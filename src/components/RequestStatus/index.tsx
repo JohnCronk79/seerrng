@@ -1233,7 +1233,7 @@ const RequestStatusCard = ({
 
             <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch md:grid-cols-3">
               <div className="min-w-0 md:col-span-2 md:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-2 gap-y-0.5 text-xs leading-4 text-gray-400 md:grid-cols-[max-content_0.5rem_max-content_0.75rem_1px_0.75rem_minmax(0,1fr)] md:gap-x-0">
+                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-2 gap-y-0.5 text-xs leading-4 text-gray-400 md:grid-cols-[max-content_0.5rem_7rem_0.75rem_1px_0.75rem_minmax(0,1fr)] md:gap-x-0">
                   <dt className="font-medium text-gray-100 md:col-start-1 md:row-start-1">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
