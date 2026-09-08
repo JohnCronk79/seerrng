@@ -143,13 +143,6 @@ const MobileMenu = ({
         activeRegExp: /^\/requests\/status/,
       },
       {
-        href: '/requests',
-        content: intl.formatMessage(menuMessages.requests),
-        svgIcon: <ClockIcon className="h-6 w-6" />,
-        svgIconSelected: <FilledClockIcon className="h-6 w-6" />,
-        activeRegExp: /^\/requests\/?$/,
-      },
-      {
         href: '/blocklist',
         content: intl.formatMessage(menuMessages.blocklist),
         svgIcon: <EyeSlashIcon className="h-6 w-6" />,

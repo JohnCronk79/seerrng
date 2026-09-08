@@ -705,9 +705,19 @@ mediaRoutes.delete(
                   if (!media.externalServiceId) {
                     throw new Error('Lidarr album ID not found');
                   }
+                  const album = await (service as LidarrAPI).getAlbum(
+                    { id: media.externalServiceId },
+                    0
+                  );
                   await (service as LidarrAPI).removeAlbum(
                     media.externalServiceId
                   );
+                  const remainingAlbums = await (
+                    service as LidarrAPI
+                  ).getAlbumsByArtist(album.artistId, 0);
+                  if (remainingAlbums.length === 0) {
+                    await (service as LidarrAPI).removeArtist(album.artistId);
+                  }
                 } else if (isBook) {
                   const removeEbook = bookFormat !== 'audiobook';
                   const removeAudiobook = bookFormat !== 'ebook';
@@ -750,7 +760,18 @@ mediaRoutes.delete(
                       url: ReadarrAPI.buildUrl(ebookSettings, '/api/v1'),
                       mediaType: 'ebook',
                     });
+                    const ebook = await ebookService.getBook(
+                      media.externalServiceId,
+                      0
+                    );
                     await ebookService.removeBook(media.externalServiceId);
+                    if (ebook.authorId !== undefined) {
+                      const remainingBooks =
+                        await ebookService.getBooksByAuthor(ebook.authorId, 0);
+                      if (remainingBooks.length === 0) {
+                        await ebookService.removeAuthor(ebook.authorId);
+                      }
+                    }
                     removedBookFormat = true;
                     media.serviceId = null;
                     media.externalServiceId = null;
@@ -780,9 +801,23 @@ mediaRoutes.delete(
                       url: ReadarrAPI.buildUrl(audiobookSettings, '/api/v1'),
                       mediaType: 'audiobook',
                     });
+                    const audiobook = await audiobookService.getBook(
+                      media.audiobookExternalServiceId,
+                      0
+                    );
                     await audiobookService.removeBook(
                       media.audiobookExternalServiceId
                     );
+                    if (audiobook.authorId !== undefined) {
+                      const remainingBooks =
+                        await audiobookService.getBooksByAuthor(
+                          audiobook.authorId,
+                          0
+                        );
+                      if (remainingBooks.length === 0) {
+                        await audiobookService.removeAuthor(audiobook.authorId);
+                      }
+                    }
                     removedBookFormat = true;
                     media.audiobookServiceId = null;
                     media.audiobookExternalServiceId = null;

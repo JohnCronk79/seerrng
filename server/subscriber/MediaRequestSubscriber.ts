@@ -19,6 +19,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -28,6 +29,7 @@ import {
   getRequestMutationAdmissionKey,
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
+import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import { RequestDispatchOutbox } from '@server/entity/RequestDispatchOutbox';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
@@ -427,6 +429,25 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           .getQuery();
         return `NOT EXISTS ${queued}`;
       })
+      .andWhere((query) => {
+        const latestStage = query
+          .subQuery()
+          .select('latestStatus.stage')
+          .from(MediaRequestStatusEvent, 'latestStatus')
+          .where('latestStatus.requestId = mediaRequest.id')
+          .orderBy('latestStatus.createdAt', 'DESC')
+          .addOrderBy('latestStatus.id', 'DESC')
+          .limit(1)
+          .getQuery();
+
+        return `COALESCE(${latestStage}, '') NOT IN (:...terminalStages)`;
+      })
+      .setParameter('terminalStages', [
+        RequestStatusStage.UNAVAILABLE,
+        RequestStatusStage.FAILED,
+        RequestStatusStage.CANCELLED,
+        RequestStatusStage.DECLINED,
+      ])
       .orderBy('mediaRequest.updatedAt', 'ASC')
       .addOrderBy('mediaRequest.id', 'ASC')
       .take(boundedLimit)
@@ -1858,9 +1879,33 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             : bookInfo.author,
           editions: bookInfo.editions ?? [],
           addOptions: {
-            searchForNewBook: true,
+            // Seerr starts and tracks BookSearch explicitly after the add.
+            // The Bookshelf convenience flag depends on a later metadata
+            // refresh and does not expose the resulting command to Seerr.
+            searchForNewBook: false,
           },
         });
+
+        if (!result.id) {
+          throw new Error(
+            'Bookshelf returned no book ID after adding the book.'
+          );
+        }
+
+        const searchCommand = await readarr.startBookSearch(result.id);
+        await getRepository(BookRequestSearch).save(
+          new BookRequestSearch({
+            requestId: entity.id,
+            serviceId: readarrSettings.id,
+            format: serviceType,
+            bookId: result.id,
+            authorId: result.authorId ?? result.author?.id ?? null,
+            commandId: searchCommand.id,
+            createdBook: result.createdBook,
+            createdAuthor: result.createdAuthor,
+            state: 'searching',
+          })
+        );
 
         if (serviceType === 'audiobook') {
           media.audiobookExternalServiceId = result.id ?? null;

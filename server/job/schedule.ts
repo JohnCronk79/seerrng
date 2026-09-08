@@ -1,6 +1,7 @@
 import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
 import availabilitySync from '@server/lib/availabilitySync';
+import bookRequestSearchManager from '@server/lib/bookRequestSearch';
 import downloadRecovery from '@server/lib/downloadRecovery';
 import downloadTracker from '@server/lib/downloadtracker';
 import ImageProxy from '@server/lib/imageproxy';
@@ -400,6 +401,7 @@ export const startJobs = (): void => {
         'Download Sync',
         async () => {
           await downloadTracker.updateDownloads();
+          await bookRequestSearchManager.run();
           await reconcileActiveRequests();
         },
         { scope: 'instance' }

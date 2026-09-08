@@ -8976,6 +8976,9 @@ paths:
             enum:
               [
                 all,
+                pending,
+                processing,
+                deleted,
                 active,
                 attention,
                 requested,
@@ -9184,6 +9187,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+  /request/{requestId}/status:
+    delete:
+      summary: Delete request status entry
+      description: |
+        Cancels and cleans up active work when required, then permanently removes the request and its lifecycle history. The owner may remove their own request; users with `MANAGE_REQUESTS` or `ADMIN` may remove any request.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          description: Request ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      responses:
+        '204':
+          description: Request status entry and history removed
+        '409':
+          description: Active work could not be cleaned up safely
   /request/{requestId}/{status}:
     post:
       summary: Update a request's status

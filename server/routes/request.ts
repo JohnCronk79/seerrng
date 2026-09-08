@@ -7,7 +7,7 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
-import { getRepository } from '@server/datasource';
+import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -24,6 +24,7 @@ import {
   hasMediaRequestPermission,
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
+import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
 import type {
@@ -49,6 +50,7 @@ import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
 import requestDispatchManager from '@server/lib/requestDispatch';
 import {
+  REQUEST_STATUS_TERMINAL_STAGES,
   RequestStatusStage,
   getRequestStatusHistory,
   getRequestStatusPage,
@@ -58,6 +60,9 @@ import {
   REQUEST_STATUS_SORT_FIELDS,
   parseRequestStatusSort,
 } from '@server/lib/requestStatusSort';
+import requestWorkCleanupManager, {
+  RequestWorkCleanupError,
+} from '@server/lib/requestWorkCleanup';
 import { runWithCurrentServarrService } from '@server/lib/serviceAdmission';
 import {
   UserMutationActorUnauthorizedError,
@@ -116,6 +121,9 @@ const requestStatusFilters = [
 ] as const;
 const requestTimelineStatusFilters = [
   'all',
+  'pending',
+  'processing',
+  'deleted',
   'active',
   'attention',
   'completed',
@@ -131,6 +139,59 @@ const requestStatusTimeFrames = [
   '6m',
   'all',
 ] as const;
+
+const canRemoveRequestFromService = (
+  request: Pick<MediaRequest, 'type' | 'is4k' | 'bookFormat' | 'media'>,
+  settings: ReturnType<typeof getExternalRuntimeConfig>
+): boolean => {
+  const media = request.media;
+  if (!media) return false;
+
+  switch (request.type) {
+    case MediaType.MOVIE:
+      return settings.radarr.some(
+        (server) =>
+          server.id === (request.is4k ? media.serviceId4k : media.serviceId)
+      );
+    case MediaType.TV:
+      return settings.sonarr.some(
+        (server) =>
+          server.id === (request.is4k ? media.serviceId4k : media.serviceId)
+      );
+    case MediaType.MUSIC:
+      return settings.lidarr.some((server) => server.id === media.serviceId);
+    case MediaType.BOOK: {
+      const hasEbookLink =
+        media.serviceId !== null &&
+        media.serviceId !== undefined &&
+        media.externalServiceId !== null &&
+        media.externalServiceId !== undefined;
+      const hasAudiobookLink =
+        media.audiobookServiceId !== null &&
+        media.audiobookServiceId !== undefined &&
+        media.audiobookExternalServiceId !== null &&
+        media.audiobookExternalServiceId !== undefined;
+      const canRemoveEbook =
+        hasEbookLink &&
+        settings.readarr.some((server) => server.id === media.serviceId);
+      const canRemoveAudiobook =
+        hasAudiobookLink &&
+        settings.readarr.some(
+          (server) => server.id === media.audiobookServiceId
+        );
+
+      return request.bookFormat === 'audiobook'
+        ? canRemoveAudiobook
+        : request.bookFormat === 'both'
+          ? (hasEbookLink || hasAudiobookLink) &&
+            (!hasEbookLink || canRemoveEbook) &&
+            (!hasAudiobookLink || canRemoveAudiobook)
+          : canRemoveEbook;
+    }
+    default:
+      return false;
+  }
+};
 
 const getRequestStatusStartDate = (
   timeFrame: (typeof requestStatusTimeFrames)[number] | undefined
@@ -2278,6 +2339,10 @@ requestRoutes.get<
           [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
           { type: 'or' }
         );
+        const canManageRequests = actor.hasPermission(
+          Permission.MANAGE_REQUESTS
+        );
+        const settings = getExternalRuntimeConfig();
         const page = await getRequestStatusPage({
           take: pageSize,
           skip,
@@ -2295,6 +2360,9 @@ requestRoutes.get<
           results: page.results.map(({ request, status }) => ({
             request: filterEntityResponse(request, actor),
             status: protectRequestStatusDownloadId(status),
+            canRemove:
+              canManageRequests &&
+              canRemoveRequestFromService(request, settings),
           })),
         });
       },
@@ -2934,6 +3002,98 @@ requestRoutes.delete('/:requestId', async (req, res, next) => {
   }
 });
 
+requestRoutes.delete<{ requestId: string }>(
+  '/:requestId/status',
+  isAuthenticated(),
+  async (req, res, next) => {
+    const requestId = parseRequestParamId(req.params.requestId);
+    if (!requestId) {
+      return next({ status: 404, message: 'Request not found.' });
+    }
+
+    try {
+      const initialRequest = await getRepository(MediaRequest).findOne({
+        where: { id: requestId },
+        relations: { requestedBy: true },
+      });
+      if (!initialRequest) {
+        return next({ status: 404, message: 'Request not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        initialRequest.requestedBy.id,
+        Permission.MANAGE_REQUESTS,
+        (actor) =>
+          runWithRequestAdmission(
+            [getRequestMutationAdmissionKey(requestId)],
+            async () => {
+              const request = await getRepository(MediaRequest).findOneOrFail({
+                where: { id: requestId },
+                relations: { requestedBy: true, modifiedBy: true, media: true },
+              });
+              if (
+                !actor.hasPermission(Permission.MANAGE_REQUESTS) &&
+                request.requestedBy.id !== actor.id
+              ) {
+                return next({
+                  status: 403,
+                  message: 'You do not have permission to delete this entry.',
+                });
+              }
+
+              const currentStatus = await recordRequestStatus(request.id);
+              const active =
+                !!currentStatus &&
+                !REQUEST_STATUS_TERMINAL_STAGES.includes(currentStatus.stage);
+              await requestWorkCleanupManager.cleanup(request, active);
+
+              await dataSource.transaction(async (manager) => {
+                const transactionalRequest = await manager.findOneOrFail(
+                  MediaRequest,
+                  {
+                    where: { id: requestId },
+                    relations: {
+                      requestedBy: true,
+                      modifiedBy: true,
+                      media: true,
+                    },
+                  }
+                );
+                await manager.remove(transactionalRequest);
+                await manager.delete(MediaRequestStatusEvent, { requestId });
+              });
+
+              return res.status(204).send();
+            }
+          ),
+        {
+          expectedCredentialVersion: getExpectedCredentialVersion(req),
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: 'You do not have permission to delete this entry.',
+        });
+      }
+      if (e instanceof RequestWorkCleanupError) {
+        return next({ status: 409, message: e.message });
+      }
+      logger.error('Error deleting request status entry', {
+        label: 'Request Status',
+        requestId,
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      return next({
+        status: 500,
+        message: 'Unable to delete the request status entry.',
+      });
+    }
+  }
+);
+
 requestRoutes.post<{
   requestId: string;
 }>('/:requestId/retry', isAuthenticated(), async (req, res, next) => {
@@ -2978,15 +3138,23 @@ requestRoutes.post<{
             }
 
             const currentStatus = await recordRequestStatus(request.id);
+            if (!currentStatus) {
+              return next({ status: 404, message: 'Request not found.' });
+            }
+            const canRetryAny = actor.hasPermission(Permission.MANAGE_REQUESTS);
+            const alreadyQueued =
+              request.status === MediaRequestStatus.APPROVED &&
+              currentStatus.stage !== RequestStatusStage.UNAVAILABLE &&
+              currentStatus.stage !== RequestStatusStage.FAILED;
             if (
-              !currentStatus ||
-              !currentStatus.retryable ||
-              (currentStatus.stage !== RequestStatusStage.FAILED &&
-                currentStatus.stage !== RequestStatusStage.UNAVAILABLE)
+              currentStatus.stage === RequestStatusStage.REQUESTED ||
+              alreadyQueued ||
+              (!canRetryAny && !currentStatus.retryable)
             ) {
               return next({
                 status: 409,
-                message: 'Only failed or unavailable requests can be retried.',
+                message:
+                  'This request cannot be retried from its current state.',
               });
             }
 
@@ -2998,6 +3166,11 @@ requestRoutes.post<{
               request.is4k
             );
 
+            const active = !REQUEST_STATUS_TERMINAL_STAGES.includes(
+              currentStatus.stage
+            );
+            await requestWorkCleanupManager.cleanup(request, active);
+
             if (request.status === MediaRequestStatus.FAILED) {
               request.status = MediaRequestStatus.APPROVED;
             } else {
@@ -3007,10 +3180,11 @@ requestRoutes.post<{
               await recordRequestStatus(request.id, {
                 resetTerminalOverride: true,
               });
-              await requestDispatchManager.enqueue(request.id);
+              request.status = MediaRequestStatus.APPROVED;
             }
             request.modifiedBy = actor;
             await requestRepository.save(request);
+            await requestDispatchManager.enqueue(request.id);
 
             return res
               .status(200)
@@ -3030,6 +3204,9 @@ requestRoutes.post<{
     }
     if (e instanceof ServiceConfigurationError) {
       return next({ status: 400, message: e.message });
+    }
+    if (e instanceof RequestWorkCleanupError) {
+      return next({ status: 409, message: e.message });
     }
 
     logger.error('Error processing request retry', {

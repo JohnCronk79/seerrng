@@ -29,7 +29,11 @@ const areNumberArraysEqual = (a: number[], b: number[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
 
 const messages = defineMessages('components.RequestModal.AdvancedRequester', {
-  advancedoptions: 'Advanced',
+  advancedoptions: 'Advanced Request',
+  service: 'Service',
+  status: 'Status',
+  ready: 'Ready to Request',
+  showOptions: 'Show Options',
   destinationserver: 'Destination Server',
   qualityprofile: 'Quality Profile',
   metadataprofile: 'Metadata Profile',
@@ -80,6 +84,9 @@ interface AdvancedRequesterProps {
     music: { limit?: number };
     book: { limit?: number };
   };
+  mediaTitle?: string;
+  posterPath?: string;
+  requestStatus?: string;
   onChange: (overrides: RequestOverrides) => void;
 }
 
@@ -91,6 +98,9 @@ const AdvancedRequester = ({
   defaultOverrides,
   requestUser,
   quota,
+  mediaTitle,
+  posterPath,
+  requestStatus,
   onChange,
 }: AdvancedRequesterProps) => {
   const intl = useIntl();
@@ -444,17 +454,58 @@ const AdvancedRequester = ({
           !serverData.tags?.length)));
   const userOptionsHidden =
     !selectedUser || (filteredUserData ?? []).length < 2;
-
-  if ((!data || serviceOptionsHidden) && userOptionsHidden) {
-    return null;
-  }
+  const selectedService = serviceServers.find(
+    (server) => server.id === selectedServer
+  );
 
   return (
-    <>
-      <div className="mb-2 mt-4 flex items-center text-lg font-semibold">
-        {intl.formatMessage(messages.advancedoptions)}
-      </div>
-      <div className="rounded-md">
+    <details className="group mt-4 rounded-lg border border-gray-700 bg-gray-900/35">
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-3 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded ring-1 ring-gray-600">
+          <CachedImage
+            type={
+              type === 'book' ? 'book' : type === 'music' ? 'music' : 'tmdb'
+            }
+            src={posterPath || '/images/seerr_poster_not_found.png'}
+            alt=""
+            fill
+            className="object-cover"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-white">
+            {mediaTitle || intl.formatMessage(messages.advancedoptions)}
+          </div>
+          <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 text-xs leading-5 text-gray-400">
+            <dt className="font-medium text-gray-200">
+              {intl.formatMessage(messages.status)}:
+            </dt>
+            <dd className="m-0 truncate">
+              {requestStatus || intl.formatMessage(messages.ready)}
+            </dd>
+            <dt className="font-medium text-gray-200">
+              {intl.formatMessage(messages.service)}:
+            </dt>
+            <dd className="m-0 truncate">
+              {selectedService?.name ??
+                intl.formatMessage(globalMessages.loading)}
+            </dd>
+            <dt className="font-medium text-gray-200">
+              {intl.formatMessage(messages.rootfolder)}:
+            </dt>
+            <dd className="m-0 truncate">
+              {selectedFolder || intl.formatMessage(globalMessages.loading)}
+            </dd>
+          </dl>
+        </div>
+        <span className="flex-shrink-0 text-xs font-semibold text-indigo-300 group-open:hidden">
+          {intl.formatMessage(messages.showOptions)}
+        </span>
+        <ChevronDownIcon className="h-5 w-5 flex-shrink-0 text-gray-400 transition group-open:rotate-180" />
+      </summary>
+      <div
+        className={`border-t border-gray-700 p-3 ${serviceOptionsHidden && userOptionsHidden ? 'hidden' : ''}`}
+      >
         {!!data && selectedServer !== null && serviceOverridesEnabled && (
           <div className="flex flex-col md:flex-row">
             {serviceServers.length > 1 && (
@@ -874,7 +925,7 @@ const AdvancedRequester = ({
           </div>
         )}
       </div>
-    </>
+    </details>
   );
 };
 

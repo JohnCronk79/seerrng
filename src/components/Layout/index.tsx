@@ -186,6 +186,10 @@ const Layout = ({ children }: LayoutProps) => {
               <SearchInput />
             </div>
             <div className="relative z-20 ml-2 flex shrink-0 items-center gap-2">
+              <div
+                id="request-status-view-toggle"
+                className="flex shrink-0 items-center"
+              />
               <ThemePicker />
               <UserDropdown />
             </div>

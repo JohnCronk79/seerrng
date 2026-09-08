@@ -4,6 +4,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import { RequestDispatchOutbox } from '@server/entity/RequestDispatchOutbox';
@@ -170,6 +171,7 @@ type StatusEventLike = Pick<
 type StatusOptions = {
   downloads?: DownloadingItem[];
   dispatchPending?: boolean;
+  bookSearchState?: BookRequestSearch['state'];
   resetTerminalOverride?: boolean;
   latestEvent?: StatusEventLike;
 };
@@ -590,6 +592,28 @@ const getStageFromRequest = (
     };
   }
 
+  if (options.bookSearchState === 'importing') {
+    return {
+      stage: RequestStatusStage.IMPORTING,
+      queueFailure: false,
+      downloads,
+    };
+  }
+  if (options.bookSearchState === 'grabbed') {
+    return {
+      stage: RequestStatusStage.DOWNLOADING,
+      queueFailure: false,
+      downloads,
+    };
+  }
+  if (options.bookSearchState === 'searching') {
+    return {
+      stage: RequestStatusStage.SEARCHING,
+      queueFailure: false,
+      downloads,
+    };
+  }
+
   const latestEventIsCurrent =
     !!options.latestEvent &&
     options.latestEvent.createdAt.getTime() >= request.updatedAt.getTime();
@@ -598,7 +622,10 @@ const getStageFromRequest = (
     latestEventIsCurrent &&
     options.latestEvent?.stage === RequestStatusStage.UNAVAILABLE &&
     request.status === MediaRequestStatus.APPROVED &&
-    !hasRequestedServiceLink(request)
+    (!hasRequestedServiceLink(request) ||
+      (request.type === MediaType.BOOK &&
+        request.bookFormat === 'both' &&
+        !isRequestSatisfied(request)))
   ) {
     return {
       stage: RequestStatusStage.UNAVAILABLE,
@@ -730,6 +757,27 @@ const getDispatchPending = async (
     getRepository(RequestDispatchOutbox)
   ).exists({ where: { requestId } });
 
+const getBookSearchState = async (
+  requestId: number,
+  manager?: EntityManager
+): Promise<BookRequestSearch['state'] | undefined> => {
+  const records = await (
+    manager?.getRepository(BookRequestSearch) ??
+    getRepository(BookRequestSearch)
+  ).find({ where: { requestId }, select: { state: true } });
+  if (records.some((record) => record.state === 'importing'))
+    return 'importing';
+  if (records.some((record) => record.state === 'grabbed')) return 'grabbed';
+  if (
+    records.some(
+      (record) => record.state === 'searching' || record.state === 'settling'
+    )
+  ) {
+    return 'searching';
+  }
+  return undefined;
+};
+
 const eventToHistoryItem = (
   event: MediaRequestStatusEvent
 ): RequestStatusHistoryItem => ({
@@ -856,10 +904,14 @@ export const recordRequestStatus = async (
     return undefined;
   }
   const latestEvent = await getLatestStatusEvent(requestId, options.manager);
-  const dispatchPending = await getDispatchPending(requestId, options.manager);
+  const [dispatchPending, bookSearchState] = await Promise.all([
+    getDispatchPending(requestId, options.manager),
+    getBookSearchState(requestId, options.manager),
+  ]);
   const status = getRequestStatus(request, {
     latestEvent: latestEvent ?? undefined,
     dispatchPending,
+    bookSearchState,
     resetTerminalOverride: options.resetTerminalOverride,
   });
   await persistStatusEvent(
@@ -1041,15 +1093,48 @@ const getPendingDispatchRequestIds = async (
   return new Set(records.map((record) => record.requestId));
 };
 
+const getBookSearchStates = async (
+  requestIds: number[]
+): Promise<Map<number, BookRequestSearch['state']>> => {
+  if (requestIds.length === 0) return new Map();
+  const records = await getRepository(BookRequestSearch).find({
+    where: { requestId: In(requestIds) },
+    select: { requestId: true, state: true },
+  });
+  const states = new Map<number, BookRequestSearch['state']>();
+  for (const record of records) {
+    if (
+      record.state === 'available' ||
+      record.state === 'unavailable' ||
+      record.state === 'failed'
+    ) {
+      continue;
+    }
+    const nextState =
+      record.state === 'settling' ? ('searching' as const) : record.state;
+    const current = states.get(record.requestId);
+    if (
+      !current ||
+      nextState === 'importing' ||
+      (nextState === 'grabbed' && current === 'searching')
+    ) {
+      states.set(record.requestId, nextState);
+    }
+  }
+  return states;
+};
+
 const mapRequestStatusItem = async (
   request: MediaRequest,
   latestEvent: MediaRequestStatusEvent | undefined,
   dispatchPending: boolean,
+  bookSearchState: BookRequestSearch['state'] | undefined,
   persist: boolean
 ): Promise<RequestStatusPageItem> => {
   const status = getRequestStatus(request, {
     latestEvent,
     dispatchPending,
+    bookSearchState,
   });
   if (persist) {
     await persistStatusEvent(request, status, latestEvent);
@@ -1059,9 +1144,21 @@ const mapRequestStatusItem = async (
 
 const stageMatchesFilter = (
   stage: RequestStatusStage,
-  filter: string | undefined
+  filter: string | undefined,
+  request: MediaRequest
 ): boolean => {
   switch (filter) {
+    case 'pending':
+      return request.status === MediaRequestStatus.PENDING;
+    case 'processing':
+      return [
+        RequestStatusStage.SEARCHING,
+        RequestStatusStage.DOWNLOADING,
+        RequestStatusStage.IMPORTING,
+        RequestStatusStage.LIBRARY,
+      ].includes(stage);
+    case 'deleted':
+      return getRequestedMediaStatus(request) === MediaStatus.DELETED;
     case 'active':
       return ACTIVE_STAGES.includes(stage);
     case 'attention':
@@ -1072,6 +1169,7 @@ const stageMatchesFilter = (
         RequestStatusStage.CANCELLED,
       ].includes(stage);
     case 'completed':
+      return request.status === MediaRequestStatus.COMPLETED;
     case 'available':
       return stage === RequestStatusStage.AVAILABLE;
     default:
@@ -1288,10 +1386,13 @@ export const getRequestStatusPage = async (options: {
   }
 
   const requestIds = requests.map((request) => request.id);
-  const [latestEvents, pendingRequestIds] = await Promise.all([
-    getLatestEvents(requestIds),
-    getPendingDispatchRequestIds(requestIds),
-  ]);
+  const [latestEvents, pendingRequestIds, bookSearchStates] = await Promise.all(
+    [
+      getLatestEvents(requestIds),
+      getPendingDispatchRequestIds(requestIds),
+      getBookSearchStates(requestIds),
+    ]
+  );
 
   let resultItems: RequestStatusPageItem[] = [];
   for (const request of requests) {
@@ -1300,14 +1401,15 @@ export const getRequestStatusPage = async (options: {
         request,
         latestEvents.get(request.id),
         pendingRequestIds.has(request.id),
+        bookSearchStates.get(request.id),
         !requiresFullProjection
       )
     );
   }
 
   if (hasStatusFilter) {
-    resultItems = resultItems.filter(({ status }) =>
-      stageMatchesFilter(status.stage, options.filter)
+    resultItems = resultItems.filter(({ status, request }) =>
+      stageMatchesFilter(status.stage, options.filter, request)
     );
     requestCount = resultItems.length;
   }

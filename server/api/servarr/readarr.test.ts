@@ -17,7 +17,8 @@ import axios from 'axios';
 type MockableReadarr = {
   get: (
     endpoint: string,
-    options?: { params?: Record<string, unknown> }
+    options?: { params?: Record<string, unknown> },
+    ttl?: number
   ) => Promise<unknown>;
   post: (
     endpoint: string,
@@ -136,6 +137,23 @@ describe('ReadarrAPI.getBook', () => {
 
     assert.strictEqual(result.id, 42);
     assert.strictEqual(getMock.mock.calls[0].arguments[0], '/book/42');
+  });
+
+  it('can bypass the metadata cache for lifecycle telemetry', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+    });
+    const getMock = mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'get',
+      async () => existingBook({ id: 42 })
+    );
+
+    await api.getBook(42, 0);
+
+    assert.strictEqual(getMock.mock.calls[0].arguments[0], '/book/42');
+    assert.strictEqual(getMock.mock.calls[0].arguments[2], 0);
   });
 });
 

@@ -17,6 +17,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
+import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -104,6 +105,11 @@ describe('MediaRequestSubscriber service dispatch', () => {
   beforeEach(async () => {
     await resetTestDb();
     enqueuedRequestIds = [];
+    mock.method(ReadarrAPI.prototype, 'startBookSearch', async () => ({
+      id: 901,
+      name: 'BookSearch',
+      status: 'queued',
+    }));
     mock.method(
       requestDispatchManager,
       'enqueue',
@@ -790,6 +796,15 @@ describe('MediaRequestSubscriber service dispatch', () => {
     assert.equal(savedMedia.externalServiceId, 55);
     assert.equal(savedMedia.externalServiceSlug, 'left-hand-darkness');
     assert.equal(savedMedia.serviceId, 20);
+
+    const savedSearch = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+      format: 'ebook',
+    });
+    assert.equal(savedSearch.serviceId, 20);
+    assert.equal(savedSearch.bookId, 55);
+    assert.equal(savedSearch.commandId, 901);
+    assert.equal(savedSearch.state, 'searching');
 
     const savedRequest = await getRepository(MediaRequest).findOneByOrFail({
       id: request.id,

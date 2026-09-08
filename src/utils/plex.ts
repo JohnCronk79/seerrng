@@ -8,6 +8,12 @@ const MAX_PLEX_AUTH_TOKEN_LENGTH = 4096;
 const MAX_PLEX_PIN_ID = 2_147_483_647;
 const MAX_PLEX_PIN_CODE_LENGTH = 128;
 
+export const getPlexPopupReturnUrl = (origin: string): string => {
+  const returnUrl = new URL('/login/plex/loading', origin);
+  returnUrl.searchParams.set('complete', '1');
+  return returnUrl.toString();
+};
+
 export const getBoundedPlexPinDeadline = (
   expiresAt: unknown,
   hardDeadline: number
@@ -177,6 +183,10 @@ class PlexOAuth {
         'context[device][screenResolution]':
           this.plexHeaders['X-Plex-Device-Screen-Resolution'],
         'context[device][layout]': 'desktop',
+        // Authentication still completes through the existing bounded PIN
+        // polling flow. This return URL only brings the script-opened popup
+        // back to a Seerr-owned page so it can close itself after approval.
+        forwardUrl: getPlexPopupReturnUrl(window.location.origin),
         code: this.pin.code,
       };
 

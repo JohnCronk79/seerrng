@@ -35,6 +35,9 @@ import {
   RequestStatusStage,
   recordRequestStatusOverride,
 } from '@server/lib/requestStatus';
+import requestWorkCleanupManager, {
+  RequestWorkCleanupError,
+} from '@server/lib/requestWorkCleanup';
 import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
 import { checkUser } from '@server/middleware/auth';
@@ -50,6 +53,7 @@ import authRoutes from './auth';
 import requestRoutes, { REQUEST_SERVICE_PROFILE_CONCURRENCY } from './request';
 
 let app: Express;
+let cleanupShouldFail = false;
 
 function createApp() {
   const app = express();
@@ -86,8 +90,14 @@ before(async () => {
 });
 
 beforeEach(() => {
+  cleanupShouldFail = false;
   mock.method(MediaRequest, 'sendNotification', async () => undefined);
   mock.method(requestDispatchManager, 'enqueue', async () => undefined);
+  mock.method(requestWorkCleanupManager, 'cleanup', async () => {
+    if (cleanupShouldFail) {
+      throw new RequestWorkCleanupError('Cleanup was not confirmed.');
+    }
+  });
 });
 
 afterEach(() => {
@@ -405,6 +415,19 @@ describe('GET /request/count', () => {
 });
 
 describe('GET /request/status', () => {
+  for (const filter of ['pending', 'processing', 'deleted']) {
+    it(`returns an empty page for the ${filter} filter when nothing matches`, async () => {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await agent
+        .get('/request/status')
+        .query({ filter, timeFrame: 'all' });
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pageInfo.results, 0);
+      assert.deepStrictEqual(response.body.results, []);
+    });
+  }
+
   it('defaults to recent requests while exposing older history', async () => {
     const now = Date.now();
     await seedRequest(
@@ -4201,8 +4224,9 @@ describe('POST /request/:requestId/:status', () => {
       const res = await admin.post(`/request/${existing.id}/approve`);
 
       assert.strictEqual(res.status, 409);
-      const persisted = await getRepository(MediaRequest).findOneByOrFail({
-        id: existing.id,
+      const persisted = await getRepository(MediaRequest).findOneOrFail({
+        where: { id: existing.id },
+        relations: { modifiedBy: true },
       });
       assert.strictEqual(persisted.status, existingStatus);
     });
@@ -4352,6 +4376,47 @@ describe('POST /request/:requestId/:status', () => {
   });
 });
 
+describe('DELETE /request/:requestId/status', () => {
+  it('removes the request and its complete status history', async () => {
+    const mediaRequest = await seedRequest(MediaRequestStatus.FAILED);
+    await recordRequestStatusOverride(
+      mediaRequest.id,
+      RequestStatusStage.FAILED,
+      'Download failed.'
+    );
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await owner.delete(`/request/${mediaRequest.id}/status`);
+
+    assert.strictEqual(response.status, 204);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      0
+    );
+    assert.strictEqual(
+      await getRepository(MediaRequestStatusEvent).countBy({
+        requestId: mediaRequest.id,
+      }),
+      0
+    );
+  });
+
+  it('keeps the database entry when active cleanup is not confirmed', async () => {
+    cleanupShouldFail = true;
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await owner.delete(`/request/${mediaRequest.id}/status`);
+
+    assert.strictEqual(response.status, 409);
+    assert.match(response.body.message, /not confirmed/i);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      1
+    );
+  });
+});
+
 describe('POST /request/:requestId/retry', () => {
   it('allows the request owner to retry a failed request', async () => {
     const failed = await seedRequest(MediaRequestStatus.FAILED);
@@ -4427,24 +4492,51 @@ describe('POST /request/:requestId/retry', () => {
     assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
   });
 
+  it('does not bypass approval for a pending request', async () => {
+    const existing = await seedRequest(MediaRequestStatus.PENDING);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${existing.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: existing.id,
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+    assert.strictEqual(persisted.modifiedBy, null);
+  });
+
+  it('does not enqueue a request that is already queued for dispatch', async () => {
+    const existing = await seedRequest(MediaRequestStatus.APPROVED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${existing.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(
+      (await getRepository(MediaRequest).findOneByOrFail({ id: existing.id }))
+        .status,
+      MediaRequestStatus.APPROVED
+    );
+  });
+
   for (const status of [
-    MediaRequestStatus.PENDING,
-    MediaRequestStatus.APPROVED,
     MediaRequestStatus.DECLINED,
     MediaRequestStatus.COMPLETED,
   ]) {
-    it(`does not retry a request in status ${status}`, async () => {
+    it(`allows an administrator to restart a request in status ${status}`, async () => {
       const existing = await seedRequest(status);
       const admin = await loginAs('admin@seerr.dev', 'test1234');
 
       const res = await admin.post(`/request/${existing.id}/retry`);
 
-      assert.strictEqual(res.status, 409);
-      const persisted = await getRepository(MediaRequest).findOneByOrFail({
-        id: existing.id,
+      assert.strictEqual(res.status, 200);
+      const persisted = await getRepository(MediaRequest).findOneOrFail({
+        where: { id: existing.id },
+        relations: { modifiedBy: true },
       });
-      assert.strictEqual(persisted.status, status);
-      assert.strictEqual(persisted.modifiedBy, null);
+      assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+      assert.strictEqual(persisted.modifiedBy?.id, 1);
     });
   }
 

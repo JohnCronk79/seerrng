@@ -295,18 +295,43 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
     this.apiKey = apiKey;
   }
 
-  public async getAlbums(): Promise<LidarrAlbum[]> {
+  public async getAlbums(cacheTtl?: number): Promise<LidarrAlbum[]> {
     try {
-      const data = await this.get<LidarrAlbum[]>('/album');
+      const data = await this.get<LidarrAlbum[]>('/album', undefined, cacheTtl);
       return sanitizeServarrRecordArray<LidarrAlbum>(data);
     } catch (e) {
       throw new Error(`[Lidarr] Failed to retrieve albums: ${e.message}`);
     }
   }
 
-  public async getAlbum({ id }: { id: number }): Promise<LidarrAlbum> {
+  public async getAlbumsByArtist(
+    artistId: number,
+    cacheTtl?: number
+  ): Promise<LidarrAlbum[]> {
     try {
-      const data = await this.get<LidarrAlbum>(`/album/${id}`);
+      const data = await this.get<LidarrAlbum[]>(
+        '/album',
+        { params: { artistId } },
+        cacheTtl
+      );
+      return sanitizeServarrRecordArray<LidarrAlbum>(data);
+    } catch (e) {
+      throw new Error(
+        `[Lidarr] Failed to retrieve artist albums: ${e.message}`
+      );
+    }
+  }
+
+  public async getAlbum(
+    { id }: { id: number },
+    cacheTtl?: number
+  ): Promise<LidarrAlbum> {
+    try {
+      const data = await this.get<LidarrAlbum>(
+        `/album/${id}`,
+        undefined,
+        cacheTtl
+      );
       return data;
     } catch (e) {
       throw new Error(`[Lidarr] Failed to retrieve album: ${e.message}`);
@@ -324,6 +349,20 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       logger.info(`[Lidarr] Removed album ${albumId}`);
     } catch (e) {
       throw new Error(`[Lidarr] Failed to remove album: ${e.message}`);
+    }
+  }
+
+  public async removeArtist(artistId: number): Promise<void> {
+    try {
+      await this.request('DELETE', `/artist/${artistId}`, undefined, {
+        params: {
+          deleteFiles: 'false',
+          addImportListExclusion: 'false',
+        },
+      });
+      logger.info(`[Lidarr] Removed empty artist ${artistId}`);
+    } catch (e) {
+      throw new Error(`[Lidarr] Failed to remove artist: ${e.message}`);
     }
   }
 

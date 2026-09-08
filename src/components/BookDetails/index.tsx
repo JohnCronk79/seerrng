@@ -118,6 +118,8 @@ const BookDetails = () => {
     routeBookFormat === 'both'
       ? routeBookFormat
       : undefined;
+  const [requestModalFormat, setRequestModalFormat] =
+    useState<RequestedBookFormat>(preferredBookFormat ?? 'ebook');
 
   const {
     data,
@@ -200,6 +202,10 @@ const BookDetails = () => {
       data.mediaInfo.status === MediaStatus.UNKNOWN ||
       data.mediaInfo.status === MediaStatus.DELETED ||
       hasMissingBookFormat);
+  const canRequestEbook =
+    canRequest && !(hasEbookServiceLink || hasActiveEbookRequest);
+  const canRequestAudiobook =
+    canRequest && !(hasAudiobookServiceLink || hasActiveAudiobookRequest);
   const canReportIssue =
     !!data.mediaInfo?.id &&
     (data.mediaInfo.status === MediaStatus.AVAILABLE ||
@@ -225,12 +231,11 @@ const BookDetails = () => {
     data.mediaInfo?.issues?.filter(
       (issue) => issue.status === IssueStatus.OPEN
     ) ?? [];
-  const requestedBookFormat: RequestedBookFormat =
-    preferredBookFormat ??
-    (!hasEbookServiceLink && !hasActiveEbookRequest ? 'ebook' : 'audiobook');
-  const requestLabel = intl.formatMessage(messages.requestBookFormat, {
-    format: intl.formatMessage(getBookFormatMessage(requestedBookFormat)),
-  });
+  const openRequestModal = (format: RequestedBookFormat) => {
+    setEditRequest(undefined);
+    setRequestModalFormat(format);
+    setShowRequestModal(true);
+  };
   const activeRequestLabel = activeBookRequest
     ? intl.formatMessage(messages.viewRequestFormat, {
         format: intl.formatMessage(
@@ -403,7 +408,7 @@ const BookDetails = () => {
       {showRequestModal && (
         <RequestModal
           bookId={openLibraryWorkId}
-          initialBookFormat={preferredBookFormat}
+          initialBookFormat={requestModalFormat}
           editRequest={editRequest}
           show={showRequestModal}
           type="book"
@@ -469,7 +474,7 @@ const BookDetails = () => {
                   downloadItem={bookDownloadStatus}
                   inProgress={bookDownloadStatus.length > 0}
                   mediaType="book"
-                  bookFormat={requestedBookFormat}
+                  bookFormat={preferredBookFormat ?? requestModalFormat}
                   externalId={openLibraryWorkId}
                   serviceUrl={
                     data.mediaInfo.serviceUrl ??
@@ -645,16 +650,32 @@ const BookDetails = () => {
                   )}
                 </>
               )}
-              {canShowRequest && (
+              {canRequestEbook && (
                 <Button
                   buttonType="primary"
-                  onClick={() => {
-                    setEditRequest(undefined);
-                    setShowRequestModal(true);
-                  }}
+                  onClick={() => openRequestModal('ebook')}
                 >
                   <ArrowDownTrayIcon />
-                  <span>{requestLabel}</span>
+                  <span>
+                    {intl.formatMessage(messages.requestBookFormat, {
+                      format: intl.formatMessage(getBookFormatMessage('ebook')),
+                    })}
+                  </span>
+                </Button>
+              )}
+              {canRequestAudiobook && (
+                <Button
+                  buttonType="primary"
+                  onClick={() => openRequestModal('audiobook')}
+                >
+                  <ArrowDownTrayIcon />
+                  <span>
+                    {intl.formatMessage(messages.requestBookFormat, {
+                      format: intl.formatMessage(
+                        getBookFormatMessage('audiobook')
+                      ),
+                    })}
+                  </span>
                 </Button>
               )}
               {canRequest && data.authorId && (

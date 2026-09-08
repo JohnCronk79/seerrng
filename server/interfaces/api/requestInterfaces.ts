@@ -83,6 +83,7 @@ export interface RequestStatusResultsResponse extends PaginatedResponse {
   results: {
     request: NonFunctionProperties<MediaRequest>;
     status: RequestStatusSnapshot;
+    canRemove?: boolean;
   }[];
   counts: {
     total: number;

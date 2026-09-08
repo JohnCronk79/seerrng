@@ -111,6 +111,75 @@ test('request lifecycle uses authoritative queue progress and never invents a pe
   );
 });
 
+test('tracked Bookshelf operations report observed lifecycle stages', () => {
+  const bookRequest = request({
+    status: MediaRequestStatus.COMPLETED,
+    type: MediaType.BOOK,
+    bookFormat: 'ebook',
+    media: {
+      ...request().media,
+      mediaType: MediaType.BOOK,
+      status: MediaStatus.PROCESSING,
+    },
+  });
+
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'searching' }).stage,
+    RequestStatusStage.SEARCHING
+  );
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'grabbed' }).stage,
+    RequestStatusStage.DOWNLOADING
+  );
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'importing' }).stage,
+    RequestStatusStage.IMPORTING
+  );
+});
+
+test('both-format book requests show a terminal missing-format result', () => {
+  const bookRequest = request({
+    status: MediaRequestStatus.APPROVED,
+    type: MediaType.BOOK,
+    bookFormat: 'both',
+    media: {
+      ...request().media,
+      mediaType: MediaType.BOOK,
+      status: MediaStatus.AVAILABLE,
+      serviceId: null,
+      externalServiceId: null,
+      audiobookServiceId: 21,
+      audiobookExternalServiceId: 66,
+    },
+  });
+
+  const status = getRequestStatus(bookRequest, {
+    latestEvent: {
+      id: 1,
+      requestId: 1,
+      requestedById: 2,
+      mediaId: 3,
+      mediaType: MediaType.BOOK,
+      stage: RequestStatusStage.UNAVAILABLE,
+      attempt: 1,
+      format: 'both',
+      service: 'Bookshelf',
+      fingerprint: 'unavailable:1',
+      message: 'No release found.',
+      percent: null,
+      size: null,
+      sizeLeft: null,
+      estimatedCompletionTime: null,
+      downloadCount: 0,
+      downloadId: null,
+      createdAt: new Date(date.getTime() + 1_000),
+    },
+  });
+
+  assert.equal(status.stage, RequestStatusStage.UNAVAILABLE);
+  assert.equal(status.message, 'No release found.');
+});
+
 test('series progress only includes requested seasons', () => {
   mock.method(downloadTracker, 'getSeriesProgress', () => [
     download({

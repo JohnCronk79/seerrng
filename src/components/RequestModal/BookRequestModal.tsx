@@ -497,6 +497,9 @@ const BookRequestModal = ({
             type="book"
             is4k={false}
             bookFormat={bookFormat}
+            mediaTitle={data?.title}
+            posterPath={data?.posterPath}
+            requestStatus={formatLabel}
             requestUser={editRequest.requestedBy}
             defaultOverrides={{
               folder: editRequest.rootFolder,
@@ -618,6 +621,9 @@ const BookRequestModal = ({
           type="book"
           is4k={false}
           bookFormat={bookFormat}
+          mediaTitle={data?.title}
+          posterPath={data?.posterPath}
+          requestStatus={formatLabel}
           onChange={(overrides) => setRequestOverrides(overrides)}
         />
       )}

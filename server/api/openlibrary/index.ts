@@ -68,6 +68,7 @@ export interface OpenLibraryEdition {
   isbn_10?: string[];
   isbn_13?: string[];
   physical_format?: string;
+  number_of_pages?: number;
   works?: {
     key: string;
   }[];

@@ -359,6 +359,9 @@ const Search = () => {
     !isLoadingInitialData &&
     !isLoadingMore &&
     sortedTitles.length === 0;
+  const providerErrorMessage = (
+    error as { response?: { data?: { message?: string } } } | undefined
+  )?.response?.data?.message;
 
   const searchError = error && (
     <div
@@ -367,7 +370,8 @@ const Search = () => {
     >
       <div>
         <p className="font-medium">
-          {intl.formatMessage(messages.searchUnavailable)}
+          {providerErrorMessage ??
+            intl.formatMessage(messages.searchUnavailable)}
         </p>
         <p className="mt-1 text-sm text-red-100/80">
           {intl.formatMessage(messages.searchUnavailableHint)}

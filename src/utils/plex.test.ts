@@ -6,6 +6,7 @@ import {
   PLEX_OAUTH_HTTP_OPTIONS,
   default as PlexOAuth,
   getBoundedPlexPinDeadline,
+  getPlexPopupReturnUrl,
   parsePlexPin,
   parsePlexPinAuthToken,
 } from './plex';
@@ -26,6 +27,15 @@ afterEach(() => {
 describe('PLEX_OAUTH_HTTP_OPTIONS', () => {
   it('bounds browser-side Plex OAuth requests', () => {
     assert.equal(PLEX_OAUTH_HTTP_OPTIONS.timeout, 10_000);
+  });
+});
+
+describe('Plex popup return URL', () => {
+  it('returns only to the local Seerr completion page', () => {
+    assert.equal(
+      getPlexPopupReturnUrl('http://localhost:5065'),
+      'http://localhost:5065/login/plex/loading?complete=1'
+    );
   });
 });
 

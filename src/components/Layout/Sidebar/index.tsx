@@ -98,12 +98,6 @@ const SidebarLinks: SidebarLinkProps[] = [
     activeRegExp: /^\/requests\/status/,
   },
   {
-    href: '/requests',
-    messagesKey: 'requests',
-    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/requests\/?$/,
-  },
-  {
     href: '/blocklist',
     messagesKey: 'blocklist',
     svgIcon: <EyeSlashIcon className="mr-3 h-6 w-6" />,

@@ -5,6 +5,7 @@ import { getInternalApiBaseUrl } from './utils/internalApi';
 import {
   isLoginPath,
   isPathPrefix,
+  isPlexLoginCompletionPath,
   isResetPasswordPath,
   isSetupPath,
 } from './utils/routeAccess';
@@ -28,6 +29,10 @@ const isPlexLoginPath = (pathname: string): boolean =>
  */
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  const isPlexLoginCompletion = isPlexLoginCompletionPath(
+    pathname,
+    req.nextUrl.searchParams.get('complete')
+  );
   const apiBaseUrl = getInternalApiBaseUrl();
 
   let settings: { initialized?: boolean };
@@ -74,7 +79,10 @@ export async function proxy(req: NextRequest) {
   }
 
   if (authed) {
-    if (isSetupPath(pathname) || isLoginPath(pathname)) {
+    if (
+      (isSetupPath(pathname) || isLoginPath(pathname)) &&
+      !isPlexLoginCompletion
+    ) {
       return NextResponse.redirect(new URL('/', req.url));
     }
   } else if (

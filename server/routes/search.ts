@@ -362,6 +362,20 @@ searchRoutes.get('/', async (req, res, next) => {
           : fallback;
       };
 
+      const bookProviderResponse = providerResults.get(3);
+      if (
+        typeFilter === 'book' &&
+        shouldSearchBooks &&
+        booksEnabled &&
+        (!bookProviderResponse || bookProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+        });
+      }
+
       if (providerResponses.timedOut) {
         logger.debug('Global search provider deadline exceeded', {
           label: 'API',
