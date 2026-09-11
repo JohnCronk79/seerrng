@@ -19,8 +19,8 @@ const Tooltip = ({
   const popperConfig = useMemo(
     () => ({
       followCursor: true,
-      offset: [-28, 6] as [number, number],
-      placement: 'auto-end' as const,
+      offset: [0, 14] as [number, number],
+      placement: 'top' as const,
       ...tooltipConfig,
     }),
     [tooltipConfig]

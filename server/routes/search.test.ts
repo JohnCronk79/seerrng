@@ -254,6 +254,50 @@ describe('GET /search', () => {
     assert.strictEqual(bookSearch.mock.callCount(), 0);
   });
 
+  it('limits global book keywords to visible title and author fields', async () => {
+    const bookSearch = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ query }: { query: string }) => {
+        assert.strictEqual(
+          query,
+          '(title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
+        );
+
+        return {
+          numFound: 2,
+          start: 0,
+          docs: [
+            {
+              key: '/works/OLWINDOWS11W',
+              title: 'Windows 11 Inside Out',
+              author_name: ['Ed Bott'],
+            },
+            {
+              key: '/works/OLHIDDENW',
+              title: 'A Completely Unrelated Novel',
+              subject: ['Windows', '11'],
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'windows 11',
+      type: 'book',
+      format: 'ebook',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(bookSearch.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['Windows 11 Inside Out']
+    );
+  });
+
   it('rejects book formats on non-book searches', async () => {
     const agent = await loginAs('friend@seerr.dev', 'test1234');
     const res = await agent.get('/search').query({

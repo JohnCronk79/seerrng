@@ -4,6 +4,7 @@ import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityT
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
+import Tooltip from '@app/components/Common/Tooltip';
 import useDiscover from '@app/hooks/useDiscover';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
 import defineMessages from '@app/utils/defineMessages';
@@ -35,8 +36,8 @@ const messages = defineMessages('components.Search', {
   ebooks: 'Ebooks',
   audiobooks: 'Audiobooks',
   music: 'Music',
-  filter: 'Filter',
-  sortBy: 'Sort by',
+  filter: 'Filters',
+  sortBy: 'Sort By',
   title: 'Title',
   author: 'Author',
   artist: 'Artist',
@@ -283,7 +284,7 @@ const Search = () => {
   } = useDiscover<SearchResult>(`/api/v1/search`, searchOptions, {
     enabled: isSearchReady,
     hideAvailable: false,
-    hideBlocklisted: false,
+    hideBlocklisted: true,
     showErrorToast: false,
     shouldRetryOnError: false,
   });
@@ -425,11 +426,10 @@ const Search = () => {
             const isSelected = category.key === searchCategory.key;
 
             return (
-              <Button
+              <button
                 key={searchCategory.key}
-                className="w-[104px] px-2"
-                buttonSize="sm"
-                buttonType={isSelected ? 'primary' : 'default'}
+                type="button"
+                className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${isSelected ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
                 aria-pressed={isSelected}
                 onClick={() => {
                   const nextQuery = { ...router.query };
@@ -454,7 +454,7 @@ const Search = () => {
                 }}
               >
                 {intl.formatMessage(searchCategory.message)}
-              </Button>
+              </button>
             );
           })}
         </div>
@@ -478,42 +478,39 @@ const Search = () => {
               displayedOrder === 'asc' ? BarsArrowUpIcon : BarsArrowDownIcon;
 
             return (
-              <Button
-                key={sortOption.field}
-                className="w-[104px] px-2"
-                buttonSize="sm"
-                buttonType={isSelected ? 'primary' : 'default'}
-                aria-pressed={isSelected}
-                aria-label={`${intl.formatMessage(
-                  sortOption.message
-                )}: ${directionLabel}`}
-                title={directionLabel}
-                onClick={() => {
-                  const nextOrder = isSelected
-                    ? sortOrder === 'asc'
-                      ? 'desc'
-                      : 'asc'
-                    : sortOption.defaultOrder;
+              <Tooltip key={sortOption.field} content={directionLabel}>
+                <button
+                  type="button"
+                  className={`inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${isSelected ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+                  aria-pressed={isSelected}
+                  aria-label={`${intl.formatMessage(
+                    sortOption.message
+                  )}: ${directionLabel}`}
+                  onClick={() => {
+                    const nextOrder = isSelected
+                      ? sortOrder === 'asc'
+                        ? 'desc'
+                        : 'asc'
+                      : sortOption.defaultOrder;
 
-                  void router.replace(
-                    {
-                      pathname: router.pathname,
-                      query: {
-                        ...router.query,
-                        sort: sortOption.field,
-                        order: nextOrder,
+                    void router.replace(
+                      {
+                        pathname: router.pathname,
+                        query: {
+                          ...router.query,
+                          sort: sortOption.field,
+                          order: nextOrder,
+                        },
                       },
-                    },
-                    undefined,
-                    { shallow: true, scroll: false }
-                  );
-                }}
-              >
-                <span className="flex items-center gap-2">
+                      undefined,
+                      { shallow: true, scroll: false }
+                    );
+                  }}
+                >
                   {intl.formatMessage(sortOption.message)}
                   <SortDirectionIcon className="h-4 w-4 flex-shrink-0" />
-                </span>
-              </Button>
+                </button>
+              </Tooltip>
             );
           })}
         </div>

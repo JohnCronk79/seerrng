@@ -27,12 +27,13 @@ import AsyncSelect from 'react-select/async';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.Selector', {
+  any: 'Any',
   searchKeywords: 'Search keywords…',
   searchGenres: 'Select genres…',
   searchStudios: 'Search studios…',
   searchUsers: 'Select users…',
   starttyping: 'Starting typing to search.',
-  nooptions: 'No results.',
+  nooptions: 'No results',
   showmore: 'Show More',
   showless: 'Show Less',
   searchStatus: 'Select status...',
@@ -53,6 +54,7 @@ type BaseSelectorMultiProps = {
   defaultValue?: string;
   isMulti: true;
   isDisabled?: boolean;
+  compact?: boolean;
   onChange: (value: MultiValue<SingleVal> | null) => void;
 };
 
@@ -60,6 +62,7 @@ type BaseSelectorSingleProps = {
   defaultValue?: string;
   isMulti?: false;
   isDisabled?: boolean;
+  compact?: boolean;
   onChange: (value: SingleValue<SingleVal> | null) => void;
 };
 
@@ -67,6 +70,7 @@ export const CompanySelector = ({
   defaultValue,
   isMulti,
   isDisabled,
+  compact,
   onChange,
 }: BaseSelectorSingleProps | BaseSelectorMultiProps) => {
   const intl = useIntl();
@@ -135,7 +139,7 @@ export const CompanySelector = ({
   return (
     <AsyncSelect
       key={`company-selector-${defaultDataValue}`}
-      className="react-select-container"
+      className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
       isMulti={isMulti}
       isDisabled={isDisabled}
@@ -149,7 +153,9 @@ export const CompanySelector = ({
           : intl.formatMessage(messages.nooptions)
       }
       loadOptions={loadCompanyOptions}
-      placeholder={intl.formatMessage(messages.searchStudios)}
+      placeholder={intl.formatMessage(
+        compact ? messages.any : messages.searchStudios
+      )}
       onChange={(value) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onChange(value as any);
@@ -166,6 +172,7 @@ export const GenreSelector = ({
   isMulti,
   defaultValue,
   isDisabled,
+  compact,
   onChange,
   type,
 }: GenreSelectorProps) => {
@@ -234,7 +241,7 @@ export const GenreSelector = ({
   return (
     <AsyncSelect
       key={`genre-select-${type}-${defaultDataValue}`}
-      className="react-select-container"
+      className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
       defaultOptions
@@ -242,7 +249,9 @@ export const GenreSelector = ({
       isMulti={isMulti}
       isDisabled={isDisabled}
       loadOptions={loadGenreOptions}
-      placeholder={intl.formatMessage(messages.searchGenres)}
+      placeholder={intl.formatMessage(
+        compact ? messages.any : messages.searchGenres
+      )}
       onChange={(value) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onChange(value as any);
@@ -255,6 +264,7 @@ export const StatusSelector = ({
   isMulti,
   isDisabled,
   defaultValue,
+  compact,
   onChange,
 }: BaseSelectorMultiProps | BaseSelectorSingleProps) => {
   const intl = useIntl();
@@ -303,14 +313,16 @@ export const StatusSelector = ({
   return (
     <AsyncSelect
       key={`status-select-${defaultDataValue}`}
-      className="react-select-container"
+      className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
       defaultOptions
       isMulti={isMulti}
       isDisabled={isDisabled}
       loadOptions={loadStatusOptions}
-      placeholder={intl.formatMessage(messages.searchStatus)}
+      placeholder={intl.formatMessage(
+        compact ? messages.any : messages.searchStatus
+      )}
       onChange={(value) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onChange(value as any);
@@ -425,6 +437,7 @@ type WatchProviderSelectorProps = {
   region?: string;
   activeProviders?: number[];
   onChange: (region: string, value: number[]) => void;
+  regionLabel?: string;
 };
 
 export const WatchProviderSelector = ({
@@ -432,6 +445,7 @@ export const WatchProviderSelector = ({
   onChange,
   region,
   activeProviders,
+  regionLabel,
 }: WatchProviderSelectorProps) => {
   const intl = useIntl();
   const { currentSettings } = useSettings();
@@ -483,18 +497,37 @@ export const WatchProviderSelector = ({
 
   return (
     <>
-      <RegionSelector
-        value={watchRegion}
-        name="watchRegion"
-        onChange={(_name, value) => {
-          if (value !== watchRegion) {
-            setActiveProvider([]);
-          }
-          setWatchRegion(value);
-        }}
-        disableAll
-        watchProviders
-      />
+      {regionLabel ? (
+        <div className="discover-filter-control mb-2">
+          <span className="discover-filter-control-label">{regionLabel}</span>
+          <RegionSelector
+            value={watchRegion}
+            name="watchRegion"
+            onChange={(_name, value) => {
+              if (value !== watchRegion) {
+                setActiveProvider([]);
+              }
+              setWatchRegion(value);
+            }}
+            disableAll
+            watchProviders
+            compact
+          />
+        </div>
+      ) : (
+        <RegionSelector
+          value={watchRegion}
+          name="watchRegion"
+          onChange={(_name, value) => {
+            if (value !== watchRegion) {
+              setActiveProvider([]);
+            }
+            setWatchRegion(value);
+          }}
+          disableAll
+          watchProviders
+        />
+      )}
       {isLoading ? (
         <SmallLoadingSpinner />
       ) : (

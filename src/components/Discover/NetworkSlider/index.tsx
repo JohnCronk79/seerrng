@@ -13,7 +13,7 @@ interface Network {
   url: string;
 }
 
-const networks: Network[] = [
+export const tvNetworks: Network[] = [
   {
     name: 'Netflix',
     image:
@@ -158,10 +158,11 @@ const NetworkSlider = () => {
         </div>
       </div>
       <Slider
+        compact
         sliderKey="networks"
         isLoading={false}
         isEmpty={false}
-        items={networks.map((network, index) => (
+        items={tvNetworks.map((network, index) => (
           <CompanyCard
             key={`network-${index}`}
             name={network.name}
@@ -177,7 +178,7 @@ const NetworkSlider = () => {
 };
 
 const CompanyCardPlaceholder = () => (
-  <div className="h-32 w-56 animate-pulse rounded-xl bg-gray-700 sm:h-36 sm:w-72" />
+  <div className="h-16 w-28 animate-pulse rounded-xl bg-gray-700 sm:h-[72px] sm:w-36" />
 );
 
 export default NetworkSlider;

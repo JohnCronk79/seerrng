@@ -46,10 +46,6 @@ import { mutate } from 'swr';
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
 });
-const BlocklistModal = dynamic(() => import('@app/components/BlocklistModal'), {
-  ssr: false,
-});
-
 interface TitleCardProps {
   id: number | string;
   image?: string;
@@ -119,7 +115,7 @@ const TitleCard = ({
   const { addToast } = useToasts();
   const [toggleWatchlist, setToggleWatchlist] =
     useState<boolean>(!isAddedToWatchlist);
-  const [showBlocklistModal, setShowBlocklistModal] = useState(false);
+  const [wasBlocklistedHere, setWasBlocklistedHere] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Just to get the year from the date
@@ -153,10 +149,6 @@ const TitleCard = ({
     []
   );
 
-  const closeBlocklistModal = useCallback(
-    () => setShowBlocklistModal(false),
-    []
-  );
   const showDetails = useCallback(() => {
     setShowDetail((currentShowDetail) =>
       currentShowDetail ? currentShowDetail : true
@@ -288,6 +280,7 @@ const TitleCard = ({
           { appearance: 'success', autoDismiss: true }
         );
         setCurrentStatus(MediaStatus.BLOCKLISTED);
+        setWasBlocklistedHere(true);
         if (mutateParent) {
           mutateParent();
         }
@@ -311,7 +304,6 @@ const TitleCard = ({
       }
 
       setIsUpdating(false);
-      closeBlocklistModal();
     } else {
       addToast(intl.formatMessage(globalMessages.blocklistError), {
         appearance: 'error',
@@ -500,6 +492,10 @@ const TitleCard = ({
             : globalMessages.request
         );
 
+  if (wasBlocklistedHere) {
+    return null;
+  }
+
   return (
     <div
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
@@ -522,22 +518,6 @@ const TitleCard = ({
           onCancel={closeModal}
           initialIs4k={requestingAdditional4k}
           show4kSelector={mediaType === 'movie' || mediaType === 'tv'}
-        />
-      )}
-      {canUseVideoActions && showBlocklistModal && (
-        <BlocklistModal
-          tmdbId={numericId}
-          type={
-            mediaType === 'movie'
-              ? 'movie'
-              : mediaType === 'collection'
-                ? 'collection'
-                : 'tv'
-          }
-          show={showBlocklistModal}
-          onCancel={closeBlocklistModal}
-          onComplete={onClickHideItemBtn}
-          isUpdating={isUpdating}
         />
       )}
       {showRequestModal && (
@@ -566,7 +546,7 @@ const TitleCard = ({
         </>
       )}
       <div
-        className={`relative transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover outline-none ring-1 transition duration-300 ${
+        className={`group relative transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover outline-none ring-1 transition duration-300 ${
           showDetail
             ? 'scale-105 shadow-lg ring-gray-500'
             : 'scale-100 shadow ring-gray-700'
@@ -626,7 +606,7 @@ const TitleCard = ({
               )}
             </div>
             {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col items-end gap-1">
                 {canUseWatchlistActions &&
                   user?.userType !== UserType.PLEX &&
                   (toggleWatchlist ? (
@@ -652,18 +632,23 @@ const TitleCard = ({
                   currentStatus !== MediaStatus.AVAILABLE &&
                   currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
                   currentStatus !== MediaStatus.PENDING && (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={() =>
-                        canUseVideoActions
-                          ? setShowBlocklistModal(true)
-                          : onClickHideItemBtn()
-                      }
+                    <Tooltip
+                      content={intl.formatMessage(
+                        globalMessages.addToBlocklist
+                      )}
                     >
-                      <EyeSlashIcon className={'h-3'} />
-                    </Button>
+                      <Button
+                        buttonType="ghost"
+                        className="z-40 h-6 w-6 rounded-full border-red-600/80 bg-red-950/75 p-0 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
+                        buttonSize="sm"
+                        aria-label={intl.formatMessage(
+                          globalMessages.addToBlocklist
+                        )}
+                        onClick={() => void onClickHideItemBtn()}
+                      >
+                        <EyeSlashIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </Tooltip>
                   )}
               </div>
             )}
@@ -689,7 +674,7 @@ const TitleCard = ({
               (currentStatus4k && currentStatus4k !== MediaStatus.UNKNOWN)) && (
               <div className="flex flex-col items-end gap-1">
                 {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
-                  <div className="pointer-events-none z-40 flex">
+                  <div className="z-40 flex">
                     <StatusBadgeMini
                       status={currentStatus}
                       inProgress={inProgress}
@@ -698,7 +683,7 @@ const TitleCard = ({
                   </div>
                 )}
                 {currentStatus4k && currentStatus4k !== MediaStatus.UNKNOWN && (
-                  <div className="pointer-events-none z-40 flex">
+                  <div className="z-40 flex">
                     <StatusBadgeMini
                       status={currentStatus4k}
                       is4k

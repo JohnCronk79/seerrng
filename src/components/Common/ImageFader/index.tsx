@@ -34,13 +34,6 @@ const ImageFader: ForwardRefRenderFunction<HTMLDivElement, ImageFaderProps> = (
 
     return [activeIndex, (activeIndex + 1) % imageCount];
   }, [activeIndex, imageCount]);
-  const gradient = useMemo(
-    () =>
-      isDarker
-        ? 'linear-gradient(180deg, rgba(17, 24, 39, 0.47) 0%, rgba(17, 24, 39, 1) 100%)'
-        : 'linear-gradient(180deg, rgba(45, 55, 72, 0.47) 0%, #1A202E 100%)',
-    [isDarker]
-  );
   const imageStyle = useMemo(
     () => ({ width: '100%', height: '100%', objectFit: 'cover' as const }),
     []
@@ -96,8 +89,7 @@ const ImageFader: ForwardRefRenderFunction<HTMLDivElement, ImageFaderProps> = (
               {...imageOverrides}
             />
             <div
-              className="absolute inset-0"
-              style={{ backgroundImage: gradient }}
+              className={`absolute inset-0 ${isDarker ? 'bg-gray-900/55' : 'bg-gray-800/45'}`}
             />
           </div>
         );

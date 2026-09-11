@@ -16,7 +16,7 @@ const messages = defineMessages('components.Association', {
   similarartists: 'Similar artists',
   alsoconnected: 'Also connected',
   explore: 'Explore the full map',
-  empty: 'No associations found yet.',
+  empty: 'No associations found yet',
   loaderror: 'Could not load associations.',
 });
 

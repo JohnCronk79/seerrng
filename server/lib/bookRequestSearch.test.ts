@@ -267,6 +267,39 @@ describe('BookRequestSearchManager', () => {
     assert.equal(event.message, 'Bookshelf download or import failed.');
   });
 
+  it('reports importing when a grabbed book has left the live queue', async () => {
+    const { request } = await createTrackedRequest({
+      createdBook: true,
+      createdAuthor: false,
+    });
+    mock.method(ReadarrAPI.prototype, 'getCommand', async () => ({
+      id: 901,
+      name: 'BookSearch',
+      status: 'completed',
+    }));
+    mock.method(ReadarrAPI.prototype, 'getBook', async () => ({
+      id: 55,
+      title: 'Tracked Book',
+      statistics: { bookFileCount: 0 },
+    }));
+    mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => [
+      {
+        id: 1,
+        bookId: 55,
+        eventType: 'grabbed',
+        date: new Date(Date.now() + 1_000).toISOString(),
+      },
+    ]);
+
+    await bookRequestSearchManager.run();
+
+    const operation = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+    });
+    assert.equal(operation.state, 'importing');
+  });
+
   it('finishes tracking after Bookshelf confirms an imported file', async () => {
     const { media, request } = await createTrackedRequest({
       createdBook: true,

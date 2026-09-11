@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +23,7 @@ afterEach(async () => {
 });
 
 describe('SQLite file permissions', () => {
-  it('tightens database directories and SQLite files', async () => {
+  posixIt('tightens database directories and SQLite files', async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
     temporaryDirectories.push(parent);
     const databaseDirectory = path.join(parent, 'db');
@@ -51,41 +53,47 @@ describe('SQLite file permissions', () => {
     }
   });
 
-  it('rejects symlinked database files without modifying their targets', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
-    temporaryDirectories.push(parent);
-    const databaseDirectory = path.join(parent, 'db');
-    const databasePath = path.join(databaseDirectory, 'db.sqlite3');
-    const targetPath = path.join(parent, 'unrelated');
-    await fs.mkdir(databaseDirectory);
-    await fs.writeFile(targetPath, 'unrelated', { mode: 0o644 });
-    await fs.symlink(targetPath, databasePath);
+  posixIt(
+    'rejects symlinked database files without modifying their targets',
+    async () => {
+      const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
+      temporaryDirectories.push(parent);
+      const databaseDirectory = path.join(parent, 'db');
+      const databasePath = path.join(databaseDirectory, 'db.sqlite3');
+      const targetPath = path.join(parent, 'unrelated');
+      await fs.mkdir(databaseDirectory);
+      await fs.writeFile(targetPath, 'unrelated', { mode: 0o644 });
+      await fs.symlink(targetPath, databasePath);
 
-    assert.throws(
-      () => secureSqliteDatabaseFiles(databasePath),
-      /regular file/
-    );
-    assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
-  });
+      assert.throws(
+        () => secureSqliteDatabaseFiles(databasePath),
+        /regular file/
+      );
+      assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
+    }
+  );
 
-  it('rejects hard-linked database files without modifying their targets', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
-    temporaryDirectories.push(parent);
-    const databaseDirectory = path.join(parent, 'db');
-    const databasePath = path.join(databaseDirectory, 'db.sqlite3');
-    const targetPath = path.join(parent, 'unrelated');
-    await fs.mkdir(databaseDirectory);
-    await fs.writeFile(targetPath, 'unrelated', { mode: 0o644 });
-    await fs.link(targetPath, databasePath);
+  posixIt(
+    'rejects hard-linked database files without modifying their targets',
+    async () => {
+      const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
+      temporaryDirectories.push(parent);
+      const databaseDirectory = path.join(parent, 'db');
+      const databasePath = path.join(databaseDirectory, 'db.sqlite3');
+      const targetPath = path.join(parent, 'unrelated');
+      await fs.mkdir(databaseDirectory);
+      await fs.writeFile(targetPath, 'unrelated', { mode: 0o644 });
+      await fs.link(targetPath, databasePath);
 
-    assert.throws(
-      () => secureSqliteDatabaseFiles(databasePath),
-      /regular file/
-    );
-    assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
-  });
+      assert.throws(
+        () => secureSqliteDatabaseFiles(databasePath),
+        /regular file/
+      );
+      assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
+    }
+  );
 
-  it('rejects symlinks above the direct database directory', async () => {
+  posixIt('rejects symlinks above the direct database directory', async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-sqlite-'));
     temporaryDirectories.push(parent);
     const targetRoot = path.join(parent, 'target');

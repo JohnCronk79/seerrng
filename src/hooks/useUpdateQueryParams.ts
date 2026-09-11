@@ -108,7 +108,11 @@ export const mergeQueryString = (
       queryParams.set(key, value);
     }
   });
-  const queryString = queryParams.toString();
+  // URLSearchParams serializes spaces as `+`, but the API request validator
+  // requires percent-encoded query values. Keep router URLs and the discovery
+  // request URLs on the same unambiguous encoding so multi-word live searches
+  // are not rejected before reaching their route handlers.
+  const queryString = queryParams.toString().replace(/\+/g, '%20');
 
   const pathWithoutQuery = router.asPath.match(/(.*)\?.*/);
   const asPath = pathWithoutQuery ? pathWithoutQuery[1] : router.asPath;

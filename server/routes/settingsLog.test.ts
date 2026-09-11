@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 import { readLogTail } from './settings';
 
 const temporaryDirectories = new Set<string>();
@@ -24,17 +26,20 @@ afterEach(async () => {
 });
 
 describe('readLogTail', () => {
-  it('reads a bounded tail through an in-directory rotation symlink', async () => {
-    const directory = await createTemporaryDirectory();
-    const target = path.join(directory, 'seerr-2026-07-17.log');
-    const alias = path.join(directory, '.machinelogs.json');
-    await fs.writeFile(target, 'discard\nsecond\nthird\n');
-    await fs.symlink(path.basename(target), alias);
+  posixIt(
+    'reads a bounded tail through an in-directory rotation symlink',
+    async () => {
+      const directory = await createTemporaryDirectory();
+      const target = path.join(directory, 'seerr-2026-07-17.log');
+      const alias = path.join(directory, '.machinelogs.json');
+      await fs.writeFile(target, 'discard\nsecond\nthird\n');
+      await fs.symlink(path.basename(target), alias);
 
-    assert.equal(await readLogTail(alias, 9), 'third\n');
-  });
+      assert.equal(await readLogTail(alias, 9), 'third\n');
+    }
+  );
 
-  it('rejects escaping symlinks and hard-linked log files', async () => {
+  posixIt('rejects escaping symlinks and hard-linked log files', async () => {
     const directory = await createTemporaryDirectory();
     const outsideDirectory = await createTemporaryDirectory();
     const outside = path.join(outsideDirectory, 'outside.log');
@@ -49,7 +54,7 @@ describe('readLogTail', () => {
     await assert.rejects(readLogTail(hardLink), /private regular file/i);
   });
 
-  it('rejects symlinks in the log directory path', async () => {
+  posixIt('rejects symlinks in the log directory path', async () => {
     const directory = await createTemporaryDirectory();
     const targetDirectory = await createTemporaryDirectory();
     await fs.writeFile(path.join(targetDirectory, 'seerr.log'), 'private');

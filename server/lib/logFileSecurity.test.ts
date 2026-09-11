@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 import fs from 'fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,20 +23,23 @@ afterEach(async () => {
 });
 
 describe('log file permissions', () => {
-  it('creates a missing log directory with private permissions', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
-    temporaryDirectories.push(parent);
-    const logDirectory = path.join(parent, 'logs');
+  posixIt(
+    'creates a missing log directory with private permissions',
+    async () => {
+      const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
+      temporaryDirectories.push(parent);
+      const logDirectory = path.join(parent, 'logs');
 
-    secureLogDirectory(logDirectory);
+      secureLogDirectory(logDirectory);
 
-    assert.strictEqual(
-      (await fs.stat(logDirectory)).mode & 0o777,
-      PRIVATE_LOG_DIRECTORY_MODE
-    );
-  });
+      assert.strictEqual(
+        (await fs.stat(logDirectory)).mode & 0o777,
+        PRIVATE_LOG_DIRECTORY_MODE
+      );
+    }
+  );
 
-  it('tightens existing log directories and regular files', async () => {
+  posixIt('tightens existing log directories and regular files', async () => {
     const logDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-logs-')
     );
@@ -55,19 +60,22 @@ describe('log file permissions', () => {
     );
   });
 
-  it('rejects symlinked log directories without modifying their targets', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
-    temporaryDirectories.push(parent);
-    const targetDirectory = path.join(parent, 'unrelated');
-    const logDirectory = path.join(parent, 'logs');
-    await fs.mkdir(targetDirectory, { mode: 0o755 });
-    await fs.symlink(targetDirectory, logDirectory);
+  posixIt(
+    'rejects symlinked log directories without modifying their targets',
+    async () => {
+      const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
+      temporaryDirectories.push(parent);
+      const targetDirectory = path.join(parent, 'unrelated');
+      const logDirectory = path.join(parent, 'logs');
+      await fs.mkdir(targetDirectory, { mode: 0o755 });
+      await fs.symlink(targetDirectory, logDirectory);
 
-    assert.throws(() => secureLogDirectory(logDirectory), /symlink/);
-    assert.equal((await fs.stat(targetDirectory)).mode & 0o777, 0o755);
-  });
+      assert.throws(() => secureLogDirectory(logDirectory), /symlink/);
+      assert.equal((await fs.stat(targetDirectory)).mode & 0o777, 0o755);
+    }
+  );
 
-  it('rejects symlinks above the direct log directory', async () => {
+  posixIt('rejects symlinks above the direct log directory', async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
     temporaryDirectories.push(parent);
     const targetRoot = path.join(parent, 'target');
@@ -83,7 +91,7 @@ describe('log file permissions', () => {
     assert.equal((await fs.stat(targetDirectory)).mode & 0o777, 0o755);
   });
 
-  it('allows only safe logger-managed symlinks', async () => {
+  posixIt('allows only safe logger-managed symlinks', async () => {
     const logDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-logs-')
     );
@@ -100,7 +108,7 @@ describe('log file permissions', () => {
     assert.equal((await fs.stat(datedLog)).mode & 0o777, PRIVATE_LOG_FILE_MODE);
   });
 
-  it('allows the legacy Overseerr logger-managed symlink', async () => {
+  posixIt('allows the legacy Overseerr logger-managed symlink', async () => {
     const logDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-logs-')
     );
@@ -117,7 +125,7 @@ describe('log file permissions', () => {
     assert.equal((await fs.stat(datedLog)).mode & 0o777, PRIVATE_LOG_FILE_MODE);
   });
 
-  it('rejects escaping and unexpected log symlinks', async () => {
+  posixIt('rejects escaping and unexpected log symlinks', async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
     temporaryDirectories.push(parent);
     const logDirectory = path.join(parent, 'logs');
@@ -134,16 +142,19 @@ describe('log file permissions', () => {
     assert.throws(() => secureLogDirectory(logDirectory), /Unexpected symlink/);
   });
 
-  it('rejects hard-linked log files without changing the target', async () => {
-    const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
-    temporaryDirectories.push(parent);
-    const logDirectory = path.join(parent, 'logs');
-    const target = path.join(parent, 'outside.log');
-    await fs.mkdir(logDirectory);
-    await fs.writeFile(target, 'outside', { mode: 0o644 });
-    await fs.link(target, path.join(logDirectory, 'seerr-current.log'));
+  posixIt(
+    'rejects hard-linked log files without changing the target',
+    async () => {
+      const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-logs-'));
+      temporaryDirectories.push(parent);
+      const logDirectory = path.join(parent, 'logs');
+      const target = path.join(parent, 'outside.log');
+      await fs.mkdir(logDirectory);
+      await fs.writeFile(target, 'outside', { mode: 0o644 });
+      await fs.link(target, path.join(logDirectory, 'seerr-current.log'));
 
-    assert.throws(() => secureLogDirectory(logDirectory), /hard-linked/);
-    assert.equal((await fs.stat(target)).mode & 0o777, 0o644);
-  });
+      assert.throws(() => secureLogDirectory(logDirectory), /hard-linked/);
+      assert.equal((await fs.stat(target)).mode & 0o777, 0o644);
+    }
+  );
 });

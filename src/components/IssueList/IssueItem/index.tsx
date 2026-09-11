@@ -1,7 +1,8 @@
-import Badge from '@app/components/Common/Badge';
-import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
-import Tooltip from '@app/components/Common/Tooltip';
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
+import { getIssueMediaAndFormatLabel } from '@app/components/IssueDetails/issueMediaFormat';
 import { issueOptions } from '@app/components/IssueModal/constants';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -12,7 +13,7 @@ import {
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
-import { EyeIcon } from '@heroicons/react/24/solid';
+import { EyeIcon } from '@heroicons/react/24/outline';
 import { IssueStatus } from '@server/constants/issue';
 import { MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
@@ -22,24 +23,46 @@ import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
 import Link from 'next/link';
 import { useInView } from 'react-intersection-observer';
-import { FormattedRelativeTime, useIntl } from 'react-intl';
+import { FormattedDate, useIntl } from 'react-intl';
 import useSWR from 'swr';
+import { getIssueAffectedSummary } from './issueAffectedSummary';
 
 const messages = defineMessages('components.IssueList.IssueItem', {
-  openeduserdate: '{date} by {user}',
-  seasons: '{seasonCount, plural, one {Season} other {Seasons}}',
-  episodes: '{episodeCount, plural, one {Episode} other {Episodes}}',
-  problemepisode: 'Affected Episode',
+  mediaAndFormat: 'Media & Format',
+  releaseDate: 'Release Date',
+  firstPublished: 'First Published',
+  runtime: 'Runtime',
+  pages: 'Pages',
+  director: 'Director',
+  creator: 'Creator',
+  studio: 'Studio',
+  network: 'Network',
+  artist: 'Artist',
+  albumType: 'Album Type',
+  trackCount: 'Track Count',
+  author: 'Author',
+  publisher: 'Publisher',
+  affected: 'Affected',
+  description: 'Description',
+  createdBy: 'Created By',
+  createdDate: 'Created Date',
   issuetype: 'Type',
   issuestatus: 'Status',
-  opened: 'Opened',
   viewissue: 'View Issue',
   medianotfound: 'Media Not Found',
   unknownissuetype: 'Unknown',
-  descriptionpreview: 'Issue Description',
+  unavailable: 'Not available',
 });
 
 type IssueTitle = MovieDetails | TvDetails | MusicDetails | BookDetails;
+type LinkedDetailValue = {
+  name: string;
+  href?: string;
+};
+type LinkedDetail = {
+  label: string;
+  values: LinkedDetailValue[];
+};
 
 const isMovie = (movie: IssueTitle): movie is MovieDetails => {
   return (
@@ -55,6 +78,164 @@ const isMusic = (title: IssueTitle): title is MusicDetails => {
 
 const isBook = (title: IssueTitle): title is BookDetails => {
   return (title as BookDetails).mediaType === 'book';
+};
+
+const getTitle = (title: IssueTitle): string =>
+  isMovie(title) || isMusic(title) || isBook(title) ? title.title : title.name;
+
+const getReleaseDate = (title: IssueTitle): string | undefined =>
+  isMovie(title)
+    ? title.releaseDate
+    : isMusic(title)
+      ? title.releaseDate
+      : isBook(title)
+        ? title.firstPublishYear?.toString()
+        : title.firstAirDate;
+
+const getRuntime = (title: IssueTitle, unavailable: string): string => {
+  if (isBook(title)) {
+    return title.numberOfPages?.toLocaleString() ?? unavailable;
+  }
+  const minutes = isMovie(title)
+    ? title.runtime
+    : isMusic(title)
+      ? Math.round(
+          title.tracks.reduce((total, track) => total + track.length, 0) / 60000
+        )
+      : title.episodeRunTime[0];
+  return minutes ? `${minutes.toLocaleString()} minutes` : unavailable;
+};
+
+const getSecondaryDetails = (
+  title: IssueTitle,
+  issue: Issue,
+  intl: ReturnType<typeof useIntl>
+): LinkedDetail[] => {
+  const unavailable = intl.formatMessage(messages.unavailable);
+  if (isMovie(title)) {
+    const director = title.credits.crew.find(
+      (credit) => credit.job === 'Director'
+    );
+    const studio = title.productionCompanies[0];
+    return [
+      {
+        label: intl.formatMessage(messages.director),
+        values: [
+          {
+            name: director?.name ?? unavailable,
+            href: director?.id ? `/person/${director.id}` : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.studio),
+        values: [
+          {
+            name: studio?.name ?? unavailable,
+            href: studio?.id
+              ? `/discover/movies/studio/${studio.id}`
+              : undefined,
+          },
+        ],
+      },
+    ];
+  }
+  if (isMusic(title)) {
+    return [
+      {
+        label: intl.formatMessage(messages.artist),
+        values: [
+          {
+            name: title.artist.name,
+            href: title.artist.id
+              ? `/artist/${encodeApiPathSegment(title.artist.id)}`
+              : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.albumType),
+        values: [{ name: title.type }],
+      },
+      {
+        label: intl.formatMessage(messages.trackCount),
+        values: [{ name: title.tracks.length.toLocaleString() }],
+      },
+    ];
+  }
+  if (isBook(title)) {
+    return [
+      {
+        label: intl.formatMessage(messages.author),
+        values: [
+          {
+            name: title.author ?? unavailable,
+            href: title.authorId
+              ? `/author/${encodeApiPathSegment(title.authorId)}`
+              : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.publisher),
+        values: [{ name: title.publisher ?? unavailable }],
+      },
+    ];
+  }
+
+  const affected = getIssueAffectedSummary(
+    issue,
+    title.seasons.map((season) => season.seasonNumber)
+  );
+  return [
+    {
+      label: intl.formatMessage(messages.creator),
+      values:
+        title.createdBy.length > 0
+          ? title.createdBy.map((creator) => ({
+              name: creator.name,
+              href: `/person/${creator.id}`,
+            }))
+          : [{ name: unavailable }],
+    },
+    {
+      label: intl.formatMessage(messages.network),
+      values:
+        title.networks.length > 0
+          ? title.networks.map((network) => ({
+              name: network.name,
+              href: `/discover/tv/network/${network.id}`,
+            }))
+          : [{ name: unavailable }],
+    },
+    {
+      label: intl.formatMessage(messages.affected),
+      values: [{ name: affected }],
+    },
+  ];
+};
+
+const getBackdrop = (
+  title: IssueTitle
+): { src: string; type: 'tmdb' | 'music' | 'book' } | undefined => {
+  if (isMusic(title)) {
+    const src = title.artistBackdrop ?? title.artistThumb ?? title.posterPath;
+    return src ? { src, type: 'music' } : undefined;
+  }
+  if (isBook(title)) {
+    return title.posterPath
+      ? { src: title.posterPath, type: 'book' }
+      : undefined;
+  }
+  if (title.backdropPath) {
+    return {
+      src: `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`,
+      type: 'tmdb',
+    };
+  }
+  return title.posterPath
+    ? { src: getTmdbPosterImageUrl(title.posterPath), type: 'tmdb' }
+    : undefined;
 };
 
 interface IssueItemProps {
@@ -141,257 +322,214 @@ const IssueItem = ({ issue }: IssueItemProps) => {
     (opt) => opt.issueType === issue?.issueType
   );
 
-  const problemSeasonEpisodeLine: React.ReactNode[] = [];
-
-  if (
-    issue.media.mediaType === MediaType.TV &&
-    !isMovie(title) &&
-    !isMusic(title) &&
-    !isBook(title) &&
-    issue
-  ) {
-    problemSeasonEpisodeLine.push(
-      <>
-        <span className="card-field-name">
-          {intl.formatMessage(messages.seasons, {
-            seasonCount: issue.problemSeason ? 1 : 0,
-          })}
-        </span>
-        <span className="mr-4 uppercase">
-          <Badge>
-            {issue.problemSeason > 0
-              ? issue.problemSeason
-              : intl.formatMessage(globalMessages.all)}
-          </Badge>
-        </span>
-      </>
-    );
-
-    if (issue.problemSeason > 0) {
-      problemSeasonEpisodeLine.push(
-        <>
-          <span className="card-field-name">
-            {intl.formatMessage(messages.episodes, {
-              episodeCount: issue.problemEpisode ? 1 : 0,
-            })}
-          </span>
-          <span className="uppercase">
-            <Badge>
-              {issue.problemEpisode > 0
-                ? issue.problemEpisode
-                : intl.formatMessage(globalMessages.all)}
-            </Badge>
-          </span>
-        </>
-      );
-    }
-  }
-
   const description = issue.comments?.[0]?.message || '';
-  const maxDescriptionLength = 120;
-  const shouldTruncate = description.length > maxDescriptionLength;
-  const truncatedDescription = shouldTruncate
-    ? description.substring(0, maxDescriptionLength) + '...'
-    : description;
+  const unavailable = intl.formatMessage(messages.unavailable);
+  const releaseDate = getReleaseDate(title);
+  const releaseYear = releaseDate?.match(/\d{4}/)?.[0];
+  const displayTitle = `${getTitle(title)}${releaseYear ? ` (${releaseYear})` : ''}`;
+  const posterSrc = title.posterPath
+    ? isMusic(title) || isBook(title)
+      ? title.posterPath
+      : getTmdbPosterImageUrl(title.posterPath)
+    : '/images/seerr_poster_not_found.png';
+  const posterType = isBook(title) ? 'book' : isMusic(title) ? 'music' : 'tmdb';
+  const backdrop = getBackdrop(title);
+  const secondaryDetails = getSecondaryDetails(title, issue, intl);
+  const canViewCreator = hasPermission(
+    [Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES],
+    { type: 'or' }
+  );
+  const mediaLabel = getIssueMediaAndFormatLabel(
+    issue.media.mediaType,
+    issue.is4k
+  );
+  const statusClass =
+    issue.status === IssueStatus.OPEN
+      ? 'border-red-500 bg-red-800/60 text-red-100'
+      : 'border-emerald-500 bg-emerald-800/60 text-emerald-100';
 
   return (
-    <div className="relative flex w-full flex-col justify-between overflow-hidden rounded-xl bg-gray-800 py-4 text-gray-400 shadow-md ring-1 ring-gray-700 xl:flex-row">
-      {!isMusic(title) && !isBook(title) && title.backdropPath && (
-        <div className="absolute inset-0 z-0 w-full bg-cover bg-center xl:w-2/3">
+    <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 text-gray-400 shadow-lg shadow-gray-950/20">
+      {backdrop && (
+        <div className="absolute inset-0 z-0">
           <CachedImage
-            type="tmdb"
-            src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
+            type={backdrop.type}
+            src={backdrop.src}
             alt=""
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
+            sizes="100vw"
+            className="object-cover object-center"
           />
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(90deg, rgba(31, 41, 55, 0.47) 0%, rgba(31, 41, 55, 1) 100%)',
-            }}
-          />
+          <div className="refreshed-artwork-scrim" />
+          <div className="refreshed-artwork-gradient" />
         </div>
       )}
-      <div className="relative flex w-full flex-col justify-between overflow-hidden sm:flex-row">
-        <div className="relative z-10 flex w-full items-center overflow-hidden pl-4 pr-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
+      <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+        <Link
+          href={mediaHref}
+          className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition hover:ring-indigo-400 sm:h-[120px] sm:w-20"
+        >
+          <CachedImage
+            type={posterType}
+            src={posterSrc}
+            alt=""
+            fill
+            sizes="(min-width: 640px) 80px, 64px"
+            className="object-cover"
+          />
+          <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+            <MediaTypeBadge
+              mediaType={
+                getMediaTypeBadgeType(issue.media.mediaType) ?? 'movie'
+              }
+              variant="compact"
+              className="h-[18px] w-full justify-center gap-0.5 px-1 py-0 text-[9px] shadow-sm [&_svg]:h-2.5 [&_svg]:w-2.5"
+            />
+          </span>
+        </Link>
+
+        <div className="flex min-w-0 flex-col">
           <Link
             href={mediaHref}
-            className="relative h-auto w-12 flex-shrink-0 scale-100 transform-gpu overflow-hidden rounded-md transition duration-300 hover:scale-105"
+            className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline"
           >
-            <CachedImage
-              type={isBook(title) ? 'book' : isMusic(title) ? 'music' : 'tmdb'}
-              src={
-                (isMusic(title) || isBook(title)) && title.posterPath
-                  ? title.posterPath
-                  : !isMusic(title) && !isBook(title) && title.posterPath
-                    ? getTmdbPosterImageUrl(title.posterPath)
-                    : '/images/seerr_poster_not_found.png'
-              }
-              alt=""
-              sizes="100vw"
-              style={{ width: '100%', height: 'auto', objectFit: 'cover' }}
-              width={600}
-              height={900}
-            />
+            {displayTitle}
           </Link>
-          <div className="flex flex-col justify-center overflow-hidden pl-2 xl:pl-4">
-            <div className="pt-0.5 text-xs text-white sm:pt-1">
-              {(isMovie(title)
-                ? title.releaseDate
-                : isMusic(title)
-                  ? title.releaseDate
-                  : isBook(title)
-                    ? title.firstPublishYear?.toString()
-                    : title.firstAirDate
-              )?.slice(0, 4)}
-            </div>
-            <Link
-              href={mediaHref}
-              className="mr-2 min-w-0 truncate text-lg font-bold text-white hover:underline xl:text-xl"
-            >
-              {isMovie(title)
-                ? title.title
-                : isMusic(title) || isBook(title)
-                  ? title.title
-                  : title.name}
-            </Link>
-            {description && (
-              <div className="mt-1 max-w-full">
-                <div className="overflow-hidden text-sm text-gray-300">
-                  {shouldTruncate ? (
-                    <Tooltip
-                      content={
-                        <div className="max-w-sm p-3">
-                          <div className="mb-1 text-sm font-medium text-gray-200">
-                            Issue Description
-                          </div>
-                          <div className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                            {description}
-                          </div>
-                        </div>
-                      }
-                      tooltipConfig={{
-                        placement: 'top',
-                        offset: [0, 8],
-                      }}
-                    >
-                      <span className="block cursor-help truncate transition-colors hover:text-gray-200">
-                        {truncatedDescription}
-                      </span>
-                    </Tooltip>
-                  ) : (
-                    <span className="block break-words">{description}</span>
+          <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
+            <div className="min-w-0 card:col-span-2 card:pr-3">
+              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                  {intl.formatMessage(messages.mediaAndFormat)}:
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  {mediaLabel}
+                </dd>
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  {intl.formatMessage(
+                    isBook(title)
+                      ? messages.firstPublished
+                      : messages.releaseDate
                   )}
+                  :
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  {releaseDate || unavailable}
+                </dd>
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  {intl.formatMessage(
+                    isBook(title) ? messages.pages : messages.runtime
+                  )}
+                  :
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  {getRuntime(title, unavailable)}
+                </dd>
+                <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+                <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  {secondaryDetails.map((detail) => (
+                    <div className="contents" key={detail.label}>
+                      <dt className="font-medium text-gray-100">
+                        {detail.label}:
+                      </dt>
+                      <dd className="m-0 truncate">
+                        {detail.values.map((value, index) => (
+                          <span key={`${detail.label}-${value.name}-${index}`}>
+                            {index > 0 && ', '}
+                            {value.href ? (
+                              <Link
+                                href={value.href}
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                              >
+                                {value.name}
+                              </Link>
+                            ) : (
+                              value.name
+                            )}
+                          </span>
+                        ))}
+                      </dd>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
-            {problemSeasonEpisodeLine.length > 0 && (
-              <div className="card-field mt-1">
-                {problemSeasonEpisodeLine.map((t, k) => (
-                  <span key={k}>{t}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="z-10 ml-4 mt-4 flex w-full flex-col justify-center overflow-hidden pr-4 text-sm sm:ml-2 sm:mt-0 xl:flex-1 xl:pr-0">
-          <div className="card-field">
-            <span className="card-field-name">
-              {intl.formatMessage(messages.issuestatus)}
-            </span>
-            {issue.status === IssueStatus.OPEN ? (
-              <Badge badgeType="warning" href={`/issues/${issue.id}`}>
-                {intl.formatMessage(globalMessages.open)}
-              </Badge>
-            ) : (
-              <Badge badgeType="success" href={`/issues/${issue.id}`}>
-                {intl.formatMessage(globalMessages.resolved)}
-              </Badge>
-            )}
-          </div>
-          <div className="card-field">
-            <span className="card-field-name">
-              {intl.formatMessage(messages.issuetype)}
-            </span>
-            <span className="flex truncate text-sm text-gray-300">
-              {intl.formatMessage(
-                issueOption?.name ?? messages.unknownissuetype
-              )}
-            </span>
-          </div>
-          <div className="card-field">
-            {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
-              type: 'or',
-            }) ? (
-              <>
-                <span className="card-field-name">
-                  {intl.formatMessage(messages.opened)}
-                </span>
-                <span className="flex truncate text-sm text-gray-300">
-                  {intl.formatMessage(messages.openeduserdate, {
-                    date: (
-                      <FormattedRelativeTime
-                        value={Math.floor(
-                          (new Date(issue.createdAt).getTime() - Date.now()) /
-                            1000
-                        )}
-                        updateIntervalInSeconds={1}
-                        numeric="auto"
-                      />
-                    ),
-                    user: (
-                      <Link
-                        href={`/users/${issue.createdBy.id}`}
-                        className="group flex items-center truncate"
-                      >
-                        <CachedImage
-                          type="avatar"
-                          src={issue.createdBy.avatar}
-                          alt=""
-                          className="avatar-sm ml-1.5 object-cover"
-                          width={20}
-                          height={20}
-                        />
-                        <span className="truncate text-sm font-semibold group-hover:text-white group-hover:underline">
-                          {issue.createdBy.displayName}
-                        </span>
-                      </Link>
-                    ),
-                  })}
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="card-field-name">
-                  {intl.formatMessage(messages.opened)}
-                </span>
-                <span className="flex truncate text-sm text-gray-300">
-                  <FormattedRelativeTime
-                    value={Math.floor(
-                      (new Date(issue.createdAt).getTime() - Date.now()) / 1000
-                    )}
-                    updateIntervalInSeconds={1}
-                    numeric="auto"
-                  />
-                </span>
-              </>
-            )}
+                <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  {intl.formatMessage(messages.description)}:
+                </dt>
+                <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                  {description || unavailable}
+                </dd>
+              </dl>
+            </div>
+
+            <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.createdBy)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {canViewCreator ? (
+                  <Link
+                    href={`/users/${issue.createdBy.id}`}
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline"
+                  >
+                    {issue.createdBy.displayName}
+                  </Link>
+                ) : (
+                  unavailable
+                )}
+              </dd>
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.createdDate)}:
+              </dt>
+              <dd className="m-0 truncate">
+                <FormattedDate
+                  value={new Date(issue.createdAt)}
+                  dateStyle="medium"
+                />
+              </dd>
+              <dt aria-hidden="true" />
+              <dd className="m-0 truncate">
+                <FormattedDate
+                  value={new Date(issue.createdAt)}
+                  timeStyle="short"
+                />
+              </dd>
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.issuetype)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {intl.formatMessage(
+                  issueOption?.name ?? messages.unknownissuetype
+                )}
+              </dd>
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.issuestatus)}:
+              </dt>
+              <dd className="m-0 truncate">
+                <Link
+                  href={`/issues/${issue.id}`}
+                  className={`inline-flex h-4 max-w-full items-center justify-center self-center rounded-full border px-1 text-[8px] font-semibold leading-none ${statusClass}`}
+                >
+                  {intl.formatMessage(
+                    issue.status === IssueStatus.OPEN
+                      ? globalMessages.open
+                      : globalMessages.resolved
+                  )}
+                </Link>
+              </dd>
+            </dl>
           </div>
         </div>
       </div>
-      <div className="z-10 mt-4 flex w-full flex-col justify-center pl-4 pr-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
-        <span className="w-full">
-          <Link href={`/issues/${issue.id}`} passHref legacyBehavior>
-            <Button as="a" className="w-full" buttonType="primary">
-              <EyeIcon />
-              <span>{intl.formatMessage(messages.viewissue)}</span>
-            </Button>
-          </Link>
-        </span>
+
+      <div className="relative z-10 mt-[5px] flex justify-end">
+        <Link
+          href={`/issues/${issue.id}`}
+          className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          <EyeIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{intl.formatMessage(messages.viewissue)}</span>
+        </Link>
       </div>
-    </div>
+    </article>
   );
 };
 

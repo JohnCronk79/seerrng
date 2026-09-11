@@ -1,16 +1,27 @@
 import Alert from '@app/components/Common/Alert';
+import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
+import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
+import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
+import { isMusicDestinationAvailable } from '@app/components/RequestModal/requestAvailability';
 import useToasts from '@app/hooks/useToasts';
-import { Permission, useUser } from '@app/hooks/useUser';
+import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import {
   encodeApiPathSegment,
   normalizeMusicBrainzId,
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
+import {
+  AdjustmentsHorizontalIcon,
+  ArrowDownTrayIcon,
+  ChevronDownIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -20,6 +31,7 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
+import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { MusicDetails } from '@server/models/Music';
 import axios from 'axios';
 import { useCallback, useEffect, useState } from 'react';
@@ -27,7 +39,6 @@ import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
 const messages = defineMessages('components.RequestModal.Music', {
-  requestadmin: 'This request will be approved automatically.',
   requestSuccess: '<strong>{title}</strong> requested successfully!',
   requestCancel: 'Request for <strong>{title}</strong> canceled.',
   requestEdited: 'Request for <strong>{title}</strong> edited successfully!',
@@ -46,6 +57,18 @@ const messages = defineMessages('components.RequestModal.Music', {
   editerror: 'Something went wrong while editing the request.',
   noLidarrServer:
     'No Lidarr service is configured. Music requests are unavailable.',
+  mediaAndFormat: 'Media & Format',
+  releaseDate: 'Release Date',
+  runtime: 'Runtime',
+  genres: 'Genres',
+  artist: 'Artist',
+  albumType: 'Album Type',
+  trackCount: 'Track Count',
+  status: 'Status',
+  service: 'Service',
+  readyToRequest: 'Ready to Request',
+  notAvailable: 'Not Available',
+  advancedOptions: 'Advanced Options',
 });
 
 interface MusicRequestModalProps {
@@ -69,6 +92,9 @@ const MusicRequestModal = ({
   const [isUpdating, setIsUpdating] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  const [requestedByPortal, setRequestedByPortal] =
+    useState<HTMLDivElement | null>(null);
   const normalizedMbId = normalizeMusicBrainzId(mbId);
   const { data, error } = useSWR<MusicDetails>(
     `/api/v1/music/${encodeApiPathSegment(normalizedMbId)}`,
@@ -79,9 +105,22 @@ const MusicRequestModal = ({
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
   );
+  const selectedMusicServerId =
+    requestOverrides?.server ??
+    musicServices?.find((service) => service.isDefault)?.id;
+  const selectedDestinationAvailable =
+    !editRequest &&
+    isMusicDestinationAvailable(
+      data?.mediaInfo,
+      selectedMusicServerId,
+      data?.availableServices
+    );
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
-      (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
+      (!requestOverrides?.user?.id ||
+        hasPermission([Permission.MANAGE_REQUESTS, Permission.MANAGE_USERS], {
+          type: 'or',
+        }))
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
       : null
   );
@@ -95,6 +134,10 @@ const MusicRequestModal = ({
   }, [isUpdating, onUpdating]);
 
   const sendRequest = useCallback(async () => {
+    if (selectedDestinationAvailable) {
+      return;
+    }
+
     setIsUpdating(true);
 
     try {
@@ -129,12 +172,7 @@ const MusicRequestModal = ({
         }
 
         onComplete?.(
-          hasPermission(
-            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MUSIC],
-            {
-              type: 'or',
-            }
-          )
+          response.data.status === MediaRequestStatus.APPROVED
             ? MediaStatus.PROCESSING
             : MediaStatus.PENDING
         );
@@ -160,22 +198,48 @@ const MusicRequestModal = ({
     addToast,
     data?.mbId,
     data?.title,
-    hasPermission,
     intl,
     normalizedMbId,
     onComplete,
     requestOverrides,
+    selectedDestinationAvailable,
   ]);
 
-  const hasAutoApprove = hasPermission(
-    [
-      Permission.MANAGE_REQUESTS,
-      Permission.AUTO_APPROVE,
-      Permission.AUTO_APPROVE_MUSIC,
-    ],
-    { type: 'or' }
+  const hasAutoApprove = hasAutoApprovePermission(
+    requestOverrides?.user?.permissions ?? user?.permissions ?? 0,
+    'music'
   );
   const serviceUnavailable = !!musicServices && musicServices.length === 0;
+  const canUseAdvancedOptions = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
+    { type: 'or' }
+  );
+  const selectedService = musicServices?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = musicServices?.find((server) => server.isDefault);
+  const notAvailable = intl.formatMessage(messages.notAvailable);
+  const releaseDate = data?.releaseDate
+    ? intl.formatDate(new Date(`${data.releaseDate}T00:00:00`), {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : notAvailable;
+  const releaseYear = data?.releaseDate?.match(/^\d{4}/)?.[0];
+  const runtimeMinutes = Math.round(
+    (data?.tracks ?? []).reduce((total, track) => total + track.length, 0) /
+      60000
+  );
+  const genres = [...(data?.tags?.releaseGroup ?? [])]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
+    .map((tag) => tag.tag)
+    .filter(Boolean)
+    .join(', ');
+  const requestButtonLabel = isUpdating
+    ? intl.formatMessage(globalMessages.requesting)
+    : intl.formatMessage(globalMessages.request);
 
   const cancelRequest = async () => {
     setIsUpdating(true);
@@ -349,30 +413,24 @@ const MusicRequestModal = ({
       backgroundClickable
       onCancel={onCancel}
       onOk={sendRequest}
-      okDisabled={isUpdating || quota?.music?.restricted || serviceUnavailable}
-      title={intl.formatMessage(messages.requestmusic)}
-      subTitle={data ? `${data.artist.name} - ${data.title}` : undefined}
-      okText={
-        isUpdating
-          ? intl.formatMessage(globalMessages.requesting)
-          : intl.formatMessage(globalMessages.request)
+      hideActions
+      alignTop
+      okDisabled={
+        isUpdating ||
+        selectedDestinationAvailable ||
+        quota?.music?.restricted ||
+        serviceUnavailable
       }
+      title={intl.formatMessage(messages.requestmusic)}
+      okText={requestButtonLabel}
       okButtonType="primary"
-      backdrop={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
+      dialogClass="sm:max-w-5xl"
     >
       {serviceUnavailable && (
         <div className="mt-6">
           <Alert
             title={intl.formatMessage(messages.noLidarrServer)}
             type="warning"
-          />
-        </div>
-      )}
-      {hasAutoApprove && !quota?.music?.restricted && (
-        <div className="mt-6">
-          <Alert
-            title={intl.formatMessage(messages.requestadmin)}
-            type="info"
           />
         </div>
       )}
@@ -387,14 +445,177 @@ const MusicRequestModal = ({
           }
         />
       )}
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="music"
-          is4k={false}
-          onChange={(overrides) => setRequestOverrides(overrides)}
-        />
-      )}
+      <RequestMediaCard
+        artwork={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
+        artworkType="music"
+      >
+        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+            <CachedImage
+              type="music"
+              src={data?.posterPath || '/images/seerr_poster_not_found.png'}
+              alt=""
+              fill
+              sizes="(min-width: 640px) 80px, 64px"
+              className="object-cover"
+            />
+          </div>
+
+          <div className="flex min-w-0 flex-col">
+            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+              {data?.title}
+              {releaseYear ? ` (${releaseYear})` : ''}
+            </h3>
+
+            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
+              <div className="min-w-0 card:col-span-2 card:pr-3">
+                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                    {intl.formatMessage(messages.mediaAndFormat)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                    Music · Album
+                  </dd>
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                    {intl.formatMessage(messages.releaseDate)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                    {releaseDate}
+                  </dd>
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                    {intl.formatMessage(messages.runtime)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                    {runtimeMinutes > 0
+                      ? `${intl.formatNumber(runtimeMinutes)} minutes`
+                      : notAvailable}
+                  </dd>
+
+                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+
+                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.artist)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      {data?.artist.name || notAvailable}
+                    </dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.albumType)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      {data?.type || notAvailable}
+                    </dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.trackCount)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      {data?.tracks.length
+                        ? intl.formatNumber(data.tracks.length)
+                        : notAvailable}
+                    </dd>
+                  </div>
+
+                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                    {intl.formatMessage(messages.genres)}:
+                  </dt>
+                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                    {genres || notAvailable}
+                  </dd>
+                </dl>
+              </div>
+
+              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.status)}:
+                </dt>
+                <dd className="m-0 truncate">
+                  {intl.formatMessage(
+                    selectedDestinationAvailable
+                      ? globalMessages.available
+                      : messages.readyToRequest
+                  )}
+                </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.service)}:
+                </dt>
+                <dd className="m-0 truncate">
+                  {selectedService?.name ??
+                    fallbackService?.name ??
+                    notAvailable}
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        {data?.tracks.length ? <AlbumTrackList tracks={data.tracks} /> : null}
+
+        {canUseAdvancedOptions && (
+          <AdvancedRequester
+            type="music"
+            is4k={false}
+            expanded={advancedOptionsOpen}
+            panelOnly
+            rootFolderTable
+            requestedByPortal={requestedByPortal}
+            onChange={(overrides) => setRequestOverrides(overrides)}
+          />
+        )}
+
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+          <div className="mr-auto flex items-center gap-2">
+            {canUseAdvancedOptions && (
+              <button
+                type="button"
+                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                aria-expanded={advancedOptionsOpen}
+                onClick={() => setAdvancedOptionsOpen((open) => !open)}
+              >
+                <AdjustmentsHorizontalIcon
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                />
+                {intl.formatMessage(messages.advancedOptions)}
+                <ChevronDownIcon
+                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+            <RequestFooterStatus
+              available={selectedDestinationAvailable}
+              hasAutoApprove={hasAutoApprove}
+            />
+          </div>
+          <div
+            className="flex h-[22px] items-center"
+            ref={setRequestedByPortal}
+          />
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {intl.formatMessage(globalMessages.cancel)}
+          </button>
+          <button
+            type="button"
+            onClick={() => void sendRequest()}
+            disabled={
+              isUpdating ||
+              selectedDestinationAvailable ||
+              quota?.music?.restricted ||
+              serviceUnavailable
+            }
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {requestButtonLabel}
+          </button>
+        </div>
+      </RequestMediaCard>
     </Modal>
   );
 };

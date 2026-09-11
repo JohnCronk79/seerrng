@@ -9,6 +9,7 @@ import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
 } from '@server/entity/MediaIdentifier';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
@@ -591,6 +592,123 @@ describe('GET and DELETE /blocklist/:id', () => {
     );
   });
 
+  it('searches the locally stored media metadata snapshot', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 880003,
+        status: MediaStatus.BLOCKLISTED,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaSearchMetadata).save({
+      mediaId: media.id,
+      media,
+      title: 'Metadata Search Movie',
+      director: 'Searchable Director',
+      genres: 'Mystery, Drama',
+      searchText:
+        'metadata search movie searchable director mystery drama radarr-hd',
+    });
+    await getRepository(Blocklist).save(
+      new Blocklist({
+        mediaType: MediaType.MOVIE,
+        tmdbId: media.tmdbId,
+        title: 'Different Visible Title',
+        media,
+      })
+    );
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent
+      .get('/blocklist')
+      .query({ search: 'searchable director' });
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(
+      response.body.results.map(({ tmdbId }: { tmdbId: number }) => tmdbId),
+      [880003]
+    );
+  });
+
+  it('returns filter counts within the selected time period', async () => {
+    const repository = getRepository(Blocklist);
+    const [recentManual, recentTag, oldManual] = await repository.save([
+      new Blocklist({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 880011,
+        title: 'Count window marker recent manual',
+      }),
+      new Blocklist({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 880012,
+        title: 'Count window marker recent tag',
+        blocklistedTags: ',123,',
+      }),
+      new Blocklist({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 880013,
+        title: 'Count window marker old manual',
+      }),
+    ]);
+    await repository.update(oldManual.id, {
+      createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+    });
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent.get('/blocklist').query({
+      search: 'count window marker',
+      timeFrame: '7d',
+      filter: 'all',
+    });
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.counts, {
+      all: 2,
+      manual: 1,
+      blocklistedTags: 1,
+    });
+    assert.deepStrictEqual(
+      response.body.results.map(({ tmdbId }: { tmdbId: number }) => tmdbId),
+      [recentTag.tmdbId, recentManual.tmdbId]
+    );
+  });
+
+  it('filters blocklisted items and task counts by media type', async () => {
+    const repository = getRepository(Blocklist);
+    const [movie, series] = await repository.save([
+      new Blocklist({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 880021,
+        title: 'Blocklist media filter marker movie',
+      }),
+      new Blocklist({
+        mediaType: MediaType.TV,
+        tmdbId: 880022,
+        title: 'Blocklist media filter marker series',
+        blocklistedTags: ',123,',
+      }),
+    ]);
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent.get('/blocklist').query({
+      search: 'blocklist media filter marker',
+      mediaType: MediaType.TV,
+    });
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(
+      response.body.results.map(({ tmdbId }: { tmdbId: number }) => tmdbId),
+      [series.tmdbId]
+    );
+    assert.deepStrictEqual(response.body.counts, {
+      all: 1,
+      manual: 0,
+      blocklistedTags: 1,
+    });
+    assert.notStrictEqual(movie.tmdbId, series.tmdbId);
+  });
+
   it('rejects malformed blocklist list query parameters', async () => {
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const malformedTake = await agent.get('/blocklist?take=1.5');
@@ -598,6 +716,8 @@ describe('GET and DELETE /blocklist/:id', () => {
       '/blocklist?search=movie&search=show'
     );
     const excessiveOffset = await agent.get('/blocklist?skip=100001');
+    const malformedTimeFrame = await agent.get('/blocklist?timeFrame=forever');
+    const malformedMediaType = await agent.get('/blocklist?mediaType=podcast');
 
     assert.strictEqual(malformedTake.status, 400);
     assert.match(malformedTake.body.message, /Invalid blocklist query/);
@@ -605,6 +725,10 @@ describe('GET and DELETE /blocklist/:id', () => {
     assert.match(repeatedSearch.body.message, /Invalid blocklist query/);
     assert.strictEqual(excessiveOffset.status, 400);
     assert.match(excessiveOffset.body.message, /Invalid blocklist query/);
+    assert.strictEqual(malformedTimeFrame.status, 400);
+    assert.match(malformedTimeFrame.body.message, /Invalid blocklist query/);
+    assert.strictEqual(malformedMediaType.status, 400);
+    assert.match(malformedMediaType.body.message, /Invalid blocklist query/);
   });
 
   it('rejects malformed numeric media identifiers', async () => {

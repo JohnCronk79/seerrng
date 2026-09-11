@@ -10,6 +10,8 @@ import {
   readDatabaseTlsFile,
 } from './databaseConfig';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 describe('database configuration parsing', () => {
   it('rejects misspelled booleans instead of silently disabling verification', () => {
     assert.equal(parseBooleanConfig('TLS', 'TRUE'), true);
@@ -42,19 +44,22 @@ describe('database configuration parsing', () => {
 });
 
 describe('database TLS file reads', () => {
-  it('supports symlinked secret mounts while reading regular files', () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'seerr-db-tls-'));
-    try {
-      const target = path.join(directory, 'certificate.pem');
-      const link = path.join(directory, 'current.pem');
-      fs.writeFileSync(target, 'certificate');
-      fs.symlinkSync(target, link);
+  posixIt(
+    'supports symlinked secret mounts while reading regular files',
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'seerr-db-tls-'));
+      try {
+        const target = path.join(directory, 'certificate.pem');
+        const link = path.join(directory, 'current.pem');
+        fs.writeFileSync(target, 'certificate');
+        fs.symlinkSync(target, link);
 
-      assert.equal(readDatabaseTlsFile(link).toString(), 'certificate');
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
+        assert.equal(readDatabaseTlsFile(link).toString(), 'certificate');
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it('rejects oversized TLS material before buffering it', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'seerr-db-tls-'));

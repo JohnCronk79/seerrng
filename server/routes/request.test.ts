@@ -428,7 +428,7 @@ describe('GET /request/status', () => {
     });
   }
 
-  it('defaults to recent requests while exposing older history', async () => {
+  it('defaults to all requests while rolling windows expose older history', async () => {
     const now = Date.now();
     await seedRequest(
       MediaRequestStatus.PENDING,
@@ -441,7 +441,14 @@ describe('GET /request/status', () => {
     );
     const agent = await loginAs('friend@seerr.dev', 'test1234');
 
-    const recentResponse = await agent.get('/request/status');
+    const allResponse = await agent.get('/request/status');
+    assert.strictEqual(allResponse.status, 200);
+    assert.strictEqual(allResponse.body.pageInfo.results, 2);
+    assert.strictEqual(allResponse.body.olderCount, 0);
+
+    const recentResponse = await agent
+      .get('/request/status')
+      .query({ timeFrame: '7d' });
     assert.strictEqual(recentResponse.status, 200);
     assert.strictEqual(recentResponse.body.pageInfo.results, 1);
     assert.strictEqual(recentResponse.body.olderCount, 1);
@@ -453,12 +460,12 @@ describe('GET /request/status', () => {
     assert.strictEqual(fourteenDayResponse.body.pageInfo.results, 1);
     assert.strictEqual(fourteenDayResponse.body.olderCount, 1);
 
-    const allResponse = await agent
+    const explicitAllResponse = await agent
       .get('/request/status')
       .query({ timeFrame: 'all' });
-    assert.strictEqual(allResponse.status, 200);
-    assert.strictEqual(allResponse.body.pageInfo.results, 2);
-    assert.strictEqual(allResponse.body.olderCount, 0);
+    assert.strictEqual(explicitAllResponse.status, 200);
+    assert.strictEqual(explicitAllResponse.body.pageInfo.results, 2);
+    assert.strictEqual(explicitAllResponse.body.olderCount, 0);
   });
 
   it('returns the owner-scoped lifecycle and durable history', async () => {
@@ -1308,6 +1315,66 @@ describe('GET /request', () => {
 });
 
 describe('POST /request', () => {
+  it('rejects an available selected movie quality while allowing the missing quality', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      createRadarrSettings(20),
+      { ...createRadarrSettings(21), is4k: true, name: 'Radarr 4K' },
+    ];
+    const tmdbId = 987_639;
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get:
+        () =>
+        async ({ movieId }: { movieId: number }) =>
+          ({
+            id: movieId,
+            external_ids: {},
+            keywords: { keywords: [] },
+            genres: [],
+            original_language: 'en',
+          }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const availableResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: tmdbId,
+      serverId: 20,
+      is4k: false,
+    });
+    const missingQualityResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: tmdbId,
+      serverId: 21,
+      is4k: true,
+    });
+
+    assert.strictEqual(availableResponse.status, 409);
+    assert.match(availableResponse.body.message, /already available/i);
+    assert.strictEqual(missingQualityResponse.status, 201);
+    assert.strictEqual(missingQualityResponse.body.is4k, true);
+
+    const updatedMedia = await getRepository(Media).findOneByOrFail({
+      id: existingMedia.id,
+    });
+    assert.strictEqual(updatedMedia.status, MediaStatus.AVAILABLE);
+    assert.notStrictEqual(updatedMedia.status4k, MediaStatus.UNKNOWN);
+  });
+
   it('uses an explicitly selected zero-valued screen service without a default', async (t) => {
     const settings = getSettings();
     settings.radarr = [
@@ -1777,6 +1844,42 @@ describe('POST /request', () => {
     assert.equal(persistedMedia.status, MediaStatus.PROCESSING);
   });
 
+  it('uses the selected request owner permissions instead of the acting administrator permissions', async (t) => {
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 553,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+    });
+
+    const adminUser = await getRepository(User).findOneByOrFail({ id: 1 });
+    const requestOwner = await getRepository(User).findOneByOrFail({ id: 2 });
+
+    const mediaRequest = await MediaRequest.request(
+      {
+        mediaType: MediaType.MOVIE,
+        mediaId: 553,
+        is4k: false,
+        userId: requestOwner.id,
+      },
+      adminUser
+    );
+
+    assert.equal(mediaRequest.requestedBy.id, requestOwner.id);
+    assert.equal(mediaRequest.status, MediaRequestStatus.PENDING);
+    assert.equal(mediaRequest.modifiedBy == null, true);
+    assert.equal(mediaRequest.media.status, MediaStatus.PENDING);
+  });
+
   it('serializes different music releases resolving to one release group', async (t) => {
     const settings = getSettings();
     settings.lidarr = [createLidarrSettings(10)];
@@ -2132,6 +2235,91 @@ describe('POST /request', () => {
     );
   });
 
+  it('persists exact episodes and removes duplicate active episode selections', async (t) => {
+    const settings = getSettings();
+    settings.sonarr = [createSonarrSettings(10)];
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 335,
+        tvdbId: 224,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            episodeNumbers: [1],
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      })
+    );
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 335,
+          external_ids: { tvdb_id: 224 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [1, 2].map((season_number) => ({ season_number })),
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      settings.sonarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 335,
+      seasons: [1, 2],
+      seasonRequests: [
+        { seasonNumber: 1, episodeNumbers: [1, 2] },
+        { seasonNumber: 2 },
+      ],
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.deepStrictEqual(
+      response.body.seasons.map(
+        (season: { seasonNumber: number; episodeNumbers?: number[] }) => ({
+          seasonNumber: season.seasonNumber,
+          episodeNumbers: season.episodeNumbers,
+        })
+      ),
+      [
+        { seasonNumber: 1, episodeNumbers: [2] },
+        { seasonNumber: 2, episodeNumbers: null },
+      ]
+    );
+  });
+
+  it('rejects an empty partial-season request', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 336,
+      seasonRequests: [{ seasonNumber: 1, episodeNumbers: [] }],
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /must include an episode/);
+  });
+
   it('creates a pending music request with the resolved MusicBrainz release group', async (t) => {
     const settings = getSettings();
     settings.lidarr = [
@@ -2197,6 +2385,18 @@ describe('POST /request', () => {
     assert.strictEqual(res.body.metadataProfileId, 30);
     assert.strictEqual(res.body.rootFolder, '/music');
     assert.deepStrictEqual(res.body.tags, []);
+    assert.deepStrictEqual(res.body.serviceTargets, [
+      {
+        serviceType: 'lidarr',
+        format: 'music',
+        serverId: 10,
+        profileId: 20,
+        metadataProfileId: 30,
+        rootFolder: '/music',
+        tags: [],
+        status: MediaStatus.PENDING,
+      },
+    ]);
 
     const savedMedia = await getRepository(Media).findOneOrFail({
       where: { mbId: 'release-group-id', mediaType: MediaType.MUSIC },
@@ -2204,6 +2404,174 @@ describe('POST /request', () => {
     });
     assert.strictEqual(savedMedia.status, MediaStatus.PENDING);
     assert.strictEqual(savedMedia.requests.length, 1);
+  });
+
+  it('rejects a music request when the album is already available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const mbId = 'available-music-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Available Album' },
+            artist: { name: 'Available Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+
+    assert.strictEqual(response.status, 409);
+    assert.match(response.body.message, /already available/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('allows the alternate music destination and blocks it after that copy becomes available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(11, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'alternate-quality-music-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 10,
+        externalServiceId: 100,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Alternate Quality Album' },
+            artist: { name: 'Alternate Quality Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const alternateResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 11,
+    });
+
+    assert.strictEqual(alternateResponse.status, 201);
+    assert.strictEqual(alternateResponse.body.serverId, 11);
+
+    const alternateRequest = await getRepository(MediaRequest).findOneByOrFail({
+      id: alternateResponse.body.id,
+    });
+    alternateRequest.status = MediaRequestStatus.COMPLETED;
+    alternateRequest.serviceTargets = alternateRequest.serviceTargets?.map(
+      (target) => ({ ...target, status: MediaStatus.AVAILABLE })
+    );
+    await getRepository(MediaRequest).save(alternateRequest);
+
+    const duplicateResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 11,
+    });
+
+    assert.strictEqual(duplicateResponse.status, 409);
+    assert.match(duplicateResponse.body.message, /already available/i);
+  });
+
+  it('allows an MP3 request when the FLAC destination is already available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(11, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'flac-available-mp3-request-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 11,
+        externalServiceId: 101,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'FLAC Available Album' },
+            artist: { name: 'FLAC Available Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.body.serverId, 10);
   });
 
   it('rolls back an existing music status when the request insert fails', async (t) => {

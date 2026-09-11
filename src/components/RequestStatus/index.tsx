@@ -11,8 +11,11 @@ import MediaTypeBadge, {
 } from '@app/components/Common/MediaTypeBadge';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
+import useDebouncedState from '@app/hooks/useDebouncedState';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
+import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import {
@@ -36,6 +39,7 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
   MagnifyingGlassIcon,
+  NoSymbolIcon,
   PencilIcon,
   ServerIcon,
   TrashIcon,
@@ -58,11 +62,11 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { FormattedDate, useIntl } from 'react-intl';
 import useSWR, { useSWRConfig } from 'swr';
 import {
   canLoadRequestStatus,
+  resolveRequestStatusUserSelection,
   type RequestStatusUserSelection,
 } from './requestStatusQuery';
 
@@ -74,6 +78,8 @@ const messages = defineMessages('components.RequestStatus', {
   title: 'Request Status',
   manageRequests: 'Manage Requests',
   selectUser: 'Select User to View Requests',
+  search: 'Keyword Search',
+  searchRequests: 'Search Requests',
   userFilter: 'Select User',
   allUsers: 'All Users',
   taskFilters: 'Task Filters',
@@ -138,7 +144,6 @@ const messages = defineMessages('components.RequestStatus', {
     '{count, plural, =1 {# older request is outside this window.} other {# older requests are outside this window.}}',
   viewAllHistory: 'View All History',
   filter: 'Filters',
-  statusFilter: 'Request Type',
   allMedia: 'All Media',
   movies: 'Movies',
   music: 'Music',
@@ -149,6 +154,7 @@ const messages = defineMessages('components.RequestStatus', {
   format: 'Format',
   sortBy: 'Sort By',
   sortAdded: 'Date',
+  sortModified: 'Last Modified',
   sortTitle: 'Title',
   sortStatus: 'Status',
   sortDirector: 'Director',
@@ -167,7 +173,7 @@ const messages = defineMessages('components.RequestStatus', {
   eta: 'ETA: {date}',
   history: 'History',
   hideHistory: 'Hide History',
-  noHistory: 'No status history has been recorded yet.',
+  noHistory: 'No status history has been recorded yet',
   requestedBy: 'Requested by {user}',
   requestedByLabel: 'Requested By',
   requestedAt: 'Requested {date}',
@@ -203,24 +209,17 @@ const messages = defineMessages('components.RequestStatus', {
     'Delete {title} and its media files from {service}. Seerr will preserve an author or artist that still has other books or albums.',
   removeFailed: 'Unable to delete this item from its library service.',
   removeSuccess: 'Item deleted from its library service.',
-  adminView: 'Admin View',
-  userView: 'User View',
-  viewMode: 'Request Status view mode',
   loading: 'Loading request status',
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
   loadError: 'Request status could not be loaded.',
   loadErrorHint: 'The request service did not respond. Try again.',
   retryLoad: 'Try Again',
-  noResults: 'No requests match these filters.',
+  noResults: 'No requests match these filters',
   clearFilters: 'Clear Filters',
-  previous: 'Previous',
-  next: 'Next',
-  page: 'Page {page} of {pages}',
   scrollProgressLeft: 'Scroll progress left',
   requestLifecycle: 'Request lifecycle',
   scrollProgressRight: 'Scroll progress right',
-  pagination: 'Pagination',
   unknownTitle: 'Unknown title',
 });
 
@@ -241,8 +240,6 @@ type RequestStatusItem = RequestStatusResultsResponse['results'][number];
 type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book' | 'audiobook';
 type UserSelection = Exclude<RequestStatusUserSelection, null>;
 type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
-type ViewMode = 'admin' | 'user';
-
 type RemoveSelection = {
   requestId: number;
   mediaId: number;
@@ -275,9 +272,7 @@ const requestTypeFilterValues = [
   'completed',
   'processing',
   'attention',
-  'available',
-  'unavailable',
-  'failed',
+  ...statusStageValues,
 ];
 const mediaTypeValues: MediaFilter[] = [
   'all',
@@ -288,17 +283,8 @@ const mediaTypeValues: MediaFilter[] = [
   'audiobook',
 ];
 
-const statusMediaBadgeTone: Record<MediaTypeBadgeType, string> = {
-  movie: 'border-blue-500/70 bg-blue-700/70 text-blue-50',
-  tv: 'border-violet-300/90 bg-purple-700/70 text-purple-50',
-  collection: 'border-blue-500/70 bg-blue-700/70 text-blue-50',
-  album: 'border-emerald-500/70 bg-emerald-700/70 text-emerald-50',
-  artist: 'border-fuchsia-500/70 bg-fuchsia-700/70 text-fuchsia-50',
-  book: 'border-amber-500/70 bg-amber-700/70 text-amber-50',
-};
-
 const sortDirectionValues = ['asc', 'desc'] as const;
-const timeFrameValues: TimeFrame[] = ['7d', '14d', '30d', '6m', 'all'];
+const timeFrameValues: TimeFrame[] = ['all', '7d', '14d', '30d', '6m'];
 
 const getSortOptions = (
   mediaFilter: MediaFilter
@@ -308,6 +294,7 @@ const getSortOptions = (
     label: keyof typeof messages;
   }[] = [
     { value: 'added', label: 'sortAdded' },
+    { value: 'modified', label: 'sortModified' },
     { value: 'title', label: 'sortTitle' },
     { value: 'status', label: 'sortStatus' },
   ];
@@ -373,7 +360,7 @@ const getTimeFrameFromQuery = (
   }
   return candidate && timeFrameValues.includes(candidate as TimeFrame)
     ? (candidate as TimeFrame)
-    : '7d';
+    : 'all';
 };
 
 const fetchStatusUsers = async (
@@ -521,6 +508,39 @@ const getPoster = (
     return { src: details.posterPath, type: 'book' };
   }
   return { src: getTmdbPosterImageUrl(details.posterPath), type: 'tmdb' };
+};
+
+const getBackdrop = (
+  details: MediaDetails | undefined
+): { src: string; type: 'tmdb' | 'music' | 'book' } | undefined => {
+  if (!details) return undefined;
+  if (isMusic(details)) {
+    const src =
+      details.artistBackdrop ?? details.artistThumb ?? details.posterPath;
+    return src ? { src, type: 'music' } : undefined;
+  }
+  if (isBook(details)) {
+    return details.posterPath
+      ? { src: details.posterPath, type: 'book' }
+      : undefined;
+  }
+  if (details.backdropPath) {
+    return {
+      src: `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${details.backdropPath}`,
+      type: 'tmdb',
+    };
+  }
+  return details.posterPath
+    ? { src: getTmdbPosterImageUrl(details.posterPath), type: 'tmdb' }
+    : undefined;
+};
+
+const getDisplayServiceName = (service?: string | null): string | undefined => {
+  if (/^bookshelfng-ebooks$/i.test(service ?? '')) return 'Bookshelf-Ebook';
+  if (/^bookshelfng-audiobooks$/i.test(service ?? '')) {
+    return 'Bookshelf-Audio';
+  }
+  return service ?? undefined;
 };
 
 const getMediaBadge = (
@@ -910,6 +930,7 @@ const RequestStatusCard = ({
   const [showEditModal, setShowEditModal] = useState(false);
   const [isModifying, setIsModifying] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
+  const [timelineHasOverflow, setTimelineHasOverflow] = useState(false);
   const detailsUrl = getDetailsUrl(item);
   const detailHref = getDetailHref(item);
   const { data: details } = useSWR<MediaDetails>(detailsUrl);
@@ -963,6 +984,7 @@ const RequestStatusCard = ({
     : 'approved';
   const activeIndex = getLastTimelineIndex(currentStage, history);
   const poster = getPoster(details);
+  const backdrop = getBackdrop(details);
   const title = getTitle(intl, details, item);
   const mediaBadgeType = getMediaBadgeType(item) ?? 'movie';
   const StageIcon = stageIcon[currentStage] ?? InformationCircleIcon;
@@ -1011,7 +1033,7 @@ const RequestStatusCard = ({
     hasPermission(Permission.MANAGE_REQUESTS) &&
     item.request.status === MediaRequestStatus.PENDING;
   const posterBadgeClassName =
-    'h-[18px] w-full justify-center gap-0.5 px-1 py-0 text-[9px] shadow-sm backdrop-blur-[1px] [&_svg]:h-2.5 [&_svg]:w-2.5';
+    'h-[18px] w-full justify-center gap-0.5 px-1 py-0 text-[9px] shadow-sm backdrop-blur-[1px] [&_svg]:h-2.5 [&_svg]:w-2.5 [&_svg]:-translate-y-px';
   const posterBadge = bookFormat ? (
     <BookFormatBadge
       format={bookFormat}
@@ -1022,7 +1044,7 @@ const RequestStatusCard = ({
     <MediaTypeBadge
       mediaType={mediaBadgeType}
       variant="compact"
-      className={`${statusMediaBadgeTone[mediaBadgeType]} ${posterBadgeClassName}`}
+      className={posterBadgeClassName}
     />
   );
   const refreshRequestStatus = async () => {
@@ -1055,6 +1077,31 @@ const RequestStatusCard = ({
       behavior: 'smooth',
     });
   };
+  useEffect(() => {
+    const timeline = timelineRef.current;
+    if (!timeline) {
+      return;
+    }
+
+    const updateTimelineOverflow = () => {
+      setTimelineHasOverflow(timeline.scrollWidth > timeline.clientWidth + 1);
+    };
+
+    updateTimelineOverflow();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateTimelineOverflow);
+      return () => window.removeEventListener('resize', updateTimelineOverflow);
+    }
+
+    const resizeObserver = new ResizeObserver(updateTimelineOverflow);
+    resizeObserver.observe(timeline);
+    const content = timeline.firstElementChild;
+    if (content) {
+      resizeObserver.observe(content);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, []);
   const actionControls = (
     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
       {canModeratePending && (
@@ -1136,7 +1183,7 @@ const RequestStatusCard = ({
               onRemove(
                 item.request.id,
                 displayTitle,
-                current.service ?? 'library service'
+                getDisplayServiceName(current.service) ?? 'library service'
               )
             }
           >
@@ -1177,10 +1224,24 @@ const RequestStatusCard = ({
         />
       )}
       <article
-        className="overflow-hidden rounded-xl border border-gray-700 bg-gray-800/95 p-3 shadow-lg shadow-gray-950/20"
+        className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20"
         data-testid={`request-status-${item.request.id}`}
       >
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+        {backdrop && (
+          <div className="absolute inset-0 z-0">
+            <CachedImage
+              type={backdrop.type}
+              src={backdrop.src}
+              alt=""
+              fill
+              sizes="100vw"
+              className="object-cover object-center"
+            />
+            <div className="refreshed-artwork-scrim" />
+            <div className="refreshed-artwork-gradient" />
+          </div>
+        )}
+        <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
           <div className="min-w-0 self-start">
             {detailHref ? (
               <Link
@@ -1231,31 +1292,31 @@ const RequestStatusCard = ({
               </h3>
             )}
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch md:grid-cols-3">
-              <div className="min-w-0 md:col-span-2 md:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-2 gap-y-0.5 text-xs leading-4 text-gray-400 md:grid-cols-[max-content_0.5rem_7rem_0.75rem_1px_0.75rem_minmax(0,1fr)] md:gap-x-0">
-                  <dt className="font-medium text-gray-100 md:col-start-1 md:row-start-1">
+            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
+              <div className="min-w-0 card:col-span-2 card:pr-3">
+                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
-                  <dd className="m-0 truncate md:col-start-3 md:row-start-1">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
                     {getMediaBadge(intl, item)} · {getMediaFormat(intl, item)}
                   </dd>
-                  <dt className="font-medium text-gray-100 md:col-start-1 md:row-start-2">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
                     {getReleaseDateLabel(intl, item)}:
                   </dt>
-                  <dd className="m-0 truncate md:col-start-3 md:row-start-2">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
                     {displayReleaseDate}
                   </dd>
-                  <dt className="font-medium text-gray-100 md:col-start-1 md:row-start-3">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
                     {getRuntimeLabel(intl, item)}:
                   </dt>
-                  <dd className="m-0 truncate md:col-start-3 md:row-start-3">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
                     {getRuntimeOrPages(intl, details, item)}
                   </dd>
 
-                  <div className="hidden bg-gray-600 md:col-start-5 md:row-span-3 md:row-start-1 md:block" />
+                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
 
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-2 gap-y-0.5 border-t border-gray-600 pt-2 md:col-span-1 md:col-start-7 md:row-span-3 md:row-start-1 md:mt-0 md:border-t-0 md:pt-0">
+                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
                     {[...featuredCredits, ...secondaryDetails].map(
                       (credit, index) => (
                         <div
@@ -1282,11 +1343,11 @@ const RequestStatusCard = ({
                     )}
                   </div>
 
-                  <dt className="mt-0.5 font-medium text-gray-100 md:col-start-1 md:row-start-4">
+                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
                   {genres.length > 0 ? (
-                    <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words md:col-span-5 md:col-start-3 md:row-start-4">
+                    <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
                       {genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
@@ -1300,14 +1361,14 @@ const RequestStatusCard = ({
                       ))}
                     </dd>
                   ) : (
-                    <dd className="m-0 mt-0.5 md:col-span-5 md:col-start-3 md:row-start-4">
+                    <dd className="m-0 mt-0.5 card:col-span-5 card:col-start-3 card:row-start-4">
                       {notAvailable}
                     </dd>
                   )}
                 </dl>
               </div>
 
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-2 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 md:relative md:mt-0 md:border-l-0 md:border-t-0 md:pl-3 md:pt-0 md:before:absolute md:before:bottom-1 md:before:left-0 md:before:top-0 md:before:w-px md:before:bg-gray-600">
+              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-l-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.requestedByLabel)}:
                 </dt>
@@ -1324,11 +1385,15 @@ const RequestStatusCard = ({
                 </dt>
                 <dd className="m-0 truncate">
                   {createdAt ? (
-                    <FormattedDate
-                      value={createdAt}
-                      dateStyle="medium"
-                      timeStyle="short"
-                    />
+                    <FormattedDate value={createdAt} dateStyle="medium" />
+                  ) : (
+                    notAvailable
+                  )}
+                </dd>
+                <dt aria-hidden="true" />
+                <dd className="m-0 truncate">
+                  {createdAt ? (
+                    <FormattedDate value={createdAt} timeStyle="short" />
                   ) : (
                     notAvailable
                   )}
@@ -1337,24 +1402,24 @@ const RequestStatusCard = ({
                   {intl.formatMessage(messages.serviceLabel)}:
                 </dt>
                 <dd className="m-0 truncate">
-                  {current.service ?? notAvailable}
+                  {getDisplayServiceName(current.service) ?? notAvailable}
                 </dd>
               </dl>
             </div>
           </div>
         </div>
 
-        <div className="mt-1 border-t border-gray-700" />
-
-        <div className="relative mt-[5px] rounded-lg border border-gray-700 bg-gray-900/40 py-[5px]">
-          <button
-            type="button"
-            onClick={() => scrollTimeline(-1)}
-            className="absolute left-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm md:hidden"
-            aria-label={intl.formatMessage(messages.scrollProgressLeft)}
-          >
-            <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
+        <div className="refreshed-inset-surface relative z-10 mt-[5px] rounded-lg border border-gray-700 py-[5px]">
+          {timelineHasOverflow && (
+            <button
+              type="button"
+              onClick={() => scrollTimeline(-1)}
+              className="absolute left-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm"
+              aria-label={intl.formatMessage(messages.scrollProgressLeft)}
+            >
+              <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
           <div
             ref={timelineRef}
             className="hide-scrollbar flex overflow-x-auto px-2"
@@ -1412,18 +1477,20 @@ const RequestStatusCard = ({
               })}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => scrollTimeline(1)}
-            className="absolute right-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm md:hidden"
-            aria-label={intl.formatMessage(messages.scrollProgressRight)}
-          >
-            <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
-          </button>
+          {timelineHasOverflow && (
+            <button
+              type="button"
+              onClick={() => scrollTimeline(1)}
+              className="absolute right-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm"
+              aria-label={intl.formatMessage(messages.scrollProgressRight)}
+            >
+              <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
 
         {current.stage === 'downloading' && current.percent !== null && (
-          <div className="mt-2 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+          <div className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-indigo-200">
               <span className="inline-flex items-center gap-2">
                 <span>
@@ -1480,7 +1547,7 @@ const RequestStatusCard = ({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 pt-[5px]">
+        <div className="relative z-10 flex flex-wrap items-center gap-2 pt-[5px]">
           <Tooltip content={current.message}>
             <span
               className={`inline-flex h-[22px] w-32 flex-shrink-0 items-center justify-center gap-1.5 rounded-full border px-2 text-[11px] font-semibold ${stageTone[currentStage] ?? stageTone.cancelled}`}
@@ -1510,7 +1577,7 @@ const RequestStatusCard = ({
         </div>
 
         {isHistoryOpen && (
-          <section className="mt-2 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+          <section className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
             <h4 className="mb-2 text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.history)}
             </h4>
@@ -1519,7 +1586,7 @@ const RequestStatusCard = ({
                 {intl.formatMessage(messages.noHistory)}
               </p>
             ) : (
-              <ol className="grid grid-cols-[7rem_7.5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+              <ol className="grid grid-cols-[7rem_6rem_7.5rem_minmax(0,1fr)] gap-x-3 gap-y-2">
                 {chronologicalHistory.map((event) => {
                   const eventDate = getValidDate(event.createdAt);
                   if (!eventDate) {
@@ -1532,12 +1599,13 @@ const RequestStatusCard = ({
                         className="whitespace-nowrap text-gray-500"
                         dateTime={eventDate.toISOString()}
                       >
-                        <FormattedDate
-                          value={eventDate}
-                          hour="numeric"
-                          minute="2-digit"
-                          second="2-digit"
-                        />
+                        <FormattedDate value={eventDate} dateStyle="medium" />
+                      </time>
+                      <time
+                        className="whitespace-nowrap text-gray-500"
+                        dateTime={eventDate.toISOString()}
+                      >
+                        <FormattedDate value={eventDate} timeStyle="medium" />
                       </time>
                       <span className="font-medium text-gray-200">
                         {getStageLabel(intl, event.stage as StatusStage)}
@@ -1564,22 +1632,20 @@ const RequestStatus = () => {
   const router = useRouter();
   const { user: currentUser, hasPermission } = useUser();
   const { addToast } = useToasts();
-  const canUseAdminView = hasPermission(Permission.MANAGE_REQUESTS);
-  const [viewMode, setViewMode] = useState<ViewMode>('admin');
-  const [viewToggleTarget, setViewToggleTarget] = useState<HTMLElement | null>(
-    null
-  );
-  const isAdminView = canUseAdminView && viewMode === 'admin';
+  const isAdminView = hasPermission(Permission.MANAGE_REQUESTS);
   const canViewOtherUsers =
     isAdminView &&
     hasPermission([Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW], {
       type: 'or',
     });
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const [searchFilter, debouncedSearchFilter, setSearchFilter] =
+    useDebouncedState('');
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState<RequestStatusSortField>('added');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [timeFrame, setTimeFrame] = useState<TimeFrame>('7d');
+  const [pageSize, setPageSize] = useState(10);
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [selectedUser, setSelectedUser] = useState<UserSelection | null>(null);
   const [expandedRequestId, setExpandedRequestId] = useState<number | null>(
     null
@@ -1596,10 +1662,6 @@ const RequestStatus = () => {
   const [removingRequestId, setRemovingRequestId] = useState<number | null>(
     null
   );
-
-  useEffect(() => {
-    setViewToggleTarget(document.getElementById('request-status-view-toggle'));
-  }, []);
 
   const { data: statusUsers } = useSWR<RequestStatusUsersResponse>(
     canViewOtherUsers ? '/api/v1/request/status/users?take=100&skip=0' : null,
@@ -1636,18 +1698,12 @@ const RequestStatus = () => {
     const rawUserId = Array.isArray(router.query.userId)
       ? router.query.userId[0]
       : router.query.userId;
-    if (canViewOtherUsers) {
-      if (rawUserId === 'all') {
-        setSelectedUser('all');
-      } else if (rawUserId && /^\d+$/.test(rawUserId)) {
-        const userId = Number(rawUserId);
-        setSelectedUser(userId > 0 ? userId : (currentUser?.id ?? null));
-      } else {
-        setSelectedUser(currentUser?.id ?? null);
-      }
-    } else {
-      setSelectedUser(null);
-    }
+    setSelectedUser(
+      resolveRequestStatusUserSelection({
+        canViewOtherUsers,
+        queryUserId: rawUserId,
+      })
+    );
   }, [
     canViewOtherUsers,
     currentUser?.id,
@@ -1688,7 +1744,6 @@ const RequestStatus = () => {
       : (selectedUser ?? currentUser?.id)
     : currentUser?.id;
   const page = Math.max(Number(router.query.page) || 1, 1);
-  const pageSize = 25;
   const apiMediaType =
     mediaFilter === 'book' || mediaFilter === 'audiobook'
       ? 'book'
@@ -1725,14 +1780,19 @@ const RequestStatus = () => {
     if (selectedOwnerId !== undefined) {
       params.set('requestedBy', String(selectedOwnerId));
     }
+    if (debouncedSearchFilter.trim()) {
+      params.set('search', debouncedSearchFilter.trim());
+    }
     return `/api/v1/request/status?${params.toString()}`;
   }, [
     apiMediaType,
     bookFormat,
     canViewOtherUsers,
     currentUser,
+    debouncedSearchFilter,
     filter,
     page,
+    pageSize,
     selectedOwnerId,
     selectedUser,
     sort,
@@ -1744,6 +1804,11 @@ const RequestStatus = () => {
       refreshInterval: 15000,
       revalidateOnFocus: true,
     });
+  useSearchActivityReporter(
+    Boolean(searchFilter.trim()) &&
+      (searchFilter.trim() !== debouncedSearchFilter.trim() || isValidating),
+    'request-status-keyword'
+  );
   useRequestStatusScrollRestoration(Boolean(data));
 
   const routeQuery = ({
@@ -1769,9 +1834,9 @@ const RequestStatus = () => {
     ...(nextSortDirection !== 'desc'
       ? { sortDirection: nextSortDirection }
       : {}),
-    ...(nextTimeFrame !== '7d' ? { timeFrame: nextTimeFrame } : {}),
-    ...(canViewOtherUsers && nextUser !== null
-      ? { userId: nextUser === 'all' ? 'all' : String(nextUser) }
+    ...(nextTimeFrame !== 'all' ? { timeFrame: nextTimeFrame } : {}),
+    ...(canViewOtherUsers && nextUser !== null && nextUser !== 'all'
+      ? { userId: String(nextUser) }
       : {}),
     ...(nextPage > 1 ? { page: String(nextPage) } : {}),
   });
@@ -1814,22 +1879,6 @@ const RequestStatus = () => {
     const nextUser: UserSelection = value === 'all' ? 'all' : Number(value);
     setSelectedUser(nextUser);
     pushRouteQuery(routeQuery({ nextUser }));
-  };
-
-  const updateViewMode = (nextViewMode: ViewMode) => {
-    setViewMode(nextViewMode);
-    const nextUser: UserSelection =
-      nextViewMode === 'admin' ? 'all' : (currentUser?.id ?? 0);
-    setSelectedUser(nextUser);
-    const nextQuery = routeQuery({ nextUser });
-
-    if (nextViewMode === 'admin') {
-      nextQuery.userId = 'all';
-    } else {
-      delete nextQuery.userId;
-    }
-
-    pushRouteQuery(nextQuery);
   };
 
   const updateTimeFrame = (nextTimeFrame: TimeFrame) => {
@@ -2021,28 +2070,31 @@ const RequestStatus = () => {
     pushRouteQuery(routeQuery({ nextPage }));
   };
   const selectedTaskFilter =
-    filter === 'completed'
-      ? 'completed'
-      : filter === 'processing'
-        ? 'active'
-        : filter === 'attention'
-          ? 'attention'
-          : 'all';
+    filter === 'all'
+      ? 'all'
+      : filter === 'completed'
+        ? 'completed'
+        : filter === 'processing'
+          ? 'active'
+          : filter === 'attention'
+            ? 'attention'
+            : null;
   const hasFilters =
+    searchFilter.trim() !== '' ||
     filter !== 'all' ||
     mediaFilter !== 'all' ||
     sort !== 'added' ||
     sortDirection !== 'desc' ||
-    timeFrame !== '7d' ||
-    (canViewOtherUsers &&
-      (selectedUser === 'all' || selectedUser !== currentUser?.id));
+    timeFrame !== 'all' ||
+    (canViewOtherUsers && selectedUser !== 'all');
   const clearFilters = () => {
+    setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
     setSort('added');
     setSortDirection('desc');
-    setTimeFrame('7d');
-    setSelectedUser(currentUser?.id ?? null);
+    setTimeFrame('all');
+    setSelectedUser(canViewOtherUsers ? 'all' : null);
     pushRouteQuery({});
   };
 
@@ -2102,34 +2154,7 @@ const RequestStatus = () => {
         </Transition>
       )}
       <PageTitle title={intl.formatMessage(messages.title)} />
-      {canUseAdminView &&
-        viewToggleTarget &&
-        createPortal(
-          <div
-            className="inline-flex flex-shrink-0 rounded-lg border border-gray-600 bg-gray-800 p-0.5"
-            role="group"
-            aria-label={intl.formatMessage(messages.viewMode)}
-          >
-            <button
-              type="button"
-              className={`h-8 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${isAdminView ? 'bg-indigo-500 text-white' : 'text-gray-300 hover:text-white'}`}
-              aria-pressed={isAdminView}
-              onClick={() => updateViewMode('admin')}
-            >
-              {intl.formatMessage(messages.adminView)}
-            </button>
-            <button
-              type="button"
-              className={`h-8 rounded-md px-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${!isAdminView ? 'bg-indigo-500 text-white' : 'text-gray-300 hover:text-white'}`}
-              aria-pressed={!isAdminView}
-              onClick={() => updateViewMode('user')}
-            >
-              {intl.formatMessage(messages.userView)}
-            </button>
-          </div>,
-          viewToggleTarget
-        )}
-      <div className="mt-8 flex items-start justify-between gap-4">
+      <div className="mt-8 flex items-center justify-between gap-4">
         <h2
           className="min-w-0 flex-1 truncate text-2xl font-bold leading-7 text-gray-100 sm:overflow-visible sm:text-4xl sm:leading-9"
           data-testid="page-header"
@@ -2139,8 +2164,12 @@ const RequestStatus = () => {
           </span>
         </h2>
         {isAdminView && canViewOtherUsers && (
-          <label className="inline-flex h-8 flex-shrink-0 self-start overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span className="inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100">
+          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                selectedUser !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
               {intl.formatMessage(messages.userFilter)}
             </span>
             <select
@@ -2181,13 +2210,21 @@ const RequestStatus = () => {
       )}
 
       <section
-        className="mb-5 mt-4"
+        className="mb-3 mt-4"
         aria-label={intl.formatMessage(messages.taskFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
+            {intl.formatMessage(messages.clearFilters)}
+          </button>
           {[
             {
               key: 'all',
@@ -2226,65 +2263,33 @@ const RequestStatus = () => {
               </span>
             </button>
           ))}
-          <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span className="inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100">
-              {intl.formatMessage(messages.statusFilter)}
-            </span>
-            <select
-              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-              value={filter}
-              onChange={(event) => updateFilter(event.target.value)}
-              aria-label={intl.formatMessage(messages.statusFilter)}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {[
+            {
+              value: 'unavailable',
+              label: messages.noReleaseFoundFilter,
+              count: data.counts.unavailable,
+            },
+            {
+              value: 'failed',
+              label: messages.failed,
+              count: data.counts.failed,
+            },
+          ].map((status) => (
+            <button
+              key={status.value}
+              type="button"
+              aria-pressed={filter === status.value}
+              onClick={() => updateFilter(status.value)}
+              className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${filter === status.value ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
             >
-              {[
-                'all',
-                'pending',
-                'completed',
-                'processing',
-                'attention',
-                'failed',
-                'available',
-                'unavailable',
-              ].map((value) => (
-                <option key={value} value={value}>
-                  {intl.formatMessage(
-                    value === 'unavailable'
-                      ? messages.noReleaseFoundFilter
-                      : messages[value as keyof typeof messages]
-                  )}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span className="inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100">
-              {intl.formatMessage(messages.timeFrame)}
-            </span>
-            <select
-              className="w-24 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-              value={timeFrame}
-              onChange={(event) =>
-                updateTimeFrame(event.target.value as TimeFrame)
-              }
-              aria-label={intl.formatMessage(messages.timeFrame)}
-            >
-              <option value="7d">
-                {intl.formatMessage(messages.last7Days)}
-              </option>
-              <option value="14d">
-                {intl.formatMessage(messages.last14Days)}
-              </option>
-              <option value="30d">
-                {intl.formatMessage(messages.last30Days)}
-              </option>
-              <option value="6m">
-                {intl.formatMessage(messages.last6Months)}
-              </option>
-              <option value="all">
-                {intl.formatMessage(messages.allTime)}
-              </option>
-            </select>
-          </label>
+              <span>{intl.formatMessage(status.label)}</span>
+              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
+                {status.count}
+              </span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -2307,6 +2312,59 @@ const RequestStatus = () => {
               {intl.formatMessage(messages[option.label])}
             </button>
           ))}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              {intl.formatMessage(messages.timeFrame)}
+            </span>
+            <select
+              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              value={timeFrame}
+              onChange={(event) =>
+                updateTimeFrame(event.target.value as TimeFrame)
+              }
+              aria-label={intl.formatMessage(messages.timeFrame)}
+            >
+              <option value="all">
+                {intl.formatMessage(messages.allTime)}
+              </option>
+              <option value="7d">
+                {intl.formatMessage(messages.last7Days)}
+              </option>
+              <option value="14d">
+                {intl.formatMessage(messages.last14Days)}
+              </option>
+              <option value="30d">
+                {intl.formatMessage(messages.last30Days)}
+              </option>
+              <option value="6m">
+                {intl.formatMessage(messages.last6Months)}
+              </option>
+            </select>
+          </label>
+          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                searchFilter.trim() ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              {intl.formatMessage(messages.search)}
+            </span>
+            <input
+              type="search"
+              value={searchFilter}
+              onChange={(event) => setSearchFilter(event.target.value)}
+              placeholder={intl.formatMessage(messages.searchRequests)}
+              aria-label={intl.formatMessage(messages.searchRequests)}
+              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+            />
+          </label>
         </div>
         {(mediaFilter === 'book' || mediaFilter === 'audiobook') && (
           <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
@@ -2396,7 +2454,7 @@ const RequestStatus = () => {
       </div>
 
       {data.results.length === 0 && (
-        <div className="flex min-h-48 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-gray-700 bg-gray-800/40 p-6 text-center text-gray-400">
+        <div className="refreshed-card-surface flex min-h-12 flex-row flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 p-2 text-center text-gray-400">
           <span>{intl.formatMessage(messages.noResults)}</span>
           {hasFilters && (
             <Button buttonType="default" buttonSize="sm" onClick={clearFilters}>
@@ -2406,30 +2464,16 @@ const RequestStatus = () => {
         </div>
       )}
 
-      <nav
-        className="mt-6 flex items-center justify-between"
-        aria-label={intl.formatMessage(messages.pagination)}
-      >
-        <Button
-          disabled={page <= 1}
-          onClick={() => changePage(page - 1)}
-          buttonSize="sm"
-        >
-          <ChevronLeftIcon className="mr-1 h-4 w-4" aria-hidden="true" />
-          {intl.formatMessage(messages.previous)}
-        </Button>
-        <span className="text-sm text-gray-400">
-          {intl.formatMessage(messages.page, { page, pages: totalPages })}
-        </span>
-        <Button
-          disabled={page >= totalPages}
-          onClick={() => changePage(page + 1)}
-          buttonSize="sm"
-        >
-          {intl.formatMessage(messages.next)}
-          <ChevronRightIcon className="ml-1 h-4 w-4" aria-hidden="true" />
-        </Button>
-      </nav>
+      <PaginationFooter
+        page={page}
+        pageSize={pageSize}
+        totalPages={totalPages}
+        onPageChange={changePage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          changePage(1);
+        }}
+      />
     </>
   );
 };

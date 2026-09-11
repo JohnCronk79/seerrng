@@ -368,7 +368,18 @@ class BaseScanner<T> {
           this.asyncLock.dispatch(normalizedMbId, () =>
             this.runProcessMutation(mutationGuard, async () => {
               const existing = await mediaRepository.findOne({
-                where: { mbId: normalizedMbId, mediaType: MediaType.MUSIC },
+                where: [
+                  { mbId: normalizedMbId, mediaType: MediaType.MUSIC },
+                  ...(serviceId !== undefined && externalServiceId !== undefined
+                    ? [
+                        {
+                          serviceId,
+                          externalServiceId,
+                          mediaType: MediaType.MUSIC,
+                        },
+                      ]
+                    : []),
+                ],
               });
 
               if (existing) {

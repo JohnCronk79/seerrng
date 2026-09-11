@@ -48,8 +48,15 @@ Run these against a real Lidarr instance:
 5. Approve a pending music request.
 6. Confirm the album is added in Lidarr with the expected root folder, quality
    profile, metadata profile, and tags.
-7. Trigger a Lidarr scan in SeerrNG.
-8. Confirm the request status reflects Lidarr availability.
+7. If the download uses an external tagging or staging workflow such as Picard,
+   confirm Request Status remains at **Importing** while that work is pending.
+   Seerr uses recent Lidarr history when a fast download leaves the live queue
+   between polls, so a confirmed Grabbed event must not fall back to
+   **Searching**.
+8. Confirm the request moves directly to **Available** after Lidarr reports the
+   album files. Active requests are checked independently of the broad Lidarr
+   scan; enabling scan additionally discovers existing catalogue items at
+   startup and during scheduled scans.
 9. Remove the item from SeerrNG and confirm Lidarr removal behavior is expected.
 10. Retry a failed music request and confirm it dispatches again.
 

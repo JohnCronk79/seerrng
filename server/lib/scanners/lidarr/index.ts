@@ -33,6 +33,7 @@ class LidarrScanner
   private currentServer: LidarrSettings;
   private lidarrApi: LidarrAPI;
   private scannedMbIds: Set<string> = new Set();
+  private scannedServiceAlbums: Set<string> = new Set();
   private didScan = false;
 
   constructor() {
@@ -56,6 +57,7 @@ class LidarrScanner
       return;
     }
     this.scannedMbIds.clear();
+    this.scannedServiceAlbums.clear();
     this.didScan = false;
 
     try {
@@ -123,6 +125,11 @@ class LidarrScanner
       }
 
       this.scannedMbIds.add(mbId);
+      this.scannedServiceAlbums.add(
+        `${this.currentServer.id}:${lidarrAlbum.id}`
+      );
+
+      const hasFile = (lidarrAlbum.statistics?.trackFileCount ?? 0) > 0;
 
       if (!lidarrAlbum.monitored) {
         await this.processMusic(mbId, {
@@ -131,7 +138,7 @@ class LidarrScanner
           externalServiceSlug: mbId,
           title: lidarrAlbum.title,
           processing: false,
-          hasFile: false,
+          hasFile,
           mutationGuard: (callback) =>
             runWithServarrServiceSnapshot(
               'lidarr',
@@ -152,6 +159,7 @@ class LidarrScanner
           (!lidarrAlbum.statistics ||
             lidarrAlbum.statistics.trackFileCount <
               lidarrAlbum.statistics.totalTrackCount),
+        hasFile,
         mutationGuard: (callback) =>
           runWithServarrServiceSnapshot('lidarr', this.currentServer, callback),
       });
@@ -182,7 +190,19 @@ class LidarrScanner
           ? normalizeMusicBrainzId(media.mbId)
           : undefined;
 
-        if (mbId && !this.scannedMbIds.has(mbId)) {
+        const serviceAlbumKey =
+          media.serviceId !== null &&
+          media.serviceId !== undefined &&
+          media.externalServiceId !== null &&
+          media.externalServiceId !== undefined
+            ? `${media.serviceId}:${media.externalServiceId}`
+            : undefined;
+
+        if (
+          mbId &&
+          !this.scannedMbIds.has(mbId) &&
+          (!serviceAlbumKey || !this.scannedServiceAlbums.has(serviceAlbumKey))
+        ) {
           const changed = await runMediaEntityMutation(media, () =>
             runWithServarrServiceSnapshots(
               'lidarr',

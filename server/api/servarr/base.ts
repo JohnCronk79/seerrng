@@ -88,6 +88,18 @@ export interface QueueItem {
   statusMessages?: QueueStatusMessage[];
 }
 
+export interface ServarrHistoryItem {
+  id: number;
+  movieId?: number;
+  seriesId?: number;
+  episodeId?: number;
+  albumId?: number;
+  bookId?: number;
+  eventType?: string | number;
+  date?: string;
+  downloadId?: string;
+}
+
 export interface Tag {
   id: number;
   label: string;
@@ -255,6 +267,44 @@ export const sanitizeServarrQueue = <T>(value: unknown): T[] =>
       }
       return [normalized as T];
     });
+
+export const sanitizeServarrHistory = (
+  value: unknown,
+  maximum = MAX_SERVARR_LOOKUP_RESULTS
+): ServarrHistoryItem[] =>
+  sanitizeServarrRecordArray<Record<string, unknown>>(value, maximum).flatMap(
+    (item) => {
+      if (!Number.isSafeInteger(item.id)) {
+        return [];
+      }
+
+      const historyItem: ServarrHistoryItem = { id: item.id as number };
+      for (const field of [
+        'movieId',
+        'seriesId',
+        'episodeId',
+        'albumId',
+        'bookId',
+      ] as const) {
+        if (Number.isSafeInteger(item[field])) {
+          historyItem[field] = item[field] as number;
+        }
+      }
+      if (
+        typeof item.eventType === 'string' ||
+        typeof item.eventType === 'number'
+      ) {
+        historyItem.eventType = item.eventType;
+      }
+      if (typeof item.date === 'string') {
+        historyItem.date = boundedText(item.date);
+      }
+      if (typeof item.downloadId === 'string') {
+        historyItem.downloadId = boundedText(item.downloadId);
+      }
+      return [historyItem];
+    }
+  );
 
 const EXTERNAL_READ_ONLY =
   process.env.SEERR_EXTERNAL_READ_ONLY?.toLowerCase() === 'true' ||
@@ -432,6 +482,30 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve queue: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async getHistory(pageSize = 250): Promise<ServarrHistoryItem[]> {
+    try {
+      const boundedPageSize = Math.min(Math.max(pageSize, 1), 1_000);
+      const response = await this.request<{ records?: unknown[] }>(
+        'GET',
+        '/history',
+        undefined,
+        this.getRequestConfig({
+          page: 1,
+          pageSize: boundedPageSize,
+          sortKey: 'date',
+          sortDirection: 'descending',
+        })
+      );
+
+      return sanitizeServarrHistory(response.data?.records, boundedPageSize);
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve history: ${e.message}`,
         { cause: e }
       );
     }

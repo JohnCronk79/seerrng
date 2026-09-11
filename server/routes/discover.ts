@@ -69,6 +69,11 @@ import {
 } from '@server/utils/concurrency';
 import { parsePositiveInt } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
+import {
+  matchesAllSearchTerms,
+  toBooleanAndQuery,
+  toFieldedBooleanAndQuery,
+} from '@server/utils/searchTerms';
 import { isCollection, isMovie, isPerson } from '@server/utils/typeHelpers';
 import {
   parseOptionalAllowedString,
@@ -218,6 +223,7 @@ const getErrorLogFields = (error: unknown) => ({
 const getDiscoverLogQuery = (query: Record<string, unknown>) => ({
   page: query.page,
   sortBy: query.sortBy,
+  search: query.search,
   query: query.query,
   genre: query.genre,
   subject: query.subject,
@@ -664,6 +670,8 @@ const bookSortOptions = new Set([
   'oldest',
   'random',
   'rating',
+  'rating.desc',
+  'rating.asc',
   'editions',
 ]);
 
@@ -697,11 +705,13 @@ const optionalTmdbDateString = z
 const QueryFilterOptions = z.object({
   page: optionalTmdbQueryString(16),
   sortBy: optionalTmdbQueryString(64),
+  search: optionalTmdbQueryString(),
   primaryReleaseDateGte: optionalTmdbDateString,
   primaryReleaseDateLte: optionalTmdbDateString,
   firstAirDateGte: optionalTmdbDateString,
   firstAirDateLte: optionalTmdbDateString,
   studio: optionalTmdbQueryString(),
+  country: optionalTmdbQueryString(16),
   genre: optionalTmdbQueryString(),
   keywords: optionalTmdbQueryString(),
   excludeKeywords: optionalTmdbQueryString(),
@@ -791,40 +801,57 @@ discoverRoutes.get('/movies', async (req, res, next) => {
     const keywords = parsedKeywords.value;
     const excludeKeywords = parsedExcludeKeywords.value;
 
-    const data = await tmdb.getDiscoverMovies({
-      page: parsePositiveInt(query.page, 1, 500),
-      sortBy: getValidatedTmdbSort(query.sortBy),
-      language: req.locale ?? query.language,
-      originalLanguage: query.language,
-      genre: query.genre,
-      studio: query.studio,
-      primaryReleaseDateLte: query.primaryReleaseDateLte
-        ? new Date(query.primaryReleaseDateLte).toISOString().split('T')[0]
-        : undefined,
-      primaryReleaseDateGte: query.primaryReleaseDateGte
-        ? new Date(query.primaryReleaseDateGte).toISOString().split('T')[0]
-        : undefined,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
-    const rankedResults = query.sortBy
-      ? data.results
-      : shuffleRankedWindow(
-          rankTmdbMovieResults(data.results, parsedShuffleSeed.value),
-          parsedShuffleSeed.value
-        );
+    const page = parsePositiveInt(query.page, 1, 500);
+    const data = query.search
+      ? await tmdb.searchMovies({
+          query: query.search,
+          page,
+          language: req.locale ?? query.language,
+        })
+      : await tmdb.getDiscoverMovies({
+          page,
+          sortBy: getValidatedTmdbSort(query.sortBy),
+          language: req.locale ?? query.language,
+          originalLanguage: query.language,
+          genre: query.genre,
+          studio: query.studio,
+          country: query.country,
+          primaryReleaseDateLte: query.primaryReleaseDateLte
+            ? new Date(query.primaryReleaseDateLte).toISOString().split('T')[0]
+            : undefined,
+          primaryReleaseDateGte: query.primaryReleaseDateGte
+            ? new Date(query.primaryReleaseDateGte).toISOString().split('T')[0]
+            : undefined,
+          keywords,
+          excludeKeywords,
+          withRuntimeGte: query.withRuntimeGte,
+          withRuntimeLte: query.withRuntimeLte,
+          voteAverageGte: query.voteAverageGte,
+          voteAverageLte: query.voteAverageLte,
+          voteCountGte: query.voteCountGte,
+          voteCountLte: query.voteCountLte,
+          watchProviders: query.watchProviders,
+          watchRegion: query.watchRegion,
+          certification: query.certification,
+          certificationGte: query.certificationGte,
+          certificationLte: query.certificationLte,
+          certificationCountry: query.certificationCountry,
+        });
+    const providerResults =
+      query.search || query.sortBy
+        ? data.results
+        : shuffleRankedWindow(
+            rankTmdbMovieResults(data.results, parsedShuffleSeed.value),
+            parsedShuffleSeed.value
+          );
+    const rankedResults = query.search
+      ? providerResults.filter((result) =>
+          matchesAllSearchTerms(
+            [result.title, result.original_title],
+            query.search ?? ''
+          )
+        )
+      : providerResults;
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -1186,41 +1213,58 @@ discoverRoutes.get('/tv', async (req, res, next) => {
     const keywords = parsedKeywords.value;
     const excludeKeywords = parsedExcludeKeywords.value;
 
-    const data = await tmdb.getDiscoverTv({
-      page: parsePositiveInt(query.page, 1, 500),
-      sortBy: getValidatedTmdbSort(query.sortBy),
-      language: req.locale ?? query.language,
-      genre: query.genre,
-      network,
-      firstAirDateLte: query.firstAirDateLte
-        ? new Date(query.firstAirDateLte).toISOString().split('T')[0]
-        : undefined,
-      firstAirDateGte: query.firstAirDateGte
-        ? new Date(query.firstAirDateGte).toISOString().split('T')[0]
-        : undefined,
-      originalLanguage: query.language,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      withStatus: query.status,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
-    const rankedResults = query.sortBy
-      ? data.results
-      : shuffleRankedWindow(
-          rankTmdbTvResults(data.results, parsedShuffleSeed.value),
-          parsedShuffleSeed.value
-        );
+    const page = parsePositiveInt(query.page, 1, 500);
+    const data = query.search
+      ? await tmdb.searchTvShows({
+          query: query.search,
+          page,
+          language: req.locale ?? query.language,
+        })
+      : await tmdb.getDiscoverTv({
+          page,
+          sortBy: getValidatedTmdbSort(query.sortBy),
+          language: req.locale ?? query.language,
+          genre: query.genre,
+          network,
+          country: query.country,
+          firstAirDateLte: query.firstAirDateLte
+            ? new Date(query.firstAirDateLte).toISOString().split('T')[0]
+            : undefined,
+          firstAirDateGte: query.firstAirDateGte
+            ? new Date(query.firstAirDateGte).toISOString().split('T')[0]
+            : undefined,
+          originalLanguage: query.language,
+          keywords,
+          excludeKeywords,
+          withRuntimeGte: query.withRuntimeGte,
+          withRuntimeLte: query.withRuntimeLte,
+          voteAverageGte: query.voteAverageGte,
+          voteAverageLte: query.voteAverageLte,
+          voteCountGte: query.voteCountGte,
+          voteCountLte: query.voteCountLte,
+          watchProviders: query.watchProviders,
+          watchRegion: query.watchRegion,
+          withStatus: query.status,
+          certification: query.certification,
+          certificationGte: query.certificationGte,
+          certificationLte: query.certificationLte,
+          certificationCountry: query.certificationCountry,
+        });
+    const providerResults =
+      query.search || query.sortBy
+        ? data.results
+        : shuffleRankedWindow(
+            rankTmdbTvResults(data.results, parsedShuffleSeed.value),
+            parsedShuffleSeed.value
+          );
+    const rankedResults = query.search
+      ? providerResults.filter((result) =>
+          matchesAllSearchTerms(
+            [result.name, result.original_name],
+            query.search ?? ''
+          )
+        )
+      : providerResults;
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -1888,6 +1932,7 @@ discoverRoutes.get('/music', async (req, res) => {
         .filter(Boolean)
     : [];
   const query = parsedQuery.value ?? '';
+  const providerSearchQuery = toBooleanAndQuery(query);
   const shuffleSeed = parsedShuffleSeed.value;
   const releaseDateGte = parsedReleaseDateGte.value;
   const releaseDateLte = parsedReleaseDateLte.value;
@@ -1896,12 +1941,41 @@ discoverRoutes.get('/music', async (req, res) => {
     if (query) {
       const providerWindow = getProviderWindow(page, itemsPerPage);
       const albumWindow = await musicBrainz.searchAlbum({
-        query,
+        query: providerSearchQuery,
         limit: providerWindow.limit,
         offset: providerWindow.offset,
       });
+      const filteredAlbums = albumWindow.filter((album) => {
+        const releaseDate = album['first-release-date'] ?? '';
+        const albumGenres = (album.tags ?? []).map((tag) =>
+          tag.name.toLocaleLowerCase()
+        );
+
+        return (
+          matchesAllSearchTerms(
+            [
+              album.title,
+              ...album['artist-credit'].flatMap((credit) => [
+                credit.name,
+                credit.artist.name,
+                credit.artist['sort-name'],
+              ]),
+              ...albumGenres,
+            ],
+            query
+          ) &&
+          (!releaseTypeFilter.length ||
+            releaseTypeFilter.includes(album['primary-type'])) &&
+          (!genreFilter.length ||
+            genreFilter.some((genre) =>
+              albumGenres.includes(genre.toLocaleLowerCase())
+            )) &&
+          (!releaseDateGte || releaseDate >= releaseDateGte) &&
+          (!releaseDateLte || releaseDate <= releaseDateLte)
+        );
+      });
       const albums = dedupeMusicAlbums(
-        albumWindow.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+        filteredAlbums.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
       );
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
@@ -2360,6 +2434,21 @@ discoverRoutes.get('/books', async (req, res) => {
     req.query.query,
     'Query'
   );
+  const parsedFirstPublishYear = parseOptionalDiscoverString(
+    req.query.firstPublishYear,
+    'First publish year',
+    16
+  );
+  const parsedLanguage = parseOptionalDiscoverString(
+    req.query.language,
+    'Language',
+    3
+  );
+  const parsedMinRating = parseOptionalDiscoverString(
+    req.query.minRating,
+    'Minimum rating',
+    3
+  );
   const parsedShuffleSeed = parseOptionalDiscoverString(
     req.query.shuffleSeed,
     'Shuffle seed',
@@ -2374,6 +2463,19 @@ discoverRoutes.get('/books', async (req, res) => {
       .status(400)
       .json({ status: 400, message: parsedSearchQuery.error });
   }
+  if ('error' in parsedFirstPublishYear) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedFirstPublishYear.error });
+  }
+  if ('error' in parsedLanguage) {
+    return res.status(400).json({ status: 400, message: parsedLanguage.error });
+  }
+  if ('error' in parsedMinRating) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedMinRating.error });
+  }
   if ('error' in parsedShuffleSeed) {
     return res
       .status(400)
@@ -2384,9 +2486,70 @@ discoverRoutes.get('/books', async (req, res) => {
   const hasSubjectFilter = !!subjectQuery;
   const subject = hasSubjectFilter ? subjectQuery : 'fiction';
   const searchQuery = parsedSearchQuery.value ?? '';
+  const firstPublishYear = parsedFirstPublishYear.value ?? '';
+  const language = parsedLanguage.value ?? '';
+  const parsedRatingNumber = parsedMinRating.value
+    ? Number(parsedMinRating.value)
+    : undefined;
+
+  if (
+    firstPublishYear &&
+    firstPublishYear !== 'before-1970' &&
+    !/^\d{4}$/.test(firstPublishYear)
+  ) {
+    return res.status(400).json({
+      status: 400,
+      message: 'First publish year must be a four-digit year or before-1970.',
+    });
+  }
+  if (language && !/^[a-z]{3}$/.test(language)) {
+    return res.status(400).json({
+      status: 400,
+      message: 'Language must be a three-letter ISO 639 code.',
+    });
+  }
+  if (
+    parsedRatingNumber !== undefined &&
+    (!Number.isFinite(parsedRatingNumber) ||
+      parsedRatingNumber < 1 ||
+      parsedRatingNumber > 5 ||
+      parsedRatingNumber * 2 !== Math.round(parsedRatingNumber * 2))
+  ) {
+    return res.status(400).json({
+      status: 400,
+      message: 'Minimum rating must be between 1 and 5 in half-star steps.',
+    });
+  }
   const shuffleSeed = parsedShuffleSeed.value;
   const hasSearchQuery = !!searchQuery;
-  const query = hasSearchQuery ? searchQuery : `subject:${subject}`;
+  const queryParts = [
+    hasSearchQuery
+      ? toFieldedBooleanAndQuery(searchQuery, ['title', 'author'])
+      : `subject:${subject}`,
+  ];
+
+  if (hasSearchQuery && hasSubjectFilter) {
+    queryParts.push(`subject:${subject}`);
+  }
+  if (language) {
+    queryParts.push(`language:${language}`);
+  }
+  if (firstPublishYear && firstPublishYear !== 'before-1970') {
+    queryParts.push(`first_publish_year:${firstPublishYear}`);
+  }
+
+  const query = queryParts.join(' AND ');
+  const needsLocalFiltering =
+    hasSearchQuery ||
+    parsedRatingNumber !== undefined ||
+    firstPublishYear === 'before-1970';
+  const providerWindow = needsLocalFiltering
+    ? getProviderWindow(page, itemsPerPage)
+    : undefined;
+  const providerPage = providerWindow
+    ? Math.floor(providerWindow.offset / providerWindow.limit) + 1
+    : page;
+  const providerLimit = providerWindow?.limit ?? itemsPerPage;
 
   try {
     const openLibrarySort =
@@ -2396,7 +2559,9 @@ discoverRoutes.get('/books', async (req, res) => {
           ? 'old'
           : sortByValue === 'random'
             ? 'random'
-            : sortByValue === 'rating'
+            : sortByValue === 'rating' ||
+                sortByValue === 'rating.desc' ||
+                sortByValue === 'rating.asc'
               ? 'rating'
               : sortByValue === 'editions'
                 ? 'editions'
@@ -2413,8 +2578,8 @@ discoverRoutes.get('/books', async (req, res) => {
             .map((defaultSubject) =>
               openLibrary.searchBooks({
                 query: `subject:${defaultSubject}`,
-                page,
-                limit: itemsPerPage,
+                page: providerPage,
+                limit: providerLimit,
               })
             ),
           BOOK_DISCOVERY_BLEND_TIMEOUT_MS
@@ -2431,8 +2596,11 @@ discoverRoutes.get('/books', async (req, res) => {
             });
           }
 
-          if (!responses.length) {
-            throw new Error('No book discovery subjects were available');
+          if (
+            !responses.length ||
+            !responses.some((response) => response.docs.length > 0)
+          ) {
+            throw new Error('No usable book discovery results were available');
           }
 
           const rejectedCount = results.filter(
@@ -2489,8 +2657,8 @@ discoverRoutes.get('/books', async (req, res) => {
           [
             openLibrary.searchBooks({
               query,
-              page,
-              limit: itemsPerPage,
+              page: providerPage,
+              limit: providerLimit,
               sort: openLibrarySort,
             }),
           ],
@@ -2513,9 +2681,35 @@ discoverRoutes.get('/books', async (req, res) => {
 
           return result.value;
         });
-    const dedupedDocs = dedupeBookDocs(books.docs);
+    const dedupedDocs = dedupeBookDocs(books.docs).filter((doc) => {
+      if (
+        hasSearchQuery &&
+        !matchesAllSearchTerms(
+          [doc.title, ...(doc.author_name ?? [])],
+          searchQuery
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        parsedRatingNumber !== undefined &&
+        (doc.ratings_average ?? 0) < parsedRatingNumber
+      ) {
+        return false;
+      }
+
+      if (
+        firstPublishYear === 'before-1970' &&
+        (doc.first_publish_year === undefined || doc.first_publish_year >= 1970)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
     const sortedDocs =
-      sortByValue === 'ranked' && !shouldBlendDefaultSubjects
+      sortByValue === 'ranked' && !hasSearchQuery && !shouldBlendDefaultSubjects
         ? shuffleRankedWindow(
             rankByQualityScore(
               [...dedupedDocs].sort(
@@ -2528,8 +2722,17 @@ discoverRoutes.get('/books', async (req, res) => {
             ),
             shuffleSeed
           )
-        : dedupedDocs;
-    const ids = sortedDocs.map((doc) => normalizeOpenLibraryWorkId(doc.key));
+        : sortByValue === 'rating.asc'
+          ? [...dedupedDocs].sort(
+              (a, b) =>
+                (a.ratings_average ?? Number.POSITIVE_INFINITY) -
+                (b.ratings_average ?? Number.POSITIVE_INFINITY)
+            )
+          : dedupedDocs;
+    const pagedDocs = providerWindow
+      ? sortedDocs.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+      : sortedDocs;
+    const ids = pagedDocs.map((doc) => normalizeOpenLibraryWorkId(doc.key));
     const mediaByOpenLibraryId = await findBookMediaByOpenLibraryIds(
       ids,
       req.user
@@ -2537,9 +2740,15 @@ discoverRoutes.get('/books', async (req, res) => {
 
     return res.status(200).json({
       page,
-      totalPages: Math.max(Math.ceil(books.numFound / itemsPerPage), 1),
-      totalResults: books.numFound,
-      results: sortedDocs.map((doc) => ({
+      totalPages: needsLocalFiltering
+        ? pagedDocs.length === itemsPerPage
+          ? page + 1
+          : page
+        : Math.max(Math.ceil(books.numFound / itemsPerPage), 1),
+      totalResults: needsLocalFiltering
+        ? getUnknownTotalResults(page, pagedDocs.length, itemsPerPage)
+        : books.numFound,
+      results: pagedDocs.map((doc) => ({
         ...mapOpenLibrarySearchDoc(
           doc,
           mediaByOpenLibraryId.get(normalizeOpenLibraryWorkId(doc.key))
@@ -2553,7 +2762,11 @@ discoverRoutes.get('/books', async (req, res) => {
       ...getErrorLogFields(e),
       requestQuery: getDiscoverLogQuery(req.query),
     });
-    return res.status(200).json(emptyDiscoverResponse(page));
+    return res.status(503).json({
+      status: 503,
+      message:
+        'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+    });
   }
 });
 

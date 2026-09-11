@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import TitleCard from '@app/components/TitleCard';
 import globalMessages from '@app/i18n/globalMessages';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
@@ -11,6 +12,7 @@ interface SliderProps {
   isEmpty?: boolean;
   emptyMessage?: React.ReactNode;
   placeholder?: React.ReactNode;
+  compact?: boolean;
 }
 
 enum Direction {
@@ -25,6 +27,7 @@ const Slider = ({
   isEmpty = false,
   emptyMessage,
   placeholder = <TitleCard.Placeholder />,
+  compact = false,
 }: SliderProps) => {
   const intl = useIntl();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -141,39 +144,43 @@ const Slider = ({
 
   return (
     <div className="relative" data-testid="media-slider">
-      <div className="absolute right-0 -mt-10 flex text-gray-400">
-        <button
-          className={`${
-            scrollPos.isStart ? 'text-gray-800' : 'hover:text-white'
-          }`}
+      <div className="absolute right-0 -mt-10 flex gap-1 text-gray-400">
+        <Button
+          buttonType="ghost"
+          buttonSize="sm"
+          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
           onClick={() => slide(Direction.LEFT)}
           disabled={scrollPos.isStart}
+          disabledReason={intl.formatMessage(globalMessages.noPreviousItems)}
           type="button"
           aria-label={intl.formatMessage(globalMessages.previous)}
         >
-          <ChevronLeftIcon className="h-6 w-6" />
-        </button>
-        <button
-          className={`${
-            scrollPos.isEnd ? 'text-gray-800' : 'hover:text-white'
-          }`}
+          <ChevronLeftIcon className="h-4 w-4" />
+        </Button>
+        <Button
+          buttonType="ghost"
+          buttonSize="sm"
+          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
           onClick={() => slide(Direction.RIGHT)}
           disabled={scrollPos.isEnd}
+          disabledReason={intl.formatMessage(globalMessages.noNextItems)}
           type="button"
           aria-label={intl.formatMessage(globalMessages.next)}
         >
-          <ChevronRightIcon className="h-6 w-6" />
-        </button>
+          <ChevronRightIcon className="h-4 w-4" />
+        </Button>
       </div>
       <div
-        className="hide-scrollbar relative -my-2 -ml-4 -mr-4 min-h-[17rem] overflow-y-auto overflow-x-scroll overscroll-x-contain whitespace-nowrap px-2 py-2"
+        className={`hide-scrollbar relative -my-2 -ml-4 -mr-4 overflow-y-auto overflow-x-scroll overscroll-x-contain whitespace-nowrap px-2 py-2 ${
+          compact ? 'min-h-[5.5rem]' : 'min-h-[13.5rem] md:min-h-[17rem]'
+        }`}
         ref={containerRef}
         onScroll={onScroll}
       >
         {items?.map((item, index) => (
           <div
             key={`${sliderKey}-${index}`}
-            className="slider-item inline-block px-2 align-top"
+            className={`slider-item inline-block px-2 align-top ${compact ? 'slider-item-compact' : ''}`}
           >
             {item}
           </div>
@@ -182,7 +189,7 @@ const Slider = ({
           [...Array(10)].map((_item, i) => (
             <div
               key={`placeholder-${i}`}
-              className="slider-item inline-block px-2 align-top"
+              className={`slider-item inline-block px-2 align-top ${compact ? 'slider-item-compact' : ''}`}
             >
               {placeholder}
             </div>

@@ -2,6 +2,7 @@ import Button from '@app/components/Common/Button';
 import Header from '@app/components/Common/Header';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
 import RequestItem from '@app/components/RequestList/RequestItem';
 import {
@@ -23,8 +24,6 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   Bars3BottomLeftIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CircleStackIcon,
   FunnelIcon,
 } from '@heroicons/react/24/solid';
@@ -181,8 +180,10 @@ const RequestList = () => {
     return <LoadingSpinner />;
   }
 
-  const hasNextPage = data.pageInfo.pages > pageIndex + 1;
-  const hasPrevPage = pageIndex > 0;
+  const changePage = (nextPage: number) => {
+    updateQueryParams('page', String(nextPage));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
     <>
@@ -411,79 +412,22 @@ const RequestList = () => {
           )}
         </div>
       )}
-      <div className="actions">
-        <nav
-          className="mb-3 flex flex-col items-center space-y-3 sm:flex-row sm:space-y-0"
-          aria-label="Pagination"
-        >
-          <div className="hidden lg:flex lg:flex-1">
-            <p className="text-sm">
-              {data.results.length > 0 &&
-                intl.formatMessage(globalMessages.showingresults, {
-                  from: pageIndex * currentPageSize + 1,
-                  to:
-                    data.results.length < currentPageSize
-                      ? pageIndex * currentPageSize + data.results.length
-                      : (pageIndex + 1) * currentPageSize,
-                  total: data.pageInfo.results,
-                  strong: (msg: React.ReactNode) => (
-                    <span key="strong" className="font-medium">
-                      {msg}
-                    </span>
-                  ),
-                })}
-            </p>
-          </div>
-          <div className="flex justify-center sm:flex-1 sm:justify-start lg:justify-center">
-            <span className="-mt-3 items-center truncate text-sm sm:mt-0">
-              {intl.formatMessage(globalMessages.resultsperpage, {
-                pageSize: (
-                  <select
-                    key="request-page-size"
-                    id="pageSize"
-                    name="pageSize"
-                    onChange={(e) => {
-                      setCurrentPageSize(Number(e.target.value));
-                      router
-                        .push({
-                          pathname: router.pathname,
-                          query: router.query.userId
-                            ? { userId: router.query.userId }
-                            : {},
-                        })
-                        .then(() => window.scrollTo(0, 0));
-                    }}
-                    value={currentPageSize}
-                    className="short inline"
-                  >
-                    <option value="5">5</option>
-                    <option value="10">10</option>
-                    <option value="25">25</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                  </select>
-                ),
-              })}
-            </span>
-          </div>
-          <div className="flex flex-auto justify-center space-x-2 sm:flex-1 sm:justify-end">
-            <Button
-              disabled={!hasPrevPage}
-              onClick={() => updateQueryParams('page', (page - 1).toString())}
-            >
-              <ChevronLeftIcon />
-              <span>{intl.formatMessage(globalMessages.previous)}</span>
-            </Button>
-            <Button
-              disabled={!hasNextPage}
-              onClick={() => updateQueryParams('page', (page + 1).toString())}
-            >
-              <span>{intl.formatMessage(globalMessages.next)}</span>
-              <ChevronRightIcon />
-            </Button>
-          </div>
-        </nav>
-      </div>
+      <PaginationFooter
+        page={page}
+        pageSize={currentPageSize}
+        pageSizeOptions={[5, 10, 25, 50, 100]}
+        totalPages={data.pageInfo.pages}
+        onPageChange={changePage}
+        onPageSizeChange={(size) => {
+          setCurrentPageSize(size);
+          void router
+            .push({
+              pathname: router.pathname,
+              query: router.query.userId ? { userId: router.query.userId } : {},
+            })
+            .then(() => window.scrollTo(0, 0));
+        }}
+      />
     </>
   );
 };

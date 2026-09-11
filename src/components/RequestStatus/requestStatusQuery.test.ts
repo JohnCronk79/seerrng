@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canLoadRequestStatus } from './requestStatusQuery';
+import {
+  canLoadRequestStatus,
+  resolveRequestStatusUserSelection,
+} from './requestStatusQuery';
+
+describe('resolveRequestStatusUserSelection', () => {
+  it('shows all users by default to request managers', () => {
+    assert.equal(
+      resolveRequestStatusUserSelection({ canViewOtherUsers: true }),
+      'all'
+    );
+  });
+
+  it('keeps an explicitly selected user', () => {
+    assert.equal(
+      resolveRequestStatusUserSelection({
+        canViewOtherUsers: true,
+        queryUserId: '42',
+      }),
+      42
+    );
+  });
+
+  it('limits users without cross-user permission to their own API scope', () => {
+    assert.equal(
+      resolveRequestStatusUserSelection({
+        canViewOtherUsers: false,
+        queryUserId: '42',
+      }),
+      null
+    );
+  });
+});
 
 describe('canLoadRequestStatus', () => {
   it('loads an unscoped query for the All Users selection', () => {

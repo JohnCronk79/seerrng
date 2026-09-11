@@ -22,6 +22,7 @@ interface RegionSelectorProps {
   watchProviders?: boolean;
   regionType?: 'discover' | 'streaming';
   onChange?: (fieldName: string, region: string) => void;
+  compact?: boolean;
 }
 
 const RegionSelector = ({
@@ -32,6 +33,7 @@ const RegionSelector = ({
   watchProviders = false,
   regionType = 'discover',
   onChange,
+  compact = false,
 }: RegionSelectorProps) => {
   const { currentSettings } = useSettings();
   const intl = useIntl();
@@ -94,8 +96,16 @@ const RegionSelector = ({
       <Listbox as="div" value={selectedRegion} onChange={handleRegionSelect}>
         {({ open }) => (
           <div className="relative">
-            <span className="inline-block w-full rounded-md shadow-sm">
-              <Listbox.Button className="focus:shadow-outline-blue relative flex w-full cursor-default items-center rounded-md border border-gray-500 bg-gray-700 py-2 pl-3 pr-10 text-left text-white transition duration-150 ease-in-out focus:border-blue-300 focus:outline-none sm:text-sm sm:leading-5">
+            <span
+              className={`inline-block w-full ${compact ? '' : 'rounded-md shadow-sm'}`}
+            >
+              <Listbox.Button
+                className={`focus:shadow-outline-blue relative flex w-full cursor-default items-center text-left text-white transition duration-150 ease-in-out focus:outline-none sm:text-sm sm:leading-5 ${
+                  compact
+                    ? 'h-[30px] rounded-none border-0 bg-transparent py-1 pl-2 pr-8'
+                    : 'rounded-md border border-gray-500 bg-gray-700 py-2 pl-3 pr-10 focus:border-blue-300'
+                }`}
+              >
                 {((selectedRegion &&
                   countries.includes(selectedRegion?.iso_3166_1)) ||
                   (isUserSetting &&
@@ -136,7 +146,7 @@ const RegionSelector = ({
             >
               <Listbox.Options
                 static
-                className="shadow-xs max-h-60 overflow-auto rounded-md py-1 text-base leading-6 focus:outline-none sm:text-sm sm:leading-5"
+                className={`shadow-xs overflow-auto rounded-md py-1 text-base leading-6 focus:outline-none sm:text-sm sm:leading-5 ${compact ? 'max-h-60 text-xs leading-4 sm:text-xs sm:leading-4' : 'max-h-60'}`}
               >
                 {isUserSetting && (
                   <Listbox.Option value={null}>
@@ -144,7 +154,7 @@ const RegionSelector = ({
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative flex cursor-default select-none items-center py-2 pl-8 pr-4`}
+                        } relative flex cursor-default select-none items-center pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span className="mr-2 text-base">
                           <span
@@ -185,7 +195,7 @@ const RegionSelector = ({
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative cursor-default select-none py-2 pl-8 pr-4`}
+                        } relative cursor-default select-none pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span
                           className={`${
@@ -213,7 +223,7 @@ const RegionSelector = ({
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative flex cursor-default select-none items-center py-2 pl-8 pr-4`}
+                        } relative flex cursor-default select-none items-center pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span className="mr-2 text-base">
                           <span

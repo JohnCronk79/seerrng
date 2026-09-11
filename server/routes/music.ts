@@ -8,6 +8,7 @@ import TmdbPersonMapper from '@server/api/themoviedb/personMapper';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
+import { MediaRequest } from '@server/entity/MediaRequest';
 import MetadataArtist from '@server/entity/MetadataArtist';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
@@ -16,7 +17,10 @@ import {
   normalizeMusicBrainzId,
   prepareMusicBrainzBatchIds,
 } from '@server/lib/externalIds';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
+import { getAvailableMusicServices } from '@server/lib/musicQualityAvailability';
 import logger from '@server/logger';
 import { mapMusicDetails } from '@server/models/Music';
 import { filterEntityResponse } from '@server/utils/entityResponse';
@@ -373,8 +377,35 @@ musicRoutes.get('/:id', async (req, res, next) => {
         : resolvedMetadataArtist;
 
     const mappedDetails = mapMusicDetails(albumDetails, media, onUserWatchlist);
+    const destinationRequests = media?.id
+      ? await getRepository(MediaRequest)
+          .createQueryBuilder('request')
+          .select(['request.id', 'request.serviceTargets'])
+          .innerJoin('request.media', 'requestMedia')
+          .where('requestMedia.id = :mediaId', { mediaId: media.id })
+          .getMany()
+      : [];
+    const availableServices = getAvailableMusicServices(
+      media,
+      destinationRequests,
+      getExternalRuntimeConfig().lidarr
+    );
     const finalTrackArtistMetadata =
       updatedArtistMetadata || resolvedTrackArtistMetadata;
+
+    await upsertMediaSearchMetadata(media?.id, {
+      title: mappedDetails.title,
+      releaseDate: mappedDetails.releaseDate,
+      genres: mappedDetails.tags?.releaseGroup.map((tag) => tag.tag).join(', '),
+      runtime: mappedDetails.tracks.length
+        ? `${mappedDetails.tracks.length} tracks`
+        : undefined,
+      artist: mappedDetails.artist.name,
+      albumType: mappedDetails.type,
+      format: 'Music Album',
+      provider: 'MusicBrainz',
+      externalIds: mappedDetails.mbId,
+    });
 
     return res.status(200).json(
       filterEntityResponse(
@@ -395,6 +426,7 @@ musicRoutes.get('/:id', async (req, res, next) => {
           tmdbPersonId: updatedMetadataArtist?.tmdbPersonId
             ? Number(updatedMetadataArtist.tmdbPersonId)
             : null,
+          availableServices,
           tracks: mappedDetails.tracks.map((track) => ({
             ...track,
             artists: track.artists.map((artist) => {

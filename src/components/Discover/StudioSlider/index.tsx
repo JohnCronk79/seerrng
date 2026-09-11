@@ -92,6 +92,7 @@ const StudioSlider = () => {
         </div>
       </div>
       <Slider
+        compact
         sliderKey="studios"
         isLoading={false}
         isEmpty={false}
@@ -111,7 +112,7 @@ const StudioSlider = () => {
 };
 
 const CompanyCardPlaceholder = () => (
-  <div className="h-32 w-56 animate-pulse rounded-xl bg-gray-700 sm:h-36 sm:w-72" />
+  <div className="h-16 w-28 animate-pulse rounded-xl bg-gray-700 sm:h-[72px] sm:w-36" />
 );
 
 export default StudioSlider;

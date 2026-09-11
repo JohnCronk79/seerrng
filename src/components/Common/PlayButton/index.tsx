@@ -3,6 +3,7 @@ import { getSafeHref } from '@app/utils/safeUrl';
 
 interface PlayButtonProps {
   links: PlayButtonLink[];
+  buttonSize?: 'default' | 'sm';
 }
 
 export interface PlayButtonLink {
@@ -11,7 +12,7 @@ export interface PlayButtonLink {
   svg: React.ReactNode;
 }
 
-const PlayButton = ({ links }: PlayButtonProps) => {
+const PlayButton = ({ links, buttonSize = 'default' }: PlayButtonProps) => {
   const safeLinks = links
     .map((link) => ({ ...link, url: getSafeHref(link.url) }))
     .filter((link): link is PlayButtonLink => Boolean(link.url));
@@ -24,6 +25,7 @@ const PlayButton = ({ links }: PlayButtonProps) => {
     <ButtonWithDropdown
       as="a"
       buttonType="ghost"
+      buttonSize={buttonSize}
       text={
         <>
           {safeLinks[0].svg}

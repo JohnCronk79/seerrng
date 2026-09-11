@@ -1,266 +1,357 @@
 import Button from '@app/components/Common/Button';
-import Header from '@app/components/Common/Header';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
 import IssueItem from '@app/components/IssueList/IssueItem';
+import useDebouncedState from '@app/hooks/useDebouncedState';
+import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import {
   getPositiveQueryParamNumber,
   useUpdateQueryParams,
 } from '@app/hooks/useUpdateQueryParams';
 import globalMessages from '@app/i18n/globalMessages';
+import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
 import {
-  isStoredOption,
-  isStoredPageSize,
-  readLocalStoredRecord,
-  writeLocalStoredRecord,
-} from '@app/utils/localStorage';
-import {
   BarsArrowDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  FunnelIcon,
-} from '@heroicons/react/24/solid';
+  BarsArrowUpIcon,
+  MagnifyingGlassIcon,
+  NoSymbolIcon,
+} from '@heroicons/react/24/outline';
 import type { IssueResultsResponse } from '@server/interfaces/api/issueInterfaces';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.IssueList', {
   issues: 'Issues',
-  sortAdded: 'Most Recent',
+  allIssues: 'All Issues',
+  taskFilters: 'Task Filters',
+  filters: 'Filters',
+  clearFilters: 'Clear Filters',
+  sortBy: 'Sort By',
+  sortDate: 'Date',
   sortModified: 'Last Modified',
-  showallissues: 'Show All Issues',
+  sortStatus: 'Status',
+  timePeriod: 'Time Period',
+  sevenDays: 'Last 7 Days',
+  fourteenDays: 'Last 14 Days',
+  thirtyDays: 'Last 30 Days',
+  sixMonths: 'Last 6 Months',
+  allTime: 'All Time',
+  search: 'Keyword Search',
+  searchIssues: 'Search Issues',
+  allMedia: 'All Media',
+  movies: 'Movies',
+  series: 'Series',
+  music: 'Music',
+  books: 'Books',
+  issueType: 'Issue Type',
+  any: 'Any',
+  audio: 'Audio',
+  video: 'Video',
+  subtitle: 'Subtitle',
+  other: 'Other',
+  showAllIssues: 'Show All Issues',
 });
 
-enum Filter {
-  ALL = 'all',
-  OPEN = 'open',
-  RESOLVED = 'resolved',
-}
+type Filter = 'all' | 'open' | 'resolved';
+type Sort = 'added' | 'modified' | 'status';
+type Direction = 'asc' | 'desc';
+type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
+type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book';
+type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 
-type Sort = 'added' | 'modified';
-const ISSUE_FILTER_OPTIONS = Object.values(Filter);
-const ISSUE_SORT_OPTIONS: readonly Sort[] = ['added', 'modified'];
+const controlClass = (active: boolean) =>
+  `inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`;
 
 const IssueList = () => {
   const intl = useIntl();
   const router = useRouter();
-  const [currentFilter, setCurrentFilter] = useState<Filter>(Filter.OPEN);
-  const [currentSort, setCurrentSort] = useState<Sort>('added');
-  const [currentPageSize, setCurrentPageSize] = useState<number>(10);
-
+  const [filter, setFilter] = useState<Filter>('open');
+  const [sort, setSort] = useState<Sort>('added');
+  const [direction, setDirection] = useState<Direction>('desc');
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const [issueTypeFilter, setIssueTypeFilter] =
+    useState<IssueTypeFilter>('all');
+  const [pageSize, setPageSize] = useState(10);
+  const [search, debouncedSearch, setSearch] = useDebouncedState('');
   const page = getPositiveQueryParamNumber(router.query.page, 1) ?? 1;
   const pageIndex = page - 1;
   const updateQueryParams = useUpdateQueryParams({ page: page.toString() });
-
-  const { data, error } = useSWR<IssueResultsResponse>(
-    `/api/v1/issue?take=${currentPageSize}&skip=${
-      pageIndex * currentPageSize
-    }&filter=${currentFilter}&sort=${currentSort}`
+  const params = new URLSearchParams({
+    take: String(pageSize),
+    skip: String(pageIndex * pageSize),
+    filter,
+    sort,
+    sortDirection: direction,
+    timeFrame,
+    mediaType: mediaFilter,
+    issueType: issueTypeFilter,
+  });
+  if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+  const { data, error, isValidating } = useSWR<IssueResultsResponse>(
+    `/api/v1/issue?${params.toString()}`
+  );
+  useSearchActivityReporter(
+    Boolean(search.trim()) &&
+      (search.trim() !== debouncedSearch.trim() || isValidating),
+    'issues-keyword'
   );
 
-  // Restore last set filter values on component mount
-  useEffect(() => {
-    const filterSettings = readLocalStoredRecord('il-filter-settings');
-    if (filterSettings) {
-      if (isStoredOption(filterSettings.currentFilter, ISSUE_FILTER_OPTIONS)) {
-        setCurrentFilter(filterSettings.currentFilter);
-      }
-      if (isStoredOption(filterSettings.currentSort, ISSUE_SORT_OPTIONS)) {
-        setCurrentSort(filterSettings.currentSort);
-      }
-      if (isStoredPageSize(filterSettings.currentPageSize)) {
-        setCurrentPageSize(filterSettings.currentPageSize);
-      }
-    }
+  if (!data && !error) return <LoadingSpinner />;
+  if (!data) return <ErrorPage statusCode={500} />;
 
-    // If filter value is provided in query, use that instead
-    if (Object.values(Filter).includes(router.query.filter as Filter)) {
-      setCurrentFilter(router.query.filter as Filter);
-    }
-  }, [router.query.filter]);
-
-  // Set filter values to local storage any time they are changed
-  useEffect(() => {
-    writeLocalStoredRecord('il-filter-settings', {
-      currentFilter,
-      currentSort,
-      currentPageSize,
-    });
-  }, [currentFilter, currentSort, currentPageSize]);
-
-  if (!data && !error) {
-    return <LoadingSpinner />;
-  }
-
-  if (!data) {
-    return <LoadingSpinner />;
-  }
-
-  const hasNextPage = data.pageInfo.pages > pageIndex + 1;
-  const hasPrevPage = pageIndex > 0;
+  const resetPage = () => page !== 1 && updateQueryParams('page', '1');
+  const changePage = (nextPage: number) => {
+    updateQueryParams('page', String(nextPage));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const updateSort = (nextSort: Sort) => {
+    setDirection(
+      sort === nextSort ? (direction === 'asc' ? 'desc' : 'asc') : 'desc'
+    );
+    setSort(nextSort);
+    resetPage();
+  };
+  const clearFilters = () => {
+    setFilter('all');
+    setTimeFrame('all');
+    setMediaFilter('all');
+    setIssueTypeFilter('all');
+    setSearch('');
+    resetPage();
+  };
+  const totalPages = Math.max(data.pageInfo.pages, 1);
 
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.issues)} />
-      <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
-        <Header>{intl.formatMessage(messages.issues)}</Header>
-        <div className="mt-2 flex flex-grow flex-col sm:flex-row lg:flex-grow-0">
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 lg:flex-grow-0">
-            <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100">
-              <FunnelIcon className="h-6 w-6" />
+      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+        <span className="text-overseerr">
+          {intl.formatMessage(messages.issues)}
+        </span>
+      </h2>
+      <section className="mb-3 mt-4">
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.taskFilters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
+            {intl.formatMessage(messages.clearFilters)}
+          </button>
+          {(
+            [
+              ['all', messages.allIssues, data.counts?.all ?? 0],
+              ['open', globalMessages.open, data.counts?.open ?? 0],
+              ['resolved', globalMessages.resolved, data.counts?.resolved ?? 0],
+            ] as const
+          ).map(([value, label, count]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={filter === value}
+              onClick={() => {
+                setFilter(value);
+                resetPage();
+              }}
+              className={controlClass(filter === value)}
+            >
+              {intl.formatMessage(label)}
+              <span className="rounded-full bg-black/25 px-1.5 text-[10px]">
+                {count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="mb-5">
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              ['all', messages.allMedia],
+              ['movie', messages.movies],
+              ['tv', messages.series],
+              ['music', messages.music],
+              ['book', messages.books],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={mediaFilter === value}
+              onClick={() => {
+                setMediaFilter(value);
+                resetPage();
+              }}
+              className={controlClass(mediaFilter === value)}
+            >
+              {intl.formatMessage(label)}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                issueTypeFilter !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              {intl.formatMessage(messages.issueType)}
             </span>
             <select
-              id="filter"
-              name="filter"
-              onChange={(e) => {
-                setCurrentFilter(e.target.value as Filter);
-                router.push({
-                  pathname: router.pathname,
-                  query: router.query.userId
-                    ? { userId: router.query.userId }
-                    : {},
-                });
+              value={issueTypeFilter}
+              onChange={(event) => {
+                setIssueTypeFilter(event.target.value as IssueTypeFilter);
+                resetPage();
               }}
-              value={currentFilter}
-              className="rounded-r-only"
+              className="w-24 border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              aria-label={intl.formatMessage(messages.issueType)}
+            >
+              {(
+                [
+                  ['all', messages.any],
+                  ['audio', messages.audio],
+                  ['video', messages.video],
+                  ['subtitle', messages.subtitle],
+                  ['other', messages.other],
+                ] as const
+              ).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {intl.formatMessage(label)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              {intl.formatMessage(messages.timePeriod)}
+            </span>
+            <select
+              value={timeFrame}
+              onChange={(event) => {
+                setTimeFrame(event.target.value as TimeFrame);
+                resetPage();
+              }}
+              className="border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
             >
               <option value="all">
-                {intl.formatMessage(globalMessages.all)}
+                {intl.formatMessage(messages.allTime)}
               </option>
-              <option value="open">
-                {intl.formatMessage(globalMessages.open)}
+              <option value="7d">
+                {intl.formatMessage(messages.sevenDays)}
               </option>
-              <option value="resolved">
-                {intl.formatMessage(globalMessages.resolved)}
+              <option value="14d">
+                {intl.formatMessage(messages.fourteenDays)}
+              </option>
+              <option value="30d">
+                {intl.formatMessage(messages.thirtyDays)}
+              </option>
+              <option value="6m">
+                {intl.formatMessage(messages.sixMonths)}
               </option>
             </select>
-          </div>
-          <div className="mb-2 flex flex-grow sm:mb-0 lg:flex-grow-0">
-            <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-gray-100 sm:text-sm">
-              <BarsArrowDownIcon className="h-6 w-6" />
-            </span>
-            <select
-              id="sort"
-              name="sort"
-              onChange={(e) => {
-                setCurrentSort(e.target.value as Sort);
-                router.push({
-                  pathname: router.pathname,
-                  query: router.query.userId
-                    ? { userId: router.query.userId }
-                    : {},
-                });
-              }}
-              value={currentSort}
-              className="rounded-r-only"
+          </label>
+          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                search.trim() ? 'bg-indigo-500/35 text-white' : ''
+              }`}
             >
-              <option value="added">
-                {intl.formatMessage(messages.sortAdded)}
-              </option>
-              <option value="modified">
-                {intl.formatMessage(messages.sortModified)}
-              </option>
-            </select>
-          </div>
+              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              {intl.formatMessage(messages.search)}
+            </span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                resetPage();
+              }}
+              placeholder={intl.formatMessage(messages.searchIssues)}
+              aria-label={intl.formatMessage(messages.searchIssues)}
+              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+            />
+          </label>
         </div>
-      </div>
-      {data.results.map((issue) => {
-        return (
-          <div className="py-2" key={`issue-item-${issue.id}`}>
-            <IssueItem issue={issue} />
-          </div>
-        );
-      })}
+      </section>
+      <section className="mb-5">
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.sortBy)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              ['added', messages.sortDate],
+              ['modified', messages.sortModified],
+              ['status', messages.sortStatus],
+            ] as const
+          ).map(([value, label]) => {
+            const active = sort === value;
+            const Icon =
+              active && direction === 'asc'
+                ? BarsArrowUpIcon
+                : BarsArrowDownIcon;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => updateSort(value)}
+                className={controlClass(active)}
+              >
+                {intl.formatMessage(label)}
+                <Icon className="h-4 w-4" />
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      {data.results.map((issue) => (
+        <div className="py-2" key={`issue-item-${issue.id}`}>
+          <IssueItem issue={issue} />
+        </div>
+      ))}
       {data.results.length === 0 && (
-        <div className="flex w-full flex-col items-center justify-center py-24 text-white">
-          <span className="text-2xl text-gray-400">
+        <div className="refreshed-card-surface flex min-h-16 w-full flex-col items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-white">
+          <span className="text-sm text-gray-400">
             {intl.formatMessage(globalMessages.noresults)}
           </span>
-          {currentFilter !== Filter.ALL && (
-            <div className="mt-4">
-              <Button
-                buttonType="primary"
-                onClick={() => setCurrentFilter(Filter.ALL)}
-              >
-                {intl.formatMessage(messages.showallissues)}
-              </Button>
-            </div>
+          {filter !== 'all' && (
+            <Button
+              buttonType="primary"
+              className="mt-3"
+              onClick={() => setFilter('all')}
+            >
+              {intl.formatMessage(messages.showAllIssues)}
+            </Button>
           )}
         </div>
       )}
-      <div className="actions">
-        <nav
-          className="mb-3 flex flex-col items-center space-y-3 sm:flex-row sm:space-y-0"
-          aria-label="Pagination"
-        >
-          <div className="hidden lg:flex lg:flex-1">
-            <p className="text-sm">
-              {data.results.length > 0 &&
-                intl.formatMessage(globalMessages.showingresults, {
-                  from: pageIndex * currentPageSize + 1,
-                  to:
-                    data.results.length < currentPageSize
-                      ? pageIndex * currentPageSize + data.results.length
-                      : (pageIndex + 1) * currentPageSize,
-                  total: data.pageInfo.results,
-                  strong: (msg: React.ReactNode) => (
-                    <span className="font-medium">{msg}</span>
-                  ),
-                })}
-            </p>
-          </div>
-          <div className="flex justify-center sm:flex-1 sm:justify-start lg:justify-center">
-            <span className="-mt-3 items-center truncate text-sm sm:mt-0">
-              {intl.formatMessage(globalMessages.resultsperpage, {
-                pageSize: (
-                  <select
-                    id="pageSize"
-                    name="pageSize"
-                    onChange={(e) => {
-                      setCurrentPageSize(Number(e.target.value));
-                      router
-                        .push({
-                          pathname: router.pathname,
-                          query: router.query.userId
-                            ? { userId: router.query.userId }
-                            : {},
-                        })
-                        .then(() => window.scrollTo(0, 0));
-                    }}
-                    value={currentPageSize}
-                    className="short inline"
-                  >
-                    <option value="5">5</option>
-                    <option value="10">10</option>
-                    <option value="25">25</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                  </select>
-                ),
-              })}
-            </span>
-          </div>
-          <div className="flex flex-auto justify-center space-x-2 sm:flex-1 sm:justify-end">
-            <Button
-              disabled={!hasPrevPage}
-              onClick={() => updateQueryParams('page', (page - 1).toString())}
-            >
-              <ChevronLeftIcon />
-              <span>{intl.formatMessage(globalMessages.previous)}</span>
-            </Button>
-            <Button
-              disabled={!hasNextPage}
-              onClick={() => updateQueryParams('page', (page + 1).toString())}
-            >
-              <span>{intl.formatMessage(globalMessages.next)}</span>
-              <ChevronRightIcon />
-            </Button>
-          </div>
-        </nav>
-      </div>
+      <PaginationFooter
+        page={page}
+        pageSize={pageSize}
+        totalPages={totalPages}
+        onPageChange={changePage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          resetPage();
+        }}
+      />
     </>
   );
 };

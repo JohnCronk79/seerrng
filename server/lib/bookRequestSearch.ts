@@ -173,11 +173,15 @@ class BookRequestSearchManager {
       await this.setState(operation, 'importing');
       return;
     }
-    if (
-      currentQueue.length > 0 ||
-      currentHistory.some((item) => isGrabbedHistory(item.eventType))
-    ) {
+    if (currentQueue.length > 0) {
       await this.setState(operation, 'grabbed');
+      return;
+    }
+    if (currentHistory.some((item) => isGrabbedHistory(item.eventType))) {
+      // The release was handed to the downloader and has since disappeared
+      // from Bookshelf's live queue. It is now waiting on import or manual
+      // matching, not still downloading.
+      await this.setState(operation, 'importing');
       return;
     }
 

@@ -34,6 +34,8 @@ describe('request status routes behind the OpenAPI validator', () => {
           active: 0,
           attention: 0,
           completed: 0,
+          unavailable: 0,
+          failed: 0,
         },
         olderCount: 0,
       })
@@ -73,4 +75,23 @@ describe('request status routes behind the OpenAPI validator', () => {
       assert.deepStrictEqual(response.body.results, []);
     });
   }
+
+  it('admits the Request Status search, paging, sort, and filter controls', async () => {
+    const response = await request(createValidatedApp())
+      .get('/api/v1/request/status')
+      .query({
+        take: 100,
+        skip: 0,
+        requestedBy: 1,
+        bookFormat: 'ebook',
+        timeFrame: '30d',
+        sort: 'modified',
+        sortDirection: 'asc',
+        mediaType: 'book',
+        filter: 'completed',
+        search: 'picard',
+      });
+
+    assert.strictEqual(response.status, 200);
+  });
 });

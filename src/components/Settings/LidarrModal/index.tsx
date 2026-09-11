@@ -68,7 +68,7 @@ const messages = defineMessages('components.Settings.LidarrModal', {
   enableSearchHelp:
     'Automatically trigger a search in Lidarr when a request is approved.',
   tags: 'Tags',
-  notagoptions: 'No tags.',
+  notagoptions: 'No tags',
   selecttags: 'Select tags',
   metadataprofile: 'Metadata Profile',
   selectMetadataProfile: 'Select metadata profile',

@@ -4,7 +4,6 @@ import TitleCard from '@app/components/TitleCard';
 import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
 import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import useCardTextVisibility from '@app/hooks/useCardTextVisibility';
-import { Permission, useUser } from '@app/hooks/useUser';
 import useVerticalScroll from '@app/hooks/useVerticalScroll';
 import globalMessages from '@app/i18n/globalMessages';
 import {
@@ -60,26 +59,16 @@ const ListView = ({
   emptyClassName,
 }: ListViewProps) => {
   const intl = useIntl();
-  const { hasPermission } = useUser();
   const { visibility } = useCardTextVisibility();
 
-  const blocklistVisibility = hasPermission(
-    [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
-    { type: 'or' }
-  );
   const visibleItems = useMemo(
     () =>
-      items?.filter((title) => {
-        if (blocklistVisibility) {
-          return true;
-        }
-
-        return (
+      items?.filter(
+        (title) =>
           (title as TvResult | MovieResult | AlbumResult | BookResult).mediaInfo
             ?.status !== MediaStatus.BLOCKLISTED
-        );
-      }),
-    [blocklistVisibility, items]
+      ),
+    [items]
   );
   const plexCards = useMemo(
     () =>

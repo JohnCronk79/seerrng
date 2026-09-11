@@ -30,6 +30,13 @@ import {
   runWithConfigurationAdmission,
   runWithConfigurationSnapshot,
 } from '@server/lib/configurationAdmission';
+import {
+  InvalidLocalAvatarError,
+  LOCAL_AVATAR_CONTENT_TYPES,
+  LOCAL_AVATAR_MAX_BYTES,
+  removeLocalAvatarFiles,
+  storeLocalAvatar,
+} from '@server/lib/localAvatar';
 import { hydrateMediaRequestRelations } from '@server/lib/mediaRequestHydration';
 import {
   MediaServerUserAuthorityChangedError,
@@ -64,7 +71,10 @@ import {
   parsePageParams,
   parsePositiveInt,
 } from '@server/utils/pagination';
-import { isOwnProfileOrAdmin } from '@server/utils/profileMiddleware';
+import {
+  isOwnProfile,
+  isOwnProfileOrAdmin,
+} from '@server/utils/profileMiddleware';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
   getRateLimitKey,
@@ -77,7 +87,7 @@ import {
   parseOptionalBoundedString,
   parseOptionalNonNegativeInteger,
 } from '@server/utils/validation';
-import { Router } from 'express';
+import { Router, raw } from 'express';
 import rateLimit from 'express-rate-limit';
 import gravatarUrl from 'gravatar-url';
 import { findIndex, sortBy } from 'lodash';
@@ -134,6 +144,14 @@ const pushSubscriptionMutationLock = new AsyncLock();
 const pushSubscriptionRegistrationRateLimit = rateLimit({
   windowMs: 60 * 1000,
   limit: PUSH_SUBSCRIPTION_REGISTRATION_LIMIT,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) =>
+    req.user?.id ? `user:${req.user.id}` : getRateLimitKey(req),
+});
+const localAvatarUploadRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) =>
@@ -1214,6 +1232,111 @@ router.delete<{ id: string; endpoint: string }>(
   }
 );
 
+router.put<{ id: string }>(
+  '/:id/avatar',
+  isOwnProfile(),
+  localAvatarUploadRateLimit,
+  raw({ type: [...LOCAL_AVATAR_CONTENT_TYPES], limit: LOCAL_AVATAR_MAX_BYTES }),
+  async (req, res, next) => {
+    try {
+      const userId = parseUserRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      const contentType = req.header('content-type')?.split(';', 1)[0];
+      if (
+        !contentType ||
+        !LOCAL_AVATAR_CONTENT_TYPES.includes(
+          contentType as (typeof LOCAL_AVATAR_CONTENT_TYPES)[number]
+        )
+      ) {
+        return next({
+          status: 415,
+          message: 'Profile pictures must be JPEG, PNG, or WebP images.',
+        });
+      }
+
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        return next({
+          status: 400,
+          message: 'Select a profile picture to upload.',
+        });
+      }
+
+      const userRepository = getRepository(User);
+      const outcome = await runUserSecurityMutation(userId, async () => {
+        const activeUser = await userRepository.findOneBy({ id: userId });
+        if (!activeUser) {
+          return { type: 'missing' as const };
+        }
+        if (activeUser.userType !== UserType.LOCAL) {
+          return { type: 'provider-managed' as const };
+        }
+
+        const storedAvatar = await storeLocalAvatar(userId, req.body);
+        const result = await userRepository.update(
+          { id: userId, userType: UserType.LOCAL },
+          {
+            avatar: storedAvatar.url,
+            avatarETag: storedAvatar.version,
+            avatarVersion: storedAvatar.version,
+          }
+        );
+        if (result.affected !== 1) {
+          return { type: 'provider-managed' as const };
+        }
+
+        try {
+          await removeLocalAvatarFiles(userId, storedAvatar.version);
+        } catch (error) {
+          logger.warn('Unable to remove an older local profile picture', {
+            label: 'API',
+            userId,
+            errorMessage:
+              error instanceof Error ? error.message : 'Unknown avatar error',
+          });
+        }
+        return {
+          type: 'updated' as const,
+          user: await userRepository.findOneByOrFail({ id: userId }),
+        };
+      });
+
+      if (outcome.type === 'missing') {
+        return next({ status: 404, message: 'User not found.' });
+      }
+      if (outcome.type === 'provider-managed') {
+        return next({
+          status: 409,
+          message:
+            'This profile picture is managed by the linked media server.',
+        });
+      }
+
+      return res.status(200).json(outcome.user.filter(true));
+    } catch (error) {
+      if (error instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      if (error instanceof InvalidLocalAvatarError) {
+        return next({ status: 400, message: error.message });
+      }
+
+      logger.error('Something went wrong while uploading a profile picture', {
+        label: 'API',
+        userId: req.params.id,
+        errorMessage:
+          error instanceof Error ? error.message : 'Unknown avatar error',
+      });
+      return next({
+        status: 500,
+        message: 'Something went wrong while uploading the profile picture.',
+      });
+    }
+  }
+);
+
 router.get<{ id: string }>('/:id', async (req, res, next) => {
   try {
     const userRepository = getRepository(User);
@@ -1644,6 +1767,16 @@ router.delete<{ id: string }>(
         return next({
           status: 405,
           message: 'You cannot delete users with administrative privileges.',
+        });
+      }
+      try {
+        await removeLocalAvatarFiles(outcome.user.id);
+      } catch (error) {
+        logger.warn('Unable to remove local profile picture files', {
+          label: 'API',
+          userId: outcome.user.id,
+          errorMessage:
+            error instanceof Error ? error.message : 'Unknown avatar error',
         });
       }
       return res.status(200).json(outcome.user.filter());

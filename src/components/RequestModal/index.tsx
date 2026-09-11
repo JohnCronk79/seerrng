@@ -1,14 +1,10 @@
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
-import globalMessages from '@app/i18n/globalMessages';
-import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
 import type { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
-import { useIntl } from 'react-intl';
 
 const BookRequestModal = dynamic(
   () => import('@app/components/RequestModal/BookRequestModal'),
@@ -47,11 +43,6 @@ interface RequestModalProps {
   onUpdating?: (isUpdating: boolean) => void;
 }
 
-const messages = defineMessages('components.RequestModal', {
-  requestQuality: 'Request Quality',
-  standard: 'Standard',
-});
-
 const RequestModal = ({
   type,
   show,
@@ -62,12 +53,11 @@ const RequestModal = ({
   initialIs4k,
   is4k,
   editRequest,
-  show4kSelector = false,
+  show4kSelector = true,
   onComplete,
   onUpdating,
   onCancel,
 }: RequestModalProps) => {
-  const intl = useIntl();
   const settings = useSettings();
   const { hasPermission } = useUser();
   const canRequestStandard =
@@ -90,9 +80,6 @@ const RequestModal = ({
       ],
       { type: 'or' }
     );
-  const [selectedIs4k, setSelectedIs4k] = useState(
-    is4k ?? initialIs4k ?? (!canRequestStandard && canRequest4k)
-  );
   const canSelect4k =
     show4kSelector &&
     !editRequest &&
@@ -100,30 +87,8 @@ const RequestModal = ({
     ((type === 'movie' && settings.currentSettings.movie4kEnabled) ||
       (type === 'tv' && settings.currentSettings.series4kEnabled)) &&
     canRequest4k;
-  const modalIs4k = is4k ?? selectedIs4k;
-  const requestQualityControl = canSelect4k ? (
-    <div className="mb-4 mt-4">
-      <label htmlFor="request-quality">
-        {intl.formatMessage(messages.requestQuality)}
-      </label>
-      <select
-        id="request-quality"
-        name="request-quality"
-        value={modalIs4k ? '4k' : 'standard'}
-        onChange={(event) => setSelectedIs4k(event.target.value === '4k')}
-        className="border-gray-700 bg-gray-800"
-      >
-        {canRequestStandard && (
-          <option value="standard">
-            {intl.formatMessage(messages.standard)}
-          </option>
-        )}
-        <option value="4k">
-          {intl.formatMessage(globalMessages.request4k)}
-        </option>
-      </select>
-    </div>
-  ) : null;
+  const modalIs4k =
+    is4k ?? initialIs4k ?? (!canRequestStandard && canRequest4k);
 
   return (
     <Transition
@@ -161,7 +126,7 @@ const RequestModal = ({
           onUpdating={onUpdating}
           is4k={modalIs4k}
           editRequest={editRequest}
-          requestQualityControl={requestQualityControl}
+          allow4kServerSelection={canSelect4k}
         />
       ) : type === 'tv' && tmdbId ? (
         <TvRequestModal
@@ -171,7 +136,7 @@ const RequestModal = ({
           onUpdating={onUpdating}
           is4k={modalIs4k}
           editRequest={editRequest}
-          requestQualityControl={requestQualityControl}
+          allow4kServerSelection={canSelect4k}
         />
       ) : tmdbId ? (
         <CollectionRequestModal

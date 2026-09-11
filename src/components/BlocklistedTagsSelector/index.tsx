@@ -37,7 +37,7 @@ const messages = defineMessages('components.Settings', {
   no: 'No',
   searchKeywords: 'Search keywords…',
   starttyping: 'Starting typing to search.',
-  nooptions: 'No results.',
+  nooptions: 'No results',
   blocklistedTagImportTitle: 'Import Blocklisted Tag Configuration',
   blocklistedTagImportInstructions: 'Paste blocklist tag configuration below.',
   valueRequired: 'You must provide a value.',

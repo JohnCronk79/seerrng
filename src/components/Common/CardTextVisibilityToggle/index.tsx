@@ -15,10 +15,12 @@ interface CardTextVisibilityToggleProps {
   mediaType:
     | keyof UserSettingsCardTextResponse
     | (keyof UserSettingsCardTextResponse)[];
+  className?: string;
 }
 
 const CardTextVisibilityToggle = ({
   mediaType,
+  className = '',
 }: CardTextVisibilityToggleProps) => {
   const intl = useIntl();
   const { visibility, setVisibility } = useCardTextVisibility();
@@ -35,7 +37,7 @@ const CardTextVisibilityToggle = ({
       <Button
         buttonType="ghost"
         buttonSize="sm"
-        className="h-8 w-8 p-0"
+        className={`h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white ${className}`}
         aria-label={label}
         onClick={(e) => {
           e.preventDefault();

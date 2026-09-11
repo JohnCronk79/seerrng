@@ -44,6 +44,52 @@ describe('DownloadTracker Bookshelf queues', () => {
   });
 });
 
+describe('DownloadTracker Lidarr history', () => {
+  it('finds the newest request-scoped album event after a queue item disappears', () => {
+    const tracker = new DownloadTracker();
+    Object.assign(tracker as unknown as Record<string, unknown>, {
+      lidarrHistory: {
+        2: [
+          {
+            id: 3,
+            albumId: 11,
+            eventType: 'downloadFailed',
+            date: '2026-09-10T09:44:00Z',
+            downloadId: 'failed-download',
+          },
+          {
+            id: 2,
+            albumId: 11,
+            eventType: 'grabbed',
+            date: '2026-09-10T09:43:00Z',
+            downloadId: 'grabbed-download',
+          },
+          {
+            id: 1,
+            albumId: 11,
+            eventType: 'grabbed',
+            date: '2026-09-10T08:00:00Z',
+            downloadId: 'old-download',
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(
+      tracker.getMusicHistoryEvidence(2, 11, new Date('2026-09-10T09:42:00Z')),
+      {
+        stage: 'failed',
+        observedAt: new Date('2026-09-10T09:44:00Z'),
+        downloadId: 'failed-download',
+      }
+    );
+    assert.equal(
+      tracker.getMusicHistoryEvidence(2, 11, new Date('2026-09-10T09:45:00Z')),
+      undefined
+    );
+  });
+});
+
 describe('DownloadTracker credential snapshots', () => {
   const server = {
     id: 7,

@@ -515,5 +515,14 @@ export const startJobs = (): void => {
     reconcileActiveRequests()
   );
 
+  // Discover the existing music catalogue immediately after startup instead
+  // of leaving ownership badges stale until the overnight Lidarr scan.
+  if (
+    jobs['lidarr-scan'].enabled !== false &&
+    getSettings().lidarr.some((server) => server.syncEnabled)
+  ) {
+    void runTrackedJob('Lidarr Scan', () => lidarrScanner.run());
+  }
+
   logger.info('Scheduled jobs loaded', { label: 'Jobs' });
 };

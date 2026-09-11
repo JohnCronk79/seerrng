@@ -269,6 +269,7 @@ export interface LidarrAlbum {
   profileId: number;
   duration: number;
   albumType: string;
+  lastSearchTime?: string;
   statistics: {
     trackFileCount: number;
     trackCount: number;

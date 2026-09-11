@@ -18,7 +18,7 @@ const messages = defineMessages('components.Association', {
   listeneroverlap: 'Listener overlap',
   relatedbooks: 'Related books',
   books: 'Same author',
-  empty: 'No associations found yet.',
+  empty: 'No associations found yet',
 });
 
 interface Section {

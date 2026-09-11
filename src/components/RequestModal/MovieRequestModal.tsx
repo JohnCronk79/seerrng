@@ -1,26 +1,35 @@
-import Alert from '@app/components/Common/Alert';
+import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
+import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
+import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
+import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
+import {
+  AdjustmentsHorizontalIcon,
+  ArrowDownTrayIcon,
+  ChevronDownIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
-import { Permission } from '@server/lib/permissions';
+import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { MovieDetails } from '@server/models/Movie';
 import axios from 'axios';
-import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
 const messages = defineMessages('components.RequestModal', {
-  requestadmin: 'This request will be approved automatically.',
   requestSuccess: '<strong>{title}</strong> requested successfully!',
   requestCancel: 'Request for <strong>{title}</strong> canceled.',
   requestmovietitle: 'Request Movie',
@@ -36,6 +45,16 @@ const messages = defineMessages('components.RequestModal', {
   requestApproved: 'Request for <strong>{title}</strong> approved!',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
+  mediaAndFormat: 'Media & Format',
+  releaseDate: 'Release Date',
+  runtime: 'Runtime',
+  genres: 'Genres',
+  studio: 'Studio',
+  status: 'Status',
+  service: 'Service',
+  readyToRequest: 'Ready to Request',
+  notAvailable: 'Not available',
+  advancedOptions: 'Advanced Options',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -45,7 +64,7 @@ interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus, is4k?: boolean) => void;
   onUpdating?: (isUpdating: boolean) => void;
-  requestQualityControl?: ReactNode;
+  allow4kServerSelection?: boolean;
 }
 
 const MovieRequestModal = ({
@@ -55,7 +74,7 @@ const MovieRequestModal = ({
   onUpdating,
   editRequest,
   is4k = false,
-  requestQualityControl,
+  allow4kServerSelection = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [requestOverrides, setRequestOverrides] =
@@ -68,10 +87,29 @@ const MovieRequestModal = ({
   const { user, hasPermission } = useUser();
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
-      (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
+      (!requestOverrides?.user?.id ||
+        hasPermission([Permission.MANAGE_REQUESTS, Permission.MANAGE_USERS], {
+          type: 'or',
+        }))
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
       : null
   );
+  const { data: radarrServers } = useSWR<ServiceCommonServer[]>(
+    '/api/v1/service/radarr',
+    {
+      refreshInterval: 0,
+      refreshWhenHidden: false,
+      revalidateOnFocus: false,
+    }
+  );
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  const [requestedByPortal, setRequestedByPortal] =
+    useState<HTMLDivElement | null>(null);
+  const effectiveIs4k = requestOverrides?.is4k ?? is4k;
+  const selectedDestinationAvailable =
+    !editRequest &&
+    data?.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] ===
+      MediaStatus.AVAILABLE;
 
   useEffect(() => {
     if (onUpdating) {
@@ -80,6 +118,10 @@ const MovieRequestModal = ({
   }, [isUpdating, onUpdating]);
 
   const sendRequest = useCallback(async () => {
+    if (selectedDestinationAvailable) {
+      return;
+    }
+
     setIsUpdating(true);
 
     try {
@@ -96,7 +138,7 @@ const MovieRequestModal = ({
       const response = await axios.post<MediaRequest>('/api/v1/request', {
         mediaId: data?.id,
         mediaType: 'movie',
-        is4k,
+        is4k: effectiveIs4k,
         ignoreQuota: requestOverrides?.ignoreQuota,
         ...overrideParams,
       });
@@ -105,7 +147,10 @@ const MovieRequestModal = ({
 
       if (response.data) {
         if (onComplete) {
-          onComplete(response.data.media[is4k ? 'status4k' : 'status'], is4k);
+          onComplete(
+            response.data.media[effectiveIs4k ? 'status4k' : 'status'],
+            effectiveIs4k
+          );
         }
         addToast(
           <span>
@@ -129,7 +174,8 @@ const MovieRequestModal = ({
     requestOverrides,
     data?.id,
     data?.title,
-    is4k,
+    effectiveIs4k,
+    selectedDestinationAvailable,
     onComplete,
     addToast,
     intl,
@@ -297,14 +343,37 @@ const MovieRequestModal = ({
     );
   }
 
-  const hasAutoApprove = hasPermission(
-    [
-      Permission.MANAGE_REQUESTS,
-      is4k ? Permission.AUTO_APPROVE_4K : Permission.AUTO_APPROVE,
-      is4k ? Permission.AUTO_APPROVE_4K_MOVIE : Permission.AUTO_APPROVE_MOVIE,
-    ],
+  const hasAutoApprove = hasAutoApprovePermission(
+    requestOverrides?.user?.permissions ?? user?.permissions ?? 0,
+    'movie',
+    effectiveIs4k
+  );
+  const canUseAdvancedOptions = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
+  const selectedService = radarrServers?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = radarrServers?.find(
+    (server) => server.isDefault && server.is4k === effectiveIs4k
+  );
+  const notAvailable = intl.formatMessage(messages.notAvailable);
+  const releaseDate = data?.releaseDate
+    ? intl.formatDate(new Date(`${data.releaseDate}T00:00:00`), {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : notAvailable;
+  const releaseYear = data?.releaseDate?.match(/^\d{4}/)?.[0];
+  const featuredCrew = sortCrewPriority(data?.credits?.crew ?? []).slice(0, 2);
+  const studio = data?.productionCompanies?.[0]?.name ?? notAvailable;
+  const requestButtonLabel = isUpdating
+    ? intl.formatMessage(globalMessages.requesting)
+    : intl.formatMessage(
+        effectiveIs4k ? globalMessages.request4k : globalMessages.request
+      );
 
   return (
     <Modal
@@ -312,33 +381,22 @@ const MovieRequestModal = ({
       backgroundClickable
       onCancel={onCancel}
       onOk={sendRequest}
+      hideActions
+      alignTop
       okDisabled={
         isUpdating ||
+        selectedDestinationAvailable ||
         (quota?.movie.restricted && !requestOverrides?.ignoreQuota)
       }
       title={intl.formatMessage(
-        is4k ? messages.requestmovie4ktitle : messages.requestmovietitle
+        effectiveIs4k
+          ? messages.requestmovie4ktitle
+          : messages.requestmovietitle
       )}
-      subTitle={data?.title}
-      okText={
-        isUpdating
-          ? intl.formatMessage(globalMessages.requesting)
-          : intl.formatMessage(
-              is4k ? globalMessages.request4k : globalMessages.request
-            )
-      }
+      okText={requestButtonLabel}
       okButtonType={'primary'}
-      backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+      dialogClass="sm:max-w-5xl"
     >
-      {hasAutoApprove && !quota?.movie.restricted && (
-        <div className="mt-6">
-          <Alert
-            title={intl.formatMessage(messages.requestadmin)}
-            type="info"
-          />
-        </div>
-      )}
-      {requestQualityControl}
       {(quota?.movie.limit ?? 0) > 0 && (
         <QuotaDisplay
           mediaType="movie"
@@ -350,17 +408,187 @@ const MovieRequestModal = ({
           }
         />
       )}
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="movie"
-          is4k={is4k}
-          quota={quota}
-          onChange={(overrides) => {
-            setRequestOverrides(overrides);
-          }}
-        />
-      )}
+      <RequestMediaCard
+        artwork={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            : getTmdbPosterImageUrl(data?.posterPath, 'original')
+        }
+        artworkType="tmdb"
+      >
+        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+            <CachedImage
+              type="tmdb"
+              src={
+                getTmdbPosterImageUrl(data?.posterPath) ||
+                '/images/seerr_poster_not_found.png'
+              }
+              alt=""
+              fill
+              sizes="(min-width: 640px) 80px, 64px"
+              className="object-cover"
+            />
+          </div>
+
+          <div className="flex min-w-0 flex-col">
+            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+              {data?.title}
+              {releaseYear ? ` (${releaseYear})` : ''}
+            </h3>
+
+            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
+              <div className="min-w-0 card:col-span-2 card:pr-3">
+                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                    {intl.formatMessage(messages.mediaAndFormat)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                    Movie · {effectiveIs4k ? '4K' : 'HD'}
+                  </dd>
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                    {intl.formatMessage(messages.releaseDate)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                    {releaseDate}
+                  </dd>
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                    {intl.formatMessage(messages.runtime)}:
+                  </dt>
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                    {data?.runtime
+                      ? `${intl.formatNumber(data.runtime)} minutes`
+                      : notAvailable}
+                  </dd>
+
+                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+
+                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                    {featuredCrew.map((person) => (
+                      <div
+                        className="contents"
+                        key={`${person.job}-${person.id}`}
+                      >
+                        <dt className="font-medium text-gray-100">
+                          {person.job}:
+                        </dt>
+                        <dd className="m-0 truncate">{person.name}</dd>
+                      </div>
+                    ))}
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.studio)}:
+                    </dt>
+                    <dd className="m-0 truncate">{studio}</dd>
+                  </div>
+
+                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                    {intl.formatMessage(messages.genres)}:
+                  </dt>
+                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                    {data?.genres?.length
+                      ? data.genres
+                          .slice(0, 3)
+                          .map((genre) => genre.name)
+                          .join(', ')
+                      : notAvailable}
+                  </dd>
+                </dl>
+              </div>
+
+              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.status)}:
+                </dt>
+                <dd className="m-0 truncate">
+                  {intl.formatMessage(
+                    selectedDestinationAvailable
+                      ? globalMessages.available
+                      : messages.readyToRequest
+                  )}
+                </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.service)}:
+                </dt>
+                <dd className="m-0 truncate">
+                  {selectedService?.name ??
+                    fallbackService?.name ??
+                    notAvailable}
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        {canUseAdvancedOptions && (
+          <AdvancedRequester
+            type="movie"
+            is4k={is4k}
+            allow4kServerSelection={allow4kServerSelection}
+            quota={quota}
+            mediaTitle={data?.title}
+            posterPath={data?.posterPath}
+            expanded={advancedOptionsOpen}
+            panelOnly
+            rootFolderTable
+            requestedByPortal={requestedByPortal}
+            onChange={(overrides) => {
+              setRequestOverrides(overrides);
+            }}
+          />
+        )}
+
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+          <div className="mr-auto flex items-center gap-2">
+            {canUseAdvancedOptions && (
+              <button
+                type="button"
+                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                aria-expanded={advancedOptionsOpen}
+                onClick={() => setAdvancedOptionsOpen((open) => !open)}
+              >
+                <AdjustmentsHorizontalIcon
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                />
+                {intl.formatMessage(messages.advancedOptions)}
+                <ChevronDownIcon
+                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+            <RequestFooterStatus
+              available={selectedDestinationAvailable}
+              hasAutoApprove={hasAutoApprove}
+            />
+          </div>
+          <div
+            className="flex h-[22px] items-center"
+            ref={setRequestedByPortal}
+          />
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+          >
+            <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {intl.formatMessage(globalMessages.cancel)}
+          </button>
+          <button
+            type="button"
+            onClick={() => void sendRequest()}
+            disabled={
+              isUpdating ||
+              selectedDestinationAvailable ||
+              (quota?.movie.restricted && !requestOverrides?.ignoreQuota)
+            }
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {requestButtonLabel}
+          </button>
+        </div>
+      </RequestMediaCard>
     </Modal>
   );
 };

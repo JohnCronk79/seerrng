@@ -1,0 +1,105 @@
+# Seerr Site Visual Audit - 2026-09-11
+
+This ledger records rendered inspection of the current Seerr refresh. A source-code check is not a visual pass. Shared-component routes are each opened at least once; dynamic detail routes are checked with representative real data and relevant expanded/modal states.
+
+## Acceptance states
+
+- `Verified`: rendered in the dedicated audit browser and satisfied the current acceptance ledger.
+- `Pending`: not yet rendered in this audit.
+- `Deferred inventory`: intentionally outside the current redesign; document existing fields, actions, cards, and inconsistencies without redesigning or removing them.
+- `Not applicable`: internal framework route or authenticated redirect with no distinct page to inspect.
+
+## Global shell and shared behavior
+
+| Area | State | Evidence or finding |
+| --- | --- | --- |
+| Desktop/narrow global shell and background | Verified | Dedicated Chrome audit viewport shows the narrow purple highlight, diagonal blue-to-dark-blue-to-black field, readable header, and artwork visible through refreshed cards. |
+| Narrow slide-out navigation | Verified | Open/close behavior, full-height scrolling, all top-level destinations, focus capture, overlay, and the pronounced purple-to-blue-to-black menu gradient inspected at the narrow audit viewport. |
+| Shared semantic action buttons | Verified with live-state limit | The final production build rendered the shared semantic outline styles, standard compact sizing and stable action order across all four detail pages. A requested-but-unavailable Book visibly retained disabled Manage and Report actions, used the prohibited cursor, and exposed distinct reason tooltips. Source and regression checks verify the same permission-versus-state contract on Movie, Series, and Music; the current dataset does not contain a representative of every disabled state for every media type. |
+| Shared pagination footer | Verified | Issues, Blocklist, Request Status, and the user request-history page all render the same Previous / Results Per Page / Page / Next footer order and disabled states. |
+| Shared keyword-search activity | Verified | Fresh-build live multi-word searches showed the existing top-bar `Searching` status immediately, replaced results without submission, and serialized routed filter terms with `%20` on Movies (`project hail`), Series (`special ops`), Music (`london grammar`), and Books (`windows 11`). Status cleared after completion. |
+| Plex/local profile picture behavior | Verified with local-login limit | Fresh production build renders the signed-in Plex owner's actual Plex portrait in the header and profile. Absolute remote URL handling and bounded browser retry cover a cold cache warm-up. Local-user Edit/upload is source- and route-test verified; a rendered upload was intentionally not fabricated because the audit browser is authenticated as the Plex owner and no local-user password was assumed. |
+
+## Media detail pages
+
+| Route/state | State | Evidence or finding |
+| --- | --- | --- |
+| Movie `/movie/1288445` main card | Verified | Artwork contained in main card; standard details, overview, ratings, details, button sizes/colors/order, recommendations/similar layout inspected. |
+| Movie cast expanded | Verified | Full Cast List renders three person cards per row and three rows before internal scrolling. |
+| Movie crew expanded | Verified | Uses the same shared three-by-three credit component; content and person links present. |
+| Movie Report an Issue | Verified | Artwork contained; Other, Audio, Video, and Subtitle options visible; current quality shown. |
+| Movie state-disabled actions | Verified with live-state limit | Stable button positions and semantic styling rendered in production. The shared permission/state contract and Blocklist correction are regression checked; the current dataset has no representative for every disabled Movie action. |
+| Series `/tv/108978` main card | Verified | Artwork, standard details, season/episode information cards, overview, optically normalized tomato/popcorn/TMDB rating art with aligned values, details, and action layout inspected on the final production build. |
+| Series cast/crew expanded | Verified | Shared three-by-three credit layout and person links present. |
+| Series Report an Issue | Verified | Artwork contained; four required issue types visible; season/episode information and selection layout present. |
+| Series state-disabled actions | Verified with live-state limit | Stable button positions and semantic styling rendered in production. The shared permission/state contract and Blocklist correction are regression checked; the current dataset has no representative for every disabled Series action. |
+| Music `/music/b3c83c83-4280-363f-8ecc-9cb453a8ea18` | Verified | Main artwork card, FLAC badge, two-column track list, icon-only Manage/Report actions, Associations, dark-green Request Discography, Request, no unused artist overview, Album Details, and linked Origin inspected. |
+| Music state-disabled actions | Verified with live-state limit | Stable button positions, icon tooltips, semantic styling, and permitted actions rendered in production. Regression checks cover disabled Manage/Report/Blocklist behavior; the current dataset has no representative for every disabled Music action. |
+| Book `/book/OL24864871W` | Verified | Main artwork card, details, overview, Genres disclosure, Book Details, Associations, bibliography and format-specific request actions inspected. |
+| Book state-disabled actions | Verified | The requested-but-unavailable representative retains disabled Manage and Report actions in their stable positions, uses the prohibited cursor, and explains each unavailable action in a tooltip. Its complementary format remains requestable. |
+
+## Request and operational pages
+
+| Route/state | State | Evidence or finding |
+| --- | --- | --- |
+| Request Status `/requests/status` base | Verified | All Users is the default, filters and sorting render, media cards and lifecycle timeline render. |
+| Request Status history | Verified | Expanded Hold On history rendered distinct aligned date, time, action, and description columns without overlap; long descriptions wrap only in the description column. |
+| Request Status lifecycle edge states | Verified with documented live-data limit | Real records rendered Available, Failed, Unavailable/No Release Found, Importing/Picard hold, and Adding to library states. The user selector defaults to All Users. The prior pending Music Edit check opened the correct refreshed title, service, root folder, and approval action; there is no approval-pending record left in the current database to reopen. No current record is in Downloading. Regression tests cover requested/approved, Lidarr no-grab interactive-search guidance, Picard holds, Arr manual-import holds, Bookshelf holds, and retry transitions without fabricating live state. |
+| User request history `/users/[userId]/requests` (`/requests` redirects to Status) | Verified | Pending empty state, Show All Requests action, populated Music cards, media/status/sort controls, destructive actions, and shared pagination footer inspected. The legacy card design is outside the current redesign; no requested behavior was removed. |
+| Movie request modal | Verified | Contained artwork/details card, 4K destination, quality profile, two-column root-folder table, approval/footer alignment, and compact actions rendered. Switching the same available movie from Radarr-4K to its existing Radarr-HD destination changed Status to Available and disabled Request. |
+| Series request modal | Verified | Shared artwork/details treatment plus side-by-side season and episode selection, destination, quality, root folder, approval footer, and selection-required disabled action rendered without clipping. |
+| Music request modal | Verified | The real FLAC Bedtime Stories album opened a requestable Lidarr-MP3 destination with Standard metadata/MP3 quality; the real MP3 The Gambler album disabled its existing Lidarr-MP3 destination as Available, then changed to enabled Ready to Request with Lidarr-FLAC, Standard metadata, FLAC quality, and `/music-flac`. Both cross-format directions are visibly preserved. |
+| Book request modal | Verified | Fresh build rendered contained artwork, Ebook/Audiobook/Both selector, edition candidates, service, metadata profile, quality profile, root-folder columns, and footer. The representative opened on the complementary Ebook path as Ready to Request; switching back to its active Audiobook format now shows Requested and disables submission. |
+
+## Discover and search
+
+| Route/state | State | Evidence or finding |
+| --- | --- | --- |
+| Discover root `/` | Verified | No circular heading arrows or duplicate View Title control; section gaps are consistent from Trending through Series Genres; Genre, Studio, and Network cards use the half-size standard; badges/buttons and slider navigation render consistently. Recommended Books remains coupled to the separately tracked provider-cache correction. |
+| Movies `/discover/movies` | Verified | Narrow rendered layout inspected; filters wrap cleanly, card badges/actions follow the shared styling, live `matrix` and fresh-build multi-word `project hail` searches returned relevant titles, Release Date sorting updated the query and descending results, and the Streaming Services disclosure expanded without overlap. |
+| Series `/discover/tv` | Verified | Narrow base layout, cards, badges, filters, and wrapping inspected. The corrected API contract accepted fresh-build live multi-word `special ops` filtering, showed top-bar activity, updated the URL, and replaced results without the former HTTP 400/stale-result state. |
+| Music `/discover/music` | Verified | Narrow base layout, shared card/action styling, and live `adele` results inspected. Fresh-build multi-word `london grammar` filtering showed top-bar activity, used `%20`, and returned relevant London Grammar releases. |
+| Books `/discover/books` | Verified with provider-availability limit | Base layout, controls, sort/filter states, live multi-word activity, and field-limited `windows 11` behavior were inspected. The old broad query admitted novels through hidden metadata; title/author-only provider queries and local all-term validation now exclude them. When Open Library became unavailable during the final pass, the versioned response contract and no-stale-on-error policy rendered the same explicit timeout/error card used by main search rather than substituting an old `No results` response. Live provider-result relevance is also covered by route tests and the successful global `windows 11` result set from the same adapter. |
+| Global search `/search` | Verified | Fresh-build live `windows 11` search rendered relevant title/author-visible books alongside legitimate non-book matches, with no hidden-metadata-only `Computer Basics`/dictionary rows. All-media and Ebook-only filter layouts, sort controls, format badges, request actions, and URL state were inspected. The final production build also verified the corrected no-stale-on-error cache policy on Books discovery. |
+| Trending/watchlist/upcoming routes | Verified | Trending grid and selectors, empty Plex Watchlist state, Upcoming Movies, and Upcoming Series inspected. Shared card badges, associations, status icons, request actions, spacing, and infinite loading remain aligned and readable. |
+| Movie genre/keyword/language/studio routes | Verified | Movie Genres half-height cards plus Action genre, Space keyword, English language, and Universal Pictures studio result pages inspected with populated data and shared title-card behavior. |
+| Series genre/keyword/language/network routes | Verified | Series Genres half-height cards plus Drama genre, Space keyword, English language, and Paramount+ network result pages inspected with populated data and shared title-card behavior. |
+
+## Issues, blocklist, associations, and collections
+
+| Route/state | State | Evidence or finding |
+| --- | --- | --- |
+| Issues `/issues` | Verified | Narrow rendered cards show `Media & Format` with `Series · HD` and `Movie · HD`; green View Issue actions, translucent artwork cards, task/media/type/time filters, sort controls, `lioness` live result filtering, and the shared Results Per Page/Page/Previous/Next footer all render consistently. Shared top-search activity remains tracked globally. |
+| Issue detail `/issues/[issueId]` | Verified | Movie and Series records (the media types represented in the preview database) render contained artwork, `Movie · HD` / `Series · HD`, affected episodes where applicable, comments, and the requested Exit / Add Comment / Close Issue order with red and green semantic actions. Music and Book share the same summary/action components but have no live issue record in this dataset. |
+| Blocklist `/blocklist` | Verified | Task/media/time filters, date/title/media sort controls, translucent artwork cards, red Remove from Blocklist actions, live `primer` filtering, count updates, empty/disabled paging states, and the Issues-standard footer inspected. |
+| Associations `/associations/[mediaType]/[id]` and popover | Verified | Fresh-build Movie List and Map views render with consistent badges, poster cards, links, graph legend, nodes, zoom/fit controls, and connection links. The first card popover loaded its title, overview, state-aware actions, and request action without reproducing the old transient error. |
+| Collection `/collection/[collectionId]` | Verified | Star Wars Collection rendered its artwork card, collection/availability badges, overview, Request Collection in 4K action, movie slider, and inherited title-card states without clipping or spacing regressions. |
+
+## Deferred redesign inventory
+
+The following areas are inspected and documented for a future refresh but are not redesigned during this acceptance pass. Every current field, detail, button, task, card, link, and capability is preserved. Any uncertain element must be recorded with its current purpose, proposed treatment, reason for uncertainty, and the user decision required.
+
+| Area/routes | State | Current scope to inventory |
+| --- | --- | --- |
+| People `/person/[personId]` | Deferred inventory | Taylor Sheridan representative: full-page hero artwork/fade, circular portrait, name, social links, birth details, alternate names, biography with Read More, credit-type selector, and Crew/Appearances title-card sliders. Existing artwork treatment differs from the refreshed contained-card standard; future redesign must preserve every identity and credit link. |
+| Artists `/artist/[artistId]` | Deferred inventory | Madonna representative: circular portrait, Artist badge, country, Request Discography, Similar Artists area, release-group categories, album cards, filters, sorting, and request/association actions. The separately deferred major artist refresh must resolve the oversized empty Similar Artists region without removing empty-state meaning or any discography operation. |
+| Authors `/author/[authorId]` | Deferred inventory | John Jackson Miller representative: circular fallback portrait, biography, Request Bibliography, Bibliography title cards, author/work links, and existing metadata. Future design must preserve unknown-image behavior and all work/request routes. |
+| Manage Movie/Series slide-overs | Deferred inventory | Movie representative exposes Open in Radarr, Remove from Radarr, Mark as Available in 4K, Clear Data, warnings, and destructive confirmations. Series exposes Open in Sonarr, Remove, Mark All Seasons Available, Mark All Seasons Available in 4K, Clear Data, warnings, and destructive confirmations. Preserve all operations and permission gates; standardize presentation only after explicit review. |
+| Manage Music/Book slide-overs | Deferred inventory | Music representative exposes Open in Lidarr, Remove from Lidarr, and Clear Data. Book management is state-dependent and could not be opened on the requested-but-unavailable representative; its stable state-disabled Manage action and reason tooltip were verified in the final production build. Do not invent missing Book operations: inventory the actual panel once an eligible library-linked Book exists. |
+| Users and user settings routes | Deferred inventory | The user identified these as main areas not yet refreshed. Profile and local-user settings were inspected only for the active avatar requirement; future inventory must preserve user navigation, identity/provider details, permissions, quotas, request history, notification settings, and administrative controls. |
+| Application Settings routes | Deferred inventory | The user identified Settings as a main area not yet refreshed; record navigation, forms, service cards/modals, logs, jobs, and controls only. |
+| Profile settings routes | Deferred inventory | Current owner profile/settings show identity and linked-provider navigation, and the final production build renders the Plex portrait correctly. Local-user Edit/upload is source- and route-test verified but was not visually exercised because no local-user credential was assumed. The later redesign must preserve linked-account, password, permission, quota, and notification behavior. |
+| Login/setup/reset-password/404 | Deferred inventory | Record shared-theme integration and legacy card/control differences; do not change authentication behavior during visual refresh. |
+
+## Confirmed audit defects
+
+1. Blocklist was hidden for already-available titles. Corrected so permission controls visibility and blocklisted state disables the stable action.
+2. Books discovery could retain an unusable empty Open Library provider response and repeatedly render `No results`. Corrected by rejecting empty cached provider payloads and retrying uncached.
+3. Detail actions used combined permission-and-state conditions, causing Manage and Report an Issue to disappear and shift the row. Corrected across Movie, Series, Music, and Book; the final production build verifies the shared layout and a live disabled Book state.
+4. Series live keyword filtering sent the supported `search` parameter, but the OpenAPI contract rejected it as unknown before the route ran. Added the missing bounded search parameter to `/discover/tv` and a contract-validator check; the final production build verifies live multi-word filtering and top-bar activity.
+5. Multi-word page-level searches were routed with `+` separators, while API request validation accepted the same values only with percent-encoded spaces. Music reproduced this as `No results` for `london grammar` despite 20 relevant API results with `%20`; the shared route builder and regression test now require `%20` for every page using it.
+6. Book keyword searches used Open Library's broad composite `q` field and then treated hidden subject tags as visible keyword evidence. This reproduced the reported `windows 11` novel results. Provider queries and local relevance checks now require every term in the visible title or author fields; regression coverage excludes subject-only and publisher-only matches.
+7. Global Book search used the same broad provider response without the Discover Books local relevance gate, so Ebook filtering still included hidden-metadata-only titles. It now uses the same field-limited title/author provider query and local all-term validation, with route-level regression coverage.
+8. Plex-linked profile pictures always fell back to the generic avatar because the remote proxy intentionally has no provider base URL, while the URL resolver incorrectly required a base even for an already absolute HTTPS URL. The resolver now accepts validated absolute remote-avatar URLs; regression tests cover that path, and POSIX-only cache security tests stay active in Linux CI while being explicitly skipped on Windows systems that cannot create the required links or expose POSIX modes.
+9. A Book detail could correctly show an active Audiobook request while the same request modal allowed a manual switch back to Audiobook, labeled it Ready to Request, and left its submit action enabled. The modal now applies the backend's overlapping-format rule before submission, displays Requested, disables the action for active overlaps, and still allows the complementary Ebook or Audiobook format.
+10. The repository's formatting commands depended on Unix `find`/`xargs` pipelines, so the same pull-request formatting gate could not be run reliably from the Windows laptop. Both write and check modes now use one Node runner that obtains tracked and untracked, non-ignored files directly from Git and invokes the pinned Prettier CLI in bounded batches; GitHub retains the identical `pnpm format:check` entry point.

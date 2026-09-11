@@ -7,6 +7,7 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { getSettings, type RadarrSettings } from '@server/lib/settings';
 import { rankTmdbMovieResults } from '@server/lib/tmdbRank';
 import logger from '@server/logger';
@@ -127,6 +128,30 @@ movieRoutes.get('/:id', async (req, res, next) => {
     });
 
     const data = mapMovieDetails(tmdbMovie, media, onUserWatchlist);
+
+    await upsertMediaSearchMetadata(media?.id, {
+      title: data.title,
+      alternateTitle: data.originalTitle,
+      releaseDate: data.releaseDate,
+      genres: data.genres.map((genre) => genre.name).join(', '),
+      runtime: data.runtime ? `${data.runtime} minutes` : undefined,
+      director: data.credits.crew
+        .filter((credit) => credit.job === 'Director')
+        .map((credit) => credit.name)
+        .join(', '),
+      writer: data.credits.crew
+        .filter((credit) =>
+          ['Writer', 'Screenplay', 'Story', 'Teleplay'].includes(credit.job)
+        )
+        .map((credit) => credit.name)
+        .join(', '),
+      studio: data.productionCompanies
+        .map((company) => company.name)
+        .join(', '),
+      format: 'Movie',
+      provider: 'TMDB',
+      externalIds: [data.id, data.imdbId].filter(Boolean).join(' '),
+    });
 
     // TMDB issue where it doesnt fallback to English when no overview is available in requested locale.
     if (!data.overview) {

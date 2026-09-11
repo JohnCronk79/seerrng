@@ -10,6 +10,8 @@ import { describe, it } from 'node:test';
 
 type FixtureChild = ChildProcessByStdio<null, Readable, Readable>;
 
+const posixDescribe = process.platform === 'win32' ? describe.skip : describe;
+
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const FIXTURE_PATH = path.join(
   REPO_ROOT,
@@ -106,7 +108,7 @@ const stopChild = async (child: FixtureChild) => {
   }
 };
 
-describe('process shutdown integration', () => {
+posixDescribe('process shutdown integration', () => {
   it('stops admission, drains held work, and exits successfully on SIGTERM', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-shutdown-')

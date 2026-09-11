@@ -30,6 +30,7 @@ import {
 import Issue from './Issue';
 import MediaIdentifier from './MediaIdentifier';
 import { MediaRequest } from './MediaRequest';
+import { MediaSearchMetadata } from './MediaSearchMetadata';
 import Season from './Season';
 
 @Entity()
@@ -187,6 +188,9 @@ class Media {
 
   @OneToOne(() => Blocklist, (blocklist) => blocklist.media)
   public blocklist: Promise<Blocklist>;
+
+  @OneToOne(() => MediaSearchMetadata, (metadata) => metadata.media)
+  public searchMetadata?: MediaSearchMetadata;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;

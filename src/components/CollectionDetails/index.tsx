@@ -315,13 +315,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             fill
             priority
           />
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(180deg, rgba(17, 24, 39, 0.47) 0%, rgba(17, 24, 39, 1) 100%)',
-            }}
-          />
+          <div className="absolute inset-0 bg-gray-900/50" />
         </div>
       )}
       <PageTitle title={data.name} />

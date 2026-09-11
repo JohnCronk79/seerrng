@@ -4,10 +4,7 @@ import Slider from '@app/components/Slider';
 import useDiscoverRowSnapshot from '@app/hooks/useDiscoverRowSnapshot';
 import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  ArrowRightCircleIcon,
-  ExclamationTriangleIcon,
-} from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import type { RequestResultsResponse } from '@server/interfaces/api/requestInterfaces';
 import Link from 'next/link';
 import { useInView } from 'react-intersection-observer';
@@ -50,7 +47,6 @@ const RecentRequestsSlider = () => {
       <div className="slider-header">
         <Link href="/requests?filter=all" className="slider-title">
           <span>{intl.formatMessage(sliderTitles.recentrequests)}</span>
-          <ArrowRightCircleIcon />
         </Link>
       </div>
 

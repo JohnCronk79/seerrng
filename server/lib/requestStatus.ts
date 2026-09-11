@@ -5,16 +5,27 @@ import {
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import { BookRequestSearch } from '@server/entity/BookRequestSearch';
-import { MediaRequest } from '@server/entity/MediaRequest';
+import {
+  MediaRequest,
+  type MediaRequestServiceTarget,
+} from '@server/entity/MediaRequest';
 import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import { RequestDispatchOutbox } from '@server/entity/RequestDispatchOutbox';
-import type { DownloadingItem } from '@server/lib/downloadtracker';
+import type {
+  DownloadingItem,
+  ServarrHistoryEvidence,
+} from '@server/lib/downloadtracker';
 import downloadTracker from '@server/lib/downloadtracker';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import {
+  getRequestedMusicSearchTime,
+  reconcileRequestedMusicAvailability,
+} from '@server/lib/musicAvailability';
 import logger from '@server/logger';
 import type { EntityManager, Repository } from 'typeorm';
 import { In, MoreThan } from 'typeorm';
 import {
+  filterRequestStatusItems,
   isMetadataRequestStatusSort,
   sortRequestStatusItems,
   type RequestStatusSortDirection,
@@ -108,6 +119,8 @@ export interface RequestStatusPage {
     active: number;
     attention: number;
     completed: number;
+    unavailable: number;
+    failed: number;
   };
   /** Requests in the same scope that predate the selected rolling window. */
   olderCount: number;
@@ -137,6 +150,8 @@ type RequestLike = {
   type: MediaType;
   is4k: boolean;
   bookFormat?: 'ebook' | 'audiobook' | 'both' | null;
+  serverId?: number | null;
+  serviceTargets?: MediaRequestServiceTarget[] | null;
   createdAt: Date;
   updatedAt: Date;
   requestedBy: { id: number };
@@ -172,6 +187,8 @@ type StatusOptions = {
   downloads?: DownloadingItem[];
   dispatchPending?: boolean;
   bookSearchState?: BookRequestSearch['state'];
+  musicSearchTime?: Date | null;
+  servarrHistory?: ServarrHistoryEvidence;
   resetTerminalOverride?: boolean;
   latestEvent?: StatusEventLike;
 };
@@ -185,6 +202,7 @@ const ACTIVE_STAGES = [
   RequestStatusStage.LIBRARY,
 ];
 const REQUEST_STATUS_RECONCILIATION_BATCH_SIZE = 500;
+const COMPLETED_MUSIC_SEARCH_SETTLE_MS = 15_000;
 const REQUEST_STATUS_RECONCILIATION_STATUSES = [
   MediaRequestStatus.PENDING,
   MediaRequestStatus.APPROVED,
@@ -219,6 +237,39 @@ const hasRequestedBookFormat = (
     ? hasLink(media.audiobookServiceId, media.audiobookExternalServiceId)
     : hasLink(media.serviceId, media.externalServiceId);
 
+const getTarget = (
+  request: RequestLike,
+  serviceType: MediaRequestServiceTarget['serviceType'],
+  format?: MediaRequestServiceTarget['format']
+): MediaRequestServiceTarget | undefined =>
+  request.serviceTargets?.find(
+    (target) =>
+      target.serviceType === serviceType &&
+      (format === undefined || target.format === format)
+  );
+
+const getMusicTarget = (
+  request: RequestLike
+): MediaRequestServiceTarget | undefined => {
+  const savedTarget = getTarget(request, 'lidarr', 'music');
+  if (savedTarget) {
+    return savedTarget;
+  }
+
+  return (request.serverId == null ||
+    request.media.serviceId === request.serverId) &&
+    request.media.serviceId != null &&
+    request.media.externalServiceId != null
+    ? {
+        serviceType: 'lidarr',
+        format: 'music',
+        serverId: request.media.serviceId,
+        externalServiceId: request.media.externalServiceId,
+        status: request.media.status,
+      }
+    : undefined;
+};
+
 const hasRequestedServiceLink = (request: RequestLike): boolean => {
   if (request.type === MediaType.BOOK) {
     if (request.bookFormat === 'audiobook') {
@@ -239,15 +290,18 @@ const hasRequestedServiceLink = (request: RequestLike): boolean => {
       : hasLink(request.media.serviceId, request.media.externalServiceId);
   }
 
-  return hasLink(request.media.serviceId, request.media.externalServiceId);
+  const musicTarget = getMusicTarget(request);
+  return hasLink(musicTarget?.serverId, musicTarget?.externalServiceId);
 };
 
 const getRequestedMediaStatus = (request: RequestLike): MediaStatus =>
-  request.type === MediaType.BOOK || request.type === MediaType.MUSIC
-    ? request.media.status
-    : request.is4k
-      ? request.media.status4k
-      : request.media.status;
+  request.type === MediaType.MUSIC
+    ? (getMusicTarget(request)?.status ?? request.media.status)
+    : request.type === MediaType.BOOK
+      ? request.media.status
+      : request.is4k
+        ? request.media.status4k
+        : request.media.status;
 
 const isRequestSatisfied = (request: RequestLike): boolean => {
   const mediaStatus = getRequestedMediaStatus(request);
@@ -285,27 +339,50 @@ const isRequestSatisfied = (request: RequestLike): boolean => {
   return isAvailableStatus(mediaStatus);
 };
 
-const normalizedQueueStatus = (item: DownloadingItem): string =>
-  item.status.toLocaleLowerCase().replace(/[\s_-]+/g, '');
+const normalizedQueueStates = (item: DownloadingItem): string[] =>
+  [item.status, item.trackedDownloadStatus, item.trackedDownloadState]
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.toLocaleLowerCase().replace(/[\s_-]+/g, ''));
 
 const isFailedQueueItem = (item: DownloadingItem): boolean => {
-  const status = normalizedQueueStatus(item);
+  const states = normalizedQueueStates(item);
+  const explicitFailure = states.some(
+    (status) =>
+      status.includes('downloadfailed') ||
+      status.includes('importfailed') ||
+      status === 'failed'
+  );
+
+  if (explicitFailure) {
+    return true;
+  }
+
+  const waitingForImport = states.some(
+    (status) =>
+      status.includes('importpending') ||
+      status.includes('manualimport') ||
+      status.includes('postprocess') ||
+      status.includes('moving') ||
+      status.includes('copying') ||
+      status === 'completed'
+  );
+
   return (
-    status.includes('failed') ||
-    status.includes('error') ||
-    status.includes('importfailed') ||
-    status === 'warning'
+    !waitingForImport &&
+    states.some(
+      (status) => status.includes('failed') || status.includes('error')
+    )
   );
 };
 
 const isImportingQueueItem = (item: DownloadingItem): boolean => {
-  const status = normalizedQueueStatus(item);
-  return (
-    status.includes('import') ||
-    status.includes('postprocess') ||
-    status.includes('moving') ||
-    status.includes('copying') ||
-    status === 'completed'
+  return normalizedQueueStates(item).some(
+    (status) =>
+      status.includes('import') ||
+      status.includes('postprocess') ||
+      status.includes('moving') ||
+      status.includes('copying') ||
+      status === 'completed'
   );
 };
 
@@ -407,13 +484,14 @@ const getDownloadItems = (request: RequestLike): DownloadingItem[] => {
     );
   }
   if (request.type === MediaType.MUSIC) {
-    return media.serviceId !== null &&
-      media.serviceId !== undefined &&
-      media.externalServiceId !== null &&
-      media.externalServiceId !== undefined
+    const target = getMusicTarget(request);
+    return target?.serverId !== null &&
+      target?.serverId !== undefined &&
+      target.externalServiceId !== null &&
+      target.externalServiceId !== undefined
       ? downloadTracker.getMusicProgress(
-          media.serviceId,
-          media.externalServiceId
+          target.serverId,
+          target.externalServiceId
         )
       : [];
   }
@@ -448,6 +526,59 @@ const getDownloadItems = (request: RequestLike): DownloadingItem[] => {
   return ebookDownloads;
 };
 
+const getServarrHistoryEvidence = (
+  request: RequestLike
+): ServarrHistoryEvidence | undefined => {
+  const { media } = request;
+  const musicTarget =
+    request.type === MediaType.MUSIC ? getMusicTarget(request) : undefined;
+  const serverId =
+    request.type === MediaType.MUSIC
+      ? musicTarget?.serverId
+      : request.is4k &&
+          (request.type === MediaType.MOVIE || request.type === MediaType.TV)
+        ? media.serviceId4k
+        : media.serviceId;
+  const externalServiceId =
+    request.type === MediaType.MUSIC
+      ? musicTarget?.externalServiceId
+      : request.is4k &&
+          (request.type === MediaType.MOVIE || request.type === MediaType.TV)
+        ? media.externalServiceId4k
+        : media.externalServiceId;
+  if (
+    serverId === null ||
+    serverId === undefined ||
+    externalServiceId === null ||
+    externalServiceId === undefined
+  ) {
+    return undefined;
+  }
+
+  if (request.type === MediaType.MOVIE) {
+    return downloadTracker.getMovieHistoryEvidence(
+      serverId,
+      externalServiceId,
+      request.createdAt
+    );
+  }
+  if (request.type === MediaType.TV) {
+    return downloadTracker.getSeriesHistoryEvidence(
+      serverId,
+      externalServiceId,
+      request.createdAt
+    );
+  }
+  if (request.type === MediaType.MUSIC) {
+    return downloadTracker.getMusicHistoryEvidence(
+      serverId,
+      externalServiceId,
+      request.createdAt
+    );
+  }
+  return undefined;
+};
+
 const getServiceName = (request: RequestLike): string | null => {
   const settings = getExternalRuntimeConfig();
   const names = new Set<string>();
@@ -472,10 +603,8 @@ const getServiceName = (request: RequestLike): string | null => {
       )?.name
     );
   } else if (request.type === MediaType.MUSIC) {
-    add(
-      settings.lidarr.find((server) => server.id === request.media.serviceId)
-        ?.name
-    );
+    const target = getMusicTarget(request);
+    add(settings.lidarr.find((server) => server.id === target?.serverId)?.name);
   } else {
     const formats =
       request.bookFormat === 'both'
@@ -541,6 +670,7 @@ const getStageFromRequest = (
   stage: RequestStatusStage;
   queueFailure: boolean;
   downloads: DownloadingItem[];
+  message?: string;
 } => {
   if (request.status === MediaRequestStatus.DECLINED) {
     return {
@@ -558,6 +688,8 @@ const getStageFromRequest = (
   }
 
   const downloads = options.downloads ?? getDownloadItems(request);
+  const servarrHistory =
+    options.servarrHistory ?? getServarrHistoryEvidence(request);
   const queueFailure = downloads.some(isFailedQueueItem);
   if (queueFailure) {
     return { stage: RequestStatusStage.FAILED, queueFailure: true, downloads };
@@ -592,6 +724,27 @@ const getStageFromRequest = (
     };
   }
 
+  if (servarrHistory?.stage === 'failed') {
+    return { stage: RequestStatusStage.FAILED, queueFailure: true, downloads };
+  }
+  if (servarrHistory?.stage === 'grabbed') {
+    return {
+      stage: RequestStatusStage.IMPORTING,
+      queueFailure: false,
+      downloads,
+    };
+  }
+  if (servarrHistory?.stage === 'imported') {
+    return {
+      stage:
+        request.type === MediaType.MUSIC
+          ? RequestStatusStage.IMPORTING
+          : RequestStatusStage.LIBRARY,
+      queueFailure: false,
+      downloads,
+    };
+  }
+
   if (options.bookSearchState === 'importing') {
     return {
       stage: RequestStatusStage.IMPORTING,
@@ -612,6 +765,46 @@ const getStageFromRequest = (
       queueFailure: false,
       downloads,
     };
+  }
+
+  if (
+    request.type === MediaType.MUSIC &&
+    hasRequestedServiceLink(request) &&
+    options.latestEvent &&
+    (options.latestEvent.stage === RequestStatusStage.DOWNLOADING ||
+      options.latestEvent.stage === RequestStatusStage.IMPORTING ||
+      options.latestEvent.stage === RequestStatusStage.LIBRARY)
+  ) {
+    return {
+      stage: RequestStatusStage.IMPORTING,
+      queueFailure: false,
+      downloads,
+    };
+  }
+
+  if (request.type === MediaType.MUSIC && hasRequestedServiceLink(request)) {
+    const musicTarget = getMusicTarget(request);
+    const searchTime =
+      options.musicSearchTime === undefined
+        ? musicTarget?.externalServiceId != null
+          ? getRequestedMusicSearchTime(
+              musicTarget.serverId,
+              musicTarget.externalServiceId
+            )
+          : undefined
+        : (options.musicSearchTime ?? undefined);
+    if (
+      searchTime &&
+      searchTime.getTime() >= request.updatedAt.getTime() &&
+      Date.now() - searchTime.getTime() >= COMPLETED_MUSIC_SEARCH_SETTLE_MS
+    ) {
+      return {
+        stage: RequestStatusStage.UNAVAILABLE,
+        queueFailure: false,
+        downloads,
+        message: 'No release found. Use an interactive search in Lidarr.',
+      };
+    }
   }
 
   const latestEventIsCurrent =
@@ -660,6 +853,7 @@ const getStageFromRequest = (
   }
   if (
     hasRequestedServiceLink(request) &&
+    request.type !== MediaType.MUSIC &&
     (request.type === MediaType.BOOK && request.bookFormat === 'both'
       ? hasRequestedBookFormat(request.media, 'ebook') !==
         hasRequestedBookFormat(request.media, 'audiobook')
@@ -697,13 +891,14 @@ export const getRequestStatus = (
   const stage = result.stage;
   const latestEvent = options.latestEvent;
   const message =
-    latestEvent &&
+    result.message ??
+    (latestEvent &&
     (stage === RequestStatusStage.UNAVAILABLE ||
       stage === RequestStatusStage.FAILED) &&
     latestEvent.stage === stage &&
     latestEvent.message
       ? latestEvent.message
-      : getMessage(stage, result.queueFailure);
+      : getMessage(stage, result.queueFailure));
 
   return {
     stage,
@@ -1238,6 +1433,8 @@ const getRequestStatusCounts = async (options: {
   let active = 0;
   let attention = 0;
   let completed = 0;
+  let unavailable = 0;
+  let failed = 0;
   for (const row of rows) {
     let stage = row.stage as RequestStatusStage | undefined;
     if (!stage) {
@@ -1265,8 +1462,20 @@ const getRequestStatusCounts = async (options: {
     } else {
       active += 1;
     }
+    if (stage === RequestStatusStage.UNAVAILABLE) {
+      unavailable += 1;
+    } else if (stage === RequestStatusStage.FAILED) {
+      failed += 1;
+    }
   }
-  return { total: rows.length, active, attention, completed };
+  return {
+    total: rows.length,
+    active,
+    attention,
+    completed,
+    unavailable,
+    failed,
+  };
 };
 
 const getRequestStatusOlderCount = async (options: {
@@ -1313,6 +1522,7 @@ export const getRequestStatusPage = async (options: {
   ownerId?: number;
   mediaType?: MediaType;
   bookFormat?: 'ebook' | 'audiobook';
+  search?: string;
   since?: Date;
   filter?: string;
   sort?: RequestStatusSortField;
@@ -1353,10 +1563,12 @@ export const getRequestStatusPage = async (options: {
   const pageSize = Math.min(Math.max(options.take, 1), 100);
   const skip = Math.max(options.skip, 0);
   const hasStatusFilter = !!options.filter && options.filter !== 'all';
+  const hasSearch = !!options.search?.trim();
   const sortField = options.sort ?? 'added';
   const sortDirection = options.sortDirection ?? 'desc';
   const requiresFullProjection =
     hasStatusFilter ||
+    hasSearch ||
     sortField === 'status' ||
     isMetadataRequestStatusSort(sortField);
   let requests: MediaRequest[];
@@ -1410,6 +1622,14 @@ export const getRequestStatusPage = async (options: {
   if (hasStatusFilter) {
     resultItems = resultItems.filter(({ status, request }) =>
       stageMatchesFilter(status.stage, options.filter, request)
+    );
+    requestCount = resultItems.length;
+  }
+
+  if (hasSearch) {
+    resultItems = await filterRequestStatusItems(
+      resultItems,
+      options.search ?? ''
     );
     requestCount = resultItems.length;
   }
@@ -1500,6 +1720,7 @@ export const reconcileActiveRequests = async (limit = 500): Promise<void> => {
       take: batchSize,
     });
   }
+  await reconcileRequestedMusicAvailability(requests);
   for (const request of requests) {
     await recordRequestStatus(request.id);
     requestStatusReconciliationCursor = request.id;

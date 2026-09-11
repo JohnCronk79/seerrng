@@ -31,6 +31,10 @@ import {
 } from '@server/utils/concurrency';
 import { parsePositiveInt } from '@server/utils/pagination';
 import {
+  matchesAllSearchTerms,
+  toFieldedBooleanAndQuery,
+} from '@server/utils/searchTerms';
+import {
   parseBoundedString,
   parseOptionalAllowedString,
   parseOptionalLanguage,
@@ -310,7 +314,7 @@ searchRoutes.get('/', async (req, res, next) => {
           : Promise.resolve([]),
         shouldSearchBooks && booksEnabled
           ? openLibrary.searchBooks({
-              query: queryString,
+              query: toFieldedBooleanAndQuery(queryString, ['title', 'author']),
               page,
               limit: 20,
             })
@@ -423,7 +427,13 @@ searchRoutes.get('/', async (req, res, next) => {
         .map((p) => p.id.toString());
 
       const dedupedAlbumResults = dedupeAlbumSearchResults(albumResults);
-      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs);
+      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs).filter(
+        (doc) =>
+          matchesAllSearchTerms(
+            [doc.title, ...(doc.author_name ?? [])],
+            queryString
+          )
+      );
 
       const albumIds = dedupedAlbumResults.map((album) =>
         normalizeMusicBrainzId(album.id)

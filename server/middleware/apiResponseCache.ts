@@ -35,7 +35,9 @@ const getCacheControl = (path: string, isAuthenticated: boolean) => {
   if (path.startsWith('/discover') || path.startsWith('/search')) {
     // Catalog feeds change frequently and support seeded refreshes. Keep the
     // browser copy for conditional 304 requests, but validate before reuse.
-    return 'private, no-cache, stale-if-error=3600';
+    // Do not permit stale-if-error here: it can replace a current provider
+    // timeout with an old empty response and incorrectly render "No results."
+    return 'private, no-cache';
   }
 
   return 'private, max-age=300, stale-while-revalidate=1800, stale-if-error=1800';

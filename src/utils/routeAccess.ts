@@ -10,8 +10,7 @@ export const isLoginPath = (pathname: string): boolean =>
 export const isPlexLoginCompletionPath = (
   pathname: string,
   completionMarker: string | null
-): boolean =>
-  pathname === '/login/plex/loading' && completionMarker === '1';
+): boolean => pathname === '/login/plex/loading' && completionMarker === '1';
 
 export const isResetPasswordPath = (pathname: string): boolean =>
   isPathPrefix(pathname, '/resetpassword');
