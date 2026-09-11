@@ -7,6 +7,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { getLocaleDifferences } = require('./check-i18n-lib');
 
 const targets = [
   path.join(__dirname, '..', 'src', 'i18n', 'locale', 'en.json'),
@@ -26,9 +27,18 @@ try {
     fs.unlinkSync(backups[i]);
 
     if (original !== extracted) {
+      const differences = getLocaleDifferences(original, extracted);
       console.error(
         `i18n messages are out of sync for ${path.basename(path.dirname(path.dirname(targets[i])))}. Please run 'pnpm i18n:extract' and commit the changes.`
       );
+      for (const difference of differences.slice(0, 25)) {
+        console.error(
+          `  ${difference.key}: ${JSON.stringify(difference.original)} -> ${JSON.stringify(difference.extracted)}`
+        );
+      }
+      if (differences.length > 25) {
+        console.error(`  ...and ${differences.length - 25} more differences.`);
+      }
       outOfSync = true;
     }
   }

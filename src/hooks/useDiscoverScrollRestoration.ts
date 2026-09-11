@@ -1,15 +1,16 @@
 import type { RestorableDiscoverMediaType } from '@app/utils/discoverScrollRestoration';
 import {
-  DISCOVER_SCROLL_HISTORY_KEY,
-  getDiscoverScrollEntry,
   getScrollRestorationAction,
   isMediaDetailPath,
+  readDiscoverScrollEntry,
+  saveDiscoverScrollEntry,
 } from '@app/utils/discoverScrollRestoration';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 
 type UseDiscoverScrollRestorationOptions = {
   mediaType: RestorableDiscoverMediaType;
+  shuffleSeed?: string;
   itemCount: number;
   isLoading: boolean;
   isReachingEnd: boolean;
@@ -18,6 +19,7 @@ type UseDiscoverScrollRestorationOptions = {
 
 const useDiscoverScrollRestoration = ({
   mediaType,
+  shuffleSeed,
   itemCount,
   isLoading,
   isReachingEnd,
@@ -25,11 +27,11 @@ const useDiscoverScrollRestoration = ({
 }: UseDiscoverScrollRestorationOptions): void => {
   const router = useRouter();
   const itemCountRef = useRef(itemCount);
-  const loadRequestedRef = useRef(false);
+  const loadRequestedRef = useRef<number | undefined>(undefined);
   const [entry, setEntry] = useState(() =>
     typeof window === 'undefined'
       ? undefined
-      : getDiscoverScrollEntry(window.history.state, router.asPath)
+      : readDiscoverScrollEntry(router.asPath)
   );
 
   itemCountRef.current = itemCount;
@@ -39,7 +41,7 @@ const useDiscoverScrollRestoration = ({
       return;
     }
 
-    setEntry(getDiscoverScrollEntry(window.history.state, router.asPath));
+    setEntry(readDiscoverScrollEntry(router.asPath));
   }, [router.asPath, router.isReady]);
 
   useEffect(() => {
@@ -48,33 +50,22 @@ const useDiscoverScrollRestoration = ({
         return;
       }
 
-      const currentState =
-        window.history.state && typeof window.history.state === 'object'
-          ? window.history.state
-          : {};
-
-      window.history.replaceState(
-        {
-          ...currentState,
-          [DISCOVER_SCROLL_HISTORY_KEY]: {
-            path: router.asPath,
-            scrollY: window.scrollY,
-            itemCount: itemCountRef.current,
-          },
-        },
-        '',
-        window.location.href
-      );
+      saveDiscoverScrollEntry({
+        path: router.asPath,
+        scrollY: window.scrollY,
+        itemCount: itemCountRef.current,
+        shuffleSeed,
+      });
     };
 
     router.events.on('routeChangeStart', saveScrollPosition);
 
     return () => router.events.off('routeChangeStart', saveScrollPosition);
-  }, [mediaType, router.asPath, router.events]);
+  }, [mediaType, router.asPath, router.events, shuffleSeed]);
 
   useEffect(() => {
     if (isLoading) {
-      loadRequestedRef.current = false;
+      loadRequestedRef.current = undefined;
       return;
     }
 
@@ -86,8 +77,8 @@ const useDiscoverScrollRestoration = ({
     });
 
     if (action === 'load-more') {
-      if (!loadRequestedRef.current) {
-        loadRequestedRef.current = true;
+      if (loadRequestedRef.current !== itemCount) {
+        loadRequestedRef.current = itemCount;
         fetchMore();
       }
 
@@ -98,21 +89,20 @@ const useDiscoverScrollRestoration = ({
       return;
     }
 
-    const currentState =
-      window.history.state && typeof window.history.state === 'object'
-        ? { ...window.history.state }
-        : {};
-    delete currentState[DISCOVER_SCROLL_HISTORY_KEY];
-    window.history.replaceState(currentState, '', window.location.href);
-
+    let secondFrame: number | undefined;
     const firstFrame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
         window.scrollTo({ top: entry.scrollY, left: 0, behavior: 'auto' });
         setEntry(undefined);
       });
     });
 
-    return () => window.cancelAnimationFrame(firstFrame);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) {
+        window.cancelAnimationFrame(secondFrame);
+      }
+    };
   }, [entry, fetchMore, isLoading, isReachingEnd, itemCount]);
 };
 

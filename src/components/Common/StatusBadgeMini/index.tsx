@@ -1,4 +1,6 @@
 import Spinner from '@app/assets/spinner.svg';
+import Tooltip from '@app/components/Common/Tooltip';
+import globalMessages from '@app/i18n/globalMessages';
 import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import {
   BellIcon,
@@ -9,6 +11,7 @@ import {
 } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import { memo } from 'react';
+import { useIntl } from 'react-intl';
 
 interface StatusBadgeMiniProps {
   status: MediaStatus;
@@ -25,9 +28,10 @@ const StatusBadgeMini = memo(
     inProgress = false,
     shrink = false,
   }: StatusBadgeMiniProps) => {
+    const intl = useIntl();
     const badgeStyle = [
       `rounded-full shadow-md ${
-        shrink ? 'w-4 sm:w-5 border p-0' : 'w-5 ring-1 p-0.5'
+        shrink ? 'h-6 w-6 border p-0' : 'w-5 ring-1 p-0.5'
       }`,
     ];
 
@@ -74,16 +78,46 @@ const StatusBadgeMini = memo(
       indicatorIcon = <Spinner />;
     }
 
-    return (
+    const statusLabel = (() => {
+      if (inProgress) {
+        return intl.formatMessage(globalMessages.processing);
+      }
+
+      switch (status) {
+        case MediaStatus.PROCESSING:
+          return intl.formatMessage(globalMessages.processing);
+        case MediaStatus.AVAILABLE:
+          return intl.formatMessage(globalMessages.available);
+        case MediaStatus.PENDING:
+          return intl.formatMessage(globalMessages.pending);
+        case MediaStatus.BLOCKLISTED:
+          return intl.formatMessage(globalMessages.blocklisted);
+        case MediaStatus.PARTIALLY_AVAILABLE:
+          return intl.formatMessage(globalMessages.partiallyavailable);
+        case MediaStatus.DELETED:
+          return intl.formatMessage(globalMessages.deleted);
+        default:
+          return undefined;
+      }
+    })();
+    const label = [is4k ? '4K' : undefined, statusLabel]
+      .filter(Boolean)
+      .join(' ');
+
+    const badge = (
       <div
         className={`relative inline-flex whitespace-nowrap rounded-full border-gray-700 text-xs font-semibold leading-5 ring-gray-700 ${
           shrink ? '' : 'ring-1'
         }`}
+        role="img"
+        aria-label={label || undefined}
       >
         <div className={badgeStyle.join(' ')}>{indicatorIcon}</div>
         {is4k && <span className="pl-1 pr-2 text-gray-200">4K</span>}
       </div>
     );
+
+    return label ? <Tooltip content={label}>{badge}</Tooltip> : badge;
   }
 );
 

@@ -1,13 +1,17 @@
 import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
+import BookDetailsLayout from '@app/components/BookDetails/BookDetailsLayout';
+import {
+  getBookFormatMessage,
+  getRequestedBookFormat,
+  type RequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
 import Button from '@app/components/Common/Button';
-import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
-import StatusBadge from '@app/components/StatusBadge';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -39,7 +43,6 @@ import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { BookDetails as BookDetailsType } from '@server/models/Book';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -61,14 +64,7 @@ const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
 });
 
 const messages = defineMessages('components.BookDetails', {
-  book: 'Book',
-  author: 'Author',
-  firstPublished: 'First Published',
-  identifiers: 'Identifiers',
-  openLibrary: 'Open Library',
-  isbnCandidates: 'ISBN Candidates',
-  subjects: 'Subjects',
-  manage: 'Manage',
+  manage: 'Manage Book',
   reportissue: 'Report an Issue',
   openissues: 'Open Issues',
   watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
@@ -78,6 +74,8 @@ const messages = defineMessages('components.BookDetails', {
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
   viewrequest: 'View Request',
+  viewRequestFormat: 'View {format} request',
+  requestBookFormat: 'Request {format}',
   requestbibliography: 'Request Bibliography',
 });
 
@@ -100,6 +98,15 @@ const BookDetails = () => {
   const normalizedRouteBookId = bookId
     ? normalizeOpenLibraryWorkId(bookId)
     : undefined;
+  const routeBookFormat = getQueryParamString(router.query.format);
+  const preferredBookFormat: RequestedBookFormat | undefined =
+    routeBookFormat === 'audiobook' ||
+    routeBookFormat === 'ebook' ||
+    routeBookFormat === 'both'
+      ? routeBookFormat
+      : undefined;
+  const [requestModalFormat, setRequestModalFormat] =
+    useState<RequestedBookFormat>(preferredBookFormat ?? 'ebook');
 
   const {
     data,
@@ -167,39 +174,29 @@ const BookDetails = () => {
     activeBookRequests.length === 1
       ? activeBookRequests[0]
       : undefined);
-  const hasMissingBookFormat =
-    !!data.mediaInfo &&
-    data.mediaInfo.status !== MediaStatus.BLOCKLISTED &&
-    (!(hasEbookServiceLink || hasActiveEbookRequest) ||
-      !(hasAudiobookServiceLink || hasActiveAudiobookRequest));
-  const bookDownloadStatus = [
-    ...(data.mediaInfo?.downloadStatus ?? []),
-    ...(data.mediaInfo?.audiobookDownloadStatus ?? []),
-  ];
-  const canShowRequest =
+  const canRequestEbook =
     canRequest &&
-    (!data.mediaInfo?.status ||
-      data.mediaInfo.status === MediaStatus.UNKNOWN ||
-      data.mediaInfo.status === MediaStatus.DELETED ||
-      hasMissingBookFormat);
-  const canReportIssue =
+    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
+    !(hasEbookServiceLink || hasActiveEbookRequest);
+  const canRequestAudiobook =
+    canRequest &&
+    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
+    !(hasAudiobookServiceLink || hasActiveAudiobookRequest);
+  const canUseReportIssue = hasPermission(
+    [Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES],
+    { type: 'or' }
+  );
+  const isReportIssueAvailable =
     !!data.mediaInfo?.id &&
     (data.mediaInfo.status === MediaStatus.AVAILABLE ||
-      data.mediaInfo.status === MediaStatus.PARTIALLY_AVAILABLE) &&
-    hasPermission([Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES], {
-      type: 'or',
-    });
-  const canBlocklist =
-    hasPermission(Permission.MANAGE_BLOCKLIST) &&
-    data.mediaInfo?.status !== MediaStatus.PROCESSING &&
-    data.mediaInfo?.status !== MediaStatus.AVAILABLE &&
-    data.mediaInfo?.status !== MediaStatus.PARTIALLY_AVAILABLE &&
-    data.mediaInfo?.status !== MediaStatus.PENDING &&
+      data.mediaInfo.status === MediaStatus.PARTIALLY_AVAILABLE);
+  const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
+  const isBlocklistAvailable =
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
-  const canManage =
-    hasPermission(Permission.MANAGE_REQUESTS) &&
-    data.mediaInfo &&
-    data.mediaInfo.status !== MediaStatus.UNKNOWN;
+  const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
+  const isManageAvailable = Boolean(
+    data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
+  );
   const canWatchlist =
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     user?.userType !== UserType.PLEX;
@@ -207,6 +204,36 @@ const BookDetails = () => {
     data.mediaInfo?.issues?.filter(
       (issue) => issue.status === IssueStatus.OPEN
     ) ?? [];
+  const openRequestModal = (format: RequestedBookFormat) => {
+    setEditRequest(undefined);
+    setRequestModalFormat(format);
+    setShowRequestModal(true);
+  };
+  const activeRequestLabel = activeBookRequest
+    ? intl.formatMessage(messages.viewRequestFormat, {
+        format: intl.formatMessage(
+          getBookFormatMessage(
+            getRequestedBookFormat(activeBookRequest.bookFormat)
+          )
+        ),
+      })
+    : intl.formatMessage(messages.viewrequest);
+  const formatCoverage: {
+    format: 'ebook' | 'audiobook';
+    available: boolean;
+    requested: boolean;
+  }[] = [
+    {
+      format: 'ebook',
+      available: hasEbookServiceLink,
+      requested: hasActiveEbookRequest,
+    },
+    {
+      format: 'audiobook',
+      available: hasAudiobookServiceLink,
+      requested: hasActiveAudiobookRequest,
+    },
+  ];
 
   const blocklistBook = async () => {
     setIsBlocklisting(true);
@@ -309,10 +336,199 @@ const BookDetails = () => {
     }
   };
 
+  const primaryActions = (
+    <>
+      {canUseBlocklist && (
+        <Tooltip
+          content={intl.formatMessage(
+            isBlocklistAvailable
+              ? globalMessages.addToBlocklist
+              : globalMessages.alreadyBlocklisted
+          )}
+        >
+          <Button
+            buttonType="blocklist"
+            buttonSize="sm"
+            onClick={() => setShowBlocklistModal(true)}
+            disabled={!isBlocklistAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.alreadyBlocklisted
+            )}
+            aria-label={intl.formatMessage(globalMessages.addToBlocklist)}
+          >
+            <EyeSlashIcon />
+          </Button>
+        </Tooltip>
+      )}
+      {canUseManage && (
+        <Tooltip
+          content={intl.formatMessage(
+            isManageAvailable
+              ? messages.manage
+              : globalMessages.manageUnavailable
+          )}
+        >
+          <Button
+            buttonType="manage"
+            buttonSize="sm"
+            onClick={() => setShowManager(true)}
+            disabled={!isManageAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.manageUnavailable
+            )}
+            className="relative"
+            aria-label={intl.formatMessage(messages.manage)}
+          >
+            <CogIcon className="!mr-0" />
+            {openIssues.length > 0 && (
+              <>
+                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
+                <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
+              </>
+            )}
+          </Button>
+        </Tooltip>
+      )}
+      {canUseReportIssue && (
+        <Tooltip
+          content={intl.formatMessage(
+            isReportIssueAvailable
+              ? messages.reportissue
+              : globalMessages.reportIssueUnavailable
+          )}
+        >
+          <Button
+            buttonType="reportIssue"
+            buttonSize="sm"
+            onClick={() => setShowIssueModal(true)}
+            disabled={!isReportIssueAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.reportIssueUnavailable
+            )}
+            aria-label={intl.formatMessage(messages.reportissue)}
+          >
+            <ExclamationTriangleIcon />
+          </Button>
+        </Tooltip>
+      )}
+      <AssociationBadge
+        mediaType="book"
+        id={openLibraryWorkId}
+        variant="button"
+      />
+      <span className="ml-auto hidden sm:block" aria-hidden="true" />
+      {canRequest && data.authorId && (
+        <Button
+          buttonType="bulkRequest"
+          buttonSize="sm"
+          onClick={() => setShowBulkRequestModal(true)}
+        >
+          <ArrowDownTrayIcon />
+          <span>{intl.formatMessage(messages.requestbibliography)}</span>
+        </Button>
+      )}
+      {activeBookRequest && (
+        <Button
+          buttonType="ghost"
+          buttonSize="sm"
+          onClick={() => {
+            setEditRequest(activeBookRequest);
+            setShowRequestModal(true);
+          }}
+        >
+          <InformationCircleIcon />
+          <span>{activeRequestLabel}</span>
+        </Button>
+      )}
+      {canRequestEbook && (
+        <Button
+          buttonType="detailRequest"
+          buttonSize="sm"
+          onClick={() => openRequestModal('ebook')}
+        >
+          <ArrowDownTrayIcon />
+          <span>
+            {intl.formatMessage(messages.requestBookFormat, {
+              format: intl.formatMessage(getBookFormatMessage('ebook')),
+            })}
+          </span>
+        </Button>
+      )}
+      {canRequestAudiobook && (
+        <Button
+          buttonType="detailRequest"
+          buttonSize="sm"
+          onClick={() => openRequestModal('audiobook')}
+        >
+          <ArrowDownTrayIcon />
+          <span>
+            {intl.formatMessage(messages.requestBookFormat, {
+              format: intl.formatMessage(getBookFormatMessage('audiobook')),
+            })}
+          </span>
+        </Button>
+      )}
+    </>
+  );
+
+  const secondaryActions = (
+    <>
+      {canWatchlist && (
+        <Tooltip
+          content={intl.formatMessage(
+            toggleWatchlist
+              ? messages.addtowatchlist
+              : messages.removefromwatchlist
+          )}
+        >
+          <Button
+            buttonType={toggleWatchlist ? 'ghost' : 'default'}
+            buttonSize="sm"
+            onClick={toggleWatchlist ? addToWatchlist : removeFromWatchlist}
+            aria-label={intl.formatMessage(
+              toggleWatchlist
+                ? messages.addtowatchlist
+                : messages.removefromwatchlist
+            )}
+          >
+            {isWatchlistUpdating ? (
+              <Spinner />
+            ) : toggleWatchlist ? (
+              <StarIcon className="text-amber-300" />
+            ) : (
+              <MinusCircleIcon />
+            )}
+          </Button>
+        </Tooltip>
+      )}
+    </>
+  );
+
+  const additionalContent =
+    hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
+      type: 'or',
+    }) && openIssues.length > 0 ? (
+      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+        <h2 className="px-3 py-2 text-xs font-semibold text-gray-200">
+          {intl.formatMessage(messages.openissues)}
+        </h2>
+        <ul className="border-t border-gray-700">
+          {openIssues.map((issue) => (
+            <li
+              key={`book-issue-${issue.id}`}
+              className="border-b border-gray-700 last:border-b-0"
+            >
+              <IssueBlock issue={issue} />
+            </li>
+          ))}
+        </ul>
+      </section>
+    ) : undefined;
+
   return (
     <>
       <PageTitle title={data.title} />
-      {showManager && canManage && (
+      {showManager && canUseManage && isManageAvailable && (
         <ExternalMediaManageSlideOver
           data={data}
           mediaType={MediaType.BOOK}
@@ -320,7 +536,10 @@ const BookDetails = () => {
             setShowManager(false);
             router.push({
               pathname: router.pathname,
-              query: { bookId },
+              query: {
+                bookId,
+                ...(preferredBookFormat ? { format: preferredBookFormat } : {}),
+              },
             });
           }}
           revalidate={() => revalidate()}
@@ -351,6 +570,7 @@ const BookDetails = () => {
       {showRequestModal && (
         <RequestModal
           bookId={openLibraryWorkId}
+          initialBookFormat={requestModalFormat}
           editRequest={editRequest}
           show={showRequestModal}
           type="book"
@@ -388,301 +608,13 @@ const BookDetails = () => {
           onComplete={() => revalidate()}
         />
       )}
-      <div className="relative z-10 mt-4 flex flex-col gap-6 lg:flex-row">
-        <div className="w-full max-w-xs flex-shrink-0">
-          <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-gray-800 ring-1 ring-gray-700">
-            <CachedImage
-              type="book"
-              src={
-                data.posterPath ?? '/images/seerr_poster_not_found_logo_top.png'
-              }
-              alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              fill
-            />
-          </div>
-        </div>
-        <div className="min-w-0 flex-1 text-gray-300">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-amber-500 bg-amber-600/80 px-3 py-1 text-xs font-medium uppercase tracking-wider text-white">
-              {intl.formatMessage(messages.book)}
-            </span>
-            {data.mediaInfo?.status &&
-              data.mediaInfo.status !== MediaStatus.UNKNOWN && (
-                <StatusBadge
-                  status={data.mediaInfo.status}
-                  downloadItem={bookDownloadStatus}
-                  inProgress={bookDownloadStatus.length > 0}
-                  mediaType="book"
-                  externalId={openLibraryWorkId}
-                  serviceUrl={
-                    data.mediaInfo.serviceUrl ??
-                    data.mediaInfo.audiobookServiceUrl
-                  }
-                />
-              )}
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <h1
-              className="min-w-0 break-words text-3xl font-bold text-white lg:text-5xl"
-              data-testid="media-title"
-            >
-              {data.title}
-            </h1>
-            <div className="flex-shrink-0">
-              <AssociationBadge
-                mediaType="book"
-                id={openLibraryWorkId}
-                variant="inline"
-              />
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-            {data.author && (
-              <span>
-                {intl.formatMessage(messages.author)}:{' '}
-                {data.authorId ? (
-                  <Link href={`/author/${encodeApiPathSegment(data.authorId)}`}>
-                    {data.author}
-                  </Link>
-                ) : (
-                  data.author
-                )}
-              </span>
-            )}
-            {data.firstPublishYear && (
-              <span>
-                {intl.formatMessage(messages.firstPublished)}:{' '}
-                {data.firstPublishYear}
-              </span>
-            )}
-          </div>
-          {data.description && (
-            <div className="mt-6 max-w-4xl whitespace-pre-line text-sm leading-6">
-              {data.description}
-            </div>
-          )}
-          <div className="media-facts mt-6 max-w-4xl">
-            {data.author && (
-              <div className="media-fact">
-                <span>{intl.formatMessage(messages.author)}</span>
-                <span className="media-fact-value">
-                  {data.authorId ? (
-                    <Link
-                      href={`/author/${encodeApiPathSegment(data.authorId)}`}
-                    >
-                      {data.author}
-                    </Link>
-                  ) : (
-                    data.author
-                  )}
-                </span>
-              </div>
-            )}
-            {data.firstPublishYear && (
-              <div className="media-fact">
-                <span>{intl.formatMessage(messages.firstPublished)}</span>
-                <span className="media-fact-value">
-                  {data.firstPublishYear}
-                </span>
-              </div>
-            )}
-            <div className="media-fact">
-              <span>{intl.formatMessage(messages.identifiers)}</span>
-              <span className="media-fact-value">
-                <a
-                  href={`https://openlibrary.org/works/${openLibraryWorkId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {intl.formatMessage(messages.openLibrary)}
-                </a>
-                {data.isbn13 && (
-                  <span className="ml-2">ISBN {data.isbn13}</span>
-                )}
-                {data.editionId && (
-                  <span className="ml-2">Edition {data.editionId}</span>
-                )}
-              </span>
-            </div>
-            {!!data.isbnCandidates?.length && (
-              <div className="media-fact">
-                <span>{intl.formatMessage(messages.isbnCandidates)}</span>
-                <div className="media-fact-value max-w-full space-y-1">
-                  {data.isbnCandidates.slice(0, 5).map((candidate) => (
-                    <div
-                      key={`${candidate.editionId ?? candidate.isbn}-${candidate.isbn}`}
-                      className="truncate"
-                      title={[candidate.isbn, candidate.title, candidate.format]
-                        .filter(Boolean)
-                        .join(' - ')}
-                    >
-                      {[candidate.isbn, candidate.title, candidate.format]
-                        .filter(Boolean)
-                        .join(' - ')}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          {(canWatchlist ||
-            canShowRequest ||
-            canReportIssue ||
-            canBlocklist ||
-            canManage) && (
-            <div className="media-actions mt-6 justify-start gap-2 sm:justify-start xl:mt-6">
-              {canWatchlist && (
-                <>
-                  {toggleWatchlist ? (
-                    <Tooltip
-                      content={intl.formatMessage(messages.addtowatchlist)}
-                    >
-                      <Button buttonType="ghost" onClick={addToWatchlist}>
-                        {isWatchlistUpdating ? (
-                          <Spinner />
-                        ) : (
-                          <StarIcon className="text-amber-300" />
-                        )}
-                      </Button>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip
-                      content={intl.formatMessage(messages.removefromwatchlist)}
-                    >
-                      <Button onClick={removeFromWatchlist}>
-                        {isWatchlistUpdating ? (
-                          <Spinner />
-                        ) : (
-                          <MinusCircleIcon />
-                        )}
-                      </Button>
-                    </Tooltip>
-                  )}
-                </>
-              )}
-              {canShowRequest && (
-                <Button
-                  buttonType="primary"
-                  onClick={() => {
-                    setEditRequest(undefined);
-                    setShowRequestModal(true);
-                  }}
-                >
-                  <ArrowDownTrayIcon />
-                  <span>{intl.formatMessage(globalMessages.request)}</span>
-                </Button>
-              )}
-              {canRequest && data.authorId && (
-                <Button
-                  buttonType="default"
-                  onClick={() => setShowBulkRequestModal(true)}
-                >
-                  <ArrowDownTrayIcon />
-                  <span>
-                    {intl.formatMessage(messages.requestbibliography)}
-                  </span>
-                </Button>
-              )}
-              {activeBookRequest && (
-                <Button
-                  buttonType="default"
-                  onClick={() => {
-                    setEditRequest(activeBookRequest);
-                    setShowRequestModal(true);
-                  }}
-                >
-                  <InformationCircleIcon />
-                  <span>{intl.formatMessage(messages.viewrequest)}</span>
-                </Button>
-              )}
-              {canManage && (
-                <Tooltip content={intl.formatMessage(messages.manage)}>
-                  <Button
-                    buttonType="ghost"
-                    onClick={() => setShowManager(true)}
-                    className="relative"
-                    aria-label={intl.formatMessage(messages.manage)}
-                  >
-                    <CogIcon className="!mr-0" />
-                    {openIssues.length > 0 && (
-                      <>
-                        <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
-                        <div className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-                      </>
-                    )}
-                  </Button>
-                </Tooltip>
-              )}
-              {canReportIssue && (
-                <Tooltip content={intl.formatMessage(messages.reportissue)}>
-                  <Button
-                    buttonType="warning"
-                    onClick={() => setShowIssueModal(true)}
-                    aria-label={intl.formatMessage(messages.reportissue)}
-                  >
-                    <ExclamationTriangleIcon className="!mr-0" />
-                  </Button>
-                </Tooltip>
-              )}
-              {canBlocklist && (
-                <Tooltip
-                  content={intl.formatMessage(globalMessages.addToBlocklist)}
-                >
-                  <Button
-                    buttonType="ghost"
-                    onClick={() => setShowBlocklistModal(true)}
-                    aria-label={intl.formatMessage(
-                      globalMessages.addToBlocklist
-                    )}
-                  >
-                    <EyeSlashIcon className="!mr-0" />
-                  </Button>
-                </Tooltip>
-              )}
-            </div>
-          )}
-          {!!data.subjects?.length && (
-            <div className="mt-6">
-              <h2 className="mb-2 text-lg font-semibold text-white">
-                {intl.formatMessage(messages.subjects)}
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {data.subjects.map((subject) => (
-                  <span
-                    key={subject}
-                    className="rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-200 ring-1 ring-gray-700"
-                  >
-                    {subject}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-      {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
-        type: 'or',
-      }) &&
-        openIssues.length > 0 && (
-          <div className="mt-10">
-            <h2 className="mb-4 text-2xl font-bold text-white">
-              {intl.formatMessage(messages.openissues)}
-            </h2>
-            <div className="overflow-hidden rounded-lg ring-1 ring-gray-800">
-              <ul>
-                {openIssues.map((issue) => (
-                  <li
-                    key={`book-issue-${issue.id}`}
-                    className="border-b border-gray-800 last:border-b-0"
-                  >
-                    <IssueBlock issue={issue} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
+      <BookDetailsLayout
+        data={data}
+        formatCoverage={formatCoverage}
+        primaryActions={primaryActions}
+        secondaryActions={secondaryActions}
+        additionalContent={additionalContent}
+      />
     </>
   );
 };

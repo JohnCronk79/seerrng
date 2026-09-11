@@ -11,7 +11,7 @@ import { FormattedMessage } from 'react-intl';
 const messages = defineMessages('components.Setup', {
   welcome: 'Welcome to Seerr',
   signinMessage: 'Get started by signing in',
-  signin: 'Sign in to your account',
+  signinToAccount: 'Sign in to your account',
   signinWithJellyfin: 'Enter your Jellyfin details',
   signinWithEmby: 'Enter your Emby details',
   signinWithPlex: 'Enter your Plex details',
@@ -81,7 +81,7 @@ const SetupLogin: React.FC<LoginWithMediaServerProps> = ({
   return (
     <div className="p-4">
       <div className="mb-2 flex justify-center text-xl font-bold">
-        <FormattedMessage {...messages.signin} />
+        <FormattedMessage {...messages.signinToAccount} />
       </div>
       <div className="mb-2 flex justify-center pb-6 text-sm">
         {serverType === MediaServerType.JELLYFIN ? (

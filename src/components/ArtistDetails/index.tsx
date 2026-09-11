@@ -2,6 +2,7 @@ import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
 import PageTitle from '@app/components/Common/PageTitle';
 import MediaSlider from '@app/components/MediaSlider';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
@@ -236,6 +237,7 @@ const ArtistDetails = () => {
         )}
         <div className="min-w-0 text-center lg:text-left">
           <div className="flex min-w-0 flex-wrap items-center justify-center gap-3 lg:justify-start">
+            <MediaTypeBadge mediaType="artist" variant="inline" />
             <h1 className="min-w-0 break-words text-3xl font-bold text-white lg:text-5xl">
               {artistName}
             </h1>

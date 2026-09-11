@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import { MediaServerType } from '@server/constants/server';
+import { UserType } from '@server/constants/user';
 import * as datasource from '@server/datasource';
 import { User } from '@server/entity/User';
 import type { ImageResponse } from '@server/lib/imageproxy';
 import ImageProxy from '@server/lib/imageproxy';
+import * as localAvatar from '@server/lib/localAvatar';
 import { getSettings } from '@server/lib/settings';
 import express from 'express';
 import request from 'supertest';
@@ -270,6 +272,56 @@ describe('GET /avatarproxy/remote', () => {
     assert.equal(res.status, 502);
     assert.deepEqual(res.body, { error: 'Unable to load avatar image.' });
     assert.doesNotMatch(JSON.stringify(res.body), /10\.0\.0\.5|ECONNREFUSED/);
+  });
+});
+
+describe('GET /avatarproxy/local/:userId', () => {
+  it('serves the current version with immutable browser caching', async () => {
+    const version = 'a'.repeat(64);
+    mock.method(datasource, 'getRepository', () => ({
+      findOne: async () => ({
+        id: 7,
+        avatarVersion: version,
+        userType: UserType.LOCAL,
+      }),
+    }));
+    mock.method(localAvatar, 'readLocalAvatar', async () =>
+      Buffer.from('local-avatar')
+    );
+
+    const response = await request(createApp()).get(
+      `/avatarproxy/local/7?v=${version}`
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['content-type'], 'image/webp');
+    assert.equal(
+      response.headers['cache-control'],
+      'public, max-age=31536000, immutable'
+    );
+    assert.equal(response.headers.etag, `"${version}"`);
+    assert.equal(response.body.toString(), 'local-avatar');
+  });
+
+  it('does not serve an older version after the profile picture changes', async () => {
+    const currentVersion = 'b'.repeat(64);
+    const readAvatar = mock.method(localAvatar, 'readLocalAvatar', async () =>
+      Buffer.from('local-avatar')
+    );
+    mock.method(datasource, 'getRepository', () => ({
+      findOne: async () => ({
+        id: 7,
+        avatarVersion: currentVersion,
+        userType: UserType.LOCAL,
+      }),
+    }));
+
+    const response = await request(createApp()).get(
+      `/avatarproxy/local/7?v=${'c'.repeat(64)}`
+    );
+
+    assert.equal(response.status, 404);
+    assert.equal(readAvatar.mock.callCount(), 0);
   });
 });
 

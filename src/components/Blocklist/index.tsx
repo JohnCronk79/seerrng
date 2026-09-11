@@ -1,12 +1,17 @@
-import BlocklistedTagsBadge from '@app/components/BlocklistedTagsBadge';
+import BlocklistedTagsBadge, {
+  compactBlocklistSourceBadgeClass,
+} from '@app/components/BlocklistedTagsBadge';
 import Badge from '@app/components/Common/Badge';
-import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
-import ConfirmButton from '@app/components/Common/ConfirmButton';
-import Header from '@app/components/Common/Header';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
+import Tooltip from '@app/components/Common/Tooltip';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
 import {
   getPositiveQueryParamNumber,
@@ -22,12 +27,13 @@ import {
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  FunnelIcon,
+  BarsArrowDownIcon,
+  BarsArrowUpIcon,
   MagnifyingGlassIcon,
+  NoSymbolIcon,
+  TagIcon,
   TrashIcon,
-} from '@heroicons/react/24/solid';
+} from '@heroicons/react/24/outline';
 import type {
   BlocklistItem,
   BlocklistResultsResponse,
@@ -39,26 +45,58 @@ import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import type { ChangeEvent } from 'react';
 import { useState } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { FormattedRelativeTime, useIntl } from 'react-intl';
+import { FormattedDate, useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.Blocklist', {
-  blocklistsettings: 'Blocklist Settings',
-  blocklistSettingsDescription: 'Manage blocklisted media.',
-  mediaName: 'Name',
-  mediaType: 'Type',
-  mediaTmdbId: 'tmdb Id',
-  blocklistdate: 'date',
-  blocklistedby: '{date} by {user}',
-  blocklistNotFoundError: '<strong>{title}</strong> is not blocklisted.',
-  filterManual: 'Manual',
-  filterBlocklistedTags: 'Blocklisted Tags',
-  showAllBlocklisted: 'Show All Blocklisted Media',
+  taskFilters: 'Task Filters',
+  filters: 'Filters',
+  clearFilters: 'Clear Filters',
+  all: 'All Blocklisted',
+  manual: 'Manual',
+  blocklistedTags: 'Blocklist Tag',
+  search: 'Keyword Search',
+  searchPlaceholder: 'Search Blocklist',
+  allMedia: 'All Media',
+  movies: 'Movies',
+  series: 'Series',
   music: 'Music',
   books: 'Books',
+  timePeriod: 'Time Period',
+  allTime: 'All Time',
+  sevenDays: 'Last 7 Days',
+  fourteenDays: 'Last 14 Days',
+  thirtyDays: 'Last 30 Days',
+  sixMonths: 'Last 6 Months',
+  mediaAndFormat: 'Media & Format',
+  releaseDate: 'Release Date',
+  firstPublished: 'First Published',
+  runtime: 'Runtime',
+  pages: 'Pages',
+  genres: 'Genres',
+  director: 'Director',
+  creator: 'Creator',
+  studio: 'Studio',
+  network: 'Network',
+  artist: 'Artist',
+  albumType: 'Album Type',
+  trackCount: 'Track Count',
+  author: 'Author',
+  publisher: 'Publisher',
+  blocklistedBy: 'Blocked By',
+  blocklistedOn: 'Blocked On',
+  source: 'Source',
+  manualSource: 'Manual',
+  unavailable: 'Not available',
+  removeTooltip: 'Remove this item from the blocklist.',
+  removeFailed: 'Unable to remove this item from the blocklist.',
+  noResults: 'No blocklisted items match these filters',
+  sortBy: 'Sort By',
+  sortDate: 'Date',
+  sortTitle: 'Title',
+  sortMediaType: 'Media Type',
 });
 
 enum Filter {
@@ -68,232 +106,472 @@ enum Filter {
 }
 
 type BlocklistTitle = MovieDetails | TvDetails | MusicDetails | BookDetails;
-
-const isMusic = (title: BlocklistTitle): title is MusicDetails => {
-  return (title as MusicDetails).mediaType === 'album';
+type TimeFrame = 'all' | '7d' | '14d' | '30d' | '6m';
+type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book';
+type LinkedDetailValue = {
+  name: string;
+  href?: string;
+};
+type LinkedDetail = {
+  label: string;
+  values: LinkedDetailValue[];
+};
+type GenreLink = {
+  name: string;
+  href: string;
 };
 
-const isBook = (title: BlocklistTitle): title is BookDetails => {
-  return (title as BookDetails).mediaType === 'book';
+const isMusic = (title: BlocklistTitle): title is MusicDetails =>
+  (title as MusicDetails).mediaType === 'album';
+
+const isBook = (title: BlocklistTitle): title is BookDetails =>
+  (title as BookDetails).mediaType === 'book';
+
+const isMovie = (title: BlocklistTitle): title is MovieDetails =>
+  !isMusic(title) && !isBook(title) && 'title' in title;
+
+const getTitle = (title: BlocklistTitle): string =>
+  isMovie(title) || isMusic(title) || isBook(title) ? title.title : title.name;
+
+const getYear = (title: BlocklistTitle): string | undefined => {
+  const value = isMovie(title)
+    ? title.releaseDate
+    : isMusic(title)
+      ? title.releaseDate
+      : isBook(title)
+        ? title.firstPublishYear?.toString()
+        : title.firstAirDate;
+  return value?.slice(0, 4);
 };
 
-const isMovie = (movie: BlocklistTitle): movie is MovieDetails => {
-  return (
-    !isMusic(movie) &&
-    !isBook(movie) &&
-    (movie as MovieDetails).title !== undefined
-  );
+const getRuntime = (title: BlocklistTitle, unavailable: string): string => {
+  if (isBook(title)) {
+    return title.numberOfPages?.toLocaleString() ?? unavailable;
+  }
+  const minutes = isMovie(title)
+    ? title.runtime
+    : isMusic(title)
+      ? Math.round(
+          title.tracks.reduce((total, track) => total + track.length, 0) / 60000
+        )
+      : title.episodeRunTime[0];
+  return minutes ? `${minutes.toLocaleString()} minutes` : unavailable;
+};
+
+const getGenres = (title: BlocklistTitle): GenreLink[] => {
+  if (isBook(title)) {
+    return (
+      title.subjects?.slice(0, 3).map((subject) => ({
+        name: subject,
+        href: `/discover/books?subject=${encodeURIComponent(subject)}`,
+      })) ?? []
+    );
+  }
+  if (isMusic(title)) {
+    return (
+      title.tags?.releaseGroup
+        ?.toSorted((left, right) => right.count - left.count)
+        .slice(0, 3)
+        .map((tag) => ({
+          name: tag.tag,
+          href: `/discover/music?genre=${encodeURIComponent(tag.tag)}`,
+        })) ?? []
+    );
+  }
+  return title.genres.slice(0, 3).map((genre) => ({
+    name: genre.name,
+    href: isMovie(title)
+      ? `/discover/movies/genre/${genre.id}`
+      : `/discover/tv/genre/${genre.id}`,
+  }));
+};
+
+const getSecondaryDetails = (
+  title: BlocklistTitle,
+  intl: ReturnType<typeof useIntl>
+): LinkedDetail[] => {
+  const unavailable = intl.formatMessage(messages.unavailable);
+  if (isMovie(title)) {
+    const director = title.credits.crew.find(
+      (credit) => credit.job === 'Director'
+    );
+    const studio = title.productionCompanies[0];
+    return [
+      {
+        label: intl.formatMessage(messages.director),
+        values: [
+          {
+            name: director?.name ?? unavailable,
+            href: director?.id ? `/person/${director.id}` : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.studio),
+        values: [
+          {
+            name: studio?.name ?? unavailable,
+            href: studio?.id
+              ? `/discover/movies/studio/${studio.id}`
+              : undefined,
+          },
+        ],
+      },
+    ];
+  }
+  if (isMusic(title)) {
+    return [
+      {
+        label: intl.formatMessage(messages.artist),
+        values: [
+          {
+            name: title.artist.name,
+            href: title.artist.id
+              ? `/artist/${encodeApiPathSegment(title.artist.id)}`
+              : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.albumType),
+        values: [{ name: title.type }],
+      },
+      {
+        label: intl.formatMessage(messages.trackCount),
+        values: [{ name: title.tracks.length.toLocaleString() }],
+      },
+    ];
+  }
+  if (isBook(title)) {
+    return [
+      {
+        label: intl.formatMessage(messages.author),
+        values: [
+          {
+            name: title.author ?? unavailable,
+            href: title.authorId
+              ? `/author/${encodeApiPathSegment(title.authorId)}`
+              : undefined,
+          },
+        ],
+      },
+      {
+        label: intl.formatMessage(messages.publisher),
+        values: [{ name: title.publisher ?? unavailable }],
+      },
+    ];
+  }
+  return [
+    {
+      label: intl.formatMessage(messages.creator),
+      values:
+        title.createdBy.length > 0
+          ? title.createdBy.map((creator) => ({
+              name: creator.name,
+              href: `/person/${creator.id}`,
+            }))
+          : [{ name: unavailable }],
+    },
+    {
+      label: intl.formatMessage(messages.network),
+      values:
+        title.networks.length > 0
+          ? title.networks.map((network) => ({
+              name: network.name,
+              href: `/discover/tv/network/${network.id}`,
+            }))
+          : [{ name: unavailable }],
+    },
+  ];
 };
 
 const Blocklist = () => {
-  const [currentPageSize, setCurrentPageSize] = useState<number>(10);
+  const [currentPageSize, setCurrentPageSize] = useState(10);
   const [searchFilter, debouncedSearchFilter, setSearchFilter] =
     useDebouncedState('');
-  const [currentFilter, setCurrentFilter] = useState<Filter>(Filter.MANUAL);
+  const [currentFilter, setCurrentFilter] = useState<Filter>(Filter.ALL);
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const [sort, setSort] = useState<'date' | 'title' | 'mediaType'>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const router = useRouter();
   const intl = useIntl();
-
   const page = getPositiveQueryParamNumber(router.query.page, 1) ?? 1;
   const pageIndex = page - 1;
   const updateQueryParams = useUpdateQueryParams({ page: page.toString() });
-
   const {
     data,
     error,
+    isValidating,
     mutate: revalidate,
   } = useSWR<BlocklistResultsResponse>(
-    `/api/v1/blocklist/?take=${currentPageSize}&skip=${
-      pageIndex * currentPageSize
-    }&filter=${currentFilter}${
+    `/api/v1/blocklist/?take=${currentPageSize}&skip=${pageIndex * currentPageSize}&filter=${currentFilter}${
       debouncedSearchFilter
         ? `&search=${encodeURIComponent(debouncedSearchFilter)}`
         : ''
-    }`,
-    {
-      refreshInterval: 0,
-      revalidateOnFocus: false,
-    }
+    }&timeFrame=${timeFrame}&mediaType=${mediaFilter}&sort=${sort}&sortDirection=${sortDirection}`,
+    { refreshInterval: 0, revalidateOnFocus: false }
+  );
+  useSearchActivityReporter(
+    Boolean(searchFilter.trim()) &&
+      (searchFilter.trim() !== debouncedSearchFilter.trim() || isValidating),
+    'blocklist-keyword'
   );
 
-  // check if there's no data and no errors in the table
-  // so as to show a spinner inside the table and not refresh the whole component
   if (!data && error) {
     return <ErrorPage statusCode={500} />;
   }
 
-  const searchItem = (e: ChangeEvent<HTMLInputElement>) => {
-    // Remove the "page" query param from the URL
-    // so that the "skip" query param on line 62 is empty
-    // and the search returns results without skipping items
-    if (router.query.page) router.replace(router.basePath);
-
-    setSearchFilter(e.target.value as string);
+  const resetPage = () => {
+    if (router.query.page) {
+      void router.replace({ pathname: router.pathname });
+    }
   };
-
-  const hasNextPage = data && data.pageInfo.pages > pageIndex + 1;
-  const hasPrevPage = pageIndex > 0;
+  const changePage = (nextPage: number) => {
+    updateQueryParams('page', String(nextPage));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const filterOptions = [
+    { value: Filter.ALL, label: messages.all, count: data?.counts.all ?? 0 },
+    {
+      value: Filter.MANUAL,
+      label: messages.manual,
+      count: data?.counts.manual ?? 0,
+    },
+    {
+      value: Filter.BLOCKLISTEDTAGS,
+      label: messages.blocklistedTags,
+      count: data?.counts.blocklistedTags ?? 0,
+    },
+  ];
+  const updateSort = (nextSort: typeof sort) => {
+    setSortDirection(
+      sort === nextSort
+        ? sortDirection === 'asc'
+          ? 'desc'
+          : 'asc'
+        : nextSort === 'title' || nextSort === 'mediaType'
+          ? 'asc'
+          : 'desc'
+    );
+    setSort(nextSort);
+    resetPage();
+  };
+  const clearFilters = () => {
+    setCurrentFilter(Filter.ALL);
+    setTimeFrame('all');
+    setMediaFilter('all');
+    setSearchFilter('');
+    resetPage();
+  };
 
   return (
     <>
-      <PageTitle title={[intl.formatMessage(globalMessages.blocklist)]} />
-      <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
-        <Header>{intl.formatMessage(globalMessages.blocklist)}</Header>
+      <PageTitle title={intl.formatMessage(globalMessages.blocklist)} />
+      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+        <span className="text-overseerr">
+          {intl.formatMessage(globalMessages.blocklist)}
+        </span>
+      </h2>
 
-        <div className="mt-2 flex flex-grow flex-col sm:flex-row lg:flex-grow-0">
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 lg:flex-grow-0">
-            <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100">
-              <FunnelIcon className="h-6 w-6" />
+      <section
+        className="mb-5 mt-4"
+        aria-label={intl.formatMessage(messages.taskFilters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.taskFilters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
+            {intl.formatMessage(messages.clearFilters)}
+          </button>
+          {filterOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={currentFilter === option.value}
+              onClick={() => {
+                setCurrentFilter(option.value);
+                resetPage();
+              }}
+              className={`inline-flex h-8 items-center whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                currentFilter === option.value
+                  ? 'border-indigo-400 bg-indigo-500 text-white'
+                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
+              }`}
+            >
+              {intl.formatMessage(option.label)}
+              <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
+                {option.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section
+        className="mb-5"
+        aria-label={intl.formatMessage(messages.filters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              ['all', messages.allMedia],
+              ['movie', messages.movies],
+              ['tv', messages.series],
+              ['music', messages.music],
+              ['book', messages.books],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={mediaFilter === value}
+              onClick={() => {
+                setMediaFilter(value);
+                resetPage();
+              }}
+              className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                mediaFilter === value
+                  ? 'border-indigo-400 bg-indigo-500 text-white'
+                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
+              }`}
+            >
+              {intl.formatMessage(label)}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              {intl.formatMessage(messages.timePeriod)}
             </span>
             <select
-              id="filter"
-              name="filter"
-              onChange={(e) => {
-                setCurrentFilter(e.target.value as Filter);
-                router.push({
-                  pathname: router.pathname,
-                  query: router.query.userId
-                    ? { userId: router.query.userId }
-                    : {},
-                });
+              value={timeFrame}
+              onChange={(event) => {
+                setTimeFrame(event.target.value as TimeFrame);
+                resetPage();
               }}
-              value={currentFilter}
-              className="rounded-r-only"
+              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              aria-label={intl.formatMessage(messages.timePeriod)}
             >
               <option value="all">
-                {intl.formatMessage(globalMessages.all)}
+                {intl.formatMessage(messages.allTime)}
               </option>
-              <option value="manual">
-                {intl.formatMessage(messages.filterManual)}
+              <option value="7d">
+                {intl.formatMessage(messages.sevenDays)}
               </option>
-              <option value="blocklistedTags">
-                {intl.formatMessage(messages.filterBlocklistedTags)}
+              <option value="14d">
+                {intl.formatMessage(messages.fourteenDays)}
+              </option>
+              <option value="30d">
+                {intl.formatMessage(messages.thirtyDays)}
+              </option>
+              <option value="6m">
+                {intl.formatMessage(messages.sixMonths)}
               </option>
             </select>
-          </div>
-
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 md:flex-grow-0">
-            <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100">
-              <MagnifyingGlassIcon className="h-6 w-6" />
+          </label>
+          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+            <span
+              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+                searchFilter.trim() ? 'bg-indigo-500/35 text-white' : ''
+              }`}
+            >
+              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              {intl.formatMessage(messages.search)}
             </span>
             <input
-              type="text"
-              className="rounded-r-only"
+              type="search"
               value={searchFilter}
-              onChange={(e) => searchItem(e)}
+              onChange={(event) => {
+                setSearchFilter(event.target.value);
+                resetPage();
+              }}
+              placeholder={intl.formatMessage(messages.searchPlaceholder)}
+              aria-label={intl.formatMessage(messages.searchPlaceholder)}
+              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
             />
-          </div>
+          </label>
         </div>
-      </div>
+      </section>
+
+      <section className="mb-5">
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.sortBy)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              ['date', messages.sortDate],
+              ['title', messages.sortTitle],
+              ['mediaType', messages.sortMediaType],
+            ] as const
+          ).map(([value, label]) => {
+            const active = sort === value;
+            const DirectionIcon =
+              active && sortDirection === 'asc'
+                ? BarsArrowUpIcon
+                : BarsArrowDownIcon;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => updateSort(value)}
+                className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+              >
+                {intl.formatMessage(label)}
+                <DirectionIcon className="h-4 w-4" />
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {!data ? (
         <LoadingSpinner />
       ) : data.results.length === 0 ? (
-        <div className="flex w-full flex-col items-center justify-center py-24 text-white">
-          <span className="text-2xl text-gray-400">
-            {intl.formatMessage(globalMessages.noresults)}
-          </span>
-          {currentFilter !== Filter.ALL && (
-            <div className="mt-4">
-              <Button
-                buttonType="primary"
-                onClick={() => setCurrentFilter(Filter.ALL)}
-              >
-                {intl.formatMessage(messages.showAllBlocklisted)}
-              </Button>
-            </div>
-          )}
+        <div className="refreshed-card-surface flex min-h-16 w-full items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-sm text-gray-400">
+          {intl.formatMessage(messages.noResults)}
         </div>
       ) : (
-        data.results.map((item: BlocklistItem) => {
-          return (
-            <div
-              className="py-2"
-              key={`request-list-${item.mediaType}-${
-                item.externalId ?? item.tmdbId
-              }`}
-            >
-              <BlocklistedItem item={item} revalidateList={revalidate} />
-            </div>
-          );
-        })
+        <div className="space-y-4">
+          {data.results.map((item) => (
+            <BlocklistedItem
+              key={`${item.mediaType}-${item.externalId ?? item.tmdbId}`}
+              item={item}
+              revalidateList={() => void revalidate()}
+            />
+          ))}
+        </div>
       )}
 
-      <div className="actions">
-        <nav
-          className="mb-3 flex flex-col items-center space-y-3 sm:flex-row sm:space-y-0"
-          aria-label="Pagination"
-        >
-          <div className="hidden lg:flex lg:flex-1">
-            <p className="text-sm">
-              {data &&
-                (data?.results.length ?? 0) > 0 &&
-                intl.formatMessage(globalMessages.showingresults, {
-                  from: pageIndex * currentPageSize + 1,
-                  to:
-                    data.results.length < currentPageSize
-                      ? pageIndex * currentPageSize + data.results.length
-                      : (pageIndex + 1) * currentPageSize,
-                  total: data.pageInfo.results,
-                  strong: (msg: React.ReactNode) => (
-                    <span className="font-medium">{msg}</span>
-                  ),
-                })}
-            </p>
-          </div>
-          <div className="flex justify-center sm:flex-1 sm:justify-start lg:justify-center">
-            <span className="-mt-3 items-center truncate text-sm sm:mt-0">
-              {intl.formatMessage(globalMessages.resultsperpage, {
-                pageSize: (
-                  <select
-                    id="pageSize"
-                    name="pageSize"
-                    onChange={(e) => {
-                      setCurrentPageSize(Number(e.target.value));
-                      router
-                        .push({
-                          pathname: router.pathname,
-                          query: router.query.userId
-                            ? { userId: router.query.userId }
-                            : {},
-                        })
-                        .then(() => window.scrollTo(0, 0));
-                    }}
-                    value={currentPageSize}
-                    className="short inline"
-                  >
-                    <option value="5">5</option>
-                    <option value="10">10</option>
-                    <option value="25">25</option>
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                  </select>
-                ),
-              })}
-            </span>
-          </div>
-          <div className="flex flex-auto justify-center space-x-2 sm:flex-1 sm:justify-end">
-            <Button
-              disabled={!hasPrevPage}
-              onClick={() => updateQueryParams('page', (page - 1).toString())}
-            >
-              <ChevronLeftIcon />
-              <span>{intl.formatMessage(globalMessages.previous)}</span>
-            </Button>
-            <Button
-              disabled={!hasNextPage}
-              onClick={() => updateQueryParams('page', (page + 1).toString())}
-            >
-              <span>{intl.formatMessage(globalMessages.next)}</span>
-              <ChevronRightIcon />
-            </Button>
-          </div>
-        </nav>
-      </div>
+      <PaginationFooter
+        page={page}
+        pageSize={currentPageSize}
+        totalPages={data?.pageInfo.pages ?? 1}
+        onPageChange={changePage}
+        onPageSizeChange={(size) => {
+          setCurrentPageSize(size);
+          resetPage();
+        }}
+      />
     </>
   );
 };
-
-export default Blocklist;
 
 interface BlocklistedItemProps {
   item: BlocklistItem;
@@ -301,18 +579,15 @@ interface BlocklistedItemProps {
 }
 
 const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
-  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const { addToast } = useToasts();
-  const { ref, inView } = useInView({
-    triggerOnce: true,
-  });
+  const { ref, inView } = useInView({ triggerOnce: true });
   const intl = useIntl();
   const { hasPermission } = useUser();
   const externalTitleId =
     item.externalId && (item.mediaType === 'music' || item.mediaType === 'book')
       ? normalizeExternalTitleId(item.mediaType, item.externalId)
       : item.externalId;
-
   const url =
     item.mediaType === 'movie'
       ? `/api/v1/movie/${item.tmdbId}`
@@ -338,228 +613,293 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
   if (!title && !error) {
     return (
       <div
-        className="h-64 w-full animate-pulse rounded-xl bg-gray-800 xl:h-28"
         ref={ref}
+        className="h-36 w-full animate-pulse rounded-xl bg-gray-800/50"
       />
     );
   }
 
-  const removeFromBlocklist = async (tmdbId: number, title?: string) => {
-    setIsUpdating(true);
+  const displayTitle = title
+    ? getTitle(title)
+    : (item.title ?? 'Unknown title');
+  const year = title ? getYear(title) : undefined;
+  const unavailable = intl.formatMessage(messages.unavailable);
+  const posterPath = title?.posterPath;
+  const posterSrc =
+    title && (isBook(title) || isMusic(title))
+      ? posterPath
+      : posterPath
+        ? getTmdbPosterImageUrl(posterPath)
+        : undefined;
+  const posterType =
+    title && isBook(title)
+      ? 'book'
+      : title && isMusic(title)
+        ? 'music'
+        : 'tmdb';
+  const backdropSrc = title
+    ? isMusic(title)
+      ? (title.artistBackdrop ?? title.artistThumb ?? title.posterPath)
+      : isBook(title)
+        ? title.posterPath
+        : title.backdropPath
+          ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`
+          : posterSrc
+    : undefined;
+  const backdropType =
+    title && isBook(title)
+      ? 'book'
+      : title && isMusic(title)
+        ? 'music'
+        : 'tmdb';
+  const secondaryDetails = title ? getSecondaryDetails(title, intl) : [];
+  const genres = title ? getGenres(title) : [];
+  const releaseDate = title
+    ? isMovie(title)
+      ? title.releaseDate
+      : isMusic(title)
+        ? title.releaseDate
+        : isBook(title)
+          ? title.firstPublishYear?.toString()
+          : title.firstAirDate
+    : undefined;
 
+  const removeFromBlocklist = async () => {
+    setIsUpdating(true);
     try {
       await axios.delete(
         `/api/v1/blocklist/${
           item.mediaType === 'music' || item.mediaType === 'book'
             ? encodeApiPathSegment(externalTitleId ?? '')
-            : tmdbId
+            : item.tmdbId
         }?mediaType=${item.mediaType}`
       );
-
       addToast(
         <span>
           {intl.formatMessage(globalMessages.removeFromBlocklistSuccess, {
-            title,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            title: displayTitle,
+            strong: (message: React.ReactNode) => <strong>{message}</strong>,
           })}
         </span>,
         { appearance: 'success', autoDismiss: true }
       );
+      revalidateList();
     } catch {
-      addToast(intl.formatMessage(globalMessages.blocklistError), {
+      addToast(intl.formatMessage(messages.removeFailed), {
         appearance: 'error',
         autoDismiss: true,
       });
+    } finally {
+      setIsUpdating(false);
     }
-
-    revalidateList();
-    setIsUpdating(false);
   };
 
   return (
-    <div className="relative flex w-full flex-col justify-between overflow-hidden rounded-xl bg-gray-800 py-4 text-gray-400 shadow-md ring-1 ring-gray-700 xl:h-28 xl:flex-row">
-      {title && !isMusic(title) && !isBook(title) && title.backdropPath && (
-        <div className="absolute inset-0 z-0 w-full bg-cover bg-center xl:w-2/3">
+    <article
+      ref={ref}
+      className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20"
+    >
+      {backdropSrc && (
+        <div className="absolute inset-0 z-0">
           <CachedImage
-            type="tmdb"
-            src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
+            type={backdropType}
+            src={backdropSrc}
             alt=""
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
+            sizes="100vw"
+            className="object-cover object-center"
           />
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(90deg, rgba(31, 41, 55, 0.47) 0%, rgba(31, 41, 55, 1) 100%)',
-            }}
-          />
+          <div className="refreshed-artwork-scrim" />
+          <div className="refreshed-artwork-gradient" />
         </div>
       )}
-      <div className="relative flex w-full flex-col justify-between overflow-hidden sm:flex-row">
-        <div className="relative z-10 flex w-full items-center overflow-hidden pl-4 pr-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
+      <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+        <Link
+          href={mediaHref}
+          className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition hover:ring-indigo-400 sm:h-[120px] sm:w-20"
+        >
+          <CachedImage
+            type={posterType}
+            src={posterSrc ?? '/images/seerr_poster_not_found.png'}
+            alt=""
+            fill
+            sizes="(min-width: 640px) 80px, 64px"
+            className="object-cover"
+          />
+          <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+            <MediaTypeBadge
+              mediaType={getMediaTypeBadgeType(item.mediaType) ?? 'movie'}
+              variant="compact"
+              className="h-[18px] w-full justify-center gap-0.5 px-1 py-0 text-[9px] shadow-sm [&_svg]:h-2.5 [&_svg]:w-2.5"
+            />
+          </span>
+        </Link>
+
+        <div className="flex min-w-0 flex-col">
           <Link
             href={mediaHref}
-            className="relative h-auto w-12 flex-shrink-0 scale-100 transform-gpu overflow-hidden rounded-md transition duration-300 hover:scale-105"
+            className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline"
           >
-            <CachedImage
-              type={
-                title && isBook(title)
-                  ? 'book'
-                  : title && isMusic(title)
-                    ? 'music'
-                    : 'tmdb'
-              }
-              src={
-                title && (isMusic(title) || isBook(title)) && title.posterPath
-                  ? title.posterPath
-                  : title?.posterPath && !isMusic(title) && !isBook(title)
-                    ? getTmdbPosterImageUrl(title.posterPath)
-                    : '/images/seerr_poster_not_found.png'
-              }
-              alt=""
-              sizes="100vw"
-              style={{ width: '100%', height: 'auto', objectFit: 'cover' }}
-              width={600}
-              height={900}
-            />
+            {displayTitle}
+            {year ? ` (${year})` : ''}
           </Link>
-          <div className="flex flex-col justify-center overflow-hidden pl-2 xl:pl-4">
-            <div className="pt-0.5 text-xs font-medium text-white sm:pt-1">
-              {title &&
-                (isMovie(title)
-                  ? title.releaseDate
-                  : isMusic(title)
-                    ? title.releaseDate
-                    : isBook(title)
-                      ? title.firstPublishYear?.toString()
-                      : title.firstAirDate
-                )?.slice(0, 4)}
-            </div>
-            <Link href={mediaHref}>
-              <span className="mr-2 min-w-0 truncate text-lg font-bold text-white hover:underline xl:text-xl">
-                {title &&
-                  (isMovie(title)
-                    ? title.title
-                    : isMusic(title) || isBook(title)
-                      ? title.title
-                      : title.name)}
-              </span>
-            </Link>
-          </div>
-        </div>
-
-        <div className="z-10 ml-4 mt-4 flex w-full flex-col justify-center overflow-hidden pr-4 text-sm sm:ml-2 sm:mt-0 xl:flex-1 xl:pr-0">
-          <div className="card-field">
-            <span className="card-field-name">Status</span>
-            <Badge badgeType="danger">
-              {intl.formatMessage(globalMessages.blocklisted)}
-            </Badge>
-          </div>
-
-          {item.createdAt && (
-            <div className="card-field">
-              <span className="card-field-name">
-                {intl.formatMessage(globalMessages.blocklisted)}
-              </span>
-              <span className="flex truncate text-sm text-gray-300">
-                {intl.formatMessage(messages.blocklistedby, {
-                  date: (
-                    <FormattedRelativeTime
-                      value={Math.floor(
-                        (new Date(item.createdAt).getTime() - Date.now()) / 1000
-                      )}
-                      updateIntervalInSeconds={1}
-                      numeric="auto"
-                    />
-                  ),
-                  user: item.user ? (
-                    <Link href={`/users/${item.user.id}`}>
-                      <span className="group flex items-center truncate">
-                        <CachedImage
-                          type="avatar"
-                          src={item.user.avatar}
-                          alt=""
-                          className="avatar-sm ml-1.5"
-                          width={20}
-                          height={20}
-                          style={{ objectFit: 'cover' }}
-                        />
-                        <span className="ml-1 truncate text-sm font-semibold group-hover:text-white group-hover:underline">
-                          {item.user.displayName}
+          <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
+            <div className="min-w-0 card:col-span-2 card:pr-3">
+              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                  {intl.formatMessage(messages.mediaAndFormat)}:
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  {item.mediaType === 'tv'
+                    ? 'Series'
+                    : item.mediaType === 'music'
+                      ? 'Music · Album'
+                      : item.mediaType === 'book'
+                        ? 'Book'
+                        : 'Movie'}
+                </dd>
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  {intl.formatMessage(
+                    title && isBook(title)
+                      ? messages.firstPublished
+                      : messages.releaseDate
+                  )}
+                  :
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  {releaseDate || unavailable}
+                </dd>
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  {intl.formatMessage(
+                    title && isBook(title) ? messages.pages : messages.runtime
+                  )}
+                  :
+                </dt>
+                <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  {title ? getRuntime(title, unavailable) : unavailable}
+                </dd>
+                <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+                <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  {secondaryDetails.map((detail) => (
+                    <div className="contents" key={detail.label}>
+                      <dt className="font-medium text-gray-100">
+                        {detail.label}:
+                      </dt>
+                      <dd className="m-0 truncate">
+                        {detail.values.map((value, index) => (
+                          <span key={`${detail.label}-${value.name}-${index}`}>
+                            {index > 0 && ', '}
+                            {value.href ? (
+                              <Link
+                                href={value.href}
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                              >
+                                {value.name}
+                              </Link>
+                            ) : (
+                              value.name
+                            )}
+                          </span>
+                        ))}
+                      </dd>
+                    </div>
+                  ))}
+                </div>
+                <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  {intl.formatMessage(messages.genres)}:
+                </dt>
+                <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                  {genres.length > 0
+                    ? genres.map((genre, index) => (
+                        <span key={`${genre.href}-${genre.name}`}>
+                          {index > 0 && ', '}
+                          <Link
+                            href={genre.href}
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                          >
+                            {genre.name}
+                          </Link>
                         </span>
-                      </span>
-                    </Link>
-                  ) : item.blocklistedTags ? (
-                    <span className="ml-1">
-                      <BlocklistedTagsBadge data={item} />
-                    </span>
-                  ) : (
-                    <span className="ml-1 truncate text-sm font-semibold">
-                      ???
-                    </span>
-                  ),
-                })}
-              </span>
+                      ))
+                    : unavailable}
+                </dd>
+              </dl>
             </div>
-          )}
-          <div className="card-field">
-            {item.mediaType === 'movie' ? (
-              <div className="pointer-events-none z-40 self-start rounded-full border border-blue-500 bg-blue-600/80 shadow-md">
-                <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                  {intl.formatMessage(globalMessages.movie)}
-                </div>
-              </div>
-            ) : item.mediaType === 'tv' ? (
-              <div className="pointer-events-none z-40 self-start rounded-full border border-purple-600 bg-purple-600/80 shadow-md">
-                <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                  {intl.formatMessage(globalMessages.tvshow)}
-                </div>
-              </div>
-            ) : item.mediaType === 'music' ? (
-              <div className="pointer-events-none z-40 self-start rounded-full border border-emerald-500 bg-emerald-600/80 shadow-md">
-                <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                  {intl.formatMessage(messages.music)}
-                </div>
-              </div>
-            ) : (
-              <div className="pointer-events-none z-40 self-start rounded-full border border-amber-500 bg-amber-600/80 shadow-md">
-                <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                  {intl.formatMessage(messages.books)}
-                </div>
-              </div>
-            )}
+
+            <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.blocklistedBy)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {item.user?.displayName ?? unavailable}
+              </dd>
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.blocklistedOn)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {item.createdAt ? (
+                  <FormattedDate
+                    value={new Date(item.createdAt)}
+                    dateStyle="medium"
+                  />
+                ) : (
+                  unavailable
+                )}
+              </dd>
+              <dt aria-hidden="true" />
+              <dd className="m-0 truncate">
+                {item.createdAt ? (
+                  <FormattedDate
+                    value={new Date(item.createdAt)}
+                    timeStyle="short"
+                  />
+                ) : (
+                  unavailable
+                )}
+              </dd>
+              <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.source)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {item.blocklistedTags ? (
+                  <BlocklistedTagsBadge data={item} compact />
+                ) : (
+                  <Badge
+                    badgeType="dark"
+                    className={compactBlocklistSourceBadgeClass}
+                  >
+                    <TagIcon
+                      className="h-2.5 w-2.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      {intl.formatMessage(messages.manualSource)}
+                    </span>
+                  </Badge>
+                )}
+              </dd>
+            </dl>
           </div>
         </div>
       </div>
-      <div className="z-10 mt-4 flex w-full flex-col justify-center space-y-2 pl-4 pr-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
-        {hasPermission(Permission.MANAGE_BLOCKLIST) && (
-          <ConfirmButton
-            onClick={() =>
-              removeFromBlocklist(
-                item.tmdbId,
-                title &&
-                  (isMovie(title)
-                    ? title.title
-                    : isMusic(title) || isBook(title)
-                      ? title.title
-                      : title.name)
-              )
-            }
-            confirmText={intl.formatMessage(
-              isUpdating ? globalMessages.deleting : globalMessages.areyousure
-            )}
-            className={`w-full ${
-              isUpdating ? 'pointer-events-none opacity-50' : ''
-            }`}
-          >
-            <TrashIcon />
-            <span>
+
+      {hasPermission(Permission.MANAGE_BLOCKLIST) && (
+        <div className="relative z-10 mt-[5px] flex justify-end">
+          <Tooltip content={intl.formatMessage(messages.removeTooltip)}>
+            <button
+              type="button"
+              disabled={isUpdating}
+              onClick={() => void removeFromBlocklist()}
+              className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-40"
+            >
+              <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
               {intl.formatMessage(globalMessages.removefromBlocklist)}
-            </span>
-          </ConfirmButton>
-        )}
-      </div>
-    </div>
+            </button>
+          </Tooltip>
+        </div>
+      )}
+    </article>
   );
 };
+
+export default Blocklist;

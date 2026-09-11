@@ -10,6 +10,8 @@ import type {
   ReadarrBookOptions,
 } from '@server/api/servarr/readarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
+import type { AddSeriesOptions } from '@server/api/servarr/sonarr';
+import SonarrAPI from '@server/api/servarr/sonarr';
 import WikidataAPI from '@server/api/wikidata';
 import {
   MediaRequestStatus,
@@ -17,6 +19,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
+import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -104,6 +107,11 @@ describe('MediaRequestSubscriber service dispatch', () => {
   beforeEach(async () => {
     await resetTestDb();
     enqueuedRequestIds = [];
+    mock.method(ReadarrAPI.prototype, 'startBookSearch', async () => ({
+      id: 901,
+      name: 'BookSearch',
+      status: 'queued',
+    }));
     mock.method(
       requestDispatchManager,
       'enqueue',
@@ -443,7 +451,110 @@ describe('MediaRequestSubscriber service dispatch', () => {
     assert.equal(savedMedia.serviceId, 31);
   });
 
-  it('sends approved music requests to Lidarr and completes the request', async () => {
+  it('passes exact multi-season episode selections to Sonarr', async () => {
+    const settings = getSettings();
+    settings.sonarr = [
+      {
+        id: 31,
+        name: 'Sonarr',
+        hostname: 'sonarr.local',
+        port: 8989,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 6,
+        activeProfileName: 'HD',
+        activeLanguageProfileId: 1,
+        activeDirectory: '/tv',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        seriesType: 'standard',
+        animeSeriesType: 'anime',
+        enableSeasonFolders: true,
+        monitorNewItems: 'all',
+        overrideRule: [],
+      },
+    ];
+
+    const requestedBy = await getRequester();
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 1400,
+        tvdbId: 121362,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    (
+      mock.method as (
+        object: object,
+        methodName: string,
+        implementation: () => Promise<unknown>
+      ) => unknown
+    )(ExternalAPI.prototype, 'get', async () => ({
+      id: 1400,
+      name: 'Episode Selection Test',
+      external_ids: { tvdb_id: 121362 },
+      keywords: { results: [] },
+    }));
+
+    let receivedOptions: AddSeriesOptions | undefined;
+    mock.method(
+      SonarrAPI.prototype,
+      'addSeries',
+      async (options: AddSeriesOptions) => {
+        receivedOptions = options;
+        return {
+          id: 89,
+          title: 'Episode Selection Test',
+          titleSlug: 'episode-selection-test',
+        } as Awaited<ReturnType<SonarrAPI['addSeries']>>;
+      }
+    );
+    mock.method(MediaRequest, 'sendNotification', async () => undefined);
+
+    const request = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            episodeNumbers: [2, 4],
+            status: MediaRequestStatus.APPROVED,
+          }),
+          new SeasonRequest({
+            seasonNumber: 3,
+            status: MediaRequestStatus.APPROVED,
+          }),
+          new SeasonRequest({
+            seasonNumber: 5,
+            episodeNumbers: [7, 8],
+            status: MediaRequestStatus.APPROVED,
+          }),
+        ],
+      })
+    );
+
+    await new MediaRequestSubscriber().sendToSonarr(request);
+
+    assert.deepStrictEqual(receivedOptions?.seasons, [1, 3, 5]);
+    assert.deepStrictEqual(receivedOptions?.episodeSelections, [
+      { seasonNumber: 1, episodeNumbers: [2, 4] },
+      { seasonNumber: 3 },
+      { seasonNumber: 5, episodeNumbers: [7, 8] },
+    ]);
+    assert.strictEqual(receivedOptions?.searchNow, true);
+  });
+
+  it('sends approved music requests to Lidarr and keeps them active until files are confirmed', async () => {
     const settings = getSettings();
     settings.lidarr = [
       {
@@ -479,6 +590,7 @@ describe('MediaRequestSubscriber service dispatch', () => {
       })
     );
     const request = await createApprovedRequest(media, requestedBy);
+    await getRepository(MediaRequest).save(request);
 
     const searchMock = mock.method(
       LidarrAPI.prototype,
@@ -560,11 +672,12 @@ describe('MediaRequestSubscriber service dispatch', () => {
     assert.equal(savedMedia.externalServiceId, 44);
     assert.equal(savedMedia.externalServiceSlug, 'kind-of-blue');
     assert.equal(savedMedia.serviceId, 10);
+    assert.equal(savedMedia.status, MediaStatus.PROCESSING);
 
     const savedRequest = await getRepository(MediaRequest).findOneByOrFail({
       id: request.id,
     });
-    assert.equal(savedRequest.status, MediaRequestStatus.COMPLETED);
+    assert.equal(savedRequest.status, MediaRequestStatus.APPROVED);
   });
 
   it('preserves zero-valued Lidarr profile overrides during dispatch', async () => {
@@ -790,6 +903,15 @@ describe('MediaRequestSubscriber service dispatch', () => {
     assert.equal(savedMedia.externalServiceId, 55);
     assert.equal(savedMedia.externalServiceSlug, 'left-hand-darkness');
     assert.equal(savedMedia.serviceId, 20);
+
+    const savedSearch = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+      format: 'ebook',
+    });
+    assert.equal(savedSearch.serviceId, 20);
+    assert.equal(savedSearch.bookId, 55);
+    assert.equal(savedSearch.commandId, 901);
+    assert.equal(savedSearch.state, 'searching');
 
     const savedRequest = await getRepository(MediaRequest).findOneByOrFail({
       id: request.id,

@@ -55,7 +55,7 @@ const messages = defineMessages('components.Discover.CreateSlider', {
   searchGenres: 'Search genres…',
   searchStudios: 'Search studios…',
   starttyping: 'Starting typing to search.',
-  nooptions: 'No results.',
+  nooptions: 'No results',
   fiction: 'Fiction',
   fantasy: 'Fantasy',
   scienceFiction: 'Science Fiction',

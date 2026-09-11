@@ -14,6 +14,7 @@ import ServarrBase, {
   sanitizeServarrProfiles,
   sanitizeServarrRecordArray,
   sanitizeServarrSystemStatus,
+  type ServarrCommand,
   type SystemStatus,
 } from './base';
 
@@ -118,12 +119,25 @@ export interface ReadarrBook extends ReadarrBookLookupResult {
   };
 }
 
+export interface ReadarrAddBookResult extends ReadarrBookLookupResult {
+  createdBook: boolean;
+  createdAuthor: boolean;
+}
+
 type ReadarrQueueItem = {
   bookId?: number;
   book?: {
     id?: number;
   };
 };
+
+export interface ReadarrHistoryItem {
+  id: number;
+  bookId?: number;
+  eventType?: string;
+  date?: string;
+  downloadId?: string;
+}
 
 export type ReadarrCoverImage = {
   imageBuffer: Buffer;
@@ -380,6 +394,58 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     return response.data;
   }
 
+  public async getBookHistory(bookId: number): Promise<ReadarrHistoryItem[]> {
+    const response = await this.request<{
+      records?: ReadarrHistoryItem[];
+    }>(
+      'GET',
+      '/history',
+      undefined,
+      this.getRequestConfig({
+        page: 1,
+        pageSize: 100,
+        sortKey: 'date',
+        sortDirection: 'descending',
+        bookId,
+      })
+    );
+    return sanitizeServarrRecordArray<ReadarrHistoryItem>(
+      response.data?.records,
+      100
+    );
+  }
+
+  public async getBooksByAuthor(
+    authorId: number,
+    cacheTtl?: number
+  ): Promise<ReadarrBook[]> {
+    return sanitizeServarrRecordArray<ReadarrBook>(
+      await this.get<ReadarrBook[]>(
+        '/book',
+        {
+          ...this.getRequestConfig({ authorId }),
+        },
+        cacheTtl
+      ),
+      MAX_SERVARR_LIBRARY_RESULTS
+    );
+  }
+
+  public async removeAuthor(
+    authorId: number,
+    options: { deleteFiles?: boolean; addImportListExclusion?: boolean } = {}
+  ): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/author/${authorId}`,
+      undefined,
+      this.getRequestConfig({
+        deleteFiles: options.deleteFiles ?? false,
+        addImportListExclusion: options.addImportListExclusion ?? false,
+      })
+    );
+  }
+
   private async ensureRequestedBookState(
     addedBook: ReadarrBookLookupResult,
     options: ReadarrBookOptions
@@ -539,13 +605,37 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     }
   }
 
-  public async getBook(bookId: number): Promise<ReadarrBook> {
+  public async getBook(
+    bookId: number,
+    cacheTtl?: number
+  ): Promise<ReadarrBook> {
     try {
       return await this.get<ReadarrBook>(
         `/book/${bookId}`,
-        this.getRequestConfig()
+        this.getRequestConfig(),
+        cacheTtl
       );
     } catch (e) {
+      throw new Error(
+        `[Readarr] Failed to retrieve book ${bookId}: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async getBookIfExists(bookId: number): Promise<ReadarrBook | null> {
+    try {
+      const response = await this.request<ReadarrBook>(
+        'GET',
+        `/book/${bookId}`,
+        undefined,
+        this.getRequestConfig()
+      );
+      return response.data;
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        return null;
+      }
       throw new Error(
         `[Readarr] Failed to retrieve book ${bookId}: ${e.message}`,
         { cause: e }
@@ -796,7 +886,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
   public async addBook(
     options: ReadarrBookOptions
-  ): Promise<ReadarrBookLookupResult> {
+  ): Promise<ReadarrAddBookResult> {
     try {
       const existingBooks = sanitizeServarrRecordArray<ReadarrBook>(
         await this.get<ReadarrBook[]>('/book', this.getRequestConfig()),
@@ -856,7 +946,11 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           await this.searchBook(existingBook.id);
         }
 
-        return existingBook;
+        return {
+          ...existingBook,
+          createdBook: false,
+          createdAuthor: false,
+        };
       }
 
       if (existingBook) {
@@ -904,17 +998,40 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           }
         );
 
-        await this.post(
-          '/command',
-          {
-            name: 'BookSearch',
-            bookIds: [updatedBook.id ?? existingBook.id],
-          },
-          this.getRequestConfig()
-        );
+        if (options.addOptions?.searchForNewBook) {
+          await this.post(
+            '/command',
+            {
+              name: 'BookSearch',
+              bookIds: [updatedBook.id ?? existingBook.id],
+            },
+            this.getRequestConfig()
+          );
+        }
 
-        return updatedBook;
+        return {
+          ...updatedBook,
+          createdBook: false,
+          createdAuthor: false,
+        };
       }
+
+      const existingAuthors = this.isChaptarr()
+        ? []
+        : sanitizeServarrRecordArray<ReadarrAuthorLookupResult>(
+            await this.get<ReadarrAuthorLookupResult[]>(
+              '/author',
+              this.getRequestConfig()
+            ),
+            MAX_SERVARR_LIBRARY_RESULTS
+          );
+      const createdAuthor =
+        !this.isChaptarr() &&
+        !existingAuthors.some(
+          (author) =>
+            !!author.foreignAuthorId &&
+            author.foreignAuthorId === options.author?.foreignAuthorId
+        );
 
       const postedBook = await this.post<ReadarrBookLookupResult | number>(
         '/book',
@@ -932,7 +1049,19 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           ? { ...options, id: postedBook }
           : postedBook;
 
-      return await this.ensureRequestedBookState(addedBook, options);
+      const ensuredBook = await this.ensureRequestedBookState(
+        addedBook,
+        options
+      );
+      const persistedBook =
+        !this.isChaptarr() && ensuredBook.id
+          ? await this.getFreshBook(ensuredBook.id).catch(() => ensuredBook)
+          : ensuredBook;
+      return {
+        ...persistedBook,
+        createdBook: true,
+        createdAuthor,
+      };
     } catch (e) {
       throw new Error(
         `[Readarr] Failed to add book: ${getReadarrErrorMessage(e)}`,
@@ -962,14 +1091,14 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     }
   }
 
-  public async searchBook(bookId: number): Promise<void> {
+  public async startBookSearch(bookId: number): Promise<ServarrCommand> {
     logger.info('Executing book search command.', {
       label: 'Readarr API',
       bookId,
     });
 
     try {
-      await this.runCommand('BookSearch', { bookIds: [bookId] });
+      return await this.runCommand('BookSearch', { bookIds: [bookId] });
     } catch (e) {
       logger.error(
         'Something went wrong while executing Bookshelf/Readarr book search.',
@@ -979,7 +1108,15 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           bookId,
         }
       );
+      throw new Error(
+        `[Readarr] Failed to start book search: ${getReadarrErrorMessage(e)}`,
+        { cause: e }
+      );
     }
+  }
+
+  public async searchBook(bookId: number): Promise<void> {
+    await this.startBookSearch(bookId);
   }
 }
 

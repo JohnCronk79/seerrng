@@ -18,19 +18,234 @@ test('release package channels wait for the reusable release asset build', () =>
   const release = readWorkflow('release.yml');
   const assetBuild = release.jobs['build-release-assets'];
   const packageDispatch = release.jobs['dispatch-package-channels'];
+  const publishRelease = release.jobs['publish-release'];
   const dispatchScript = packageDispatch.steps.find(
     (step) => step.name === 'Dispatch package workflows'
   ).run;
 
   assert.equal(assetBuild.uses, './.github/workflows/release-assets.yml');
-  assert.equal(assetBuild.needs, 'publish-release');
+  assert.equal(assetBuild.needs, 'verify');
   assert.equal(assetBuild.with.tag, '${{ inputs.tag || github.ref_name }}');
-  assert.deepEqual(packageDispatch.needs, [
-    'publish-release',
-    'build-release-assets',
-  ]);
-  assert.doesNotMatch(dispatchScript, /release-assets\.yml/u);
+  assert.deepEqual(packageDispatch.needs, ['verify', 'build-release-assets']);
+  assert.equal(packageDispatch['timeout-minutes'], 120);
+  assert.match(dispatchScript, /--ref main/u);
   assert.match(dispatchScript, /release-linux-packages\.yml/u);
+  assert.match(dispatchScript, /gh run watch/u);
+  assert.match(dispatchScript, /release-snap\.yml[\s\S]*optional=false/u);
+  assert.match(
+    dispatchScript,
+    /Optional package workflow .*failed; continuing without Snap Store publication/u
+  );
+  assert.match(
+    dispatchScript,
+    /Skipping stable package channels for pre-release/u
+  );
+  const inventoryScript = packageDispatch.steps.find(
+    (step) => step.name === 'Verify release package assets'
+  ).run;
+  assert.match(
+    inventoryScript,
+    /gh release view .*--json assets/u,
+    'package inventory must inspect draft releases through the GitHub CLI'
+  );
+  assert.deepEqual(publishRelease.needs, [
+    'create-draft-release',
+    'verify',
+    'build-release-assets',
+    'dispatch-package-channels',
+  ]);
+  assert.equal(
+    release.jobs['announce-discord'].needs.includes('publish-release'),
+    true
+  );
+  const discordStep = release.jobs['announce-discord'].steps.find(
+    (step) => step.name === 'Send Discord announcement'
+  );
+  assert.equal(discordStep.if, undefined);
+  assert.match(
+    discordStep.run,
+    /DISCORD_RELEASE_WEBHOOK is required to complete a release/u
+  );
+});
+
+test('package workflows build the requested tag and reject tags outside main', () => {
+  for (const workflowName of [
+    'release-linux-packages.yml',
+    'release-flatpak.yml',
+    'release-ppa.yml',
+    'release-copr.yml',
+  ]) {
+    const workflowText = fs.readFileSync(
+      path.join(workflowDirectory, workflowName),
+      'utf8'
+    );
+    assert.match(
+      workflowText,
+      /ref: \$\{\{ (?:github\.event\.inputs|steps\.version\.outputs)\.tag(?: \}\})?/u
+    );
+    assert.match(
+      workflowText,
+      /ensure-release-tag-on-main\.sh/u,
+      `${workflowName} must verify tag ancestry before publishing`
+    );
+  }
+});
+
+test('release asset uploaders preserve the draft until the final publish gate', () => {
+  for (const workflowName of [
+    'release-assets.yml',
+    'release-linux-packages.yml',
+    'release-flatpak.yml',
+  ]) {
+    const workflowText = fs.readFileSync(
+      path.join(workflowDirectory, workflowName),
+      'utf8'
+    );
+    assert.match(
+      workflowText,
+      /softprops\/action-gh-release@[\s\S]*?draft: true/u
+    );
+  }
+});
+
+test('all container vulnerability scans use an available pinned Trivy release', () => {
+  for (const workflowName of ['ci.yml', 'trivy-scan.yml', 'release.yml']) {
+    const workflowText = fs.readFileSync(
+      path.join(workflowDirectory, workflowName),
+      'utf8'
+    );
+    assert.match(workflowText, /aquasecurity\/setup-trivy@/u);
+    assert.match(workflowText, /version: v0\.74\.0/u);
+    assert.doesNotMatch(workflowText, /version: 0\.58\.2/u);
+    assert.match(workflowText, /--exit-code 1/u);
+    assert.match(workflowText, /--severity HIGH,CRITICAL/u);
+    assert.match(workflowText, /--ignore-unfixed/u);
+  }
+  const gitlab = fs.readFileSync(
+    path.join(rootDirectory, '.gitlab-ci.yml'),
+    'utf8'
+  );
+  assert.match(gitlab, /aquasec\/trivy:0\.74\.0@sha256:/u);
+  assert.match(
+    gitlab,
+    /trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed/u
+  );
+});
+
+test('multi-architecture publishers perform the real build once and verify the index', () => {
+  const ci = readWorkflow('ci.yml');
+  const preview = readWorkflow('preview.yml');
+  const release = readWorkflow('release.yml');
+
+  assert.equal(ci.jobs.build, undefined);
+  assert.equal(ci.jobs.publish.if, "github.ref == 'refs/heads/main'");
+  assert.equal(ci.jobs.publish.needs, undefined);
+  assert.equal(
+    ci.jobs.publish.outputs.image_digest,
+    '${{ steps.resolve-digest.outputs.image_digest }}'
+  );
+  assert.deepEqual(ci.jobs['deploy-main'].needs, [
+    'publish',
+    'preflight-deploy',
+  ]);
+  assert.match(
+    ci.jobs['preflight-deploy'].steps.find(
+      (step) => step.name === 'Verify deployment storage is mounted read-write'
+    ).run,
+    /refusing deployment until the host is repaired/u
+  );
+  assert.match(
+    ci.jobs.publish.steps.find(
+      (step) => step.name === 'Build & Push (multi-arch, single tag)'
+    ).run,
+    /--platform linux\/amd64,linux\/arm64[\s\S]*--provenance mode=max/u
+  );
+  assert.match(
+    ci.jobs.publish.steps.find(
+      (step) => step.name === 'Verify published architectures'
+    ).run,
+    /verify-container-manifest\.sh --require-provenance/u
+  );
+  assert.equal(ci.jobs['scan-main-image'].needs, 'publish');
+  assert.deepEqual(ci.jobs['scan-main-image'].strategy.matrix.include, [
+    { platform: 'linux/amd64', suffix: 'amd64' },
+    { platform: 'linux/arm64', suffix: 'arm64' },
+  ]);
+  assert.match(
+    ci.jobs['scan-main-image'].steps.find(
+      (step) => step.name === 'Run Trivy image scan'
+    ).run,
+    /ghcr\.io\/\$\{\{ github\.repository \}\}@\$\{\{ needs\.publish\.outputs\.image_digest \}\}/u
+  );
+
+  assert.equal(preview.jobs.build, undefined);
+  assert.equal(preview.jobs.publish.needs, 'validate-main-tag');
+  assert.match(
+    preview.jobs.publish.steps.find(
+      (step) => step.name === 'Verify published architectures'
+    ).run,
+    /verify-container-manifest\.sh --require-provenance[\s\S]*linux\/amd64 linux\/arm64/u
+  );
+
+  assert.equal(release.jobs.build, undefined);
+  assert.deepEqual(release.jobs.publish.needs, [
+    'validate-main-tag',
+    'create-draft-release',
+  ]);
+  const releaseCommit = release.jobs.publish.steps.find(
+    (step) => step.name === 'Resolve release commit'
+  );
+  assert.equal(releaseCommit.id, 'release');
+  assert.match(releaseCommit.run, /git rev-parse.*RELEASE_TAG/iu);
+  const metadata = release.jobs.publish.steps.find(
+    (step) => step.name === 'Extract metadata'
+  );
+  assert.match(
+    metadata.with.labels,
+    /org\.opencontainers\.image\.revision=\$\{\{ steps\.release\.outputs\.SHA \}\}/u,
+    'release image metadata must identify the tagged source commit'
+  );
+  assert.match(
+    metadata.with.annotations,
+    /org\.opencontainers\.image\.revision=\$\{\{ steps\.release\.outputs\.SHA \}\}/u,
+    'release image annotations must identify the tagged source commit'
+  );
+  const buildStep = release.jobs.publish.steps.find(
+    (step) => step.name === 'Build & Push (multi-arch)'
+  );
+  assert.match(
+    buildStep.run,
+    /release_sha="\$\{\{ steps\.release\.outputs\.SHA \}\}"/u,
+    'release image contents and metadata must use the same tagged source commit'
+  );
+  assert.match(
+    buildStep.env.IMAGE_ANNOTATIONS,
+    /steps\.meta\.outputs\.annotations/u,
+    'release image builds must receive OCI annotations from metadata'
+  );
+  assert.match(
+    buildStep.run,
+    /--annotation/u,
+    'release image builds must publish the tagged source commit as an OCI annotation'
+  );
+  assert.match(
+    release.jobs.publish.steps.find(
+      (step) => step.name === 'Verify published architectures'
+    ).run,
+    /verify-container-manifest\.sh --require-provenance/u
+  );
+  assert.deepEqual(release.jobs['scan-release-image'].needs, 'publish');
+  assert.deepEqual(release.jobs['scan-release-image'].strategy.matrix.include, [
+    { platform: 'linux/amd64', suffix: 'amd64' },
+    { platform: 'linux/arm64', suffix: 'arm64' },
+  ]);
+  assert.deepEqual(release.jobs.sign.needs, ['publish', 'scan-release-image']);
+  assert.match(
+    release.jobs['scan-release-image'].steps.find(
+      (step) => step.name === 'Run Trivy image scan'
+    ).run,
+    /needs\.publish\.outputs\.image_digest/u
+  );
 });
 
 test('release publishing admits only tag pushes and main-branch retries', () => {
@@ -102,11 +317,45 @@ test('release notes flow into the draft release and Discord announcement', () =>
     draft.steps.find((step) => step.name === 'Draft Release').env.RELEASE_BODY,
     '${{ needs.changelog.outputs.release_body }}'
   );
-  assert.deepEqual(discord.needs, ['changelog', 'publish', 'publish-release']);
+  assert.deepEqual(discord.needs, [
+    'changelog',
+    'publish',
+    'publish-release',
+    'dispatch-package-channels',
+  ]);
   assert.equal(
     discord.env.RELEASE_BODY,
     '${{ needs.changelog.outputs.release_body }}'
   );
+});
+
+test('release platform digest validation is portable across grep implementations', () => {
+  const releaseText = fs.readFileSync(
+    path.join(workflowDirectory, 'release.yml'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(releaseText, /grep -Eq '\^(?:amd64|arm64)\\tsha256:/u);
+  assert.equal((releaseText.match(/\[\[:blank:\]\]/gu) ?? []).length, 4);
+});
+
+test('release asset checksums match the builder sidecar names', () => {
+  const releaseText = fs.readFileSync(
+    path.join(workflowDirectory, 'release.yml'),
+    'utf8'
+  );
+  const assetsText = fs.readFileSync(
+    path.join(workflowDirectory, 'release-assets.yml'),
+    'utf8'
+  );
+
+  assert.doesNotMatch(releaseText, /(?:\\.tar\\.gz|\\.zip)\\.sha256/u);
+  assert.doesNotMatch(
+    assetsText,
+    /checksum="dist-release\/\$archive\.sha256"/u
+  );
+  assert.match(assetsText, /archive_base="\$\{archive%\.tar\.gz\}"/u);
+  assert.match(assetsText, /archive_base="\$\{archive_base%\.zip\}"/u);
 });
 
 test('pull-request CI publishes the exact release-note preview', () => {
@@ -116,6 +365,10 @@ test('pull-request CI publishes the exact release-note preview', () => {
   );
 
   assert.ok(validation);
+  assert.equal(
+    validation.env.PR_BODY,
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.body || github.event.head_commit.message || '' }}"
+  );
   assert.match(validation.run, /--summary-file "\$GITHUB_STEP_SUMMARY"/u);
 });
 

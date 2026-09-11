@@ -1,3 +1,4 @@
+import Alert from '@app/components/Common/Alert';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
@@ -10,6 +11,7 @@ import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import type { NetworkSettings } from '@server/lib/settings';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
+import type { ChangeEvent } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 import * as Yup from 'yup';
@@ -61,6 +63,35 @@ const messages = defineMessages('components.Settings.SettingsNetwork', {
   apiRequestTimeoutTip:
     'Maximum time (in seconds) to wait for responses from external services like Radarr, Sonarr, Lidarr, or Bookshelf. Set to 0 for no timeout.',
   validationApiRequestTimeout: 'You must provide a valid timeout value',
+  transportSecurity: 'Browser Transport Security',
+  transportSecurityDescription:
+    'Choose how Seerr protects browser login sessions. Listener changes require a server restart.',
+  tlsMode: 'Built-in HTTPS mode',
+  tlsDisabled: 'Disabled (use a reverse proxy or explicit HTTP fallback)',
+  tlsSelfSigned: 'Self-signed local HTTPS',
+  tlsProvided: 'Provided certificate',
+  httpsPort: 'HTTPS Port',
+  httpsPortTip: 'The HTTPS listener port. It must differ from the HTTP port.',
+  tlsHosts: 'Self-signed HTTPS hostnames and IP addresses',
+  tlsHostsTip:
+    'Comma-separated names and addresses included in the generated certificate and accepted by the HTTP listener. Provided certificates use their own SANs.',
+  certificateFile: 'Certificate file',
+  keyFile: 'Private key file',
+  caFile: 'CA chain file (optional)',
+  providedFileTip:
+    'Use paths visible inside the SeerrNG process. Mount certificate files into the container; private keys are never uploaded through this form.',
+  redirectHttpToHttps: 'Redirect HTTP to HTTPS',
+  redirectHttpToHttpsTip:
+    'Leave this off while verifying the HTTPS URL. HTTP will show an upgrade instruction instead of serving the app.',
+  allowHttpAuth: 'Allow authenticated browser sessions over HTTP',
+  allowHttpAuthTip:
+    'Use only when trusted LAN devices cannot install the local CA. Anyone observing the connection could steal the session cookie.',
+  acknowledgeHttpRisk:
+    'I understand that HTTP login sessions can be intercepted on the network.',
+  environmentOverride:
+    'Transport settings are overridden by environment variables: {variables}. Remove those variables before using these controls.',
+  tlsSaveRestart:
+    'Save the choice, restart SeerrNG, verify HTTPS, then enable the HTTP redirect if desired.',
 });
 
 const toOptionalNumber = (value: unknown): number | undefined =>
@@ -76,6 +107,9 @@ const SettingsNetwork = () => {
     error,
     mutate: revalidate,
   } = useSWR<NetworkSettings>('/api/v1/settings/network');
+  const { data: tlsStatus } = useSWR<{
+    environmentOverrides: string[];
+  }>('/api/v1/status/tls');
 
   const NetworkSettingsSchema = Yup.object().shape({
     dnsCacheForceMinTtl: Yup.number().when('dnsCacheEnabled', {
@@ -154,6 +188,15 @@ const SettingsNetwork = () => {
               data?.apiRequestTimeout !== undefined
                 ? data.apiRequestTimeout / 1000
                 : 10,
+            tlsMode: data?.tls?.mode ?? 'disabled',
+            tlsHttpsPort: data?.tls?.httpsPort ?? 5056,
+            tlsHosts: data?.tls?.hosts ?? 'localhost,127.0.0.1,::1',
+            tlsCertificateFile: data?.tls?.certificateFile ?? '',
+            tlsKeyFile: data?.tls?.keyFile ?? '',
+            tlsCaFile: data?.tls?.caFile ?? '',
+            tlsRedirectHttpToHttps: data?.tls?.redirectHttpToHttps ?? false,
+            tlsAllowHttpAuth: data?.tls?.allowHttpAuth ?? false,
+            tlsHttpAuthAcknowledged: data?.tls?.httpAuthAcknowledged ?? false,
           }}
           enableReinitialize
           validationSchema={NetworkSettingsSchema}
@@ -179,6 +222,17 @@ const SettingsNetwork = () => {
                   bypassLocalAddresses: values.proxyBypassLocalAddresses,
                 },
                 apiRequestTimeout: Number(values.apiRequestTimeout) * 1000,
+                tls: {
+                  mode: values.tlsMode,
+                  httpsPort: toOptionalNumber(values.tlsHttpsPort),
+                  hosts: values.tlsHosts,
+                  certificateFile: values.tlsCertificateFile,
+                  keyFile: values.tlsKeyFile,
+                  caFile: values.tlsCaFile,
+                  redirectHttpToHttps: values.tlsRedirectHttpToHttps,
+                  allowHttpAuth: values.tlsAllowHttpAuth,
+                  httpAuthAcknowledged: values.tlsHttpAuthAcknowledged,
+                },
               });
               mutate('/api/v1/settings/public');
               mutate('/api/v1/status?checkUpdateAvailable=false');
@@ -207,6 +261,196 @@ const SettingsNetwork = () => {
           }) => {
             return (
               <Form className="section" data-testid="settings-network-form">
+                <div className="mb-6">
+                  <h4 className="heading">
+                    {intl.formatMessage(messages.transportSecurity)}
+                  </h4>
+                  <p className="description">
+                    {intl.formatMessage(messages.transportSecurityDescription)}
+                  </p>
+                  {tlsStatus?.environmentOverrides.length ? (
+                    <Alert type="warning">
+                      {intl.formatMessage(messages.environmentOverride, {
+                        variables: tlsStatus.environmentOverrides.join(', '),
+                      })}
+                    </Alert>
+                  ) : null}
+                </div>
+                <div className="form-row">
+                  <label htmlFor="tlsMode" className="text-label">
+                    <span className="mr-2">
+                      {intl.formatMessage(messages.tlsMode)}
+                    </span>
+                    <SettingsBadge badgeType="restartRequired" />
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      as="select"
+                      id="tlsMode"
+                      name="tlsMode"
+                      onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                        const nextMode = event.target.value;
+                        setFieldValue('tlsMode', nextMode);
+                        if (nextMode !== 'disabled') {
+                          setFieldValue('tlsAllowHttpAuth', false);
+                          setFieldValue('tlsHttpAuthAcknowledged', false);
+                        }
+                      }}
+                    >
+                      <option value="disabled">
+                        {intl.formatMessage(messages.tlsDisabled)}
+                      </option>
+                      <option value="self-signed">
+                        {intl.formatMessage(messages.tlsSelfSigned)}
+                      </option>
+                      <option value="provided">
+                        {intl.formatMessage(messages.tlsProvided)}
+                      </option>
+                    </Field>
+                  </div>
+                </div>
+                {values.tlsMode !== 'disabled' && (
+                  <>
+                    <div className="ml-4 mr-2">
+                      <div className="form-row">
+                        <label htmlFor="tlsHttpsPort" className="text-label">
+                          {intl.formatMessage(messages.httpsPort)}
+                          <span className="label-tip">
+                            {intl.formatMessage(messages.httpsPortTip)}
+                          </span>
+                        </label>
+                        <div className="form-input-area">
+                          <Field
+                            id="tlsHttpsPort"
+                            name="tlsHttpsPort"
+                            type="text"
+                            inputMode="numeric"
+                            className="short"
+                          />
+                        </div>
+                      </div>
+                      {values.tlsMode === 'self-signed' && (
+                        <div className="form-row">
+                          <label htmlFor="tlsHosts" className="text-label">
+                            {intl.formatMessage(messages.tlsHosts)}
+                            <span className="label-tip">
+                              {intl.formatMessage(messages.tlsHostsTip)}
+                            </span>
+                          </label>
+                          <div className="form-input-area">
+                            <Field id="tlsHosts" name="tlsHosts" type="text" />
+                          </div>
+                        </div>
+                      )}
+                      {values.tlsMode === 'provided' && (
+                        <>
+                          <p className="description">
+                            {intl.formatMessage(messages.providedFileTip)}
+                          </p>
+                          {(
+                            [
+                              ['tlsCertificateFile', messages.certificateFile],
+                              ['tlsKeyFile', messages.keyFile],
+                              ['tlsCaFile', messages.caFile],
+                            ] as const
+                          ).map(([name, label]) => (
+                            <div className="form-row" key={name}>
+                              <label htmlFor={name} className="text-label">
+                                {intl.formatMessage(label)}
+                              </label>
+                              <div className="form-input-area">
+                                <Field id={name} name={name} type="text" />
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                    <div className="form-row">
+                      <label
+                        htmlFor="tlsRedirectHttpToHttps"
+                        className="checkbox-label"
+                      >
+                        <span className="mr-2">
+                          {intl.formatMessage(messages.redirectHttpToHttps)}
+                        </span>
+                        <SettingsBadge badgeType="restartRequired" />
+                        <span className="label-tip">
+                          {intl.formatMessage(messages.redirectHttpToHttpsTip)}
+                        </span>
+                      </label>
+                      <div className="form-input-area">
+                        <Field
+                          type="checkbox"
+                          id="tlsRedirectHttpToHttps"
+                          name="tlsRedirectHttpToHttps"
+                          onChange={() => {
+                            setFieldValue(
+                              'tlsRedirectHttpToHttps',
+                              !values.tlsRedirectHttpToHttps
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+                {values.tlsMode === 'disabled' && (
+                  <>
+                    <div className="form-row">
+                      <label
+                        htmlFor="tlsAllowHttpAuth"
+                        className="checkbox-label"
+                      >
+                        <span className="mr-2">
+                          {intl.formatMessage(messages.allowHttpAuth)}
+                        </span>
+                        <SettingsBadge badgeType="restartRequired" />
+                        <span className="label-tip">
+                          {intl.formatMessage(messages.allowHttpAuthTip)}
+                        </span>
+                      </label>
+                      <div className="form-input-area">
+                        <Field
+                          type="checkbox"
+                          id="tlsAllowHttpAuth"
+                          name="tlsAllowHttpAuth"
+                          onChange={() => {
+                            setFieldValue(
+                              'tlsAllowHttpAuth',
+                              !values.tlsAllowHttpAuth
+                            );
+                            if (values.tlsAllowHttpAuth) {
+                              setFieldValue('tlsHttpAuthAcknowledged', false);
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {values.tlsAllowHttpAuth && (
+                      <Alert type="warning">
+                        <label
+                          htmlFor="tlsHttpAuthAcknowledged"
+                          className="checkbox-label"
+                        >
+                          <Field
+                            type="checkbox"
+                            id="tlsHttpAuthAcknowledged"
+                            name="tlsHttpAuthAcknowledged"
+                          />
+                          <span className="ml-2">
+                            {intl.formatMessage(messages.acknowledgeHttpRisk)}
+                          </span>
+                        </label>
+                      </Alert>
+                    )}
+                  </>
+                )}
+                {values.tlsMode !== 'disabled' && (
+                  <p className="description">
+                    {intl.formatMessage(messages.tlsSaveRestart)}
+                  </p>
+                )}
                 <div className="form-row">
                   <label htmlFor="trustProxy" className="checkbox-label">
                     <span className="mr-2">

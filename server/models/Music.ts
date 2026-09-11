@@ -1,6 +1,7 @@
 import type { LbAlbumDetails } from '@server/api/listenbrainz/interfaces';
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
+import type { AvailableMusicService } from '@server/lib/musicQualityAvailability';
 
 export interface MusicDetails {
   id: string;
@@ -65,6 +66,7 @@ export interface MusicDetails {
   tmdbPersonId?: number;
   artistBackdrop?: string;
   artistThumb?: string;
+  availableServices?: AvailableMusicService[];
 }
 
 export const MAX_MUSIC_DETAIL_MEDIA = 50;

@@ -40,6 +40,7 @@ import settingsRoutes, {
   parseJellyfinSettingsBody,
   parseLogMessages,
   parsePlexSettingsBody,
+  parseTlsSettingsBody,
   preparePlexServerDevices,
 } from './settings';
 import { persistNotificationAgent } from './settings/notifications';
@@ -1064,6 +1065,74 @@ describe('Settings route input validation', () => {
       /proxy.enabled must be a boolean/
     );
     assert.strictEqual(saveMock.mock.callCount(), 0);
+  });
+
+  it('requires an explicit acknowledgement before enabling HTTP authentication', async () => {
+    const settings = getSettings();
+    const original = structuredClone(settings.network);
+    const saveMock = mock.method(settings, 'save', async () => undefined);
+
+    try {
+      const missingAcknowledgement = await request(app)
+        .post('/settings/network')
+        .send({
+          tls: {
+            mode: 'disabled',
+            allowHttpAuth: true,
+            httpAuthAcknowledged: false,
+          },
+        });
+      assert.strictEqual(missingAcknowledgement.status, 400);
+      assert.match(
+        missingAcknowledgement.body.message,
+        /httpAuthAcknowledged must be true/i
+      );
+      assert.strictEqual(saveMock.mock.callCount(), 0);
+
+      const enabled = await request(app)
+        .post('/settings/network')
+        .send({
+          tls: {
+            mode: 'disabled',
+            allowHttpAuth: true,
+            httpAuthAcknowledged: true,
+          },
+        });
+      assert.strictEqual(enabled.status, 200);
+      assert.strictEqual(enabled.body.tls.allowHttpAuth, true);
+      assert.strictEqual(enabled.body.tls.httpAuthAcknowledged, true);
+
+      const mixedModes = await request(app)
+        .post('/settings/network')
+        .send({
+          tls: {
+            mode: 'self-signed',
+            allowHttpAuth: true,
+            httpAuthAcknowledged: true,
+          },
+        });
+      assert.strictEqual(mixedModes.status, 400);
+      assert.match(mixedModes.body.message, /cannot be enabled/i);
+    } finally {
+      settings.replaceSection('network', original);
+    }
+  });
+
+  it('validates persisted HTTPS listener settings', () => {
+    const settings = getSettings();
+    const invalid = parseTlsSettingsBody(
+      {
+        tls: {
+          mode: 'self-signed',
+          httpsPort: 5055,
+          hosts: 'not a hostname',
+        },
+      },
+      settings.network.tls
+    );
+
+    assert.ok('error' in invalid);
+    assert.match(invalid.error, /hostname|port/i);
   });
 
   it('preserves omitted proxy fields and persists explicit clears', async () => {

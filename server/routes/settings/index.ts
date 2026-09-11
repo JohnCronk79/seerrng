@@ -71,6 +71,7 @@ import { getAppVersion } from '@server/utils/appVersion';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { dnsCache } from '@server/utils/dnsCache';
 import { getHostname } from '@server/utils/getHostname';
+import { parseListenPort } from '@server/utils/httpServer';
 import { parsePageParams } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
@@ -84,6 +85,7 @@ import {
   normalizeServiceHostname,
   normalizeUrlBase,
 } from '@server/utils/serviceUrl';
+import { parseTlsHosts, parseTlsMode } from '@server/utils/tls';
 import {
   parseBoundedString,
   parseOptionalAllowedString,
@@ -119,6 +121,8 @@ const MAX_SETTINGS_PATH_ID_LENGTH = 128;
 const MAX_NETWORK_TIMEOUT_MS = 300_000;
 const MAX_PROXY_STRING_LENGTH = 512;
 const MAX_PROXY_BYPASS_LENGTH = 4096;
+const MAX_TLS_PATH_LENGTH = 4096;
+const MAX_TLS_HOSTS_LENGTH = 4096;
 const MAX_PROXY_PORT = 65_535;
 const MAX_DNS_CACHE_TTL = 86_400;
 const MAX_MAIN_STRING_LENGTH = 512;
@@ -672,6 +676,144 @@ const parseOptionalNetworkInteger = (
     : { value };
 };
 
+export const parseTlsSettingsBody = (
+  body: Record<string, unknown>,
+  current: NetworkSettings['tls']
+): { value: Record<string, unknown> } | { error: string } => {
+  if (body.tls === undefined) {
+    return { value: {} };
+  }
+  if (!body.tls || typeof body.tls !== 'object' || Array.isArray(body.tls)) {
+    return { error: 'tls must be an object.' };
+  }
+
+  const incoming = body.tls as Record<string, unknown>;
+  const tls: Record<string, unknown> = {};
+
+  if (Object.prototype.hasOwnProperty.call(incoming, 'mode')) {
+    if (typeof incoming.mode !== 'string') {
+      return { error: 'tls.mode must be a string.' };
+    }
+    try {
+      tls.mode = parseTlsMode(incoming.mode);
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : 'tls.mode is invalid.',
+      };
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(incoming, 'httpsPort')) {
+    const parsedPort = parseOptionalNetworkInteger(
+      incoming.httpsPort,
+      'tls.httpsPort',
+      MAX_PROXY_PORT,
+      1
+    );
+    if ('error' in parsedPort) {
+      return parsedPort;
+    }
+    tls.httpsPort = parsedPort.value;
+  }
+
+  const hosts = parsePatchBoundedString(incoming, 'hosts', {
+    fieldName: 'tls.hosts',
+    maxLength: MAX_TLS_HOSTS_LENGTH,
+    allowEmpty: true,
+  });
+  if ('error' in hosts) {
+    return hosts;
+  }
+  if (hosts.value !== undefined) {
+    try {
+      parseTlsHosts(hosts.value || undefined);
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : 'tls.hosts is invalid.',
+      };
+    }
+    tls.hosts = hosts.value;
+  }
+
+  for (const [key, fieldName] of [
+    ['redirectHttpToHttps', 'tls.redirectHttpToHttps'],
+    ['allowHttpAuth', 'tls.allowHttpAuth'],
+    ['httpAuthAcknowledged', 'tls.httpAuthAcknowledged'],
+  ] as const) {
+    if (!Object.prototype.hasOwnProperty.call(incoming, key)) {
+      continue;
+    }
+    const parsed = parseOptionalBooleanSetting(incoming[key], fieldName);
+    if ('error' in parsed) {
+      return parsed;
+    }
+    tls[key] = parsed.value;
+  }
+
+  for (const [key, fieldName] of [
+    ['certificateFile', 'tls.certificateFile'],
+    ['keyFile', 'tls.keyFile'],
+    ['caFile', 'tls.caFile'],
+  ] as const) {
+    const parsed = parsePatchBoundedString(incoming, key, {
+      fieldName,
+      maxLength: MAX_TLS_PATH_LENGTH,
+      allowEmpty: true,
+    });
+    if ('error' in parsed) {
+      return parsed;
+    }
+    if (parsed.value !== undefined) {
+      tls[key] = parsed.value;
+    }
+  }
+
+  const effectiveMode = (tls.mode ??
+    current.mode) as NetworkSettings['tls']['mode'];
+  const effectiveAllowHttpAuth = (tls.allowHttpAuth ??
+    current.allowHttpAuth) as boolean;
+  const effectiveHttpsPort = (tls.httpsPort ?? current.httpsPort) as
+    | number
+    | undefined;
+  if (effectiveMode !== 'disabled' && effectiveHttpsPort !== undefined) {
+    let httpPort: number;
+    try {
+      httpPort = parseListenPort(process.env.PORT);
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : 'PORT is invalid.',
+      };
+    }
+    if (effectiveHttpsPort === httpPort) {
+      return {
+        error: 'tls.httpsPort must differ from the HTTP PORT.',
+      };
+    }
+  }
+  if (effectiveMode !== 'disabled' && effectiveAllowHttpAuth) {
+    return {
+      error:
+        'tls.allowHttpAuth cannot be enabled while built-in HTTPS is enabled.',
+    };
+  }
+
+  if (effectiveAllowHttpAuth) {
+    const acknowledged = (tls.httpAuthAcknowledged ??
+      current.httpAuthAcknowledged) as boolean;
+    if (!acknowledged) {
+      return {
+        error:
+          'tls.httpAuthAcknowledged must be true before HTTP authentication can be enabled.',
+      };
+    }
+    tls.httpAuthAcknowledged = true;
+  } else {
+    tls.httpAuthAcknowledged = false;
+  }
+
+  return { value: { tls } };
+};
+
 const parseNetworkSettingsBody = (
   body: Record<string, unknown>,
   current: NetworkSettings
@@ -689,6 +831,12 @@ const parseNetworkSettingsBody = (
     }
     value[key] = parsed.value;
   }
+
+  const parsedTls = parseTlsSettingsBody(body, current.tls);
+  if ('error' in parsedTls) {
+    return parsedTls;
+  }
+  Object.assign(value, parsedTls.value);
 
   if (body.apiRequestTimeout !== undefined) {
     const parsedTimeout = parseOptionalNetworkInteger(

@@ -1,6 +1,12 @@
 import Badge from '@app/components/Common/Badge';
+import BookFormatBadge, {
+  getRequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
 import Tooltip from '@app/components/Common/Tooltip';
 import useRequestOverride from '@app/hooks/useRequestOverride';
 import { useUser } from '@app/hooks/useUser';
@@ -44,9 +50,6 @@ const messages = defineMessages('components.RequestBlock', {
   requestedby: 'Requested By',
   lastmodifiedby: 'Last Modified By',
   bookFormat: 'Format',
-  ebook: 'Ebook',
-  audiobook: 'Audiobook',
-  both: 'Both',
   approve: 'Approve Request',
   decline: 'Decline Request',
   edit: 'Edit Request',
@@ -72,13 +75,6 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
   const musicId = request.media?.mbId
     ? normalizeMusicBrainzId(request.media.mbId)
     : undefined;
-  const bookFormatMessage =
-    request.bookFormat === 'audiobook'
-      ? messages.audiobook
-      : request.bookFormat === 'both'
-        ? messages.both
-        : messages.ebook;
-
   const updateRequest = async (type: 'approve' | 'decline'): Promise<void> => {
     setIsUpdating(true);
     await axios.post(`/api/v1/request/${request.id}/${type}`);
@@ -246,6 +242,14 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
         <div className="mt-2 sm:flex sm:justify-between">
           <div className="sm:flex">
             <div className="mr-6 flex items-center text-sm leading-5">
+              {request.type !== 'book' && (
+                <span className="mr-1">
+                  <MediaTypeBadge
+                    mediaType={getMediaTypeBadgeType(request.type) ?? 'movie'}
+                    variant="compact"
+                  />
+                </span>
+              )}
               {request.is4k && (
                 <span className="mr-1">
                   <Badge badgeType="warning">4K</Badge>
@@ -254,7 +258,10 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
               {request.type === 'book' && (
                 <span className="mr-1">
                   <Tooltip content={intl.formatMessage(messages.bookFormat)}>
-                    <Badge>{intl.formatMessage(bookFormatMessage)}</Badge>
+                    <BookFormatBadge
+                      format={getRequestedBookFormat(request.bookFormat)}
+                      variant="compact"
+                    />
                   </Tooltip>
                 </span>
               )}

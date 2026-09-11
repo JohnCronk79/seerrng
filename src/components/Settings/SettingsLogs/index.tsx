@@ -3,6 +3,7 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Table from '@app/components/Common/Table';
 import Tooltip from '@app/components/Common/Tooltip';
 import useDebouncedState from '@app/hooks/useDebouncedState';
@@ -22,8 +23,6 @@ import {
 } from '@app/utils/localStorage';
 import { Transition } from '@headlessui/react';
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ClipboardDocumentIcon,
   DocumentMagnifyingGlassIcon,
   FunnelIcon,
@@ -149,8 +148,10 @@ const SettingsLogs = () => {
     return <ErrorPage statusCode={500} />;
   }
 
-  const hasNextPage = data?.pageInfo.pages ?? 0 > pageIndex + 1;
-  const hasPrevPage = pageIndex > 0;
+  const changePage = (nextPage: number) => {
+    updateQueryParams('page', String(nextPage));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
     <>
@@ -432,79 +433,19 @@ const SettingsLogs = () => {
                 </Table.TD>
               </tr>
             )}
-            <tr className="bg-gray-700">
-              <Table.TD colSpan={5} noPadding>
-                <nav
-                  className="flex w-screen flex-col items-center space-x-4 space-y-3 px-6 py-3 sm:flex-row sm:space-y-0 md:w-full"
-                  aria-label="Pagination"
-                >
-                  <div className="hidden lg:flex lg:flex-1">
-                    <p className="text-sm">
-                      {(data?.results.length ?? 0) > 0 &&
-                        intl.formatMessage(globalMessages.showingresults, {
-                          from: pageIndex * currentPageSize + 1,
-                          to:
-                            (data?.results.length ?? 0 < currentPageSize)
-                              ? pageIndex * currentPageSize +
-                                (data?.results.length ?? 0)
-                              : (pageIndex + 1) * currentPageSize,
-                          total: data?.pageInfo.results ?? 0,
-                          strong: (msg: React.ReactNode) => (
-                            <span className="font-medium">{msg}</span>
-                          ),
-                        })}
-                    </p>
-                  </div>
-                  <div className="flex justify-center sm:flex-1 sm:justify-start md:justify-center">
-                    <span className="-mt-3 items-center text-sm sm:-ml-4 sm:mt-0 md:ml-0">
-                      {intl.formatMessage(globalMessages.resultsperpage, {
-                        pageSize: (
-                          <select
-                            id="pageSize"
-                            name="pageSize"
-                            onChange={(e) => {
-                              setCurrentPageSize(Number(e.target.value));
-                              router
-                                .push(router.pathname)
-                                .then(() => window.scrollTo(0, 0));
-                            }}
-                            value={currentPageSize}
-                            className="short inline"
-                          >
-                            <option value="10">10</option>
-                            <option value="25">25</option>
-                            <option value="50">50</option>
-                            <option value="100">100</option>
-                          </select>
-                        ),
-                      })}
-                    </span>
-                  </div>
-                  <div className="flex flex-auto justify-center space-x-2 sm:flex-1 sm:justify-end">
-                    <Button
-                      disabled={!hasPrevPage}
-                      onClick={() =>
-                        updateQueryParams('page', (page - 1).toString())
-                      }
-                    >
-                      <ChevronLeftIcon />
-                      <span>{intl.formatMessage(globalMessages.previous)}</span>
-                    </Button>
-                    <Button
-                      disabled={!hasNextPage}
-                      onClick={() =>
-                        updateQueryParams('page', (page + 1).toString())
-                      }
-                    >
-                      <span>{intl.formatMessage(globalMessages.next)}</span>
-                      <ChevronRightIcon />
-                    </Button>
-                  </div>
-                </nav>
-              </Table.TD>
-            </tr>
           </Table.TBody>
         </Table>
+        <PaginationFooter
+          defaultPageSize={25}
+          page={page}
+          pageSize={currentPageSize}
+          totalPages={data?.pageInfo.pages ?? 1}
+          onPageChange={changePage}
+          onPageSizeChange={(size) => {
+            setCurrentPageSize(size);
+            void router.push(router.pathname).then(() => window.scrollTo(0, 0));
+          }}
+        />
       </div>
     </>
   );

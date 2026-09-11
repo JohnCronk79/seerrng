@@ -1,4 +1,6 @@
 import MeshNetworkIcon from '@app/assets/mesh-network.svg';
+import Button from '@app/components/Common/Button';
+import Tooltip from '@app/components/Common/Tooltip';
 import type { AssociationMediaType } from '@app/hooks/useAssociations';
 import useAssociations, {
   toAssociationMediaType,
@@ -18,7 +20,7 @@ interface AssociationBadgeProps {
   mediaType: string;
   id: string | number;
   /** 'card' floats over poster art; 'inline' sits next to a title. */
-  variant?: 'card' | 'inline';
+  variant?: 'card' | 'inline' | 'button';
   hideWhenEmpty?: boolean;
 }
 
@@ -64,34 +66,52 @@ const AssociationBadge = ({
     return null;
   }
 
+  const associationLabel = intl.formatMessage(messages.associations);
   const buttonClass =
     variant === 'card'
-      ? 'inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-cyan-100/95 bg-gradient-to-br from-cyan-500/95 via-teal-500/90 to-blue-500/95 text-white shadow-md shadow-cyan-950/40 ring-2 ring-black/25 backdrop-blur transition hover:border-white hover:from-cyan-400 hover:via-teal-400 hover:to-blue-400 sm:h-8 sm:w-8'
+      ? 'inline-flex h-6 w-6 items-center justify-center rounded-full border border-cyan-100/95 bg-gradient-to-br from-cyan-600/70 via-teal-600/70 to-blue-600/70 text-white shadow-md shadow-cyan-950/40 backdrop-blur transition hover:border-white hover:from-cyan-500 hover:via-teal-500 hover:to-blue-500'
       : 'flex h-8 w-8 items-center justify-center rounded-full bg-gray-800 text-gray-300 ring-1 ring-gray-700 transition hover:text-white';
+
+  const toggleAssociations = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (hideWhenEmpty && isChecking) {
+      return;
+    }
+    setIsOpen((open) => !open);
+  };
 
   return (
     <>
-      <button
-        type="button"
-        data-testid="association-badge"
-        aria-label={intl.formatMessage(messages.associations)}
-        title={intl.formatMessage(messages.associations)}
-        className={buttonClass}
-        disabled={hideWhenEmpty && isChecking}
-        onClick={(e: React.MouseEvent) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (hideWhenEmpty && isChecking) {
-            return;
-          }
-          setIsOpen((open) => !open);
-        }}
-      >
-        <MeshNetworkIcon
-          className={variant === 'card' ? 'h-5 w-5 sm:h-6 sm:w-6' : 'h-4 w-4'}
-          aria-hidden="true"
-        />
-      </button>
+      <Tooltip content={associationLabel}>
+        {variant === 'button' ? (
+          <Button
+            buttonType="association"
+            buttonSize="sm"
+            data-testid="association-badge"
+            aria-label={associationLabel}
+            disabled={hideWhenEmpty && isChecking}
+            onClick={toggleAssociations}
+          >
+            <MeshNetworkIcon className="h-4 w-4" aria-hidden="true" />
+            <span className="ml-1.5">{associationLabel}</span>
+          </Button>
+        ) : (
+          <button
+            type="button"
+            data-testid="association-badge"
+            aria-label={associationLabel}
+            className={buttonClass}
+            disabled={hideWhenEmpty && isChecking}
+            onClick={toggleAssociations}
+          >
+            <MeshNetworkIcon
+              className={variant === 'card' ? 'h-3.5 w-3.5' : 'h-4 w-4'}
+              aria-hidden="true"
+            />
+          </button>
+        )}
+      </Tooltip>
       {isOpen &&
         ReactDOM.createPortal(
           <div

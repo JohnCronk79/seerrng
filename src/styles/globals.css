@@ -37,13 +37,15 @@
     --color-purple-800: 107 33 168;
     --color-purple-900: 88 28 135;
     --color-purple-950: 59 7 100;
-    --theme-sidebar-start: 31 41 55;
-    --theme-sidebar-end: 17 24 39;
     --theme-sidebar-border: 55 65 81;
     --theme-sidebar-hover: 55 65 81;
-    --theme-page-bg: 17 24 39;
-    --theme-page-glow-start: 31 41 55;
-    --theme-page-glow-end: 17 24 39;
+    --theme-page-bg: 0 0 0;
+    --theme-page-spotlight-center: 194 169 255;
+    --theme-page-spotlight-edge: 151 115 246;
+    --theme-page-gradient-light: 76 67 189;
+    --theme-page-gradient-main: 52 51 157;
+    --theme-page-gradient-deep: 23 29 89;
+    --theme-page-gradient-black: 0 0 0;
     --theme-searchbar-scrolled: 55 65 81;
   }
 
@@ -358,40 +360,91 @@
     border-right: 1px solid rgb(var(--theme-sidebar-border));
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
-    background: linear-gradient(
-      180deg,
-      rgb(var(--theme-sidebar-start)) 0%,
-      rgb(var(--theme-sidebar-end)) 100%
-    );
+    background:
+      radial-gradient(
+        ellipse 34% 27% at 100% 0%,
+        rgb(var(--theme-page-spotlight-center) / 0.98) 0%,
+        rgb(var(--theme-page-spotlight-edge) / 0.72) 34%,
+        rgb(var(--theme-page-gradient-light) / 0) 100%
+      ),
+      linear-gradient(
+        40deg,
+        rgb(var(--theme-page-gradient-black)) 0%,
+        rgb(var(--theme-page-gradient-deep)) 36%,
+        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-light)) 100%
+      );
   }
 
   .sidebar-link-idle {
-    @apply text-white;
+    @apply bg-gradient-to-br from-transparent to-transparent text-white;
   }
 
   .sidebar-link-idle:hover,
   .sidebar-link-idle:focus {
-    background-color: rgb(var(--theme-sidebar-hover));
+    @apply from-indigo-800 to-purple-800;
   }
 
   .app-shell {
-    background-color: rgb(var(--theme-page-bg));
+    background-color: transparent;
   }
 
   .app-backdrop {
-    background: linear-gradient(
-      225deg,
-      rgb(var(--theme-page-glow-start)) 0%,
-      rgb(var(--theme-page-glow-end)) 100%
-    );
+    background:
+      radial-gradient(
+        ellipse 34% 27% at 100% 0%,
+        rgb(var(--theme-page-spotlight-center) / 0.98) 0%,
+        rgb(var(--theme-page-spotlight-edge) / 0.72) 34%,
+        rgb(var(--theme-page-gradient-light) / 0) 100%
+      ),
+      linear-gradient(
+        40deg,
+        rgb(var(--theme-page-gradient-black)) 0%,
+        rgb(var(--theme-page-gradient-deep)) 36%,
+        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-light)) 100%
+      );
   }
 
-  .app-backdrop-fade {
+  .app-menu-gradient {
+    background:
+      radial-gradient(
+        ellipse 34% 27% at 100% 0%,
+        rgb(var(--theme-page-spotlight-center) / 0.96) 0%,
+        rgb(var(--theme-page-spotlight-edge) / 0.7) 34%,
+        rgb(var(--theme-page-gradient-light) / 0) 100%
+      ),
+      linear-gradient(
+        40deg,
+        rgb(var(--theme-page-gradient-black) / 0.98) 0%,
+        rgb(var(--theme-page-gradient-deep) / 0.98) 36%,
+        rgb(var(--theme-page-gradient-main) / 0.96) 72%,
+        rgb(var(--theme-page-gradient-light) / 0.96) 100%
+      );
+  }
+
+  .refreshed-card-surface {
+    background-color: rgb(var(--color-gray-800) / 0.2);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  .refreshed-inset-surface {
+    background-color: rgb(var(--color-gray-900) / 0.3);
+  }
+
+  .refreshed-artwork-scrim {
+    @apply absolute inset-0 bg-gray-900/60;
+  }
+
+  .refreshed-artwork-gradient {
     background: linear-gradient(
-      0deg,
-      rgb(var(--theme-page-bg)) 0%,
-      rgb(var(--theme-page-bg) / 0) 100%
+      90deg,
+      rgb(var(--color-gray-900) / 0.3) 0%,
+      rgb(var(--color-gray-900) / 0.48) 52%,
+      rgb(var(--color-gray-900) / 0.76) 100%
     );
+    @apply absolute inset-0;
   }
 
   .app-searchbar-scrolled {
@@ -448,7 +501,18 @@
   .slider-item {
     content-visibility: auto;
     contain-intrinsic-inline-size: auto 11rem;
-    contain-intrinsic-block-size: auto 17rem;
+    contain-intrinsic-block-size: auto 13.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .slider-item {
+      contain-intrinsic-block-size: auto 17rem;
+    }
+  }
+
+  .slider-item-compact {
+    contain-intrinsic-inline-size: auto 9rem;
+    contain-intrinsic-block-size: auto 4.5rem;
   }
 
   .provider-icons {
@@ -456,7 +520,7 @@
   }
 
   .slider-header {
-    @apply relative mb-4 mt-6 flex;
+    @apply relative mb-4 mt-6 flex items-center gap-2;
   }
 
   .service-error-banner {
@@ -471,10 +535,6 @@
     @apply transition duration-300 hover:text-white;
   }
 
-  a.slider-title svg {
-    @apply ml-2 h-6 w-6;
-  }
-
   .media-page {
     @apply relative -mx-4 bg-cover bg-center px-4;
     margin-top: calc(-4rem - env(safe-area-inset-top));
@@ -487,15 +547,25 @@
   }
 
   .media-header {
-    @apply flex flex-col items-center pt-4 xl:flex-row xl:items-end;
+    @apply flex flex-col items-center rounded-xl border border-gray-700 p-4 shadow-lg shadow-gray-950/20 xl:flex-row xl:items-end;
+    background-color: rgb(var(--color-gray-800) / 0.2);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  .media-detail-card {
+    @apply rounded-xl border border-gray-700 p-4 shadow-lg shadow-gray-950/20;
+    background-color: rgb(var(--color-gray-800) / 0.2);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
   }
 
   .media-poster {
-    @apply w-32 overflow-hidden rounded shadow md:w-44 md:rounded-lg md:shadow-2xl xl:mr-4 xl:w-52;
+    @apply w-32 overflow-hidden rounded-lg shadow ring-1 ring-gray-600 md:w-44 md:shadow-2xl xl:mr-4 xl:w-52;
   }
 
   .media-status {
-    @apply mb-2 space-x-2;
+    @apply mb-2 flex flex-wrap items-center gap-2;
   }
 
   .media-title {
@@ -527,11 +597,14 @@
   }
 
   .media-overview {
-    @apply flex flex-col pb-4 pt-8 text-white lg:flex-row;
+    @apply flex flex-col gap-4 pb-4 pt-4 text-white lg:flex-row;
   }
 
   .media-overview-left {
-    @apply flex-1 lg:mr-8;
+    @apply flex-1 rounded-xl border border-gray-700 p-4 shadow-lg shadow-gray-950/20;
+    background-color: rgb(var(--color-gray-800) / 0.2);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
   }
 
   .tagline {
@@ -561,11 +634,12 @@
   }
 
   .media-overview-right {
-    @apply mt-8 w-full lg:mt-0 lg:w-80;
+    @apply w-full lg:w-80;
   }
 
   .media-facts {
-    @apply rounded-lg border border-gray-700 bg-gray-900 text-sm font-bold text-gray-300 shadow;
+    @apply rounded-xl border border-gray-700 text-sm font-bold text-gray-300 shadow backdrop-blur-sm;
+    background-color: rgb(var(--color-gray-900) / 0.35);
   }
 
   .media-fact {
@@ -699,6 +773,90 @@
     @apply whitespace-nowrap;
   }
 
+  .app-button {
+    @apply inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded-md border font-medium leading-5 transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale;
+  }
+
+  .app-button-default {
+    @apply border-gray-600 bg-gray-800/80 text-gray-200 hover:border-gray-600 hover:bg-gray-700 hover:text-white focus:border-blue-300 focus:ring-blue-500 active:border-gray-600 active:bg-gray-700 active:text-gray-200;
+  }
+
+  .app-button-primary {
+    @apply border-indigo-500 bg-indigo-600/80 text-white hover:border-indigo-500 hover:bg-indigo-600 hover:text-white focus:border-indigo-700 focus:ring-indigo-500 active:border-indigo-700 active:bg-indigo-600;
+  }
+
+  .app-button-danger {
+    @apply border-red-500 bg-red-600/80 text-white hover:border-red-500 hover:bg-red-600 hover:text-white focus:border-red-700 focus:ring-red-500 active:border-red-700 active:bg-red-700;
+  }
+
+  .app-button-warning {
+    @apply border-yellow-500 bg-yellow-500/80 text-white hover:border-yellow-400 hover:bg-yellow-500 hover:text-white focus:border-yellow-700 focus:ring-yellow-500 active:border-yellow-700 active:bg-yellow-500;
+  }
+
+  .app-button-success {
+    @apply border-green-500 bg-green-500/80 text-white hover:border-green-400 hover:bg-green-500 hover:text-white focus:border-green-700 focus:ring-green-500 active:border-green-700 active:bg-green-500;
+  }
+
+  .app-button-blocklist {
+    @apply border-red-500/90 bg-red-950/35 text-red-300 hover:border-red-300 hover:bg-red-900/55 hover:text-white focus:border-red-300 focus:ring-red-500 active:border-red-400 active:bg-red-900/70;
+  }
+
+  .app-button-manage {
+    @apply border-violet-500/90 bg-violet-950/35 text-violet-300 hover:border-violet-300 hover:bg-violet-900/55 hover:text-white focus:border-violet-300 focus:ring-violet-500 active:border-violet-400 active:bg-violet-900/70;
+  }
+
+  .app-button-report-issue {
+    @apply border-yellow-500/90 bg-yellow-950/35 text-yellow-300 hover:border-yellow-300 hover:bg-yellow-900/55 hover:text-white focus:border-yellow-300 focus:ring-yellow-500 active:border-yellow-400 active:bg-yellow-900/70;
+  }
+
+  .app-button-association {
+    @apply border-cyan-500/90 bg-cyan-950/35 text-cyan-300 hover:border-cyan-300 hover:bg-cyan-900/55 hover:text-white focus:border-cyan-300 focus:ring-cyan-500 active:border-cyan-400 active:bg-cyan-900/70;
+  }
+
+  .app-button-bulk-request {
+    @apply border-emerald-600/90 bg-emerald-950/45 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-900/65 hover:text-white focus:border-emerald-400 focus:ring-emerald-500 active:border-emerald-500 active:bg-emerald-950;
+  }
+
+  .app-button-detail-request {
+    @apply border-green-500/90 bg-green-950/35 text-green-300 hover:border-green-300 hover:bg-green-900/55 hover:text-white focus:border-green-300 focus:ring-green-500 active:border-green-400 active:bg-green-900/70;
+  }
+
+  .app-button-trailer {
+    @apply border-orange-500/90 bg-orange-950/35 text-orange-300 hover:border-orange-300 hover:bg-orange-900/55 hover:text-white focus:border-orange-300 focus:ring-orange-500 active:border-orange-400 active:bg-orange-900/70;
+  }
+
+  .app-button-ghost {
+    @apply border-gray-600 bg-transparent text-white hover:border-gray-200 hover:text-white focus:border-gray-100 active:border-gray-100;
+  }
+
+  .detail-disclosure-button {
+    @apply inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400;
+  }
+
+  .media-rating-row {
+    @apply flex min-h-8 flex-wrap items-center justify-around gap-x-10 gap-y-2 py-[5px];
+  }
+
+  .media-rating-link {
+    @apply inline-flex h-8 items-center gap-2 text-sm text-gray-300 hover:text-white;
+  }
+
+  .media-rating-icon {
+    @apply h-5 w-5 flex-none;
+  }
+
+  .media-rating-icon-audience {
+    @apply h-4 w-4;
+  }
+
+  .media-rating-wordmark {
+    @apply h-3.5 w-auto flex-none;
+  }
+
+  .media-rating-value {
+    @apply inline-flex h-5 items-center leading-none;
+  }
+
   button.input-action {
     @apply relative -ml-px inline-flex items-center border border-gray-500 bg-indigo-600/80 px-3 py-2 text-sm font-medium leading-5 text-white last:rounded-r-md sm:px-3.5;
   }
@@ -714,6 +872,18 @@
   .button-md :where(svg),
   button.input-action svg {
     @apply ml-2 mr-2 h-5 w-5 first:ml-0 last:mr-0;
+  }
+
+  .button-md {
+    @apply px-4 py-2 text-sm;
+  }
+
+  .button-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .button-sm {
+    @apply h-8 px-2.5 text-xs;
   }
 
   .button-sm svg {
@@ -851,6 +1021,90 @@
 
   .datepicker-wrapper > div > div:first-child {
     @apply hidden;
+  }
+
+  .discover-filter-control {
+    @apply relative inline-flex min-h-8 min-w-0 max-w-full rounded-md border border-gray-600 bg-gray-900/70 focus-within:ring-2 focus-within:ring-inset focus-within:ring-indigo-400;
+    width: max-content;
+  }
+
+  .discover-filter-control-label {
+    @apply inline-flex flex-none items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors;
+  }
+
+  .discover-filter-control-label-active {
+    @apply bg-indigo-500/35 text-white;
+  }
+
+  .discover-filter-control .react-select-container {
+    @apply w-auto min-w-[4.5rem] max-w-80 flex-none;
+  }
+
+  .discover-filter-control .react-select__control,
+  .discover-filter-control .react-select__control--is-focused {
+    @apply min-h-[30px] rounded-none border-0 bg-transparent shadow-none hover:border-0;
+  }
+
+  .discover-filter-control .react-select__value-container {
+    @apply px-2 py-0;
+  }
+
+  .discover-filter-control .react-select__indicator {
+    @apply py-1;
+  }
+
+  .discover-filter-control .react-select__menu-list {
+    max-height: 240px !important;
+  }
+
+  .discover-filter-control .discover-compact-select {
+    position: static;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__menu {
+    @apply left-0 mt-1 w-max min-w-full max-w-80 rounded-md border border-gray-600 bg-gray-800 py-0 text-xs shadow-xl;
+    top: 100%;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__menu-list {
+    @apply py-1;
+    max-height: 240px !important;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__option {
+    @apply min-h-0 px-2 py-1 text-xs leading-4;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__input {
+    @apply text-xs leading-4 text-gray-200;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__placeholder,
+  .discover-filter-control .discover-compact-select .react-select__single-value,
+  .discover-filter-control
+    .discover-compact-select
+    .react-select__multi-value__label {
+    @apply text-xs leading-4;
+  }
+
+  .discover-filter-control .discover-compact-select .react-select__multi-value {
+    @apply my-0;
+  }
+
+  .discover-filter-control
+    .discover-compact-select
+    .react-select__multi-value__label {
+    @apply px-1 py-0;
+  }
+
+  .discover-filter-control
+    .discover-compact-select
+    .react-select__multi-value__remove {
+    @apply px-0.5 py-0;
+  }
+
+  .discover-filter-control .datepicker-wrapper > button {
+    @apply right-1;
   }
 
   input[type='range']::-webkit-slider-thumb {

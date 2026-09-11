@@ -1,16 +1,22 @@
 import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
+import {
+  CompactSelect,
+  type CompactSelectOption,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import IssueMediaSummary from '@app/components/IssueDetails/IssueMediaSummary';
+import { getAvailableIssueQualities } from '@app/components/IssueDetails/issueMediaFormat';
+import SeriesEpisodeSelector from '@app/components/IssueModal/CreateIssueModal/SeriesEpisodeSelector';
 import { getIssueOptionsForMediaType } from '@app/components/IssueModal/constants';
-import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
-import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { RadioGroup } from '@headlessui/react';
+import { PaperAirplaneIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { ArrowRightCircleIcon } from '@heroicons/react/24/solid';
-import { MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
+import { IssueType, MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
 import { MediaStatus } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import type { BookDetails } from '@server/models/Book';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
@@ -29,13 +35,12 @@ const messages = defineMessages('components.IssueModal.CreateIssueModal', {
   whatswrong: "What's wrong?",
   providedetail:
     'Please provide a detailed explanation of the issue you encountered.',
-  extras: 'Extras',
-  season: 'Season {seasonNumber}',
-  episode: 'Episode {episodeNumber}',
-  allseasons: 'All Seasons',
-  allepisodes: 'All Episodes',
-  problemseason: 'Affected Season',
-  problemepisode: 'Affected Episode',
+  quality: 'Quality',
+  issueType: 'Issue Type',
+  hd: 'HD',
+  ultraHd: '4K',
+  noAvailableQuality: 'No available quality',
+  selectepisode: 'Select at least one affected season or episode',
   toastSuccessCreate:
     'Issue report for <strong>{title}</strong> submitted successfully!',
   toastFailedCreate: 'Something went wrong while submitting the issue.',
@@ -62,10 +67,6 @@ const isMovie = (movie: IssueMediaDetails): movie is MovieDetails => {
   return (movie as MovieDetails).title !== undefined;
 };
 
-const classNames = (...classes: string[]) => {
-  return classes.filter(Boolean).join(' ');
-};
-
 interface CreateIssueModalProps {
   mediaType: 'movie' | 'tv' | 'music' | 'book';
   tmdbId?: number;
@@ -84,8 +85,6 @@ const CreateIssueModal = ({
   backdrop,
 }: CreateIssueModalProps) => {
   const intl = useIntl();
-  const settings = useSettings();
-  const { hasPermission } = useUser();
   const { addToast } = useToasts();
   const detailUrl =
     mediaType === 'movie' || mediaType === 'tv'
@@ -108,22 +107,47 @@ const CreateIssueModal = ({
         : data.name
       : undefined);
   const issueOptions = getIssueOptionsForMediaType(mediaType);
-
-  const availableSeasons = (data?.mediaInfo?.seasons ?? [])
-    .filter(
-      (season) =>
-        season.status === MediaStatus.AVAILABLE ||
-        season.status === MediaStatus.PARTIALLY_AVAILABLE ||
-        (settings.currentSettings.series4kEnabled &&
-          hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_TV], {
-            type: 'or',
-          }) &&
-          (season.status4k === MediaStatus.AVAILABLE ||
-            season.status4k === MediaStatus.PARTIALLY_AVAILABLE))
-    )
-    .map((season) => season.seasonNumber);
+  const orderedIssueOptions = [
+    IssueType.OTHER,
+    IssueType.AUDIO,
+    IssueType.VIDEO,
+    IssueType.SUBTITLES,
+  ].flatMap((issueType) =>
+    issueOptions.filter((option) => option.issueType === issueType)
+  );
+  const defaultIssueType = IssueType.OTHER;
+  const issueTypeOptions: CompactSelectOption[] = orderedIssueOptions.map(
+    (option) => ({
+      value: option.issueType.toString(),
+      label: intl.formatMessage(option.name),
+    })
+  );
+  const availableQualities = getAvailableIssueQualities(data?.mediaInfo);
+  const hasAvailableVideoQuality = availableQualities.length > 0;
+  const initialIs4k = availableQualities[0] === '4k';
+  const qualityOptions: CompactSelectOption[] = availableQualities.map(
+    (quality) => ({
+      value: quality,
+      label: intl.formatMessage(
+        quality === '4k' ? messages.ultraHd : messages.hd
+      ),
+    })
+  );
+  const isAvailableStatus = (status?: MediaStatus) =>
+    status === MediaStatus.AVAILABLE ||
+    status === MediaStatus.PARTIALLY_AVAILABLE;
+  const getAvailableSeasons = (is4k: boolean) =>
+    (data?.mediaInfo?.seasons ?? [])
+      .filter((season) =>
+        isAvailableStatus(is4k ? season.status4k : season.status)
+      )
+      .map((season) => season.seasonNumber);
+  const initialAvailableSeasons = getAvailableSeasons(initialIs4k);
 
   const CreateIssueModalSchema = Yup.object().shape({
+    issueType: Yup.number()
+      .oneOf(orderedIssueOptions.map((option) => option.issueType))
+      .required(),
     message: Yup.string()
       .max(
         MAX_ISSUE_MESSAGE_LENGTH,
@@ -132,26 +156,44 @@ const CreateIssueModal = ({
         })
       )
       .required(intl.formatMessage(messages.validationMessageRequired)),
+    problemEpisodeSelections:
+      mediaType === 'tv'
+        ? Yup.array()
+            .of(
+              Yup.object({
+                seasonNumber: Yup.number().integer().min(0).required(),
+                episodeNumbers: Yup.array().of(Yup.number().integer().min(1)),
+              })
+            )
+            .min(1, intl.formatMessage(messages.selectepisode))
+        : Yup.array(),
   });
 
   return (
     <Formik
+      enableReinitialize
       initialValues={{
-        selectedIssue: issueOptions[0],
+        issueType: defaultIssueType,
         message: '',
-        problemSeason: availableSeasons.length === 1 ? availableSeasons[0] : 0,
-        problemEpisode: 0,
+        is4k: initialIs4k,
+        activeSeason: initialAvailableSeasons[0] ?? -1,
+        problemEpisodeSelections: [] as SeasonEpisodeSelection[],
       }}
       validationSchema={CreateIssueModalSchema}
       onSubmit={async (values) => {
         try {
           const newIssue = await axios.post<Issue>('/api/v1/issue', {
-            issueType: values.selectedIssue.issueType,
+            issueType: values.issueType,
             message: values.message,
             mediaId: resolvedMediaId,
-            problemSeason: values.problemSeason,
+            is4k: values.is4k,
+            problemSeason:
+              values.problemEpisodeSelections[0]?.seasonNumber ?? 0,
             problemEpisode:
-              values.problemSeason > 0 ? values.problemEpisode : 0,
+              values.problemEpisodeSelections[0]?.episodeNumbers?.[0] ?? 0,
+            problemEpisodes:
+              values.problemEpisodeSelections[0]?.episodeNumbers ?? [],
+            problemEpisodeSelections: values.problemEpisodeSelections,
           });
 
           if (resolvedTitle) {
@@ -190,178 +232,162 @@ const CreateIssueModal = ({
         }
       }}
     >
-      {({ handleSubmit, values, setFieldValue, errors, touched }) => {
+      {({
+        handleSubmit,
+        values,
+        setFieldValue,
+        errors,
+        touched,
+        isSubmitting,
+      }) => {
+        const actionButton =
+          'inline-flex h-[22px] items-center gap-1 rounded-md border px-2 text-[11px] font-semibold leading-none transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-40';
+        const issueTypeSelect = (
+          <CompactSelect
+            label={intl.formatMessage(messages.issueType)}
+            value={values.issueType.toString()}
+            options={issueTypeOptions}
+            onChange={(issueType) =>
+              void setFieldValue('issueType', Number(issueType) as IssueType)
+            }
+            defaultValue={defaultIssueType.toString()}
+          />
+        );
+
         return (
           <Modal
             backgroundClickable
             onCancel={onCancel}
             title={intl.formatMessage(messages.reportissue)}
-            subTitle={resolvedTitle}
-            cancelText={intl.formatMessage(globalMessages.close)}
-            onOk={() => handleSubmit()}
-            okText={intl.formatMessage(messages.submitissue)}
+            hideActions
             loading={!!detailUrl && !data && !error}
-            backdrop={
-              backdrop ??
-              (!data || isMusic(data) || isBook(data) || !data.backdropPath
-                ? undefined
-                : `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`)
-            }
           >
+            {data && (
+              <IssueMediaSummary
+                data={data}
+                mediaType={mediaType}
+                is4k={values.is4k}
+                artwork={backdrop}
+                rightDetails={[
+                  { label: 'Status', value: 'Ready to Report' },
+                  {
+                    label: 'Quality',
+                    value: hasAvailableVideoQuality
+                      ? values.is4k
+                        ? intl.formatMessage(messages.ultraHd)
+                        : intl.formatMessage(messages.hd)
+                      : intl.formatMessage(messages.noAvailableQuality),
+                  },
+                ]}
+                footer={
+                  <>
+                    {(mediaType === 'movie' || mediaType === 'tv') &&
+                      hasAvailableVideoQuality && (
+                        <CompactSelect
+                          label={intl.formatMessage(messages.quality)}
+                          value={values.is4k ? '4k' : 'hd'}
+                          options={qualityOptions}
+                          onChange={(quality) => {
+                            const nextIs4k = quality === '4k';
+                            const seasons = getAvailableSeasons(nextIs4k);
+                            void setFieldValue('is4k', nextIs4k);
+                            void setFieldValue(
+                              'activeSeason',
+                              seasons[0] ?? -1
+                            );
+                            void setFieldValue('problemEpisodeSelections', []);
+                          }}
+                          defaultValue={initialIs4k ? '4k' : 'hd'}
+                        />
+                      )}
+                    {issueTypeSelect}
+                  </>
+                }
+              />
+            )}
+
+            {!data && issueTypeSelect}
+
             {mediaType === 'tv' &&
               data &&
               !isMovie(data) &&
               !isMusic(data) &&
               !isBook(data) && (
                 <>
-                  <div className="form-row">
-                    <label htmlFor="problemSeason" className="text-label">
-                      {intl.formatMessage(messages.problemseason)}
-                      <span className="label-required">*</span>
-                    </label>
-                    <div className="form-input-area">
-                      <div className="form-input-field">
-                        <Field
-                          as="select"
-                          id="problemSeason"
-                          name="problemSeason"
-                          disabled={availableSeasons.length === 1}
-                        >
-                          {availableSeasons.length > 1 && (
-                            <option value={0}>
-                              {intl.formatMessage(messages.allseasons)}
-                            </option>
-                          )}
-                          {availableSeasons.map((season) => (
-                            <option
-                              value={season}
-                              key={`problem-season-${season}`}
-                            >
-                              {season === 0
-                                ? intl.formatMessage(messages.extras)
-                                : intl.formatMessage(messages.season, {
-                                    seasonNumber: season,
-                                  })}
-                            </option>
-                          ))}
-                        </Field>
+                  <SeriesEpisodeSelector
+                    tvId={data.id}
+                    seasons={data.seasons.filter((season) =>
+                      getAvailableSeasons(values.is4k).includes(
+                        season.seasonNumber
+                      )
+                    )}
+                    activeSeason={values.activeSeason}
+                    selections={values.problemEpisodeSelections}
+                    onActiveSeasonChange={(seasonNumber) =>
+                      void setFieldValue('activeSeason', seasonNumber)
+                    }
+                    onSelectionsChange={(selections) =>
+                      void setFieldValue('problemEpisodeSelections', selections)
+                    }
+                  />
+                  {touched.problemEpisodeSelections &&
+                    errors.problemEpisodeSelections && (
+                      <div className="mt-1 text-xs text-red-300">
+                        {String(errors.problemEpisodeSelections)}
                       </div>
-                    </div>
-                  </div>
-                  {values.problemSeason > 0 && (
-                    <div className="form-row mb-2">
-                      <label htmlFor="problemEpisode" className="text-label">
-                        {intl.formatMessage(messages.problemepisode)}
-                        <span className="label-required">*</span>
-                      </label>
-                      <div className="form-input-area">
-                        <div className="form-input-field">
-                          <Field
-                            as="select"
-                            id="problemEpisode"
-                            name="problemEpisode"
-                          >
-                            <option value={0}>
-                              {intl.formatMessage(messages.allepisodes)}
-                            </option>
-                            {[
-                              ...Array(
-                                data.seasons.find(
-                                  (season) =>
-                                    Number(values.problemSeason) ===
-                                    season.seasonNumber
-                                )?.episodeCount ?? 0
-                              ),
-                            ].map((i, index) => (
-                              <option
-                                value={index + 1}
-                                key={`problem-episode-${index + 1}`}
-                              >
-                                {intl.formatMessage(messages.episode, {
-                                  episodeNumber: index + 1,
-                                })}
-                              </option>
-                            ))}
-                          </Field>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                    )}
                 </>
               )}
-            <RadioGroup
-              value={values.selectedIssue}
-              onChange={(issue) => setFieldValue('selectedIssue', issue)}
-              className="mt-4"
-            >
-              <RadioGroup.Label className="sr-only">
-                Select an Issue
-              </RadioGroup.Label>
-              <div className="-space-y-px overflow-hidden rounded-md bg-gray-800/30">
-                {issueOptions.map((setting, index) => (
-                  <RadioGroup.Option
-                    key={`issue-type-${setting.issueType}`}
-                    value={setting}
-                    className={({ checked }) =>
-                      classNames(
-                        index === 0 ? 'rounded-tl-md rounded-tr-md' : '',
-                        index === issueOptions.length - 1
-                          ? 'rounded-bl-md rounded-br-md'
-                          : '',
-                        checked
-                          ? 'z-10 border border-indigo-500 bg-indigo-400/20'
-                          : 'border-gray-500',
-                        'relative flex cursor-pointer border p-4 focus:outline-none'
-                      )
-                    }
-                  >
-                    {({ active, checked }) => (
-                      <>
-                        <span
-                          className={`${
-                            checked
-                              ? 'border-transparent bg-indigo-600'
-                              : 'border-gray-300 bg-white'
-                          } ${
-                            active ? 'ring-2 ring-indigo-300 ring-offset-2' : ''
-                          } mt-0.5 flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border`}
-                          aria-hidden="true"
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                        </span>
-                        <div className="ml-3 flex flex-col">
-                          <RadioGroup.Label
-                            as="span"
-                            className={`block text-sm font-medium ${
-                              checked ? 'text-indigo-100' : 'text-gray-100'
-                            }`}
-                          >
-                            {intl.formatMessage(setting.name)}
-                          </RadioGroup.Label>
-                        </div>
-                      </>
-                    )}
-                  </RadioGroup.Option>
-                ))}
+
+            <div className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-2">
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="message"
+                  className="text-xs font-semibold text-gray-100"
+                >
+                  {intl.formatMessage(messages.whatswrong)}
+                  <span className="label-required">*</span>
+                </label>
+                <Field
+                  as="textarea"
+                  rows={3}
+                  name="message"
+                  id="message"
+                  className="max-h-32 w-full resize-none overflow-y-auto rounded-md border-gray-600 bg-gray-900/60 text-sm text-gray-100 placeholder:text-gray-500"
+                  placeholder={intl.formatMessage(messages.providedetail)}
+                />
+                {errors.message &&
+                  touched.message &&
+                  typeof errors.message === 'string' && (
+                    <div className="error">{errors.message}</div>
+                  )}
               </div>
-            </RadioGroup>
-            <div className="mt-4 flex-col space-y-2">
-              <label htmlFor="message">
-                {intl.formatMessage(messages.whatswrong)}
-                <span className="label-required">*</span>
-              </label>
-              <Field
-                as="textarea"
-                name="message"
-                id="message"
-                className="h-28"
-                placeholder={intl.formatMessage(messages.providedetail)}
-              />
-              {errors.message &&
-                touched.message &&
-                typeof errors.message === 'string' && (
-                  <div className="error">{errors.message}</div>
-                )}
+            </div>
+
+            <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                data-testid="modal-cancel-button"
+                className={`${actionButton} border-red-600/80 bg-red-800/25 text-red-200 hover:border-red-500 hover:text-white focus:ring-red-500`}
+              >
+                <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {intl.formatMessage(globalMessages.cancel)}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubmit()}
+                data-testid="modal-ok-button"
+                disabled={
+                  isSubmitting ||
+                  ((mediaType === 'movie' || mediaType === 'tv') &&
+                    !hasAvailableVideoQuality)
+                }
+                className={`${actionButton} border-emerald-600/80 bg-emerald-800/25 text-emerald-200 hover:border-emerald-500 hover:text-white focus:ring-emerald-500`}
+              >
+                <PaperAirplaneIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {intl.formatMessage(messages.submitissue)}
+              </button>
             </div>
           </Modal>
         );

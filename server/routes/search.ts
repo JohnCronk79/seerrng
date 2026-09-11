@@ -25,8 +25,15 @@ import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
-import { settlePromisesWithin } from '@server/utils/concurrency';
+import {
+  mapWithConcurrency,
+  settlePromisesWithin,
+} from '@server/utils/concurrency';
 import { parsePositiveInt } from '@server/utils/pagination';
+import {
+  matchesAllSearchTerms,
+  toFieldedBooleanAndQuery,
+} from '@server/utils/searchTerms';
 import {
   parseBoundedString,
   parseOptionalAllowedString,
@@ -45,6 +52,7 @@ export const SEARCH_RATE_LIMIT = {
 export const MAX_SEARCH_RESULTS_PER_PROVIDER = 20;
 export const MAX_COMBINED_SEARCH_RESULTS = 100;
 export const SEARCH_PROVIDER_TIMEOUT_MS = 5_000;
+export const SEARCH_CREDIT_LOOKUP_CONCURRENCY = 4;
 const searchRateLimit = rateLimit({
   ...SEARCH_RATE_LIMIT,
   standardHeaders: true,
@@ -74,8 +82,11 @@ const searchTypes = [
   'album',
   'artist',
   'book',
+  'music',
 ] as const;
 type SearchType = (typeof searchTypes)[number];
+const bookFormats = ['ebook', 'audiobook'] as const;
+type BookFormat = (typeof bookFormats)[number];
 
 const parseSearchQuery = (value: unknown) =>
   parseBoundedString(value, {
@@ -90,6 +101,41 @@ const normalizeSearchText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+const WRITING_JOBS = new Set(['Screenplay', 'Story', 'Teleplay', 'Writer']);
+
+const sortedUniqueCreditNames = (values: unknown[]): string[] =>
+  [
+    ...new Set(
+      values
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+
+export const extractSearchCrew = (details: {
+  credits?: { crew?: { job?: string; name?: string }[] };
+  created_by?: { name?: string }[];
+}) => {
+  const crew = details.credits?.crew ?? [];
+  const directors = sortedUniqueCreditNames(
+    crew
+      .filter((credit) => credit.job === 'Director')
+      .map((credit) => credit.name)
+  );
+  const creditedWriters = crew
+    .filter((credit) => credit.job && WRITING_JOBS.has(credit.job))
+    .map((credit) => credit.name);
+  const writers = sortedUniqueCreditNames([
+    ...creditedWriters,
+    ...(creditedWriters.length === 0
+      ? (details.created_by ?? []).map((creator) => creator.name)
+      : []),
+  ]);
+
+  return { directors, writers };
+};
 
 const dedupeAlbumSearchResults = <T extends { id: string }>(
   albums: T[]
@@ -158,11 +204,37 @@ searchRoutes.get('/', async (req, res, next) => {
     return res.status(400).json({ status: 400, message: parsedType.error });
   }
   const typeFilter = parsedType.value;
+  const parsedFormat = req.query.format
+    ? parseOptionalAllowedString(req.query.format, {
+        fieldName: 'Format',
+        allowedValues: bookFormats,
+        maxLength: 16,
+      })
+    : ({ value: undefined } as { value?: BookFormat });
+  if ('error' in parsedFormat) {
+    return res.status(400).json({ status: 400, message: parsedFormat.error });
+  }
+  const bookFormat = parsedFormat.value;
+  if (bookFormat && typeFilter !== 'book') {
+    return res.status(400).json({
+      status: 400,
+      message: 'Format can only be used with book searches.',
+    });
+  }
   const settings = getExternalRuntimeConfig();
   const musicEnabled = settings.lidarr.length > 0;
-  const booksEnabled = settings.readarr.length > 0;
+  const booksEnabled = bookFormat
+    ? settings.readarr.some(
+        (server) => (server.serviceType ?? 'ebook') === bookFormat
+      )
+    : settings.readarr.length > 0;
 
-  if ((typeFilter === 'album' || typeFilter === 'artist') && !musicEnabled) {
+  if (
+    (typeFilter === 'album' ||
+      typeFilter === 'artist' ||
+      typeFilter === 'music') &&
+    !musicEnabled
+  ) {
     return res.status(200).json({
       page,
       totalPages: 1,
@@ -181,6 +253,7 @@ searchRoutes.get('/', async (req, res, next) => {
   }
 
   try {
+    const tmdb = new TheMovieDb();
     const searchProvider = findSearchProvider(queryString.toLowerCase());
     let results: CombinedSearchResponse;
 
@@ -194,7 +267,6 @@ searchRoutes.get('/', async (req, res, next) => {
         query: queryString,
       });
     } else {
-      const tmdb = new TheMovieDb();
       const musicbrainz = new MusicBrainz();
       const openLibrary = new OpenLibraryAPI();
       const theAudioDb = new TheAudioDb();
@@ -208,7 +280,10 @@ searchRoutes.get('/', async (req, res, next) => {
         typeFilter === 'tv' ||
         typeFilter === 'person';
       const shouldSearchMusic =
-        !typeFilter || typeFilter === 'album' || typeFilter === 'artist';
+        !typeFilter ||
+        typeFilter === 'album' ||
+        typeFilter === 'artist' ||
+        typeFilter === 'music';
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
@@ -239,7 +314,7 @@ searchRoutes.get('/', async (req, res, next) => {
           : Promise.resolve([]),
         shouldSearchBooks && booksEnabled
           ? openLibrary.searchBooks({
-              query: queryString,
+              query: toFieldedBooleanAndQuery(queryString, ['title', 'author']),
               page,
               limit: 20,
             })
@@ -291,6 +366,20 @@ searchRoutes.get('/', async (req, res, next) => {
           : fallback;
       };
 
+      const bookProviderResponse = providerResults.get(3);
+      if (
+        typeFilter === 'book' &&
+        shouldSearchBooks &&
+        booksEnabled &&
+        (!bookProviderResponse || bookProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+        });
+      }
+
       if (providerResponses.timedOut) {
         logger.debug('Global search provider deadline exceeded', {
           label: 'API',
@@ -338,7 +427,13 @@ searchRoutes.get('/', async (req, res, next) => {
         .map((p) => p.id.toString());
 
       const dedupedAlbumResults = dedupeAlbumSearchResults(albumResults);
-      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs);
+      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs).filter(
+        (doc) =>
+          matchesAllSearchTerms(
+            [doc.title, ...(doc.author_name ?? [])],
+            queryString
+          )
+      );
 
       const albumIds = dedupedAlbumResults.map((album) =>
         normalizeMusicBrainzId(album.id)
@@ -592,8 +687,31 @@ searchRoutes.get('/', async (req, res, next) => {
     );
 
     const mappedResults = await mapSearchResults(results.results, media);
+    const creditEnrichedResults =
+      typeFilter === 'movie' || typeFilter === 'tv'
+        ? await mapWithConcurrency(
+            mappedResults,
+            SEARCH_CREDIT_LOOKUP_CONCURRENCY,
+            async (result) => {
+              if (result.mediaType !== typeFilter) {
+                return result;
+              }
 
-    const capabilityResults = mappedResults.filter(
+              try {
+                const details =
+                  result.mediaType === 'movie'
+                    ? await tmdb.getMovie({ movieId: result.id, language })
+                    : await tmdb.getTvShow({ tvId: result.id, language });
+
+                return { ...result, ...extractSearchCrew(details) };
+              } catch {
+                return result;
+              }
+            }
+          )
+        : mappedResults;
+
+    const capabilityResults = creditEnrichedResults.filter(
       (result) =>
         !('mediaType' in result) ||
         (((result.mediaType !== 'album' && result.mediaType !== 'artist') ||
@@ -603,12 +721,16 @@ searchRoutes.get('/', async (req, res, next) => {
 
     const filteredResults = typeFilter
       ? capabilityResults.filter(
-          (result) => 'mediaType' in result && result.mediaType === typeFilter
+          (result) =>
+            'mediaType' in result &&
+            (typeFilter === 'music'
+              ? result.mediaType === 'album' || result.mediaType === 'artist'
+              : result.mediaType === typeFilter)
         )
       : capabilityResults;
 
     const capabilityFiltered =
-      capabilityResults.length !== mappedResults.length;
+      capabilityResults.length !== creditEnrichedResults.length;
 
     return res.status(200).json({
       page: results.page,

@@ -21,6 +21,7 @@ import { authorizedRouteAccess } from '@server/middleware/authorizedMutation';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import { MAX_PAGINATION_OFFSET } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
+import { getSearchTerms } from '@server/utils/searchTerms';
 import { escapeSqlLikePattern } from '@server/utils/sqlLike';
 import { Router } from 'express';
 import { EntityNotFoundError, In, QueryFailedError } from 'typeorm';
@@ -73,12 +74,16 @@ export const parseBlocklistCollectionParts = (parts: unknown) => {
 };
 
 const blocklistGet = z.object({
-  take: strictPositiveInteger.pipe(z.number().max(100)).default(25),
+  take: strictPositiveInteger.pipe(z.number().max(100)).default(10),
   skip: strictNonNegativeInteger
     .pipe(z.number().max(MAX_PAGINATION_OFFSET))
     .default(0),
   search: z.string().trim().max(maxBlocklistTextLength).optional(),
   filter: z.enum(['all', 'manual', 'blocklistedTags']).optional(),
+  timeFrame: z.enum(['all', '7d', '14d', '30d', '6m']).default('all'),
+  mediaType: z.enum(['all', 'movie', 'tv', 'music', 'book']).default('all'),
+  sort: z.enum(['date', 'title', 'mediaType']).default('date'),
+  sortDirection: z.enum(['asc', 'desc']).default('desc'),
 });
 
 const parseBlocklistNumericId = (id: string): number | undefined =>
@@ -156,13 +161,82 @@ blocklistRoutes.get(
         message: 'Invalid blocklist query parameters.',
       });
     }
-    const { take, skip, search, filter } = parsedQuery.data;
+    const {
+      take,
+      skip,
+      search,
+      filter,
+      timeFrame,
+      mediaType,
+      sort,
+      sortDirection,
+    } = parsedQuery.data;
 
     try {
       let query = getRepository(Blocklist)
         .createQueryBuilder('blocklist')
         .leftJoinAndSelect('blocklist.user', 'user')
+        .leftJoin('blocklist.media', 'media')
+        .leftJoin('media.searchMetadata', 'searchMetadata')
         .where('1 = 1'); // Allow use of andWhere later
+
+      if (mediaType !== 'all') {
+        query = query.andWhere('blocklist.mediaType = :blocklistMediaType', {
+          blocklistMediaType: mediaType,
+        });
+      }
+
+      const timeFrameMs =
+        timeFrame === '7d'
+          ? 7 * 24 * 60 * 60 * 1000
+          : timeFrame === '14d'
+            ? 14 * 24 * 60 * 60 * 1000
+            : timeFrame === '30d'
+              ? 30 * 24 * 60 * 60 * 1000
+              : timeFrame === '6m'
+                ? 183 * 24 * 60 * 60 * 1000
+                : undefined;
+      if (timeFrameMs) {
+        query = query.andWhere('blocklist.createdAt >= :blocklistSince', {
+          blocklistSince: new Date(Date.now() - timeFrameMs),
+        });
+      }
+
+      for (const [termIndex, term] of getSearchTerms(search ?? '').entries()) {
+        const searchParameter = `search${termIndex}`;
+        query = query.andWhere(
+          `(LOWER(COALESCE(blocklist.title, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(blocklist.mediaType, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(blocklist.externalId, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(blocklist.externalProvider, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(blocklist.blocklistedTags, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(user.username, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(user.plexUsername, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(user.jellyfinUsername, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(user.email, '')) LIKE :${searchParameter} ESCAPE '\\'
+            OR LOWER(COALESCE(searchMetadata.searchText, '')) LIKE :${searchParameter} ESCAPE '\\')`,
+          {
+            [searchParameter]: `%${escapeSqlLikePattern(term)}%`,
+          }
+        );
+      }
+
+      const rawCounts = await query
+        .clone()
+        .select('COUNT(DISTINCT blocklist.id)', 'all')
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN blocklist.blocklistedTags IS NULL THEN blocklist.id END)',
+          'manual'
+        )
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN blocklist.blocklistedTags IS NOT NULL THEN blocklist.id END)',
+          'blocklistedTags'
+        )
+        .getRawOne<{
+          all: string;
+          manual: string;
+          blocklistedTags: string;
+        }>();
 
       switch (filter) {
         case 'manual':
@@ -173,17 +247,17 @@ blocklistRoutes.get(
           break;
       }
 
-      if (search) {
-        query = query.andWhere(
-          `LOWER(blocklist.title) LIKE :title ESCAPE '\\'`,
-          {
-            title: `%${escapeSqlLikePattern(search.toLowerCase())}%`,
-          }
-        );
-      }
+      const sortColumn =
+        sort === 'title'
+          ? 'blocklist.title'
+          : sort === 'mediaType'
+            ? 'blocklist.mediaType'
+            : 'blocklist.createdAt';
+      const direction = sortDirection === 'asc' ? 'ASC' : 'DESC';
 
       const [blocklistedItems, itemsCount] = await query
-        .orderBy('blocklist.createdAt', 'DESC')
+        .orderBy(sortColumn, direction)
+        .addOrderBy('blocklist.id', direction)
         .take(take)
         .skip(skip)
         .getManyAndCount();
@@ -196,6 +270,11 @@ blocklistRoutes.get(
           page: Math.ceil(skip / take) + 1,
         },
         results: filterEntityResponse(blocklistedItems, req.user),
+        counts: {
+          all: Number(rawCounts?.all ?? 0),
+          manual: Number(rawCounts?.manual ?? 0),
+          blocklistedTags: Number(rawCounts?.blocklistedTags ?? 0),
+        },
       } as BlocklistResultsResponse);
     } catch (error) {
       logger.error('Something went wrong while retrieving blocklisted items', {

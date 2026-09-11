@@ -4,7 +4,13 @@ title: Getting Started
 import DocCardList from '@theme/DocCardList';
 
 :::info
-After running Seerr for the first time, configure it by visiting the web UI at `http://[address]:5055` and completing the setup steps.
+After running Seerr for the first time, configure it by visiting the web UI at
+the configured address and completing the setup steps. The first-run page lets
+you choose built-in self-signed HTTPS, a provided certificate, or an explicitly
+acknowledged trusted-LAN HTTP fallback. Save the choice and restart before the
+first media-server login. Existing upgrades keep their current connection mode;
+see [built-in HTTPS for a direct LAN deployment](/using-seerr/advanced/built-in-tls)
+for the full flow.
 :::
 
 <DocCardList />

@@ -482,10 +482,14 @@ const applyThemeChrome = (
   if (mode === 'dark') {
     root.style.setProperty('--theme-page-bg', surfaceScale[9]);
     root.style.setProperty(
+      '--theme-page-glow-highlight',
+      mixRgb(surfaceScale[7], secondaryScale[4], 0.62)
+    );
+    root.style.setProperty(
       '--theme-page-glow-start',
       mixRgb(surfaceScale[8], primaryScale[7], 0.56)
     );
-    root.style.setProperty('--theme-page-glow-end', surfaceScale[9]);
+    root.style.setProperty('--theme-page-glow-end', surfaceScale[10]);
     root.style.setProperty(
       '--theme-searchbar-scrolled',
       mixRgb(surfaceScale[8], primaryScale[7], 0.44)
@@ -509,10 +513,14 @@ const applyThemeChrome = (
   } else {
     root.style.setProperty('--theme-page-bg', surfaceScale[9]);
     root.style.setProperty(
+      '--theme-page-glow-highlight',
+      mixRgb(surfaceScale[9], secondaryScale[2], 0.48)
+    );
+    root.style.setProperty(
       '--theme-page-glow-start',
       mixRgb(surfaceScale[8], primaryScale[3], 0.44)
     );
-    root.style.setProperty('--theme-page-glow-end', surfaceScale[9]);
+    root.style.setProperty('--theme-page-glow-end', surfaceScale[7]);
     root.style.setProperty(
       '--theme-searchbar-scrolled',
       mixRgb(surfaceScale[8], primaryScale[2], 0.38)
@@ -638,10 +646,15 @@ export const getThemeTokens = (mode: ThemeMode, palette: string) => {
     secondaryScale,
     surfaceScale,
     pageBg: surfaceScale[9],
+    pageGlowHighlight:
+      mode === 'dark'
+        ? mixRgb(surfaceScale[7], secondaryScale[4], 0.62)
+        : mixRgb(surfaceScale[9], secondaryScale[2], 0.48),
     pageGlowStart:
       mode === 'dark'
         ? mixRgb(surfaceScale[8], primaryScale[7], 0.56)
         : mixRgb(surfaceScale[8], primaryScale[3], 0.44),
+    pageGlowEnd: mode === 'dark' ? surfaceScale[10] : surfaceScale[7],
     searchbarScrolled:
       mode === 'dark'
         ? mixRgb(surfaceScale[8], primaryScale[7], 0.44)

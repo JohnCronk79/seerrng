@@ -5,6 +5,8 @@ import {
   getDiscoverScrollEntry,
   getScrollRestorationAction,
   isMediaDetailPath,
+  readDiscoverScrollEntry,
+  saveDiscoverScrollEntry,
 } from './discoverScrollRestoration';
 
 describe('discover scroll restoration', () => {
@@ -25,6 +27,18 @@ describe('discover scroll restoration', () => {
     const state = { [DISCOVER_SCROLL_HISTORY_KEY]: entry };
 
     deepStrictEqual(getDiscoverScrollEntry(state, entry.path), entry);
+    deepStrictEqual(
+      getDiscoverScrollEntry(
+        {
+          [DISCOVER_SCROLL_HISTORY_KEY]: {
+            ...entry,
+            shuffleSeed: 'x'.repeat(128),
+          },
+        },
+        entry.path
+      ),
+      { ...entry, shuffleSeed: 'x'.repeat(128) }
+    );
     strictEqual(getDiscoverScrollEntry(state, '/discover/movies'), undefined);
     strictEqual(
       getDiscoverScrollEntry(
@@ -32,6 +46,18 @@ describe('discover scroll restoration', () => {
           [DISCOVER_SCROLL_HISTORY_KEY]: {
             ...entry,
             scrollY: Number.NaN,
+          },
+        },
+        entry.path
+      ),
+      undefined
+    );
+    strictEqual(
+      getDiscoverScrollEntry(
+        {
+          [DISCOVER_SCROLL_HISTORY_KEY]: {
+            ...entry,
+            shuffleSeed: 'x'.repeat(129),
           },
         },
         entry.path
@@ -68,5 +94,53 @@ describe('discover scroll restoration', () => {
       }),
       'restore'
     );
+  });
+});
+
+describe('history entry persistence', () => {
+  it('retains the list seed and offset after Next replaces history state, isolating fresh visits', () => {
+    const values = new Map<string, string>();
+    const originalWindow = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'window'
+    );
+    const browser = {
+      history: { state: { key: 'first' } },
+      sessionStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: browser,
+    });
+    try {
+      for (const path of [
+        '/discover/movies',
+        '/discover/tv',
+        '/discover/books',
+      ]) {
+        const entry = {
+          path,
+          scrollY: 4200,
+          itemCount: 80,
+          shuffleSeed: 'original-order',
+        };
+        browser.history.state = { key: path };
+        saveDiscoverScrollEntry(entry);
+        browser.history.state = { key: 'detail' };
+        strictEqual(readDiscoverScrollEntry(path), undefined);
+        browser.history.state = { key: path };
+        deepStrictEqual(readDiscoverScrollEntry(path), entry);
+        strictEqual(readDiscoverScrollEntry(`${path}?sortBy=new`), undefined);
+        browser.history.state = { key: 'fresh-visit' };
+        strictEqual(readDiscoverScrollEntry(path), undefined);
+      }
+    } finally {
+      if (originalWindow)
+        Object.defineProperty(globalThis, 'window', originalWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
   });
 });

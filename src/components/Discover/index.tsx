@@ -190,14 +190,16 @@ const Discover = ({ initialSliders }: DiscoverProps) => {
             leaveTo="opacity-0"
             className="absolute-bottom-shift fixed right-6 z-50 flex items-center sm:bottom-8"
           >
-            <button
+            <Button
+              buttonType="default"
+              buttonSize="sm"
               onClick={() => setIsEditing(true)}
               data-testid="discover-start-editing"
               aria-label={intl.formatMessage(messages.customizediscover)}
-              className="h-12 w-12 rounded-full border-2 border-gray-600 bg-gray-700/90 p-3 text-gray-400 shadow transition-all hover:bg-gray-700"
+              className="shadow"
             >
-              <PencilIcon className="h-full w-full" />
-            </button>
+              <PencilIcon className="!mr-0 h-4 w-4" />
+            </Button>
           </Transition>
           <Transition
             show={isEditing}

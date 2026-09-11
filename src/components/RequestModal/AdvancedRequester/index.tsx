@@ -16,6 +16,7 @@ import type {
 } from '@server/interfaces/api/serviceInterfaces';
 import { hasPermission } from '@server/lib/permissions';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
 import useSWR from 'swr';
@@ -28,20 +29,28 @@ type OptionType = {
 const areNumberArraysEqual = (a: number[], b: number[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
 
+const formatServiceLabel = (value: string) =>
+  value.replace(/\beBook\b/g, 'Ebook');
+
 const messages = defineMessages('components.RequestModal.AdvancedRequester', {
-  advancedoptions: 'Advanced',
+  advancedoptions: 'Advanced Request',
+  service: 'Service',
+  status: 'Status',
+  ready: 'Ready to Request',
+  showOptions: 'Show Options',
+  availableRootFolders: 'Available Root Folders',
+  availableSpace: 'Available Space',
   destinationserver: 'Destination Server',
   qualityprofile: 'Quality Profile',
   metadataprofile: 'Metadata Profile',
   rootfolder: 'Root Folder',
   animenote: '* This series is an anime.',
-  default: '{name} (Default)',
   folder: '{path} ({space})',
-  requestas: 'Request As',
+  requestedBy: 'Requested By',
   languageprofile: 'Language Profile',
   tags: 'Tags',
   selecttags: 'Select tags',
-  notagoptions: 'No tags.',
+  notagoptions: 'No tags',
   ignoreQuotaTitle: 'Bypass User Quota',
   ignoreQuotaDescription:
     "This request will not count against the user's quota limits. Use with caution.",
@@ -49,6 +58,7 @@ const messages = defineMessages('components.RequestModal.AdvancedRequester', {
 
 export type RequestOverrides = {
   server?: number;
+  is4k?: boolean;
   profile?: number;
   metadataProfile?: number;
   folder?: string;
@@ -80,6 +90,14 @@ interface AdvancedRequesterProps {
     music: { limit?: number };
     book: { limit?: number };
   };
+  mediaTitle?: string;
+  posterPath?: string;
+  requestStatus?: string;
+  expanded?: boolean;
+  panelOnly?: boolean;
+  rootFolderTable?: boolean;
+  allow4kServerSelection?: boolean;
+  requestedByPortal?: HTMLElement | null;
   onChange: (overrides: RequestOverrides) => void;
 }
 
@@ -91,6 +109,14 @@ const AdvancedRequester = ({
   defaultOverrides,
   requestUser,
   quota,
+  mediaTitle,
+  posterPath,
+  requestStatus,
+  expanded,
+  panelOnly = false,
+  rootFolderTable = false,
+  allow4kServerSelection = false,
+  requestedByPortal,
   onChange,
 }: AdvancedRequesterProps) => {
   const intl = useIntl();
@@ -170,16 +196,20 @@ const AdvancedRequester = ({
     () =>
       (data ?? []).filter(
         (server) =>
-          server.is4k === is4k &&
+          (allow4kServerSelection || server.is4k === is4k) &&
           (type !== 'book' ||
             (server.serviceType ?? 'ebook') === bookServiceType)
       ),
-    [bookServiceType, data, is4k, type]
+    [allow4kServerSelection, bookServiceType, data, is4k, type]
   );
-  const availableServers = useMemo(
-    () => (data ?? []).filter((server) => server.is4k === is4k),
-    [data, is4k]
+  const selectedServerDetails = useMemo(
+    () => (data ?? []).find((server) => server.id === selectedServer),
+    [data, selectedServer]
   );
+  const selectedIs4k = allow4kServerSelection
+    ? (selectedServerDetails?.is4k ?? is4k)
+    : is4k;
+  const availableServers = serviceServers;
   const selectedUserId = selectedUser?.id;
   const previousSelectedUserIdRef = useRef<number | undefined>(selectedUserId);
 
@@ -192,7 +222,7 @@ const AdvancedRequester = ({
     () =>
       userData?.results.filter((user) =>
         hasPermission(
-          is4k
+          selectedIs4k
             ? [
                 Permission.REQUEST_4K,
                 type === 'movie'
@@ -213,7 +243,7 @@ const AdvancedRequester = ({
           { type: 'or' }
         )
       ),
-    [userData?.results]
+    [selectedIs4k, type, userData?.results]
   );
 
   useEffect(() => {
@@ -402,6 +432,7 @@ const AdvancedRequester = ({
         server: serviceOverridesEnabled
           ? (selectedServer ?? undefined)
           : undefined,
+        is4k: serviceOverridesEnabled ? selectedIs4k : undefined,
         user: selectedUser ?? undefined,
         language:
           serviceOverridesEnabled && selectedLanguage !== -1
@@ -414,6 +445,7 @@ const AdvancedRequester = ({
   }, [
     selectedFolder,
     selectedServer,
+    selectedIs4k,
     selectedProfile,
     selectedMetadataProfile,
     selectedUser,
@@ -442,65 +474,298 @@ const AdvancedRequester = ({
           serverData.rootFolders.length < 2 &&
           (serverData.languageProfiles ?? []).length < 2 &&
           !serverData.tags?.length)));
-  const userOptionsHidden =
-    !selectedUser || (filteredUserData ?? []).length < 2;
+  const selectedService = serviceServers.find(
+    (server) => server.id === selectedServer
+  );
+  const defaultService =
+    serviceServers.find((server) => server.isDefault && server.is4k === is4k) ??
+    serviceServers[0];
+  const defaultProfileId = serverData
+    ? isAnime && serverData.server.activeAnimeProfileId
+      ? serverData.server.activeAnimeProfileId
+      : serverData.server.activeProfileId
+    : undefined;
+  const defaultMetadataProfileId =
+    serverData?.server.activeMetadataProfileId ??
+    serverData?.metadataProfiles?.[0]?.id;
+  const defaultFolderPath = serverData
+    ? isAnime && serverData.server.activeAnimeDirectory
+      ? serverData.server.activeAnimeDirectory
+      : serverData.server.activeDirectory
+    : undefined;
+  const defaultLanguageId = serverData
+    ? isAnime && serverData.server.activeAnimeLanguageProfileId
+      ? serverData.server.activeAnimeLanguageProfileId
+      : serverData.server.activeLanguageProfileId
+    : undefined;
+  const defaultTagIds = serverData
+    ? isAnime
+      ? serverData.server.activeAnimeTags
+      : serverData.server.activeTags
+    : undefined;
+  const controlLabelClass = (active: boolean) =>
+    `inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+      active ? 'bg-indigo-500/35 text-white' : ''
+    }`;
 
-  if ((!data || serviceOptionsHidden) && userOptionsHidden) {
-    return null;
-  }
+  const canSelectRequestedBy =
+    currentHasPermission([
+      Permission.MANAGE_REQUESTS,
+      Permission.MANAGE_USERS,
+    ]) && !!selectedUser;
+
+  const requestedByControl =
+    requestedByPortal && canSelectRequestedBy
+      ? createPortal(
+          <Listbox
+            as="div"
+            value={selectedUser}
+            onChange={(value) => {
+              setIgnoreQuota(false);
+              setSelectedUser(value);
+            }}
+            className="relative inline-flex h-[22px] min-w-0 max-w-56 flex-shrink-0 items-stretch overflow-visible rounded-md border border-gray-600 bg-gray-900/70"
+          >
+            {({ open }) => (
+              <>
+                <Listbox.Label
+                  className={`inline-flex h-full flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-2 py-0 font-semibold text-indigo-100 transition-colors ${
+                    selectedUser.id !== currentUser?.id
+                      ? 'bg-indigo-500/35 text-white'
+                      : ''
+                  } text-[11px] leading-none`}
+                >
+                  <span className="relative top-px">
+                    {intl.formatMessage(messages.requestedBy)}
+                  </span>
+                </Listbox.Label>
+                <Listbox.Button className="inline-flex h-full min-w-24 flex-1 items-center justify-between gap-2 rounded-r-[5px] px-2 py-0 text-[11px] font-semibold leading-none text-gray-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-400">
+                  <span className="relative top-px truncate">
+                    {selectedUser.displayName}
+                  </span>
+                  <ChevronDownIcon
+                    className="h-3.5 w-3.5 flex-shrink-0 text-gray-500"
+                    aria-hidden="true"
+                  />
+                </Listbox.Button>
+                <Transition
+                  show={open}
+                  enter="transition-opacity ease-in duration-150"
+                  enterFrom="opacity-0"
+                  enterTo="opacity-100"
+                  leave="transition-opacity ease-out duration-100"
+                  leaveFrom="opacity-100"
+                  leaveTo="opacity-0"
+                >
+                  <Listbox.Options
+                    static
+                    className="absolute bottom-full right-0 z-50 mb-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
+                  >
+                    {(filteredUserData ?? []).map((candidate) => (
+                      <Listbox.Option key={candidate.id} value={candidate}>
+                        {({ selected, active }) => (
+                          <div
+                            className={`relative cursor-default select-none whitespace-nowrap py-1.5 pl-7 pr-3 ${
+                              active
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-gray-300'
+                            }`}
+                          >
+                            <span
+                              className={
+                                selected ? 'font-semibold' : 'font-normal'
+                              }
+                            >
+                              {candidate.displayName}
+                            </span>
+                            {selected && (
+                              <CheckIcon
+                                className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                                aria-hidden="true"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </Listbox.Option>
+                    ))}
+                  </Listbox.Options>
+                </Transition>
+              </>
+            )}
+          </Listbox>,
+          requestedByPortal
+        )
+      : null;
 
   return (
     <>
-      <div className="mb-2 mt-4 flex items-center text-lg font-semibold">
-        {intl.formatMessage(messages.advancedoptions)}
-      </div>
-      <div className="rounded-md">
-        {!!data && selectedServer !== null && serviceOverridesEnabled && (
-          <div className="flex flex-col md:flex-row">
-            {serviceServers.length > 1 && (
-              <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                <label htmlFor="server">
-                  {intl.formatMessage(messages.destinationserver)}
-                </label>
-                <select
-                  id="server"
-                  name="server"
-                  value={selectedServer}
-                  onChange={(e) => setSelectedServer(Number(e.target.value))}
-                  onBlur={(e) => setSelectedServer(Number(e.target.value))}
-                  className="border-gray-700 bg-gray-800"
-                >
-                  {serviceServers.map((server) => (
-                    <option key={`server-list-${server.id}`} value={server.id}>
-                      {server.isDefault
-                        ? intl.formatMessage(messages.default, {
-                            name: server.name,
-                          })
-                        : server.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {(type === 'music' || type === 'book') &&
-              (isValidating ||
-                !serverData ||
-                (serverData.metadataProfiles ?? []).length > 1) && (
-                <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                  <label htmlFor="metadataProfile">
-                    {intl.formatMessage(messages.metadataprofile)}
-                  </label>
+      {requestedByControl}
+      <details
+        open={panelOnly ? expanded : undefined}
+        className={
+          panelOnly
+            ? expanded
+              ? 'group mt-2'
+              : 'group'
+            : 'refreshed-inset-surface group mt-4 rounded-lg border border-gray-700'
+        }
+      >
+        <summary
+          className={
+            panelOnly
+              ? 'hidden'
+              : 'flex cursor-pointer list-none items-center gap-3 p-3 focus:outline-none focus:ring-2 focus:ring-indigo-400'
+          }
+        >
+          <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded ring-1 ring-gray-600">
+            <CachedImage
+              type={
+                type === 'book' ? 'book' : type === 'music' ? 'music' : 'tmdb'
+              }
+              src={posterPath || '/images/seerr_poster_not_found.png'}
+              alt=""
+              fill
+              className="object-cover"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-white">
+              {mediaTitle || intl.formatMessage(messages.advancedoptions)}
+            </div>
+            <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 text-xs leading-5 text-gray-400">
+              <dt className="font-medium text-gray-200">
+                {intl.formatMessage(messages.status)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {requestStatus || intl.formatMessage(messages.ready)}
+              </dd>
+              <dt className="font-medium text-gray-200">
+                {intl.formatMessage(messages.service)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {selectedService?.name ??
+                  intl.formatMessage(globalMessages.loading)}
+              </dd>
+              <dt className="font-medium text-gray-200">
+                {intl.formatMessage(messages.rootfolder)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {selectedFolder || intl.formatMessage(globalMessages.loading)}
+              </dd>
+            </dl>
+          </div>
+          <span className="flex-shrink-0 text-xs font-semibold text-indigo-300 group-open:hidden">
+            {intl.formatMessage(messages.showOptions)}
+          </span>
+          <ChevronDownIcon className="h-5 w-5 flex-shrink-0 text-gray-400 transition group-open:rotate-180" />
+        </summary>
+        <div
+          className={`${panelOnly ? 'refreshed-inset-surface rounded-lg border border-gray-700 p-3' : 'border-t border-gray-700 p-3'} ${!rootFolderTable && serviceOptionsHidden ? 'hidden' : ''}`}
+        >
+          {!!data && selectedServer !== null && serviceOverridesEnabled && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {serviceServers.length > 0 && (
+                <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                  <span
+                    className={controlLabelClass(
+                      defaultService !== undefined &&
+                        selectedServer !== defaultService.id
+                    )}
+                  >
+                    {intl.formatMessage(messages.destinationserver)}
+                  </span>
                   <select
-                    id="metadataProfile"
-                    name="metadataProfile"
-                    value={selectedMetadataProfile}
-                    onChange={(e) =>
-                      setSelectedMetadataProfile(Number(e.target.value))
-                    }
-                    onBlur={(e) =>
-                      setSelectedMetadataProfile(Number(e.target.value))
-                    }
-                    className="border-gray-700 bg-gray-800"
+                    id="server"
+                    name="server"
+                    value={selectedServer}
+                    onChange={(e) => setSelectedServer(Number(e.target.value))}
+                    onBlur={(e) => setSelectedServer(Number(e.target.value))}
+                    aria-label={intl.formatMessage(messages.destinationserver)}
+                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                  >
+                    {serviceServers.map((server) => (
+                      <option
+                        key={`server-list-${server.id}`}
+                        value={server.id}
+                      >
+                        {formatServiceLabel(server.name)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {(type === 'music' || type === 'book') &&
+                (isValidating ||
+                  !serverData ||
+                  (serverData.metadataProfiles ?? []).length > 0) && (
+                  <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                    <span
+                      className={controlLabelClass(
+                        defaultMetadataProfileId !== undefined &&
+                          selectedMetadataProfile !== defaultMetadataProfileId
+                      )}
+                    >
+                      {intl.formatMessage(messages.metadataprofile)}
+                    </span>
+                    <select
+                      id="metadataProfile"
+                      name="metadataProfile"
+                      value={selectedMetadataProfile}
+                      onChange={(e) =>
+                        setSelectedMetadataProfile(Number(e.target.value))
+                      }
+                      onBlur={(e) =>
+                        setSelectedMetadataProfile(Number(e.target.value))
+                      }
+                      aria-label={intl.formatMessage(messages.metadataprofile)}
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      disabled={isValidating || !serverData}
+                    >
+                      {(isValidating || !serverData) && (
+                        <option value="">
+                          {intl.formatMessage(globalMessages.loading)}
+                        </option>
+                      )}
+                      {!isValidating &&
+                        serverData &&
+                        serverData.metadataProfiles
+                          ?.toSorted((a, b) =>
+                            a.name.localeCompare(b.name, intl.locale, {
+                              numeric: true,
+                              sensitivity: 'base',
+                            })
+                          )
+                          .map((profile) => (
+                            <option
+                              key={`metadata-profile-list${profile.id}`}
+                              value={profile.id}
+                            >
+                              {formatServiceLabel(profile.name)}
+                            </option>
+                          ))}
+                    </select>
+                  </label>
+                )}
+              {(isValidating ||
+                !serverData ||
+                serverData.profiles.length > 0) && (
+                <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                  <span
+                    className={controlLabelClass(
+                      defaultProfileId !== undefined &&
+                        selectedProfile !== defaultProfileId
+                    )}
+                  >
+                    {intl.formatMessage(messages.qualityprofile)}
+                  </span>
+                  <select
+                    id="profile"
+                    name="profile"
+                    value={selectedProfile}
+                    onChange={(e) => setSelectedProfile(Number(e.target.value))}
+                    onBlur={(e) => setSelectedProfile(Number(e.target.value))}
+                    aria-label={intl.formatMessage(messages.qualityprofile)}
+                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
                     disabled={isValidating || !serverData}
                   >
                     {(isValidating || !serverData) && (
@@ -510,8 +775,8 @@ const AdvancedRequester = ({
                     )}
                     {!isValidating &&
                       serverData &&
-                      serverData.metadataProfiles
-                        ?.toSorted((a, b) =>
+                      serverData.profiles
+                        .toSorted((a, b) =>
                           a.name.localeCompare(b.name, intl.locale, {
                             numeric: true,
                             sensitivity: 'base',
@@ -519,361 +784,228 @@ const AdvancedRequester = ({
                         )
                         .map((profile) => (
                           <option
-                            key={`metadata-profile-list${profile.id}`}
+                            key={`profile-list${profile.id}`}
                             value={profile.id}
                           >
-                            {serverData.server.activeMetadataProfileId ===
-                            profile.id
-                              ? intl.formatMessage(messages.default, {
-                                  name: profile.name,
-                                })
-                              : profile.name}
+                            {formatServiceLabel(profile.name)}
                           </option>
                         ))}
                   </select>
-                </div>
-              )}
-            {(isValidating ||
-              !serverData ||
-              serverData.profiles.length > 1) && (
-              <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                <label htmlFor="profile">
-                  {intl.formatMessage(messages.qualityprofile)}
                 </label>
-                <select
-                  id="profile"
-                  name="profile"
-                  value={selectedProfile}
-                  onChange={(e) => setSelectedProfile(Number(e.target.value))}
-                  onBlur={(e) => setSelectedProfile(Number(e.target.value))}
-                  className="border-gray-700 bg-gray-800"
-                  disabled={isValidating || !serverData}
-                >
-                  {(isValidating || !serverData) && (
-                    <option value="">
-                      {intl.formatMessage(globalMessages.loading)}
-                    </option>
-                  )}
-                  {!isValidating &&
-                    serverData &&
-                    serverData.profiles
-                      .toSorted((a, b) =>
-                        a.name.localeCompare(b.name, intl.locale, {
-                          numeric: true,
-                          sensitivity: 'base',
-                        })
-                      )
-                      .map((profile) => (
-                        <option
-                          key={`profile-list${profile.id}`}
-                          value={profile.id}
-                        >
-                          {isAnime &&
-                          serverData.server.activeAnimeProfileId === profile.id
-                            ? intl.formatMessage(messages.default, {
-                                name: profile.name,
-                              })
-                            : !isAnime &&
-                                serverData.server.activeProfileId === profile.id
-                              ? intl.formatMessage(messages.default, {
-                                  name: profile.name,
-                                })
-                              : profile.name}
-                        </option>
-                      ))}
-                </select>
-              </div>
-            )}
-            {(isValidating ||
-              !serverData ||
-              serverData.rootFolders.length > 1) && (
-              <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                <label htmlFor="folder">
-                  {intl.formatMessage(messages.rootfolder)}
-                </label>
-                <select
-                  id="folder"
-                  name="folder"
-                  value={selectedFolder}
-                  onChange={(e) => setSelectedFolder(e.target.value)}
-                  onBlur={(e) => setSelectedFolder(e.target.value)}
-                  className="border-gray-700 bg-gray-800"
-                  disabled={isValidating || !serverData}
-                >
-                  {(isValidating || !serverData) && (
-                    <option value="">
-                      {intl.formatMessage(globalMessages.loading)}
-                    </option>
-                  )}
-                  {!isValidating &&
-                    serverData &&
-                    serverData.rootFolders.map((folder) => (
-                      <option
-                        key={`folder-list${folder.id}`}
-                        value={folder.path}
-                      >
-                        {isAnime &&
-                        serverData.server.activeAnimeDirectory === folder.path
-                          ? intl.formatMessage(messages.default, {
-                              name: intl.formatMessage(messages.folder, {
-                                path: folder.path,
-                                space: formatBytes(folder.freeSpace ?? 0),
-                              }),
-                            })
-                          : !isAnime &&
-                              serverData.server.activeDirectory === folder.path
-                            ? intl.formatMessage(messages.default, {
-                                name: intl.formatMessage(messages.folder, {
-                                  path: folder.path,
-                                  space: formatBytes(folder.freeSpace ?? 0),
-                                }),
-                              })
-                            : intl.formatMessage(messages.folder, {
-                                path: folder.path,
-                                space: formatBytes(folder.freeSpace ?? 0),
-                              })}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-            {type === 'tv' &&
-              (isValidating ||
-                !serverData ||
-                (serverData.languageProfiles ?? []).length > 1) && (
-                <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                  <label htmlFor="language">
-                    {intl.formatMessage(messages.languageprofile)}
-                  </label>
-                  <select
-                    id="language"
-                    name="language"
-                    value={selectedLanguage}
-                    onChange={(e) =>
-                      setSelectedLanguage(parseInt(e.target.value))
-                    }
-                    onBlur={(e) =>
-                      setSelectedLanguage(parseInt(e.target.value))
-                    }
-                    className="border-gray-700 bg-gray-800"
-                    disabled={isValidating || !serverData}
-                  >
-                    {(isValidating || !serverData) && (
-                      <option value="">
-                        {intl.formatMessage(globalMessages.loading)}
-                      </option>
-                    )}
-                    {!isValidating &&
-                      serverData &&
-                      serverData.languageProfiles?.map((language) => (
-                        <option
-                          key={`folder-list${language.id}`}
-                          value={language.id}
-                        >
-                          {isAnime &&
-                          serverData.server.activeAnimeLanguageProfileId ===
-                            language.id
-                            ? intl.formatMessage(messages.default, {
-                                name: language.name,
-                              })
-                            : !isAnime &&
-                                serverData.server.activeLanguageProfileId ===
-                                  language.id
-                              ? intl.formatMessage(messages.default, {
-                                  name: language.name,
-                                })
-                              : language.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
               )}
-          </div>
-        )}
-        {selectedServer !== null &&
-          serviceOverridesEnabled &&
-          (isValidating || !serverData || !!serverData?.tags?.length) && (
-            <div className="mb-2">
-              <label htmlFor="tags">{intl.formatMessage(messages.tags)}</label>
-              <Select<OptionType, true>
-                name="tags"
-                options={(serverData?.tags ?? []).map((tag) => ({
-                  label: tag.label,
-                  value: tag.id,
-                }))}
-                isMulti
-                isDisabled={isValidating || !serverData}
-                placeholder={
-                  isValidating || !serverData
-                    ? intl.formatMessage(globalMessages.loading)
-                    : intl.formatMessage(messages.selecttags)
-                }
-                className="react-select-container react-select-container-dark"
-                classNamePrefix="react-select"
-                value={
-                  selectedTags
-                    .map((tagId) => {
-                      const foundTag = serverData?.tags.find(
-                        (tag) => tag.id === tagId
-                      );
-
-                      if (!foundTag) {
-                        return undefined;
-                      }
-
-                      return {
-                        value: foundTag.id,
-                        label: foundTag.label,
-                      };
-                    })
-                    .filter((option) => option !== undefined) as OptionType[]
-                }
-                onChange={(value) => {
-                  setSelectedTags(value.map((option) => option.value));
-                }}
-                noOptionsMessage={() =>
-                  intl.formatMessage(messages.notagoptions)
-                }
-              />
-            </div>
-          )}
-        {isIgnoreQuotaVisible && (
-          <div className="mb-2">
-            <label htmlFor="ignoreQuota">
-              {intl.formatMessage(messages.ignoreQuotaTitle)}
-            </label>
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-400">
-                {intl.formatMessage(messages.ignoreQuotaDescription)}
-              </p>
-              <SlideCheckbox
-                checked={ignoreQuota}
-                onClick={() => setIgnoreQuota(!ignoreQuota)}
-              />
-            </div>
-          </div>
-        )}
-        {currentHasPermission([
-          Permission.MANAGE_REQUESTS,
-          Permission.MANAGE_USERS,
-        ]) &&
-          selectedUser &&
-          (filteredUserData ?? []).length > 1 && (
-            <Listbox
-              as="div"
-              value={selectedUser}
-              onChange={(value) => {
-                setIgnoreQuota(false);
-                setSelectedUser(value);
-              }}
-              className="space-y-1"
-            >
-              {({ open }) => (
-                <>
-                  <Listbox.Label>
-                    {intl.formatMessage(messages.requestas)}
-                  </Listbox.Label>
-                  <div className="relative">
-                    <span className="inline-block w-full rounded-md shadow-sm">
-                      <Listbox.Button className="focus:shadow-outline-blue relative w-full cursor-default rounded-md border border-gray-700 bg-gray-800 py-2 pl-3 pr-10 text-left text-white transition duration-150 ease-in-out focus:border-blue-300 focus:outline-none sm:text-sm sm:leading-5">
-                        <span className="flex items-center">
-                          <CachedImage
-                            type="avatar"
-                            src={selectedUser.avatar}
-                            alt=""
-                            className="h-6 w-6 flex-shrink-0 rounded-full object-cover"
-                            width={24}
-                            height={24}
-                          />
-                          <span className="ml-3 block">
-                            {selectedUser.displayName}
-                          </span>
-                          {selectedUser.displayName.toLowerCase() !==
-                            selectedUser.email && (
-                            <span className="ml-1 truncate text-gray-400">
-                              ({selectedUser.email})
-                            </span>
-                          )}
-                        </span>
-                        <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 text-gray-500">
-                          <ChevronDownIcon className="h-5 w-5" />
-                        </span>
-                      </Listbox.Button>
-                    </span>
-
-                    <Transition
-                      show={open}
-                      enter="transition-opacity ease-in duration-300"
-                      enterFrom="opacity-0"
-                      enterTo="opacity-100"
-                      leave="transition-opacity ease-in duration-100"
-                      leaveFrom="opacity-100"
-                      leaveTo="opacity-0"
-                      className="mt-1 w-full rounded-md border border-gray-700 bg-gray-800 shadow-lg"
+              {!rootFolderTable &&
+                (isValidating ||
+                  !serverData ||
+                  serverData.rootFolders.length > 1) && (
+                  <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                    <span
+                      className={controlLabelClass(
+                        defaultFolderPath !== undefined &&
+                          selectedFolder !== defaultFolderPath
+                      )}
                     >
-                      <Listbox.Options
-                        static
-                        className="shadow-xs max-h-60 overflow-auto rounded-md py-1 text-base leading-6 focus:outline-none sm:text-sm sm:leading-5"
-                      >
-                        {filteredUserData?.map((user) => (
-                          <Listbox.Option key={user.id} value={user}>
-                            {({ selected, active }) => (
-                              <div
-                                className={`${
-                                  active
-                                    ? 'bg-indigo-600 text-white'
-                                    : 'text-gray-300'
-                                } relative cursor-default select-none py-2 pl-8 pr-4`}
-                              >
-                                <span
-                                  className={`${
-                                    selected ? 'font-semibold' : 'font-normal'
-                                  } flex items-center`}
-                                >
-                                  <CachedImage
-                                    type="avatar"
-                                    src={user.avatar}
-                                    alt=""
-                                    className="h-6 w-6 flex-shrink-0 rounded-full object-cover"
-                                    width={24}
-                                    height={24}
-                                  />
-                                  <span className="ml-3 block flex-shrink-0">
-                                    {user.displayName}
-                                  </span>
-                                  {user.displayName.toLowerCase() !==
-                                    user.email && (
-                                    <span className="ml-1 truncate text-gray-400">
-                                      ({user.email})
-                                    </span>
-                                  )}
-                                </span>
-                                {selected && (
-                                  <span
-                                    className={`${
-                                      active ? 'text-white' : 'text-indigo-600'
-                                    } absolute inset-y-0 left-0 flex items-center pl-1.5`}
-                                  >
-                                    <CheckIcon className="h-5 w-5" />
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </Listbox.Option>
+                      {intl.formatMessage(messages.rootfolder)}
+                    </span>
+                    <select
+                      id="folder"
+                      name="folder"
+                      value={selectedFolder}
+                      onChange={(e) => setSelectedFolder(e.target.value)}
+                      onBlur={(e) => setSelectedFolder(e.target.value)}
+                      aria-label={intl.formatMessage(messages.rootfolder)}
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      disabled={isValidating || !serverData}
+                    >
+                      {(isValidating || !serverData) && (
+                        <option value="">
+                          {intl.formatMessage(globalMessages.loading)}
+                        </option>
+                      )}
+                      {!isValidating &&
+                        serverData &&
+                        serverData.rootFolders.map((folder) => (
+                          <option
+                            key={`folder-list${folder.id}`}
+                            value={folder.path}
+                          >
+                            {intl.formatMessage(messages.folder, {
+                              path: folder.path,
+                              space: formatBytes(folder.freeSpace ?? 0),
+                            })}
+                          </option>
                         ))}
-                      </Listbox.Options>
-                    </Transition>
-                  </div>
-                </>
-              )}
-            </Listbox>
+                    </select>
+                  </label>
+                )}
+              {type === 'tv' &&
+                (isValidating ||
+                  !serverData ||
+                  (serverData.languageProfiles ?? []).length > 0) && (
+                  <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                    <span
+                      className={controlLabelClass(
+                        defaultLanguageId !== undefined &&
+                          selectedLanguage !== defaultLanguageId
+                      )}
+                    >
+                      {intl.formatMessage(messages.languageprofile)}
+                    </span>
+                    <select
+                      id="language"
+                      name="language"
+                      value={selectedLanguage}
+                      onChange={(e) =>
+                        setSelectedLanguage(parseInt(e.target.value))
+                      }
+                      onBlur={(e) =>
+                        setSelectedLanguage(parseInt(e.target.value))
+                      }
+                      aria-label={intl.formatMessage(messages.languageprofile)}
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      disabled={isValidating || !serverData}
+                    >
+                      {(isValidating || !serverData) && (
+                        <option value="">
+                          {intl.formatMessage(globalMessages.loading)}
+                        </option>
+                      )}
+                      {!isValidating &&
+                        serverData &&
+                        serverData.languageProfiles?.map((language) => (
+                          <option
+                            key={`folder-list${language.id}`}
+                            value={language.id}
+                          >
+                            {language.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+            </div>
           )}
-        {isAnime && (
-          <div className="mt-4 italic">
-            {intl.formatMessage(messages.animenote)}
-          </div>
-        )}
-      </div>
+          {rootFolderTable && (
+            <div className="mb-3">
+              <h4 className="mb-2 text-xs font-semibold text-gray-200">
+                {intl.formatMessage(messages.availableRootFolders)}
+              </h4>
+              <div className="grid w-fit max-w-full grid-cols-[minmax(0,max-content)_max-content] justify-start gap-x-3 gap-y-1 text-xs">
+                <div className="col-span-2 mb-1 grid grid-cols-subgrid border-b border-gray-600 px-1 pb-2">
+                  <span className="font-medium text-gray-400">
+                    {intl.formatMessage(messages.rootfolder)}
+                  </span>
+                  <span className="font-medium text-gray-400">
+                    {intl.formatMessage(messages.availableSpace)}
+                  </span>
+                </div>
+                {isValidating || !serverData ? (
+                  <span className="col-span-2 text-gray-500">
+                    {intl.formatMessage(globalMessages.loading)}
+                  </span>
+                ) : (
+                  serverData.rootFolders.map((folder) => {
+                    const isSelected = folder.path === selectedFolder;
+
+                    return (
+                      <button
+                        type="button"
+                        key={`folder-card-${folder.id}`}
+                        onClick={() => setSelectedFolder(folder.path ?? '')}
+                        className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                          isSelected
+                            ? 'bg-indigo-500/20 text-indigo-200'
+                            : 'text-gray-300 hover:bg-gray-800/80 hover:text-white'
+                        }`}
+                      >
+                        <span className="truncate">{folder.path}</span>
+                        <span className="whitespace-nowrap text-gray-400">
+                          {formatBytes(folder.freeSpace ?? 0)}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+          {selectedServer !== null &&
+            serviceOverridesEnabled &&
+            (isValidating || !serverData || !!serverData?.tags?.length) && (
+              <div className="discover-filter-control mb-2 max-w-xl">
+                <label
+                  htmlFor="tags"
+                  className={controlLabelClass(
+                    defaultTagIds !== undefined &&
+                      !areNumberArraysEqual(selectedTags, defaultTagIds)
+                  )}
+                >
+                  {intl.formatMessage(messages.tags)}
+                </label>
+                <Select<OptionType, true>
+                  name="tags"
+                  options={(serverData?.tags ?? []).map((tag) => ({
+                    label: tag.label,
+                    value: tag.id,
+                  }))}
+                  isMulti
+                  isDisabled={isValidating || !serverData}
+                  placeholder={
+                    isValidating || !serverData
+                      ? intl.formatMessage(globalMessages.loading)
+                      : intl.formatMessage(messages.selecttags)
+                  }
+                  className="react-select-container react-select-container-dark discover-compact-select"
+                  classNamePrefix="react-select"
+                  value={
+                    selectedTags
+                      .map((tagId) => {
+                        const foundTag = serverData?.tags.find(
+                          (tag) => tag.id === tagId
+                        );
+
+                        if (!foundTag) {
+                          return undefined;
+                        }
+
+                        return {
+                          value: foundTag.id,
+                          label: foundTag.label,
+                        };
+                      })
+                      .filter((option) => option !== undefined) as OptionType[]
+                  }
+                  onChange={(value) => {
+                    setSelectedTags(value.map((option) => option.value));
+                  }}
+                  noOptionsMessage={() =>
+                    intl.formatMessage(messages.notagoptions)
+                  }
+                />
+              </div>
+            )}
+          {isIgnoreQuotaVisible && (
+            <div className="mb-2">
+              <label htmlFor="ignoreQuota">
+                {intl.formatMessage(messages.ignoreQuotaTitle)}
+              </label>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-400">
+                  {intl.formatMessage(messages.ignoreQuotaDescription)}
+                </p>
+                <SlideCheckbox
+                  checked={ignoreQuota}
+                  onClick={() => setIgnoreQuota(!ignoreQuota)}
+                />
+              </div>
+            </div>
+          )}
+          {isAnime && (
+            <div className="mt-4 italic">
+              {intl.formatMessage(messages.animenote)}
+            </div>
+          )}
+        </div>
+      </details>
     </>
   );
 };

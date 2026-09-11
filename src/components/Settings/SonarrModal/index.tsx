@@ -78,7 +78,7 @@ const messages = defineMessages('components.Settings.SonarrModal', {
   validationBaseUrlTrailingSlash: 'Base URL must not end in a trailing slash',
   tags: 'Tags',
   animeTags: 'Anime Tags',
-  notagoptions: 'No tags.',
+  notagoptions: 'No tags',
   selecttags: 'Select tags',
   monitorNewItems: 'Monitor New Seasons',
   monitorNewItemsHelp:

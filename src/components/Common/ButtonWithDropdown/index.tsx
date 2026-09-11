@@ -7,7 +7,9 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
 type ButtonWithDropdownProps = {
   text: React.ReactNode;
   dropdownIcon?: React.ReactNode;
-  buttonType?: 'primary' | 'ghost';
+  buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest';
+  buttonSize?: 'default' | 'sm';
+  disabledReason?: string;
 } & (
   | ({ as?: 'button' } & ButtonHTMLAttributes<HTMLButtonElement>)
   | ({ as: 'a' } & AnchorHTMLAttributes<HTMLAnchorElement>)
@@ -19,37 +21,36 @@ const ButtonWithDropdown = ({
   dropdownIcon,
   className,
   buttonType = 'primary',
+  buttonSize = 'default',
+  disabledReason,
   ...props
 }: ButtonWithDropdownProps) => {
-  const styleClasses = {
-    mainButtonClasses: 'button-md text-white border',
-    dropdownSideButtonClasses: 'button-md border',
+  const isSmall = buttonSize === 'sm';
+  const buttonTypeClassNames = {
+    primary: 'app-button-primary',
+    ghost: 'app-button-ghost',
+    success: 'app-button-success',
+    detailRequest: 'app-button-detail-request',
   };
-
-  switch (buttonType) {
-    case 'ghost':
-      styleClasses.mainButtonClasses +=
-        ' bg-transparent border-gray-600 hover:border-gray-200 focus:border-gray-100 active:border-gray-100';
-      styleClasses.dropdownSideButtonClasses = styleClasses.mainButtonClasses;
-      break;
-    default:
-      styleClasses.mainButtonClasses +=
-        ' bg-indigo-600/80 border-indigo-500 hover:bg-indigo-600 hover:border-indigo-500 active:bg-indigo-700 active:border-indigo-700 focus:ring-blue';
-      styleClasses.dropdownSideButtonClasses +=
-        ' bg-indigo-600/80 border-indigo-500 hover:bg-indigo-600 active:bg-indigo-600 focus:ring-blue';
-  }
+  const sharedClasses = `app-button ${buttonTypeClassNames[buttonType]} ${
+    isSmall ? 'button-sm' : 'button-md'
+  }`;
 
   const TriggerElement = props.as ?? 'button';
   const disabled = props.as !== 'a' && props.disabled === true;
+  const disabledTitle = disabled
+    ? (disabledReason ?? 'This action is unavailable in the current state.')
+    : props.title;
 
   return (
     <Menu as="div" className="relative z-10 inline-flex">
       <TriggerElement
         type="button"
-        className={`relative z-10 inline-flex h-full items-center px-4 py-2 text-sm font-medium leading-5 transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
-          styleClasses.mainButtonClasses
-        } ${children ? 'rounded-l-md' : 'rounded-md'} ${className}`}
+        className={`relative z-10 hover:z-20 focus:z-20 ${sharedClasses} ${
+          children ? 'rounded-r-none' : ''
+        } ${className ?? ''}`}
         {...(props as Record<string, string>)}
+        title={disabledTitle}
       >
         {text}
       </TriggerElement>
@@ -58,8 +59,9 @@ const ButtonWithDropdown = ({
           <Menu.Button
             type="button"
             disabled={disabled}
-            className={`relative z-10 inline-flex h-full items-center rounded-r-md px-2 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 focus:z-20 ${styleClasses.dropdownSideButtonClasses}`}
+            className={`relative z-10 -ml-px rounded-l-none px-1.5 hover:z-20 focus:z-20 ${sharedClasses}`}
             aria-label="Expand"
+            title={disabledTitle}
           >
             {dropdownIcon ? dropdownIcon : <ChevronDownIcon />}
           </Menu.Button>

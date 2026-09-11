@@ -12,6 +12,7 @@ import {
   isValidOpenLibraryResourceId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { getSettings, type ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import {
@@ -210,13 +211,32 @@ bookRoutes.get('/:id', async (req, res, next) => {
     const author = authorId
       ? await openLibrary.getAuthor(authorId).catch(() => undefined)
       : undefined;
-    const bookDetails = mapOpenLibraryWork(
-      work,
-      media,
-      editions.entries,
-      onUserWatchlist,
-      author?.name
-    );
+    const bookDetails = {
+      ...mapOpenLibraryWork(
+        work,
+        media,
+        editions.entries,
+        onUserWatchlist,
+        author?.name
+      ),
+      editionCount: editions.size,
+    };
+
+    await upsertMediaSearchMetadata(media?.id, {
+      title: bookDetails.title,
+      releaseDate: bookDetails.firstPublishYear?.toString(),
+      genres: bookDetails.subjects?.join(', '),
+      runtime: bookDetails.numberOfPages
+        ? `${bookDetails.numberOfPages} pages`
+        : undefined,
+      author: bookDetails.author,
+      publisher: bookDetails.publisher,
+      format: 'Book Ebook Audiobook',
+      provider: 'Open Library',
+      externalIds: [bookDetails.id, bookDetails.editionId, bookDetails.isbn13]
+        .filter(Boolean)
+        .join(' '),
+    });
 
     return res.status(200).json(filterEntityResponse(bookDetails, req.user));
   } catch (e) {

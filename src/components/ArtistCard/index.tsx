@@ -1,4 +1,5 @@
 import CachedImage from '@app/components/Common/CachedImage';
+import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import { UserCircleIcon } from '@heroicons/react/24/solid';
 import Link from 'next/link';
@@ -47,6 +48,9 @@ const ArtistCard = ({
       >
         <div style={{ paddingBottom: '150%' }}>
           <div className="absolute inset-0 flex h-full w-full flex-col items-center p-2">
+            <div className="absolute left-2 top-2 z-10">
+              <MediaTypeBadge mediaType="artist" variant="card" />
+            </div>
             <div className="relative mb-4 mt-2 flex h-1/2 w-full justify-center">
               {artistThumb ? (
                 <div className="relative h-full w-3/4 overflow-hidden rounded-full ring-1 ring-gray-700">

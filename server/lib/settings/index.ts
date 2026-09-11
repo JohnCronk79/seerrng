@@ -4,6 +4,7 @@ import { Permission } from '@server/lib/permissions';
 import { runMigrations } from '@server/lib/settings/migrator';
 import type { AvailableLocale } from '@server/types/languages';
 import AsyncLock from '@server/utils/asyncLock';
+import type { TlsSettings } from '@server/utils/tls';
 import { randomBytes, randomUUID } from 'crypto';
 import { mergeWith } from 'lodash';
 import fs from 'node:fs';
@@ -232,6 +233,7 @@ export interface NetworkSettings {
   csrfProtection: boolean;
   forceIpv4First: boolean;
   trustProxy: boolean;
+  tls: TlsSettings;
   proxy: ProxySettings;
   dnsCache: DnsCacheSettings;
   apiRequestTimeout: number;
@@ -711,6 +713,17 @@ class Settings {
         csrfProtection: false,
         forceIpv4First: false,
         trustProxy: false,
+        tls: {
+          mode: 'disabled',
+          httpsPort: 5056,
+          hosts: 'localhost,127.0.0.1,::1',
+          certificateFile: '',
+          keyFile: '',
+          caFile: '',
+          redirectHttpToHttps: false,
+          allowHttpAuth: false,
+          httpAuthAcknowledged: false,
+        },
         proxy: {
           enabled: false,
           hostname: '',
@@ -1433,6 +1446,17 @@ class Settings {
         csrfProtection: false,
         forceIpv4First: false,
         trustProxy: false,
+        tls: {
+          mode: 'disabled',
+          httpsPort: 5056,
+          hosts: 'localhost,127.0.0.1,::1',
+          certificateFile: '',
+          keyFile: '',
+          caFile: '',
+          redirectHttpToHttps: false,
+          allowHttpAuth: false,
+          httpAuthAcknowledged: false,
+        },
         proxy: {
           enabled: false,
           hostname: '',

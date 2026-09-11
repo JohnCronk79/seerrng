@@ -1,3 +1,4 @@
+import type { QueueItem, ServarrHistoryItem } from '@server/api/servarr/base';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -52,8 +53,25 @@ export interface DownloadingItem {
   estimatedCompletionTime: Date;
   title: string;
   downloadId: string;
+  trackedDownloadStatus?: string;
+  trackedDownloadState?: string;
   episode?: EpisodeNumberResult;
 }
+
+export type ServarrHistoryStage = 'grabbed' | 'imported' | 'failed';
+
+export interface ServarrHistoryEvidence {
+  stage: ServarrHistoryStage;
+  observedAt: Date;
+  downloadId?: string;
+}
+
+const getQueueState = (
+  item: QueueItem
+): Pick<DownloadingItem, 'trackedDownloadStatus' | 'trackedDownloadState'> => ({
+  trackedDownloadStatus: item.trackedDownloadStatus,
+  trackedDownloadState: item.trackedDownloadState,
+});
 
 export const DOWNLOAD_TRACKER_SERVER_CONCURRENCY = 5;
 
@@ -66,8 +84,11 @@ export class DownloadTracker {
   private static readonly monitoredRefreshCooldownMs = 5 * 60 * 1000;
 
   private radarrServers: Record<number, DownloadingItem[]> = {};
+  private radarrHistory: Record<number, ServarrHistoryItem[]> = {};
   private sonarrServers: Record<number, DownloadingItem[]> = {};
+  private sonarrHistory: Record<number, ServarrHistoryItem[]> = {};
   private lidarrServers: Record<number, DownloadingItem[]> = {};
+  private lidarrHistory: Record<number, ServarrHistoryItem[]> = {};
   private readarrServers: Record<number, DownloadingItem[]> = {};
   private monitoredRefreshes = new Set<string>();
   private lastMonitoredRefresh = new Map<string, number>();
@@ -140,6 +161,27 @@ export class DownloadTracker {
     );
   }
 
+  private async loadHistory(
+    serviceType: ServarrServiceType,
+    server: DownloadTrackerServerSettings,
+    api: { getHistory: () => Promise<ServarrHistoryItem[]> },
+    serverName: string
+  ): Promise<ServarrHistoryItem[] | undefined> {
+    try {
+      return await this.runWithCurrentServarrDownloadServer(
+        serviceType,
+        server,
+        () => api.getHistory()
+      );
+    } catch (e) {
+      logger.debug(`Unable to get history from server: ${serverName}`, {
+        errorMessage: e instanceof Error ? e.message : String(e),
+        label: 'Download Tracker',
+      });
+      return undefined;
+    }
+  }
+
   public getMovieProgress(
     serverId: number,
     externalServiceId: number
@@ -179,6 +221,104 @@ export class DownloadTracker {
     );
   }
 
+  private getHistoryEvidence(
+    history: Record<number, ServarrHistoryItem[]>,
+    idField: 'movieId' | 'seriesId' | 'albumId',
+    serverId: number,
+    externalServiceId: number,
+    since: Date
+  ): ServarrHistoryEvidence | undefined {
+    const sinceTime = since.getTime();
+    if (!Number.isFinite(sinceTime)) {
+      return undefined;
+    }
+
+    let evidence: ServarrHistoryEvidence | undefined;
+    for (const item of history[serverId] ?? []) {
+      if (item[idField] !== externalServiceId || !item.date) {
+        continue;
+      }
+      const observedAt = new Date(item.date);
+      if (
+        Number.isNaN(observedAt.getTime()) ||
+        observedAt.getTime() < sinceTime
+      ) {
+        continue;
+      }
+
+      const eventType = String(item.eventType ?? '')
+        .trim()
+        .toLocaleLowerCase();
+      let stage: ServarrHistoryStage | undefined;
+      if (
+        eventType.includes('failed') ||
+        eventType.includes('error') ||
+        Number(item.eventType) === 4
+      ) {
+        stage = 'failed';
+      } else if (
+        eventType.includes('imported') ||
+        eventType.includes('importcompleted') ||
+        [3, 8].includes(Number(item.eventType))
+      ) {
+        stage = 'imported';
+      } else if (eventType === 'grabbed' || Number(item.eventType) === 1) {
+        stage = 'grabbed';
+      }
+
+      if (
+        stage &&
+        (!evidence || observedAt.getTime() > evidence.observedAt.getTime())
+      ) {
+        evidence = { stage, observedAt, downloadId: item.downloadId };
+      }
+    }
+
+    return evidence;
+  }
+
+  public getMovieHistoryEvidence(
+    serverId: number,
+    externalServiceId: number,
+    since: Date
+  ): ServarrHistoryEvidence | undefined {
+    return this.getHistoryEvidence(
+      this.radarrHistory,
+      'movieId',
+      serverId,
+      externalServiceId,
+      since
+    );
+  }
+
+  public getSeriesHistoryEvidence(
+    serverId: number,
+    externalServiceId: number,
+    since: Date
+  ): ServarrHistoryEvidence | undefined {
+    return this.getHistoryEvidence(
+      this.sonarrHistory,
+      'seriesId',
+      serverId,
+      externalServiceId,
+      since
+    );
+  }
+
+  public getMusicHistoryEvidence(
+    serverId: number,
+    externalServiceId: number,
+    since: Date
+  ): ServarrHistoryEvidence | undefined {
+    return this.getHistoryEvidence(
+      this.lidarrHistory,
+      'albumId',
+      serverId,
+      externalServiceId,
+      since
+    );
+  }
+
   public getBookProgress(
     serverId: number,
     externalServiceId: number
@@ -198,8 +338,11 @@ export class DownloadTracker {
     // first, then clear the snapshot and its refresh cooldowns.
     await this.activeUpdate?.catch(() => undefined);
     this.radarrServers = {};
+    this.radarrHistory = {};
     this.sonarrServers = {};
+    this.sonarrHistory = {};
     this.lidarrServers = {};
+    this.lidarrHistory = {};
     this.readarrServers = {};
     this.lastMonitoredRefresh.clear();
   }
@@ -259,16 +402,21 @@ export class DownloadTracker {
               () => radarr.refreshMonitoredDownloads(),
               server.name
             );
-            const queueItems = await this.runWithCurrentServarrDownloadServer(
-              'radarr',
-              server,
-              () => radarr.getQueue()
-            );
+            const [queueItems, historyItems] = await Promise.all([
+              this.runWithCurrentServarrDownloadServer('radarr', server, () =>
+                radarr.getQueue()
+              ),
+              this.loadHistory('radarr', server, radarr, server.name),
+            ]);
             if (!queueItems) {
               delete this.radarrServers[server.id];
+              delete this.radarrHistory[server.id];
               return;
             }
 
+            if (historyItems) {
+              this.radarrHistory[server.id] = historyItems;
+            }
             this.radarrServers[server.id] = queueItems.map((item) => ({
               externalId: item.movieId,
               estimatedCompletionTime: new Date(item.estimatedCompletionTime),
@@ -279,6 +427,7 @@ export class DownloadTracker {
               timeLeft: item.timeleft,
               title: item.title,
               downloadId: item.downloadId,
+              ...getQueueState(item),
             }));
 
             if (queueItems.length > 0) {
@@ -315,6 +464,7 @@ export class DownloadTracker {
           matchingServers.forEach((ms) => {
             if (ms.syncEnabled) {
               this.radarrServers[ms.id] = this.radarrServers[server.id];
+              this.radarrHistory[ms.id] = this.radarrHistory[server.id];
             }
           });
         }
@@ -356,16 +506,21 @@ export class DownloadTracker {
               () => sonarr.refreshMonitoredDownloads(),
               server.name
             );
-            const queueItems = await this.runWithCurrentServarrDownloadServer(
-              'sonarr',
-              server,
-              () => sonarr.getQueue()
-            );
+            const [queueItems, historyItems] = await Promise.all([
+              this.runWithCurrentServarrDownloadServer('sonarr', server, () =>
+                sonarr.getQueue()
+              ),
+              this.loadHistory('sonarr', server, sonarr, server.name),
+            ]);
             if (!queueItems) {
               delete this.sonarrServers[server.id];
+              delete this.sonarrHistory[server.id];
               return;
             }
 
+            if (historyItems) {
+              this.sonarrHistory[server.id] = historyItems;
+            }
             this.sonarrServers[server.id] = queueItems.map((item) => ({
               externalId: item.seriesId,
               estimatedCompletionTime: new Date(item.estimatedCompletionTime),
@@ -377,6 +532,7 @@ export class DownloadTracker {
               title: item.title,
               episode: item.episode,
               downloadId: item.downloadId,
+              ...getQueueState(item),
             }));
 
             if (queueItems.length > 0) {
@@ -413,6 +569,7 @@ export class DownloadTracker {
           matchingServers.forEach((ms) => {
             if (ms.syncEnabled) {
               this.sonarrServers[ms.id] = this.sonarrServers[server.id];
+              this.sonarrHistory[ms.id] = this.sonarrHistory[server.id];
             }
           });
         }
@@ -452,16 +609,21 @@ export class DownloadTracker {
               () => lidarr.refreshMonitoredDownloads(),
               server.name
             );
-            const queueItems = await this.runWithCurrentServarrDownloadServer(
-              'lidarr',
-              server,
-              () => lidarr.getQueue()
-            );
+            const [queueItems, historyItems] = await Promise.all([
+              this.runWithCurrentServarrDownloadServer('lidarr', server, () =>
+                lidarr.getQueue()
+              ),
+              this.loadHistory('lidarr', server, lidarr, server.name),
+            ]);
             if (!queueItems) {
               delete this.lidarrServers[server.id];
+              delete this.lidarrHistory[server.id];
               return;
             }
 
+            if (historyItems) {
+              this.lidarrHistory[server.id] = historyItems;
+            }
             this.lidarrServers[server.id] = queueItems
               .filter((item) => item.albumId !== undefined)
               .map((item) => ({
@@ -474,6 +636,7 @@ export class DownloadTracker {
                 timeLeft: item.timeleft,
                 title: item.title,
                 downloadId: item.downloadId,
+                ...getQueueState(item),
               }));
 
             if (queueItems.length > 0) {
@@ -510,6 +673,7 @@ export class DownloadTracker {
           matchingServers.forEach((ms) => {
             if (ms.syncEnabled) {
               this.lidarrServers[ms.id] = this.lidarrServers[server.id];
+              this.lidarrHistory[ms.id] = this.lidarrHistory[server.id];
             }
           });
         }
@@ -576,6 +740,7 @@ export class DownloadTracker {
                 timeLeft: item.timeleft,
                 title: item.title,
                 downloadId: item.downloadId,
+                ...getQueueState(item),
               }));
 
             if (queueItems.length > 0) {

@@ -1,8 +1,14 @@
 import Spinner from '@app/assets/spinner.svg';
 import Badge from '@app/components/Common/Badge';
+import BookFormatBadge, {
+  getRequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import ConfirmButton from '@app/components/Common/ConfirmButton';
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
 import StatusBadge from '@app/components/StatusBadge';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useToasts from '@app/hooks/useToasts';
@@ -108,7 +114,15 @@ const getRequestDetailHref = (
   request: NonFunctionProperties<MediaRequest>,
   manage = false
 ) => {
-  const suffix = manage ? '?manage=1' : '';
+  const query = [
+    manage ? 'manage=1' : null,
+    request.type === 'book'
+      ? `format=${getRequestedBookFormat(request.bookFormat)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('&');
+  const suffix = query ? `?${query}` : '';
   const bookId = getNormalizedBookId(request);
   const musicId = getNormalizedMusicId(request);
 
@@ -331,6 +345,11 @@ const RequestItemError = ({
                           : requestData.type === 'tv'
                             ? 'tv'
                             : 'movie'
+                    }
+                    bookFormat={
+                      requestData.type === 'book'
+                        ? getRequestedBookFormat(requestData.bookFormat)
+                        : undefined
                     }
                     plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                     serviceUrl={getRequestServiceUrl(requestData)}
@@ -697,15 +716,28 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
               />
             </Link>
             <div className="flex flex-col justify-center overflow-hidden pl-2 xl:pl-4">
-              <div className="pt-0.5 text-xs font-medium text-white sm:pt-1">
-                {(isMovie(title)
-                  ? title.releaseDate
-                  : isMusic(title)
+              <div className="flex flex-wrap items-center gap-1 pt-0.5 text-xs font-medium text-white sm:pt-1">
+                {requestData.type !== 'book' && (
+                  <MediaTypeBadge
+                    mediaType={
+                      getMediaTypeBadgeType(requestData.type) ?? 'movie'
+                    }
+                    variant="compact"
+                  />
+                )}
+                {requestData.type !== 'book' && requestData.is4k && (
+                  <Badge badgeType="warning">4K</Badge>
+                )}
+                <span>
+                  {(isMovie(title)
                     ? title.releaseDate
-                    : isBook(title)
-                      ? title.firstPublishYear?.toString()
-                      : title.firstAirDate
-                )?.slice(0, 4)}
+                    : isMusic(title)
+                      ? title.releaseDate
+                      : isBook(title)
+                        ? title.firstPublishYear?.toString()
+                        : title.firstAirDate
+                  )?.slice(0, 4)}
+                </span>
               </div>
               <Link
                 href={getRequestDetailHref(requestData)}
@@ -815,6 +847,11 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                         : requestData.type === 'tv'
                           ? 'tv'
                           : 'movie'
+                  }
+                  bookFormat={
+                    requestData.type === 'book'
+                      ? getRequestedBookFormat(requestData.bookFormat)
+                      : undefined
                   }
                   plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                   serviceUrl={getRequestServiceUrl(requestData)}
@@ -942,20 +979,15 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 </span>
               </div>
             )}
-            {requestData.type === 'book' && requestData.bookFormat && (
+            {requestData.type === 'book' && (
               <div className="card-field">
                 <span className="card-field-name">
                   {intl.formatMessage(messages.bookFormat)}
                 </span>
-                <span className="flex truncate text-sm text-gray-300">
-                  {intl.formatMessage(
-                    requestData.bookFormat === 'audiobook'
-                      ? messages.audiobook
-                      : requestData.bookFormat === 'both'
-                        ? messages.both
-                        : messages.ebook
-                  )}
-                </span>
+                <BookFormatBadge
+                  format={getRequestedBookFormat(requestData.bookFormat)}
+                  variant="compact"
+                />
               </div>
             )}
             {hasPartialBookService && (

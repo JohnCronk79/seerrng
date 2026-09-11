@@ -1,169 +1,120 @@
-import Button from '@app/components/Common/Button';
-import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityToggle';
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
+import FilterPanel from '@app/components/Discover/FilterPanel';
+import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import type { FilterOptions } from '@app/components/Discover/constants';
-import {
-  countActiveFilters,
-  prepareFilterValues,
-} from '@app/components/Discover/constants';
+import { prepareFilterValues } from '@app/components/Discover/constants';
 import useDiscover from '@app/hooks/useDiscover';
 import useDiscoverScrollRestoration from '@app/hooks/useDiscoverScrollRestoration';
+import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import { useUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
-import { BarsArrowDownIcon, FunnelIcon } from '@heroicons/react/24/solid';
+import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { SortOptions as TMDBSortOptions } from '@server/api/themoviedb';
 import type { TvResult } from '@server/models/Search';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
 import { useIntl } from 'react-intl';
 
-const FilterSlideover = dynamic(
-  () => import('@app/components/Discover/FilterSlideover'),
-  { ssr: false }
-);
-
 const messages = defineMessages('components.Discover.DiscoverTv', {
-  discovertv: 'Series',
-  activefilters:
-    '{count, plural, one {# Active Filter} other {# Active Filters}}',
-  sortPopularityAsc: 'Popularity Ascending',
-  sortPopularityDesc: 'Popularity Descending',
-  sortFirstAirDateAsc: 'First Air Date Ascending',
-  sortFirstAirDateDesc: 'First Air Date Descending',
-  sortTmdbRatingAsc: 'TMDB Rating Ascending',
-  sortTmdbRatingDesc: 'TMDB Rating Descending',
-  sortTitleAsc: 'Title (A-Z) Ascending',
-  sortTitleDesc: 'Title (Z-A) Descending',
+  series: 'Series',
+  filters: 'Filters',
+  sortBy: 'Sort By',
+  popularity: 'Popularity',
+  firstAirDate: 'First Air Date',
+  rating: 'TMDB Rating',
+  title: 'Title',
 });
-
-const SortOptions: Record<string, TMDBSortOptions> = {
-  PopularityAsc: 'popularity.asc',
-  PopularityDesc: 'popularity.desc',
-  FirstAirDateAsc: 'first_air_date.asc',
-  FirstAirDateDesc: 'first_air_date.desc',
-  TmdbRatingAsc: 'vote_average.asc',
-  TmdbRatingDesc: 'vote_average.desc',
-  TitleAsc: 'original_title.asc',
-  TitleDesc: 'original_title.desc',
-} as const;
-
+const sorts: {
+  label: keyof typeof messages;
+  asc: TMDBSortOptions;
+  desc: TMDBSortOptions;
+}[] = [
+  { label: 'popularity', asc: 'popularity.asc', desc: 'popularity.desc' },
+  {
+    label: 'firstAirDate',
+    asc: 'first_air_date.asc',
+    desc: 'first_air_date.desc',
+  },
+  { label: 'rating', asc: 'vote_average.asc', desc: 'vote_average.desc' },
+  { label: 'title', asc: 'original_title.asc', desc: 'original_title.desc' },
+];
 const DiscoverTv = () => {
   const intl = useIntl();
   const router = useRouter();
-  const [showFilters, setShowFilters] = useState(false);
-  const preparedFilters = prepareFilterValues(router.query);
   const updateQueryParams = useUpdateQueryParams({});
-
-  const {
-    isLoadingInitialData,
-    isEmpty,
-    isLoadingMore,
-    isReachingEnd,
-    titles,
-    fetchMore,
-    error,
-  } = useDiscover<TvResult, never, FilterOptions>(
+  const preparedFilters = prepareFilterValues(router.query);
+  const currentSort = preparedFilters.sortBy || 'popularity.desc';
+  const discover = useDiscover<TvResult, never, FilterOptions>(
     '/api/v1/discover/tv',
-    {
-      ...preparedFilters,
-    },
+    preparedFilters,
     { randomizeOrder: !preparedFilters.sortBy }
+  );
+  useSearchActivityReporter(
+    Boolean(preparedFilters.search) &&
+      (discover.isLoadingInitialData || discover.isValidating),
+    'series-keyword'
   );
   useDiscoverScrollRestoration({
     mediaType: 'tv',
-    itemCount: titles.length,
-    isLoading: isLoadingInitialData || isLoadingMore,
-    isReachingEnd,
-    fetchMore,
+    itemCount: discover.titles.length,
+    shuffleSeed: discover.shuffleSeed,
+    isLoading: discover.isLoadingInitialData || discover.isLoadingMore,
+    isReachingEnd: discover.isReachingEnd,
+    fetchMore: discover.fetchMore,
   });
-
-  if (error) {
-    return <ErrorPage statusCode={500} />;
-  }
-
-  const title = intl.formatMessage(messages.discovertv);
-
+  if (discover.error) return <ErrorPage statusCode={500} />;
+  const title = intl.formatMessage(messages.series);
   return (
     <>
       <PageTitle title={title} />
-      <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
+      <div className="mb-4">
         <Header>{title}</Header>
-        <div className="mt-2 flex flex-grow flex-col gap-2 sm:flex-row lg:flex-grow-0">
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:flex-grow-0">
-            <CardTextVisibilityToggle mediaType="tv" />
-          </div>
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 lg:flex-grow-0">
-            <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-gray-100 sm:text-sm">
-              <BarsArrowDownIcon className="h-6 w-6" />
-            </span>
-            <select
-              id="sortBy"
-              name="sortBy"
-              className="rounded-r-only"
-              value={preparedFilters.sortBy || SortOptions.PopularityDesc}
-              onChange={(e) => updateQueryParams('sortBy', e.target.value)}
-            >
-              <option value={SortOptions.PopularityDesc}>
-                {intl.formatMessage(messages.sortPopularityDesc)}
-              </option>
-              <option value={SortOptions.PopularityAsc}>
-                {intl.formatMessage(messages.sortPopularityAsc)}
-              </option>
-              <option value={SortOptions.FirstAirDateDesc}>
-                {intl.formatMessage(messages.sortFirstAirDateDesc)}
-              </option>
-              <option value={SortOptions.FirstAirDateAsc}>
-                {intl.formatMessage(messages.sortFirstAirDateAsc)}
-              </option>
-              <option value={SortOptions.TmdbRatingDesc}>
-                {intl.formatMessage(messages.sortTmdbRatingDesc)}
-              </option>
-              <option value={SortOptions.TmdbRatingAsc}>
-                {intl.formatMessage(messages.sortTmdbRatingAsc)}
-              </option>
-              <option value={SortOptions.TitleAsc}>
-                {intl.formatMessage(messages.sortTitleAsc)}
-              </option>
-              <option value={SortOptions.TitleDesc}>
-                {intl.formatMessage(messages.sortTitleDesc)}
-              </option>
-            </select>
-          </div>
-          {showFilters && (
-            <FilterSlideover
-              type="tv"
-              currentFilters={preparedFilters}
-              onClose={() => setShowFilters(false)}
-              show={showFilters}
-            />
-          )}
-          <div className="mb-2 flex flex-grow sm:mb-0 lg:flex-grow-0">
-            <Button onClick={() => setShowFilters(true)} className="w-full">
-              <FunnelIcon />
-              <span>
-                {intl.formatMessage(messages.activefilters, {
-                  count: countActiveFilters(preparedFilters),
-                })}
-              </span>
-            </Button>
-          </div>
+        <div className="mb-2 mt-4 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <FilterPanel type="tv" currentFilters={preparedFilters} />
+        <div className="mb-2 mt-4 text-sm text-gray-300">
+          {intl.formatMessage(messages.sortBy)}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {sorts.map((option) => {
+            const active =
+              currentSort === option.asc || currentSort === option.desc;
+            const ascending = currentSort === option.asc;
+            const Icon = ascending ? BarsArrowUpIcon : BarsArrowDownIcon;
+            return (
+              <button
+                key={option.label}
+                type="button"
+                aria-pressed={active}
+                onClick={() =>
+                  updateQueryParams(
+                    'sortBy',
+                    active && !ascending ? option.asc : option.desc
+                  )
+                }
+                className={getFilterToggleButtonClass(active)}
+              >
+                {intl.formatMessage(messages[option.label])}
+                <Icon className="h-4 w-4" />
+              </button>
+            );
+          })}
         </div>
       </div>
       <ListView
-        items={titles}
-        isEmpty={isEmpty}
-        isReachingEnd={isReachingEnd}
+        items={discover.titles}
+        isEmpty={discover.isEmpty}
         isLoading={
-          isLoadingInitialData || (isLoadingMore && (titles?.length ?? 0) > 0)
+          discover.isLoadingInitialData ||
+          (discover.isLoadingMore && discover.titles.length > 0)
         }
-        onScrollBottom={fetchMore}
+        isReachingEnd={discover.isReachingEnd}
+        onScrollBottom={discover.fetchMore}
       />
     </>
   );
 };
-
 export default DiscoverTv;

@@ -10,10 +10,13 @@ const AssociationCard = ({ node }: { node: AssociationNode }) => {
           id={node.id}
           image={node.posterPath}
           status={node.mediaInfo?.status}
+          status4k={node.mediaInfo?.status4k}
           summary={node.overview}
           title={node.title}
           year={node.releaseDate}
           mediaType="movie"
+          inProgress={(node.mediaInfo?.downloadStatus ?? []).length > 0}
+          inProgress4k={(node.mediaInfo?.downloadStatus4k ?? []).length > 0}
           hideAssociationWhenEmpty
         />
       );
@@ -23,10 +26,13 @@ const AssociationCard = ({ node }: { node: AssociationNode }) => {
           id={node.id}
           image={node.posterPath}
           status={node.mediaInfo?.status}
+          status4k={node.mediaInfo?.status4k}
           summary={node.overview}
           title={node.name}
           year={node.firstAirDate}
           mediaType="tv"
+          inProgress={(node.mediaInfo?.downloadStatus ?? []).length > 0}
+          inProgress4k={(node.mediaInfo?.downloadStatus4k ?? []).length > 0}
           hideAssociationWhenEmpty
         />
       );

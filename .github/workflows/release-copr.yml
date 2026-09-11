@@ -8,7 +8,7 @@ on:
         required: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish-copr:
@@ -23,12 +23,20 @@ jobs:
           set -euo pipefail
           tag="$RELEASE_TAG"
           [[ "$tag" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || { echo "Invalid release tag: $tag" >&2; exit 2; }
+          [[ "$tag" != *-* ]] || { echo "Stable package channels reject pre-release tag: $tag" >&2; exit 2; }
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify release tag is on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/ensure-release-tag-on-main.sh "$TAG"
 
       - name: Download Linux asset
         env:

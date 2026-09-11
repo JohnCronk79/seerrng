@@ -17,9 +17,9 @@ const GenreCard = ({ image, url, name, canExpand = false }: GenreCardProps) => {
     <Link
       href={url}
       prefetch={false}
-      className={`relative flex h-32 items-center justify-center sm:h-36 ${
-        canExpand ? 'w-full' : 'w-56 sm:w-72'
-      } transform-gpu cursor-pointer p-8 shadow ring-1 transition duration-300 ease-in-out ${
+      className={`relative flex h-16 items-center justify-center sm:h-[72px] ${
+        canExpand ? 'w-full' : 'w-28 sm:w-36'
+      } transform-gpu cursor-pointer p-3 shadow ring-1 transition duration-300 ease-in-out ${
         isHovered
           ? 'scale-105 bg-gray-700/100 ring-gray-500'
           : 'scale-100 bg-gray-800/80 ring-gray-700'
@@ -48,7 +48,7 @@ const GenreCard = ({ image, url, name, canExpand = false }: GenreCardProps) => {
           isHovered ? 'bg-gray-800/10' : 'bg-gray-800/30'
         }`}
       />
-      <div className="relative z-20 w-full truncate whitespace-normal text-center text-2xl font-bold text-white sm:text-3xl">
+      <div className="relative z-20 w-full truncate whitespace-normal text-center text-base font-bold leading-5 text-white sm:text-lg">
         {name}
       </div>
     </Link>
@@ -57,9 +57,7 @@ const GenreCard = ({ image, url, name, canExpand = false }: GenreCardProps) => {
 
 const GenreCardPlaceholder = () => {
   return (
-    <div
-      className={`relative h-32 w-56 animate-pulse rounded-xl bg-gray-700 sm:h-40 sm:w-72`}
-    />
+    <div className="relative h-16 w-28 animate-pulse rounded-xl bg-gray-700 sm:h-[72px] sm:w-36" />
   );
 };
 

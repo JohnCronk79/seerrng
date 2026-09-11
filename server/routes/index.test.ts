@@ -87,6 +87,29 @@ describe('Public endpoint resource boundaries', () => {
     assert.strictEqual(unavailable.status, 503);
     assert.strictEqual(unavailable.text, '');
   });
+
+  it('reports active and saved transport state without exposing certificate paths', async () => {
+    const settings = getSettings();
+    const originalTls = structuredClone(settings.network.tls);
+    settings.network.tls = {
+      ...originalTls,
+      mode: 'self-signed',
+      redirectHttpToHttps: false,
+    };
+
+    try {
+      const response = await request(app).get('/api/v1/status/tls');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.configuredMode, 'self-signed');
+      assert.strictEqual(response.body.configuredRedirectsHttpToHttps, false);
+      assert.ok(Array.isArray(response.body.environmentOverrides));
+      assert.equal('certificateFile' in response.body, false);
+      assert.equal('keyFile' in response.body, false);
+    } finally {
+      settings.network.tls = originalTls;
+    }
+  });
 });
 
 describe('Authenticated metadata resource boundaries', () => {

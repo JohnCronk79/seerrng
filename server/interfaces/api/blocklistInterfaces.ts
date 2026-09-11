@@ -15,4 +15,9 @@ export interface BlocklistItem {
 
 export interface BlocklistResultsResponse extends PaginatedResponse {
   results: BlocklistItem[];
+  counts: {
+    all: number;
+    manual: number;
+    blocklistedTags: number;
+  };
 }

@@ -33,7 +33,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   browsebooks: 'Books',
   browsetv: 'Series',
   requests: 'Requests',
-  requeststatus: 'Request Status',
+  requeststatus: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
   users: 'Users',
@@ -71,37 +71,31 @@ const SidebarLinks: SidebarLinkProps[] = [
     href: '/discover/movies',
     messagesKey: 'browsemovies',
     svgIcon: <FilmIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/discover\/movies$/,
+    activeRegExp: /^\/(?:discover\/movies(?:\/.*)?|movie\/)/,
   },
   {
     href: '/discover/tv',
     messagesKey: 'browsetv',
     svgIcon: <TvIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/discover\/tv$/,
+    activeRegExp: /^\/(?:discover\/tv(?:\/.*)?|tv\/)/,
   },
   {
     href: '/discover/music',
     messagesKey: 'browsemusic',
     svgIcon: <MusicalNoteIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/discover\/music$/,
+    activeRegExp: /^\/(?:discover\/music(?:\/.*)?|music\/)/,
   },
   {
     href: '/discover/books',
     messagesKey: 'browsebooks',
     svgIcon: <BookOpenIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/discover\/books$/,
+    activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
   },
   {
     href: '/requests/status',
     messagesKey: 'requeststatus',
     svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/requests\/status/,
-  },
-  {
-    href: '/requests',
-    messagesKey: 'requests',
-    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/requests\/?$/,
   },
   {
     href: '/blocklist',
@@ -212,7 +206,7 @@ const Sidebar = ({
               leaveTo="-translate-x-full"
             >
               <>
-                <div className="sidebar relative flex h-full w-full max-w-xs flex-1 flex-col bg-gray-800">
+                <div className="sidebar relative flex h-full w-full max-w-xs flex-1 flex-col">
                   <div className="sidebar-close-button absolute right-0 -mr-14 p-1">
                     <button
                       className="flex h-12 w-12 items-center justify-center rounded-full focus:bg-gray-600 focus:outline-none"
@@ -246,7 +240,7 @@ const Sidebar = ({
                             href={sidebarLink.href}
                             as={sidebarLink.as}
                             prefetch={false}
-                            onClick={() => setClosed()}
+                            onClick={setClosed}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 setClosed();

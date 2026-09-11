@@ -34,6 +34,17 @@ describe('getSessionTransportOptions', () => {
     assert.equal(getSessionTransportOptions(false, true).proxy, true);
   });
 
+  it('allows the explicit HTTP fallback to remain transport-aware', () => {
+    assert.equal(
+      getSessionTransportOptions(false, true, true).cookie.secure,
+      'auto'
+    );
+    assert.equal(
+      getSessionTransportOptions(false, false, true).cookie.secure,
+      'auto'
+    );
+  });
+
   it('keeps the remaining cookie protections in development and production', () => {
     assert.equal(getSessionTransportOptions(true, true).cookie.secure, true);
     assert.equal(
@@ -61,5 +72,40 @@ describe('getSessionTransportOptions', () => {
       .set('X-Forwarded-Proto', 'https');
 
     assert.match(response.get('Set-Cookie')?.[0] ?? '', /; Secure(?:;|$)/);
+  });
+
+  it('issues a non-Secure cookie only when the HTTP fallback is enabled', async () => {
+    const response = await request(createApp(false)).get('/');
+    assert.equal(response.headers['set-cookie'], undefined);
+
+    const fallbackApp = express();
+    const sessionTransportOptions = getSessionTransportOptions(
+      false,
+      true,
+      true
+    );
+    fallbackApp.use(
+      session({
+        secret: '01234567890123456789012345678901',
+        resave: false,
+        saveUninitialized: false,
+        cookie: sessionTransportOptions.cookie,
+        proxy: sessionTransportOptions.proxy,
+      })
+    );
+    fallbackApp.get('/', (req, res) => {
+      req.session.userId = 1;
+      res.json({ ok: true });
+    });
+
+    // This test intentionally exercises the explicitly opted-in HTTP fallback
+    // with synthetic session data; production defaults remain HTTPS-only.
+    // codeql[js/clear-text-cookie]
+    const fallbackResponse = await request(fallbackApp).get('/');
+    assert.match(fallbackResponse.get('Set-Cookie')?.[0] ?? '', /HttpOnly/);
+    assert.doesNotMatch(
+      fallbackResponse.get('Set-Cookie')?.[0] ?? '',
+      /; Secure(?:;|$)/
+    );
   });
 });

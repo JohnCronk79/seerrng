@@ -35,6 +35,7 @@ describe('apiResponseCache', () => {
     assert.equal(res.status, 200);
     assert.match(res.headers['cache-control'], /private/);
     assert.match(res.headers['cache-control'], /no-cache/);
+    assert.doesNotMatch(res.headers['cache-control'], /stale-if-error/);
     assert.equal(res.headers.vary, 'Cookie, Accept-Encoding');
   });
 

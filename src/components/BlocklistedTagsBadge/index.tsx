@@ -9,16 +9,23 @@ import axios from 'axios';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 
-const messages = defineMessages('components.Settings', {
-  blocklistedTagsText: 'Blocklisted Tags',
+const messages = defineMessages('components.BlocklistedTagsBadge', {
+  blocklistTag: 'Blocklist Tag',
 });
 const KEYWORD_LOOKUP_CONCURRENCY = 8;
 
+export const compactBlocklistSourceBadgeClass =
+  'box-border !h-4 !max-h-4 min-h-0 max-w-full items-center gap-0.5 self-center border border-red-500 !px-1 !py-0 text-[8px] !font-semibold !leading-[14px] !text-red-300';
+
 interface BlocklistedTagsBadgeProps {
   data: BlocklistItem;
+  compact?: boolean;
 }
 
-const BlocklistedTagsBadge = ({ data }: BlocklistedTagsBadgeProps) => {
+const BlocklistedTagsBadge = ({
+  data,
+  compact = false,
+}: BlocklistedTagsBadgeProps) => {
   const [tagNamesBlocklistedFor, setTagNamesBlocklistedFor] =
     useState<string>('Loading...');
   const intl = useIntl();
@@ -70,10 +77,19 @@ const BlocklistedTagsBadge = ({ data }: BlocklistedTagsBadgeProps) => {
     >
       <Badge
         badgeType="dark"
-        className="items-center border border-red-500 !text-red-400"
+        className={
+          compact
+            ? compactBlocklistSourceBadgeClass
+            : 'items-center border border-red-500 !text-red-400'
+        }
       >
-        <TagIcon className="mr-1 h-4" />
-        {intl.formatMessage(messages.blocklistedTagsText)}
+        <TagIcon
+          className={compact ? 'h-2.5 w-2.5 shrink-0' : 'mr-1 h-4'}
+          aria-hidden="true"
+        />
+        <span className="truncate">
+          {intl.formatMessage(messages.blocklistTag)}
+        </span>
       </Badge>
     </Tooltip>
   );

@@ -63,8 +63,10 @@ const releaseNotesContent = releaseNotesMatch
   : '';
 const releaseNoteOptions =
   releaseNotesContent.match(/- \[[ x]\][^\n]*/gi) || [];
-const checkedReleaseNoteOptions =
-  releaseNotesContent.match(/- \[x\][^\n]*/gi) || [];
+const hasReleaseNoteFragment =
+  /- \[x\][^\n]*I added a release-note fragment/iu.test(releaseNotesContent);
+const hasInternalOnlyOptOut =
+  /- \[x\][^\n]*This change is internal-only/iu.test(releaseNotesContent);
 
 if (!releaseNotesContent) {
   issues.push('**Release Notes** section is missing or empty.');
@@ -72,9 +74,9 @@ if (!releaseNotesContent) {
   issues.push(
     '**Release Notes** must select a release-note fragment or the internal-only opt-out.'
   );
-} else if (checkedReleaseNoteOptions.length !== 1) {
+} else if (hasReleaseNoteFragment === hasInternalOnlyOptOut) {
   issues.push(
-    '**Release Notes** must select exactly one of the two release-note options.'
+    '**Release Notes** must select exactly one primary option: add a release-note fragment or mark the change internal-only. Supporting confirmation boxes may also be checked.'
   );
 }
 

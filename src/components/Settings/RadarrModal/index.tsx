@@ -69,7 +69,7 @@ const messages = defineMessages('components.Settings.RadarrModal', {
   validationApplicationUrlTrailingSlash: 'URL must not end in a trailing slash',
   validationBaseUrlLeadingSlash: 'URL base must have a leading slash',
   validationBaseUrlTrailingSlash: 'URL base must not end in a trailing slash',
-  notagoptions: 'No tags.',
+  notagoptions: 'No tags',
   selecttags: 'Select tags',
   announced: 'Announced',
   inCinemas: 'In Cinemas',

@@ -1,5 +1,10 @@
 import Alert from '@app/components/Common/Alert';
 import Badge from '@app/components/Common/Badge';
+import {
+  getBookFormatMessage,
+  type RequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
+import BookFormatSelector from '@app/components/Common/BookFormatSelector';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
@@ -25,6 +30,7 @@ import type {
   BulkMediaRequestResponse,
   BulkMediaRequestResult,
 } from '@server/interfaces/api/requestInterfaces';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import type { BookResult } from '@server/models/Book';
 import axios from 'axios';
@@ -33,7 +39,6 @@ import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
 const messages = defineMessages('components.RequestModal.BulkRequestModal', {
-  requestbibliography: 'Request Bibliography',
   requestdiscography: 'Request Discography',
   requestitems: 'Request {count} {count, plural, one {Item} other {Items}}',
   selectitems: 'Select Items',
@@ -42,15 +47,20 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
     'You selected {count} items. Confirm once more before submitting this batch.',
   quotaexceeded: 'Not enough request quota remaining.',
   summary: '{created} created, {skipped} skipped, {failed} failed.',
+  requestbibliographyFormat: 'Request {format} Bibliography',
+  requestitemsFormat:
+    'Request {count} {count, plural, one {Item} other {Items}} as {format}',
   faileditems: 'Failed Items',
   retryfailed: 'Retry Failed',
   submittingprogress:
     'Submitting {processed} of {total} {total, plural, one {item} other {items}}.',
   close: 'Close',
-  format: 'Format',
-  ebook: 'Ebook',
-  audiobook: 'Audiobook',
-  both: 'Both',
+  noEbookServer:
+    'No ebook Bookshelf service is configured. Ebook requests are unavailable.',
+  noAudiobookServer:
+    'No audiobook Bookshelf service is configured. Audiobook requests are unavailable.',
+  noBothServers:
+    'Ebook + Audiobook requires ebook and audiobook Bookshelf services to be configured.',
   releasetype: 'Release Type',
   loadmore: 'Load More',
   available: 'Available',
@@ -63,7 +73,7 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
   openSource: 'Open original playlist',
 });
 
-type BulkBookFormat = 'ebook' | 'audiobook' | 'both';
+type BulkBookFormat = RequestedBookFormat;
 type BulkMediaType = 'music' | 'book';
 
 export type BulkItem = {
@@ -285,7 +295,7 @@ const getBookIneligibleReason = (
     return messages.requested.defaultMessage;
   }
 
-  if (format === 'both' && (ebookCovered || audiobookCovered)) {
+  if (format === 'both' && ebookCovered && audiobookCovered) {
     return messages.requested.defaultMessage;
   }
 
@@ -365,6 +375,24 @@ const BulkRequestModal = ({
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
       : null
   );
+  const { data: bookServices } = useSWR<ServiceCommonServer[]>(
+    mediaType === 'book' ? '/api/v1/service/readarr' : null
+  );
+
+  const formatAvailable = useMemo(() => {
+    const hasEbookServer = (bookServices ?? []).some(
+      (service) => (service.serviceType ?? 'ebook') === 'ebook'
+    );
+    const hasAudiobookServer = (bookServices ?? []).some(
+      (service) => service.serviceType === 'audiobook'
+    );
+
+    return {
+      ebook: hasEbookServer,
+      audiobook: hasAudiobookServer,
+      both: hasEbookServer && hasAudiobookServer,
+    };
+  }, [bookServices]);
 
   useEffect(() => {
     setItems(dedupeBulkItems(initialItems, mediaType));
@@ -496,6 +524,18 @@ const BulkRequestModal = ({
     [format, mediaType]
   );
 
+  useEffect(() => {
+    if (mediaType !== 'book' || !bookServices || formatAvailable[format]) {
+      return;
+    }
+
+    if (formatAvailable.ebook) {
+      setFormat('ebook');
+    } else if (formatAvailable.audiobook) {
+      setFormat('audiobook');
+    }
+  }, [bookServices, format, formatAvailable, mediaType]);
+
   const eligibleItems = useMemo(
     () => items.filter((item) => !getIneligibleReason(item)),
     [getIneligibleReason, items]
@@ -523,6 +563,14 @@ const BulkRequestModal = ({
     ],
     { type: 'or' }
   );
+  const formatWarning =
+    mediaType === 'book' && bookServices && !formatAvailable[format]
+      ? format === 'ebook'
+        ? messages.noEbookServer
+        : format === 'audiobook'
+          ? messages.noAudiobookServer
+          : messages.noBothServers
+      : null;
 
   const toggleItem = (item: BulkItem) => {
     if (getIneligibleReason(item)) {
@@ -737,12 +785,16 @@ const BulkRequestModal = ({
       show={show}
     >
       <Modal
-        loading={!quota || isLoadingItems}
-        title={intl.formatMessage(
+        loading={
+          !quota || isLoadingItems || (mediaType === 'book' && !bookServices)
+        }
+        title={
           mediaType === 'book'
-            ? messages.requestbibliography
-            : messages.requestdiscography
-        )}
+            ? intl.formatMessage(messages.requestbibliographyFormat, {
+                format: intl.formatMessage(getBookFormatMessage(format)),
+              })
+            : intl.formatMessage(messages.requestdiscography)
+        }
         subTitle={title}
         onCancel={onCancel}
         onOk={summary ? onCancel : submit}
@@ -753,16 +805,22 @@ const BulkRequestModal = ({
               ? intl.formatMessage(globalMessages.requesting)
               : selectedIds.length === 0
                 ? intl.formatMessage(messages.selectitems)
-                : intl.formatMessage(messages.requestitems, {
-                    count: selectedIds.length,
-                  })
+                : mediaType === 'book'
+                  ? intl.formatMessage(messages.requestitemsFormat, {
+                      count: selectedIds.length,
+                      format: intl.formatMessage(getBookFormatMessage(format)),
+                    })
+                  : intl.formatMessage(messages.requestitems, {
+                      count: selectedIds.length,
+                    })
         }
         okDisabled={
           !summary &&
           (isLoadingItems ||
             isUpdating ||
             selectedIds.length === 0 ||
-            selectedExceedsQuota)
+            selectedExceedsQuota ||
+            !!formatWarning)
         }
         dialogClass="sm:max-w-5xl"
       >
@@ -842,28 +900,14 @@ const BulkRequestModal = ({
                 }
               />
             )}
-            <div className="mt-6 flex flex-wrap items-end gap-4">
+            <div className="mt-6">
               {mediaType === 'book' ? (
-                <label className="w-48">
-                  <span>{intl.formatMessage(messages.format)}</span>
-                  <select
-                    className="mt-1 border-gray-700 bg-gray-800"
-                    value={format}
-                    onChange={(e) =>
-                      setFormat(e.target.value as BulkBookFormat)
-                    }
-                  >
-                    <option value="ebook">
-                      {intl.formatMessage(messages.ebook)}
-                    </option>
-                    <option value="audiobook">
-                      {intl.formatMessage(messages.audiobook)}
-                    </option>
-                    <option value="both">
-                      {intl.formatMessage(messages.both)}
-                    </option>
-                  </select>
-                </label>
+                <BookFormatSelector
+                  value={format}
+                  available={formatAvailable}
+                  onChange={setFormat}
+                  className="mt-0"
+                />
               ) : (
                 <label className="w-48">
                   <span>{intl.formatMessage(messages.releasetype)}</span>
@@ -880,10 +924,20 @@ const BulkRequestModal = ({
                   </select>
                 </label>
               )}
-              <Button buttonType="ghost" onClick={toggleAll}>
-                {intl.formatMessage(messages.selectitems)}
-              </Button>
+              <div className="mt-4 flex flex-wrap items-center gap-4">
+                <Button buttonType="ghost" onClick={toggleAll}>
+                  {intl.formatMessage(messages.selectitems)}
+                </Button>
+              </div>
             </div>
+            {formatWarning && (
+              <div className="mt-4">
+                <Alert
+                  title={intl.formatMessage(formatWarning)}
+                  type="warning"
+                />
+              </div>
+            )}
             {sourceUrl && (
               <div className="mt-4 text-sm text-gray-300">
                 <a

@@ -132,9 +132,7 @@ const Layout = ({ children }: LayoutProps) => {
   return (
     <div className="app-shell flex h-full min-h-full min-w-0">
       <div className="pwa-only fixed inset-0 z-20 h-1 w-full border-gray-700 md:border-t" />
-      <div className="app-backdrop absolute top-0 h-64 w-full">
-        <div className="app-backdrop-fade relative inset-0 h-full w-full" />
-      </div>
+      <div className="app-backdrop pointer-events-none fixed inset-0 h-full w-full" />
       <Sidebar
         open={isSidebarOpen}
         setClosed={() => setSidebarOpen(false)}

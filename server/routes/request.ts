@@ -7,7 +7,7 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
-import { getRepository } from '@server/datasource';
+import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -24,6 +24,7 @@ import {
   hasMediaRequestPermission,
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
+import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
 import type {
@@ -35,6 +36,8 @@ import type {
   RequestStatusResultsResponse,
   RequestStatusUsersResponse,
 } from '@server/interfaces/api/requestInterfaces';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
+import { hasAvailableBookFormat } from '@server/lib/bookAvailability';
 import {
   isValidMusicBrainzResourceId,
   isValidOpenLibraryResourceId,
@@ -49,6 +52,7 @@ import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
 import requestDispatchManager from '@server/lib/requestDispatch';
 import {
+  REQUEST_STATUS_TERMINAL_STAGES,
   RequestStatusStage,
   getRequestStatusHistory,
   getRequestStatusPage,
@@ -58,6 +62,9 @@ import {
   REQUEST_STATUS_SORT_FIELDS,
   parseRequestStatusSort,
 } from '@server/lib/requestStatusSort';
+import requestWorkCleanupManager, {
+  RequestWorkCleanupError,
+} from '@server/lib/requestWorkCleanup';
 import { runWithCurrentServarrService } from '@server/lib/serviceAdmission';
 import {
   UserMutationActorUnauthorizedError,
@@ -116,12 +123,95 @@ const requestStatusFilters = [
 ] as const;
 const requestTimelineStatusFilters = [
   'all',
+  'pending',
+  'processing',
+  'deleted',
   'active',
   'attention',
   'completed',
   ...Object.values(RequestStatusStage),
 ] as const;
 const requestStatusBookFormatFilters = ['ebook', 'audiobook'] as const;
+const requestStatusTimeFrames = [
+  '7d',
+  '14d',
+  '30d',
+  // Keep accepting the original API value as a compatibility alias.
+  '1m',
+  '6m',
+  'all',
+] as const;
+
+const canRemoveRequestFromService = (
+  request: Pick<MediaRequest, 'type' | 'is4k' | 'bookFormat' | 'media'>,
+  settings: ReturnType<typeof getExternalRuntimeConfig>
+): boolean => {
+  const media = request.media;
+  if (!media) return false;
+
+  switch (request.type) {
+    case MediaType.MOVIE:
+      return settings.radarr.some(
+        (server) =>
+          server.id === (request.is4k ? media.serviceId4k : media.serviceId)
+      );
+    case MediaType.TV:
+      return settings.sonarr.some(
+        (server) =>
+          server.id === (request.is4k ? media.serviceId4k : media.serviceId)
+      );
+    case MediaType.MUSIC:
+      return settings.lidarr.some((server) => server.id === media.serviceId);
+    case MediaType.BOOK: {
+      const hasEbookLink =
+        media.serviceId !== null &&
+        media.serviceId !== undefined &&
+        media.externalServiceId !== null &&
+        media.externalServiceId !== undefined;
+      const hasAudiobookLink =
+        media.audiobookServiceId !== null &&
+        media.audiobookServiceId !== undefined &&
+        media.audiobookExternalServiceId !== null &&
+        media.audiobookExternalServiceId !== undefined;
+      const canRemoveEbook =
+        hasEbookLink &&
+        settings.readarr.some((server) => server.id === media.serviceId);
+      const canRemoveAudiobook =
+        hasAudiobookLink &&
+        settings.readarr.some(
+          (server) => server.id === media.audiobookServiceId
+        );
+
+      return request.bookFormat === 'audiobook'
+        ? canRemoveAudiobook
+        : request.bookFormat === 'both'
+          ? (hasEbookLink || hasAudiobookLink) &&
+            (!hasEbookLink || canRemoveEbook) &&
+            (!hasAudiobookLink || canRemoveAudiobook)
+          : canRemoveEbook;
+    }
+    default:
+      return false;
+  }
+};
+
+const getRequestStatusStartDate = (
+  timeFrame: (typeof requestStatusTimeFrames)[number] | undefined
+): Date | undefined => {
+  const days =
+    timeFrame === '7d'
+      ? 7
+      : timeFrame === '14d'
+        ? 14
+        : timeFrame === '30d' || timeFrame === '1m'
+          ? 30
+          : timeFrame === '6m'
+            ? 180
+            : 0;
+  return days > 0
+    ? new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    : undefined;
+};
 
 const getExpectedCredentialVersion = (
   req: Pick<Request, 'session' | 'user'>
@@ -423,6 +513,124 @@ const parseOptionalRequestSeasons = (
   return { value: seasons };
 };
 
+const parseOptionalSeasonRequests = (
+  value: unknown
+): RequestOptionValidationResult<SeasonEpisodeSelection[] | undefined> => {
+  if (value === undefined || value === null) {
+    return { value: undefined };
+  }
+  if (!Array.isArray(value)) {
+    return {
+      error: { status: 400, message: 'seasonRequests must be an array.' },
+    };
+  }
+  if (value.length > maxSeasonCount) {
+    return {
+      error: {
+        status: 400,
+        message: `seasonRequests are limited to ${maxSeasonCount} seasons.`,
+      },
+    };
+  }
+
+  const selections: SeasonEpisodeSelection[] = [];
+  let totalEpisodeCount = 0;
+  for (const valueSelection of value) {
+    if (
+      !valueSelection ||
+      typeof valueSelection !== 'object' ||
+      Array.isArray(valueSelection)
+    ) {
+      return {
+        error: {
+          status: 400,
+          message: 'seasonRequests must contain selection objects.',
+        },
+      };
+    }
+    const selection = valueSelection as Record<string, unknown>;
+    const seasonNumber = parseOptionalNonNegativeInteger(
+      selection.seasonNumber,
+      maxSeasonNumber
+    );
+    if (seasonNumber === undefined) {
+      return {
+        error: {
+          status: 400,
+          message: `seasonRequests must contain season numbers no greater than ${maxSeasonNumber}.`,
+        },
+      };
+    }
+    if (selections.some((item) => item.seasonNumber === seasonNumber)) {
+      return {
+        error: {
+          status: 400,
+          message: 'seasonRequests must not contain duplicate seasons.',
+        },
+      };
+    }
+
+    let episodeNumbers: number[] | undefined;
+    if (selection.episodeNumbers !== undefined) {
+      if (!Array.isArray(selection.episodeNumbers)) {
+        return {
+          error: {
+            status: 400,
+            message: 'episodeNumbers must be an array of positive integers.',
+          },
+        };
+      }
+      episodeNumbers = [];
+      for (const episode of selection.episodeNumbers) {
+        const parsedEpisode = parseOptionalNonNegativeInteger(
+          episode,
+          maxSeasonNumber
+        );
+        if (parsedEpisode === undefined || parsedEpisode < 1) {
+          return {
+            error: {
+              status: 400,
+              message:
+                'episodeNumbers must contain positive integers no greater than 10000.',
+            },
+          };
+        }
+        if (!episodeNumbers.includes(parsedEpisode)) {
+          episodeNumbers.push(parsedEpisode);
+        }
+      }
+      if (episodeNumbers.length === 0) {
+        return {
+          error: {
+            status: 400,
+            message: 'A partial season request must include an episode.',
+          },
+        };
+      }
+      totalEpisodeCount += episodeNumbers.length;
+      if (totalEpisodeCount > 5_000) {
+        return {
+          error: {
+            status: 400,
+            message: 'seasonRequests are limited to 5000 selected episodes.',
+          },
+        };
+      }
+    }
+
+    selections.push({
+      seasonNumber,
+      ...(episodeNumbers
+        ? { episodeNumbers: episodeNumbers.sort((a, b) => a - b) }
+        : {}),
+    });
+  }
+
+  return {
+    value: selections.sort((a, b) => a.seasonNumber - b.seasonNumber),
+  };
+};
+
 const sanitizeMediaRequestBody = (
   body: unknown,
   options: { requireCreateIdentity?: boolean } = {}
@@ -633,9 +841,14 @@ const sanitizeMediaRequestBody = (
   if ('error' in seasons) {
     return seasons;
   }
+  const seasonRequests = parseOptionalSeasonRequests(bodyObject.seasonRequests);
+  if ('error' in seasonRequests) {
+    return seasonRequests;
+  }
   if (
     options.requireCreateIdentity &&
     mediaType === MediaType.TV &&
+    (!seasonRequests.value || seasonRequests.value.length === 0) &&
     (seasons.value === undefined ||
       (Array.isArray(seasons.value) && seasons.value.length === 0))
   ) {
@@ -659,7 +872,10 @@ const sanitizeMediaRequestBody = (
     format: format.value,
     userId: userId.value,
     tags: tags.value,
-    seasons: seasons.value,
+    seasons:
+      seasonRequests.value?.map((selection) => selection.seasonNumber) ??
+      seasons.value,
+    seasonRequests: seasonRequests.value,
   } as MediaRequestBody;
 
   return {
@@ -946,18 +1162,6 @@ const validateExternalServiceConfiguration = (
   }
 };
 
-const hasBookFormat = (
-  media: Media,
-  format: 'ebook' | 'audiobook'
-): boolean => {
-  const serviceId =
-    format === 'audiobook'
-      ? media.audiobookExternalServiceId
-      : media.externalServiceId;
-
-  return serviceId !== null && serviceId !== undefined;
-};
-
 const inactiveMediaRequestStatuses = [
   MediaRequestStatus.DECLINED,
   MediaRequestStatus.FAILED,
@@ -1040,8 +1244,8 @@ const getBulkCoveredReason = async (
   }
 
   const requestedFormat = format ?? 'ebook';
-  const ebookAvailable = hasBookFormat(media, 'ebook');
-  const audiobookAvailable = hasBookFormat(media, 'audiobook');
+  const ebookAvailable = hasAvailableBookFormat(media, 'ebook');
+  const audiobookAvailable = hasAvailableBookFormat(media, 'audiobook');
 
   if (requestedFormat === 'ebook' && ebookAvailable) {
     return 'This ebook is already available.';
@@ -1051,8 +1255,8 @@ const getBulkCoveredReason = async (
     return 'This audiobook is already available.';
   }
 
-  if (requestedFormat === 'both' && (ebookAvailable || audiobookAvailable)) {
-    return 'One or more requested book formats are already available.';
+  if (requestedFormat === 'both' && ebookAvailable && audiobookAvailable) {
+    return 'Both requested book formats are already available.';
   }
 
   if (await hasActiveOverlappingBookRequest(media.id, requestedFormat)) {
@@ -2167,7 +2371,7 @@ requestRoutes.get<
 >('/status', async (req, res, next) => {
   try {
     const { pageSize, skip } = parsePageParams(req.query, {
-      take: 25,
+      take: 10,
       maxTake: 100,
     });
     const requestedBy = parseOptionalPositiveInt(req.query.requestedBy);
@@ -2228,6 +2432,21 @@ requestRoutes.get<
     if ('error' in parsedSortDirection) {
       return next({ status: 400, message: parsedSortDirection.error });
     }
+    const parsedTimeFrame = parseOptionalAllowedString(req.query.timeFrame, {
+      fieldName: 'Time frame',
+      allowedValues: requestStatusTimeFrames,
+      maxLength: 8,
+    });
+    if ('error' in parsedTimeFrame) {
+      return next({ status: 400, message: parsedTimeFrame.error });
+    }
+    const parsedSearch = parseOptionalBoundedString(req.query.search, {
+      fieldName: 'Search',
+      maxLength: 200,
+    });
+    if ('error' in parsedSearch) {
+      return next({ status: 400, message: parsedSearch.error });
+    }
     const { field: sort, direction: sortDirection } = parseRequestStatusSort(
       parsedSort.value,
       parsedSortDirection.value
@@ -2243,12 +2462,18 @@ requestRoutes.get<
           [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
           { type: 'or' }
         );
+        const canManageRequests = actor.hasPermission(
+          Permission.MANAGE_REQUESTS
+        );
+        const settings = getExternalRuntimeConfig();
         const page = await getRequestStatusPage({
           take: pageSize,
           skip,
           ownerId: canViewAllRequests ? (requestedBy ?? undefined) : actor.id,
           mediaType: mediaType === 'all' ? undefined : (mediaType as MediaType),
           bookFormat: parsedBookFormat.value,
+          search: parsedSearch.value,
+          since: getRequestStatusStartDate(parsedTimeFrame.value ?? 'all'),
           filter: parsedFilter.value,
           sort,
           sortDirection,
@@ -2259,6 +2484,9 @@ requestRoutes.get<
           results: page.results.map(({ request, status }) => ({
             request: filterEntityResponse(request, actor),
             status: protectRequestStatusDownloadId(status),
+            canRemove:
+              canManageRequests &&
+              canRemoveRequestFromService(request, settings),
           })),
         });
       },
@@ -2666,7 +2894,19 @@ requestRoutes.put<{ requestId: string }>(
                   } else if (request.type === MediaType.TV) {
                     const requestedSeasons =
                       body.seasons === 'all' ? undefined : body.seasons;
-                    if (!requestedSeasons || requestedSeasons.length === 0) {
+                    const requestedSelections:
+                      | SeasonEpisodeSelection[]
+                      | undefined =
+                      body.seasonRequests?.length &&
+                      body.seasonRequests.length > 0
+                        ? body.seasonRequests
+                        : requestedSeasons?.map((seasonNumber) => ({
+                            seasonNumber,
+                          }));
+                    if (
+                      !requestedSelections ||
+                      requestedSelections.length === 0
+                    ) {
                       return next({
                         status: 400,
                         message:
@@ -2680,46 +2920,66 @@ requestRoutes.put<{ requestId: string }>(
                         mediaType: MediaType.TV,
                       },
                     });
-                    const existingSeasons = new Set(
-                      (
-                        await getRepository(SeasonRequest)
-                          .createQueryBuilder('requestedSeason')
-                          .innerJoin(
-                            'requestedSeason.request',
-                            'existingRequest'
-                          )
-                          .innerJoin('existingRequest.media', 'existingMedia')
-                          .select(
-                            'DISTINCT requestedSeason.seasonNumber',
-                            'seasonNumber'
-                          )
-                          .where('existingMedia.id = :mediaId', {
-                            mediaId: media.id,
-                          })
-                          .andWhere('existingRequest.is4k = :is4k', {
-                            is4k: request.is4k,
-                          })
-                          .andWhere('existingRequest.id != :requestId', {
-                            requestId: request.id,
-                          })
-                          .andWhere(
-                            'existingRequest.status NOT IN (:...inactiveStatuses)',
-                            {
-                              inactiveStatuses: inactiveMediaRequestStatuses,
-                            }
-                          )
-                          .getRawMany<{
-                            seasonNumber: number | string;
-                          }>()
+                    const existingSeasonRequests = await getRepository(
+                      SeasonRequest
+                    )
+                      .createQueryBuilder('requestedSeason')
+                      .innerJoin('requestedSeason.request', 'existingRequest')
+                      .innerJoin('existingRequest.media', 'existingMedia')
+                      .where('existingMedia.id = :mediaId', {
+                        mediaId: media.id,
+                      })
+                      .andWhere('existingRequest.is4k = :is4k', {
+                        is4k: request.is4k,
+                      })
+                      .andWhere('existingRequest.id != :requestId', {
+                        requestId: request.id,
+                      })
+                      .andWhere(
+                        'existingRequest.status NOT IN (:...inactiveStatuses)',
+                        {
+                          inactiveStatuses: inactiveMediaRequestStatuses,
+                        }
                       )
-                        .map(({ seasonNumber }) => Number(seasonNumber))
-                        .filter(Number.isSafeInteger)
+                      .getMany();
+                    const fullyRequestedSeasons = new Set(
+                      existingSeasonRequests
+                        .filter((season) => season.episodeNumbers == null)
+                        .map((season) => season.seasonNumber)
                     );
-                    const filteredSeasons = requestedSeasons.filter(
-                      (seasonNumber) => !existingSeasons.has(seasonNumber)
+                    const existingEpisodes = new Map<number, Set<number>>();
+                    existingSeasonRequests
+                      .filter((season) => season.episodeNumbers != null)
+                      .forEach((season) => {
+                        const episodes =
+                          existingEpisodes.get(season.seasonNumber) ??
+                          new Set<number>();
+                        season.episodeNumbers?.forEach((episode) =>
+                          episodes.add(episode)
+                        );
+                        existingEpisodes.set(season.seasonNumber, episodes);
+                      });
+                    const filteredSelections = requestedSelections.flatMap(
+                      (selection) => {
+                        if (fullyRequestedSeasons.has(selection.seasonNumber)) {
+                          return [];
+                        }
+                        if (!selection.episodeNumbers) {
+                          return [selection];
+                        }
+                        const unavailableEpisodes =
+                          existingEpisodes.get(selection.seasonNumber) ??
+                          new Set<number>();
+                        const episodeNumbers = selection.episodeNumbers.filter(
+                          (episode) => !unavailableEpisodes.has(episode)
+                        );
+                        return episodeNumbers.length > 0
+                          ? [{ ...selection, episodeNumbers }]
+                          : [];
+                      }
                     );
 
-                    if (filteredSeasons.length === 0) {
+                    if (filteredSelections.length === 0) {
                       return next({
                         status: 202,
                         message: 'No seasons available to request',
@@ -2732,7 +2992,7 @@ requestRoutes.put<{ requestId: string }>(
                       : request.seasons.length;
                     if (
                       quotas.tv.limit &&
-                      filteredSeasons.length >
+                      filteredSelections.length >
                         (quotas.tv.remaining ?? 0) + existingAllowance
                     ) {
                       return next({
@@ -2781,17 +3041,28 @@ requestRoutes.put<{ requestId: string }>(
                     const currentSeasonNumbers = new Set(
                       request.seasons.map((season) => season.seasonNumber)
                     );
-                    const newSeasons = filteredSeasons.filter(
-                      (seasonNumber) => !currentSeasonNumbers.has(seasonNumber)
+                    const newSelections = filteredSelections.filter(
+                      (selection) =>
+                        !currentSeasonNumbers.has(selection.seasonNumber)
                     );
                     request.seasons = request.seasons.filter((season) =>
-                      filteredSeasons.includes(season.seasonNumber)
+                      filteredSelections.some(
+                        (selection) =>
+                          selection.seasonNumber === season.seasonNumber
+                      )
                     );
+                    request.seasons.forEach((season) => {
+                      season.episodeNumbers = filteredSelections.find(
+                        (selection) =>
+                          selection.seasonNumber === season.seasonNumber
+                      )?.episodeNumbers;
+                    });
                     request.seasons.push(
-                      ...newSeasons.map(
-                        (seasonNumber) =>
+                      ...newSelections.map(
+                        (selection) =>
                           new SeasonRequest({
-                            seasonNumber,
+                            seasonNumber: selection.seasonNumber,
+                            episodeNumbers: selection.episodeNumbers,
                             status: MediaRequestStatus.PENDING,
                           })
                       )
@@ -2898,6 +3169,98 @@ requestRoutes.delete('/:requestId', async (req, res, next) => {
   }
 });
 
+requestRoutes.delete<{ requestId: string }>(
+  '/:requestId/status',
+  isAuthenticated(),
+  async (req, res, next) => {
+    const requestId = parseRequestParamId(req.params.requestId);
+    if (!requestId) {
+      return next({ status: 404, message: 'Request not found.' });
+    }
+
+    try {
+      const initialRequest = await getRepository(MediaRequest).findOne({
+        where: { id: requestId },
+        relations: { requestedBy: true },
+      });
+      if (!initialRequest) {
+        return next({ status: 404, message: 'Request not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        initialRequest.requestedBy.id,
+        Permission.MANAGE_REQUESTS,
+        (actor) =>
+          runWithRequestAdmission(
+            [getRequestMutationAdmissionKey(requestId)],
+            async () => {
+              const request = await getRepository(MediaRequest).findOneOrFail({
+                where: { id: requestId },
+                relations: { requestedBy: true, modifiedBy: true, media: true },
+              });
+              if (
+                !actor.hasPermission(Permission.MANAGE_REQUESTS) &&
+                request.requestedBy.id !== actor.id
+              ) {
+                return next({
+                  status: 403,
+                  message: 'You do not have permission to delete this entry.',
+                });
+              }
+
+              const currentStatus = await recordRequestStatus(request.id);
+              const active =
+                !!currentStatus &&
+                !REQUEST_STATUS_TERMINAL_STAGES.includes(currentStatus.stage);
+              await requestWorkCleanupManager.cleanup(request, active);
+
+              await dataSource.transaction(async (manager) => {
+                const transactionalRequest = await manager.findOneOrFail(
+                  MediaRequest,
+                  {
+                    where: { id: requestId },
+                    relations: {
+                      requestedBy: true,
+                      modifiedBy: true,
+                      media: true,
+                    },
+                  }
+                );
+                await manager.remove(transactionalRequest);
+                await manager.delete(MediaRequestStatusEvent, { requestId });
+              });
+
+              return res.status(204).send();
+            }
+          ),
+        {
+          expectedCredentialVersion: getExpectedCredentialVersion(req),
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: 'You do not have permission to delete this entry.',
+        });
+      }
+      if (e instanceof RequestWorkCleanupError) {
+        return next({ status: 409, message: e.message });
+      }
+      logger.error('Error deleting request status entry', {
+        label: 'Request Status',
+        requestId,
+        errorMessage: e instanceof Error ? e.message : String(e),
+      });
+      return next({
+        status: 500,
+        message: 'Unable to delete the request status entry.',
+      });
+    }
+  }
+);
+
 requestRoutes.post<{
   requestId: string;
 }>('/:requestId/retry', isAuthenticated(), async (req, res, next) => {
@@ -2942,15 +3305,23 @@ requestRoutes.post<{
             }
 
             const currentStatus = await recordRequestStatus(request.id);
+            if (!currentStatus) {
+              return next({ status: 404, message: 'Request not found.' });
+            }
+            const canRetryAny = actor.hasPermission(Permission.MANAGE_REQUESTS);
+            const alreadyQueued =
+              request.status === MediaRequestStatus.APPROVED &&
+              currentStatus.stage !== RequestStatusStage.UNAVAILABLE &&
+              currentStatus.stage !== RequestStatusStage.FAILED;
             if (
-              !currentStatus ||
-              !currentStatus.retryable ||
-              (currentStatus.stage !== RequestStatusStage.FAILED &&
-                currentStatus.stage !== RequestStatusStage.UNAVAILABLE)
+              currentStatus.stage === RequestStatusStage.REQUESTED ||
+              alreadyQueued ||
+              (!canRetryAny && !currentStatus.retryable)
             ) {
               return next({
                 status: 409,
-                message: 'Only failed or unavailable requests can be retried.',
+                message:
+                  'This request cannot be retried from its current state.',
               });
             }
 
@@ -2962,6 +3333,11 @@ requestRoutes.post<{
               request.is4k
             );
 
+            const active = !REQUEST_STATUS_TERMINAL_STAGES.includes(
+              currentStatus.stage
+            );
+            await requestWorkCleanupManager.cleanup(request, active);
+
             if (request.status === MediaRequestStatus.FAILED) {
               request.status = MediaRequestStatus.APPROVED;
             } else {
@@ -2971,10 +3347,11 @@ requestRoutes.post<{
               await recordRequestStatus(request.id, {
                 resetTerminalOverride: true,
               });
-              await requestDispatchManager.enqueue(request.id);
+              request.status = MediaRequestStatus.APPROVED;
             }
             request.modifiedBy = actor;
             await requestRepository.save(request);
+            await requestDispatchManager.enqueue(request.id);
 
             return res
               .status(200)
@@ -2994,6 +3371,9 @@ requestRoutes.post<{
     }
     if (e instanceof ServiceConfigurationError) {
       return next({ status: 400, message: e.message });
+    }
+    if (e instanceof RequestWorkCleanupError) {
+      return next({ status: 409, message: e.message });
     }
 
     logger.error('Error processing request retry', {

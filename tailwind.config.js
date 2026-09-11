@@ -41,6 +41,9 @@ module.exports = {
       purple: themedScale('purple'),
     },
     extend: {
+      screens: {
+        card: '720px',
+      },
       transitionProperty: {
         'max-height': 'max-height',
         width: 'width',

@@ -44,3 +44,8 @@ the internal-only release-note option in the pull request template or add
 `release-note: none` to the description. Do not use that opt-out to avoid
 describing a feature, bug fix, security change, operational behavior, or
 user-facing documentation change.
+
+For an internal-only commit pushed directly to `main` (including a merge whose
+new diff contains only internal work), add `release-note: none` to the commit
+message. Push validation uses the commit message when no pull-request body is
+available.

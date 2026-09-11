@@ -8,6 +8,13 @@ export type ButtonType =
   | 'danger'
   | 'warning'
   | 'success'
+  | 'blocklist'
+  | 'manage'
+  | 'reportIssue'
+  | 'association'
+  | 'bulkRequest'
+  | 'detailRequest'
+  | 'trailer'
   | 'ghost';
 
 // Helper type to override types (overrides onClick)
@@ -25,6 +32,8 @@ type Element<P extends ElementTypes = 'button'> = P extends 'a'
 type BaseProps<P> = {
   buttonType?: ButtonType;
   buttonSize?: 'default' | 'lg' | 'md' | 'sm';
+  /** Explains a state-based disabled action. Displayed as a native tooltip. */
+  disabledReason?: string;
   // Had to do declare this manually as typescript would assume e was of type any otherwise
   onClick?: (
     e: React.MouseEvent<P extends 'a' ? HTMLAnchorElement : HTMLButtonElement>
@@ -35,32 +44,30 @@ export type ButtonProps<P extends React.ElementType> = {
   as?: P;
 } & MergeElementProps<P, BaseProps<P>>;
 
-const baseButtonStyle =
-  'inline-flex items-center justify-center border leading-5 font-medium rounded-md focus:outline-none transition ease-in-out duration-150 cursor-pointer disabled:opacity-50 whitespace-nowrap';
-
 const buttonTypeStyles: Record<ButtonType, string> = {
-  default:
-    'text-gray-200 bg-gray-800/80 border-gray-600 hover:text-white hover:bg-gray-700 hover:border-gray-600 group-hover:text-white group-hover:bg-gray-700 group-hover:border-gray-600 focus:border-blue-300 focus:ring-blue active:text-gray-200 active:bg-gray-700 active:border-gray-600',
-  primary:
-    'text-white border border-indigo-500 bg-indigo-600/80 hover:bg-indigo-600 hover:border-indigo-500 focus:border-indigo-700 focus:ring-indigo active:bg-indigo-600 active:border-indigo-700',
-  danger:
-    'text-white bg-red-600/80 border-red-500 hover:bg-red-600 hover:border-red-500 focus:border-red-700 focus:ring-red active:bg-red-700 active:border-red-700',
-  warning:
-    'text-white border border-yellow-500 bg-yellow-500/80 hover:bg-yellow-500 hover:border-yellow-400 focus:border-yellow-700 focus:ring-yellow active:bg-yellow-500 active:border-yellow-700',
-  success:
-    'text-white bg-green-500/80 border-green-500 hover:bg-green-500 hover:border-green-400 focus:border-green-700 focus:ring-green active:bg-green-500 active:border-green-700',
-  ghost:
-    'text-white bg-transparent border-gray-600 hover:border-gray-200 focus:border-gray-100 active:border-gray-100',
+  default: 'app-button-default',
+  primary: 'app-button-primary',
+  danger: 'app-button-danger',
+  warning: 'app-button-warning',
+  success: 'app-button-success',
+  blocklist: 'app-button-blocklist',
+  manage: 'app-button-manage',
+  reportIssue: 'app-button-report-issue',
+  association: 'app-button-association',
+  bulkRequest: 'app-button-bulk-request',
+  detailRequest: 'app-button-detail-request',
+  trailer: 'app-button-trailer',
+  ghost: 'app-button-ghost',
 };
 
 const buttonSizeStyles: Record<
   NonNullable<BaseProps<unknown>['buttonSize']>,
   string
 > = {
-  default: 'px-4 py-2 text-sm button-md',
-  md: 'px-4 py-2 text-sm button-md',
-  sm: 'px-2.5 py-1.5 text-xs button-sm',
-  lg: 'px-6 py-3 text-base button-lg',
+  default: 'button-md',
+  md: 'button-md',
+  sm: 'button-sm',
+  lg: 'button-lg',
 };
 
 function Button<P extends ElementTypes = 'button'>(
@@ -70,12 +77,13 @@ function Button<P extends ElementTypes = 'button'>(
     as,
     children,
     className,
+    disabledReason,
     ...props
   }: ButtonProps<P>,
   ref?: React.Ref<Element<P>>
 ): JSX.Element {
   const buttonStyle = twMerge(
-    baseButtonStyle,
+    'app-button',
     buttonTypeStyles[buttonType],
     buttonSizeStyles[buttonSize],
     className
@@ -92,10 +100,16 @@ function Button<P extends ElementTypes = 'button'>(
       </a>
     );
   } else {
+    const buttonProps = props as React.ComponentProps<'button'>;
+    const disabledTitle = buttonProps.disabled
+      ? (disabledReason ?? 'This action is unavailable in the current state.')
+      : buttonProps.title;
+
     return (
       <button
         className={buttonStyle}
-        {...(props as React.ComponentProps<'button'>)}
+        {...buttonProps}
+        title={disabledTitle}
         ref={ref as ForwardedRef<HTMLButtonElement>}
       >
         <span className="flex max-w-full items-center">{children}</span>

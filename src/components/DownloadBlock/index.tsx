@@ -1,4 +1,7 @@
 import Badge from '@app/components/Common/Badge';
+import BookFormatBadge, {
+  type RequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
 import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
@@ -13,28 +16,40 @@ interface DownloadBlockProps {
   downloadItem: DownloadingItem;
   is4k?: boolean;
   title?: string;
+  bookFormat?: RequestedBookFormat;
 }
 
 const DownloadBlock = ({
   downloadItem,
   is4k = false,
   title,
+  bookFormat,
 }: DownloadBlockProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
+  const displayTitle = hasPermission(Permission.ADMIN)
+    ? downloadItem.title
+    : downloadItem.episode
+      ? intl.formatMessage(messages.formattedTitle, {
+          title,
+          seasonNumber: downloadItem?.episode?.seasonNumber,
+          episodeNumber: downloadItem?.episode?.episodeNumber,
+        })
+      : title;
 
   return (
     <div className="p-4">
-      <div className="mb-2 w-56 truncate text-sm sm:w-80 md:w-full">
-        {hasPermission(Permission.ADMIN)
-          ? downloadItem.title
-          : downloadItem.episode
-            ? intl.formatMessage(messages.formattedTitle, {
-                title,
-                seasonNumber: downloadItem?.episode?.seasonNumber,
-                episodeNumber: downloadItem?.episode?.episodeNumber,
-              })
-            : title}
+      <div className="mb-2 flex min-w-0 items-center text-sm">
+        {bookFormat && (
+          <BookFormatBadge
+            format={bookFormat}
+            variant="compact"
+            className="mr-2 shrink-0"
+          />
+        )}
+        <span className="w-56 min-w-0 truncate sm:w-80 md:w-full">
+          {displayTitle}
+        </span>
       </div>
       <div className="relative mb-2 h-6 min-w-0 overflow-hidden rounded-full bg-gray-700">
         <div

@@ -37,6 +37,18 @@ export interface SystemStatus {
   packageUpdateMechanism: string;
 }
 
+export interface ServarrCommand {
+  id: number;
+  name: string;
+  status: string;
+  result?: string;
+  message?: string;
+  exception?: string;
+  queued?: string;
+  started?: string;
+  ended?: string;
+}
+
 export interface RootFolder {
   id: number;
   path: string;
@@ -76,6 +88,18 @@ export interface QueueItem {
   statusMessages?: QueueStatusMessage[];
 }
 
+export interface ServarrHistoryItem {
+  id: number;
+  movieId?: number;
+  seriesId?: number;
+  episodeId?: number;
+  albumId?: number;
+  bookId?: number;
+  eventType?: string | number;
+  date?: string;
+  downloadId?: string;
+}
+
 export interface Tag {
   id: number;
   label: string;
@@ -102,6 +126,35 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const boundedText = (value: unknown): string =>
   typeof value === 'string' ? value.slice(0, MAX_SERVARR_TEXT_LENGTH) : '';
+
+export const sanitizeServarrCommand = (value: unknown): ServarrCommand => {
+  if (!isRecord(value) || !Number.isSafeInteger(value.id)) {
+    throw new Error('Servarr returned an invalid command');
+  }
+
+  const name = boundedText(value.name);
+  const status = boundedText(value.status).toLowerCase();
+  if (!name || !status) {
+    throw new Error('Servarr returned an invalid command');
+  }
+
+  const optionalText = (field: string): string | undefined => {
+    const result = boundedText(value[field]);
+    return result || undefined;
+  };
+
+  return {
+    id: value.id as number,
+    name,
+    status,
+    result: optionalText('result')?.toLowerCase(),
+    message: optionalText('message'),
+    exception: optionalText('exception'),
+    queued: optionalText('queued'),
+    started: optionalText('started'),
+    ended: optionalText('ended'),
+  };
+};
 
 export const sanitizeServarrSystemStatus = (
   value: unknown
@@ -214,6 +267,44 @@ export const sanitizeServarrQueue = <T>(value: unknown): T[] =>
       }
       return [normalized as T];
     });
+
+export const sanitizeServarrHistory = (
+  value: unknown,
+  maximum = MAX_SERVARR_LOOKUP_RESULTS
+): ServarrHistoryItem[] =>
+  sanitizeServarrRecordArray<Record<string, unknown>>(value, maximum).flatMap(
+    (item) => {
+      if (!Number.isSafeInteger(item.id)) {
+        return [];
+      }
+
+      const historyItem: ServarrHistoryItem = { id: item.id as number };
+      for (const field of [
+        'movieId',
+        'seriesId',
+        'episodeId',
+        'albumId',
+        'bookId',
+      ] as const) {
+        if (Number.isSafeInteger(item[field])) {
+          historyItem[field] = item[field] as number;
+        }
+      }
+      if (
+        typeof item.eventType === 'string' ||
+        typeof item.eventType === 'number'
+      ) {
+        historyItem.eventType = item.eventType;
+      }
+      if (typeof item.date === 'string') {
+        historyItem.date = boundedText(item.date);
+      }
+      if (typeof item.downloadId === 'string') {
+        historyItem.downloadId = boundedText(item.downloadId);
+      }
+      return [historyItem];
+    }
+  );
 
 const EXTERNAL_READ_ONLY =
   process.env.SEERR_EXTERNAL_READ_ONLY?.toLowerCase() === 'true' ||
@@ -372,7 +463,7 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     }
   }
 
-  public getQueue = async (): Promise<(QueueItem & QueueItemAppendT)[]> => {
+  public async getQueue(): Promise<(QueueItem & QueueItemAppendT)[]> {
     try {
       const response = await this.request<QueueResponse<QueueItemAppendT>>(
         'GET',
@@ -394,9 +485,33 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
         { cause: e }
       );
     }
-  };
+  }
 
-  public deleteQueueItem = async (
+  public async getHistory(pageSize = 250): Promise<ServarrHistoryItem[]> {
+    try {
+      const boundedPageSize = Math.min(Math.max(pageSize, 1), 1_000);
+      const response = await this.request<{ records?: unknown[] }>(
+        'GET',
+        '/history',
+        undefined,
+        this.getRequestConfig({
+          page: 1,
+          pageSize: boundedPageSize,
+          sortKey: 'date',
+          sortDirection: 'descending',
+        })
+      );
+
+      return sanitizeServarrHistory(response.data?.records, boundedPageSize);
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve history: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async deleteQueueItem(
     queueId: number,
     options: {
       removeFromClient?: boolean;
@@ -404,7 +519,7 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
       skipRedownload?: boolean;
       changeCategory?: boolean;
     } = {}
-  ): Promise<void> => {
+  ): Promise<void> {
     try {
       await this.request('DELETE', `/queue/${queueId}`, undefined, {
         ...this.getRequestConfig({
@@ -420,7 +535,7 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
         { cause: e }
       );
     }
-  };
+  }
 
   public getTags = async (): Promise<Tag[]> => {
     try {
@@ -499,12 +614,28 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     await this.runCommand('RefreshMonitoredDownloads', {});
   }
 
+  public async getCommand(commandId: number): Promise<ServarrCommand> {
+    try {
+      const response = await this.request<unknown>(
+        'GET',
+        `/command/${commandId}`,
+        undefined,
+        this.getRequestConfig()
+      );
+      return sanitizeServarrCommand(response.data);
+    } catch (e) {
+      throw new Error(`[${this.apiName}] Failed to get command: ${e.message}`, {
+        cause: e,
+      });
+    }
+  }
+
   protected async runCommand(
     commandName: string,
     options: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<ServarrCommand> {
     try {
-      await this.request(
+      const response = await this.request<unknown>(
         'POST',
         `/command`,
         {
@@ -513,6 +644,7 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
         },
         this.getRequestConfig()
       );
+      return sanitizeServarrCommand(response.data);
     } catch (e) {
       throw new Error(`[${this.apiName}] Failed to run command: ${e.message}`, {
         cause: e,

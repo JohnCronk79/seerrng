@@ -40,7 +40,7 @@ interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
   tmdbId: number;
   is4k?: boolean;
   onCancel?: () => void;
-  onComplete?: (newStatus: MediaStatus) => void;
+  onComplete?: (newStatus: MediaStatus, is4k?: boolean) => void;
   onUpdating?: (isUpdating: boolean) => void;
 }
 
@@ -79,7 +79,11 @@ const CollectionRequestModal = ({
 
   const getAllParts = (): number[] => {
     return (data?.parts ?? [])
-      .filter((part) => part.mediaInfo?.status !== MediaStatus.BLOCKLISTED)
+      .filter(
+        (part) =>
+          part.mediaInfo?.[is4k ? 'status4k' : 'status'] !==
+          MediaStatus.BLOCKLISTED
+      )
       .map((part) => part.id);
   };
 
@@ -242,12 +246,17 @@ const CollectionRequestModal = ({
         );
         succeededIds.forEach((id) => coveredIds.add(id));
         const requestableCollectionIds = (data?.parts ?? [])
-          .filter((part) => part.mediaInfo?.status !== MediaStatus.BLOCKLISTED)
+          .filter(
+            (part) =>
+              part.mediaInfo?.[is4k ? 'status4k' : 'status'] !==
+              MediaStatus.BLOCKLISTED
+          )
           .map((part) => part.id);
         onComplete(
           requestableCollectionIds.every((id) => coveredIds.has(id))
             ? MediaStatus.UNKNOWN
-            : MediaStatus.PARTIALLY_AVAILABLE
+            : MediaStatus.PARTIALLY_AVAILABLE,
+          is4k
         );
       }
 

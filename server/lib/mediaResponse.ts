@@ -18,6 +18,7 @@ const projectPublicMediaRequest = (request: MediaRequest): MediaRequest =>
       (season) =>
         ({
           seasonNumber: season.seasonNumber,
+          episodeNumbers: season.episodeNumbers,
         }) as SeasonRequest
     ),
     is4k: request.is4k,

@@ -102,3 +102,33 @@ export const hasPermission = (
 
   return !!(bigValue & BigInt(Permission.ADMIN)) || !!(bigValue & bigTotal);
 };
+
+export type RequestApprovalMediaType = 'movie' | 'tv' | 'music' | 'book';
+
+export const hasAutoApprovePermission = (
+  permissions: number,
+  mediaType: RequestApprovalMediaType,
+  is4k = false
+): boolean => {
+  const mediaPermission =
+    mediaType === 'movie'
+      ? is4k
+        ? Permission.AUTO_APPROVE_4K_MOVIE
+        : Permission.AUTO_APPROVE_MOVIE
+      : mediaType === 'tv'
+        ? is4k
+          ? Permission.AUTO_APPROVE_4K_TV
+          : Permission.AUTO_APPROVE_TV
+        : mediaType === 'music'
+          ? Permission.AUTO_APPROVE_MUSIC
+          : Permission.AUTO_APPROVE_BOOK;
+  const generalPermission = is4k
+    ? Permission.AUTO_APPROVE_4K
+    : Permission.AUTO_APPROVE;
+
+  return hasPermission(
+    [Permission.MANAGE_REQUESTS, generalPermission, mediaPermission],
+    permissions,
+    { type: 'or' }
+  );
+};

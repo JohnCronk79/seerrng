@@ -205,42 +205,33 @@ const ExternalMediaManageSlideOver = ({
               <SelectableDownloadList
                 items={[
                   ...downloads.map((status, index) => {
-                    const downloadTitle =
-                      mediaType === MediaType.BOOK
-                        ? `${data.title} (${intl.formatMessage(messages.ebook)})`
-                        : status.title;
-
                     return {
                       id: `standard-${status.downloadId ?? status.externalId ?? index}`,
                       content: (
                         <DownloadBlock
                           downloadItem={{
                             ...status,
-                            title: downloadTitle,
+                            title: status.title,
                           }}
-                          title={
-                            mediaType === MediaType.BOOK
-                              ? downloadTitle
-                              : data.title
+                          title={data.title}
+                          bookFormat={
+                            mediaType === MediaType.BOOK ? 'ebook' : undefined
                           }
                         />
                       ),
                     };
                   }),
                   ...audiobookDownloads.map((status, index) => {
-                    const downloadTitle = `${data.title} (${intl.formatMessage(
-                      messages.audiobook
-                    )})`;
-
                     return {
                       id: `audiobook-${status.downloadId ?? status.externalId ?? index}`,
                       content: (
                         <DownloadBlock
                           downloadItem={{
                             ...status,
-                            title: downloadTitle,
+                            title: status.title,
                           }}
-                          title={downloadTitle}
+                          title={data.title}
+                          bookFormat="audiobook"
                         />
                       ),
                     };

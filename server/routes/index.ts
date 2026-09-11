@@ -24,7 +24,7 @@ import { mapProductionCompany } from '@server/models/Movie';
 import { mapNetwork } from '@server/models/Tv';
 import { mapWatchProviderDetails } from '@server/models/common';
 import overrideRuleRoutes from '@server/routes/overrideRule';
-import settingsRoutes from '@server/routes/settings';
+import settingsRoutes, { parseTlsSettingsBody } from '@server/routes/settings';
 import watchlistRoutes from '@server/routes/watchlist';
 import {
   appDataPath,
@@ -35,6 +35,11 @@ import { getAppVersion, getCommitTag } from '@server/utils/appVersion';
 import restartFlag from '@server/utils/restartFlag';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import { getRateLimitKey } from '@server/utils/security';
+import {
+  getTlsCaCertificate,
+  getTlsConfigurationStatus,
+  getTlsRuntimeInfo,
+} from '@server/utils/tls';
 import { isPerson } from '@server/utils/typeHelpers';
 import {
   parseBoundedString,
@@ -150,6 +155,89 @@ router.get('/status/ready', publicStatusRateLimit, async (_req, res) => {
   } catch {
     return res.status(503).send();
   }
+});
+
+router.get('/status/tls', publicStatusRateLimit, (_req, res) => {
+  const settings = getSettings();
+  const configured = getTlsConfigurationStatus(settings.network.tls);
+  return res
+    .set('Cache-Control', 'no-store')
+    .status(200)
+    .json({
+      ...getTlsRuntimeInfo(),
+      configuredMode: configured.mode,
+      configuredHttpsPort: configured.httpsPort,
+      configuredHttpAuthAllowed: configured.httpAuthAllowed,
+      configuredRedirectsHttpToHttps: configured.redirectsHttpToHttps,
+      environmentOverrides: configured.environmentOverrides,
+      pendingRestart: restartFlag.isSet(),
+      setupRequired: !settings.public.initialized,
+    });
+});
+
+router.post(
+  '/status/tls/bootstrap',
+  publicStatusRateLimit,
+  async (req, res) => {
+    const settings = getSettings();
+    const hasUsers = (await getRepository(User).count()) > 0;
+    if (
+      settings.public.initialized ||
+      (hasUsers && !req.user?.hasPermission(Permission.ADMIN))
+    ) {
+      return res.status(403).json({
+        message:
+          'Transport bootstrap is only available before setup is complete or to an authenticated administrator.',
+      });
+    }
+    const configured = getTlsConfigurationStatus(settings.network.tls);
+    if (configured.environmentOverrides.length > 0) {
+      return res.status(409).json({
+        message: `Transport is controlled by environment variables: ${configured.environmentOverrides.join(', ')}.`,
+      });
+    }
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res
+        .status(400)
+        .json({ message: 'Request body must be an object.' });
+    }
+
+    const parsed = parseTlsSettingsBody(
+      { tls: req.body },
+      settings.network.tls
+    );
+    if ('error' in parsed) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const tls = {
+      ...settings.network.tls,
+      ...(parsed.value.tls as Partial<typeof settings.network.tls>),
+    };
+    const network = await settings.persistSection('network', (current) => ({
+      ...current,
+      tls,
+    }));
+
+    return res.status(200).json({
+      mode: network.tls.mode,
+      pendingRestart: restartFlag.isSet(),
+    });
+  }
+);
+
+router.get('/status/tls/ca', publicStatusRateLimit, (_req, res) => {
+  const caCertificate = getTlsCaCertificate();
+  if (!caCertificate) {
+    return res.status(404).send();
+  }
+
+  res.set({
+    'Cache-Control': 'no-store',
+    'Content-Disposition': 'attachment; filename="seerrng-local-ca.crt"',
+    'Content-Type': 'application/x-pem-file',
+  });
+  return res.status(200).send(caCertificate);
 });
 
 router.get<Record<string, never>, StatusResponse>(

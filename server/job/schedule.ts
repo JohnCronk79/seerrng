@@ -1,6 +1,7 @@
 import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
 import availabilitySync from '@server/lib/availabilitySync';
+import bookRequestSearchManager from '@server/lib/bookRequestSearch';
 import downloadRecovery from '@server/lib/downloadRecovery';
 import downloadTracker from '@server/lib/downloadtracker';
 import ImageProxy from '@server/lib/imageproxy';
@@ -400,6 +401,7 @@ export const startJobs = (): void => {
         'Download Sync',
         async () => {
           await downloadTracker.updateDownloads();
+          await bookRequestSearchManager.run();
           await reconcileActiveRequests();
         },
         { scope: 'instance' }
@@ -512,6 +514,15 @@ export const startJobs = (): void => {
   void runTrackedJob('Request Status Reconciliation', () =>
     reconcileActiveRequests()
   );
+
+  // Discover the existing music catalogue immediately after startup instead
+  // of leaving ownership badges stale until the overnight Lidarr scan.
+  if (
+    jobs['lidarr-scan'].enabled !== false &&
+    getSettings().lidarr.some((server) => server.syncEnabled)
+  ) {
+    void runTrackedJob('Lidarr Scan', () => lidarrScanner.run());
+  }
 
   logger.info('Scheduled jobs loaded', { label: 'Jobs' });
 };

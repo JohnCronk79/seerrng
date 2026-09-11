@@ -1,9 +1,15 @@
 import type { IssueType } from '@server/constants/issue';
 import type Issue from '@server/entity/Issue';
 import type { PaginatedResponse } from './common';
+import type { SeasonEpisodeSelection } from './seasonInterfaces';
 
 export interface IssueResultsResponse extends PaginatedResponse {
   results: Issue[];
+  counts?: {
+    all: number;
+    open: number;
+    resolved: number;
+  };
   status?: number;
   message?: string;
 }
@@ -14,5 +20,8 @@ export type IssueRequestBody = {
   issueType: IssueType;
   problemSeason?: number;
   problemEpisode?: number;
+  problemEpisodes?: number[];
+  problemEpisodeSelections?: SeasonEpisodeSelection[];
+  is4k?: boolean;
   userId?: number;
 };

@@ -1,8 +1,14 @@
-import RequestList from '@app/components/RequestList';
-import type { NextPage } from 'next';
+import type { GetServerSideProps, NextPage } from 'next';
 
 const RequestsPage: NextPage = () => {
-  return <RequestList />;
+  return null;
 };
+
+export const getServerSideProps: GetServerSideProps = async () => ({
+  redirect: {
+    destination: '/requests/status',
+    permanent: false,
+  },
+});
 
 export default RequestsPage;

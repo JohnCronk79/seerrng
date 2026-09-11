@@ -7,6 +7,7 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import { isRequestedBookFormatAvailable } from '@server/lib/bookAvailability';
 import logger from '@server/logger';
 import type {
   EntityManager,
@@ -76,30 +77,7 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
       return true;
     }
 
-    if (media.status !== MediaStatus.AVAILABLE) {
-      return false;
-    }
-
-    const hasEbook =
-      media.serviceId !== null &&
-      media.serviceId !== undefined &&
-      media.externalServiceId !== null &&
-      media.externalServiceId !== undefined;
-    const hasAudiobook =
-      media.audiobookServiceId !== null &&
-      media.audiobookServiceId !== undefined &&
-      media.audiobookExternalServiceId !== null &&
-      media.audiobookExternalServiceId !== undefined;
-
-    if (request.bookFormat === 'audiobook') {
-      return hasAudiobook;
-    }
-
-    if (request.bookFormat === 'both') {
-      return hasEbook && hasAudiobook;
-    }
-
-    return hasEbook;
+    return isRequestedBookFormatAvailable(media, request.bookFormat ?? 'ebook');
   }
 
   private async updateChildRequestStatus(

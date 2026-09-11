@@ -319,7 +319,7 @@ describe('Discover', () => {
     cy.contains('.slider-header', 'Recent Requests')
       .next('[data-testid=media-slider]')
       .contains('[data-testid=request-card]', 'Failed Card Book')
-      .find('a[href="/book/OLCARDFAILEDW?manage=1"]')
+      .find('a[href="/book/OLCARDFAILEDW?manage=1&format=ebook"]')
       .should('contain', 'Failed');
     cy.contains('.slider-header', 'Recent Requests')
       .next('[data-testid=media-slider]')

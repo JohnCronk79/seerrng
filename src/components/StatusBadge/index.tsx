@@ -1,5 +1,9 @@
 import Spinner from '@app/assets/spinner.svg';
 import Badge from '@app/components/Common/Badge';
+import {
+  getBookFormatMessage,
+  type RequestedBookFormat,
+} from '@app/components/Common/BookFormatBadge';
 import Tooltip from '@app/components/Common/Tooltip';
 import DownloadBlock from '@app/components/DownloadBlock';
 import useSettings from '@app/hooks/useSettings';
@@ -22,6 +26,7 @@ const messages = defineMessages('components.StatusBadge', {
   playonplex: 'Play on {mediaServerName}',
   openinarr: 'Open in {arr}',
   managemedia: 'Manage {mediaType}',
+  manageBookFormat: 'Manage {format}',
   seasonnumber: 'S{seasonNumber}',
   seasonepisodenumber: 'S{seasonNumber}E{episodeNumber}',
 });
@@ -37,8 +42,10 @@ interface StatusBadgeProps {
   mbId?: string;
   externalId?: string;
   mediaType?: 'movie' | 'tv' | 'music' | 'book';
+  bookFormat?: RequestedBookFormat;
   title?: string | string[];
   statusLabelOverride?: string;
+  className?: string;
 }
 
 const StatusBadge = ({
@@ -52,8 +59,10 @@ const StatusBadge = ({
   mbId,
   externalId,
   mediaType,
+  bookFormat,
   title,
   statusLabelOverride,
+  className,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -118,10 +127,14 @@ const StatusBadge = ({
     } else if (mediaType === 'book' && externalId) {
       mediaLink = `/book/${encodeApiPathSegment(
         normalizeOpenLibraryWorkId(externalId)
-      )}?manage=1`;
-      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
-        mediaType: 'Book',
-      });
+      )}?manage=1${bookFormat ? `&format=${bookFormat}` : ''}`;
+      mediaLinkDescription = bookFormat
+        ? intl.formatMessage(messages.manageBookFormat, {
+            format: intl.formatMessage(getBookFormatMessage(bookFormat)),
+          })
+        : intl.formatMessage(messages.managemedia, {
+            mediaType: 'Book',
+          });
     } else if (mediaType && tmdbId) {
       mediaLink = `/${mediaType}/${tmdbId}?manage=1`;
       mediaLinkDescription = intl.formatMessage(messages.managemedia, {
@@ -167,6 +180,7 @@ const StatusBadge = ({
               downloadItem={status}
               title={Array.isArray(title) ? title[index] : title}
               is4k={is4k}
+              bookFormat={mediaType === 'book' ? bookFormat : undefined}
             />
           </li>
         ))}
@@ -205,7 +219,7 @@ const StatusBadge = ({
           <Badge
             badgeType="success"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -270,7 +284,7 @@ const StatusBadge = ({
           <Badge
             badgeType="success"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -335,7 +349,7 @@ const StatusBadge = ({
           <Badge
             badgeType="primary"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -389,7 +403,7 @@ const StatusBadge = ({
     case MediaStatus.PENDING:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="warning" href={mediaLink}>
+          <Badge badgeType="warning" href={mediaLink} className={className}>
             {intl.formatMessage(is4k ? messages.status4k : messages.status, {
               status: intl.formatMessage(globalMessages.pending),
             })}
@@ -400,7 +414,7 @@ const StatusBadge = ({
     case MediaStatus.BLOCKLISTED:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="danger" href={mediaLink}>
+          <Badge badgeType="danger" href={mediaLink} className={className}>
             {intl.formatMessage(is4k ? messages.status4k : messages.status, {
               status:
                 statusLabelOverride ??
@@ -424,7 +438,7 @@ const StatusBadge = ({
           <Badge
             badgeType="danger"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >

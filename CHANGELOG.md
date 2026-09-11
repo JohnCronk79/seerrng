@@ -41,6 +41,119 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+# Changelog
+
+## [3.17.0](https://github.com/snapetech/seerrng/compare/v3.16.0..v3.17.0) - 2026-09-07
+
+### User-facing changes
+
+#### Changed
+
+- **Media Ui:** Request-management panels now identify movie, series, and album requests alongside their status, including on compact layouts.
+- **Media Ui:** Media cards and request lists now show consistent badges for movies, series, albums, artists, collections, and books so each title’s media type is clear at a glance.
+- **Media Ui:** Movie and series cards now distinguish standard and 4K availability, downloads, and requests, including a clear 4K request affordance when that quality is missing.
+
+#### Fixed
+
+- **Discover:** Returning from movie, series, or book details now preserves the discovery list order and restores your previous scroll position after the results have loaded.
+
+### 🚀 Features
+- *(ui)* Surface movie and series quality state - ([a66dc4e](https://github.com/snapetech/seerrng/commit/a66dc4ea5968f479ace2c519b059decc44711772))
+- *(ui)* Identify media in request panels - ([3d63c1c](https://github.com/snapetech/seerrng/commit/3d63c1c8ee8508b00eeb4a585b441cf934f443fa))
+- *(ui)* Standardize media type badges - ([86bcb32](https://github.com/snapetech/seerrng/commit/86bcb327e081c1c4d78cbe1876aad35e9d70ad69))
+
+### 🐛 Bug Fixes
+- *(discover)* Harden persisted back-navigation state - ([f01052f](https://github.com/snapetech/seerrng/commit/f01052f4ef3587f47ec0d9107c92ad8147530cf5))
+- *(discover)* Restore list order and scroll on back navigation - ([d925405](https://github.com/snapetech/seerrng/commit/d92540590ae0a7a1d25841e0dd11b248ce3fe5b3))
+
+### 🎨 Styling
+- *(ci)* Format release workflow assertion - ([d0f0f0c](https://github.com/snapetech/seerrng/commit/d0f0f0ce79ab62341ac3caadf4348d2df20c223c))
+
+### 🧪 Testing
+- *(cypress)* Align book assertions with format-aware controls - ([ac80cfe](https://github.com/snapetech/seerrng/commit/ac80cfebe9a8f9168b2ee56c6b3306abd13d8019))
+
+### ⚙️ Miscellaneous Tasks
+- *(ci)* Honor internal release-note markers on pushes - ([6817587](https://github.com/snapetech/seerrng/commit/6817587157be11e7f544399f53213928ada12ee8))
+
+## [3.16.0](https://github.com/snapetech/seerrng/compare/v3.15.0..v3.16.0) - 2026-09-07
+
+### User-facing changes
+
+#### Added
+
+- **Search:** Search results can now be filtered into movies, series, books, audiobooks, and music, with type-aware sorting, title visibility controls, loading feedback, and clear empty states. Book formats route to the matching Bookshelf service.
+- **Bookshelf:** Book detail pages now preserve the selected format, label request and view actions accordingly, and show whether ebook and audiobook coverage is available or already requested.
+- **Bookshelf:** Book cards, search results, and request dialogs now identify ebook, audiobook, and combined format choices. Request actions use the selected format, and formats without a configured service are clearly unavailable.
+
+#### Changed
+
+- **Request Status:** Request Status now uses compact media cards with clearer lifecycle progress, download details, status history, user context, and optional request-date filtering.
+- **Bookshelf:** Ebook, audiobook, and combined requests now keep their format context across book details, request lists, and Request Status, with clearer coverage indicators and format-aware links and actions.
+- **Bookshelf:** Bulk bibliography requests now use the same explicit Ebook, Audiobook, and Ebook + Audiobook choices as individual requests, while status links, download rows, and request-management views keep the selected format visible.
+- **Bookshelf:** Book request dialogs now include the selected ebook, audiobook, or combined format in their title and confirmation action, making the requested format clear while reviewing or submitting a request.
+- **Bookshelf:** Request status now keeps ebook, audiobook, and combined book formats visible in filters, request cards, detail links, and activity history so users can tell which format is being processed.
+- **Ci:** Main-branch image publication now reports its real multi-architecture build result independently from live deployment storage; deployment still remains blocked when the configured host is unhealthy.
+- **Ci:** Main validation runs can now proceed independently while image publication and live deployment remain serialized, and each scan and deployment uses the exact image digest produced by its own run.
+- **Ci:** Main-branch CI now runs the same release-note, localization, lint, build, and unit-test validation as pull requests before publication or deployment.
+- **Release Pipeline:** Tagged releases now remain in draft status until every required artifact and package channel has completed and the release announcement is ready, preventing incomplete releases from being presented as final.
+- **Release Pipeline:** Release publication now validates the real platform matrix, records build provenance, and waits for enabled package channels to finish, so a green release cannot hide a missing architecture or silently skipped package upload.
+- **Request Status:** Request Status now opens on recent requests by default, offers 7-day, 14-day, 30-day, 6-month, and all-time windows, and points you to older requests instead of hiding them silently.
+
+#### Fixed
+
+- **Release Pipeline:** Provenance-enabled container indexes are now verified correctly: attestation descriptors are required and checked without being mistaken for extra runtime architectures.
+- **Reliability:** Search and Request Status now explain connection failures clearly, keep useful cached results visible when possible, and provide retry or refresh actions instead of presenting outages as empty results.
+- **Localization:** The English message catalog is now regenerated from the source messages, keeping recently added Request Status and other UI text synchronized for releases.
+- **Release Pipeline:** Container vulnerability gates now resolve the pinned Trivy release correctly, so image scans run to completion instead of stopping during scanner installation.
+
+#### Security
+
+- **Authentication:** Fresh installations can choose built-in self-signed HTTPS, a provided certificate, or an explicitly acknowledged trusted-LAN HTTP fallback before first login. Administrators can change the mode in Settings > Network, verify HTTPS before enabling redirects, and recover from certificate errors with the documented environment override. Existing installs are unchanged.
+  - **Action required:** review-and-choose-transport
+- **Bookshelf:** SeerrNG now pins Hardcover and softcover BookshelfNG deployments to the latest validated images, including the native Hardcover null-response fix and patched dependency vulnerabilities.
+- **Authentication:** SeerrNG can now generate persistent local HTTPS certificates for direct LAN deployments and provides an explicit, warning-bearing HTTP login fallback when TLS cannot be used.
+  - **Action required:** configure
+- **Security:** The public `main` container image is now vulnerability-scanned separately for amd64 and arm64 immediately after publication, so development images receive the same architecture-aware security coverage as tagged releases.
+- **Security:** Release and scheduled container scans now cover both published Linux architectures and fail on detected fixable HIGH or CRITICAL vulnerabilities while retaining SARIF findings for review.
+- **Operations:** Built-in HTTPS health checks now validate the configured local CA or certificate chain instead of disabling certificate verification, so broken trust configuration is reported as unhealthy rather than silently accepted.
+- **Security:** Release and main-image vulnerability scans now use an available, explicitly pinned Trivy release instead of a retired scanner version, so the security gates execute rather than failing during tool installation.
+
+### 🚀 Features
+- *(bookshelf)* Make format choice explicit across request flows - ([c8eec36](https://github.com/snapetech/seerrng/commit/c8eec36bee1d10530dc442404f91bbdd1786747b))
+- *(bookshelf)* Preserve format context across requests - ([403bc80](https://github.com/snapetech/seerrng/commit/403bc80b3f45738b016d13d4ae6140cd15e4f5d9))
+- *(bookshelf)* Show formats across request status - ([30317c5](https://github.com/snapetech/seerrng/commit/30317c5a8d6ccd9259f0675d2dcf8840e78d2422))
+- *(bookshelf)* Label selected request format - ([3e0b3b0](https://github.com/snapetech/seerrng/commit/3e0b3b041da990f74710d6508a555beca11acaf1))
+- *(bookshelf)* Clarify book format choices - ([3eed809](https://github.com/snapetech/seerrng/commit/3eed8093116a821d264d51bb7606aefb77b5df1f))
+- *(security)* Add administrator-controlled browser transport - ([e6e318a](https://github.com/snapetech/seerrng/commit/e6e318a85b4faa0a3d2acb67a68b76db5c46c753))
+- *(security)* Add built-in TLS and explicit HTTP auth modes - ([9257cf9](https://github.com/snapetech/seerrng/commit/9257cf99408ad5bdd0b4800bb35c844def3f1175))
+- Make request status history windows user friendly - ([106d812](https://github.com/snapetech/seerrng/commit/106d81235235e3b6752f7255bc3ee5d99cc9d10b))
+- Improve search and request status tracking - ([96fd4cb](https://github.com/snapetech/seerrng/commit/96fd4cbeaeb81d9651f20ad00f6f2900690c2af4))
+
+### 🐛 Bug Fixes
+- *(security)* Validate TLS health checks - ([2c68f7d](https://github.com/snapetech/seerrng/commit/2c68f7d6ee183f7693dcca81e88fc918f832b031))
+- *(security)* Update pinned BookshelfNG images - ([685e2fa](https://github.com/snapetech/seerrng/commit/685e2fa539bd9f63d0617f205d47e258c78331f5))
+- Gate release image vulnerability scans - ([0ed285f](https://github.com/snapetech/seerrng/commit/0ed285f424a1741b5f55d90d8fb7830ed6b84d10))
+- Document trivy tag resolution - ([66e2c36](https://github.com/snapetech/seerrng/commit/66e2c3678f516e4623350a9cbcf82077a12a94ce))
+- Use the versioned trivy tag - ([f6fc6e4](https://github.com/snapetech/seerrng/commit/f6fc6e4977d9bcc1ced434a850702d0d7edcdbc9))
+- Refresh trivy release pin - ([5bc57a0](https://github.com/snapetech/seerrng/commit/5bc57a0c68809193dcc6a6b2392b22515714b2d2))
+- Handle provenance manifests in verifier - ([f2dba89](https://github.com/snapetech/seerrng/commit/f2dba891ddc15faed850df0bbdcdfcccc1747000))
+- Synchronize extracted message catalog - ([4b71a7e](https://github.com/snapetech/seerrng/commit/4b71a7ed6e83856bac548754ce2b87872425c922))
+- Harden release matrix and publication checks - ([c8deeb2](https://github.com/snapetech/seerrng/commit/c8deeb26d3ec2e47bd8bd47c0e00123f9959cb7f))
+- Harden search and request status adaptations - ([1950c7c](https://github.com/snapetech/seerrng/commit/1950c7c8f0b96089c0ef5891e592db6e6e8407b8))
+
+### 📖 Documentation
+- *(bookshelf)* Document format coverage details - ([0c05388](https://github.com/snapetech/seerrng/commit/0c053884f881f8f338af3c522ebab1f2195e58d9))
+- *(ops)* Document and deploy built-in TLS modes - ([83353fb](https://github.com/snapetech/seerrng/commit/83353fb7826bfc5df2298a167a98a7464dccc104))
+
+### ⚙️ Miscellaneous Tasks
+- *(ci)* Format container security test - ([bc93320](https://github.com/snapetech/seerrng/commit/bc933207f1e5f6cc8e337ffb2f172a5ab361d844))
+- Serialize shared publication and scan main image - ([478f77a](https://github.com/snapetech/seerrng/commit/478f77a46f08a0aaa81e57ef95b45ebaf5d770a4))
+- Gate releases on complete artifact publication - ([aa52ee2](https://github.com/snapetech/seerrng/commit/aa52ee2ba6743fbbe32a4bb99138be252883694c))
+- Separate image publication from deployment health - ([405ddd0](https://github.com/snapetech/seerrng/commit/405ddd039bdd6ea1d4ea1e0e20da7d7de166e7de))
+- Validate main before publication - ([9b7a16b](https://github.com/snapetech/seerrng/commit/9b7a16b8a55304460845383831403dc31f9c653e))
+
 ## [3.15.0](https://github.com/snapetech/seerrng/compare/v3.14.0..v3.15.0) - 2026-09-06
 
 ### User-facing changes

@@ -103,14 +103,23 @@ const runCommand = (command, args, options = {}) => {
   return result;
 };
 
-test('publisher accepts a bounded generated-change manifest', () => {
-  const result = runValidator(validManifest());
-  assert.equal(
-    result.status,
-    0,
-    `stdout: ${result.stdout}\nstderr: ${result.stderr}`
-  );
-});
+test(
+  'publisher accepts a bounded generated-change manifest',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Git Bash rewrites the embedded jq regular expression; Linux CI runs the publisher acceptance test.'
+        : false,
+  },
+  () => {
+    const result = runValidator(validManifest());
+    assert.equal(
+      result.status,
+      0,
+      `stdout: ${result.stdout}\nstderr: ${result.stderr}`
+    );
+  }
+);
 
 test('publisher rejects additional artifact entries', () => {
   const result = runValidator(validManifest(), (artifactDirectory) => {
