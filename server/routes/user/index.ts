@@ -1263,6 +1263,7 @@ router.put<{ id: string }>(
           message: 'Select a profile picture to upload.',
         });
       }
+      const avatarInput = Buffer.from(req.body);
 
       const userRepository = getRepository(User);
       const outcome = await runUserSecurityMutation(userId, async () => {
@@ -1274,7 +1275,7 @@ router.put<{ id: string }>(
           return { type: 'provider-managed' as const };
         }
 
-        const storedAvatar = await storeLocalAvatar(userId, req.body);
+        const storedAvatar = await storeLocalAvatar(activeUser.id, avatarInput);
         const result = await userRepository.update(
           { id: userId, userType: UserType.LOCAL },
           {
@@ -1288,7 +1289,7 @@ router.put<{ id: string }>(
         }
 
         try {
-          await removeLocalAvatarFiles(userId, storedAvatar.version);
+          await removeLocalAvatarFiles(activeUser.id, storedAvatar.version);
         } catch (error) {
           logger.warn('Unable to remove an older local profile picture', {
             label: 'API',

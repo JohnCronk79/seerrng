@@ -20,8 +20,27 @@ export class InvalidLocalAvatarError extends Error {}
 const getLocalAvatarDirectory = (): string =>
   path.join(appDataPath(), LOCAL_AVATAR_DIRECTORY);
 
-const getLocalAvatarFilename = (userId: number, version: string): string =>
-  `user-${userId}-${version}.webp`;
+const getLocalAvatarUserKey = (userId: number): string =>
+  createHash('sha256')
+    .update(`seerrng-local-avatar-user:${userId}`)
+    .digest('hex');
+
+const getLocalAvatarFilename = (
+  userId: number,
+  version: string
+): string | undefined => {
+  const safeVersion = path.basename(version);
+  if (
+    !Number.isSafeInteger(userId) ||
+    userId <= 0 ||
+    safeVersion !== version ||
+    !LOCAL_AVATAR_VERSION_PATTERN.test(safeVersion)
+  ) {
+    return undefined;
+  }
+
+  return `user-${getLocalAvatarUserKey(userId)}-${safeVersion}.webp`;
+};
 
 export const getLocalAvatarUrl = (userId: number, version: string): string =>
   `/avatarproxy/local/${userId}?v=${version}`;
@@ -30,22 +49,22 @@ export const getLocalAvatarFilePath = (
   userId: number,
   version: string
 ): string | undefined => {
-  if (
-    !Number.isSafeInteger(userId) ||
-    userId <= 0 ||
-    !LOCAL_AVATAR_VERSION_PATTERN.test(version)
-  ) {
+  const filename = getLocalAvatarFilename(userId, version);
+  if (!filename) {
     return undefined;
   }
 
-  return path.join(
-    getLocalAvatarDirectory(),
-    getLocalAvatarFilename(userId, version)
-  );
+  const avatarDirectory = path.resolve(getLocalAvatarDirectory());
+  const avatarPath = path.resolve(avatarDirectory, filename);
+  return path.dirname(avatarPath) === avatarDirectory ? avatarPath : undefined;
 };
 
 export const prepareLocalAvatar = async (input: Buffer): Promise<Buffer> => {
-  if (!input.length || input.length > LOCAL_AVATAR_MAX_BYTES) {
+  if (
+    !Buffer.isBuffer(input) ||
+    !input.length ||
+    input.length > LOCAL_AVATAR_MAX_BYTES
+  ) {
     throw new InvalidLocalAvatarError('Invalid profile picture size.');
   }
 
@@ -156,9 +175,7 @@ export const removeLocalAvatarFiles = async (
   const keepFilename = keepVersion
     ? getLocalAvatarFilename(userId, keepVersion)
     : undefined;
-  const userFilenamePattern = new RegExp(
-    `^user-${userId}-[a-f0-9]{64}\\.webp$`
-  );
+  const userFilenamePrefix = `user-${getLocalAvatarUserKey(userId)}-`;
 
   await Promise.all(
     entries
@@ -166,7 +183,11 @@ export const removeLocalAvatarFiles = async (
         (entry) =>
           entry.isFile() &&
           entry.name !== keepFilename &&
-          userFilenamePattern.test(entry.name)
+          entry.name.startsWith(userFilenamePrefix) &&
+          entry.name.endsWith('.webp') &&
+          LOCAL_AVATAR_VERSION_PATTERN.test(
+            entry.name.slice(userFilenamePrefix.length, -'.webp'.length)
+          )
       )
       .map(async (entry) => {
         try {

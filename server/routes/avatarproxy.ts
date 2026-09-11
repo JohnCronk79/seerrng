@@ -336,7 +336,7 @@ router.get('/local/:userId', avatarProxyRateLimit, async (req, res) => {
       return res.status(404).end();
     }
 
-    const image = await readLocalAvatar(userId, user.avatarVersion);
+    const image = await readLocalAvatar(user.id, user.avatarVersion);
     if (!image) {
       return res.status(404).end();
     }

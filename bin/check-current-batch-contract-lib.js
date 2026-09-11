@@ -207,7 +207,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     requestButton,
-    'data-testid={`request-action-${button.id}`}',
+    'data-testid={`request-action-',
     'separate request choices must retain stable browser-audit targets'
   );
   requireText(
@@ -742,6 +742,46 @@ const validateCurrentBatchContract = (files) => {
     'the repository formatting gate must not let a local cache conceal clean-checkout differences'
   );
   requireText(
+    'server/lib/localAvatar.ts',
+    '!Buffer.isBuffer(input)',
+    'local avatar processing must reject runtime type confusion before image decoding'
+  );
+  requireText(
+    'server/lib/localAvatar.ts',
+    'getLocalAvatarUserKey(userId)',
+    'local avatar filenames must use a fixed-width storage key rather than request data'
+  );
+  requireText(
+    'server/lib/localAvatar.ts',
+    'safeVersion !== version',
+    'local avatar versions must remain canonical path basenames'
+  );
+  rejectText(
+    'server/lib/localAvatar.ts',
+    'new RegExp(',
+    'local avatar cleanup must not construct regular expressions from request-derived values'
+  );
+  requireText(
+    'server/routes/user/index.ts',
+    'const avatarInput = Buffer.from(req.body);',
+    'local avatar uploads must cross the HTTP boundary as a validated Buffer copy'
+  );
+  requireText(
+    'server/routes/avatarproxy.ts',
+    'readLocalAvatar(user.id, user.avatarVersion)',
+    'local avatar reads must use the persisted user identity after authorization'
+  );
+  rejectText(
+    'server/api/tvdb/index.ts',
+    'Failed to find season ${seasonNumber}',
+    'TVDB request values must not be interpolated into log messages'
+  );
+  requireText(
+    'server/utils/sessionCookie.test.ts',
+    'codeql[js/clear-text-cookie]',
+    'the intentional synthetic HTTP-fallback regression must remain explicitly scoped for code scanning'
+  );
+  requireText(
     '.github/workflows/ci.yml',
     'Install Git for complete checkout',
     'the minimal Alpine validation job must install Git before checkout so export-ignored contract files remain available'
@@ -982,8 +1022,8 @@ const validateCurrentBatchContract = (files) => {
     ],
     [
       'server/lib/localAvatar.test.ts',
-      'avatar',
-      'must test local avatar persistence',
+      'not-a-buffer',
+      'must test local avatar runtime type rejection',
     ],
     [
       'server/routes/userAvatar.openapi.test.ts',

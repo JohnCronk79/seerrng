@@ -34,6 +34,10 @@ describe('local profile pictures', () => {
 
   it('rejects non-image and oversized input', async () => {
     await assert.rejects(
+      prepareLocalAvatar('not-a-buffer' as unknown as Buffer),
+      InvalidLocalAvatarError
+    );
+    await assert.rejects(
       prepareLocalAvatar(Buffer.from('not-an-image')),
       InvalidLocalAvatarError
     );
