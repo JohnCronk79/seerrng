@@ -144,7 +144,7 @@ jobs:
 
   unit-test:
     name: Unit Tests
-    timeout-minutes: 45
+    timeout-minutes: 75
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     container:
