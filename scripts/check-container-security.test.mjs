@@ -100,6 +100,7 @@ test('the Docker build context excludes secrets and retains build contracts', ()
   }
 
   for (const requiredContract of [
+    '!/.github/workflows/ci.yml',
     '!docs/maintainers/current-batch-acceptance-ledger.md',
     '!docs/maintainers/ui-style-standard.md',
   ]) {
