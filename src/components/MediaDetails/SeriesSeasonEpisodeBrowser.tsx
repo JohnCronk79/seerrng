@@ -65,7 +65,10 @@ const SeriesSeasonEpisodeBrowser = ({
             {intl.formatMessage(messages.episodes)}
           </span>
         </div>
-        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1">
+        <div
+          className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1"
+          data-testid="season-list"
+        >
           {visibleSeasons.length === 0 && (
             <p className="px-1 py-2 text-xs text-gray-400">
               {intl.formatMessage(messages.noSeasons)}
@@ -101,7 +104,10 @@ const SeriesSeasonEpisodeBrowser = ({
           <span>{intl.formatMessage(messages.episode)}</span>
           <span>{intl.formatMessage(messages.title)}</span>
         </div>
-        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1">
+        <div
+          className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1"
+          data-testid="episode-list"
+        >
           {!data && !error && activeSeason >= 0 && (
             <div className="flex h-20 items-center justify-center">
               <LoadingSpinner />

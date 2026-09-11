@@ -727,6 +727,7 @@ const TvRequestModal = ({
           <button
             type="button"
             onClick={closeAction}
+            data-testid="modal-cancel-button"
             className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
           >
             <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -738,6 +739,7 @@ const TvRequestModal = ({
             type="button"
             disabled={requestDisabled}
             onClick={() => void submitAction()}
+            data-testid="modal-ok-button"
             className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />

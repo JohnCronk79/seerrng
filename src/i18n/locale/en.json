@@ -369,6 +369,8 @@
   "components.IssueDetails.exit": "Exit",
   "components.IssueDetails.issuepagetitle": "Issue",
   "components.IssueDetails.nocomments": "No Comments",
+  "components.IssueDetails.openAudiobookInBookshelf": "Open Audiobook in Bookshelf",
+  "components.IssueDetails.openEbookInBookshelf": "Open Ebook in Bookshelf",
   "components.IssueDetails.openinarr": "Open in {arr}",
   "components.IssueDetails.playonserver": "Play on {mediaServerName}",
   "components.IssueDetails.reopenissue": "Reopen Issue",

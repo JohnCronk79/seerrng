@@ -368,6 +368,7 @@ const CreateIssueModal = ({
               <button
                 type="button"
                 onClick={onCancel}
+                data-testid="modal-cancel-button"
                 className={`${actionButton} border-red-600/80 bg-red-800/25 text-red-200 hover:border-red-500 hover:text-white focus:ring-red-500`}
               >
                 <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -376,6 +377,7 @@ const CreateIssueModal = ({
               <button
                 type="button"
                 onClick={() => handleSubmit()}
+                data-testid="modal-ok-button"
                 disabled={
                   isSubmitting ||
                   ((mediaType === 'movie' || mediaType === 'tv') &&

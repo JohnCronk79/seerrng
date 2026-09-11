@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- This validator is loaded by the repository's CommonJS contract runner. */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -404,6 +405,16 @@ const validateCurrentBatchContract = (files) => {
     'type="checkbox"',
     'series detail season/episode rows are informational only'
   );
+  requireText(
+    seriesBrowser,
+    'data-testid="season-list"',
+    'the read-only season list must retain a stable browser-audit target'
+  );
+  requireText(
+    seriesBrowser,
+    'data-testid="episode-list"',
+    'the read-only episode list must retain a stable browser-audit target'
+  );
 
   const bookLayout = 'src/components/BookDetails/BookDetailsLayout.tsx';
   requireText(
@@ -443,6 +454,16 @@ const validateCurrentBatchContract = (files) => {
       fileName,
       'disabled={',
       'must disable an unavailable duplicate destination'
+    );
+    requireText(
+      fileName,
+      'data-testid="modal-cancel-button"',
+      'request modals must retain a stable standard Cancel action target'
+    );
+    requireText(
+      fileName,
+      'data-testid="modal-ok-button"',
+      'request modals must retain a stable standard submit action target'
     );
   }
   const advanced = 'src/components/RequestModal/AdvancedRequester/index.tsx';
@@ -504,6 +525,16 @@ const validateCurrentBatchContract = (files) => {
     issueDetails,
     ['onClick={leaveIssue}', 'messages.exit', 'messages.closeissue'],
     'Exit and Close Issue must retain their swapped placement'
+  );
+  requireText(
+    issueDetails,
+    'messages.openEbookInBookshelf',
+    'Book issues must retain the format-specific Ebook service action'
+  );
+  requireText(
+    issueDetails,
+    'messages.openAudiobookInBookshelf',
+    'Book issues must retain the format-specific Audiobook service action'
   );
   requireText(
     'src/components/IssueList/IssueItem/index.tsx',

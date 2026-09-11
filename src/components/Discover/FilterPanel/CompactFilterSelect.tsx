@@ -66,7 +66,10 @@ export const CompactSelect = ({
         >
           {label}
         </span>
-        <Listbox.Button className="flex min-w-0 flex-none items-center gap-1.5 px-2 py-1 text-left text-xs font-medium text-gray-300 focus:outline-none">
+        <Listbox.Button
+          aria-label={label}
+          className="flex min-w-0 flex-none items-center gap-1.5 px-2 py-1 text-left text-xs font-medium text-gray-300 focus:outline-none"
+        >
           <span className="max-w-48 truncate">{selected.label}</span>
           <ChevronDownIcon
             className="h-4 w-4 flex-none text-gray-500"
@@ -172,7 +175,10 @@ export const CompactRatingSelect = ({
         >
           {label}
         </span>
-        <Listbox.Button className="flex min-w-0 flex-none items-center gap-1 px-2 py-1 text-xs font-medium text-gray-300 focus:outline-none">
+        <Listbox.Button
+          aria-label={label}
+          className="flex min-w-0 flex-none items-center gap-1 px-2 py-1 text-xs font-medium text-gray-300 focus:outline-none"
+        >
           {selectedHasScore ? (
             <RatingStars score={selected.score ?? 0} maxScore={maxScore} />
           ) : (

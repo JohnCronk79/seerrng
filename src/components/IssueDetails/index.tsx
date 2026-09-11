@@ -55,6 +55,8 @@ const messages = defineMessages('components.IssueDetails', {
   exit: 'Exit',
   playonserver: 'Play on {mediaServerName}',
   openinarr: 'Open in {arr}',
+  openEbookInBookshelf: 'Open Ebook in Bookshelf',
+  openAudiobookInBookshelf: 'Open Audiobook in Bookshelf',
   toaststatusupdated: 'Issue status updated successfully!',
   toaststatusupdatefailed:
     'Something went wrong while updating the issue status.',
@@ -147,6 +149,20 @@ const IssueDetails = () => {
       ? (issueData.media.serviceUrl4k ?? issueData.media.serviceUrl)
       : (issueData.media.serviceUrl ?? issueData.media.serviceUrl4k)
   );
+  const bookServiceLinks = isBook
+    ? [
+        {
+          url: getSafeHref(issueData.media.serviceUrl),
+          label: intl.formatMessage(messages.openEbookInBookshelf),
+        },
+        {
+          url: getSafeHref(issueData.media.audiobookServiceUrl),
+          label: intl.formatMessage(messages.openAudiobookInBookshelf),
+        },
+      ].filter((link): link is { url: string; label: string } =>
+        Boolean(link.url)
+      )
+    : [];
   const arrName =
     issueData.media.mediaType === MediaType.MOVIE
       ? 'Radarr'
@@ -356,19 +372,35 @@ const IssueDetails = () => {
                         })}
                       </a>
                     )}
-                    {selectedServiceUrl && hasPermission(Permission.ADMIN) && (
-                      <a
-                        href={selectedServiceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
-                      >
-                        <ServerIcon className="h-3.5 w-3.5" />
-                        {intl.formatMessage(messages.openinarr, {
-                          arr: arrName,
-                        })}
-                      </a>
-                    )}
+                    {!isBook &&
+                      selectedServiceUrl &&
+                      hasPermission(Permission.ADMIN) && (
+                        <a
+                          href={selectedServiceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                        >
+                          <ServerIcon className="h-3.5 w-3.5" />
+                          {intl.formatMessage(messages.openinarr, {
+                            arr: arrName,
+                          })}
+                        </a>
+                      )}
+                    {isBook &&
+                      hasPermission(Permission.ADMIN) &&
+                      bookServiceLinks.map((link) => (
+                        <a
+                          key={link.label}
+                          href={link.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                        >
+                          <ServerIcon className="h-3.5 w-3.5" />
+                          {link.label}
+                        </a>
+                      ))}
                   </div>
 
                   <button
