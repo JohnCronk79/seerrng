@@ -402,6 +402,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         buttonSize="sm"
         buttonType="detailRequest"
         className="ml-0"
+        separateButtons
         mediaType="tv"
         onUpdate={() => revalidate()}
         tmdbId={data.id}

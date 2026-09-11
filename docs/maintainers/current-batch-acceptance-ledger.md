@@ -332,9 +332,15 @@ Task-capture rule: a message prefixed with `feature:`, `bug:`, or `issue:` is an
 
 > “the history card does not have it's colums setup correctly. put the date stamp in one colum, the time stamp in a second colum, the action of the history item, then a colum for the description of the history item. perform these changes to all history buttons”
 
-- Implementation evidence: detail actions on all four media pages, global semantic button variants and sizes shared by normal and split-dropdown buttons, global rating-row geometry shared by Movie and Series, shared three-column credit list, and four-column Request Status history.
+> “on the movie detail page, the requet button is a drop down to select a 4k requst. can you change this so it's a normal button and move the request 4k button to the right of the normal request button.”
+
+> “this button is permission based, so a user that is unable to request 4k media should not see the button.”
+
+> “make that change on all details pages please”
+
+- Implementation evidence: detail actions on all four media pages, global semantic button variants and sizes, separate normal and 4K Request actions on Movie and Series details, global rating-row geometry shared by Movie and Series, shared three-column credit list, and four-column Request Status history. Music and Book retain ordinary non-4K request actions because neither page has a 4K request choice to split.
 - Current global rule: permission determines whether an action is hidden. A permitted action that is temporarily unavailable because of media or workflow state stays in its stable location, appears darkened with a prohibited cursor, and explains the blocking state in a tooltip. An action that genuinely does not exist for a title, such as a trailer when there is no trailer source, is not rendered as a false control.
-- Rendered verification: Complete for shared button sizes, outlined semantic colors, white hover treatment, action order, Movie/Series rating geometry, three-person Cast/Crew rows, and Request Status four-column history. The unavailable Book representative visibly confirms the darkened prohibited-cursor state and reason tooltips used by the shared permission/state rule.
+- Rendered verification: Complete for shared button sizes, outlined semantic colors, white hover treatment, action order, Movie/Series rating geometry, three-person Cast/Crew rows, and Request Status four-column history. Fresh-build browser checks confirm separate adjacent Movie/Series normal and 4K actions, plus complete removal of the Movie 4K action for a user without 4K request permission. The unavailable Book representative visibly confirms the darkened prohibited-cursor state and reason tooltips used by the shared permission/state rule.
 
 ## Discover and keyword search
 

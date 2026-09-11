@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import ButtonWithDropdown from '@app/components/Common/ButtonWithDropdown';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -64,6 +65,7 @@ interface RequestButtonProps {
   buttonSize?: 'default' | 'sm';
   buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest';
   className?: string;
+  separateButtons?: boolean;
 }
 
 const RequestButton = ({
@@ -76,6 +78,7 @@ const RequestButton = ({
   buttonSize = 'default',
   buttonType = 'primary',
   className = 'ml-2',
+  separateButtons = false,
 }: RequestButtonProps) => {
   const intl = useIntl();
   const settings = useSettings();
@@ -460,32 +463,49 @@ const RequestButton = ({
           onCancel={() => setShowRequest4kModal(false)}
         />
       )}
-      <ButtonWithDropdown
-        buttonSize={buttonSize}
-        buttonType={buttonType}
-        text={
-          <>
-            {buttonOne.svg}
-            <span>{buttonOne.text}</span>
-          </>
-        }
-        onClick={buttonOne.action}
-        disabled={isModifying}
-        className={className}
-      >
-        {others && others.length > 0
-          ? others.map((button) => (
-              <ButtonWithDropdown.Item
-                onClick={button.action}
-                key={`request-option-${button.id}`}
-                buttonType={buttonType}
-              >
-                {button.svg}
-                <span>{button.text}</span>
-              </ButtonWithDropdown.Item>
-            ))
-          : null}
-      </ButtonWithDropdown>
+      {separateButtons ? (
+        buttons.map((button) => (
+          <Button
+            key={`request-option-${button.id}`}
+            buttonSize={buttonSize}
+            buttonType={buttonType}
+            onClick={button.action}
+            disabled={isModifying}
+            className={className}
+            data-testid={`request-action-${button.id}`}
+          >
+            {button.svg}
+            <span className="ml-1.5">{button.text}</span>
+          </Button>
+        ))
+      ) : (
+        <ButtonWithDropdown
+          buttonSize={buttonSize}
+          buttonType={buttonType}
+          text={
+            <>
+              {buttonOne.svg}
+              <span>{buttonOne.text}</span>
+            </>
+          }
+          onClick={buttonOne.action}
+          disabled={isModifying}
+          className={className}
+        >
+          {others && others.length > 0
+            ? others.map((button) => (
+                <ButtonWithDropdown.Item
+                  onClick={button.action}
+                  key={`request-option-${button.id}`}
+                  buttonType={buttonType}
+                >
+                  {button.svg}
+                  <span>{button.text}</span>
+                </ButtonWithDropdown.Item>
+              ))
+            : null}
+        </ButtonWithDropdown>
+      )}
     </>
   );
 };

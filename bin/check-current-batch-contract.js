@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-require-imports, no-console -- This validator is a CommonJS command-line tool. */
 
 const path = require('node:path');
 const {
@@ -12,10 +13,12 @@ const fileNames = [
   'docs/maintainers/ui-style-standard.md',
   'package.json',
   'bin/run-prettier.mjs',
+  'bin/run-cypress-start.mjs',
   'seerr-api.yml',
   'src/styles/globals.css',
   'src/components/Common/Button/index.tsx',
   'src/components/Common/ButtonWithDropdown/index.tsx',
+  'src/components/RequestButton/index.tsx',
   'src/components/MediaDetails/ExpandableCreditList.tsx',
   'src/components/MediaDetails/DetailDisclosureButton.tsx',
   'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
@@ -59,6 +62,8 @@ const fileNames = [
   'src/components/RequestStatus/requestStatusQuery.test.ts',
   'src/components/IssueDetails/issueMediaFormat.test.ts',
   'src/components/IssueList/IssueItem/issueAffectedSummary.test.ts',
+  'cypress/e2e/movie-details.cy.ts',
+  'cypress/e2e/tv-details.cy.ts',
   'server/routes/request.test.ts',
   'server/lib/requestStatus.test.ts',
   'server/lib/bookRequestSearch.test.ts',

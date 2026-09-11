@@ -11,6 +11,7 @@ const result = spawnSync(process.execPath, ['dist/index.js'], {
     ...process.env,
     CONFIG_DIRECTORY:
       process.env.CONFIG_DIRECTORY ?? path.join(root, 'cypress/runtime-config'),
+    E2E_TESTS: 'true',
     NODE_ENV: 'production',
     SEERR_SKIP_DB_MIGRATIONS: 'true',
   },

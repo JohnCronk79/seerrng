@@ -199,6 +199,42 @@ const validateCurrentBatchContract = (files) => {
     'const buttonStyle =',
     'must not restore per-component button colors'
   );
+  const requestButton = 'src/components/RequestButton/index.tsx';
+  requireText(
+    requestButton,
+    'separateButtons ? (',
+    'detail-page request choices must support individual standard buttons'
+  );
+  requireText(
+    requestButton,
+    'data-testid={`request-action-${button.id}`}',
+    'separate request choices must retain stable browser-audit targets'
+  );
+  requireText(
+    requestButton,
+    'Permission.REQUEST_4K_MOVIE',
+    'Movie 4K request visibility must remain permission-gated'
+  );
+  requireText(
+    requestButton,
+    'Permission.REQUEST_4K_TV',
+    'Series 4K request visibility must remain permission-gated'
+  );
+  requireText(
+    'cypress/e2e/movie-details.cy.ts',
+    'hides the 4K request action without 4K request permission',
+    'Movie details must test that the 4K action is hidden without permission'
+  );
+  for (const fileName of [
+    'cypress/e2e/movie-details.cy.ts',
+    'cypress/e2e/tv-details.cy.ts',
+  ]) {
+    requireText(
+      fileName,
+      'shows standard and 4K requests as adjacent individual buttons',
+      'Movie and Series details must test separate standard and 4K request actions'
+    );
+  }
 
   const detailIndexes = [
     'src/components/MovieDetails/index.tsx',
@@ -274,6 +310,16 @@ const validateCurrentBatchContract = (files) => {
       fileName,
       'showHideButton && isUnavailable',
       'Blocklist must not disappear for available or processing media'
+    );
+  }
+  for (const fileName of [
+    'src/components/MovieDetails/index.tsx',
+    'src/components/TvDetails/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'separateButtons',
+      'Movie and Series details must render normal and 4K request actions as separate buttons'
     );
   }
 
@@ -679,6 +725,11 @@ const validateCurrentBatchContract = (files) => {
     'bin/run-prettier.mjs',
     'candidateFiles.filter((_, index) => !fileInfo[index].ignored)',
     'the cross-platform formatter must exclude files covered by the repository ignore rules before batching'
+  );
+  requireText(
+    'bin/run-cypress-start.mjs',
+    "E2E_TESTS: 'true'",
+    'the isolated Cypress server must disable production request limits that make the complete browser suite timing-dependent'
   );
   requireText(
     'server/lib/imageproxy.test.ts',

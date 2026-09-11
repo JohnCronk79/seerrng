@@ -379,6 +379,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         buttonSize="sm"
         buttonType="detailRequest"
         className="ml-0"
+        separateButtons
         mediaType="movie"
         media={data.mediaInfo}
         tmdbId={data.id}
