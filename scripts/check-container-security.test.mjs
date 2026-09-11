@@ -75,7 +75,7 @@ test('the production image has an explicit unprivileged final user', () => {
   assert.match(finalStage, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
 });
 
-test('the Docker build context excludes runtime state and common secrets', () => {
+test('the Docker build context excludes secrets and retains build contracts', () => {
   const ignoredPaths = new Set(
     fs
       .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
@@ -96,6 +96,16 @@ test('the Docker build context excludes runtime state and common secrets', () =>
     assert.ok(
       ignoredPaths.has(expectedPattern),
       `${expectedPattern} is exposed to the Docker build context`
+    );
+  }
+
+  for (const requiredContract of [
+    '!docs/maintainers/current-batch-acceptance-ledger.md',
+    '!docs/maintainers/ui-style-standard.md',
+  ]) {
+    assert.ok(
+      ignoredPaths.has(requiredContract),
+      `${requiredContract.slice(1)} is missing from the Docker build context`
     );
   }
 });
