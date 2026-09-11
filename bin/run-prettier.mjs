@@ -26,7 +26,7 @@ const result = spawnSync(
     mode,
     '--ignore-unknown',
     '--ignore-path',
-    path.join(root, '.prettierignore'),
+    path.join(root, 'prettier-scope.txt'),
     ...(mode === '--write' ? ['--log-level', 'warn'] : []),
     '.',
   ],

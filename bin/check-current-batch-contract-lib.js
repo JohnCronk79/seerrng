@@ -708,21 +708,21 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'bin/run-prettier.mjs',
-    "path.join(root, '.prettierignore')",
-    'the cross-platform formatter must use one deterministic repository ignore source'
+    "path.join(root, 'prettier-scope.txt')",
+    'the cross-platform formatter must use a deterministic scope file retained in GitHub source archives'
   );
   requireText(
-    '.prettierignore',
+    'prettier-scope.txt',
     'gen-docs/vendor/image-size/dist/',
     'the formatter must continue excluding the intentionally vendored generated JavaScript'
   );
   requireText(
-    '.prettierignore',
+    'prettier-scope.txt',
     'gen-docs/.docusaurus/',
     'the formatter must exclude generated documentation metadata'
   );
   requireText(
-    '.prettierignore',
+    'prettier-scope.txt',
     'gen-docs/build/',
     'the formatter must exclude rendered documentation output'
   );
