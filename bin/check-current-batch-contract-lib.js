@@ -708,18 +708,23 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'bin/run-prettier.mjs',
-    "'bin/duplicate-detector/.gitignore',",
-    'the cross-platform formatter must honor the duplicate-detector workspace ignore file'
+    "path.join(root, '.prettierignore')",
+    'the cross-platform formatter must use one deterministic repository ignore source'
   );
   requireText(
-    'bin/run-prettier.mjs',
-    "'gen-docs/.gitignore',",
-    'the cross-platform formatter must honor the documentation workspace ignore file'
+    '.prettierignore',
+    'gen-docs/vendor/image-size/dist/',
+    'the formatter must continue excluding the intentionally vendored generated JavaScript'
   );
   requireText(
-    'bin/run-prettier.mjs',
-    "? ['--ignore-path', path.join(root, ignoreFile)]",
-    'the cross-platform formatter must pass repository ignore files directly to Prettier'
+    '.prettierignore',
+    'gen-docs/.docusaurus/',
+    'the formatter must exclude generated documentation metadata'
+  );
+  requireText(
+    '.prettierignore',
+    'gen-docs/build/',
+    'the formatter must exclude rendered documentation output'
   );
   requireText(
     'bin/run-prettier.mjs',
@@ -730,6 +735,11 @@ const validateCurrentBatchContract = (files) => {
     'bin/run-prettier.mjs',
     "['ls-files', '--cached', '--others', '--exclude-standard', '-z']",
     'the formatting runner must not depend on Git being installed in the GitHub action container'
+  );
+  rejectText(
+    'bin/run-prettier.mjs',
+    "    '--cache',",
+    'the repository formatting gate must not let a local cache conceal clean-checkout differences'
   );
   requireText(
     'bin/run-cypress-start.mjs',

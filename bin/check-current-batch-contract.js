@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, '..');
 const fileNames = [
   'docs/maintainers/current-batch-acceptance-ledger.md',
   'docs/maintainers/ui-style-standard.md',
+  '.prettierignore',
   'package.json',
   'bin/run-prettier.mjs',
   'bin/run-cypress-start.mjs',

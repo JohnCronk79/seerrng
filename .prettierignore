@@ -11,6 +11,16 @@ cypress/config/settings.cypress.json
 .vscode
 next-env.d.ts
 gen-docs/vendor/image-size/dist/
+coverage/
+out/
+build/
+artifacts/
+cypress/runtime-config/
+cypress/videos/
+cypress/screenshots/
+gen-docs/.docusaurus/
+gen-docs/build/
+bin/duplicate-detector/node_modules/
 
 # assets
 src/assets/

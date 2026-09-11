@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,26 +19,15 @@ const prettierCli = path.join(
   'bin',
   'prettier.cjs'
 );
-const ignoreFiles = [
-  '.prettierignore',
-  '.gitignore',
-  'bin/duplicate-detector/.gitignore',
-  'gen-docs/.gitignore',
-];
-const ignoreArgs = ignoreFiles.flatMap((ignoreFile) =>
-  existsSync(path.join(root, ignoreFile))
-    ? ['--ignore-path', path.join(root, ignoreFile)]
-    : []
-);
 const result = spawnSync(
   process.execPath,
   [
     prettierCli,
     mode,
-    '--cache',
     '--ignore-unknown',
+    '--ignore-path',
+    path.join(root, '.prettierignore'),
     ...(mode === '--write' ? ['--log-level', 'warn'] : []),
-    ...ignoreArgs,
     '.',
   ],
   { cwd: root, stdio: 'inherit' }
