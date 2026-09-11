@@ -708,23 +708,28 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'bin/run-prettier.mjs',
+    "'bin/duplicate-detector/.gitignore',",
+    'the cross-platform formatter must honor the duplicate-detector workspace ignore file'
+  );
+  requireText(
+    'bin/run-prettier.mjs',
+    "'gen-docs/.gitignore',",
+    'the cross-platform formatter must honor the documentation workspace ignore file'
+  );
+  requireText(
+    'bin/run-prettier.mjs',
+    "? ['--ignore-path', path.join(root, ignoreFile)]",
+    'the cross-platform formatter must pass repository ignore files directly to Prettier'
+  );
+  requireText(
+    'bin/run-prettier.mjs',
+    "    '.',",
+    'the cross-platform formatter must let Prettier traverse the repository without command-line path expansion'
+  );
+  rejectText(
+    'bin/run-prettier.mjs',
     "['ls-files', '--cached', '--others', '--exclude-standard', '-z']",
-    'the cross-platform formatter must cover tracked and newly created repository files'
-  );
-  requireText(
-    'bin/run-prettier.mjs',
-    '.filter((file) => existsSync(path.join(root, file)))',
-    'the cross-platform formatter must ignore tracked files deleted by the current change'
-  );
-  requireText(
-    'bin/run-prettier.mjs',
-    "import { getFileInfo } from 'prettier';",
-    'the cross-platform formatter must use Prettier itself to classify ignored files'
-  );
-  requireText(
-    'bin/run-prettier.mjs',
-    'candidateFiles.filter((_, index) => !fileInfo[index].ignored)',
-    'the cross-platform formatter must exclude files covered by the repository ignore rules before batching'
+    'the formatting runner must not depend on Git being installed in the GitHub action container'
   );
   requireText(
     'bin/run-cypress-start.mjs',

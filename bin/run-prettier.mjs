@@ -4,7 +4,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getFileInfo } from 'prettier';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv[2];
@@ -14,36 +13,6 @@ if (mode !== '--check' && mode !== '--write') {
   process.exit(2);
 }
 
-const listedFiles = spawnSync(
-  'git',
-  ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-  {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  }
-);
-
-if (listedFiles.error || listedFiles.status !== 0) {
-  console.error(listedFiles.stderr || listedFiles.error?.message);
-  process.exit(listedFiles.status ?? 1);
-}
-
-const candidateFiles = listedFiles.stdout
-  .split('\0')
-  .filter(Boolean)
-  .filter((file) => existsSync(path.join(root, file)))
-  .sort((first, second) => first.localeCompare(second));
-const ignorePaths = [
-  path.join(root, '.prettierignore'),
-  path.join(root, '.gitignore'),
-].filter(existsSync);
-const fileInfo = await Promise.all(
-  candidateFiles.map((file) =>
-    getFileInfo(path.join(root, file), { ignorePath: ignorePaths })
-  )
-);
-const files = candidateFiles.filter((_, index) => !fileInfo[index].ignored);
 const prettierCli = path.join(
   root,
   'node_modules',
@@ -51,27 +20,34 @@ const prettierCli = path.join(
   'bin',
   'prettier.cjs'
 );
-const batchSize = 100;
+const ignoreFiles = [
+  '.prettierignore',
+  '.gitignore',
+  'bin/duplicate-detector/.gitignore',
+  'gen-docs/.gitignore',
+];
+const ignoreArgs = ignoreFiles.flatMap((ignoreFile) =>
+  existsSync(path.join(root, ignoreFile))
+    ? ['--ignore-path', path.join(root, ignoreFile)]
+    : []
+);
+const result = spawnSync(
+  process.execPath,
+  [
+    prettierCli,
+    mode,
+    '--cache',
+    '--ignore-unknown',
+    ...(mode === '--write' ? ['--log-level', 'warn'] : []),
+    ...ignoreArgs,
+    '.',
+  ],
+  { cwd: root, stdio: 'inherit' }
+);
 
-for (let index = 0; index < files.length; index += batchSize) {
-  const batch = files.slice(index, index + batchSize);
-  const result = spawnSync(
-    process.execPath,
-    [
-      prettierCli,
-      mode,
-      '--cache',
-      '--ignore-unknown',
-      ...(mode === '--write' ? ['--log-level', 'warn'] : []),
-      ...batch,
-    ],
-    { cwd: root, stdio: 'inherit' }
-  );
-
-  if (result.error || result.status !== 0) {
-    if (result.error) {
-      console.error(result.error.message);
-    }
-    process.exit(result.status ?? 1);
+if (result.error || result.status !== 0) {
+  if (result.error) {
+    console.error(result.error.message);
   }
+  process.exit(result.status ?? 1);
 }
