@@ -8,11 +8,6 @@
 .git
 .gitconfig
 .github
-!/.github
-/.github/*
-!/.github/workflows
-/.github/workflows/*
-!/.github/workflows/ci.yml
 .gitignore
 .pnpm-store
 .husky
@@ -36,10 +31,6 @@ coverage
 compose.yaml
 gen-docs
 docs/*
-!docs/maintainers
-docs/maintainers/*
-!docs/maintainers/current-batch-acceptance-ledger.md
-!docs/maintainers/ui-style-standard.md
 LICENSE
 node_modules
 report.xml

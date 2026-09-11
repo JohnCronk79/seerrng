@@ -6,4 +6,4 @@ action: none
 breaking: false
 ---
 
-Production container builds now retain the CI workflow and two documentation contracts required by prebuild validation while continuing to exclude unrelated repository metadata and the remaining documentation tree from the image context.
+Production container builds now keep development-only validation inputs outside the image context while repository and GitHub builds continue to enforce the complete current-batch contract.

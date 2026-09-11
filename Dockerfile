@@ -70,7 +70,7 @@ RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_
 
 COPY . .
 
-RUN pnpm build
+RUN pnpm i18n:check && pnpm build:next && pnpm build:server
 
 RUN rm -rf .next/cache
 
