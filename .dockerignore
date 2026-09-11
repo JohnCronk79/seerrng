@@ -8,6 +8,11 @@
 .git
 .gitconfig
 .github
+!/.github
+/.github/*
+!/.github/workflows
+/.github/workflows/*
+!/.github/workflows/ci.yml
 .gitignore
 .pnpm-store
 .husky
