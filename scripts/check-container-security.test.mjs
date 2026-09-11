@@ -75,7 +75,7 @@ test('the production image has an explicit unprivileged final user', () => {
   assert.match(finalStage, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
 });
 
-test('the Docker build context excludes secrets and retains build contracts', () => {
+test('the Docker build context excludes secrets and development-only contracts', () => {
   const ignoredPaths = new Set(
     fs
       .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
@@ -92,6 +92,9 @@ test('the Docker build context excludes secrets and retains build contracts', ()
     '**/*.pfx',
     '**/*.pem',
     'config',
+    '.github',
+    'cypress',
+    'docs/*',
   ]) {
     assert.ok(
       ignoredPaths.has(expectedPattern),
@@ -99,16 +102,19 @@ test('the Docker build context excludes secrets and retains build contracts', ()
     );
   }
 
-  for (const requiredContract of [
-    '!/.github/workflows/ci.yml',
-    '!docs/maintainers/current-batch-acceptance-ledger.md',
-    '!docs/maintainers/ui-style-standard.md',
-  ]) {
-    assert.ok(
-      ignoredPaths.has(requiredContract),
-      `${requiredContract.slice(1)} is missing from the Docker build context`
-    );
-  }
+});
+
+test('the production build does not require development-only contracts', () => {
+  const dockerfile = fs.readFileSync(
+    path.join(rootDirectory, 'Dockerfile'),
+    'utf8'
+  );
+
+  assert.match(
+    dockerfile,
+    /RUN pnpm i18n:check && pnpm build:next && pnpm build:server/u
+  );
+  assert.doesNotMatch(dockerfile, /RUN pnpm build(?:\s|$)/u);
 });
 
 test('the main deployment runs the pulled digest inside the container boundary', () => {
