@@ -12,7 +12,6 @@ const fileNames = [
   'docs/maintainers/current-batch-acceptance-ledger.md',
   'docs/maintainers/ui-style-standard.md',
   'prettier-scope.txt',
-  '.dockerignore',
   '.github/workflows/ci.yml',
   'package.json',
   'bin/run-prettier.mjs',

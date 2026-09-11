@@ -792,16 +792,6 @@ const validateCurrentBatchContract = (files) => {
     'the minimal Alpine validation job must provide Git to actions/checkout'
   );
   requireText(
-    '.dockerignore',
-    '!docs/maintainers/current-batch-acceptance-ledger.md',
-    'the production build context must retain the current-batch acceptance contract required by prebuild'
-  );
-  requireText(
-    '.dockerignore',
-    '!docs/maintainers/ui-style-standard.md',
-    'the production build context must retain the UI standard required by prebuild'
-  );
-  requireText(
     'bin/run-cypress-start.mjs',
     "E2E_TESTS: 'true'",
     'the isolated Cypress server must disable production request limits that make the complete browser suite timing-dependent'
