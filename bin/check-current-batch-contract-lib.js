@@ -671,6 +671,16 @@ const validateCurrentBatchContract = (files) => {
     'the cross-platform formatter must ignore tracked files deleted by the current change'
   );
   requireText(
+    'bin/run-prettier.mjs',
+    "import { getFileInfo } from 'prettier';",
+    'the cross-platform formatter must use Prettier itself to classify ignored files'
+  );
+  requireText(
+    'bin/run-prettier.mjs',
+    'candidateFiles.filter((_, index) => !fileInfo[index].ignored)',
+    'the cross-platform formatter must exclude files covered by the repository ignore rules before batching'
+  );
+  requireText(
     'server/lib/imageproxy.test.ts',
     "const posixIt = process.platform === 'win32' ? it.skip : it",
     'POSIX image-cache boundary tests must remain active in Linux CI without failing ordinary Windows workstations'

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getFileInfo } from 'prettier';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv[2];
@@ -28,11 +29,21 @@ if (listedFiles.error || listedFiles.status !== 0) {
   process.exit(listedFiles.status ?? 1);
 }
 
-const files = listedFiles.stdout
+const candidateFiles = listedFiles.stdout
   .split('\0')
   .filter(Boolean)
   .filter((file) => existsSync(path.join(root, file)))
   .sort((first, second) => first.localeCompare(second));
+const ignorePaths = [
+  path.join(root, '.prettierignore'),
+  path.join(root, '.gitignore'),
+].filter(existsSync);
+const fileInfo = await Promise.all(
+  candidateFiles.map((file) =>
+    getFileInfo(path.join(root, file), { ignorePath: ignorePaths })
+  )
+);
+const files = candidateFiles.filter((_, index) => !fileInfo[index].ignored);
 const prettierCli = path.join(
   root,
   'node_modules',
