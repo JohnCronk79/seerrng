@@ -5,7 +5,7 @@ import { AddAudioPlaybackVariants1784800000000 } from './1784800000000-AddAudioP
 
 test('SQLite audio playback variant migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

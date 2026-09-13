@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config '../../tailwind.config.js';
+@import 'tailwindcss';
 
 @layer base {
   :root {
@@ -460,7 +459,7 @@
   }
 
   .format-request-option {
-    @apply inline-flex items-center border-r border-green-500/70 px-[9px] text-green-200 transition duration-150 last:border-r-0 hover:bg-green-600 hover:text-white focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-300 disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
+    @apply inline-flex items-center border-r border-green-500/70 px-[9px] text-green-200 transition duration-150 last:border-r-0 hover:bg-green-600 hover:text-white focus:ring-2 focus:ring-green-300 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
   }
 
   .format-request-control:hover
@@ -480,12 +479,12 @@
   }
 
   .availability-quality-label {
-    @apply inline-flex items-center whitespace-nowrap border-r px-[9px] font-semibold text-white;
+    @apply inline-flex items-center border-r px-[9px] font-semibold whitespace-nowrap text-white;
     border-color: rgb(var(--theme-control-border) / 0.7);
   }
 
   .availability-quality-option {
-    @apply inline-flex items-center border-r px-[9px] transition duration-150 last:border-r-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-300;
+    @apply inline-flex items-center border-r px-[9px] transition duration-150 last:border-r-0 focus:ring-2 focus:ring-indigo-300 focus:outline-none focus:ring-inset;
     border-color: rgb(var(--theme-control-border) / 0.7);
     color: rgb(var(--theme-control-text));
   }
@@ -645,7 +644,7 @@
   }
 
   .slider-header {
-    @apply relative mb-4 mt-6 flex items-center gap-2;
+    @apply relative mt-6 mb-4 flex items-center gap-2;
   }
 
   .service-error-banner {
@@ -653,7 +652,7 @@
   }
 
   .slider-title {
-    @apply inline-flex items-center text-xl font-bold leading-7 text-gray-300 sm:truncate sm:text-2xl sm:leading-9;
+    @apply inline-flex items-center text-xl leading-7 font-bold text-gray-300 sm:truncate sm:text-2xl sm:leading-9;
   }
 
   a.slider-title {
@@ -694,7 +693,7 @@
   }
 
   .media-title {
-    @apply mt-4 flex flex-1 flex-col text-center text-white xl:mr-4 xl:mt-0 xl:text-left;
+    @apply mt-4 flex flex-1 flex-col text-center text-white xl:mt-0 xl:mr-4 xl:text-left;
   }
 
   .media-title > h1 {
@@ -722,7 +721,7 @@
   }
 
   .media-overview {
-    @apply flex flex-col gap-4 pb-4 pt-4 text-white lg:flex-row;
+    @apply flex flex-col gap-4 pt-4 pb-4 text-white lg:flex-row;
   }
 
   .media-overview-left {
@@ -733,7 +732,7 @@
   }
 
   .tagline {
-    @apply mb-4 text-xl italic text-gray-400 lg:text-2xl;
+    @apply mb-4 text-xl text-gray-400 italic lg:text-2xl;
   }
 
   .media-overview h2 {
@@ -784,11 +783,11 @@
   }
 
   .error-message {
-    @apply relative bottom-0 left-0 right-0 top-0 flex h-screen flex-col items-center justify-center text-center text-gray-300;
+    @apply relative top-0 right-0 bottom-0 left-0 flex h-screen flex-col items-center justify-center text-center text-gray-300;
   }
 
   .heading {
-    @apply text-2xl font-bold leading-8 text-gray-100;
+    @apply text-2xl leading-8 font-bold text-gray-100;
   }
 
   .description {
@@ -812,7 +811,7 @@
   }
 
   .section {
-    @apply mb-10 mt-6 text-white;
+    @apply mt-6 mb-10 text-white;
   }
 
   .form-row {
@@ -833,7 +832,7 @@
 
   label,
   .group-label {
-    @apply mb-1 block text-sm font-bold leading-5 text-gray-400;
+    @apply mb-1 block text-sm leading-5 font-bold text-gray-400;
   }
 
   label.checkbox-label {
@@ -899,7 +898,7 @@
   }
 
   .app-button {
-    @apply inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded-md border font-medium leading-5 transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale;
+    @apply inline-flex cursor-pointer items-center justify-center rounded-md border leading-5 font-medium whitespace-nowrap transition duration-150 ease-in-out focus:ring-2 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale;
   }
 
   .app-button-default {
@@ -975,7 +974,7 @@
   }
 
   .detail-disclosure-button {
-    @apply inline-flex h-[22px] items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400;
+    @apply inline-flex h-[22px] items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none;
     color: rgb(var(--theme-control-text) / 0.9);
     border-color: rgb(var(--theme-control-border) / 0.7);
     background-color: rgb(var(--theme-control-surface) / 0.28);
@@ -1012,7 +1011,7 @@
   }
 
   .selection-circle {
-    @apply flex h-4 w-4 flex-none items-center justify-center rounded-full border border-gray-600 bg-gray-800 text-transparent focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-40;
+    @apply flex h-4 w-4 flex-none items-center justify-center rounded-full border border-gray-600 bg-gray-800 text-transparent focus:ring-2 focus:ring-indigo-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40;
   }
 
   .selection-circle[aria-pressed='true'] {
@@ -1028,7 +1027,7 @@
   }
 
   button.input-action {
-    @apply relative -ml-px inline-flex items-center border border-gray-500 bg-indigo-600/80 px-3 py-2 text-sm font-medium leading-5 text-white last:rounded-r-md sm:px-3.5;
+    @apply relative -ml-px inline-flex items-center border border-gray-500 bg-indigo-600/80 px-3 py-2 text-sm leading-5 font-medium text-white last:rounded-r-md sm:px-3.5;
   }
 
   button.input-action[disabled] {
@@ -1041,7 +1040,7 @@
 
   .button-md :where(svg),
   button.input-action svg {
-    @apply ml-2 mr-2 h-5 w-5 first:ml-0 last:mr-0;
+    @apply mr-2 ml-2 h-5 w-5 first:ml-0 last:mr-0;
   }
 
   .button-md {
@@ -1057,7 +1056,7 @@
   }
 
   .button-sm svg {
-    @apply ml-1.5 mr-1.5 h-4 w-4 first:ml-0 last:mr-0;
+    @apply mr-1.5 ml-1.5 h-4 w-4 first:ml-0 last:mr-0;
   }
 
   .button-md svg.playback-provider-icon,
@@ -1066,7 +1065,7 @@
   }
 
   .app-search-input {
-    @apply block w-full rounded-full border py-2 pl-10 text-white placeholder-gray-300 focus:placeholder-gray-300 focus:outline-none focus:ring-0 sm:text-base;
+    @apply block w-full rounded-full border py-2 pl-10 text-white placeholder-gray-300 focus:placeholder-gray-300 focus:ring-0 focus:outline-none sm:text-base;
     border-color: rgb(var(--theme-control-border) / 0.75);
     background-color: rgb(var(--theme-control-surface) / 0.78);
   }
@@ -1078,7 +1077,7 @@
   }
 
   .app-filter-button {
-    @apply inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400;
+    @apply inline-flex h-8 items-center justify-center gap-2 rounded-md border px-[9px] text-xs font-medium whitespace-nowrap transition focus:ring-2 focus:ring-indigo-400 focus:outline-none;
   }
 
   .app-filter-button-active {
@@ -1114,7 +1113,7 @@
   }
 
   .app-filter-section-heading {
-    @apply mb-2 mt-5 text-sm text-gray-300;
+    @apply mt-5 mb-2 text-sm text-gray-300;
   }
 
   svg.icon-md {
@@ -1235,7 +1234,7 @@
   }
 
   .datepicker-wrapper > div {
-    @apply fixed left-0 right-0 w-full px-4 md:w-auto;
+    @apply fixed right-0 left-0 w-full px-4 md:w-auto;
   }
 
   .datepicker-wrapper > div > div:nth-child(2) > div {
@@ -1251,7 +1250,7 @@
   }
 
   .discover-filter-control {
-    @apply relative inline-flex min-h-8 min-w-0 max-w-full rounded-md border focus-within:ring-2 focus-within:ring-inset focus-within:ring-indigo-400;
+    @apply relative inline-flex min-h-8 max-w-full min-w-0 rounded-md border focus-within:ring-2 focus-within:ring-indigo-400 focus-within:ring-inset;
     border-color: rgb(var(--theme-control-border) / 0.7);
     background-color: rgb(var(--theme-control-surface) / 0.28);
     width: max-content;
@@ -1266,7 +1265,7 @@
   }
 
   .discover-filter-control .react-select-container {
-    @apply w-auto min-w-[4.5rem] max-w-80 flex-none;
+    @apply w-auto max-w-80 min-w-[4.5rem] flex-none;
   }
 
   .discover-filter-control .react-select__control,
@@ -1291,7 +1290,7 @@
   }
 
   .discover-filter-control .discover-compact-select .react-select__menu {
-    @apply left-0 mt-1 w-max min-w-full max-w-80 rounded-md border border-gray-600 bg-gray-800 py-0 text-xs shadow-xl;
+    @apply left-0 mt-1 w-max max-w-80 min-w-full rounded-md border border-gray-600 bg-gray-800 py-0 text-xs shadow-xl;
     top: 100%;
   }
 

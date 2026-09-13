@@ -481,32 +481,36 @@ searchRoutes.get('/', async (req, res, next) => {
             ? getRepository(MetadataArtist).find({
                 where: { tmdbPersonId: In(personIds) },
                 cache: true,
-                select: ['tmdbPersonId', 'tadbThumb', 'tadbCover'],
+                select: {
+                  tmdbPersonId: true,
+                  tadbThumb: true,
+                  tadbCover: true,
+                },
               })
             : [],
           albumIds.length > 0
             ? getRepository(MetadataAlbum).find({
                 where: { mbAlbumId: In(albumIds) },
-                select: ['mbAlbumId', 'caaUrl'],
+                select: { mbAlbumId: true, caaUrl: true },
               })
             : [],
           artistIds.length > 0
             ? getRepository(MetadataArtist).find({
                 where: { mbArtistId: In(artistIds) },
                 cache: true,
-                select: [
-                  'mbArtistId',
-                  'tmdbPersonId',
-                  'tadbThumb',
-                  'tadbCover',
-                ],
+                select: {
+                  mbArtistId: true,
+                  tmdbPersonId: true,
+                  tadbThumb: true,
+                  tadbCover: true,
+                },
               })
             : [],
           tmdbPersonIds.length > 0
             ? getRepository(MetadataArtist).find({
                 where: { tmdbPersonId: In(tmdbPersonIds) },
                 cache: true,
-                select: ['mbArtistId', 'tmdbPersonId'],
+                select: { mbArtistId: true, tmdbPersonId: true },
               })
             : [],
         ]);

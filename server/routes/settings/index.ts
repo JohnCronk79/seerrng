@@ -773,8 +773,7 @@ export const parseTlsSettingsBody = (
   const effectiveAllowHttpAuth = (tls.allowHttpAuth ??
     current.allowHttpAuth) as boolean;
   const effectiveHttpsPort = (tls.httpsPort ?? current.httpsPort) as
-    | number
-    | undefined;
+    number | undefined;
   if (effectiveMode !== 'disabled' && effectiveHttpsPort !== undefined) {
     let httpPort: number;
     try {
@@ -1205,7 +1204,9 @@ export const readLogTail = async (
       target === '.' ||
       target === '..'
     ) {
-      throw new Error('Log symlink must target a file in the log directory.');
+      throw new Error('Log symlink must target a file in the log directory.', {
+        cause: error,
+      });
     }
     const filePath = path.join(directory, target);
     handle = await fs.promises.open(
@@ -1744,7 +1745,7 @@ settingsRoutes.post(
       try {
         const admin = await userRepository.findOneOrFail({
           where: { id: 1 },
-          select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
+          select: { id: true, jellyfinUserId: true, jellyfinDeviceId: true },
           order: { id: 'ASC' },
         });
 
@@ -1840,7 +1841,7 @@ settingsRoutes.post(
       if (sync.value) {
         const userRepository = getRepository(User);
         const admin = await userRepository.findOneOrFail({
-          select: ['id', 'jellyfinDeviceId', 'jellyfinUserId'],
+          select: { id: true, jellyfinDeviceId: true, jellyfinUserId: true },
           where: { id: 1 },
           order: { id: 'ASC' },
         });
@@ -1913,7 +1914,7 @@ settingsRoutes.get('/jellyfin/users', async (req, res) =>
 
     const userRepository = getRepository(User);
     const admin = await userRepository.findOneOrFail({
-      select: ['id', 'jellyfinDeviceId', 'jellyfinUserId'],
+      select: { id: true, jellyfinDeviceId: true, jellyfinUserId: true },
       where: { id: 1 },
       order: { id: 'ASC' },
     });

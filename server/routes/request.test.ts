@@ -121,6 +121,25 @@ async function loginAs(email: string, password: string) {
   }
 }
 
+async function loginCookieAs(email: string, password: string) {
+  const settings = getSettings();
+  const priorLocalLogin = settings.main.localLogin;
+  settings.main.localLogin = true;
+
+  try {
+    const res = await request(app)
+      .post('/auth/local')
+      .send({ email, password });
+    assert.strictEqual(res.status, 200);
+    const cookies = res.headers['set-cookie'];
+    const cookie = Array.isArray(cookies) ? cookies.join('; ') : cookies;
+    assert.ok(cookie);
+    return cookie;
+  } finally {
+    settings.main.localLogin = priorLocalLogin;
+  }
+}
+
 async function seedRequest(
   status = MediaRequestStatus.PENDING,
   createdAt?: Date,
@@ -2367,24 +2386,24 @@ describe('POST /request', () => {
       delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
       delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
     });
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const cookie = await loginCookieAs('friend@seerr.dev', 'test1234');
 
     const responses = await Promise.all([
-      agent.post('/request').send({ mediaId: 1 }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({ mediaId: 1 }),
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.MOVIE,
         mediaId: 'not-an-id',
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.TV,
         mediaId: 2,
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.TV,
         mediaId: 2,
         seasons: [],
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: 'podcast',
         mediaId: 3,
       }),

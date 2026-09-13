@@ -195,6 +195,12 @@ export const openpgpEncrypt = (
       setImmediate(callback);
       return;
     }
+    if (!mail.message) {
+      setImmediate(() =>
+        callback(new Error('OpenPGP email message is not initialized'))
+      );
+      return;
+    }
     mail.message.transform(
       new PGPEncryptor({
         signingKey: options.signingKey,

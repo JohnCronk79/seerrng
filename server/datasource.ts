@@ -86,7 +86,7 @@ function buildSslConfig(): TlsOptions | undefined {
 }
 
 const testConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: ':memory:',
   // Test setup owns schema creation and reset. Enabling these here makes
   // initialize() race seedTestDb() with a second schema synchronization.
@@ -99,7 +99,7 @@ const testConfig: DataSourceOptions = {
 };
 
 const devConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: SQLITE_DATABASE_PATH,
   synchronize: true,
   migrationsRun: false,
@@ -111,7 +111,7 @@ const devConfig: DataSourceOptions = {
 };
 
 const prodConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: SQLITE_DATABASE_PATH,
   synchronize: false,
   migrationsRun: false,

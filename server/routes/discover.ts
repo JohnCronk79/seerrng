@@ -2549,11 +2549,9 @@ discoverRoutes.get('/music', async (req, res) => {
         MUSIC_DISCOVERY_BLEND_TIMEOUT_MS
       );
       const topAlbumsResult = primaryResults.results[0] as
-        | PromiseSettledResult<LbTopAlbumsResponse>
-        | undefined;
+        PromiseSettledResult<LbTopAlbumsResponse> | undefined;
       const freshReleasesResult = primaryResults.results[1] as
-        | PromiseSettledResult<LbFreshReleasesResponse>
-        | undefined;
+        PromiseSettledResult<LbFreshReleasesResponse> | undefined;
       const topAlbums =
         topAlbumsResult?.status === 'fulfilled'
           ? topAlbumsResult.value.payload.release_groups
@@ -3163,7 +3161,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
       return await runUserSecurityMutation(req.user!.id, async () => {
         const activeUser = await userRepository.findOne({
           where: { id: req.user!.id },
-          select: ['id', 'plexToken', 'passwordChangedAt'],
+          select: { id: true, plexToken: true, passwordChangedAt: true },
         });
         if (
           !activeUser ||

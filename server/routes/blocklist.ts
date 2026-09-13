@@ -18,6 +18,7 @@ import {
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import { authorizedRouteAccess } from '@server/middleware/authorizedMutation';
+import { isUniqueConstraintError } from '@server/utils/databaseError';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import { MAX_PAGINATION_OFFSET } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
@@ -450,10 +451,7 @@ blocklistRoutes.post(
       }
 
       if (error instanceof QueryFailedError) {
-        if (
-          error.driverError.errno === 19 ||
-          error.driverError.code === '23505'
-        ) {
+        if (isUniqueConstraintError(error)) {
           return next({ status: 412, message: 'Item already blocklisted' });
         }
 

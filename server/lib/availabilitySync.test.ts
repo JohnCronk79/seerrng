@@ -394,7 +394,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1408 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -468,7 +468,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1409 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -565,7 +565,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1410 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -650,7 +650,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1411 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -715,7 +715,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { id: media.id },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
@@ -796,7 +796,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2000 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -877,7 +877,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2001 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -946,7 +946,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2002 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s2 = updated.seasons.find((s) => s.seasonNumber === 2);

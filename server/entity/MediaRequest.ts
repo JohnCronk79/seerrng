@@ -68,8 +68,8 @@ import {
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
-  RelationCount,
   UpdateDateColumn,
+  VirtualColumn,
   type EntityManager,
 } from 'typeorm';
 import Media from './Media';
@@ -1976,7 +1976,11 @@ export class MediaRequest {
   @Column({ type: 'varchar' })
   public type: MediaType;
 
-  @RelationCount((request: MediaRequest) => request.seasons)
+  @VirtualColumn({
+    type: 'integer',
+    query: (alias) =>
+      `SELECT COUNT(*) FROM "season_request" WHERE "requestId" = ${alias}."id"`,
+  })
   public seasonCount: number;
 
   @OneToMany(() => SeasonRequest, (season) => season.request, {

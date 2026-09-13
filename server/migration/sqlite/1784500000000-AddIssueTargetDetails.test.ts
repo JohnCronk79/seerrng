@@ -5,7 +5,7 @@ import { AddIssueTargetDetails1784500000000 } from './1784500000000-AddIssueTarg
 
 test('SQLite issue target details migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

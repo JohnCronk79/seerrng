@@ -10,7 +10,7 @@ export const runStartupMigrations = async (
   source: DataSource = dataSource
 ): Promise<Migration[]> => {
   const databaseType = source.options.type;
-  if (databaseType !== 'sqlite' && databaseType !== 'postgres') {
+  if (databaseType !== 'better-sqlite3' && databaseType !== 'postgres') {
     throw new Error(`Unsupported migration database type: ${databaseType}`);
   }
 
@@ -18,7 +18,7 @@ export const runStartupMigrations = async (
   await queryRunner.connect();
 
   try {
-    if (databaseType === 'sqlite') {
+    if (databaseType === 'better-sqlite3') {
       await queryRunner.query(
         `PRAGMA busy_timeout = ${SQLITE_MIGRATION_BUSY_TIMEOUT_MS}`
       );
@@ -63,7 +63,7 @@ export const runStartupMigrations = async (
     }
     throw error;
   } finally {
-    if (databaseType === 'sqlite') {
+    if (databaseType === 'better-sqlite3') {
       await queryRunner.query('PRAGMA foreign_keys=ON').catch(() => undefined);
       await queryRunner
         .query(`PRAGMA busy_timeout = ${SQLITE_RUNTIME_BUSY_TIMEOUT_MS}`)

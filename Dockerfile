@@ -13,7 +13,7 @@ RUN apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat bash && 
   npm config set fetch-retries 5 && \
   npm config set fetch-retry-mintimeout 20000 && \
   npm config set fetch-retry-maxtimeout 120000 && \
-  npm install --global node-gyp@13.0.1 pnpm@10.24.0
+  npm install --global node-gyp@13.0.2 pnpm@10.24.0
 
 FROM target-base AS prod-deps
 
@@ -53,7 +53,7 @@ RUN apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat bash && 
   npm config set fetch-retries 5 && \
   npm config set fetch-retry-mintimeout 20000 && \
   npm config set fetch-retry-maxtimeout 120000 && \
-  npm install --global node-gyp@13.0.1 pnpm@10.24.0
+  npm install --global node-gyp@13.0.2 pnpm@10.24.0
 
 FROM build-base AS build
 

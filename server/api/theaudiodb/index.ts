@@ -83,7 +83,7 @@ class TheAudioDb extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataArtist).findOne({
         where: { mbArtistId: artistId },
-        select: ['tadbThumb', 'tadbCover', 'tadbUpdatedAt'],
+        select: { tadbThumb: true, tadbCover: true, tadbUpdatedAt: true },
       });
 
       if (metadata) {
@@ -111,7 +111,7 @@ class TheAudioDb extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataArtist).findOne({
         where: { mbArtistId: artistId },
-        select: ['tadbThumb', 'tadbCover', 'tadbUpdatedAt'],
+        select: { tadbThumb: true, tadbCover: true, tadbUpdatedAt: true },
       });
 
       if (metadata?.tadbThumb || metadata?.tadbCover) {
@@ -220,7 +220,12 @@ class TheAudioDb extends ExternalAPI {
     const metadataRepository = getRepository(MetadataArtist);
     const existingMetadata = await metadataRepository.find({
       where: { mbArtistId: In(normalizedIds) },
-      select: ['mbArtistId', 'tadbThumb', 'tadbCover', 'tadbUpdatedAt'],
+      select: {
+        mbArtistId: true,
+        tadbThumb: true,
+        tadbCover: true,
+        tadbUpdatedAt: true,
+      },
     });
 
     const results: Record<

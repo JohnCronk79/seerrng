@@ -268,7 +268,7 @@ describe('User route input validation', () => {
 
     const userWithPassword = await getRepository(User).findOneOrFail({
       where: { id: 2 },
-      select: ['id', 'password'],
+      select: { id: true, password: true },
     });
     assert.strictEqual(await userWithPassword.passwordMatch('test1234'), true);
     assert.strictEqual(
@@ -301,12 +301,12 @@ describe('User route input validation', () => {
 
     const persisted = await userRepository.findOneOrFail({
       where: { id: user.id },
-      select: [
-        'id',
-        'password',
-        'resetPasswordGuid',
-        'recoveryLinkExpirationDate',
-      ],
+      select: {
+        id: true,
+        password: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
     assert.strictEqual(persisted.resetPasswordGuid, null);
     assert.strictEqual(persisted.recoveryLinkExpirationDate, null);
@@ -337,7 +337,7 @@ describe('User route input validation', () => {
 
     const persisted = await getRepository(User).findOneOrFail({
       where: { id: 2 },
-      select: ['id', 'password'],
+      select: { id: true, password: true },
     });
     const matches = await Promise.all(
       newPasswords.map((password) => persisted.passwordMatch(password))
@@ -376,7 +376,7 @@ describe('User route input validation', () => {
     assert.strictEqual(emailRes.status, 403);
     const persisted = await userRepository.findOneOrFail({
       where: { id: strongerUser.id },
-      select: ['id', 'email', 'password'],
+      select: { id: true, email: true, password: true },
     });
     assert.strictEqual(persisted.email, 'stronger-user@seerr.dev');
     assert.strictEqual(

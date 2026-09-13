@@ -26,6 +26,7 @@ import requestDispatchManager from '@server/lib/requestDispatch';
 import { getSettings } from '@server/lib/settings';
 import { runStartupMigrations } from '@server/lib/startupMigrations';
 import { setStaticAssetCacheControl } from '@server/lib/staticAssetCache';
+import { TypeormSessionStore } from '@server/lib/typeormSessionStore';
 import logger from '@server/logger';
 import {
   formatApiErrorResponse,
@@ -66,7 +67,6 @@ import {
   initializeTls,
 } from '@server/utils/tls';
 import compression from 'compression';
-import { TypeormStore } from 'connect-typeorm/out';
 import cookieParser from 'cookie-parser';
 import type { NextFunction, Request, Response } from 'express';
 import express from 'express';
@@ -106,8 +106,7 @@ const getErrorLogFields = (error: unknown) => ({
 });
 
 let requestGracefulShutdown:
-  | ((reason: string, requestedExitCode?: number) => void)
-  | undefined;
+  ((reason: string, requestedExitCode?: number) => void) | undefined;
 
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled promise rejection', {
@@ -333,10 +332,10 @@ Promise.resolve()
       // behind TypeORM session touches. Production retains durable sessions.
       const sessionStore = isE2eTest
         ? undefined
-        : (new TypeormStore({
+        : (new TypeormSessionStore(sessionRespository, {
             cleanupLimit: 2,
             ttl: 60 * 60 * 24 * 30,
-          }).connect(sessionRespository) as Store);
+          }) as Store);
       server.use(
         '/api',
         session({

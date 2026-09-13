@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { AddAvailableMusicServiceIds1784900000000 } from './1784900000000-AddAvailableMusicServiceIds';
 
 test('adds and backfills available Lidarr service ids for existing music', async () => {
-  const dataSource = new DataSource({ type: 'sqlite', database: ':memory:' });
+  const dataSource = new DataSource({
+    type: 'better-sqlite3',
+    database: ':memory:',
+  });
   await dataSource.initialize();
   const queryRunner = dataSource.createQueryRunner();
   const migration = new AddAvailableMusicServiceIds1784900000000();

@@ -5,7 +5,7 @@ import { EnforceSeasonUniqueness1781800000000 } from './1781800000000-EnforceSea
 
 test('SQLite season migration repairs duplicates and enforces parent uniqueness', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

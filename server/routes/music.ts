@@ -364,12 +364,14 @@ musicRoutes.get('/:id', async (req, res, next) => {
           }
           return media ?? undefined;
         }),
-      getRepository(Watchlist).exist({
-        where: {
-          mbId,
-          requestedBy: { id: req.user?.id },
-        },
-      }),
+      req.user
+        ? getRepository(Watchlist).exists({
+            where: {
+              mbId,
+              requestedBy: { id: req.user.id },
+            },
+          })
+        : false,
     ]);
 
     const artistId = albumDetails.release_group_metadata?.artist?.artists?.[0]

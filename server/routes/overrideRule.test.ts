@@ -309,13 +309,14 @@ describe('Override rule route validation', () => {
         getSettings().radarr = [];
       }
     );
+    const deletionFailure = assert.rejects(deletion, ServarrServiceInUseError);
 
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.strictEqual(deletionEntered, false);
 
     releaseSave();
     const response = await create;
-    await assert.rejects(deletion, ServarrServiceInUseError);
+    await deletionFailure;
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(deletionEntered, true);

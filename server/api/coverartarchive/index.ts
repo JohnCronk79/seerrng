@@ -95,7 +95,7 @@ class CoverArtArchive extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataAlbum).findOne({
         where: { mbAlbumId: albumId },
-        select: ['caaUrl'],
+        select: { caaUrl: true },
       });
       return metadata?.caaUrl;
     } catch (error) {
@@ -114,7 +114,7 @@ class CoverArtArchive extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataAlbum).findOne({
         where: { mbAlbumId: albumId },
-        select: ['caaUrl', 'updatedAt'],
+        select: { caaUrl: true, updatedAt: true },
       });
 
       if (metadata?.caaUrl) {
@@ -299,7 +299,7 @@ class CoverArtArchive extends ExternalAPI {
     const metadataRepository = getRepository(MetadataAlbum);
     const existingMetadata = await metadataRepository.find({
       where: { mbAlbumId: In(validIds) },
-      select: ['mbAlbumId', 'caaUrl', 'updatedAt'],
+      select: { mbAlbumId: true, caaUrl: true, updatedAt: true },
     });
 
     const metadataMap = new Map(

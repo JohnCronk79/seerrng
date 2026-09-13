@@ -5,7 +5,7 @@ import { AddUniqueBuiltInDiscoverSlider1782500000000 } from './1782500000000-Add
 
 test('SQLite built-in discovery slider uniqueness migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

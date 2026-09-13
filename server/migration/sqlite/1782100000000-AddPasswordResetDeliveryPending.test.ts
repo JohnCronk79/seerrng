@@ -5,7 +5,7 @@ import { AddPasswordResetDeliveryPending1782100000000 } from './1782100000000-Ad
 
 test('SQLite password-reset delivery migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

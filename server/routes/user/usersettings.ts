@@ -972,7 +972,7 @@ userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
         async () => {
           const user = await userRepository.findOne({
             where: { id: userId },
-            select: ['id', 'password'],
+            select: { id: true, password: true },
           });
 
           if (!user) {
@@ -1024,7 +1024,7 @@ userSettingsRoutes.post<
         });
 
         const userWithPassword = await userRepository.findOne({
-          select: ['id', 'password'],
+          select: { id: true, password: true },
           where: { id: userId },
         });
 
@@ -1174,7 +1174,9 @@ userSettingsRoutes.post<{ authToken: string }>(
                 .status(409)
                 .json({ message: 'Media server configuration changed.' });
             }
-            if (await userRepository.exist({ where: { plexId: account.id } })) {
+            if (
+              await userRepository.exists({ where: { plexId: account.id } })
+            ) {
               return res.status(422).json({
                 message: 'This Plex account is already linked to a Seerr user',
               });
@@ -1369,7 +1371,7 @@ userSettingsRoutes.post<{ username: string; password: string }>(
                 .json({ message: 'Media server configuration changed.' });
             }
             if (
-              await userRepository.exist({
+              await userRepository.exists({
                 where: { jellyfinUserId },
               })
             ) {
@@ -1671,7 +1673,7 @@ userSettingsRoutes.post<{ secret: string }>(
       const account = await jellyfinServer.authenticateQuickConnect(secret);
 
       if (
-        await userRepository.exist({
+        await userRepository.exists({
           where: { jellyfinUserId: account.User.Id },
         })
       ) {

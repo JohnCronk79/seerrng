@@ -117,15 +117,15 @@ movieRoutes.get('/:id', async (req, res, next) => {
 
     const media = await Media.getMedia(tmdbMovie.id, MediaType.MOVIE, req.user);
 
-    const onUserWatchlist = await getRepository(Watchlist).exist({
-      where: {
-        tmdbId: movieId,
-        mediaType: MediaType.MOVIE,
-        requestedBy: {
-          id: req.user?.id,
-        },
-      },
-    });
+    const onUserWatchlist = req.user
+      ? await getRepository(Watchlist).exists({
+          where: {
+            tmdbId: movieId,
+            mediaType: MediaType.MOVIE,
+            requestedBy: { id: req.user.id },
+          },
+        })
+      : false;
 
     const data = mapMovieDetails(tmdbMovie, media, onUserWatchlist);
 

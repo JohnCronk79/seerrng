@@ -5,7 +5,7 @@ import { EnforceScreenMediaUniqueness1782600000000 } from './1782600000000-Enfor
 
 test('SQLite screen-media uniqueness migration merges duplicate relationships', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

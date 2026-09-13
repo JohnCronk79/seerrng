@@ -5,7 +5,7 @@ import { UniqueUserExternalIds1781600000000 } from './1781600000000-UniqueUserEx
 
 test('SQLite external identity migration repairs duplicates and enforces uniqueness', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

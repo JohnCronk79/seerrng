@@ -457,7 +457,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5000 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -535,7 +535,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5001 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -612,7 +612,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5002 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
