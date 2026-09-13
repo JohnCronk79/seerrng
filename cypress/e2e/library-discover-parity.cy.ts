@@ -363,8 +363,8 @@ describe('Books and Music discover parity', () => {
     cy.contains('[data-testid=media-title]', 'Requestable Book').should(
       'be.visible'
     );
-    cy.contains('button', 'Request').click();
-    cy.contains('[data-testid=modal-title]', 'Request Ebook').should(
+    cy.get('[data-testid=format-request-option-ebook]').click();
+    cy.contains('[data-testid=modal-title]', 'Request Book').should(
       'be.visible'
     );
     cy.contains('[data-testid=media-title]', 'Requestable Book').should(
@@ -372,7 +372,7 @@ describe('Books and Music discover parity', () => {
     );
     cy.contains('legend', 'Format').should('be.visible');
     cy.get('[role=radiogroup][aria-label=Format]').within(() => {
-      cy.get('[title=Ebook]')
+      cy.get('[title=Book]')
         .closest('[role=radio]')
         .should('have.attr', 'aria-checked', 'true');
       cy.get('[title=Audiobook]')
@@ -383,10 +383,10 @@ describe('Books and Music discover parity', () => {
     cy.contains('[data-testid=modal-title]', 'Request Audiobook')
       .scrollIntoView()
       .should('be.visible');
-    cy.contains('[role=radio]', 'Ebook + Audiobook')
+    cy.contains('[role=radio]', 'Book + Audiobook')
       .click()
       .should('have.attr', 'aria-checked', 'true');
-    cy.contains('[data-testid=modal-title]', 'Request Ebook + Audiobook')
+    cy.contains('[data-testid=modal-title]', 'Request Book + Audiobook')
       .scrollIntoView()
       .should('be.visible');
     cy.contains('label', 'Edition / ISBN').should('be.visible');
@@ -570,7 +570,7 @@ describe('Books and Music discover parity', () => {
     cy.contains('button', 'Request Bibliography').click();
     cy.contains(
       '[data-testid=modal-title]',
-      'Request Ebook Bibliography'
+      'Request Book Bibliography'
     ).should('be.visible');
     cy.contains('Requestable Work').should('be.visible');
     cy.contains('Already Requested Work').should('be.visible');
@@ -578,14 +578,14 @@ describe('Books and Music discover parity', () => {
     cy.get('[role="radiogroup"][aria-label="Format"] [role="radio"]')
       .should('have.length', 3)
       .filter('[aria-checked="true"]')
-      .should('contain', 'Ebook');
+      .should('contain', 'Book');
     cy.get('[role="dialog"] table')
       .contains('td', 'Already Requested Work')
       .parents('tr')
       .contains('Requested')
       .should('be.visible');
     cy.get('[role="radiogroup"][aria-label="Format"]')
-      .contains('[role="radio"]', 'Ebook + Audiobook')
+      .contains('[role="radio"]', 'Book + Audiobook')
       .click();
     cy.get('[role="dialog"] table')
       .contains('td', 'Already Requested Work')
@@ -876,7 +876,7 @@ describe('Books and Music discover parity', () => {
       .should('be.visible');
     cy.contains('series requests').should('not.exist');
     cy.contains(
-      'At least one Bookshelf server must be marked as default in order for ebook requests to be processed.'
+      'At least one Bookshelf server must be marked as default in order for book requests to be processed.'
     )
       .scrollIntoView()
       .should('be.visible');
@@ -977,10 +977,7 @@ describe('Books and Music discover parity', () => {
       'be.visible'
     );
     cy.get('button[aria-label="Add to Blocklist"]').click();
-    cy.contains('[data-testid=modal-title]', 'Blocklist Book').should(
-      'be.visible'
-    );
-    cy.contains('[data-testid=modal-title]', 'Blocklist Book').should(
+    cy.contains('Are you sure you want to blocklist this item?').should(
       'be.visible'
     );
     cy.get('[data-testid=modal-ok-button]').should('contain', 'Blocklist');
@@ -1418,7 +1415,7 @@ describe('Books and Music discover parity', () => {
       .first()
       .within(() => {
         cy.contains('Format').should('be.visible');
-        cy.contains('Ebook + Audiobook').should('be.visible');
+        cy.contains('Both').should('be.visible');
         cy.contains('Partial Bookshelf link').should('not.exist');
       });
     cy.contains('Partial Dual Book')
@@ -1426,7 +1423,7 @@ describe('Books and Music discover parity', () => {
       .first()
       .within(() => {
         cy.contains('Partial Bookshelf link').should('be.visible');
-        cy.contains('Ebook').should('be.visible');
+        cy.contains('Book').should('be.visible');
       });
   });
 
@@ -1657,9 +1654,9 @@ describe('Books and Music discover parity', () => {
     cy.wait('@getManagedBook');
     cy.contains('Manage Book').should('be.visible');
     cy.contains('Downloads').should('be.visible');
-    cy.get('[title="Ebook"]').should('be.visible');
+    cy.get('[title="Book"]').should('be.visible');
     cy.get('[title="Audiobook"]').should('be.visible');
-    cy.contains('Open Ebook in Bookshelf').should('be.visible');
+    cy.contains('Open Book in Bookshelf').should('be.visible');
     cy.get('body').type('{esc}');
 
     cy.intercept('GET', '/api/v1/music/55555555-5555-5555-5555-555555555555', {
@@ -1757,9 +1754,9 @@ describe('Books and Music discover parity', () => {
     cy.wait('@getBookIssue');
     cy.wait('@getBookIssueDetails');
     cy.contains('Issue Detail Book').should('be.visible');
-    cy.contains('Open Ebook in Bookshelf').should('be.visible');
+    cy.contains('Open Book in Bookshelf').should('be.visible');
     cy.contains('Open Audiobook in Bookshelf').should('be.visible');
-    cy.contains('Open in Bookshelf (Ebook)').should('not.exist');
+    cy.contains('Open in Bookshelf (Book)').should('not.exist');
   });
 
   it('renders rich book and music cards from sparse watchlist rows', () => {
