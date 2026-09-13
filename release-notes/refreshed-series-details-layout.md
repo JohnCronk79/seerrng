@@ -6,4 +6,4 @@ action: none
 breaking: false
 ---
 
-Series Details now uses the shared artwork-backed layout with linked facts, aligned ratings, three-column cast and crew lists, subject tags, a read-only two-card season and episode browser, a permission-aware segmented `HD | 4K` request control, and consistently styled Blocklist, Manage, Report an Issue, trailer, and Associations actions.
+Series Details now uses the shared artwork-backed layout with linked facts, aligned ratings, three-column cast and crew lists, subject tags, a read-only two-card season and episode browser, separate adjacent standard and permission-aware 4K request buttons, and consistently styled Blocklist, Manage, Report an Issue, trailer, and Associations actions.
