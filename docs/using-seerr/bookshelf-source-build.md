@@ -261,7 +261,7 @@ its `<Port>` value from `8787` to `8788`, and then start it again. Never point
 both instances at the same data directory.
 
 In SeerrNG, add the same host twice under **Settings > Services** and set
-**Book Format** to **Book** for port `8787` and **Audiobook** for port `8788`.
+**Book Format** to **Ebook** for port `8787` and **Audiobook** for port `8788`.
 Mark one service of each format as the default when both-format requests are
 needed. See the [Bookshelf backend guide](./bookshelf-backend.md) for the
 format-specific root-folder and profile settings.
@@ -276,7 +276,7 @@ After BookshelfNG is running:
    same-host service.
 4. Enter the API key shown in BookshelfNG.
 5. Leave **URL Base** blank unless you configured one in BookshelfNG.
-6. Select **Book** or **Audiobook** for the service.
+6. Select **Ebook** or **Audiobook** for the service.
 7. Select the root folder, quality profile, and metadata profile returned by
    the connection test.
 8. Enable **Scan** and, if desired, **Automatic Search**, then save.

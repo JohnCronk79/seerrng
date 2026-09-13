@@ -60,14 +60,14 @@ test('ignores unknown-platform provenance descriptors when verifying platforms',
       {
         env: {
           ...process.env,
-          DOCKER_COMMAND: dockerPath.replaceAll('\\', '/'),
           MANIFEST_FIXTURE: fixturePath,
+          PATH: `${temporaryDirectory}:${process.env.PATH}`,
         },
         encoding: 'utf8',
       }
     );
 
-    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(result.status, 0, result.stderr);
     assert.match(
       result.stdout,
       /Verified example:tag: linux\/amd64, linux\/arm64/
@@ -122,14 +122,14 @@ cat "$MANIFEST_FIXTURE"
         env: {
           ...process.env,
           ATTEMPT_FILE: attemptPath,
-          DOCKER_COMMAND: dockerPath.replaceAll('\\', '/'),
           MANIFEST_FIXTURE: fixturePath,
+          PATH: `${temporaryDirectory}:${process.env.PATH}`,
         },
         encoding: 'utf8',
       }
     );
 
-    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(result.status, 0, result.stderr);
     assert.match(
       result.stderr,
       /Manifest inspection failed for example:tag; retrying in 1s\./

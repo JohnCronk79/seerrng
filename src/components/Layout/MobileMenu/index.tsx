@@ -145,6 +145,13 @@ const MobileMenu = ({
         activeRegExp: /^\/discover\/audiobooks$/,
       },
       {
+        href: '/discover/audiobooks',
+        content: intl.formatMessage(menuMessages.browseaudiobooks),
+        svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
+        activeRegExp: /^\/discover\/audiobooks$/,
+      },
+      {
         href: '/requests/status',
         content: intl.formatMessage(menuMessages.requeststatus),
         svgIcon: <ClockIcon className="h-6 w-6" />,

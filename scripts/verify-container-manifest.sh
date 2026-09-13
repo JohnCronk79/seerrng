@@ -13,8 +13,7 @@ if (($# == 0)); then
   set -- linux/amd64 linux/arm64
 fi
 
-docker_command="${DOCKER_COMMAND:-docker}"
-command -v "$docker_command" >/dev/null 2>&1 || {
+command -v docker >/dev/null 2>&1 || {
   echo 'docker is required to verify a container manifest.' >&2
   exit 1
 }
@@ -26,7 +25,7 @@ command -v jq >/dev/null 2>&1 || {
 raw_manifest=''
 max_attempts=5
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-  if raw_manifest="$("$docker_command" buildx imagetools inspect --raw "$image_ref")"; then
+  if raw_manifest="$(docker buildx imagetools inspect --raw "$image_ref")"; then
     break
   fi
   if ((attempt == max_attempts)); then
@@ -50,7 +49,7 @@ actual_platforms="$(jq -r '
       + (if .platform.variant? then "/" + .platform.variant else "" end))]
   | unique
   | .[]
-' <<<"$raw_manifest" | tr -d '\r' | sort -u)"
+' <<<"$raw_manifest" | sort -u)"
 expected_platforms="$(printf '%s\n' "$@" | sort -u)"
 
 if ! diff -u <(printf '%s\n' "$expected_platforms") <(printf '%s\n' "$actual_platforms"); then
