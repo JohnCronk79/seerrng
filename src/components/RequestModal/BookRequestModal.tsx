@@ -8,7 +8,12 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
-import { isBookFormatCoveredByActiveRequest } from '@app/components/RequestModal/requestAvailability';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -60,7 +65,7 @@ const messages = defineMessages('components.RequestModal.Book', {
     'The request was submitted, but Bookshelf rejected it while processing.',
   editerror: 'Something went wrong while editing the request.',
   bothDefaultInfo:
-    'Ebook + Audiobook uses your default ebook and audiobook Bookshelf services. Choose a single format to override server, profile, folder, or tags.',
+    'Book + Audiobook uses your default Book and Audiobook Bookshelf services. Choose a single format to override server, profile, folder, or tags.',
   edition: 'Edition / ISBN',
   automaticEdition: 'Automatic best match',
   automaticEditionInfo:
@@ -68,14 +73,14 @@ const messages = defineMessages('components.RequestModal.Book', {
   noIsbnCandidates:
     'No valid ISBN candidates were found. Bookshelf will fall back to title matching.',
   noEbookServer:
-    'No ebook Bookshelf service is configured. Ebook requests are unavailable.',
+    'No Book Bookshelf service is configured. Book requests are unavailable.',
   noAudiobookServer:
     'No audiobook Bookshelf service is configured. Audiobook requests are unavailable.',
   noBothServers:
-    'Ebook + Audiobook requires ebook and audiobook Bookshelf services to be configured.',
-  ebook: 'Ebook',
+    'Book + Audiobook requires Book and Audiobook Bookshelf services to be configured.',
+  ebook: 'Book',
   audiobook: 'Audiobook',
-  ebookAndAudiobook: 'ebook and audiobook',
+  ebookAndAudiobook: 'Book and Audiobook',
   mediaAndFormat: 'Media & Format',
   firstPublished: 'First Published',
   pages: 'Pages',
@@ -84,6 +89,7 @@ const messages = defineMessages('components.RequestModal.Book', {
   publisher: 'Publisher',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
   readyToRequest: 'Ready to Request',
   requested: 'Requested',
   notAvailable: 'Not Available',
@@ -128,31 +134,105 @@ const BookRequestModal = ({
       revalidateOnMount: true,
     }
   );
-  const mediaRecordAvailable =
-    data?.mediaInfo?.status === MediaStatus.AVAILABLE;
-  const ebookAvailable =
-    mediaRecordAvailable &&
-    data?.mediaInfo?.externalServiceId !== null &&
-    data?.mediaInfo?.externalServiceId !== undefined;
-  const audiobookAvailable =
-    mediaRecordAvailable &&
-    data?.mediaInfo?.audiobookExternalServiceId !== null &&
-    data?.mediaInfo?.audiobookExternalServiceId !== undefined;
-  const selectedDestinationAvailable =
-    !editRequest &&
-    (bookFormat === 'both'
-      ? ebookAvailable && audiobookAvailable
-      : bookFormat === 'audiobook'
-        ? audiobookAvailable
-        : ebookAvailable);
-  const selectedDestinationRequested =
-    !editRequest &&
-    isBookFormatCoveredByActiveRequest(data?.mediaInfo?.requests, bookFormat);
-  const selectedDestinationCovered =
-    selectedDestinationAvailable || selectedDestinationRequested;
   const { data: bookServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/readarr'
   );
+  const selectedService = bookServices?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const defaultEbookService = bookServices?.find(
+    (server) => server.isDefault && (server.serviceType ?? 'ebook') === 'ebook'
+  );
+  const defaultAudiobookService = bookServices?.find(
+    (server) => server.isDefault && server.serviceType === 'audiobook'
+  );
+  const ebookDestination = createRequestDestination(
+    'readarr',
+    'ebook',
+    bookFormat === 'ebook'
+      ? (selectedService ?? defaultEbookService)
+      : defaultEbookService,
+    bookFormat === 'ebook' ? requestOverrides : null
+  );
+  const audiobookDestination = createRequestDestination(
+    'readarr',
+    'audiobook',
+    bookFormat === 'audiobook'
+      ? (selectedService ?? defaultAudiobookService)
+      : defaultAudiobookService,
+    bookFormat === 'audiobook' ? requestOverrides : null
+  );
+  const selectedDestinations =
+    bookFormat === 'both'
+      ? [ebookDestination, audiobookDestination]
+      : bookFormat === 'audiobook'
+        ? [audiobookDestination]
+        : [ebookDestination];
+  const destinationAvailable = (format: 'ebook' | 'audiobook') => {
+    const target = format === 'ebook' ? ebookDestination : audiobookDestination;
+    const externalServiceId =
+      format === 'ebook'
+        ? data?.mediaInfo?.externalServiceId
+        : data?.mediaInfo?.audiobookExternalServiceId;
+    const serviceId =
+      format === 'ebook'
+        ? data?.mediaInfo?.serviceId
+        : data?.mediaInfo?.audiobookServiceId;
+
+    return isRequestDestinationAvailable(
+      data?.mediaInfo
+        ? {
+            ...data.mediaInfo,
+            status:
+              data.mediaInfo.status === MediaStatus.AVAILABLE &&
+              externalServiceId != null
+                ? MediaStatus.AVAILABLE
+                : MediaStatus.UNKNOWN,
+            serviceId,
+          }
+        : undefined,
+      target
+    );
+  };
+  const selectedDestinationAvailable =
+    !editRequest &&
+    selectedDestinations.length > 0 &&
+    selectedDestinations.every(
+      (target) =>
+        !!target && destinationAvailable(target.format as 'ebook' | 'audiobook')
+    );
+  const selectedDestinationFullyCovered =
+    !editRequest &&
+    selectedDestinations.length > 0 &&
+    selectedDestinations.every(
+      (target) =>
+        !!target &&
+        (destinationAvailable(target.format as 'ebook' | 'audiobook') ||
+          isRequestDestinationRequested(data?.mediaInfo?.requests, target))
+    );
+  const selectedDestinationRequested =
+    selectedDestinationFullyCovered && !selectedDestinationAvailable;
+  const requestedDestinations = selectedDestinations.filter(
+    (target) =>
+      !!target &&
+      !destinationAvailable(target.format as 'ebook' | 'audiobook') &&
+      isRequestDestinationRequested(data?.mediaInfo?.requests, target)
+  );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      requestedDestinations,
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'book'
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationFullyCovered && !selectedDestinationPromotable;
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id ||
@@ -307,15 +387,6 @@ const BookRequestModal = ({
   const canUseAdvancedOptions = hasPermission(
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
-  );
-  const selectedService = bookServices?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const defaultEbookService = bookServices?.find(
-    (server) => server.isDefault && (server.serviceType ?? 'ebook') === 'ebook'
-  );
-  const defaultAudiobookService = bookServices?.find(
-    (server) => server.isDefault && server.serviceType === 'audiobook'
   );
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const serviceLabel =
@@ -711,6 +782,16 @@ const BookRequestModal = ({
                   {intl.formatMessage(messages.service)}:
                 </dt>
                 <dd className="m-0 truncate">{serviceLabel}</dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.approval)}:
+                </dt>
+                <dd className="m-0 min-w-0">
+                  <RequestFooterStatus
+                    available={selectedDestinationAvailable}
+                    requested={selectedDestinationRequested}
+                    hasAutoApprove={hasAutoApprove}
+                  />
+                </dd>
               </dl>
             </div>
           </div>
@@ -785,7 +866,7 @@ const BookRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="detail-disclosure-button"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -800,11 +881,6 @@ const BookRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              requested={selectedDestinationRequested}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
             className="flex h-[22px] items-center"

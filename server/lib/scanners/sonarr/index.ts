@@ -12,6 +12,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import type {
   ProcessableSeason,
   RunnableScanner,
@@ -242,6 +243,30 @@ class SonarrScanner
         is4k: server4k,
         mutationGuard: (callback) =>
           runWithServarrServiceSnapshot('sonarr', this.currentServer, callback),
+      });
+
+      const updatedMedia = await getRepository(Media).findOneBy({
+        tmdbId,
+        mediaType: MediaType.TV,
+      });
+      await upsertMediaSearchMetadata(updatedMedia?.id, {
+        title: tvShow.name,
+        alternateTitle: tvShow.original_name,
+        releaseDate: tvShow.first_air_date,
+        genres: tvShow.genres.map((genre) => genre.name).join(', '),
+        runtime: tvShow.episode_run_time[0]
+          ? `${tvShow.episode_run_time[0]} minutes`
+          : undefined,
+        creator: tvShow.created_by.map((creator) => creator.name).join(', '),
+        studio: tvShow.production_companies
+          .map((company) => company.name)
+          .join(', '),
+        network: tvShow.networks.map((network) => network.name).join(', '),
+        format: 'Series',
+        provider: this.currentServer.name,
+        externalIds: [tmdbId, sonarrSeries.tvdbId, sonarrSeries.imdbId]
+          .filter(Boolean)
+          .join(' '),
       });
     } catch (e) {
       if (e instanceof ServarrServiceAuthorityChangedError) throw e;

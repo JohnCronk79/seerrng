@@ -48,7 +48,7 @@ const messages = defineMessages('components.ExternalMediaManageSlideOver', {
   removearr: 'Remove from {arr}',
   removearrFormat: 'Remove {format} from {arr}',
   removearrAll: 'Remove all from {arr}',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   markavailable: 'Mark as Available',
   music: 'music',

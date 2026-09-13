@@ -4,6 +4,9 @@ import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityT
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
+import AvailabilityQualityControl, {
+  type AvailabilityQuality,
+} from '@app/components/Discover/AvailabilityQualityControl';
 import {
   CompactSelect,
   getFilterResetButtonClass,
@@ -69,7 +72,7 @@ const DiscoverMusic = () => {
   const router = useRouter();
   const update = useBatchUpdateQueryParams({});
   const query =
-    typeof router.query.query === 'string' ? router.query.query : '';
+    typeof router.query.search === 'string' ? router.query.search : '';
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
@@ -78,6 +81,10 @@ const DiscoverMusic = () => {
   }, [query, setSearch]);
   const genre =
     typeof router.query.genre === 'string' ? router.query.genre : '';
+  const availability: AvailabilityQuality | undefined =
+    router.query.availability === 'mp3' || router.query.availability === 'flac'
+      ? router.query.availability
+      : undefined;
   const releaseType =
     typeof router.query.releaseType === 'string'
       ? router.query.releaseType
@@ -102,6 +109,7 @@ const DiscoverMusic = () => {
     '/api/v1/discover/music',
     {
       query,
+      availability,
       days: '14',
       sortBy,
       genre,
@@ -109,14 +117,19 @@ const DiscoverMusic = () => {
       primaryReleaseDateGte: releaseDateGte,
       primaryReleaseDateLte: releaseDateLte,
     },
-    { randomizeOrder: !query && sortBy === 'ranked' }
+    {
+      randomizeOrder: !query && sortBy === 'ranked',
+      availableQuality: availability,
+      hideAvailable: !availability,
+    }
   );
   useSearchActivityReporter(
-    Boolean(search.trim()) &&
-      (search.trim() !== query.trim() ||
-        discover.isLoadingInitialData ||
-        discover.isValidating),
-    'music-keyword'
+    search.trim() !== query.trim() ||
+      discover.isLoadingInitialData ||
+      discover.isLoadingMore ||
+      discover.isValidating ||
+      discover.isSearchingAvailableQuality,
+    'music-discovery'
   );
   const title = intl.formatMessage(messages.music);
   const setParam = (values: Record<string, string | undefined>) =>
@@ -125,7 +138,8 @@ const DiscoverMusic = () => {
     const nextSearch = debouncedSearch.trim();
 
     if (nextSearch !== routedSearchRef.current) {
-      update({ query: nextSearch || undefined, page: undefined });
+      routedSearchRef.current = nextSearch;
+      update({ search: nextSearch || undefined, page: undefined });
     }
   }, [debouncedSearch, update]);
   const currentYear = new Date().getFullYear();
@@ -157,7 +171,12 @@ const DiscoverMusic = () => {
     { label: intl.formatMessage(messages.single), value: 'Single' },
   ];
   const hasActiveFilters = Boolean(
-    query || genre || releaseType || releaseDateGte || releaseDateLte
+    query ||
+    availability ||
+    genre ||
+    releaseType ||
+    releaseDateGte ||
+    releaseDateLte
   );
   return (
     <>
@@ -176,18 +195,18 @@ const DiscoverMusic = () => {
             </Button>
           </div>
         </div>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.filters)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <CardTextVisibilityToggle mediaType="album" className="order-2" />
           <button
             type="button"
             aria-pressed={!hasActiveFilters}
             onClick={() => {
               setSearch('');
               setParam({
-                query: undefined,
+                search: undefined,
+                availability: undefined,
                 genre: undefined,
                 releaseType: undefined,
                 primaryReleaseDateGte: undefined,
@@ -198,16 +217,26 @@ const DiscoverMusic = () => {
           >
             {intl.formatMessage(messages.clearFilters)}
           </button>
+          <CardTextVisibilityToggle mediaType="album" className="order-2" />
+          <AvailabilityQualityControl
+            mediaType="music"
+            value={availability}
+            onChange={(value) => setParam({ availability: value })}
+            className="order-3"
+          />
+          <div className="order-4 basis-full" aria-hidden="true" />
           <form
-            className="order-3 inline-flex h-8 w-72 max-w-full flex-none overflow-hidden rounded-md border border-gray-600 bg-gray-900/70"
+            className="discover-filter-control order-5 h-8 w-72 flex-none"
             onSubmit={(e) => {
               e.preventDefault();
-              setParam({ query: search.trim() || undefined });
+              const nextSearch = search.trim();
+              routedSearchRef.current = nextSearch;
+              setParam({ search: nextSearch || undefined });
             }}
           >
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                search.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                search.trim() ? 'discover-filter-control-label-active' : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -219,25 +248,25 @@ const DiscoverMusic = () => {
               onChange={(e) => setSearch(e.target.value)}
               placeholder={intl.formatMessage(messages.searchMusic)}
               aria-label={intl.formatMessage(messages.searchMusic)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </form>
           <CompactSelect
-            className="order-6"
+            className="order-8"
             label={intl.formatMessage(messages.genres)}
             value={genre}
             options={genreOptions}
             onChange={(value) => setParam({ genre: value || undefined })}
           />
           <CompactSelect
-            className="order-5"
+            className="order-7"
             label={intl.formatMessage(messages.releaseType)}
             value={releaseType}
             options={releaseTypeOptions}
             onChange={(value) => setParam({ releaseType: value || undefined })}
           />
           <CompactSelect
-            className="order-4"
+            className="order-6"
             label={intl.formatMessage(messages.releaseYear)}
             value={releaseYear}
             options={yearOptions}
@@ -261,7 +290,7 @@ const DiscoverMusic = () => {
             }}
           />
         </div>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.sortBy)}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -318,6 +347,7 @@ const DiscoverMusic = () => {
         isEmpty={discover.isEmpty}
         isLoading={
           discover.isLoadingInitialData ||
+          discover.isSearchingAvailableQuality ||
           (discover.isLoadingMore && discover.titles.length > 0)
         }
         isReachingEnd={discover.isReachingEnd}

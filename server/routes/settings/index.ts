@@ -1481,7 +1481,19 @@ settingsRoutes.post(
 
         await settings.persistSection('plex', (current) => ({
           ...parsedPlex.value,
-          libraries: current.libraries,
+          // A different machineId means this connection now points at a
+          // different physical Plex server. Stored library ids are only
+          // meaningful within one server (Plex reuses small sequential
+          // keys across installs), so carrying them over risks silently
+          // applying a stale enabled/type classification to an unrelated
+          // library on the new server. Only preserve libraries when we're
+          // re-confirming the same server (or connecting for the first
+          // time, when current.machineId is unset).
+          libraries:
+            current.machineId &&
+            current.machineId !== result.MediaContainer.machineIdentifier
+              ? []
+              : current.libraries,
           machineId: result.MediaContainer.machineIdentifier,
           name: result.MediaContainer.friendlyName,
         }));
@@ -1610,6 +1622,65 @@ settingsRoutes.post(
   })
 );
 
+settingsRoutes.put(
+  '/plex/library/:libraryId/type',
+  authorizedMutation(Permission.ADMIN, async (req, res) => {
+    const libraryId = parseBoundedString(req.params.libraryId, {
+      fieldName: 'Library ID',
+      maxLength: 128,
+    });
+    if ('error' in libraryId) {
+      return res.status(400).json({ message: libraryId.error });
+    }
+
+    const parsedBody = parseSettingsBodyObject(req.body);
+    if ('error' in parsedBody) {
+      return res.status(400).json({ message: parsedBody.error });
+    }
+    const type = parseOptionalAllowedString(parsedBody.value.type, {
+      fieldName: 'Type',
+      allowedValues: ['music', 'book'] as const,
+      maxLength: 16,
+    });
+    if ('error' in type) {
+      return res.status(400).json({ message: type.error });
+    }
+    if (!type.value) {
+      return res.status(400).json({ message: 'Type is required.' });
+    }
+    const nextType = type.value;
+
+    return runWithConfigurationAdmission('plex', async () => {
+      const settings = getSettings();
+      const existing = settings.plex.libraries.find(
+        (library) => library.id === libraryId.value
+      );
+      // Only libraries Plex reports as an 'artist' section (surfaced here
+      // as 'music' or 'book') can be reclassified between the two --
+      // Plex has no separate wire-level type for audiobook libraries.
+      if (
+        !existing ||
+        (existing.type !== 'music' && existing.type !== 'book')
+      ) {
+        return res.status(400).json({
+          message:
+            'Only Music/Audiobook libraries can be reclassified between the two.',
+        });
+      }
+
+      const plex = await settings.persistSection('plex', (current) => ({
+        ...current,
+        libraries: current.libraries.map((library) =>
+          library.id === libraryId.value
+            ? { ...library, type: nextType }
+            : library
+        ),
+      }));
+      return res.status(200).json(plex.libraries);
+    });
+  })
+);
+
 settingsRoutes.get('/plex/sync', (_req, res) => {
   return res.status(200).json(plexFullScanner.status());
 });
@@ -1695,7 +1766,13 @@ settingsRoutes.post(
             parsedBody.value.apiKey === REDACTED_SECRET
               ? current.apiKey
               : parsedJellyfin.value.apiKey,
-          libraries: current.libraries,
+          // See the analogous Plex machineId check above: a different
+          // serverId means a different physical server, so stale library
+          // ids must not carry over their enabled state to it.
+          libraries:
+            current.serverId && current.serverId !== result.Id
+              ? []
+              : current.libraries,
           serverId: result.Id,
           name: result.ServerName,
         }));
@@ -1798,7 +1875,7 @@ settingsRoutes.post(
 
         const newLibraries: Library[] = libraries.map((library) => {
           const existing = settings.jellyfin.libraries.find(
-            (l) => l.id === library.key && l.name === library.title
+            (l) => l.id === library.key
           );
 
           return {

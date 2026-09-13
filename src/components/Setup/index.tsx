@@ -11,6 +11,7 @@ import TransportSecurityNotice from '@app/components/TransportSecurityNotice';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
+import { useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import versionedAsset from '@app/utils/versionedAsset';
 import { MediaServerType } from '@server/constants/server';
@@ -54,6 +55,12 @@ const messages = defineMessages('components.Setup', {
   finisherror: 'Something went wrong while finishing setup.',
   localesaveerror:
     'Setup completed, but the selected language could not be saved.',
+  transportRecoveryTitle: 'Sign in again to continue setup',
+  transportRecoveryDescription:
+    'The media server details were saved, but the previous browser session was not established. Restart SeerrNG after changing transport settings, then sign in again from the login page.',
+  openLogin: 'Open sign-in',
+  transportRequired:
+    'Choose an active HTTPS transport or explicitly enable authenticated HTTP sessions before signing in.',
 });
 
 const Setup = () => {
@@ -69,12 +76,24 @@ const Setup = () => {
   const { locale } = useLocale();
   const settings = useSettings();
   const toasts = useToasts();
+  const { user, revalidate: revalidateUser } = useUser();
+  const [transportReady, setTransportReady] = useState(false);
+  const userCheckStarted = useRef(false);
   const libraryValidationController = useRef<AbortController | undefined>(
     undefined
   );
   const setupCompletionController = useRef<AbortController | undefined>(
     undefined
   );
+
+  useEffect(() => {
+    if (userCheckStarted.current) {
+      return;
+    }
+
+    userCheckStarted.current = true;
+    void revalidateUser().catch(() => undefined);
+  }, [revalidateUser]);
 
   const finishSetup = async () => {
     if (setupCompletionController.current) {
@@ -188,8 +207,10 @@ const Setup = () => {
       MediaServerType.NOT_CONFIGURED
     ) {
       setMediaServerType(settings.currentSettings.mediaServerType);
-      if (currentStep < 3) {
+      if (user && currentStep < 3) {
         setCurrentStep(3);
+      } else if (!user && currentStep !== 2) {
+        setCurrentStep(2);
       }
     }
   }, [
@@ -197,6 +218,7 @@ const Setup = () => {
     settings.currentSettings.initialized,
     router,
     currentStep,
+    user,
   ]);
 
   useEffect(() => {
@@ -216,6 +238,18 @@ const Setup = () => {
   const handleComplete = () => {
     void validateLibraries();
   };
+
+  const handleSetupConfigured = () => {
+    // The setup request can persist the media-server configuration even when
+    // the browser rejects the newly-issued session cookie. Refresh public
+    // settings immediately so the recovery UI replaces the setup form and
+    // prevents a duplicate submission with the same hostname.
+    void mutate('/api/v1/settings/public').catch(() => undefined);
+  };
+
+  const mediaServerAlreadyConfigured =
+    settings.currentSettings.mediaServerType !== MediaServerType.NOT_CONFIGURED;
+  const needsTransportRecovery = mediaServerAlreadyConfigured && !user;
 
   if (settings.currentSettings.initialized) return <></>;
 
@@ -273,7 +307,7 @@ const Setup = () => {
             />
           </ul>
         </nav>
-        <TransportSecurityNotice />
+        <TransportSecurityNotice onReadinessChange={setTransportReady} />
         <div className="mt-10 w-full rounded-md border border-gray-600 bg-gray-800/50 p-4 text-white">
           {currentStep === 1 && (
             <div className="flex flex-col items-center pb-6">
@@ -294,6 +328,7 @@ const Setup = () => {
                         setMediaServerType(MediaServerType.JELLYFIN);
                         setCurrentStep(2);
                       }}
+                      disabled={!transportReady}
                       className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configjellyfin)}
@@ -310,6 +345,7 @@ const Setup = () => {
                         setMediaServerType(MediaServerType.PLEX);
                         setCurrentStep(2);
                       }}
+                      disabled={!transportReady}
                       className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configplex)}
@@ -326,6 +362,7 @@ const Setup = () => {
                         setMediaServerType(MediaServerType.EMBY);
                         setCurrentStep(2);
                       }}
+                      disabled={!transportReady}
                       className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configemby)}
@@ -335,58 +372,109 @@ const Setup = () => {
               </div>
             </div>
           )}
-          {currentStep === 2 && (
-            <SetupLogin
-              serverType={mediaServerType}
-              onCancel={() => {
-                setMediaServerType(MediaServerType.NOT_CONFIGURED);
-                setCurrentStep(1);
-              }}
-              onComplete={() => setCurrentStep(3)}
-            />
-          )}
-          {currentStep === 3 && (
-            <div className="p-2">
-              {mediaServerType === MediaServerType.PLEX ? (
-                <SettingsPlex onComplete={handleComplete} />
-              ) : (
-                <SettingsJellyfin isSetupSettings onComplete={handleComplete} />
-              )}
-              <div className="actions">
-                <div className="flex justify-end">
-                  <span className="ml-3 inline-flex rounded-md shadow-sm">
-                    <Button
-                      buttonType="primary"
-                      disabled={!mediaServerSettingsComplete}
-                      onClick={() => setCurrentStep(4)}
-                    >
-                      {intl.formatMessage(messages.continue)}
-                    </Button>
-                  </span>
+          {currentStep === 2 &&
+            (!transportReady ? (
+              <div className="p-4 text-center text-sm text-gray-300">
+                {intl.formatMessage(messages.transportRequired)}
+              </div>
+            ) : needsTransportRecovery ? (
+              <div className="p-4 text-center">
+                <div className="mb-2 text-xl font-bold">
+                  {intl.formatMessage(messages.transportRecoveryTitle)}
+                </div>
+                <p className="mb-6 text-sm text-gray-300">
+                  {intl.formatMessage(messages.transportRecoveryDescription)}
+                </p>
+                <Button
+                  buttonType="primary"
+                  onClick={() => void router.push('/login')}
+                  disabled={!transportReady}
+                >
+                  {intl.formatMessage(messages.openLogin)}
+                </Button>
+              </div>
+            ) : (
+              <SetupLogin
+                serverType={mediaServerType}
+                onCancel={() => {
+                  setMediaServerType(MediaServerType.NOT_CONFIGURED);
+                  setCurrentStep(1);
+                }}
+                onComplete={() => setCurrentStep(3)}
+                onSetupConfigured={handleSetupConfigured}
+              />
+            ))}
+          {currentStep === 3 &&
+            (needsTransportRecovery ? (
+              <div className="p-4 text-center">
+                <div className="mb-2 text-xl font-bold">
+                  {intl.formatMessage(messages.transportRecoveryTitle)}
+                </div>
+                <p className="mb-6 text-sm text-gray-300">
+                  {intl.formatMessage(messages.transportRecoveryDescription)}
+                </p>
+                <Button
+                  buttonType="primary"
+                  onClick={() => void router.push('/login')}
+                  disabled={!transportReady}
+                >
+                  {intl.formatMessage(messages.openLogin)}
+                </Button>
+              </div>
+            ) : !transportReady ? (
+              <div className="p-4 text-center text-sm text-gray-300">
+                {intl.formatMessage(messages.transportRequired)}
+              </div>
+            ) : (
+              <div className="p-2">
+                {mediaServerType === MediaServerType.PLEX ? (
+                  <SettingsPlex onComplete={handleComplete} />
+                ) : (
+                  <SettingsJellyfin
+                    isSetupSettings
+                    onComplete={handleComplete}
+                  />
+                )}
+                <div className="actions">
+                  <div className="flex justify-end">
+                    <span className="ml-3 inline-flex rounded-md shadow-sm">
+                      <Button
+                        buttonType="primary"
+                        disabled={!mediaServerSettingsComplete}
+                        onClick={() => setCurrentStep(4)}
+                      >
+                        {intl.formatMessage(messages.continue)}
+                      </Button>
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-          {currentStep === 4 && (
-            <div>
-              <SettingsServices />
-              <div className="actions">
-                <div className="flex justify-end">
-                  <span className="ml-3 inline-flex rounded-md shadow-sm">
-                    <Button
-                      buttonType="primary"
-                      onClick={() => void finishSetup()}
-                      disabled={isUpdating}
-                    >
-                      {isUpdating
-                        ? intl.formatMessage(messages.finishing)
-                        : intl.formatMessage(messages.finish)}
-                    </Button>
-                  </span>
+            ))}
+          {currentStep === 4 &&
+            (!transportReady ? (
+              <div className="p-4 text-center text-sm text-gray-300">
+                {intl.formatMessage(messages.transportRequired)}
+              </div>
+            ) : (
+              <div>
+                <SettingsServices />
+                <div className="actions">
+                  <div className="flex justify-end">
+                    <span className="ml-3 inline-flex rounded-md shadow-sm">
+                      <Button
+                        buttonType="primary"
+                        onClick={() => void finishSetup()}
+                        disabled={isUpdating}
+                      >
+                        {isUpdating
+                          ? intl.formatMessage(messages.finishing)
+                          : intl.formatMessage(messages.finish)}
+                      </Button>
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            ))}
         </div>
       </div>
     </div>

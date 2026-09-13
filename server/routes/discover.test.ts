@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, it, mock } from 'node:test';
 
+import CoverArtArchive from '@server/api/coverartarchive';
 import ExternalAPI from '@server/api/externalapi';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexTvAPI from '@server/api/plextv';
 import TheMovieDb from '@server/api/themoviedb';
-import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { UserType } from '@server/constants/user';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
@@ -15,9 +20,11 @@ import MediaIdentifier, {
   MediaIdentifierProvider,
 } from '@server/entity/MediaIdentifier';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
 import { getSettings } from '@server/lib/settings';
+import logger from '@server/logger';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
 import { settlePromisesWithin } from '@server/utils/concurrency';
@@ -146,6 +153,46 @@ async function login(email = 'admin@seerr.dev') {
 }
 
 describe('GET /discover/movies', () => {
+  it('discovers locally available movies without contacting TMDB', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 456789,
+        mediaType: MediaType.MOVIE,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 1,
+        externalServiceId: 77,
+      })
+    );
+    const metadataRepository = getRepository(MediaSearchMetadata);
+    await metadataRepository.save(
+      metadataRepository.create({
+        mediaId: media.id,
+        title: 'Local HD Movie',
+        releaseDate: '2025',
+        genres: 'Adventure',
+        runtime: '105 minutes',
+        searchText: 'local hd movie adventure',
+      })
+    );
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for local availability');
+    });
+
+    const agent = await login();
+    const res = await agent.get('/discover/movies?availability=hd');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.totalResults, 1);
+    assert.strictEqual(res.body.results[0].id, 456789);
+    assert.strictEqual(res.body.results[0].title, 'Local HD Movie');
+    assert.match(res.body.results[0].posterPath, /\/movie\/456789\/cover/);
+    assert.strictEqual(
+      (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
+      0
+    );
+  });
+
   it('rejects malformed movie genre IDs before provider lookup', async () => {
     mockPrivate(ExternalAPI.prototype, 'get', async () => {
       throw new Error('TMDB should not be called for malformed genre IDs');
@@ -714,6 +761,51 @@ describe('GET /discover/tv', () => {
     assert.strictEqual(res.status, 404);
   });
 
+  it('discovers locally available 4K series without depending on TMDB page order', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 987654,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.PARTIALLY_AVAILABLE,
+      })
+    );
+    const metadataRepository = getRepository(MediaSearchMetadata);
+    await metadataRepository.save(
+      metadataRepository.create({
+        mediaId: media.id,
+        title: 'Local 4K Series',
+        alternateTitle: 'Local 4K Series',
+        releaseDate: '2026-01-01',
+        genres: 'Drama',
+        runtime: '48 minutes',
+        searchText: 'local 4k series drama',
+      })
+    );
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for local availability');
+    });
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/discover/tv?availability=4k');
+
+      assert.strictEqual(res.status, 200);
+      assert.ok(
+        res.body.results.some(
+          (result: { id: number; name: string }) =>
+            result.id === 987654 && result.name === 'Local 4K Series'
+        )
+      );
+      assert.ok(
+        (tmdbGet as { mock: { callCount: () => number } }).mock.callCount() ===
+          0
+      );
+    } finally {
+      await getRepository(Media).remove(media);
+    }
+  });
+
   it('forwards a linked production country to TMDB series discovery', async () => {
     mockPrivate(
       ExternalAPI.prototype,
@@ -1103,6 +1195,187 @@ describe('GET /discover/tv', () => {
 });
 
 describe('GET /discover/music', () => {
+  it('uses the scanned local catalog for music availability filters', async () => {
+    const settings = getSettings();
+    const previousLidarr = settings.lidarr;
+    settings.lidarr = [
+      {
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as (typeof settings.lidarr)[number],
+      {
+        id: 1,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as (typeof settings.lidarr)[number],
+    ];
+
+    const searchAlbum = mock.method(MusicBrainz.prototype, 'searchAlbum');
+    const getTopAlbums = mock.method(ListenBrainzAPI.prototype, 'getTopAlbums');
+    const getFreshReleases = mock.method(
+      ListenBrainzAPI.prototype,
+      'getFreshReleases'
+    );
+
+    try {
+      const mediaRepository = getRepository(Media);
+      const [mp3Album, flacAlbum] = await mediaRepository.save([
+        new Media({
+          tmdbId: 0,
+          mbId: '11111111-1111-4111-8111-111111111111',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 0,
+          availableMusicServiceIds: [0],
+        }),
+        new Media({
+          tmdbId: 0,
+          mbId: '22222222-2222-4222-8222-222222222222',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 1,
+          availableMusicServiceIds: [1],
+        }),
+      ]);
+      const metadataRepository = getRepository(MediaSearchMetadata);
+      await metadataRepository.save([
+        metadataRepository.create({
+          mediaId: mp3Album.id,
+          title: 'Fast MP3 Album',
+          artist: 'Local Artist',
+          releaseDate: '2025-06-07',
+          genres: 'Rock, Alternative',
+          albumType: 'Album',
+          searchText: 'fast mp3 album local artist rock alternative',
+        }),
+        metadataRepository.create({
+          mediaId: flacAlbum.id,
+          title: 'FLAC Only Album',
+          artist: 'Other Artist',
+          releaseDate: '2024-01-02',
+          genres: 'Pop',
+          albumType: 'Album',
+          searchText: 'flac only album other artist pop',
+        }),
+      ]);
+
+      const agent = await login();
+      const res = await agent
+        .get('/discover/music')
+        .query({ availability: 'mp3' });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.totalResults, 1);
+      assert.strictEqual(res.body.results[0].title, 'Fast MP3 Album');
+      assert.strictEqual(
+        res.body.results[0]['artist-credit'][0].name,
+        'Local Artist'
+      );
+      assert.deepStrictEqual(res.body.results[0].availableQualities, ['MP3']);
+      assert.strictEqual(searchAlbum.mock.callCount(), 0);
+      assert.strictEqual(getTopAlbums.mock.callCount(), 0);
+      assert.strictEqual(getFreshReleases.mock.callCount(), 0);
+    } finally {
+      settings.lidarr = previousLidarr;
+    }
+  });
+
+  for (const sortBy of ['popular.week', 'release_date.desc']) {
+    it(`reuses detail cover URLs for ${sortBy} without additional artwork lookups`, async () => {
+      const releaseMbid = '55f7c1d9-b4f4-4c8d-a578-7d98687c4e45';
+      const albumId = 'f5093c06-23e3-404f-aeaa-40f72885ee3a';
+      const archive = new CoverArtArchive();
+      Object.defineProperty(archive, 'fetchReleaseGroupMetadata', {
+        value: async () => ({
+          release: `/release/${releaseMbid}`,
+          images: [{ id: 123, front: true, approved: true }],
+        }),
+      });
+      const detailArtwork = await archive.getCoverArt(albumId);
+      const getCoverArt = mock.method(
+        CoverArtArchive.prototype,
+        'getCoverArt',
+        async () => {
+          throw new Error('Discovery must not look up additional artwork');
+        }
+      );
+      const cases = [
+        {
+          imageId: 123,
+          releaseMbid,
+          expected: `https://archive.org/download/mbid-${releaseMbid}/mbid-${releaseMbid}-123_thumb250.jpg`,
+        },
+        ...[undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(
+          (imageId) => ({
+            imageId,
+            releaseMbid,
+            expected: `https://coverartarchive.org/release/${releaseMbid}/front-250`,
+          })
+        ),
+        {
+          imageId: 123,
+          releaseMbid: 'release-not-a-uuid',
+          expected:
+            'https://coverartarchive.org/release/release-not-a-uuid/front-250',
+        },
+        { imageId: 123, releaseMbid: '', expected: undefined },
+      ];
+      const albums = cases.map((entry, index) => ({
+        artist_mbids: [`artist-cover-${index}`],
+        artist_name: `Cover Artist ${index}`,
+        caa_id: entry.imageId as number,
+        caa_release_mbid: entry.releaseMbid,
+        listen_count: 100 - index,
+        release_group_mbid: index === 0 ? albumId : `album-cover-${index}`,
+        release_group_name: `Cover Album ${index}`,
+      }));
+      mock.method(ListenBrainzAPI.prototype, 'getTopAlbums', async () => ({
+        payload: {
+          count: albums.length,
+          from_ts: 0,
+          last_updated: 0,
+          offset: 0,
+          range: 'week',
+          release_groups: albums,
+          to_ts: 0,
+        },
+      }));
+      mock.method(ListenBrainzAPI.prototype, 'getFreshReleases', async () => ({
+        payload: {
+          releases: albums.map((album) => ({
+            ...album,
+            artist_credit_name: album.artist_name,
+            release_date: '2026-05-01',
+            release_group_primary_type: 'Album',
+            release_group_secondary_type: '',
+            release_mbid: album.caa_release_mbid,
+            release_name: album.release_group_name,
+            release_tags: [],
+          })),
+        },
+      }));
+
+      const agent = await login();
+      const res = await agent.get('/discover/music').query({ sortBy });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.results.length, cases.length);
+      for (const [index, entry] of cases.entries()) {
+        const album = res.body.results.find(
+          (result: { title: string }) => result.title === `Cover Album ${index}`
+        );
+        assert.equal(album?.posterPath, entry.expected);
+      }
+      assert.equal(
+        res.body.results.find((result: { id: string }) => result.id === albumId)
+          ?.posterPath,
+        detailArtwork.images[0]?.thumbnails[250]
+      );
+      assert.equal(getCoverArt.mock.callCount(), 0);
+    });
+  }
+
   it('rejects oversized music discovery queries before provider lookup', async () => {
     const searchAlbum = mock.method(MusicBrainz.prototype, 'searchAlbum');
     const getFreshReleases = mock.method(
@@ -1357,6 +1630,74 @@ describe('GET /discover/music', () => {
       res.body.results.map((result: { title: string }) => result.title),
       ['Microsoft Windows Sounds']
     );
+  });
+
+  it('exposes every scanned Lidarr quality for discovery filtering', async () => {
+    const settings = getSettings();
+    const previousLidarr = settings.lidarr;
+    settings.lidarr = [
+      {
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as (typeof settings.lidarr)[number],
+      {
+        id: 2,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as (typeof settings.lidarr)[number],
+    ];
+
+    try {
+      await getRepository(Media).save(
+        new Media({
+          tmdbId: 0,
+          mbId: 'quality-available-album',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 2,
+          availableMusicServiceIds: [0, 2],
+        })
+      );
+      mock.method(MusicBrainz.prototype, 'searchAlbum', async () => [
+        {
+          id: 'quality-available-album',
+          title: 'Quality Available Album',
+          score: 100,
+          media_type: 'album',
+          'primary-type': 'Album',
+          'primary-type-id': '',
+          'type-id': '',
+          'first-release-date': '2026',
+          posterPath: undefined,
+          count: 1,
+          releases: [],
+          releasedate: '2026',
+          tags: [],
+          'artist-credit': [
+            {
+              name: 'Quality Artist',
+              artist: {
+                id: 'quality-artist',
+                name: 'Quality Artist',
+                'sort-name': 'Quality Artist',
+              },
+            },
+          ],
+        },
+      ]);
+
+      const agent = await login();
+      const res = await agent.get('/discover/music?query=quality%20available');
+
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.results[0].availableQualities, [
+        'MP3',
+        'FLAC',
+      ]);
+    } finally {
+      settings.lidarr = previousLidarr;
+    }
   });
 
   it('pages and sorts music discovery results', async () => {
@@ -2589,6 +2930,17 @@ describe('GET /discover/books', () => {
     assert.strictEqual(searchBooks.mock.callCount(), 0);
   });
 
+  it('rejects unsupported book formats before provider lookup', async () => {
+    const searchBooks = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+
+    const agent = await login();
+    const res = await agent.get('/discover/books').query({ format: 'print' });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Format must be valid/);
+    assert.strictEqual(searchBooks.mock.callCount(), 0);
+  });
+
   it('uses the selected subject when browsing without a search query', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,
@@ -2604,7 +2956,7 @@ describe('GET /discover/books', () => {
       }) => {
         assert.strictEqual(query, 'subject:science_fiction');
         assert.strictEqual(page, 2);
-        assert.strictEqual(limit, 20);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 0,
@@ -2661,9 +3013,14 @@ describe('GET /discover/books', () => {
         assert.strictEqual(sort, 'rating');
 
         return {
-          numFound: 0,
+          numFound: 1,
           start: 0,
-          docs: [],
+          docs: [
+            {
+              key: '/works/OL-rating-sort',
+              title: 'Rating Sort Book',
+            },
+          ],
         };
       }
     );
@@ -2693,7 +3050,7 @@ describe('GET /discover/books', () => {
           '(title:"alpha" OR author:"alpha") AND (title:"beta" OR author:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
         );
         assert.strictEqual(page, 1);
-        assert.strictEqual(limit, 100);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 2,
@@ -2779,7 +3136,7 @@ describe('GET /discover/books', () => {
           query,
           '(title:"microsoft" OR author:"microsoft") AND (title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
         );
-        assert.strictEqual(limit, 100);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 3,
@@ -2926,13 +3283,15 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('blends multiple subjects for the default recommended book feed', async () => {
+  it('uses one broad query for the default all-books feed', async () => {
     const seenQueries: string[] = [];
+    const seenLimits: (number | undefined)[] = [];
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
-      async ({ query }: { query: string; limit?: number }) => {
+      async ({ query, limit }: { query: string; limit?: number }) => {
         seenQueries.push(query);
+        seenLimits.push(limit);
 
         return {
           numFound: 1,
@@ -2956,13 +3315,9 @@ describe('GET /discover/books', () => {
     const res = await agent.get('/discover/books?sortBy=ranked');
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(seenQueries.length, 5);
-    assert.strictEqual(new Set(seenQueries).size, 5);
-    assert.strictEqual(
-      seenQueries.every((query) => query.startsWith('subject:')),
-      true
-    );
-    assert.strictEqual(res.body.results.length > 1, true);
+    assert.deepStrictEqual(seenQueries, ['*:*']);
+    assert.deepStrictEqual(seenLimits, [50]);
+    assert.strictEqual(res.body.results.length, 1);
   });
 
   it('accepts shuffle seeds for ranked book discovery', async () => {
@@ -3028,7 +3383,7 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('diversifies the default recommended book feed by author', async () => {
+  it('keeps distinct books from the broad default feed', async () => {
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
@@ -3088,13 +3443,12 @@ describe('GET /discover/books', () => {
     const res = await agent.get('/discover/books?sortBy=ranked');
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.results.length, 20);
+    assert.strictEqual(res.body.results.length, 4);
     assert.strictEqual(
-      res.body.results
-        .slice(0, 4)
-        .filter((result: { author: string }) => result.author === 'Author One')
-        .length,
-      2
+      res.body.results.filter(
+        (result: { author: string }) => result.author === 'Author One'
+      ).length,
+      3
     );
     assert.strictEqual(
       res.body.results.some(
@@ -3104,56 +3458,48 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('uses available subjects for the default book feed when one subject fails', async () => {
-    mock.method(
-      OpenLibraryAPI.prototype,
-      'searchBooks',
-      async ({ query }: { query: string }) => {
-        if (query === 'subject:fiction') {
-          throw new Error('subject unavailable');
-        }
-
-        return {
-          numFound: 1,
-          start: 0,
-          docs: [
-            {
-              key: `/works/${query.replace(/[^a-z_]/g, '')}`,
-              title: query,
-              cover_i: 1,
-              edition_count: 10,
-              ratings_average: 4,
-              ratings_count: 10,
-              want_to_read_count: 10,
-            },
-          ],
-        };
-      }
-    );
-
-    const agent = await login();
-    const res = await agent.get('/discover/books?sortBy=ranked');
-
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.results.length > 1, true);
-    assert.strictEqual(
-      res.body.results.some(
-        (result: { title: string }) => result.title === 'subject:fiction'
-      ),
-      false
-    );
-  });
-
-  it('reports when Open Library is unavailable', async () => {
+  it('reports one sanitized structured context when Open Library is unavailable', async () => {
+    const errorLog = mock.method(logger, 'error', () => undefined);
     mock.method(OpenLibraryAPI.prototype, 'searchBooks', async () => {
       throw new Error('provider unavailable');
     });
 
     const agent = await login();
-    const res = await agent.get('/discover/books?page=3');
+    const res = await agent.get('/discover/books').query({
+      page: 3,
+      format: 'audiobook',
+      query: 'space opera',
+      sortBy: 'rating',
+      subject: 'science_fiction',
+      firstPublishYear: '2024',
+      language: 'eng',
+      minRating: '4.5',
+    });
 
     assert.strictEqual(res.status, 503);
     assert.match(res.body.message, /Open Library.*unavailable/i);
+    assert.strictEqual(errorLog.mock.callCount(), 1);
+    const [, logContext] = errorLog.mock.calls[0].arguments as unknown as [
+      string,
+      Record<string, unknown>,
+    ];
+    const { errorStack, ...stableLogContext } = logContext;
+    assert.strictEqual(typeof errorStack, 'string');
+    assert.deepStrictEqual(stableLogContext, {
+      label: 'Discover Books',
+      errorMessage: 'provider unavailable',
+      discoveryContext: {
+        format: 'audiobook',
+        keyword: 'space opera',
+        page: 3,
+        pageSize: 50,
+        sort: 'rating',
+        genre: 'science_fiction',
+        firstPublishYear: '2024',
+        language: 'eng',
+        minRating: 4.5,
+      },
+    });
   });
 
   it('reports provider failure instead of an empty default book feed', async () => {
@@ -3171,6 +3517,7 @@ describe('GET /discover/books', () => {
   });
 
   it('reports when a single Open Library request stalls', async () => {
+    const errorLog = mock.method(logger, 'error', () => undefined);
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
@@ -3182,6 +3529,7 @@ describe('GET /discover/books', () => {
 
     assert.strictEqual(res.status, 503);
     assert.match(res.body.message, /Open Library.*timed out/i);
+    assert.strictEqual(errorLog.mock.callCount(), 1);
   });
 
   it('only exposes the current user watchlist state on book results', async () => {

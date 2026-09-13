@@ -71,6 +71,11 @@ test('the production image has an explicit unprivileged final user', () => {
   );
   const finalStage = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
 
+  assert.match(
+    dockerfile,
+    /RUN pnpm i18n:check && pnpm build:next && pnpm build:server/u,
+    'the image build must validate translations and compile both application targets without requiring repository-only contract inputs'
+  );
   assert.match(finalStage, /\nUSER node:node\n/);
   assert.match(finalStage, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
 });
@@ -82,7 +87,6 @@ test('the Docker build context excludes secrets and development-only contracts',
       .split(/\r?\n/u)
       .filter((line) => line && !line.startsWith('#'))
   );
-
   for (const expectedPattern of [
     '.env*',
     '.git',
@@ -101,7 +105,6 @@ test('the Docker build context excludes secrets and development-only contracts',
       `${expectedPattern} is exposed to the Docker build context`
     );
   }
-
 });
 
 test('the production build does not require development-only contracts', () => {

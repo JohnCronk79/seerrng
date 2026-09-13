@@ -1,5 +1,9 @@
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
+import {
+  matchesAvailableQuality,
+  type AvailableQualityFilter,
+} from '@app/utils/availabilityQuality';
 import { readDiscoverScrollEntry } from '@app/utils/discoverScrollRestoration';
 import {
   setPersistentResponse,
@@ -28,6 +32,7 @@ interface BaseMedia {
   mediaType: string;
   mediaInfo?: {
     status: MediaStatus;
+    status4k?: MediaStatus;
     serviceId?: number | null;
     externalServiceId?: number | null;
     audiobookServiceId?: number | null;
@@ -37,12 +42,14 @@ interface BaseMedia {
       bookFormat?: 'ebook' | 'audiobook' | 'both' | null;
     }[];
   };
+  availableQualities?: ('MP3' | 'FLAC')[];
 }
 
 interface DiscoverResult<T, S> {
   isLoadingInitialData: boolean;
   isLoadingMore: boolean;
   isValidating: boolean;
+  isSearchingAvailableQuality: boolean;
   fetchMore: () => void;
   isEmpty: boolean;
   isReachingEnd: boolean;
@@ -53,7 +60,8 @@ interface DiscoverResult<T, S> {
   mutate?: () => void;
 }
 
-const FILTERED_EMPTY_PAGE_SCAN_LIMIT = 10;
+const FILTERED_PAGE_SCAN_LIMIT = 10;
+const FILTERED_PAGE_RESULT_TARGET = 20;
 
 const getShuffleSeed = (): string => Math.random().toString(36).slice(2);
 
@@ -144,9 +152,19 @@ const useDiscover = <
     hideAvailable = true,
     hideBlocklisted = true,
     randomizeOrder = false,
+    availableQuality,
     showErrorToast = true,
     shouldRetryOnError = true,
     hideErrorWithResults = true,
+  }: {
+    enabled?: boolean;
+    hideAvailable?: boolean;
+    hideBlocklisted?: boolean;
+    randomizeOrder?: boolean;
+    availableQuality?: AvailableQualityFilter;
+    showErrorToast?: boolean;
+    shouldRetryOnError?: boolean;
+    hideErrorWithResults?: boolean;
   } = {}
 ): DiscoverResult<T, S> => {
   const settings = useSettings();
@@ -263,6 +281,12 @@ const useDiscover = <
       }
     }
 
+    if (availableQuality) {
+      filteredTitles = filteredTitles.filter((item) =>
+        matchesAvailableQuality(item, availableQuality)
+      );
+    }
+
     if (settings.currentSettings.hideAvailable && hideAvailable) {
       filteredTitles = filteredTitles.filter(
         (i) =>
@@ -284,6 +308,7 @@ const useDiscover = <
     return filteredTitles;
   }, [
     data,
+    availableQuality,
     hideAvailable,
     hideBlocklisted,
     settings.currentSettings.hideAvailable,
@@ -306,23 +331,33 @@ const useDiscover = <
     !!lastResultPage &&
     lastResultPageResults.length >= 20 &&
     lastResultPage.totalResults > size * 20;
+  const needsMoreFilteredResults =
+    titles.length === 0 ||
+    Boolean(availableQuality && titles.length < FILTERED_PAGE_RESULT_TARGET);
   const shouldScanNextFilteredPage =
     !isLoadingInitialData &&
     !isLoadingMore &&
     !isValidating &&
-    titles.length === 0 &&
+    needsMoreFilteredResults &&
     rawResultCount > 0 &&
     hasMoreUnfilteredResults &&
-    size < FILTERED_EMPTY_PAGE_SCAN_LIMIT;
+    size < FILTERED_PAGE_SCAN_LIMIT;
   const isEmpty =
     !isLoadingInitialData && titles.length === 0 && !shouldScanNextFilteredPage;
+  const isSearchingAvailableQuality = Boolean(
+    availableQuality &&
+    (isLoadingInitialData ||
+      isLoadingMore ||
+      isValidating ||
+      shouldScanNextFilteredPage)
+  );
   const isReachingEnd =
     (!!data && lastResultPageResults.length < 20) ||
     (!!data && (lastResultPage?.totalResults ?? 0) <= size * 20) ||
     (!!data && (lastResultPage?.totalResults ?? 0) < 41) ||
-    (titles.length === 0 &&
+    (needsMoreFilteredResults &&
       rawResultCount > 0 &&
-      size >= FILTERED_EMPTY_PAGE_SCAN_LIMIT);
+      size >= FILTERED_PAGE_SCAN_LIMIT);
 
   useEffect(() => {
     if (shouldScanNextFilteredPage) {
@@ -337,18 +372,27 @@ const useDiscover = <
   }, [data, fallbackCacheKey, randomizeOrder, titles.length]);
 
   useEffect(() => {
-    if (showErrorToast && error && titles.length) {
+    if (showErrorToast && error && titles.length && !hideErrorWithResults) {
       addToast(intl.formatMessage(globalMessages.error), {
         appearance: 'error',
         autoDismiss: true,
       });
     }
-  }, [data, error, addToast, intl, showErrorToast, titles.length]);
+  }, [
+    data,
+    error,
+    addToast,
+    hideErrorWithResults,
+    intl,
+    showErrorToast,
+    titles.length,
+  ]);
 
   return {
     isLoadingInitialData,
     isLoadingMore,
     isValidating,
+    isSearchingAvailableQuality,
     fetchMore,
     isEmpty,
     isReachingEnd,

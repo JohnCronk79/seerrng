@@ -3,6 +3,9 @@ import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityT
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
+import BookFormatTabs, {
+  type BookDiscoveryFormat,
+} from '@app/components/Discover/BookFormatTabs';
 import {
   CompactRatingSelect,
   CompactSelect,
@@ -34,6 +37,8 @@ import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Discover.DiscoverBooks', {
   books: 'Books',
+  audiobooks: 'Audiobooks',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   sortBy: 'Sort By',
   search: 'Keyword Search',
@@ -54,12 +59,22 @@ const messages = defineMessages('components.Discover.DiscoverBooks', {
   retry: 'Try Again',
   retrying: 'Trying Again…',
 });
-const DiscoverBooks = () => {
+
+interface DiscoverBooksProps {
+  format?: BookDiscoveryFormat;
+}
+
+const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
   const intl = useIntl();
   const router = useRouter();
   const update = useBatchUpdateQueryParams({});
   const query =
-    typeof router.query.query === 'string' ? router.query.query : '';
+    typeof router.query.search === 'string' ? router.query.search : '';
+  const routedFormat =
+    router.query.format === 'ebook' || router.query.format === 'audiobook'
+      ? router.query.format
+      : undefined;
+  const activeFormat = routedFormat ?? format;
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
@@ -90,6 +105,7 @@ const DiscoverBooks = () => {
       language,
       minRating,
       sortBy,
+      format: activeFormat === 'all' ? undefined : activeFormat,
       // One-time response contract bump prevents browsers from substituting
       // the old stale-on-error empty response after this behavior changed.
       responseVersion: 2,
@@ -121,10 +137,13 @@ const DiscoverBooks = () => {
     const nextSearch = debouncedSearch.trim();
 
     if (nextSearch !== routedSearchRef.current) {
-      update({ query: nextSearch || undefined, page: undefined });
+      routedSearchRef.current = nextSearch;
+      update({ search: nextSearch || undefined, page: undefined });
     }
   }, [debouncedSearch, update]);
-  const title = intl.formatMessage(messages.books);
+  const title = intl.formatMessage(
+    activeFormat === 'audiobook' ? messages.audiobooks : messages.books
+  );
   const currentYear = new Date().getFullYear();
   const yearOptions: CompactSelectOption[] = [
     { label: intl.formatMessage(messages.any), value: '' },
@@ -164,19 +183,22 @@ const DiscoverBooks = () => {
       <PageTitle title={title} />
       <div className="mb-4">
         <Header>{title}</Header>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
+          {intl.formatMessage(messages.mediaFilters)}
+        </div>
+        <BookFormatTabs format={activeFormat} query={router.query} />
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.filters)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <CardTextVisibilityToggle mediaType="book" className="order-2" />
           <button
             type="button"
             aria-pressed={!hasActiveFilters}
-            className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
+            className={getFilterResetButtonClass(!hasActiveFilters)}
             onClick={() => {
               setSearch('');
               setParam({
-                query: undefined,
+                search: undefined,
                 subject: undefined,
                 firstPublishYear: undefined,
                 language: undefined,
@@ -186,19 +208,22 @@ const DiscoverBooks = () => {
           >
             {intl.formatMessage(messages.clearFilters)}
           </button>
+          <CardTextVisibilityToggle mediaType="book" />
           <form
-            className="order-3 inline-flex h-8 w-72 max-w-full flex-none overflow-hidden rounded-md border border-gray-600 bg-gray-900/70"
+            className="discover-filter-control w-72 max-w-full flex-none"
             onSubmit={(e) => {
               e.preventDefault();
-              setParam({ query: search.trim() || undefined });
+              const nextSearch = search.trim();
+              routedSearchRef.current = nextSearch;
+              setParam({ search: nextSearch || undefined });
             }}
           >
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                search.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1.5 ${
+                search.trim() ? 'discover-filter-control-label-active' : ''
               }`}
             >
-              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
               {intl.formatMessage(messages.search)}
             </span>
             <input
@@ -207,18 +232,10 @@ const DiscoverBooks = () => {
               onChange={(e) => setSearch(e.target.value)}
               placeholder={intl.formatMessage(messages.searchBooks)}
               aria-label={intl.formatMessage(messages.searchBooks)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </form>
           <CompactSelect
-            className="order-5"
-            label={intl.formatMessage(messages.genres)}
-            value={subject}
-            options={genreOptions}
-            onChange={(value) => setParam({ subject: value || undefined })}
-          />
-          <CompactSelect
-            className="order-4"
             label={intl.formatMessage(messages.firstPublished)}
             value={firstPublishYear}
             options={yearOptions}
@@ -227,22 +244,26 @@ const DiscoverBooks = () => {
             }
           />
           <CompactSelect
-            className="order-7"
-            label={intl.formatMessage(messages.language)}
-            value={language}
-            options={languageOptions}
-            onChange={(value) => setParam({ language: value || undefined })}
+            label={intl.formatMessage(messages.genres)}
+            value={subject}
+            options={genreOptions}
+            onChange={(value) => setParam({ subject: value || undefined })}
           />
           <CompactRatingSelect
-            className="order-6"
             label={intl.formatMessage(messages.ratingFilter)}
             value={minRating}
             options={ratingOptions}
             maxScore={5}
             onChange={(value) => setParam({ minRating: value || undefined })}
           />
+          <CompactSelect
+            label={intl.formatMessage(messages.language)}
+            value={language}
+            options={languageOptions}
+            onChange={(value) => setParam({ language: value || undefined })}
+          />
         </div>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.sortBy)}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -334,6 +355,9 @@ const DiscoverBooks = () => {
       {(!discover.error || discover.titles.length > 0) && (
         <ListView
           items={discover.titles}
+          preferredBookFormat={
+            activeFormat === 'audiobook' ? 'audiobook' : 'ebook'
+          }
           isEmpty={discover.isEmpty}
           isLoading={
             discover.isLoadingInitialData ||

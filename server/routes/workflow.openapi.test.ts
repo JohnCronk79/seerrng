@@ -10,6 +10,7 @@ import request from 'supertest';
 describe('workflow list filters behind the OpenAPI validator', () => {
   function createValidatedApp(): Express {
     const app = express();
+    app.use(express.json());
     app.use(
       OpenApiValidator.middleware({
         apiSpec: path.join(process.cwd(), 'seerr-api.yml'),
@@ -26,6 +27,29 @@ describe('workflow list filters behind the OpenAPI validator', () => {
         results: [],
         counts: { all: 0, open: 0, resolved: 0 },
       })
+    );
+    app.get('/api/v1/playback/devices', (_req, res) =>
+      res.status(200).json([])
+    );
+    app.get('/api/v1/playback/media/:mediaId', (req, res) =>
+      res.status(200).json({
+        mediaId: Number(req.params.mediaId),
+        serverType: 1,
+        is4k: false,
+        groups: [],
+      })
+    );
+    app.post('/api/v1/playback/media/:mediaId/play', (_req, res) =>
+      res.status(204).send()
+    );
+    app.post('/api/v1/playback/media/:mediaId/playlist', (_req, res) =>
+      res.status(200).json({ url: 'https://media.example/playlist' })
+    );
+    app.post('/api/v1/playback/collection/play', (_req, res) =>
+      res.status(204).send()
+    );
+    app.post('/api/v1/playback/collection/playlist', (_req, res) =>
+      res.status(200).json({ url: 'https://media.example/playlist' })
     );
     app.use(
       (
@@ -72,5 +96,41 @@ describe('workflow list filters behind the OpenAPI validator', () => {
       });
 
     assert.strictEqual(response.status, 200);
+  });
+
+  it('admits the playback device and catalog routes', async () => {
+    const app = createValidatedApp();
+    const devices = await request(app).get('/api/v1/playback/devices');
+    const catalog = await request(app).get('/api/v1/playback/media/4222');
+
+    assert.strictEqual(devices.status, 200);
+    assert.strictEqual(catalog.status, 200);
+    assert.strictEqual(catalog.body.mediaId, 4222);
+  });
+
+  it('admits media and collection playback commands', async () => {
+    const app = createValidatedApp();
+    const media = await request(app)
+      .post('/api/v1/playback/media/4222/play')
+      .send({ deviceId: 'browser-device', itemIds: ['episode-1'] });
+    const collection = await request(app)
+      .post('/api/v1/playback/collection/play')
+      .send({ deviceId: 'browser-device', mediaIds: [1, 2] });
+
+    assert.strictEqual(media.status, 204, JSON.stringify(media.body));
+    assert.strictEqual(collection.status, 204, JSON.stringify(collection.body));
+  });
+
+  it('admits media and collection playlist replacement commands', async () => {
+    const app = createValidatedApp();
+    const media = await request(app)
+      .post('/api/v1/playback/media/4222/playlist')
+      .send({ itemIds: ['episode-2', 'episode-1'] });
+    const collection = await request(app)
+      .post('/api/v1/playback/collection/playlist')
+      .send({ mediaIds: [2, 1] });
+
+    assert.strictEqual(media.status, 200, JSON.stringify(media.body));
+    assert.strictEqual(collection.status, 200, JSON.stringify(collection.body));
   });
 });

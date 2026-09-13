@@ -183,9 +183,6 @@ class PlexOAuth {
         'context[device][screenResolution]':
           this.plexHeaders['X-Plex-Device-Screen-Resolution'],
         'context[device][layout]': 'desktop',
-        // Authentication still completes through the existing bounded PIN
-        // polling flow. This return URL only brings the script-opened popup
-        // back to a Seerr-owned page so it can close itself after approval.
         forwardUrl: getPlexPopupReturnUrl(window.location.origin),
         code: this.pin.code,
       };

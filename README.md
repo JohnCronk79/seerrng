@@ -56,6 +56,8 @@ breaking-change status, and CI shows the exact release-note preview during
 review.
 The historical tag coverage and audit method are documented in
 [`docs/maintainers/release-history-audit.md`](./docs/maintainers/release-history-audit.md).
+The in-app version check compares against published stable tags from the
+SeerrNG fork, not the upstream Seerr repository.
 
 ## Screenshots
 
@@ -148,18 +150,23 @@ default deployment path uses the Snapetech BookshelfNG fork with Hardcover
 metadata:
 
 ```text
-ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636
+ghcr.io/snapetech/bookshelfng:hardcover
 ```
 
-The installer and Compose file use an immutable BookshelfNG digest. Update the
-digest deliberately when adopting a newer BookshelfNG build so deployments are
-reproducible and rollbackable.
+The stable `hardcover` and `softcover` tags are published only from
+BookshelfNG's `main` release workflow, so SeerrNG follows the newest released
+BookshelfNG build. Set `BOOKSHELF_IMAGE` to a digest-pinned reference when a
+reproducible or rollbackable deployment is required.
 
 ### BookshelfNG and rreading-glasses
 
 These components solve different problems. Fresh Hardcover installs use the
 rreading-glasses compatibility boundary by default; native Hardcover remains an
 explicit opt-in:
+
+If Docker is not an option, see the [BookshelfNG source-build
+guide](./docs/using-seerr/bookshelf-source-build.md) for a direct Linux build,
+systemd service, metadata configuration, and SeerrNG connection.
 
 - **BookshelfNG** is the maintained Readarr-style application. It manages the
   library, download clients, imports, file organization, and the
@@ -229,7 +236,7 @@ caching, so a fresh search or uncached refresh still needs Hardcover.
 Legacy softcover/Goodreads deployments remain supported for existing users:
 
 ```text
-ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667
+ghcr.io/snapetech/bookshelfng:softcover
 ```
 
 Do not convert an existing Readarr or softcover database to Hardcover by only
@@ -368,6 +375,21 @@ Common runtime variables:
 | `SEERR_SKIP_DB_MIGRATIONS` | Skips automatically running database migrations at startup in production. Only relevant when migrations are run out-of-band (e.g. `pnpm migration:run`, or a prepared Cypress test database). |
 | `JELLYFIN_TYPE` | One-time settings-migration hint. Set to `emby` before the first start after upgrading if your existing configuration was saved as `Jellyfin` but the server is actually Emby; relabels the stored media server type and can be unset afterward. |
 
+### First-run browser transport
+
+The setup page will not allow a media-server login until the active browser
+transport can persist a session. On a direct installation, choose built-in
+self-signed HTTPS or a provided certificate, save the choice, restart SeerrNG,
+and then open the HTTPS address. If HTTPS must remain disabled on a trusted
+LAN, enable `SEERR_ALLOW_HTTP_AUTH=true` (or the matching **Allow authenticated
+sessions over HTTP** option), acknowledge the warning, save, and restart.
+
+If a previous attempt saved Jellyfin details but did not establish a session,
+restart after correcting the transport and use `/login` to sign in again. Do
+not submit the setup hostname a second time. See [Built-in HTTPS and HTTP
+authentication modes](docs/using-seerr/advanced/built-in-tls.mdx) for the
+status check and reverse-proxy requirements.
+
 Use deployment secrets, `.env` files, or container environment variables. Do not commit private TMDB, Plex, Jellyfin, Emby, Radarr, Sonarr, Lidarr, Bookshelf, SMTP, or notification credentials.
 
 Bookshelf deployment and migration variables live on the helper scripts rather
@@ -376,7 +398,7 @@ than the SeerrNG runtime container. Common ones include:
 | Variable | Purpose |
 | --- | --- |
 | `BOOKSHELF_BACKEND` | `auto`, `hardcover`, or `softcover`. |
-| `BOOKSHELF_IMAGE` | Override the Bookshelf image. Hardcover mode uses the digest-pinned Snapetech image by default. |
+| `BOOKSHELF_IMAGE` | Override the Bookshelf image. Hardcover mode uses the stable Snapetech `main` release tag by default; use a digest to pin it. |
 | `BOOKSHELF_METADATA_MODE` | `compatibility` (default for fresh Hardcover), `native`, or `hosted`. |
 | `BOOKSHELF_METADATA_URL` | Compatibility or hosted metadata URL. Native Hardcover uses it only when native mode is disabled. |
 | `BOOKSHELF_HARDCOVER_NATIVE` | Rendered Bookshelf flag; the installer sets it from `BOOKSHELF_METADATA_MODE`. |

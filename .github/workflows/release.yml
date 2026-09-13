@@ -582,6 +582,7 @@ jobs:
     with:
       tag: ${{ inputs.tag || github.ref_name }}
     permissions:
+      actions: read
       contents: write
 
   dispatch-package-channels:

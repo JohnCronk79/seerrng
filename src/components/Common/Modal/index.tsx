@@ -41,6 +41,8 @@ interface ModalProps {
   dialogClass?: string;
   hideActions?: boolean;
   alignTop?: boolean;
+  actionsClass?: string;
+  actionButtonSize?: 'default' | 'md' | 'sm';
 }
 
 const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
@@ -75,6 +77,8 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       cancelButtonProps,
       secondaryButtonProps,
       tertiaryButtonProps,
+      actionsClass = '',
+      actionButtonSize = 'default',
     },
     parentRef
   ) => {
@@ -197,10 +201,13 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
             </div>
           )}
           {!hideActions && (onCancel || onOk || onSecondary || onTertiary) && (
-            <div className="relative mt-5 flex flex-row-reverse justify-center sm:mt-4 sm:justify-start">
+            <div
+              className={`relative mt-5 flex flex-row-reverse justify-center sm:mt-4 sm:justify-start ${actionsClass}`}
+            >
               {typeof onOk === 'function' && (
                 <Button
                   buttonType={okButtonType}
+                  buttonSize={actionButtonSize}
                   onClick={onOk}
                   className="ml-3"
                   disabled={okDisabled}
@@ -213,6 +220,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               {typeof onSecondary === 'function' && secondaryText && (
                 <Button
                   buttonType={secondaryButtonType}
+                  buttonSize={actionButtonSize}
                   onClick={onSecondary}
                   className="ml-3"
                   disabled={secondaryDisabled}
@@ -225,6 +233,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               {typeof onTertiary === 'function' && tertiaryText && (
                 <Button
                   buttonType={tertiaryButtonType}
+                  buttonSize={actionButtonSize}
                   onClick={onTertiary}
                   className="ml-3"
                   disabled={tertiaryDisabled}
@@ -236,6 +245,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               {typeof onCancel === 'function' && (
                 <Button
                   buttonType={cancelButtonType}
+                  buttonSize={actionButtonSize}
                   onClick={onCancel}
                   className="ml-3 sm:ml-0"
                   data-testid="modal-cancel-button"

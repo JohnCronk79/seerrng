@@ -119,6 +119,7 @@ export interface AlbumResult extends MbSearchResult {
   }[];
   posterPath?: string;
   needsCoverArt?: boolean;
+  availableQualities?: ('MP3' | 'FLAC')[];
   mediaInfo?: Media;
 }
 

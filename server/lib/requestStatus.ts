@@ -117,6 +117,7 @@ export interface RequestStatusPage {
   counts: {
     total: number;
     active: number;
+    incomplete: number;
     attention: number;
     completed: number;
     unavailable: number;
@@ -851,21 +852,24 @@ const getStageFromRequest = (
       downloads,
     };
   }
-  if (
-    hasRequestedServiceLink(request) &&
-    request.type !== MediaType.MUSIC &&
-    (request.type === MediaType.BOOK && request.bookFormat === 'both'
-      ? hasRequestedBookFormat(request.media, 'ebook') !==
-        hasRequestedBookFormat(request.media, 'audiobook')
-      : [MediaStatus.PROCESSING, MediaStatus.PARTIALLY_AVAILABLE].includes(
-          getRequestedMediaStatus(request)
-        ))
-  ) {
-    return {
-      stage: RequestStatusStage.LIBRARY,
-      queueFailure: false,
-      downloads,
-    };
+  if (hasRequestedServiceLink(request) && request.type !== MediaType.MUSIC) {
+    const isMixedBookFormatProgress =
+      request.type === MediaType.BOOK &&
+      request.bookFormat === 'both' &&
+      hasRequestedBookFormat(request.media, 'ebook') !==
+        hasRequestedBookFormat(request.media, 'audiobook');
+    const isIncompleteMediaStatus = [
+      MediaStatus.PROCESSING,
+      MediaStatus.PARTIALLY_AVAILABLE,
+    ].includes(getRequestedMediaStatus(request));
+
+    if (isMixedBookFormatProgress || isIncompleteMediaStatus) {
+      return {
+        stage: RequestStatusStage.LIBRARY,
+        queueFailure: false,
+        downloads,
+      };
+    }
   }
   if (options.dispatchPending) {
     return {
@@ -1356,6 +1360,8 @@ const stageMatchesFilter = (
       return getRequestedMediaStatus(request) === MediaStatus.DELETED;
     case 'active':
       return ACTIVE_STAGES.includes(stage);
+    case 'incomplete':
+      return stage === RequestStatusStage.LIBRARY;
     case 'attention':
       return [
         RequestStatusStage.UNAVAILABLE,
@@ -1431,6 +1437,7 @@ const getRequestStatusCounts = async (options: {
     stage?: string | null;
   }>();
   let active = 0;
+  let incomplete = 0;
   let attention = 0;
   let completed = 0;
   let unavailable = 0;
@@ -1461,6 +1468,9 @@ const getRequestStatusCounts = async (options: {
       completed += 1;
     } else {
       active += 1;
+      if (stage === RequestStatusStage.LIBRARY) {
+        incomplete += 1;
+      }
     }
     if (stage === RequestStatusStage.UNAVAILABLE) {
       unavailable += 1;
@@ -1471,6 +1481,7 @@ const getRequestStatusCounts = async (options: {
   return {
     total: rows.length,
     active,
+    incomplete,
     attention,
     completed,
     unavailable,
@@ -1570,6 +1581,7 @@ export const getRequestStatusPage = async (options: {
     hasStatusFilter ||
     hasSearch ||
     sortField === 'status' ||
+    sortField === 'incomplete' ||
     isMetadataRequestStatusSort(sortField);
   let requests: MediaRequest[];
   let requestCount: number;

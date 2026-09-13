@@ -49,12 +49,18 @@ const DiscoverTv = () => {
   const discover = useDiscover<TvResult, never, FilterOptions>(
     '/api/v1/discover/tv',
     preparedFilters,
-    { randomizeOrder: !preparedFilters.sortBy }
+    {
+      randomizeOrder: !preparedFilters.sortBy,
+      availableQuality: preparedFilters.availability,
+      hideAvailable: !preparedFilters.availability,
+    }
   );
   useSearchActivityReporter(
-    Boolean(preparedFilters.search) &&
-      (discover.isLoadingInitialData || discover.isValidating),
-    'series-keyword'
+    Boolean(preparedFilters.search || preparedFilters.availability) &&
+      (discover.isLoadingInitialData ||
+        discover.isValidating ||
+        discover.isSearchingAvailableQuality),
+    'series-discovery'
   );
   useDiscoverScrollRestoration({
     mediaType: 'tv',
@@ -71,11 +77,11 @@ const DiscoverTv = () => {
       <PageTitle title={title} />
       <div className="mb-4">
         <Header>{title}</Header>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.filters)}
         </div>
         <FilterPanel type="tv" currentFilters={preparedFilters} />
-        <div className="mb-2 mt-4 text-sm text-gray-300">
+        <div className="app-filter-section-heading">
           {intl.formatMessage(messages.sortBy)}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -109,6 +115,7 @@ const DiscoverTv = () => {
         isEmpty={discover.isEmpty}
         isLoading={
           discover.isLoadingInitialData ||
+          discover.isSearchingAvailableQuality ||
           (discover.isLoadingMore && discover.titles.length > 0)
         }
         isReachingEnd={discover.isReachingEnd}

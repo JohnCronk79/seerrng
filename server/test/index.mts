@@ -1,7 +1,7 @@
 // Runs unit tests using the `node:test` runner.
 
 import { Command, Option } from 'commander';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import { glob } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { run } from 'node:test';
@@ -43,6 +43,7 @@ program
   .parse();
 
 const positionals: string[] = program.args;
+const isFullSuite = positionals.length === 0;
 const opts = program.opts<{
   testNamePattern: string[];
   testReporter: string[];
@@ -93,6 +94,18 @@ const stream = run({
   // ensure test process doesn't hang when tests fail
   forceExit: true,
 });
+
+// A failed assertion or test file sets the final exit status but does not stop
+// the remaining files. Preserve a complete, human-readable local report for a
+// full-suite run so every failure from the pass can be reviewed together.
+if (isFullSuite && process.env.CI === undefined) {
+  const reportDirectory = join(BASE_DIR, 'artifacts', 'test-results');
+  const reportTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const reportPath = join(reportDirectory, `unit-tests-${reportTimestamp}.log`);
+  mkdirSync(reportDirectory, { recursive: true });
+  stream.compose(reporters.spec).pipe(createWriteStream(reportPath));
+  console.log(`Full test report: ${reportPath}`);
+}
 
 // Unlike `node --test`, the programmatic runner does not set a failing process
 // status for us. Propagate any failed test file, assertion, or compilation to

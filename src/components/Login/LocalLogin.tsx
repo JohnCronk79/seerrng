@@ -22,6 +22,8 @@ const messages = defineMessages('components.Login', {
   jellyfinLocalLoginHint:
     "If you haven't set an email address in your profile, use your {mediaServerName} username instead.",
   loginerror: 'Something went wrong while trying to sign in.',
+  sessionerror:
+    'Sign-in succeeded, but SeerrNG could not establish a browser session. Use HTTPS or enable authenticated HTTP sessions, then try again.',
   credentialerror: 'The email address or password is incorrect.',
   tipEmailHasTrailingWhitespace: 'The email ends with whitespace',
   signingin: 'Signing In…',
@@ -30,7 +32,7 @@ const messages = defineMessages('components.Login', {
 });
 
 interface LocalLoginProps {
-  revalidate: () => void;
+  revalidate: () => Promise<unknown>;
 }
 
 const LocalLogin = ({ revalidate }: LocalLoginProps) => {
@@ -65,16 +67,20 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
             email: values.email,
             password: values.password,
           });
+          if (!(await revalidate())) {
+            throw new Error('browser-session-not-established');
+          }
         } catch (e) {
           setLoginError(
             intl.formatMessage(
-              axios.isAxiosError(e) && e.response?.status === 403
-                ? messages.credentialerror
-                : messages.loginerror
+              e instanceof Error &&
+                e.message === 'browser-session-not-established'
+                ? messages.sessionerror
+                : axios.isAxiosError(e) && e.response?.status === 403
+                  ? messages.credentialerror
+                  : messages.loginerror
             )
           );
-        } finally {
-          revalidate();
         }
       }}
     >

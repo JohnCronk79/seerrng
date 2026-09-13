@@ -8,17 +8,13 @@ import {
 import { Fragment } from 'react';
 
 export const getFilterResetButtonClass = (selected: boolean) =>
-  `inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-    selected
-      ? 'border-indigo-400 bg-indigo-500 text-white'
-      : 'border-gray-700 bg-gray-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-300'
+  `app-filter-button ${
+    selected ? 'app-filter-button-active' : 'app-filter-reset-button-idle'
   }`;
 
 export const getFilterToggleButtonClass = (selected: boolean) =>
-  `inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-    selected
-      ? 'border-indigo-400 bg-indigo-500 text-white'
-      : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
+  `app-filter-button ${
+    selected ? 'app-filter-button-active' : 'app-filter-button-idle'
   }`;
 
 export type CompactSelectOption = {

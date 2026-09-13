@@ -2,6 +2,7 @@ import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import RequestButton from '@app/components/RequestButton';
@@ -65,6 +66,7 @@ const messages = defineMessages('components.TvDetails', {
   watchlistError: 'Something went wrong. Please try again.',
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
+  selectToPlay: 'No playable episodes are currently available.',
 });
 
 interface TvDetailsProps {
@@ -300,6 +302,31 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         data.mediaInfo?.status4k === MediaStatus.PARTIALLY_AVAILABLE));
   const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
   const isManageAvailable = !!data.mediaInfo;
+  const canPlayMedia = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_TV],
+    { type: 'or' }
+  );
+  const playbackActions = canPlayMedia
+    ? (itemIds: string[], is4k: boolean) => (
+        <MediaServerPlayButton
+          mediaUrl={data.mediaInfo?.mediaUrl}
+          mediaUrl4k={data.mediaInfo?.mediaUrl4k}
+          iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
+          iOSPlexUrl4k={data.mediaInfo?.iOSPlexUrl4k}
+          mediaId={data.mediaInfo?.id}
+          itemIds={itemIds}
+          defaultIs4k={is4k}
+          include4k={
+            settings.currentSettings.series4kEnabled &&
+            hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_TV], {
+              type: 'or',
+            })
+          }
+          disabled={itemIds.length === 0}
+          disabledReason={intl.formatMessage(messages.selectToPlay)}
+        />
+      )
+    : undefined;
 
   const primaryActions = (
     <>
@@ -397,12 +424,10 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         </Button>
       )}
       <AssociationBadge mediaType="tv" id={data.id} variant="button" />
-      <span className="ml-auto hidden sm:block" aria-hidden="true" />
       <RequestButton
         buttonSize="sm"
         buttonType="detailRequest"
         className="ml-0"
-        separateButtons
         mediaType="tv"
         onUpdate={() => revalidate()}
         tmdbId={data.id}
@@ -505,6 +530,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        playbackActions={playbackActions}
       />
     </>
   );

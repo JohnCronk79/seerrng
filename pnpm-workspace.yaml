@@ -19,7 +19,7 @@ overrides:
   form-data: 4.0.6
   handlebars: 4.7.9
   ip-address: 10.3.1
-  js-yaml: 4.3.1
+  js-yaml: 4.3.2
   lodash: 4.18.1
   lodash-es: 4.18.1
   mailparser: 3.9.8
@@ -27,9 +27,9 @@ overrides:
   eslint-plugin-jsx-a11y>minimatch: 3.1.5
   'undici@>=6 <7': 6.28.0
   linkify-it: 5.0.2
-  multer: 2.2.0
+  multer: 2.3.0
   'nanoid@3': 3.3.18
-  nodemailer: 9.0.1
+  nodemailer: 9.1.1
   picomatch: 2.3.2
   postcss: 8.5.23
   qs: 6.16.0
@@ -39,8 +39,8 @@ overrides:
   sqlite3>node-gyp: 8.4.1
   systeminformation: 5.31.17
   tar: 7.5.21
-  sharp: 0.35.0
-  svgo: 3.3.4
+  sharp: 0.35.4
+  svgo: 3.3.5
   tmp: 0.2.7
   ua-parser-js: 2.0.10
   underscore: 1.13.8

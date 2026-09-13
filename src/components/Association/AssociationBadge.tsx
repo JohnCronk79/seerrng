@@ -132,7 +132,7 @@ const AssociationBadge = ({
             >
               <button
                 type="button"
-                className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-gray-950/80 text-gray-300 transition hover:bg-gray-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="app-button app-button-default absolute right-2 top-2 z-10 h-8 w-8 rounded-full p-0"
                 aria-label="Close associations"
                 onClick={() => setIsOpen(false)}
               >

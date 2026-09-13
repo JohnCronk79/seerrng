@@ -7,7 +7,12 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
-import { isMusicDestinationAvailable } from '@app/components/RequestModal/requestAvailability';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -66,6 +71,8 @@ const messages = defineMessages('components.RequestModal.Music', {
   trackCount: 'Track Count',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
+  requested: 'Requested',
   readyToRequest: 'Ready to Request',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
@@ -73,6 +80,7 @@ const messages = defineMessages('components.RequestModal.Music', {
 
 interface MusicRequestModalProps {
   mbId: string;
+  initialServerId?: number;
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus) => void;
   onUpdating?: (isUpdating: boolean) => void;
@@ -81,6 +89,7 @@ interface MusicRequestModalProps {
 
 const MusicRequestModal = ({
   mbId,
+  initialServerId,
   onCancel,
   onComplete,
   onUpdating,
@@ -91,7 +100,9 @@ const MusicRequestModal = ({
   const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
   const [requestOverrides, setRequestOverrides] =
-    useState<RequestOverrides | null>(null);
+    useState<RequestOverrides | null>(
+      initialServerId ? { server: initialServerId } : null
+    );
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
@@ -105,16 +116,45 @@ const MusicRequestModal = ({
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
   );
-  const selectedMusicServerId =
-    requestOverrides?.server ??
-    musicServices?.find((service) => service.isDefault)?.id;
+  const selectedService = musicServices?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = musicServices?.find((server) => server.isDefault);
+  const selectedDestination = createRequestDestination(
+    'lidarr',
+    'music',
+    selectedService ?? fallbackService,
+    requestOverrides
+  );
   const selectedDestinationAvailable =
     !editRequest &&
-    isMusicDestinationAvailable(
+    isRequestDestinationAvailable(
       data?.mediaInfo,
-      selectedMusicServerId,
-      data?.availableServices
+      selectedDestination,
+      data?.availableServices?.map((service) => service.serverId)
     );
+  const selectedDestinationRequested =
+    !editRequest &&
+    isRequestDestinationRequested(
+      data?.mediaInfo?.requests,
+      selectedDestination
+    );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'music'
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id ||
@@ -126,15 +166,15 @@ const MusicRequestModal = ({
   );
 
   useEffect(() => {
-    setRequestOverrides(null);
-  }, [editRequest?.id, mbId]);
+    setRequestOverrides(initialServerId ? { server: initialServerId } : null);
+  }, [editRequest?.id, initialServerId, mbId]);
 
   useEffect(() => {
     onUpdating?.(isUpdating);
   }, [isUpdating, onUpdating]);
 
   const sendRequest = useCallback(async () => {
-    if (selectedDestinationAvailable) {
+    if (selectedDestinationCovered) {
       return;
     }
 
@@ -202,7 +242,7 @@ const MusicRequestModal = ({
     normalizedMbId,
     onComplete,
     requestOverrides,
-    selectedDestinationAvailable,
+    selectedDestinationCovered,
   ]);
 
   const hasAutoApprove = hasAutoApprovePermission(
@@ -214,10 +254,6 @@ const MusicRequestModal = ({
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
-  const selectedService = musicServices?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const fallbackService = musicServices?.find((server) => server.isDefault);
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const releaseDate = data?.releaseDate
     ? intl.formatDate(new Date(`${data.releaseDate}T00:00:00`), {
@@ -417,7 +453,7 @@ const MusicRequestModal = ({
       alignTop
       okDisabled={
         isUpdating ||
-        selectedDestinationAvailable ||
+        selectedDestinationCovered ||
         quota?.music?.restricted ||
         serviceUnavailable
       }
@@ -533,7 +569,9 @@ const MusicRequestModal = ({
                   {intl.formatMessage(
                     selectedDestinationAvailable
                       ? globalMessages.available
-                      : messages.readyToRequest
+                      : selectedDestinationRequested
+                        ? messages.requested
+                        : messages.readyToRequest
                   )}
                 </dd>
                 <dt className="font-medium text-gray-100">
@@ -543,6 +581,16 @@ const MusicRequestModal = ({
                   {selectedService?.name ??
                     fallbackService?.name ??
                     notAvailable}
+                </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.approval)}:
+                </dt>
+                <dd className="m-0 min-w-0">
+                  <RequestFooterStatus
+                    available={selectedDestinationAvailable}
+                    requested={selectedDestinationRequested}
+                    hasAutoApprove={hasAutoApprove}
+                  />
                 </dd>
               </dl>
             </div>
@@ -568,7 +616,7 @@ const MusicRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="detail-disclosure-button"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -583,10 +631,6 @@ const MusicRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
             className="flex h-[22px] items-center"
@@ -607,7 +651,7 @@ const MusicRequestModal = ({
             data-testid="modal-ok-button"
             disabled={
               isUpdating ||
-              selectedDestinationAvailable ||
+              selectedDestinationCovered ||
               quota?.music?.restricted ||
               serviceUnavailable
             }

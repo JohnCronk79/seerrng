@@ -218,7 +218,7 @@ The `POST /request` endpoint supports new `mediaType` values:
 | `movie` | Radarr | Movie request |
 | `tv` | Sonarr | TV request |
 | `music` | Lidarr | Album request (uses `mbId`) |
-| `ebook` | Bookshelf | Ebook request |
+| `ebook` | Bookshelf | Book request |
 | `audiobook` | Bookshelf | Audiobook request |
 
 Music requests use `mediaId` with the MusicBrainz release group ID (string).

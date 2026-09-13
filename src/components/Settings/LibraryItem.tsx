@@ -1,17 +1,72 @@
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
+import globalMessages from '@app/i18n/globalMessages';
+import { ArrowsRightLeftIcon } from '@heroicons/react/24/outline';
 import { CheckIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import { useIntl } from 'react-intl';
 
 interface LibraryItemProps {
   isEnabled?: boolean;
   name: string;
+  /** Library content type, e.g. 'movie' | 'show' | 'music' | 'book'. */
+  type?: string;
+  typeLabel?: string;
   onToggle: () => void;
+  /**
+   * Shown as a small reclassify control when set. Used for Plex 'artist'
+   * libraries, where music vs. audiobook can't be told apart automatically.
+   */
+  reclassify?: { label: string; onReclassify: () => void };
 }
 
-const LibraryItem = ({ isEnabled, name, onToggle }: LibraryItemProps) => {
+const LibraryItem = ({
+  isEnabled,
+  name,
+  type,
+  typeLabel,
+  onToggle,
+  reclassify,
+}: LibraryItemProps) => {
+  const intl = useIntl();
+  // Library.type uses 'show' where MediaTypeBadgeType uses 'tv'. A Music
+  // library isn't a single Album -- it keeps the Album badge's icon/tone
+  // but overrides the label via MediaTypeBadge's `label` prop.
+  const badgeType = getMediaTypeBadgeType(
+    type === 'show' ? 'tv' : (type ?? '')
+  );
+
   return (
     <li className="col-span-1 flex rounded-md shadow-sm">
       <div className="flex flex-1 items-center justify-between truncate rounded-md border-b border-r border-t border-gray-700 bg-gray-600">
-        <div className="flex-1 cursor-default truncate px-4 py-6 text-sm leading-5">
-          {name}
+        <div className="flex min-w-0 flex-1 cursor-default items-center gap-2 truncate px-4 py-6 text-sm leading-5">
+          {badgeType && (
+            <MediaTypeBadge
+              mediaType={badgeType}
+              variant="compact"
+              label={
+                typeLabel ??
+                (type === 'music'
+                  ? intl.formatMessage(globalMessages.music)
+                  : undefined)
+              }
+            />
+          )}
+          <span className="truncate">{name}</span>
+          {reclassify && (
+            <button
+              type="button"
+              title={reclassify.label}
+              aria-label={reclassify.label}
+              onClick={(e) => {
+                e.stopPropagation();
+                reclassify.onReclassify();
+              }}
+              className="app-button app-button-default ml-1 h-7 w-7 shrink-0 p-0"
+            >
+              <ArrowsRightLeftIcon className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <div className="flex-shrink-0 pr-2">
           <span

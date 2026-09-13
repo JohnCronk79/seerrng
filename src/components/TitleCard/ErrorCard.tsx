@@ -55,12 +55,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
       data-testid="title-card"
     >
-      <div
-        className="relative transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover shadow outline-none ring-1 ring-gray-700 transition duration-300"
-        style={{
-          paddingBottom: '150%',
-        }}
-      >
+      <div className="relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover shadow outline-none ring-1 ring-gray-700 transition duration-300">
         <div className="absolute inset-0 h-full w-full overflow-hidden">
           <div className="absolute left-0 right-0 flex items-center justify-between p-2">
             <div
@@ -84,14 +79,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
           <div className="flex h-full w-full items-end">
             <div className="px-2 pb-11 text-white">
               <h1
-                className="whitespace-normal text-xl font-bold leading-tight"
-                style={{
-                  WebkitLineClamp: 3,
-                  display: '-webkit-box',
-                  overflow: 'hidden',
-                  WebkitBoxOrient: 'vertical',
-                  wordBreak: 'break-word',
-                }}
+                className="line-clamp-3 whitespace-normal break-words text-xl font-bold leading-tight"
                 data-testid="title-card-title"
               >
                 {intl.formatMessage(messages.mediaerror, {
@@ -102,16 +90,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
                   ),
                 })}
               </h1>
-              <div
-                className="whitespace-normal text-xs"
-                style={{
-                  WebkitLineClamp: 3,
-                  display: '-webkit-box',
-                  overflow: 'hidden',
-                  WebkitBoxOrient: 'vertical',
-                  wordBreak: 'break-word',
-                }}
-              >
+              <div className="line-clamp-3 whitespace-normal break-words text-xs">
                 <div className="flex items-center">
                   <span className="mr-2 font-bold text-gray-400">
                     {intl.formatMessage(messages.tmdbid)}

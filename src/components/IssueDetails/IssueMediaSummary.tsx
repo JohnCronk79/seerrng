@@ -65,6 +65,7 @@ interface IssueMediaSummaryProps {
   artwork?: string;
   rightDetails: IssueSummaryDetail[];
   footer?: ReactNode;
+  embedded?: boolean;
 }
 
 const IssueMediaSummary = ({
@@ -75,6 +76,7 @@ const IssueMediaSummary = ({
   artwork,
   rightDetails,
   footer,
+  embedded = false,
 }: IssueMediaSummaryProps) => {
   const intl = useIntl();
   const unavailable = 'Not available';
@@ -244,8 +246,10 @@ const IssueMediaSummary = ({
             : undefined);
 
   return (
-    <article className="refreshed-card-surface relative rounded-xl border border-gray-700 p-3 text-gray-400 shadow-lg shadow-gray-950/20">
-      {artworkSrc && (
+    <article
+      className={`${embedded ? 'refreshed-inset-surface' : 'refreshed-card-surface shadow-lg shadow-gray-950/20'} relative rounded-xl border border-gray-700 p-3`}
+    >
+      {!embedded && artworkSrc && (
         <div
           className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl"
           aria-hidden

@@ -676,7 +676,7 @@ const UserList = () => {
           <div className="mb-2 flex flex-grow lg:mb-0 lg:flex-grow-0">
             <button
               type="button"
-              className="inline-flex cursor-pointer items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100"
+              className="app-button app-button-default cursor-pointer rounded-r-none border-r-0 px-3 text-sm"
               onClick={() => {
                 setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
                 updateQueryParams('page', '1');

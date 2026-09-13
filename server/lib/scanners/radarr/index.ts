@@ -5,6 +5,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import type {
   RunnableScanner,
   StatusBase,
@@ -175,6 +176,26 @@ class RadarrScanner
         hasFile: radarrMovie.hasFile,
         mutationGuard: (callback) =>
           runWithServarrServiceSnapshot('radarr', this.currentServer, callback),
+      });
+
+      const media = await getRepository(Media).findOneBy({
+        tmdbId: radarrMovie.tmdbId,
+        mediaType: MediaType.MOVIE,
+      });
+      await upsertMediaSearchMetadata(media?.id, {
+        title: radarrMovie.title,
+        alternateTitle: radarrMovie.originalTitle,
+        releaseDate: radarrMovie.year ? String(radarrMovie.year) : undefined,
+        genres: radarrMovie.genres?.join(', '),
+        runtime: radarrMovie.runtime
+          ? `${radarrMovie.runtime} minutes`
+          : radarrMovie.movieFile?.mediaInfo.runTime,
+        studio: radarrMovie.studio,
+        format: 'Movie',
+        provider: this.currentServer.name,
+        externalIds: [radarrMovie.tmdbId, radarrMovie.imdbId]
+          .filter(Boolean)
+          .join(' '),
       });
     } catch (e) {
       if (e instanceof ServarrServiceAuthorityChangedError) throw e;

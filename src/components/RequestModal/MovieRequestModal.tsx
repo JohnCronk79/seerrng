@@ -5,6 +5,12 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -52,6 +58,8 @@ const messages = defineMessages('components.RequestModal', {
   studio: 'Studio',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
+  requested: 'Requested',
   readyToRequest: 'Ready to Request',
   notAvailable: 'Not available',
   advancedOptions: 'Advanced Options',
@@ -106,10 +114,44 @@ const MovieRequestModal = ({
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const effectiveIs4k = requestOverrides?.is4k ?? is4k;
+  const selectedService = radarrServers?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = radarrServers?.find(
+    (server) => server.isDefault && server.is4k === effectiveIs4k
+  );
+  const selectedDestination = createRequestDestination(
+    'radarr',
+    effectiveIs4k ? '4k' : 'standard',
+    selectedService ?? fallbackService,
+    requestOverrides
+  );
   const selectedDestinationAvailable =
     !editRequest &&
-    data?.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] ===
-      MediaStatus.AVAILABLE;
+    isRequestDestinationAvailable(data?.mediaInfo, selectedDestination);
+  const selectedDestinationRequested =
+    !editRequest &&
+    isRequestDestinationRequested(
+      data?.mediaInfo?.requests,
+      selectedDestination
+    );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'movie',
+          effectiveIs4k
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
 
   useEffect(() => {
     if (onUpdating) {
@@ -118,7 +160,7 @@ const MovieRequestModal = ({
   }, [isUpdating, onUpdating]);
 
   const sendRequest = useCallback(async () => {
-    if (selectedDestinationAvailable) {
+    if (selectedDestinationCovered) {
       return;
     }
 
@@ -175,7 +217,7 @@ const MovieRequestModal = ({
     data?.id,
     data?.title,
     effectiveIs4k,
-    selectedDestinationAvailable,
+    selectedDestinationCovered,
     onComplete,
     addToast,
     intl,
@@ -352,12 +394,6 @@ const MovieRequestModal = ({
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
-  const selectedService = radarrServers?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const fallbackService = radarrServers?.find(
-    (server) => server.isDefault && server.is4k === effectiveIs4k
-  );
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const releaseDate = data?.releaseDate
     ? intl.formatDate(new Date(`${data.releaseDate}T00:00:00`), {
@@ -385,7 +421,7 @@ const MovieRequestModal = ({
       alignTop
       okDisabled={
         isUpdating ||
-        selectedDestinationAvailable ||
+        selectedDestinationCovered ||
         (quota?.movie.restricted && !requestOverrides?.ignoreQuota)
       }
       title={intl.formatMessage(
@@ -503,7 +539,9 @@ const MovieRequestModal = ({
                   {intl.formatMessage(
                     selectedDestinationAvailable
                       ? globalMessages.available
-                      : messages.readyToRequest
+                      : selectedDestinationRequested
+                        ? messages.requested
+                        : messages.readyToRequest
                   )}
                 </dd>
                 <dt className="font-medium text-gray-100">
@@ -513,6 +551,16 @@ const MovieRequestModal = ({
                   {selectedService?.name ??
                     fallbackService?.name ??
                     notAvailable}
+                </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.approval)}:
+                </dt>
+                <dd className="m-0 min-w-0">
+                  <RequestFooterStatus
+                    available={selectedDestinationAvailable}
+                    requested={selectedDestinationRequested}
+                    hasAutoApprove={hasAutoApprove}
+                  />
                 </dd>
               </dl>
             </div>
@@ -542,7 +590,7 @@ const MovieRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="detail-disclosure-button"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -557,10 +605,6 @@ const MovieRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
             className="flex h-[22px] items-center"
@@ -581,7 +625,7 @@ const MovieRequestModal = ({
             data-testid="modal-ok-button"
             disabled={
               isUpdating ||
-              selectedDestinationAvailable ||
+              selectedDestinationCovered ||
               (quota?.movie.restricted && !requestOverrides?.ignoreQuota)
             }
             className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"

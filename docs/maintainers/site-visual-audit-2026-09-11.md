@@ -1,10 +1,20 @@
 # Seerr Site Visual Audit - 2026-09-11
 
-This ledger records rendered inspection of the current Seerr refresh. A source-code check is not a visual pass. Shared-component routes are each opened at least once; dynamic detail routes are checked with representative real data and relevant expanded/modal states.
+This ledger records the rendered inspection completed before the recovery work. A source-code check is not a visual pass. Shared-component routes were each opened at least once; dynamic detail routes were checked with representative real data and relevant expanded/modal states.
+
+Recovery qualification (2026-09-12): every rendered claim in this document is
+historical evidence from the laptop r3 image created at 2026-09-12 04:18:02 MDT,
+unless a later entry explicitly says otherwise. References below to the
+"fresh" or "final" production build mean that historical audit build; they do
+not verify source changed after r3. Every post-r3 visual change remains pending
+a fresh build and rendered inspection even when its source and automated checks
+now pass.
 
 ## Acceptance states
 
-- `Verified`: rendered in the dedicated audit browser and satisfied the current acceptance ledger.
+- `Verified`: rendered in the dedicated audit browser for the historical r3
+  image and satisfied the acceptance ledger at that time. It is not current
+  render evidence for a file changed after r3.
 - `Pending`: not yet rendered in this audit.
 - `Deferred inventory`: intentionally outside the current redesign; document existing fields, actions, cards, and inconsistencies without redesigning or removing them.
 - `Not applicable`: internal framework route or authenticated redirect with no distinct page to inspect.
@@ -24,12 +34,12 @@ This ledger records rendered inspection of the current Seerr refresh. A source-c
 
 | Route/state | State | Evidence or finding |
 | --- | --- | --- |
-| Movie `/movie/1288445` main card | Verified | Artwork contained in main card; standard details, overview, ratings, details, button sizes/colors/order, recommendations/similar layout inspected. Fresh-build browser checks confirm separate adjacent normal and 4K request actions and hide 4K entirely for a user without its request permission. |
+| Movie `/movie/1288445` main card | Historical r3 verification | Artwork contained in main card; standard details, overview, ratings, details, button sizes/colors/order, recommendations/similar layout inspected. The r3 check confirmed the now-superseded separate normal and 4K actions and permission-hidden 4K behavior; the current segmented `HD | 4K` control awaits a fresh build. |
 | Movie cast expanded | Verified | Full Cast List renders three person cards per row and three rows before internal scrolling. |
 | Movie crew expanded | Verified | Uses the same shared three-by-three credit component; content and person links present. |
 | Movie Report an Issue | Verified | Artwork contained; Other, Audio, Video, and Subtitle options visible; current quality shown. |
 | Movie state-disabled actions | Verified with live-state limit | Stable button positions and semantic styling rendered in production. The shared permission/state contract and Blocklist correction are regression checked; the current dataset has no representative for every disabled Movie action. |
-| Series `/tv/108978` main card | Verified | Artwork, standard details, season/episode information cards, overview, optically normalized tomato/popcorn/TMDB rating art with aligned values, details, and action layout inspected on the final production build. A fresh-build browser check confirms separate adjacent normal and 4K request actions. |
+| Series `/tv/108978` main card | Historical r3 verification | Artwork, standard details, season/episode information cards, overview, optically normalized tomato/popcorn/TMDB rating art with aligned values, details, and action layout were inspected. The r3 check showed the now-superseded separate request actions; the current segmented `HD | 4K` control awaits a fresh build. |
 | Series cast/crew expanded | Verified | Shared three-by-three credit layout and person links present. |
 | Series Report an Issue | Verified | Artwork contained; four required issue types visible; season/episode information and selection layout present. |
 | Series state-disabled actions | Verified with live-state limit | Stable button positions and semantic styling rendered in production. The shared permission/state contract and Blocklist correction are regression checked; the current dataset has no representative for every disabled Series action. |
@@ -49,7 +59,7 @@ This ledger records rendered inspection of the current Seerr refresh. A source-c
 | Movie request modal | Verified | Contained artwork/details card, 4K destination, quality profile, two-column root-folder table, approval/footer alignment, and compact actions rendered. Switching the same available movie from Radarr-4K to its existing Radarr-HD destination changed Status to Available and disabled Request. |
 | Series request modal | Verified | Shared artwork/details treatment plus side-by-side season and episode selection, destination, quality, root folder, approval footer, and selection-required disabled action rendered without clipping. |
 | Music request modal | Verified | The real FLAC Bedtime Stories album opened a requestable Lidarr-MP3 destination with Standard metadata/MP3 quality; the real MP3 The Gambler album disabled its existing Lidarr-MP3 destination as Available, then changed to enabled Ready to Request with Lidarr-FLAC, Standard metadata, FLAC quality, and `/music-flac`. Both cross-format directions are visibly preserved. |
-| Book request modal | Verified | Fresh build rendered contained artwork, Ebook/Audiobook/Both selector, edition candidates, service, metadata profile, quality profile, root-folder columns, and footer. The representative opened on the complementary Ebook path as Ready to Request; switching back to its active Audiobook format now shows Requested and disables submission. |
+| Book request modal | Verified | Fresh build rendered contained artwork, Book/Audiobook/Both selector, edition candidates, service, metadata profile, quality profile, root-folder columns, and footer. The representative opened on the complementary Book path as Ready to Request; switching back to its active Audiobook format now shows Requested and disables submission. |
 
 ## Discover and search
 
@@ -60,7 +70,7 @@ This ledger records rendered inspection of the current Seerr refresh. A source-c
 | Series `/discover/tv` | Verified | Narrow base layout, cards, badges, filters, and wrapping inspected. The corrected API contract accepted fresh-build live multi-word `special ops` filtering, showed top-bar activity, updated the URL, and replaced results without the former HTTP 400/stale-result state. |
 | Music `/discover/music` | Verified | Narrow base layout, shared card/action styling, and live `adele` results inspected. Fresh-build multi-word `london grammar` filtering showed top-bar activity, used `%20`, and returned relevant London Grammar releases. |
 | Books `/discover/books` | Verified with provider-availability limit | Base layout, controls, sort/filter states, live multi-word activity, and field-limited `windows 11` behavior were inspected. The old broad query admitted novels through hidden metadata; title/author-only provider queries and local all-term validation now exclude them. When Open Library became unavailable during the final pass, the versioned response contract and no-stale-on-error policy rendered the same explicit timeout/error card used by main search rather than substituting an old `No results` response. Live provider-result relevance is also covered by route tests and the successful global `windows 11` result set from the same adapter. |
-| Global search `/search` | Verified | Fresh-build live `windows 11` search rendered relevant title/author-visible books alongside legitimate non-book matches, with no hidden-metadata-only `Computer Basics`/dictionary rows. All-media and Ebook-only filter layouts, sort controls, format badges, request actions, and URL state were inspected. The final production build also verified the corrected no-stale-on-error cache policy on Books discovery. |
+| Global search `/search` | Verified | Fresh-build live `windows 11` search rendered relevant title/author-visible books alongside legitimate non-book matches, with no hidden-metadata-only `Computer Basics`/dictionary rows. All-media and Book-only filter layouts, sort controls, format badges, request actions, and URL state were inspected. The final production build also verified the corrected no-stale-on-error cache policy on Books discovery. |
 | Trending/watchlist/upcoming routes | Verified | Trending grid and selectors, empty Plex Watchlist state, Upcoming Movies, and Upcoming Series inspected. Shared card badges, associations, status icons, request actions, spacing, and infinite loading remain aligned and readable. |
 | Movie genre/keyword/language/studio routes | Verified | Movie Genres half-height cards plus Action genre, Space keyword, English language, and Universal Pictures studio result pages inspected with populated data and shared title-card behavior. |
 | Series genre/keyword/language/network routes | Verified | Series Genres half-height cards plus Drama genre, Space keyword, English language, and Paramount+ network result pages inspected with populated data and shared title-card behavior. |
@@ -73,7 +83,7 @@ This ledger records rendered inspection of the current Seerr refresh. A source-c
 | Issue detail `/issues/[issueId]` | Verified | Movie and Series records (the media types represented in the preview database) render contained artwork, `Movie · HD` / `Series · HD`, affected episodes where applicable, comments, and the requested Exit / Add Comment / Close Issue order with red and green semantic actions. Music and Book share the same summary/action components but have no live issue record in this dataset. |
 | Blocklist `/blocklist` | Verified | Task/media/time filters, date/title/media sort controls, translucent artwork cards, red Remove from Blocklist actions, live `primer` filtering, count updates, empty/disabled paging states, and the Issues-standard footer inspected. |
 | Associations `/associations/[mediaType]/[id]` and popover | Verified | Fresh-build Movie List and Map views render with consistent badges, poster cards, links, graph legend, nodes, zoom/fit controls, and connection links. The first card popover loaded its title, overview, state-aware actions, and request action without reproducing the old transient error. |
-| Collection `/collection/[collectionId]` | Verified | Star Wars Collection rendered its artwork card, collection/availability badges, overview, Request Collection in 4K action, movie slider, and inherited title-card states without clipping or spacing regressions. |
+| Collection `/collection/[collectionId]` | Pre-publication refresh required | Star Wars Collection previously rendered its artwork card, collection/availability badges, overview, Request Collection in 4K action, movie slider, and inherited title-card states without clipping or spacing regressions. The user has now placed this page into the required pre-publication refresh scope. Inventory and preserve all collection-specific behavior, apply the approved detail-page standards, and repeat the full rendered validation before publication. |
 
 ## Deferred redesign inventory
 
@@ -99,9 +109,9 @@ The following areas are inspected and documented for a future refresh but are no
 4. Series live keyword filtering sent the supported `search` parameter, but the OpenAPI contract rejected it as unknown before the route ran. Added the missing bounded search parameter to `/discover/tv` and a contract-validator check; the final production build verifies live multi-word filtering and top-bar activity.
 5. Multi-word page-level searches were routed with `+` separators, while API request validation accepted the same values only with percent-encoded spaces. Music reproduced this as `No results` for `london grammar` despite 20 relevant API results with `%20`; the shared route builder and regression test now require `%20` for every page using it.
 6. Book keyword searches used Open Library's broad composite `q` field and then treated hidden subject tags as visible keyword evidence. This reproduced the reported `windows 11` novel results. Provider queries and local relevance checks now require every term in the visible title or author fields; regression coverage excludes subject-only and publisher-only matches.
-7. Global Book search used the same broad provider response without the Discover Books local relevance gate, so Ebook filtering still included hidden-metadata-only titles. It now uses the same field-limited title/author provider query and local all-term validation, with route-level regression coverage.
+7. Global Book search used the same broad provider response without the Discover Books local relevance gate, so Book filtering still included hidden-metadata-only titles. It now uses the same field-limited title/author provider query and local all-term validation, with route-level regression coverage.
 8. Plex-linked profile pictures always fell back to the generic avatar because the remote proxy intentionally has no provider base URL, while the URL resolver incorrectly required a base even for an already absolute HTTPS URL. The resolver now accepts validated absolute remote-avatar URLs; regression tests cover that path, and POSIX-only cache security tests stay active in Linux CI while being explicitly skipped on Windows systems that cannot create the required links or expose POSIX modes.
-9. A Book detail could correctly show an active Audiobook request while the same request modal allowed a manual switch back to Audiobook, labeled it Ready to Request, and left its submit action enabled. The modal now applies the backend's overlapping-format rule before submission, displays Requested, disables the action for active overlaps, and still allows the complementary Ebook or Audiobook format.
+9. A Book detail could correctly show an active Audiobook request while the same request modal allowed a manual switch back to Audiobook, labeled it Ready to Request, and left its submit action enabled. The modal now applies the backend's overlapping-format rule before submission, displays Requested, disables the action for active overlaps, and still allows the complementary Book or Audiobook format.
 10. The repository's formatting commands depended on Unix `find`/`xargs` pipelines, so the same pull-request formatting gate could not be run reliably from the Windows laptop. Both write and check modes now use one Node runner that obtains tracked and untracked, non-ignored files directly from Git and invokes the pinned Prettier CLI in bounded batches; GitHub retains the identical `pnpm format:check` entry point.
 11. The documentation build treated exact quoted design placeholders such as `<status>` as MDX components and failed compilation. The quoted instructions remain complete and unchanged in meaning, while the placeholders are now code-delimited so the documentation site renders them literally.
 12. The pinned GitHub Linux image measured roughly 55 minutes for the expanded 1,902-test suite, beyond the former 45-minute job limit, and its graceful-shutdown fixtures needed 5.7–7.3 seconds to initialize under load. The Unit Tests ceiling is now 75 minutes and the fixture readiness bound is 20 seconds; the shutdown behavior itself remains fully asserted rather than skipped on Linux.
@@ -116,6 +126,19 @@ The following areas are inspected and documented for a future refresh but are no
 21. The first exact merged-commit container build exposed that `.dockerignore` intentionally removed all documentation while the production `prebuild` now requires the acceptance ledger and UI standard. The build context still excludes the documentation tree by default but explicitly retains those two contract files. The container-security tooling test reads `.dockerignore` outside the build context and fails if either narrow exception is removed, while the container's prebuild proves the retained files satisfy the same 80-file contract as checkout builds.
 
 ## Final validation evidence
+
+The following final-validation results belong to the historical r3 audit build,
+not the source changed during recovery. Post-r3 recovery currently adds passing
+focused source checks for the four-media matching-pending-request promotion,
+request-form eligibility, Collection request/selection state, Book discovery
+provider failures, and Docker `.npmrc` exclusion. Those checks do not replace a
+fresh build or rendered inspection.
+
+The recovery replay also re-ran the seven formerly stale focused expectations:
+MusicBrainz source/rating normalization, selected and combined Book filters,
+relevant Book search, the broad default all-books feed, distinct Books results,
+and empty-default provider failure. All seven now pass against the reconciled
+source.
 
 - Pinned GitHub Linux environment: lint, formatting, translations, the current-batch contract, and the complete production build passed; the build generated all 91 application routes.
 - Full Linux unit suite: 1,902 tests across 424 suites, with 1,898 passing, zero failures, and four intentional skips in 55 minutes 17 seconds.

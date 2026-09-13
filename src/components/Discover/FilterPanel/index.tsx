@@ -1,8 +1,10 @@
 import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityToggle';
+import AvailabilityQualityControl from '@app/components/Discover/AvailabilityQualityControl';
 import {
   CompactRatingSelect,
   CompactSelect,
   getFilterResetButtonClass,
+  getFilterToggleButtonClass,
   type CompactSelectOption,
   type RangeOption,
   type RatingOption,
@@ -53,9 +55,12 @@ const messages = defineMessages('components.Discover.FilterPanel', {
 type FilterPanelProps = {
   type: 'movie' | 'tv';
   currentFilters: FilterOptions;
+  variant?: 'discover' | 'search';
+  searchQueryKey?: 'search' | 'resultFilter';
 };
 
 const clearedFilters = {
+  availability: undefined,
   certification: undefined,
   certificationCountry: undefined,
   certificationGte: undefined,
@@ -87,7 +92,12 @@ const getRangeValue = (options: RangeOption[], gte?: string, lte?: string) =>
   options.find((option) => option.gte === gte && option.lte === lte)?.value ??
   `current:${gte ?? ''}:${lte ?? ''}`;
 
-const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
+const FilterPanel = ({
+  type,
+  currentFilters,
+  variant = 'discover',
+  searchQueryKey = 'search',
+}: FilterPanelProps) => {
   const intl = useIntl();
   const batchUpdateQueryParams = useBatchUpdateQueryParams({});
   const [searchValue, debouncedSearchValue, setSearchValue] = useDebouncedState(
@@ -105,7 +115,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
   useEffect(() => {
     routedSearchRef.current = (currentFilters.search ?? '').trim();
     setSearchValue(currentFilters.search ?? '');
-  }, [currentFilters.search]);
+  }, [currentFilters.search, setSearchValue]);
 
   useEffect(() => {
     const nextSearch = debouncedSearchValue.trim();
@@ -114,11 +124,12 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
       return;
     }
 
+    routedSearchRef.current = nextSearch;
     batchUpdateQueryParams({
-      ...clearedFilters,
-      search: nextSearch || undefined,
+      ...(variant === 'discover' ? clearedFilters : {}),
+      [searchQueryKey]: nextSearch || undefined,
     });
-  }, [batchUpdateQueryParams, debouncedSearchValue]);
+  }, [batchUpdateQueryParams, debouncedSearchValue, searchQueryKey, variant]);
 
   const dateGte =
     type === 'movie' ? 'primaryReleaseDateGte' : 'firstAirDateGte';
@@ -127,11 +138,25 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
   const hasActiveFilters = Object.keys(currentFilters).some(
     (key) => key !== 'sortBy'
   );
+  const clearAllFilters = () => {
+    routedSearchRef.current = '';
+    setSearchValue('');
+    batchUpdateQueryParams({
+      ...clearedFilters,
+      [searchQueryKey]: undefined,
+    });
+  };
   const updateFilter = (key: string, value?: string) => {
-    batchUpdateQueryParams({ search: undefined, [key]: value });
+    batchUpdateQueryParams({
+      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      [key]: value,
+    });
   };
   const updateFilters = (values: Record<string, string | undefined>) => {
-    batchUpdateQueryParams({ search: undefined, ...values });
+    batchUpdateQueryParams({
+      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      ...values,
+    });
   };
   const currentYear = new Date().getFullYear();
   const yearOptions: CompactSelectOption[] = [
@@ -357,26 +382,40 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
       ]
     : ratingOptions;
   return (
-    <section aria-label={intl.formatMessage(messages.filters)}>
-      <div className="flex flex-wrap gap-2">
-        <CardTextVisibilityToggle mediaType={type} className="order-2" />
-        <button
-          type="button"
-          aria-pressed={!hasActiveFilters}
-          onClick={() => batchUpdateQueryParams(clearedFilters)}
-          className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
-        >
-          {intl.formatMessage(messages.clearFilters)}
-        </button>
+    <section
+      aria-label={intl.formatMessage(messages.filters)}
+      className={variant === 'search' ? 'contents' : undefined}
+    >
+      <div
+        className={variant === 'search' ? 'contents' : 'flex flex-wrap gap-2'}
+      >
+        {variant === 'discover' && (
+          <>
+            <button
+              type="button"
+              aria-pressed={!hasActiveFilters}
+              onClick={clearAllFilters}
+              className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
+            >
+              {intl.formatMessage(messages.clearFilters)}
+            </button>
+            <CardTextVisibilityToggle mediaType={type} className="order-2" />
+            <AvailabilityQualityControl
+              mediaType={type}
+              value={currentFilters.availability}
+              onChange={(value) => updateFilter('availability', value)}
+              className="order-3"
+            />
+            <div className="order-4 basis-full" aria-hidden="true" />
+          </>
+        )}
         <form
-          className={`discover-filter-control w-72 max-w-full flex-none ${
-            type === 'movie' ? 'order-3' : 'order-4'
-          }`}
+          className="discover-filter-control order-5 w-72 max-w-full flex-none"
           onSubmit={(event) => {
             event.preventDefault();
             batchUpdateQueryParams({
-              ...clearedFilters,
-              search: searchValue.trim() || undefined,
+              ...(variant === 'discover' ? clearedFilters : {}),
+              [searchQueryKey]: searchValue.trim() || undefined,
             });
           }}
         >
@@ -401,71 +440,8 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
             className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
           />
         </form>
-        <CompactSelect
-          className={type === 'movie' ? 'order-4' : 'order-5'}
-          label={intl.formatMessage(messages.releaseDate)}
-          value={yearValue}
-          options={yearOptions}
-          onChange={(value) => {
-            if (value === 'any') {
-              updateFilters({ [dateGte]: undefined, [dateLte]: undefined });
-            } else if (value === 'before-1970') {
-              updateFilters({
-                [dateGte]: undefined,
-                [dateLte]: '1969-12-31',
-              });
-            } else if (value !== 'current-date-range') {
-              updateFilters({
-                [dateGte]: `${value}-01-01`,
-                [dateLte]: `${value}-12-31`,
-              });
-            }
-          }}
-        />
-        {type === 'movie' && (
-          <div className="discover-filter-control order-7">
-            <span
-              className={`discover-filter-control-label ${
-                currentFilters.studio
-                  ? 'discover-filter-control-label-active'
-                  : ''
-              }`}
-            >
-              {intl.formatMessage(messages.studio)}
-            </span>
-            <CompanySelector
-              compact
-              defaultValue={currentFilters.studio}
-              onChange={(value) => {
-                updateFilter('studio', value?.value.toString());
-              }}
-            />
-          </div>
-        )}
-        <div
-          className={`discover-filter-control ${
-            type === 'movie' ? 'order-5' : 'order-6'
-          }`}
-        >
-          <span
-            className={`discover-filter-control-label ${
-              currentFilters.genre ? 'discover-filter-control-label-active' : ''
-            }`}
-          >
-            {intl.formatMessage(messages.genres)}
-          </span>
-          <GenreSelector
-            compact
-            type={type}
-            defaultValue={currentFilters.genre}
-            isMulti
-            onChange={(value) => {
-              updateFilter('genre', value?.map((v) => v.value).join(','));
-            }}
-          />
-        </div>
         {type === 'tv' && (
-          <div className="discover-filter-control order-3">
+          <div className="discover-filter-control order-6">
             <span
               className={`discover-filter-control-label ${
                 currentFilters.status
@@ -486,7 +462,70 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
           </div>
         )}
         <CompactSelect
-          className="order-10"
+          className={type === 'movie' ? 'order-6' : 'order-7'}
+          label={intl.formatMessage(messages.releaseDate)}
+          value={yearValue}
+          options={yearOptions}
+          onChange={(value) => {
+            if (value === 'any') {
+              updateFilters({ [dateGte]: undefined, [dateLte]: undefined });
+            } else if (value === 'before-1970') {
+              updateFilters({
+                [dateGte]: undefined,
+                [dateLte]: '1969-12-31',
+              });
+            } else if (value !== 'current-date-range') {
+              updateFilters({
+                [dateGte]: `${value}-01-01`,
+                [dateLte]: `${value}-12-31`,
+              });
+            }
+          }}
+        />
+        {type === 'movie' && (
+          <div className="discover-filter-control order-9">
+            <span
+              className={`discover-filter-control-label ${
+                currentFilters.studio
+                  ? 'discover-filter-control-label-active'
+                  : ''
+              }`}
+            >
+              {intl.formatMessage(messages.studio)}
+            </span>
+            <CompanySelector
+              compact
+              defaultValue={currentFilters.studio}
+              onChange={(value) => {
+                updateFilter('studio', value?.value.toString());
+              }}
+            />
+          </div>
+        )}
+        <div
+          className={`discover-filter-control ${
+            type === 'movie' ? 'order-7' : 'order-8'
+          }`}
+        >
+          <span
+            className={`discover-filter-control-label ${
+              currentFilters.genre ? 'discover-filter-control-label-active' : ''
+            }`}
+          >
+            {intl.formatMessage(messages.genres)}
+          </span>
+          <GenreSelector
+            compact
+            type={type}
+            defaultValue={currentFilters.genre}
+            isMulti
+            onChange={(value) => {
+              updateFilter('genre', value?.map((v) => v.value).join(','));
+            }}
+          />
+        </div>
+        <CompactSelect
+          className="order-12"
           label={intl.formatMessage(messages.language)}
           value={currentLanguage}
           options={languageOptions}
@@ -495,7 +534,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
           }}
         />
         <CompactSelect
-          className={type === 'movie' ? 'order-6' : 'order-7'}
+          className={type === 'movie' ? 'order-8' : 'order-9'}
           label={intl.formatMessage(messages.certification)}
           value={currentCertification}
           options={certificationOptions}
@@ -511,7 +550,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
         />
         {type === 'movie' && (
           <CompactSelect
-            className="order-8"
+            className="order-10"
             label={intl.formatMessage(messages.runtime)}
             value={runtimeValue}
             options={currentRuntimeOptions}
@@ -527,7 +566,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
         )}
         {type === 'tv' && (
           <CompactSelect
-            className="order-8"
+            className="order-10"
             label={intl.formatMessage(messages.network)}
             value={currentFilters.network ?? 'any'}
             options={networkOptions}
@@ -537,7 +576,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
           />
         )}
         <CompactRatingSelect
-          className="order-9"
+          className="order-11"
           label={intl.formatMessage(messages.tmdbuserscore)}
           value={ratingValue}
           options={currentRatingOptions}
@@ -554,11 +593,7 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
           type="button"
           aria-expanded={isStreamingOpen}
           onClick={() => setIsStreamingOpen((current) => !current)}
-          className={`inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-            currentFilters.watchProviders
-              ? 'border-indigo-400 bg-indigo-500 text-white'
-              : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-          } order-11`}
+          className={`${getFilterToggleButtonClass(Boolean(currentFilters.watchProviders))} order-[13]`}
         >
           <TvIcon className="h-4 w-4" aria-hidden="true" />
           {intl.formatMessage(messages.streamingservices)}
@@ -574,7 +609,11 @@ const FilterPanel = ({ type, currentFilters }: FilterPanelProps) => {
         </button>
       </div>
       {isStreamingOpen && (
-        <section className="mt-2 max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900/40 p-3 pb-7">
+        <section
+          className={`${
+            variant === 'search' ? 'w-full basis-full' : ''
+          } mt-2 max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900/40 p-3 pb-7`}
+        >
           <WatchProviderSelector
             type={type}
             regionLabel={intl.formatMessage(messages.region)}

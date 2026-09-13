@@ -15,6 +15,7 @@ export type ButtonType =
   | 'bulkRequest'
   | 'detailRequest'
   | 'trailer'
+  | 'playback'
   | 'ghost';
 
 // Helper type to override types (overrides onClick)
@@ -57,6 +58,7 @@ const buttonTypeStyles: Record<ButtonType, string> = {
   bulkRequest: 'app-button-bulk-request',
   detailRequest: 'app-button-detail-request',
   trailer: 'app-button-trailer',
+  playback: 'app-button-playback',
   ghost: 'app-button-ghost',
 };
 

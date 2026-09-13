@@ -23,16 +23,15 @@ interface SearchObject {
 
 const useSearchInput = (): SearchObject => {
   const router = useRouter();
+  const isSearchPage = router.pathname === '/search';
+  const routeQuery = isSearchPage ? getSearchQuery(router.query.query) : '';
   const [searchOpen, setSearchOpen] = useState(false);
   const [lastRoute, setLastRoute] = useState<Url | null>(null);
   const pendingSearchQuery = useRef<string | null>(null);
   const searchOpenedOnCurrentRoute = useRef(false);
   const closingSearch = useRef(false);
-  const [searchValue, debouncedValue, setSearchValue] = useDebouncedState(
-    getSearchQuery(router.query.query)
-  );
-  const routeQuery = getSearchQuery(router.query.query);
-  const isSearchPage = router.pathname === '/search';
+  const [searchValue, debouncedValue, setSearchValue] =
+    useDebouncedState(routeQuery);
 
   const setIsOpen = useCallback((isOpen: boolean) => {
     searchOpenedOnCurrentRoute.current = isOpen;
@@ -60,6 +59,24 @@ const useSearchInput = (): SearchObject => {
    */
   useEffect(() => {
     if (
+      isSearchPage &&
+      searchOpen &&
+      debouncedValue === '' &&
+      routeQuery !== '' &&
+      pendingSearchQuery.current !== ''
+    ) {
+      pendingSearchQuery.current = '';
+      const remainingQuery = { ...router.query };
+      delete remainingQuery.query;
+      void router.replace(
+        {
+          pathname: router.pathname,
+          query: remainingQuery,
+        },
+        undefined,
+        { shallow: true }
+      );
+    } else if (
       shouldNavigateToSearch(
         router.pathname,
         routeQuery,

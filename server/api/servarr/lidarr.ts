@@ -262,6 +262,11 @@ export interface LidarrAlbum {
   id: number;
   mbId: string;
   title: string;
+  artistName?: string;
+  artist?: {
+    artistName?: string;
+    foreignArtistId?: string;
+  };
   monitored: boolean;
   artistId: number;
   foreignAlbumId: string;
@@ -269,6 +274,12 @@ export interface LidarrAlbum {
   profileId: number;
   duration: number;
   albumType: string;
+  releaseDate?: string;
+  genres?: string[];
+  images?: LidarrImage[];
+  remoteCover?: string;
+  added?: string;
+  ratings?: LidarrRating;
   lastSearchTime?: string;
   statistics: {
     trackFileCount: number;

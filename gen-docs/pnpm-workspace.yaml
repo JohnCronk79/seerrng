@@ -2,6 +2,7 @@ overrides:
   '@babel/core': 7.29.7
   '@babel/plugin-transform-modules-systemjs': 7.29.4
   '@faker-js/faker': 10.6.0
+  '@swc/html': 1.16.2
   '@humanfs/node': 0.16.8
   ajv: 8.18.0
   ajv-keywords@3.5.2>ajv: 6.14.0
@@ -14,8 +15,8 @@ overrides:
   http-proxy-middleware: 2.0.10
   image-size: file:./vendor/image-size
   immutable: 5.1.8
-  joi: 17.13.4
-  js-yaml: 4.3.1
+  joi: 17.13.6
+  js-yaml: 4.3.2
   launch-editor: 2.14.1
   lodash: 4.18.1
   mdast-util-to-hast: 13.2.1
@@ -29,7 +30,8 @@ overrides:
   schema-utils@3.3.0>ajv: 6.14.0
   serialize-javascript: 7.0.5
   shell-quote: 1.9.0
-  svgo: 3.3.4
+  svgo: 3.3.5
+  colord: 2.9.4
   terser-webpack-plugin: 5.6.1
   undici: 7.29.0
   uuid: 11.1.1

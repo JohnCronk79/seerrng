@@ -143,7 +143,9 @@ jobs:
       - name: Commit updated files
         run: |
           git add CHANGELOG.md package.json charts/seerr-chart/Chart.yaml charts/seerr-chart/README.md
-          git commit -m "chore(release): prepare ${TAG_VERSION}"
+          git commit \
+            -m "chore(release): prepare ${TAG_VERSION}" \
+            -m "release-note: none"
           git push
 
       - name: Create git tag

@@ -9,6 +9,9 @@ import useCardTextVisibility from '@app/hooks/useCardTextVisibility';
 import useDiscoverHomeManifest from '@app/hooks/useDiscoverHomeManifest';
 import useSettings from '@app/hooks/useSettings';
 import { useUser } from '@app/hooks/useUser';
+import useWarmImageCache, {
+  DISCOVER_SHELF_POSTER_CACHE_WARM_LIMIT,
+} from '@app/hooks/useWarmImageCache';
 import {
   buildDiscoverCacheContextKey,
   buildDiscoverSnapshotKey,
@@ -338,6 +341,11 @@ const MediaSlider = ({
     [renderableTitles]
   );
 
+  useWarmImageCache(renderableTitles, {
+    maxUrls: DISCOVER_SHELF_POSTER_CACHE_WARM_LIMIT,
+    posterOnly: true,
+  });
+
   const shouldLoadMore =
     renderableTitles.length < MEDIA_SLIDER_TITLE_LIMIT + 4 &&
     size < 5 &&
@@ -470,6 +478,7 @@ const MediaSlider = ({
                 title.releaseDate ?? title['first-release-date']?.split('-')[0]
               }
               mediaType={title.mediaType}
+              availableQualities={title.availableQualities}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
               needsCoverArt={title.needsCoverArt}
               showText={visibility.album === 'always'}
@@ -566,10 +575,10 @@ const MediaSlider = ({
           <Tooltip content={`Refresh ${title}`}>
             <Button
               type="button"
-              buttonType="ghost"
+              buttonType="default"
               buttonSize="sm"
               onClick={refreshRandomizedOrder}
-              className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white"
+              className="h-8 w-8 p-0"
               aria-label={`Refresh ${title}`}
             >
               <ArrowPathIcon className="h-4 w-4" />
