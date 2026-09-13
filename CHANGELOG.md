@@ -69,6 +69,57 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.21.0](https://github.com/snapetech/seerrng/compare/v3.20.4..v3.21.0) - 2026-09-13
+
+### User-facing changes
+
+#### Added
+
+- **Search:** Global Search now separates media-type choices under a Media Filters heading. Its regular Filters row flows from Clear Filters and title visibility into Keyword Search and the selected media type's relevant discovery controls.
+- **Discovery:** Movie, Series, and Music discovery now include one compact Quality Available control for filtering results to scanned HD, 4K, MP3, or FLAC library copies. Keyword Search begins on its own filter row across Movie, Series, Music, and Books discovery.
+- **Users:** Local users can now select Edit on their profile picture to upload a JPEG, PNG, or WebP image. Plex, Jellyfin, and Emby profile pictures continue to follow their linked media-server accounts. Absolute Plex avatar URLs are now accepted by the secure remote-image cache, preventing valid linked profile pictures from falling back to the generic avatar.
+- **Series Requests And Issues:** Series requests and issue reports can now retain selections from multiple seasons, including exact episode subsets for each season. Exact requests are sent to Sonarr as episode-level monitoring and searches while whole-season requests keep their existing behavior.
+- **Requests:** Requests, Issues, and Blocklist now group their media-type choices under a dedicated Media Filters heading, keeping workflow state and regular Time Period and Keyword Search controls in their own sections.
+- **Ui:** Books Details now matches the compact artwork-backed media design, with linked author and Open Library facts, separate Ebook and Audiobook availability, an expandable linked Genres card, and consistently styled actions. Blocklist, icon-only Manage, icon-only Report an Issue, and Associations lead the compact action row, while Request Bibliography uses a distinct dark green.
+- **Ui:** Movie Details now uses a compact artwork-backed layout with linked facts, a structured overview, aligned ratings, three-column cast and crew lists, subject tags, grouped production details, consistent actions, separate adjacent standard and permission-aware 4K request buttons, and request history with separate date, time, action, and description columns.
+- **Ui:** Music Details now uses the shared artwork-backed layout with linked album facts and Origin, MP3 and FLAC availability badges, track cards, artist information, subject tags, and consistent actions. Request Discography is dark green, while unreliable listening totals and the unused Artist Overview are omitted.
+- **Ui:** Series Details now uses the shared artwork-backed layout with linked facts, aligned ratings, three-column cast and crew lists, subject tags, a read-only two-card season and episode browser, separate adjacent standard and permission-aware 4K request buttons, and consistently styled Blocklist, Manage, Report an Issue, trailer, and Associations actions.
+- **Requests:** Request Status cards now provide compact History, Retry, and Delete controls. Active retries and deletions cancel matching download work and require confirmed cleanup before Seerr changes the request record.
+
+#### Changed
+
+- **Ui:** The site background now uses a narrow upper-right purple spotlight over a 40-degree blue-to-black gradient, providing stronger depth and color while keeping the highlight restrained.
+- **Ui:** Discover now uses consistent category spacing, including at enlarged browser scaling, one compact title-visibility control per row, standard navigation controls, and headings without circular arrow icons. Genre, Studio, and Network cards use half the former footprint without leaving oversized slider gaps.
+- **Interface:** The site and narrow-window menu now use a stronger four-color diagonal gradient with a focused upper-right highlight and black lower edge. Refreshed cards are more translucent, and artwork uses a uniform readability layer without a lower-edge fade.
+- **Media Workflows:** Request, issue, blocklist, and media browsing screens now share compact filters, sorting, paging, searchable metadata, and consistent badges and tooltips.
+- **Interface:** Blocklist, Issues, Request Status, Requests, Users, and Logs now share one compact pagination footer with matching Previous and Next actions, results-per-page selection, page count, spacing, and alignment.
+
+#### Fixed
+
+- **Bookshelf:** Book requests now track the actual Bookshelf search, download, and import workflow, report when no release is found, and remove empty records created by unsuccessful requests. Active lifecycle checks bypass cached book metadata, and a confirmed import publishes availability before request tracking ends.
+- **Ui:** Season, episode, music-track, and audiobook-track availability icons now share the exact centered column alignment used by their availability heading.
+- **Ui:** The Books page now shows the same Open Library timeout notice and retry action as book searches when its provider is unavailable, instead of incorrectly reporting that no books matched.
+- **Ci:** Production container builds now keep development-only validation inputs outside the image context while repository and GitHub builds continue to enforce the complete current-batch contract.
+- **Ui:** Refreshed media details now retain the shared blue/lavender content tone and distribute every visible primary action evenly across the full action row.
+- **Discovery:** Clear Filters on Movie and Series discovery now clears the visible Keyword Search text and prevents its debounced value from restoring the removed search filter.
+- **Ui:** Search fields and idle controls now retain the shared blue palette, while media-server playback buttons align their full-height provider logos consistently with clearly spaced labels.
+- **Issues:** Issue cards now include their saved HD or 4K target beside the media type. Report an Issue forms list only the HD and/or 4K copies currently available for Movies and Series, fresh request forms consistently expose the configured destination qualities from every entry point, and Book issue details keep separate links to configured Ebook and Audiobook services.
+- **Search:** Keyword Search now requires every entered word to match meaningful title, creator, or genre metadata, preventing broad provider metadata and popularity ranking from filling Books, Music, Movie, and Series results with unrelated titles.
+- **Music Requests:** Music requests now remain Importing while Lidarr or Picard work is pending, use recent Lidarr history to bridge fast queue changes, show No Release Found after an unsuccessful search, resume after a manual grab, and track each selected service, format, quality, metadata profile, root folder, and tag independently.
+- **Music:** Music Details now always lists MP3 availability first and FLAC availability second, with green available values and yellow unavailable values based on the separately scanned Lidarr destinations.
+- **Authentication:** Plex sign-in now returns its authentication popup to a Seerr-owned completion page so the popup can close itself, while preserving the existing bounded PIN-polling login flow.
+- **Requests:** Request forms now disable only the currently available movie, series, music, or book target while allowing another configured quality, service, or format. Album details keep the Request action visible and show the quality profile for every available MP3 or FLAC copy.
+- **Discovery:** Series now places Status directly after Keyword Search and reliably preloads its TV genres. Books and Audiobooks now separate their format choices under Media Filters while keeping all regular controls in one wrapping Filters row.
+- **Request Status:** Request Status now combines live Arr queues with recent service history, so fast downloads and files awaiting automatic or manual import remain Importing instead of becoming Failed. Only an explicit download or import failure is terminal.
+- **Search:** Keyword Search filters now activate the shared header Searching indicator and refresh Movies, Series, Music, and Books after a short typing pause. Request managers also see all users by default, so approval-required requests made for another user remain visible.
+- **Bookshelf:** Books discovery now defaults to All Books, keeps Book and Audiobook request context when entering details, opens card requests on the details page, restores browsing position after Back, and reports an unusable empty provider feed as an error.
+- **Requests:** The All Users request-status filter now reloads results without retaining the previous owner selection, and filter and sort controls use the compact Search-page sizing on mobile and desktop.
+
+### 🚀 Features
+- *(ui)* Complete media workflows and server playback (#117) - ([f6d91aa](https://github.com/snapetech/seerrng/commit/f6d91aaf7d7a00a659d83a3c6cb0a6abb599960f))
+
 ## [3.20.4](https://github.com/snapetech/seerrng/compare/v3.20.3..v3.20.4) - 2026-09-13
 
 ### ⚙️ Miscellaneous Tasks
