@@ -65,6 +65,20 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.20.3](https://github.com/snapetech/seerrng/compare/v3.20.2..v3.20.3) - 2026-09-13
+
+### User-facing changes
+
+#### Fixed
+
+- **Bookshelf:** Chaptarr book requests now work with large libraries, and library synchronization uses bounded pages instead of a single oversized response.
+
+### 🐛 Bug Fixes
+- *(bookshelf)* Paginate Chaptarr library requests - ([3d1f22f](https://github.com/snapetech/seerrng/commit/3d1f22fa46ce3b5782f99062b8eb8cb4dab3ac6b))
+- *(i18n)* Sync extracted messages for the music/book notification labels - ([843405f](https://github.com/snapetech/seerrng/commit/843405fb21af94e123ce962fb48df0a9de971656))
+
 ## [3.20.2](https://github.com/snapetech/seerrng/compare/v3.20.1..v3.20.2) - 2026-09-12
 
 ### User-facing changes
