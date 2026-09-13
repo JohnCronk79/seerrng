@@ -67,6 +67,13 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.20.4](https://github.com/snapetech/seerrng/compare/v3.20.3..v3.20.4) - 2026-09-13
+
+### ⚙️ Miscellaneous Tasks
+- Record internal dependency refresh - ([a60b98a](https://github.com/snapetech/seerrng/commit/a60b98ac17a37934366ad7571777d10de39ca10c))
+
 ## [3.20.3](https://github.com/snapetech/seerrng/compare/v3.20.2..v3.20.3) - 2026-09-13
 
 ### User-facing changes
