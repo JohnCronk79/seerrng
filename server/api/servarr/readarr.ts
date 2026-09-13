@@ -30,6 +30,7 @@ export interface ReadarrDevelopmentConfig {
 export type ReadarrMediaType = 'ebook' | 'audiobook';
 type ChaptarrDialect = 'hc' | 'gr';
 const CHAPTARR_REQUEST_TIMEOUT_MS = 60_000;
+const CHAPTARR_LIBRARY_PAGE_SIZE = 500;
 
 export interface ReadarrBookLookupResult {
   id?: number;
@@ -116,6 +117,13 @@ export interface ReadarrBook extends ReadarrBookLookupResult {
     bookFileCount?: number;
     totalBookCount?: number;
   };
+}
+
+interface PagedReadarrBooksResponse {
+  records?: unknown;
+  totalCount?: unknown;
+  offset?: unknown;
+  pageSize?: unknown;
 }
 
 type ReadarrQueueItem = {
@@ -356,6 +364,175 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
       : book.monitored === true;
   }
 
+  private static matchesExistingBook(
+    book: ReadarrBookLookupResult,
+    options: ReadarrBookOptions
+  ): boolean {
+    const normalizedForeignBookId = options.foreignBookId
+      ? normalizeOpenLibraryWorkId(options.foreignBookId)
+      : undefined;
+    const optionEditionIds = new Set(
+      options.editions
+        ?.map((edition) =>
+          edition.foreignEditionId
+            ? normalizeOpenLibraryEditionId(edition.foreignEditionId)
+            : undefined
+        )
+        .filter(Boolean)
+    );
+    const optionIsbns = new Set(
+      options.editions
+        ?.map((edition) => normalizeIsbn(edition.isbn13))
+        .filter(Boolean)
+    );
+
+    if (
+      book.foreignBookId &&
+      normalizedForeignBookId &&
+      normalizeOpenLibraryWorkId(book.foreignBookId) === normalizedForeignBookId
+    ) {
+      return true;
+    }
+
+    return (
+      book.editions?.some((edition) => {
+        const editionIsbn = normalizeIsbn(edition.isbn13);
+
+        return (
+          (!!edition.foreignEditionId &&
+            optionEditionIds.has(
+              normalizeOpenLibraryEditionId(edition.foreignEditionId)
+            )) ||
+          (!!editionIsbn && optionIsbns.has(editionIsbn))
+        );
+      }) ?? false
+    );
+  }
+
+  private async findExistingBookForAdd(
+    options: ReadarrBookOptions
+  ): Promise<ReadarrBook | undefined> {
+    if (this.isChaptarr()) {
+      // Chaptarr's POST /book is provider-aware and resolves existing local
+      // rows in its indexed database. Only use a positive ID already returned
+      // by a lookup as a targeted read; never scan the whole library here.
+      const bookId = options.id;
+      if (
+        typeof bookId !== 'number' ||
+        !Number.isSafeInteger(bookId) ||
+        bookId <= 0
+      ) {
+        return undefined;
+      }
+
+      try {
+        const existingBook = await this.getBook(bookId);
+        return ReadarrAPI.matchesExistingBook(existingBook, options)
+          ? existingBook
+          : undefined;
+      } catch (error) {
+        logger.debug(
+          'Chaptarr targeted existing-book lookup failed; letting the provider resolve the add.',
+          {
+            label: 'Readarr',
+            bookId,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+          }
+        );
+        return undefined;
+      }
+    }
+
+    const existingBooks = sanitizeServarrRecordArray<ReadarrBook>(
+      await this.get<ReadarrBook[]>('/book', this.getRequestConfig()),
+      MAX_SERVARR_LIBRARY_RESULTS
+    );
+
+    return existingBooks.find((book) =>
+      ReadarrAPI.matchesExistingBook(book, options)
+    );
+  }
+
+  private async getChaptarrBooks(): Promise<ReadarrBook[]> {
+    const books: ReadarrBook[] = [];
+    let offset = 0;
+
+    while (books.length < MAX_SERVARR_LIBRARY_RESULTS) {
+      const response = await this.get<unknown>(
+        '/book/paged',
+        this.getRequestConfig({
+          offset,
+          pageSize: CHAPTARR_LIBRARY_PAGE_SIZE,
+          includeUnmonitored: true,
+        })
+      );
+      if (
+        !response ||
+        typeof response !== 'object' ||
+        Array.isArray(response) ||
+        !Array.isArray((response as PagedReadarrBooksResponse).records)
+      ) {
+        throw new Error('Chaptarr returned an invalid paged library response');
+      }
+
+      const payload = response as PagedReadarrBooksResponse;
+      const responsePageSize =
+        typeof payload.pageSize === 'number' &&
+        Number.isSafeInteger(payload.pageSize) &&
+        payload.pageSize > 0
+          ? payload.pageSize
+          : CHAPTARR_LIBRARY_PAGE_SIZE;
+      const responseOffset =
+        typeof payload.offset === 'number' &&
+        Number.isSafeInteger(payload.offset) &&
+        payload.offset >= 0
+          ? payload.offset
+          : offset;
+      const totalCount =
+        typeof payload.totalCount === 'number' &&
+        Number.isSafeInteger(payload.totalCount) &&
+        payload.totalCount >= 0
+          ? payload.totalCount
+          : undefined;
+      const page = sanitizeServarrRecordArray<ReadarrBook>(
+        payload.records,
+        Math.min(
+          CHAPTARR_LIBRARY_PAGE_SIZE,
+          MAX_SERVARR_LIBRARY_RESULTS - books.length
+        )
+      );
+
+      if (page.length === 0) {
+        if (totalCount !== undefined && responseOffset < totalCount) {
+          throw new Error(
+            `Chaptarr returned an empty page before the reported library total of ${totalCount}`
+          );
+        }
+        break;
+      }
+
+      books.push(...page);
+      const nextOffset = responseOffset + page.length;
+
+      if (nextOffset <= offset) {
+        throw new Error('Chaptarr returned a non-advancing library page');
+      }
+
+      if (totalCount !== undefined && nextOffset >= totalCount) {
+        break;
+      }
+
+      if (page.length < responsePageSize) {
+        break;
+      }
+
+      offset = nextOffset;
+    }
+
+    return books;
+  }
+
   private async resolveBookMutationResult(
     result: ReadarrBookLookupResult | number,
     fallback: ReadarrBookLookupResult
@@ -530,6 +707,12 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
   public async getBooks(): Promise<ReadarrBook[]> {
     try {
+      await this.ensureProvider();
+
+      if (this.isChaptarr()) {
+        return await this.getChaptarrBooks();
+      }
+
       return sanitizeServarrRecordArray<ReadarrBook>(
         await this.get<ReadarrBook[]>('/book', this.getRequestConfig()),
         MAX_SERVARR_LIBRARY_RESULTS
@@ -798,49 +981,8 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     options: ReadarrBookOptions
   ): Promise<ReadarrBookLookupResult> {
     try {
-      const existingBooks = sanitizeServarrRecordArray<ReadarrBook>(
-        await this.get<ReadarrBook[]>('/book', this.getRequestConfig()),
-        MAX_SERVARR_LIBRARY_RESULTS
-      );
-      const normalizedForeignBookId = options.foreignBookId
-        ? normalizeOpenLibraryWorkId(options.foreignBookId)
-        : undefined;
-      const optionEditionIds = new Set(
-        options.editions
-          ?.map((edition) =>
-            edition.foreignEditionId
-              ? normalizeOpenLibraryEditionId(edition.foreignEditionId)
-              : undefined
-          )
-          .filter(Boolean)
-      );
-      const optionIsbns = new Set(
-        options.editions
-          ?.map((edition) => normalizeIsbn(edition.isbn13))
-          .filter(Boolean)
-      );
-      const existingBook = existingBooks.find((book) => {
-        if (
-          book.foreignBookId &&
-          normalizedForeignBookId &&
-          normalizeOpenLibraryWorkId(book.foreignBookId) ===
-            normalizedForeignBookId
-        ) {
-          return true;
-        }
-
-        return book.editions?.some((edition) => {
-          const editionIsbn = normalizeIsbn(edition.isbn13);
-
-          return (
-            (!!edition.foreignEditionId &&
-              optionEditionIds.has(
-                normalizeOpenLibraryEditionId(edition.foreignEditionId)
-              )) ||
-            (!!editionIsbn && optionIsbns.has(editionIsbn))
-          );
-        });
-      });
+      await this.ensureProvider();
+      const existingBook = await this.findExistingBookForAdd(options);
 
       if (existingBook && this.isBookMonitored(existingBook)) {
         logger.info(
