@@ -1,5 +1,6 @@
 import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
+import BlocklistConfirmationModal from '@app/components/BlocklistConfirmationModal';
 import BookFormatBadge, {
   getBookFormatMessage,
 } from '@app/components/Common/BookFormatBadge';
@@ -10,6 +11,7 @@ import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import { getTitleCardStatusBadges } from '@app/components/TitleCard/statusBadges';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -39,6 +41,7 @@ import type { MediaType } from '@server/models/Search';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import { mutate } from 'swr';
@@ -46,10 +49,6 @@ import { mutate } from 'swr';
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
 });
-const BlocklistModal = dynamic(() => import('@app/components/BlocklistModal'), {
-  ssr: false,
-});
-
 interface TitleCardProps {
   id: number | string;
   image?: string;
@@ -73,6 +72,7 @@ interface TitleCardProps {
   hideAssociationWhenEmpty?: boolean;
   priority?: boolean;
   preferredBookFormat?: 'ebook' | 'audiobook';
+  availableQualities?: ('MP3' | 'FLAC')[];
 }
 
 const messages = defineMessages('components.TitleCard', {
@@ -106,8 +106,10 @@ const TitleCard = ({
   hideAssociationWhenEmpty = false,
   priority = false,
   preferredBookFormat,
+  availableQualities,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
+  const router = useRouter();
   const intl = useIntl();
   const settings = useSettings();
   const { user, hasPermission } = useUser();
@@ -116,11 +118,20 @@ const TitleCard = ({
   const [currentStatus4k, setCurrentStatus4k] = useState(status4k);
   const [showDetail, setShowDetail] = useState(false);
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const { addToast } = useToasts();
   const [toggleWatchlist, setToggleWatchlist] =
     useState<boolean>(!isAddedToWatchlist);
-  const [showBlocklistModal, setShowBlocklistModal] = useState(false);
+  const [wasBlocklistedHere, setWasBlocklistedHere] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const statusBadges = getTitleCardStatusBadges({
+    mediaType,
+    status: currentStatus,
+    status4k: currentStatus4k,
+    inProgress,
+    inProgress4k,
+    availableQualities,
+  });
 
   // Just to get the year from the date
   if (year) {
@@ -153,10 +164,6 @@ const TitleCard = ({
     []
   );
 
-  const closeBlocklistModal = useCallback(
-    () => setShowBlocklistModal(false),
-    []
-  );
   const showDetails = useCallback(() => {
     setShowDetail((currentShowDetail) =>
       currentShowDetail ? currentShowDetail : true
@@ -288,6 +295,7 @@ const TitleCard = ({
           { appearance: 'success', autoDismiss: true }
         );
         setCurrentStatus(MediaStatus.BLOCKLISTED);
+        setWasBlocklistedHere(true);
         if (mutateParent) {
           mutateParent();
         }
@@ -311,12 +319,14 @@ const TitleCard = ({
       }
 
       setIsUpdating(false);
-      closeBlocklistModal();
+      setShowBlocklistModal(false);
     } else {
       addToast(intl.formatMessage(globalMessages.blocklistError), {
         appearance: 'error',
         autoDismiss: true,
       });
+      setIsUpdating(false);
+      setShowBlocklistModal(false);
     }
   };
 
@@ -500,12 +510,24 @@ const TitleCard = ({
             : globalMessages.request
         );
 
+  if (wasBlocklistedHere) {
+    return null;
+  }
+
   return (
     <div
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
       data-testid="title-card"
       ref={cardRef}
     >
+      {showBlocklistModal && (
+        <BlocklistConfirmationModal
+          show={showBlocklistModal}
+          onCancel={() => setShowBlocklistModal(false)}
+          onComplete={() => void onClickHideItemBtn()}
+          isUpdating={isUpdating}
+        />
+      )}
       {canUseVideoActions && showRequestModal && (
         <RequestModal
           tmdbId={numericId}
@@ -522,22 +544,6 @@ const TitleCard = ({
           onCancel={closeModal}
           initialIs4k={requestingAdditional4k}
           show4kSelector={mediaType === 'movie' || mediaType === 'tv'}
-        />
-      )}
-      {canUseVideoActions && showBlocklistModal && (
-        <BlocklistModal
-          tmdbId={numericId}
-          type={
-            mediaType === 'movie'
-              ? 'movie'
-              : mediaType === 'collection'
-                ? 'collection'
-                : 'tv'
-          }
-          show={showBlocklistModal}
-          onCancel={closeBlocklistModal}
-          onComplete={onClickHideItemBtn}
-          isUpdating={isUpdating}
         />
       )}
       {showRequestModal && (
@@ -566,14 +572,11 @@ const TitleCard = ({
         </>
       )}
       <div
-        className={`relative transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover outline-none ring-1 transition duration-300 ${
+        className={`group relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover outline-none ring-1 transition duration-300 ${
           showDetail
             ? 'scale-105 shadow-lg ring-gray-500'
             : 'scale-100 shadow ring-gray-700'
         }`}
-        style={{
-          paddingBottom: '150%',
-        }}
         onMouseEnter={() => {
           if (!isTouch) {
             showDetails();
@@ -592,121 +595,117 @@ const TitleCard = ({
         <div className="absolute inset-0 h-full w-full overflow-hidden">
           <CachedImage
             type={imageCacheType}
-            className="absolute inset-0 h-full w-full"
+            className="absolute inset-0 h-full w-full object-cover"
             alt=""
             src={displayImage ?? '/images/seerr_poster_not_found_logo_top.png'}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
             priority={priority}
           />
-          <div className="absolute left-0 right-0 flex items-center justify-between p-2">
-            <div className="flex items-center gap-1.5">
-              {isBook ? (
-                <BookFormatBadge
-                  format={preferredBookFormat}
-                  variant="card"
-                  className="pointer-events-none z-40 self-start"
-                />
-              ) : (
-                <MediaTypeBadge
-                  mediaType={mediaType === 'person' ? 'artist' : mediaType}
-                  variant="card"
-                  className="pointer-events-none z-40 self-start"
-                />
-              )}
-              {currentStatus !== MediaStatus.BLOCKLISTED && (
-                <div className="z-40 flex items-center">
-                  <AssociationBadge
-                    mediaType={mediaType}
-                    id={id}
+          <div className="absolute left-0 right-0 p-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                {isBook ? (
+                  <BookFormatBadge
+                    format={preferredBookFormat}
                     variant="card"
-                    hideWhenEmpty={hideAssociationWhenEmpty}
+                    className="pointer-events-none z-40 self-start"
                   />
+                ) : (
+                  <MediaTypeBadge
+                    mediaType={mediaType === 'person' ? 'artist' : mediaType}
+                    variant="card"
+                    className="pointer-events-none z-40 self-start"
+                  />
+                )}
+                {currentStatus !== MediaStatus.BLOCKLISTED && (
+                  <div className="z-40 flex items-center">
+                    <AssociationBadge
+                      mediaType={mediaType}
+                      id={id}
+                      variant="card"
+                      hideWhenEmpty={hideAssociationWhenEmpty}
+                    />
+                  </div>
+                )}
+              </div>
+              {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
+                <div className="flex flex-col items-end gap-1">
+                  {canUseWatchlistActions &&
+                    user?.userType !== UserType.PLEX &&
+                    (toggleWatchlist ? (
+                      <Button
+                        buttonType={'ghost'}
+                        className="z-40"
+                        buttonSize={'sm'}
+                        onClick={onClickWatchlistBtn}
+                      >
+                        <StarIcon className={'h-3 text-amber-300'} />
+                      </Button>
+                    ) : (
+                      <Button
+                        className="z-40"
+                        buttonSize={'sm'}
+                        onClick={onClickDeleteWatchlistBtn}
+                      >
+                        <MinusCircleIcon className={'h-3'} />
+                      </Button>
+                    ))}
+                  {showHideButton &&
+                    currentStatus !== MediaStatus.PROCESSING &&
+                    currentStatus !== MediaStatus.AVAILABLE &&
+                    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
+                    currentStatus !== MediaStatus.PENDING && (
+                      <Tooltip
+                        content={intl.formatMessage(
+                          globalMessages.addToBlocklist
+                        )}
+                      >
+                        <Button
+                          buttonType="ghost"
+                          className="z-40 h-6 w-6 rounded-full border-red-600/80 bg-red-950/75 p-0 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
+                          buttonSize="sm"
+                          aria-label={intl.formatMessage(
+                            globalMessages.addToBlocklist
+                          )}
+                          onClick={() => setShowBlocklistModal(true)}
+                        >
+                          <EyeSlashIcon className="h-3.5 w-3.5" />
+                        </Button>
+                      </Tooltip>
+                    )}
                 </div>
               )}
-            </div>
-            {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
-              <div className="flex flex-col gap-1">
-                {canUseWatchlistActions &&
-                  user?.userType !== UserType.PLEX &&
-                  (toggleWatchlist ? (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickWatchlistBtn}
-                    >
-                      <StarIcon className={'h-3 text-amber-300'} />
-                    </Button>
-                  ) : (
-                    <Button
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickDeleteWatchlistBtn}
-                    >
-                      <MinusCircleIcon className={'h-3'} />
-                    </Button>
-                  ))}
-                {showHideButton &&
-                  currentStatus !== MediaStatus.PROCESSING &&
-                  currentStatus !== MediaStatus.AVAILABLE &&
-                  currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
-                  currentStatus !== MediaStatus.PENDING && (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={() =>
-                        canUseVideoActions
-                          ? setShowBlocklistModal(true)
-                          : onClickHideItemBtn()
-                      }
-                    >
-                      <EyeSlashIcon className={'h-3'} />
-                    </Button>
-                  )}
-              </div>
-            )}
-            {showDetail &&
-              showHideButton &&
-              currentStatus == MediaStatus.BLOCKLISTED && (
-                <Tooltip
-                  content={intl.formatMessage(
-                    globalMessages.removefromBlocklist
-                  )}
-                >
-                  <Button
-                    buttonType={'ghost'}
-                    className="z-40"
-                    buttonSize={'sm'}
-                    onClick={() => onClickShowBlocklistBtn()}
+              {showDetail &&
+                showHideButton &&
+                currentStatus == MediaStatus.BLOCKLISTED && (
+                  <Tooltip
+                    content={intl.formatMessage(
+                      globalMessages.removefromBlocklist
+                    )}
                   >
-                    <EyeIcon className={'h-3'} />
-                  </Button>
-                </Tooltip>
-              )}
-            {((currentStatus && currentStatus !== MediaStatus.UNKNOWN) ||
-              (currentStatus4k && currentStatus4k !== MediaStatus.UNKNOWN)) && (
-              <div className="flex flex-col items-end gap-1">
-                {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
-                  <div className="pointer-events-none z-40 flex">
+                    <Button
+                      buttonType={'ghost'}
+                      className="z-40"
+                      buttonSize={'sm'}
+                      onClick={() => onClickShowBlocklistBtn()}
+                    >
+                      <EyeIcon className={'h-3'} />
+                    </Button>
+                  </Tooltip>
+                )}
+            </div>
+            {statusBadges.length > 0 && (
+              <div className="mt-1 flex justify-end gap-1">
+                {statusBadges.map((badge) => (
+                  <div key={badge.quality ?? 'status'} className="z-40 flex">
                     <StatusBadgeMini
-                      status={currentStatus}
-                      inProgress={inProgress}
+                      status={badge.status}
+                      quality={badge.quality}
+                      inProgress={badge.inProgress}
                       shrink
                     />
                   </div>
-                )}
-                {currentStatus4k && currentStatus4k !== MediaStatus.UNKNOWN && (
-                  <div className="pointer-events-none z-40 flex">
-                    <StatusBadgeMini
-                      status={currentStatus4k}
-                      is4k
-                      inProgress={inProgress4k}
-                      shrink
-                    />
-                  </div>
-                )}
+                ))}
               </div>
             )}
           </div>
@@ -739,12 +738,11 @@ const TitleCard = ({
               <Link
                 href={detailHref}
                 prefetch={false}
-                className="absolute inset-0 h-full w-full cursor-pointer overflow-hidden text-left"
-                style={{
-                  background: showFullDetailOverlay
-                    ? 'linear-gradient(180deg, rgba(45, 55, 72, 0.4) 0%, rgba(45, 55, 72, 0.9) 100%)'
-                    : 'linear-gradient(180deg, rgba(17, 24, 39, 0) 35%, rgba(17, 24, 39, 0.88) 100%)',
-                }}
+                className={`absolute inset-0 h-full w-full cursor-pointer overflow-hidden text-left ${
+                  showFullDetailOverlay
+                    ? 'title-card-overlay-full'
+                    : 'title-card-overlay-compact'
+                }`}
               >
                 <div className="flex h-full w-full items-end">
                   <div
@@ -757,14 +755,9 @@ const TitleCard = ({
                     {year && <div className="text-sm font-medium">{year}</div>}
 
                     <h1
-                      className="whitespace-normal text-xl font-bold leading-tight"
-                      style={{
-                        WebkitLineClamp: showFullDetailOverlay ? 3 : 2,
-                        display: '-webkit-box',
-                        overflow: 'hidden',
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}
+                      className={`whitespace-normal break-words text-xl font-bold leading-tight ${
+                        showFullDetailOverlay ? 'line-clamp-3' : 'line-clamp-2'
+                      }`}
                       data-testid="title-card-title"
                     >
                       {title}
@@ -776,14 +769,9 @@ const TitleCard = ({
                     )}
                     {showFullDetailOverlay && (
                       <div
-                        className="whitespace-normal text-xs"
-                        style={{
-                          WebkitLineClamp: canShowRequestButton ? 3 : 5,
-                          display: '-webkit-box',
-                          overflow: 'hidden',
-                          WebkitBoxOrient: 'vertical',
-                          wordBreak: 'break-word',
-                        }}
+                        className={`whitespace-normal break-words text-xs ${
+                          canShowRequestButton ? 'line-clamp-3' : 'line-clamp-5'
+                        }`}
                       >
                         {summary}
                       </div>
@@ -799,6 +787,16 @@ const TitleCard = ({
                     buttonSize="sm"
                     onClick={(e) => {
                       e.preventDefault();
+                      if (isBook && typeof canonicalId === 'string') {
+                        void router.push({
+                          pathname: `/book/${encodeApiPathSegment(canonicalId)}`,
+                          query: {
+                            format: preferredBookFormat ?? 'ebook',
+                            request: '1',
+                          },
+                        });
+                        return;
+                      }
                       setShowRequestModal(true);
                     }}
                     className="h-7 w-full"

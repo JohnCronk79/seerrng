@@ -71,17 +71,25 @@ test('the production image has an explicit unprivileged final user', () => {
   );
   const finalStage = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
 
+  assert.match(
+    dockerfile,
+    /RUN pnpm i18n:check && pnpm build:next && pnpm build:server/u,
+    'the image build must validate translations and compile both application targets without requiring repository-only contract inputs'
+  );
   assert.match(finalStage, /\nUSER node:node\n/);
   assert.match(finalStage, /rm -rf \/usr\/local\/lib\/node_modules\/npm/);
 });
 
 test('the Docker build context excludes runtime state and common secrets', () => {
-  const ignoredPaths = new Set(
-    fs
-      .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
-      .split(/\r?\n/u)
-      .filter((line) => line && !line.startsWith('#'))
+  const dockerfile = fs.readFileSync(
+    path.join(rootDirectory, 'Dockerfile'),
+    'utf8'
   );
+  const ignoreRules = fs
+    .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#'));
+  const ignoredPaths = new Set(ignoreRules);
 
   for (const expectedPattern of [
     '.env*',
@@ -98,6 +106,21 @@ test('the Docker build context excludes runtime state and common secrets', () =>
       `${expectedPattern} is exposed to the Docker build context`
     );
   }
+  const rootNpmrcIgnored = ignoreRules.reduce((ignored, rule) => {
+    if (rule === '.npmrc' || rule === '/.npmrc') return true;
+    if (rule === '!.npmrc' || rule === '!/.npmrc') return false;
+    return ignored;
+  }, false);
+  assert.equal(
+    rootNpmrcIgnored,
+    true,
+    'a later negation re-exposes the root .npmrc to the Docker build context'
+  );
+  assert.doesNotMatch(
+    dockerfile,
+    /COPY[^\n]*\.npmrc/u,
+    'the Dockerfile cannot copy an .npmrc that the secure context excludes'
+  );
 });
 
 test('the main deployment runs the pulled digest inside the container boundary', () => {

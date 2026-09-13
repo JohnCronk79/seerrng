@@ -2,7 +2,9 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 
 async function getFiles(dir: string): Promise<string[]> {
-  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const dirents = (await fs.readdir(dir, { withFileTypes: true })).sort(
+    (a, b) => a.name.localeCompare(b.name)
+  );
   const files = await Promise.all(
     dirents.map((dirent) => {
       const res = join(dir, dirent.name);

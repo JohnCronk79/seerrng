@@ -97,21 +97,21 @@ export const sliderTitles = defineMessages('components.Discover', {
 
 export const QueryFilterOptions = z.object({
   sortBy: z.string().optional(),
+  search: z.string().optional(),
+  availability: z.enum(['hd', '4k']).optional(),
   primaryReleaseDateGte: z.string().optional(),
   primaryReleaseDateLte: z.string().optional(),
   firstAirDateGte: z.string().optional(),
   firstAirDateLte: z.string().optional(),
   studio: z.string().optional(),
+  country: z.string().optional(),
+  network: z.string().optional(),
   genre: z.string().optional(),
-  keywords: z.string().optional(),
-  excludeKeywords: z.string().optional(),
   language: z.string().optional(),
   withRuntimeGte: z.string().optional(),
   withRuntimeLte: z.string().optional(),
   voteAverageGte: z.string().optional(),
   voteAverageLte: z.string().optional(),
-  voteCountLte: z.string().optional(),
-  voteCountGte: z.string().optional(),
   watchRegion: z.string().optional(),
   watchProviders: z.string().optional(),
   status: z.string().optional(),
@@ -154,6 +154,14 @@ export const prepareFilterValues = (
     filterValues.sortBy = values.sortBy;
   }
 
+  if (values.search) {
+    filterValues.search = values.search;
+  }
+
+  if (values.availability) {
+    filterValues.availability = values.availability;
+  }
+
   if (values.primaryReleaseDateGte) {
     filterValues.primaryReleaseDateGte = values.primaryReleaseDateGte;
   }
@@ -174,20 +182,20 @@ export const prepareFilterValues = (
     filterValues.studio = values.studio;
   }
 
+  if (values.country) {
+    filterValues.country = values.country;
+  }
+
+  if (values.network) {
+    filterValues.network = values.network;
+  }
+
   if (values.genre) {
     filterValues.genre = values.genre;
   }
 
   if (values.status) {
     filterValues.status = values.status;
-  }
-
-  if (values.keywords) {
-    filterValues.keywords = values.keywords;
-  }
-
-  if (values.excludeKeywords) {
-    filterValues.excludeKeywords = values.excludeKeywords;
   }
 
   if (values.language) {
@@ -208,14 +216,6 @@ export const prepareFilterValues = (
 
   if (values.voteAverageLte) {
     filterValues.voteAverageLte = values.voteAverageLte;
-  }
-
-  if (values.voteCountGte) {
-    filterValues.voteCountGte = values.voteCountGte;
-  }
-
-  if (values.voteCountLte) {
-    filterValues.voteCountLte = values.voteCountLte;
   }
 
   if (values.watchProviders) {
@@ -261,12 +261,6 @@ export const countActiveFilters = (filterValues: FilterOptions): number => {
     totalCount += 1;
     delete clonedFilters.voteAverageGte;
     delete clonedFilters.voteAverageLte;
-  }
-
-  if (clonedFilters.voteCountGte || filterValues.voteCountLte) {
-    totalCount += 1;
-    delete clonedFilters.voteCountGte;
-    delete clonedFilters.voteCountLte;
   }
 
   if (clonedFilters.withRuntimeGte || filterValues.withRuntimeLte) {

@@ -246,6 +246,87 @@ const series = (overrides: Partial<SonarrSeries> = {}): SonarrSeries => ({
   ...overrides,
 });
 
+describe('SonarrAPI exact episode requests', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('monitors and searches only the selected episodes', async () => {
+    const api = buildSonarr();
+    mock.method(api, 'getSeriesByTvdbId', async () =>
+      series({
+        seasons: [
+          { seasonNumber: 1, monitored: false },
+          { seasonNumber: 2, monitored: false },
+        ],
+      })
+    );
+    mock.method(getAxios(api), 'put', async () => ({ data: series() }));
+    mock.method(api, 'getEpisodes', async () => [
+      {
+        seriesId: 42,
+        episodeFileId: 0,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        title: 'One',
+        airDate: '',
+        airDateUtc: '',
+        overview: '',
+        hasFile: false,
+        monitored: false,
+        absoluteEpisodeNumber: 1,
+        unverifiedSceneNumbering: false,
+        id: 101,
+      },
+      {
+        seriesId: 42,
+        episodeFileId: 0,
+        seasonNumber: 1,
+        episodeNumber: 2,
+        title: 'Two',
+        airDate: '',
+        airDateUtc: '',
+        overview: '',
+        hasFile: false,
+        monitored: false,
+        absoluteEpisodeNumber: 2,
+        unverifiedSceneNumbering: false,
+        id: 102,
+      },
+      {
+        seriesId: 42,
+        episodeFileId: 0,
+        seasonNumber: 2,
+        episodeNumber: 1,
+        title: 'Other Season',
+        airDate: '',
+        airDateUtc: '',
+        overview: '',
+        hasFile: false,
+        monitored: false,
+        absoluteEpisodeNumber: 3,
+        unverifiedSceneNumbering: false,
+        id: 201,
+      },
+    ]);
+    const monitor = mock.method(api, 'monitorEpisodes', async () => undefined);
+    const search = mock.method(api, 'searchEpisodes', async () => undefined);
+
+    await api.addSeries({
+      tvdbid: 100,
+      title: 'Test Series',
+      profileId: 1,
+      seasons: [1],
+      episodeSelections: [{ seasonNumber: 1, episodeNumbers: [2] }],
+      seasonFolder: true,
+      rootFolderPath: '/tv',
+      seriesType: 'standard',
+      searchNow: true,
+    });
+
+    assert.deepStrictEqual(monitor.mock.calls[0].arguments[0], [102]);
+    assert.deepStrictEqual(search.mock.calls[0].arguments[0], [102]);
+  });
+});
+
 describe('SonarrAPI.getSeriesCover', () => {
   afterEach(() => {
     mock.restoreAll();

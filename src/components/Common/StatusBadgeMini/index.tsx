@@ -1,4 +1,5 @@
 import Spinner from '@app/assets/spinner.svg';
+import Tooltip from '@app/components/Common/Tooltip';
 import globalMessages from '@app/i18n/globalMessages';
 import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import {
@@ -12,9 +13,11 @@ import { MediaStatus } from '@server/constants/media';
 import { memo } from 'react';
 import { useIntl } from 'react-intl';
 
+export type StatusBadgeQuality = 'HD' | '4K' | 'MP3' | 'FLAC';
+
 interface StatusBadgeMiniProps {
   status: MediaStatus;
-  is4k?: boolean;
+  quality?: StatusBadgeQuality;
   inProgress?: boolean;
   // Should the badge shrink on mobile to a smaller size? (TitleCard)
   shrink?: boolean;
@@ -23,14 +26,14 @@ interface StatusBadgeMiniProps {
 const StatusBadgeMini = memo(
   ({
     status,
-    is4k = false,
+    quality,
     inProgress = false,
     shrink = false,
   }: StatusBadgeMiniProps) => {
     const intl = useIntl();
     const badgeStyle = [
       `rounded-full shadow-md ${
-        shrink ? 'w-4 sm:w-5 border p-0' : 'w-5 ring-1 p-0.5'
+        shrink ? 'h-6 w-6 border p-0' : 'w-5 ring-1 p-0.5'
       }`,
     ];
 
@@ -99,23 +102,22 @@ const StatusBadgeMini = memo(
           return undefined;
       }
     })();
-    const label = [is4k ? '4K' : undefined, statusLabel]
-      .filter(Boolean)
-      .join(' ');
+    const label = [quality, statusLabel].filter(Boolean).join(' ');
 
-    return (
+    const badge = (
       <div
         className={`relative inline-flex whitespace-nowrap rounded-full border-gray-700 text-xs font-semibold leading-5 ring-gray-700 ${
           shrink ? '' : 'ring-1'
         }`}
         role="img"
         aria-label={label || undefined}
-        title={label || undefined}
       >
         <div className={badgeStyle.join(' ')}>{indicatorIcon}</div>
-        {is4k && <span className="pl-1 pr-2 text-gray-200">4K</span>}
+        {quality && <span className="pl-1 pr-2 text-gray-200">{quality}</span>}
       </div>
     );
+
+    return label ? <Tooltip content={label}>{badge}</Tooltip> : badge;
   }
 );
 

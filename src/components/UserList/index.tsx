@@ -6,6 +6,7 @@ import Header from '@app/components/Common/Header';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
+import PaginationFooter from '@app/components/Common/PaginationFooter';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import Table from '@app/components/Common/Table';
 import BulkEditModal from '@app/components/UserList/BulkEditModal';
@@ -31,8 +32,6 @@ import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   ChevronUpIcon,
   InboxArrowDownIcon,
   PencilIcon,
@@ -355,8 +354,10 @@ const UserList = () => {
     return <LoadingSpinner />;
   }
 
-  const hasNextPage = data.pageInfo.pages > pageIndex + 1;
-  const hasPrevPage = pageIndex > 0;
+  const changePage = (nextPage: number) => {
+    updateQueryParams('page', String(nextPage));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const passwordGenerationEnabled =
     settings.currentSettings.applicationUrl &&
@@ -675,7 +676,7 @@ const UserList = () => {
           <div className="mb-2 flex flex-grow lg:mb-0 lg:flex-grow-0">
             <button
               type="button"
-              className="inline-flex cursor-pointer items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100"
+              className="app-button app-button-default cursor-pointer rounded-r-none border-r-0 px-3 text-sm"
               onClick={() => {
                 setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
                 updateQueryParams('page', '1');
@@ -926,79 +927,19 @@ const UserList = () => {
               </Table.TD>
             </tr>
           ))}
-          <tr className="bg-gray-700">
-            <Table.TD colSpan={8} noPadding>
-              <nav
-                className="flex w-screen flex-col items-center space-x-4 space-y-3 px-6 py-3 sm:flex-row sm:space-y-0 lg:w-full"
-                aria-label="Pagination"
-              >
-                <div className="hidden lg:flex lg:flex-1">
-                  <p className="text-sm">
-                    {data.results.length > 0 &&
-                      intl.formatMessage(globalMessages.showingresults, {
-                        from: pageIndex * currentPageSize + 1,
-                        to:
-                          data.results.length < currentPageSize
-                            ? pageIndex * currentPageSize + data.results.length
-                            : (pageIndex + 1) * currentPageSize,
-                        total: data.pageInfo.results,
-                        strong: (msg: React.ReactNode) => (
-                          <span className="font-medium">{msg}</span>
-                        ),
-                      })}
-                  </p>
-                </div>
-                <div className="flex justify-center sm:flex-1 sm:justify-start lg:justify-center">
-                  <span className="-mt-3 items-center text-sm sm:-ml-4 sm:mt-0 lg:ml-0">
-                    {intl.formatMessage(globalMessages.resultsperpage, {
-                      pageSize: (
-                        <select
-                          id="pageSize"
-                          name="pageSize"
-                          onChange={(e) => {
-                            setCurrentPageSize(Number(e.target.value));
-                            router
-                              .push(router.pathname)
-                              .then(() => window.scrollTo(0, 0));
-                          }}
-                          value={currentPageSize}
-                          className="short inline"
-                        >
-                          <option value="5">5</option>
-                          <option value="10">10</option>
-                          <option value="25">25</option>
-                          <option value="50">50</option>
-                          <option value="100">100</option>
-                        </select>
-                      ),
-                    })}
-                  </span>
-                </div>
-                <div className="flex flex-auto justify-center space-x-2 sm:flex-1 sm:justify-end">
-                  <Button
-                    disabled={!hasPrevPage}
-                    onClick={() =>
-                      updateQueryParams('page', (page - 1).toString())
-                    }
-                  >
-                    <ChevronLeftIcon />
-                    <span>{intl.formatMessage(globalMessages.previous)}</span>
-                  </Button>
-                  <Button
-                    disabled={!hasNextPage}
-                    onClick={() =>
-                      updateQueryParams('page', (page + 1).toString())
-                    }
-                  >
-                    <span>{intl.formatMessage(globalMessages.next)}</span>
-                    <ChevronRightIcon />
-                  </Button>
-                </div>
-              </nav>
-            </Table.TD>
-          </tr>
         </Table.TBody>
       </Table>
+      <PaginationFooter
+        page={page}
+        pageSize={currentPageSize}
+        pageSizeOptions={[5, 10, 25, 50, 100]}
+        totalPages={data.pageInfo.pages}
+        onPageChange={changePage}
+        onPageSizeChange={(size) => {
+          setCurrentPageSize(size);
+          void router.push(router.pathname).then(() => window.scrollTo(0, 0));
+        }}
+      />
     </>
   );
 };

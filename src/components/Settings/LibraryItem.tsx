@@ -62,7 +62,7 @@ const LibraryItem = ({
                 e.stopPropagation();
                 reclassify.onReclassify();
               }}
-              className="ml-1 shrink-0 rounded p-1 text-gray-400 hover:bg-gray-700 hover:text-white"
+              className="app-button app-button-default ml-1 h-7 w-7 shrink-0 p-0"
             >
               <ArrowsRightLeftIcon className="h-4 w-4" />
             </button>

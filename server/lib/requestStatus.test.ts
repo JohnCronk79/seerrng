@@ -111,6 +111,242 @@ test('request lifecycle uses authoritative queue progress and never invents a pe
   );
 });
 
+test('music remains importing after its download leaves the queue until Lidarr confirms files', () => {
+  const musicRequest = request({
+    type: MediaType.MUSIC,
+    media: {
+      ...request().media,
+      mediaType: MediaType.MUSIC,
+      status: MediaStatus.PROCESSING,
+    },
+  });
+
+  assert.equal(
+    getRequestStatus(musicRequest, { downloads: [] }).stage,
+    RequestStatusStage.SEARCHING
+  );
+
+  assert.equal(
+    getRequestStatus(musicRequest, {
+      downloads: [],
+      latestEvent: {
+        id: 1,
+        requestId: 1,
+        requestedById: 2,
+        mediaId: 3,
+        mediaType: MediaType.MUSIC,
+        stage: RequestStatusStage.DOWNLOADING,
+        attempt: 1,
+        format: null,
+        service: 'Lidarr',
+        fingerprint: 'downloading:1',
+        message: 'A usable release is downloading.',
+        percent: 100,
+        size: 1_000,
+        sizeLeft: 0,
+        estimatedCompletionTime: date,
+        downloadCount: 1,
+        downloadId: 'music-download',
+        createdAt: new Date(date.getTime() + 1_000),
+      },
+    }).stage,
+    RequestStatusStage.IMPORTING
+  );
+
+  assert.equal(
+    getRequestStatus(musicRequest, {
+      downloads: [],
+      servarrHistory: {
+        stage: 'grabbed',
+        observedAt: new Date(date.getTime() + 1_000),
+        downloadId: 'fast-music-download',
+      },
+    }).stage,
+    RequestStatusStage.IMPORTING
+  );
+
+  assert.equal(
+    getRequestStatus(musicRequest, {
+      downloads: [download({ mediaType: MediaType.MUSIC })],
+      servarrHistory: {
+        stage: 'grabbed',
+        observedAt: new Date(date.getTime() + 1_000),
+      },
+    }).stage,
+    RequestStatusStage.DOWNLOADING
+  );
+});
+
+test('music reports no release found after Lidarr completes a search with no grab', () => {
+  const musicRequest = request({
+    type: MediaType.MUSIC,
+    media: {
+      ...request().media,
+      mediaType: MediaType.MUSIC,
+      status: MediaStatus.PROCESSING,
+    },
+  });
+
+  const status = getRequestStatus(musicRequest, {
+    downloads: [],
+    musicSearchTime: new Date('2026-01-01T00:00:01.000Z'),
+  });
+
+  assert.equal(status.stage, RequestStatusStage.UNAVAILABLE);
+  assert.equal(
+    status.message,
+    'No release found. Use an interactive search in Lidarr.'
+  );
+  assert.equal(status.needsAttention, true);
+});
+
+test('music ignores a Lidarr search that predates the current request', () => {
+  const musicRequest = request({
+    type: MediaType.MUSIC,
+    updatedAt: new Date('2026-01-01T00:01:00.000Z'),
+    media: {
+      ...request().media,
+      mediaType: MediaType.MUSIC,
+      status: MediaStatus.PROCESSING,
+    },
+  });
+
+  assert.equal(
+    getRequestStatus(musicRequest, {
+      downloads: [],
+      musicSearchTime: new Date('2026-01-01T00:00:30.000Z'),
+    }).stage,
+    RequestStatusStage.SEARCHING
+  );
+});
+
+test('Arr import-pending queue details remain importing instead of failing', () => {
+  const importPending = download({
+    status: 'completed',
+    trackedDownloadStatus: 'warning',
+    trackedDownloadState: 'importPending',
+  });
+  assert.equal(
+    getRequestStatus(request(), { downloads: [importPending] }).stage,
+    RequestStatusStage.IMPORTING
+  );
+
+  const importPendingWithError = download({
+    status: 'completed',
+    trackedDownloadStatus: 'error',
+    trackedDownloadState: 'importPending',
+  });
+  assert.equal(
+    getRequestStatus(request(), {
+      downloads: [importPendingWithError],
+    }).stage,
+    RequestStatusStage.IMPORTING
+  );
+
+  const importFailed = download({
+    status: 'completed',
+    trackedDownloadStatus: 'error',
+    trackedDownloadState: 'importFailed',
+  });
+  assert.equal(
+    getRequestStatus(request(), { downloads: [importFailed] }).stage,
+    RequestStatusStage.FAILED
+  );
+});
+
+test('recent Arr history bridges downloads that disappear between queue polls', () => {
+  const movieRequest = request();
+  assert.equal(
+    getRequestStatus(movieRequest, {
+      downloads: [],
+      servarrHistory: {
+        stage: 'grabbed',
+        observedAt: new Date(date.getTime() + 1_000),
+      },
+    }).stage,
+    RequestStatusStage.IMPORTING
+  );
+  assert.equal(
+    getRequestStatus(movieRequest, {
+      downloads: [],
+      servarrHistory: {
+        stage: 'imported',
+        observedAt: new Date(date.getTime() + 2_000),
+      },
+    }).stage,
+    RequestStatusStage.LIBRARY
+  );
+});
+
+test('tracked Bookshelf operations report observed lifecycle stages', () => {
+  const bookRequest = request({
+    status: MediaRequestStatus.COMPLETED,
+    type: MediaType.BOOK,
+    bookFormat: 'ebook',
+    media: {
+      ...request().media,
+      mediaType: MediaType.BOOK,
+      status: MediaStatus.PROCESSING,
+    },
+  });
+
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'searching' }).stage,
+    RequestStatusStage.SEARCHING
+  );
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'grabbed' }).stage,
+    RequestStatusStage.DOWNLOADING
+  );
+  assert.equal(
+    getRequestStatus(bookRequest, { bookSearchState: 'importing' }).stage,
+    RequestStatusStage.IMPORTING
+  );
+});
+
+test('both-format book requests show a terminal missing-format result', () => {
+  const bookRequest = request({
+    status: MediaRequestStatus.APPROVED,
+    type: MediaType.BOOK,
+    bookFormat: 'both',
+    media: {
+      ...request().media,
+      mediaType: MediaType.BOOK,
+      status: MediaStatus.AVAILABLE,
+      serviceId: null,
+      externalServiceId: null,
+      audiobookServiceId: 21,
+      audiobookExternalServiceId: 66,
+    },
+  });
+
+  const status = getRequestStatus(bookRequest, {
+    latestEvent: {
+      id: 1,
+      requestId: 1,
+      requestedById: 2,
+      mediaId: 3,
+      mediaType: MediaType.BOOK,
+      stage: RequestStatusStage.UNAVAILABLE,
+      attempt: 1,
+      format: 'both',
+      service: 'Bookshelf',
+      fingerprint: 'unavailable:1',
+      message: 'No release found.',
+      percent: null,
+      size: null,
+      sizeLeft: null,
+      estimatedCompletionTime: null,
+      downloadCount: 0,
+      downloadId: null,
+      createdAt: new Date(date.getTime() + 1_000),
+    },
+  });
+
+  assert.equal(status.stage, RequestStatusStage.UNAVAILABLE);
+  assert.equal(status.message, 'No release found.');
+});
+
 test('series progress only includes requested seasons', () => {
   mock.method(downloadTracker, 'getSeriesProgress', () => [
     download({

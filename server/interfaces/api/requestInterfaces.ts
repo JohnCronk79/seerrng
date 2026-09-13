@@ -9,6 +9,7 @@ import type {
   RequestStatusSortField,
 } from '@server/lib/requestStatusSort';
 import type { NonFunctionProperties, PaginatedResponse } from './common';
+import type { SeasonEpisodeSelection } from './seasonInterfaces';
 
 export interface RequestResultsResponse extends PaginatedResponse {
   results: (NonFunctionProperties<MediaRequest> & {
@@ -30,6 +31,7 @@ export type MediaRequestBody = {
   mediaId: number | string;
   tvdbId?: number;
   seasons?: number[] | 'all';
+  seasonRequests?: SeasonEpisodeSelection[];
   is4k?: boolean;
   serverId?: number;
   profileId?: number;
@@ -83,6 +85,7 @@ export interface RequestStatusResultsResponse extends PaginatedResponse {
   results: {
     request: NonFunctionProperties<MediaRequest>;
     status: RequestStatusSnapshot;
+    canRemove?: boolean;
   }[];
   counts: {
     total: number;
@@ -90,6 +93,8 @@ export interface RequestStatusResultsResponse extends PaginatedResponse {
     incomplete: number;
     attention: number;
     completed: number;
+    unavailable: number;
+    failed: number;
   };
   olderCount: number;
 }
@@ -107,6 +112,7 @@ export type RequestStatusQuery = {
   mediaType?: MediaType | 'all';
   bookFormat?: 'ebook' | 'audiobook';
   timeFrame?: '7d' | '14d' | '30d' | '1m' | '6m' | 'all';
+  search?: string;
   filter?: string;
   sort?: RequestStatusSortField;
   sortDirection?: RequestStatusSortDirection;

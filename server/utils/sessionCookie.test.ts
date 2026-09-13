@@ -98,6 +98,9 @@ describe('getSessionTransportOptions', () => {
       res.json({ ok: true });
     });
 
+    // This test intentionally exercises the explicitly opted-in HTTP fallback
+    // with synthetic session data; production defaults remain HTTPS-only.
+    // codeql[js/clear-text-cookie]
     const fallbackResponse = await request(fallbackApp).get('/');
     assert.match(fallbackResponse.get('Set-Cookie')?.[0] ?? '', /HttpOnly/);
     assert.doesNotMatch(

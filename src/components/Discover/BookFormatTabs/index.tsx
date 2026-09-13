@@ -1,35 +1,54 @@
+import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import defineMessages from '@app/utils/defineMessages';
-import { BookOpenIcon, SpeakerWaveIcon } from '@heroicons/react/24/outline';
+import {
+  BookOpenIcon,
+  SpeakerWaveIcon,
+  Squares2X2Icon,
+} from '@heroicons/react/24/outline';
 import Link from 'next/link';
 import type { ParsedUrlQuery } from 'querystring';
 import { useIntl } from 'react-intl';
 
-export type BookDiscoveryFormat = 'ebook' | 'audiobook';
+export type BookDiscoveryFormat = 'all' | 'ebook' | 'audiobook';
 
 interface BookFormatTabsProps {
   format: BookDiscoveryFormat;
   query: ParsedUrlQuery;
+  className?: string;
 }
 
 const messages = defineMessages('components.Discover.BookFormatTabs', {
   format: 'Book format',
+  allBooks: 'All Books',
   books: 'Books',
   audiobooks: 'Audiobooks',
 });
 
-const BookFormatTabs = ({ format, query }: BookFormatTabsProps) => {
+const BookFormatTabs = ({
+  format,
+  query,
+  className = '',
+}: BookFormatTabsProps) => {
   const intl = useIntl();
   const tabs: {
     format: BookDiscoveryFormat;
     label: (typeof messages)[keyof typeof messages];
     icon: typeof BookOpenIcon;
     pathname: string;
+    queryFormat?: 'ebook';
   }[] = [
+    {
+      format: 'all',
+      label: messages.allBooks,
+      icon: Squares2X2Icon,
+      pathname: '/discover/books',
+    },
     {
       format: 'ebook',
       label: messages.books,
       icon: BookOpenIcon,
       pathname: '/discover/books',
+      queryFormat: 'ebook',
     },
     {
       format: 'audiobook',
@@ -45,7 +64,7 @@ const BookFormatTabs = ({ format, query }: BookFormatTabsProps) => {
   return (
     <nav
       aria-label={intl.formatMessage(messages.format)}
-      className="mt-4 flex flex-wrap gap-2"
+      className={`flex flex-wrap gap-2 ${className}`}
       data-testid="book-format-tabs"
     >
       {tabs.map((tab) => {
@@ -55,14 +74,16 @@ const BookFormatTabs = ({ format, query }: BookFormatTabsProps) => {
         return (
           <Link
             key={tab.format}
-            href={{ pathname: tab.pathname, query: preservedQuery }}
+            href={{
+              pathname: tab.pathname,
+              query: {
+                ...preservedQuery,
+                ...(tab.queryFormat ? { format: tab.queryFormat } : {}),
+              },
+            }}
             aria-current={isSelected ? 'page' : undefined}
             data-testid={`book-format-tab-${tab.format}`}
-            className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-              isSelected
-                ? 'border-indigo-500 bg-indigo-600/80 text-white'
-                : 'border-gray-600 bg-gray-800/80 text-gray-200 hover:border-gray-500 hover:bg-gray-700 hover:text-white'
-            }`}
+            className={getFilterToggleButtonClass(isSelected)}
           >
             <Icon className="h-4 w-4" aria-hidden="true" />
             <span>{intl.formatMessage(tab.label)}</span>

@@ -26,9 +26,9 @@ const globalMessages = defineMessages('i18n', {
   artist: 'Artist',
   book: 'Book',
   books: 'Books',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
-  ebookAndAudiobook: 'Ebook + Audiobook',
+  ebookAndAudiobook: 'Book + Audiobook',
   cancel: 'Cancel',
   canceling: 'Canceling…',
   approve: 'Approve',
@@ -52,6 +52,8 @@ const globalMessages = defineMessages('i18n', {
   back: 'Back',
   next: 'Next',
   previous: 'Previous',
+  noPreviousItems: 'There are no previous items.',
+  noNextItems: 'There are no more items.',
   status: 'Status',
   all: 'All',
   experimental: 'Experimental',
@@ -65,7 +67,7 @@ const globalMessages = defineMessages('i18n', {
   showingresults:
     'Showing <strong>{from}</strong> to <strong>{to}</strong> of <strong>{total}</strong> results',
   resultsperpage: 'Display {pageSize} results per page',
-  noresults: 'No results.',
+  noresults: 'No results',
   open: 'Open',
   resolved: 'Resolved',
   blocklist: 'Blocklist',
@@ -78,6 +80,12 @@ const globalMessages = defineMessages('i18n', {
   removeFromBlocklistSuccess:
     '<strong>{title}</strong> was successfully removed from the Blocklist.',
   addToBlocklist: 'Add to Blocklist',
+  alreadyBlocklisted: 'This title is already blocklisted.',
+  manageUnavailable:
+    'This title must be added to a media service before it can be managed.',
+  reportIssueUnavailable:
+    'An issue can be reported after this title is available in the library.',
+  actionUnavailable: 'This action is unavailable in the current state.',
   removefromBlocklist: 'Remove from Blocklist',
   specials: 'Specials',
   notificationLocale: 'Notification Language',

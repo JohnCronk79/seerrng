@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 import fs from 'fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -100,7 +102,7 @@ describe('settings file permissions', () => {
     assert.deepStrictEqual(await fs.readdir(directory), []);
   });
 
-  it('rejects a symlink planted at the settings lock path', async () => {
+  posixIt('rejects a symlink planted at the settings lock path', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-settings-')
     );
@@ -117,55 +119,64 @@ describe('settings file permissions', () => {
     assert.strictEqual(await fs.readFile(targetPath, 'utf8'), 'do not unlink');
   });
 
-  it('tightens existing settings files and keeps rewritten files private', async () => {
-    const directory = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'seerr-settings-')
-    );
-    temporaryDirectories.push(directory);
-    const filePath = path.join(directory, 'settings.json');
+  posixIt(
+    'tightens existing settings files and keeps rewritten files private',
+    async () => {
+      const directory = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'seerr-settings-')
+      );
+      temporaryDirectories.push(directory);
+      const filePath = path.join(directory, 'settings.json');
 
-    await fs.writeFile(filePath, '{}', { mode: 0o644 });
-    await fs.chmod(directory, 0o755);
-    await enforcePrivateSettingsFile(filePath);
-    assert.strictEqual(
-      (await fs.stat(directory)).mode & 0o777,
-      PRIVATE_SETTINGS_DIRECTORY_MODE
-    );
-    assert.strictEqual(
-      (await fs.stat(filePath)).mode & 0o777,
-      PRIVATE_SETTINGS_FILE_MODE
-    );
+      await fs.writeFile(filePath, '{}', { mode: 0o644 });
+      await fs.chmod(directory, 0o755);
+      await enforcePrivateSettingsFile(filePath);
+      assert.strictEqual(
+        (await fs.stat(directory)).mode & 0o777,
+        PRIVATE_SETTINGS_DIRECTORY_MODE
+      );
+      assert.strictEqual(
+        (await fs.stat(filePath)).mode & 0o777,
+        PRIVATE_SETTINGS_FILE_MODE
+      );
 
-    await fs.chmod(filePath, 0o644);
-    await writePrivateSettingsFile(filePath, '{"secret":"value"}');
-    assert.strictEqual(
-      (await fs.stat(filePath)).mode & 0o777,
-      PRIVATE_SETTINGS_FILE_MODE
-    );
-  });
+      await fs.chmod(filePath, 0o644);
+      await writePrivateSettingsFile(filePath, '{"secret":"value"}');
+      assert.strictEqual(
+        (await fs.stat(filePath)).mode & 0o777,
+        PRIVATE_SETTINGS_FILE_MODE
+      );
+    }
+  );
 
-  it('atomically replaces symlinks without modifying their targets', async () => {
-    const directory = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'seerr-settings-')
-    );
-    temporaryDirectories.push(directory);
-    const filePath = path.join(directory, 'settings.json');
-    const targetPath = path.join(directory, 'unrelated-file');
+  posixIt(
+    'atomically replaces symlinks without modifying their targets',
+    async () => {
+      const directory = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'seerr-settings-')
+      );
+      temporaryDirectories.push(directory);
+      const filePath = path.join(directory, 'settings.json');
+      const targetPath = path.join(directory, 'unrelated-file');
 
-    await fs.writeFile(targetPath, 'do not replace');
-    await fs.symlink(targetPath, filePath);
+      await fs.writeFile(targetPath, 'do not replace');
+      await fs.symlink(targetPath, filePath);
 
-    await writePrivateSettingsFile(filePath, '{"secret":"value"}');
+      await writePrivateSettingsFile(filePath, '{"secret":"value"}');
 
-    assert.strictEqual(await fs.readFile(targetPath, 'utf8'), 'do not replace');
-    assert.strictEqual(
-      await fs.readFile(filePath, 'utf8'),
-      '{"secret":"value"}'
-    );
-    assert.strictEqual((await fs.lstat(filePath)).isSymbolicLink(), false);
-  });
+      assert.strictEqual(
+        await fs.readFile(targetPath, 'utf8'),
+        'do not replace'
+      );
+      assert.strictEqual(
+        await fs.readFile(filePath, 'utf8'),
+        '{"secret":"value"}'
+      );
+      assert.strictEqual((await fs.lstat(filePath)).isSymbolicLink(), false);
+    }
+  );
 
-  it('rejects symlinked settings files during reads', async () => {
+  posixIt('rejects symlinked settings files during reads', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-settings-')
     );
@@ -183,45 +194,51 @@ describe('settings file permissions', () => {
     );
   });
 
-  it('rejects hard-linked settings files without changing the target', async () => {
-    const directory = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'seerr-settings-')
-    );
-    temporaryDirectories.push(directory);
-    const targetPath = path.join(directory, 'target.json');
-    const filePath = path.join(directory, 'settings.json');
-    await fs.writeFile(targetPath, '{}', { mode: 0o644 });
-    await fs.link(targetPath, filePath);
+  posixIt(
+    'rejects hard-linked settings files without changing the target',
+    async () => {
+      const directory = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'seerr-settings-')
+      );
+      temporaryDirectories.push(directory);
+      const targetPath = path.join(directory, 'target.json');
+      const filePath = path.join(directory, 'settings.json');
+      await fs.writeFile(targetPath, '{}', { mode: 0o644 });
+      await fs.link(targetPath, filePath);
 
-    await assert.rejects(readPrivateSettingsFile(filePath), /regular file/i);
-    assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
-  });
+      await assert.rejects(readPrivateSettingsFile(filePath), /regular file/i);
+      assert.equal((await fs.stat(targetPath)).mode & 0o777, 0o644);
+    }
+  );
 
-  it('rejects symlinked settings directories during reads and writes', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-settings-'));
-    temporaryDirectories.push(root);
-    const targetDirectory = path.join(root, 'target');
-    const linkedDirectory = path.join(root, 'linked');
-    await fs.mkdir(targetDirectory);
-    await fs.writeFile(path.join(targetDirectory, 'settings.json'), '{}');
-    await fs.symlink(targetDirectory, linkedDirectory);
-    const linkedFile = path.join(linkedDirectory, 'settings.json');
+  posixIt(
+    'rejects symlinked settings directories during reads and writes',
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-settings-'));
+      temporaryDirectories.push(root);
+      const targetDirectory = path.join(root, 'target');
+      const linkedDirectory = path.join(root, 'linked');
+      await fs.mkdir(targetDirectory);
+      await fs.writeFile(path.join(targetDirectory, 'settings.json'), '{}');
+      await fs.symlink(targetDirectory, linkedDirectory);
+      const linkedFile = path.join(linkedDirectory, 'settings.json');
 
-    await assert.rejects(
-      readPrivateSettingsFile(linkedFile),
-      /directory must not.*symlink/i
-    );
-    await assert.rejects(
-      writePrivateSettingsFile(linkedFile, '{"changed":true}'),
-      /directory must not.*symlink/i
-    );
-    assert.strictEqual(
-      await fs.readFile(path.join(targetDirectory, 'settings.json'), 'utf8'),
-      '{}'
-    );
-  });
+      await assert.rejects(
+        readPrivateSettingsFile(linkedFile),
+        /directory must not.*symlink/i
+      );
+      await assert.rejects(
+        writePrivateSettingsFile(linkedFile, '{"changed":true}'),
+        /directory must not.*symlink/i
+      );
+      assert.strictEqual(
+        await fs.readFile(path.join(targetDirectory, 'settings.json'), 'utf8'),
+        '{}'
+      );
+    }
+  );
 
-  it('rejects symlinks above the direct settings directory', async () => {
+  posixIt('rejects symlinks above the direct settings directory', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-settings-'));
     temporaryDirectories.push(root);
     const targetRoot = path.join(root, 'target');

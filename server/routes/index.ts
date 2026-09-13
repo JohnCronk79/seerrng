@@ -65,6 +65,7 @@ import mediaRoutes from './media';
 import movieRoutes from './movie';
 import musicRoutes from './music';
 import personRoutes from './person';
+import playbackRoutes from './playback';
 import playlistRoutes from './playlist';
 import requestRoutes from './request';
 import searchRoutes from './search';
@@ -409,6 +410,7 @@ router.use('/search', isAuthenticated(), searchRoutes);
 router.use('/discover', isAuthenticated(), discoverRoutes);
 router.use('/request', isAuthenticated(), requestRoutes);
 router.use('/playlist', isAuthenticated(), playlistRoutes);
+router.use('/playback', isAuthenticated(), playbackRoutes);
 router.use('/watchlist', isAuthenticated(), watchlistRoutes);
 router.use('/blocklist', isAuthenticated(), blocklistRoutes);
 router.use(

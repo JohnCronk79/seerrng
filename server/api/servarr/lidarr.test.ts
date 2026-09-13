@@ -5,6 +5,7 @@ import LidarrAPI from './lidarr';
 
 type MockableLidarr = {
   get: (endpoint: string) => Promise<unknown>;
+  request: () => Promise<{ data: unknown }>;
 };
 
 afterEach(() => {
@@ -35,5 +36,42 @@ describe('Lidarr response normalization', () => {
     const profiles = await api.getMetadataProfiles();
 
     assert.deepStrictEqual(profiles, [{ id: 1, name: 'Standard' }]);
+  });
+
+  it('returns bounded album history records without unrelated response data', async () => {
+    const api = new LidarrAPI({
+      url: 'http://localhost:8686/api/v1',
+      apiKey: 'key',
+    });
+    mock.method(
+      LidarrAPI.prototype as unknown as MockableLidarr,
+      'request',
+      async () => ({
+        data: {
+          records: [
+            null,
+            { id: 'bad', albumId: 4 },
+            {
+              id: 7,
+              albumId: 4,
+              eventType: 'grabbed',
+              date: '2026-09-10T09:42:53Z',
+              downloadId: 'download-7',
+              data: { apiKey: 'must-not-leak' },
+            },
+          ],
+        },
+      })
+    );
+
+    assert.deepStrictEqual(await api.getHistory(), [
+      {
+        id: 7,
+        albumId: 4,
+        eventType: 'grabbed',
+        date: '2026-09-10T09:42:53Z',
+        downloadId: 'download-7',
+      },
+    ]);
   });
 });

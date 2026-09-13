@@ -15,7 +15,7 @@ const CompanyCard = ({ image, url, name }: CompanyCardProps) => {
     <Link
       href={url}
       prefetch={false}
-      className={`relative flex h-32 w-56 transform-gpu cursor-pointer items-center justify-center p-8 shadow ring-1 transition duration-300 ease-in-out sm:h-36 sm:w-72 ${
+      className={`relative flex h-16 w-28 transform-gpu cursor-pointer items-center justify-center p-3 shadow ring-1 transition duration-300 ease-in-out sm:h-[72px] sm:w-36 ${
         isHovered
           ? 'scale-105 bg-gray-700 ring-gray-500'
           : 'scale-100 bg-gray-800 ring-gray-700'
@@ -43,7 +43,7 @@ const CompanyCard = ({ image, url, name }: CompanyCardProps) => {
         />
       </div>
       <div
-        className={`absolute bottom-0 left-0 right-0 z-0 h-12 rounded-b-xl bg-gradient-to-t ${
+        className={`absolute bottom-0 left-0 right-0 z-0 h-6 rounded-b-xl bg-gradient-to-t ${
           isHovered ? 'from-gray-800' : 'from-gray-900'
         }`}
       />

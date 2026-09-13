@@ -13,6 +13,7 @@ import type {
   TmdbTvDetails,
 } from '@server/api/themoviedb/interfaces';
 import { MediaServerType } from '@server/constants/server';
+import { classifyAudioPlaybackFormats } from '@server/lib/audioPlaybackFormat';
 import {
   ConfigurationAuthorityChangedError,
   captureConfigurationAuthority,
@@ -528,11 +529,48 @@ export class JellyfinScanner
         return;
       }
 
+      let audioFormats = classifyAudioPlaybackFormats(
+        (metadata.MediaSources ?? []).flatMap((source) =>
+          source.MediaStreams.filter((stream) => stream.Type === 'Audio').map(
+            (stream) => stream.Codec
+          )
+        )
+      );
+      if (audioFormats.length === 0) {
+        try {
+          const tracks = await this.jfClient.getAudioChildrenWithMediaInfo(
+            metadata.Id
+          );
+          audioFormats = classifyAudioPlaybackFormats(
+            tracks.flatMap((track) =>
+              (track.MediaSources ?? []).flatMap((source) =>
+                source.MediaStreams.filter(
+                  (stream) => stream.Type === 'Audio'
+                ).map((stream) => stream.Codec)
+              )
+            )
+          );
+        } catch (error) {
+          this.log(
+            'Unable to classify Jellyfin/Emby album playback format',
+            'warn',
+            {
+              jellyfinItemId: metadata.Id,
+              errorMessage:
+                error instanceof Error
+                  ? error.message
+                  : 'Unknown provider error',
+            }
+          );
+        }
+      }
+
       await this.processMusic(mbId, {
         mediaAddedAt: metadata.DateCreated
           ? new Date(metadata.DateCreated)
           : undefined,
         jellyfinMediaId: metadata.Id,
+        audioFormats,
         title: metadata.Name,
         mutationGuard: (callback) => this.withConfigurationSnapshot(callback),
         outerMutationGuard: (callback) => this.withOwnerAuthority(callback),

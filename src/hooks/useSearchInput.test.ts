@@ -139,8 +139,18 @@ describe('shouldSyncSearchInput', () => {
     strictEqual(shouldSyncSearchInput('/search', 'alien', '', '', true), false);
   });
 
-  it('syncs a query when navigating to search externally', () => {
-    strictEqual(shouldSyncSearchInput('/search', 'alien', '', '', false), true);
+  it('does not restore a stale route query after the input is emptied', () => {
+    strictEqual(
+      shouldSyncSearchInput('/search', 'alien', '', '', false),
+      false
+    );
+  });
+
+  it('leaves external search restoration to the dedicated route branch', () => {
+    strictEqual(
+      shouldSyncSearchInput('/search', 'alien', '', '', false),
+      false
+    );
   });
 });
 
@@ -332,5 +342,102 @@ describe('useSearchInput routing', () => {
     await act(async () => render());
     strictEqual(search?.searchValue, 'aliens');
     strictEqual(replacements.length, 1);
+  });
+
+  it('removes the route query after backspacing the search input to empty', async () => {
+    dom = new JSDOM('<div id="root"></div>', {
+      url: 'http://localhost/search?query=microsoft',
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: dom.window,
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: dom.window.document,
+    });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+
+    const replacements: unknown[] = [];
+    const router = createRouter({
+      asPath: '/search?query=microsoft&type=book',
+      query: { query: 'microsoft', type: 'book' },
+      replace: async (...args) => {
+        replacements.push(args);
+        return true;
+      },
+    });
+    let search: ReturnType<typeof useSearchInput> | undefined;
+    const Probe = () => {
+      search = useSearchInput();
+      return null;
+    };
+
+    root = createRoot(dom.window.document.getElementById('root')!);
+    await act(async () =>
+      root?.render(
+        createElement(RouterProvider, { router }, createElement(Probe))
+      )
+    );
+    await act(async () => search?.setSearchValue(''));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
+
+    deepStrictEqual(replacements, [
+      [
+        { pathname: '/search', query: { type: 'book' } },
+        undefined,
+        { shallow: true },
+      ],
+    ]);
+    strictEqual(search?.searchValue, '');
+  });
+
+  it('does not hydrate the main search from a discovery-page query parameter', async () => {
+    dom = new JSDOM('<div id="root"></div>', {
+      url: 'http://localhost/discover/music?query=madhno',
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: dom.window,
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: dom.window.document,
+    });
+    (
+      globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+
+    const pushes: unknown[] = [];
+    const router = createRouter({
+      asPath: '/discover/music?query=madhno',
+      pathname: '/discover/music',
+      query: { query: 'madhno' },
+      route: '/discover/music',
+      push: async (...args) => {
+        pushes.push(args);
+        return true;
+      },
+    });
+    let search: ReturnType<typeof useSearchInput> | undefined;
+    const Probe = () => {
+      search = useSearchInput();
+      return null;
+    };
+
+    root = createRoot(dom.window.document.getElementById('root')!);
+    await act(async () =>
+      root?.render(
+        createElement(RouterProvider, { router }, createElement(Probe))
+      )
+    );
+
+    strictEqual(search?.searchValue, '');
+    strictEqual(search?.searchOpen, false);
+    strictEqual(pushes.length, 0);
   });
 });

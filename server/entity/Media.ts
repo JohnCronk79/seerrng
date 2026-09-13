@@ -30,6 +30,7 @@ import {
 import Issue from './Issue';
 import MediaIdentifier from './MediaIdentifier';
 import { MediaRequest } from './MediaRequest';
+import { MediaSearchMetadata } from './MediaSearchMetadata';
 import Season from './Season';
 
 @Entity()
@@ -188,6 +189,9 @@ class Media {
   @OneToOne(() => Blocklist, (blocklist) => blocklist.media)
   public blocklist: Promise<Blocklist>;
 
+  @OneToOne(() => MediaSearchMetadata, (metadata) => metadata.media)
+  public searchMetadata?: MediaSearchMetadata;
+
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
 
@@ -218,6 +222,42 @@ class Media {
 
   @Column({ nullable: true, type: 'int' })
   public serviceId?: number | null;
+
+  @Column({
+    type: 'text',
+    nullable: true,
+    transformer: {
+      from: (value: string | null): number[] | null => {
+        if (value === null) {
+          return null;
+        }
+        try {
+          const parsed: unknown = JSON.parse(value);
+          return Array.isArray(parsed)
+            ? [
+                ...new Set(
+                  parsed.filter(
+                    (serverId): serverId is number =>
+                      Number.isSafeInteger(serverId) && serverId >= 0
+                  )
+                ),
+              ]
+            : [];
+        } catch {
+          return [];
+        }
+      },
+      to: (value: number[] | null | undefined): string | null =>
+        value === null || value === undefined
+          ? null
+          : JSON.stringify(
+              [...new Set(value)].filter(
+                (serverId) => Number.isSafeInteger(serverId) && serverId >= 0
+              )
+            ),
+    },
+  })
+  public availableMusicServiceIds?: number[] | null;
 
   @Column({ nullable: true, type: 'int' })
   public serviceId4k?: number | null;
@@ -250,10 +290,22 @@ class Media {
   public ratingKey4k?: string | null;
 
   @Column({ nullable: true, type: 'varchar' })
+  public ratingKeyMp3?: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  public ratingKeyFlac?: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
   public jellyfinMediaId?: string | null;
 
   @Column({ nullable: true, type: 'varchar' })
   public jellyfinMediaId4k?: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  public jellyfinMediaIdMp3?: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  public jellyfinMediaIdFlac?: string | null;
 
   @Column({ nullable: true, type: 'varchar' })
   public mbId?: string | null;
@@ -289,10 +341,15 @@ class Media {
     }
 
     this.serviceId = null;
+    this.availableMusicServiceIds = null;
     this.externalServiceId = null;
     this.externalServiceSlug = null;
     this.ratingKey = null;
     this.jellyfinMediaId = null;
+    this.ratingKeyMp3 = null;
+    this.ratingKeyFlac = null;
+    this.jellyfinMediaIdMp3 = null;
+    this.jellyfinMediaIdFlac = null;
   }
 
   public resetServiceData(): void {

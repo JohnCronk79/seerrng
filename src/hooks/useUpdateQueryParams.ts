@@ -1,7 +1,7 @@
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
 import type { ParsedUrlQuery } from 'querystring';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 type UseQueryParamReturnedFunction = (
   query: ParsedUrlQuery,
@@ -108,7 +108,11 @@ export const mergeQueryString = (
       queryParams.set(key, value);
     }
   });
-  const queryString = queryParams.toString();
+  // URLSearchParams serializes spaces as `+`, but the API request validator
+  // requires percent-encoded query values. Keep router URLs and the discovery
+  // request URLs on the same unambiguous encoding so multi-word live searches
+  // are not rejected before reaching their route handlers.
+  const queryString = queryParams.toString().replace(/\+/g, '%20');
 
   const pathWithoutQuery = router.asPath.match(/(.*)\?.*/);
   const asPath = pathWithoutQuery ? pathWithoutQuery[1] : router.asPath;
@@ -149,16 +153,18 @@ export const useUpdateQueryParams = (
   filter: ParsedUrlQuery
 ): ((key: string, value?: string) => void) => {
   const updateQueryParams = useQueryParams();
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
   return useCallback(
     (key: string, value?: string) => {
       const query = {
-        ...filter,
+        ...filterRef.current,
         [key]: value,
       };
       updateQueryParams(query, 'replace');
     },
-    [filter, updateQueryParams]
+    [updateQueryParams]
   );
 };
 
@@ -166,15 +172,17 @@ export const useBatchUpdateQueryParams = (
   filter: ParsedUrlQuery
 ): ((items: Record<string, string | undefined>) => void) => {
   const updateQueryParams = useQueryParams();
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
 
   return useCallback(
     (items: Record<string, string | undefined>) => {
       const query = {
-        ...filter,
+        ...filterRef.current,
         ...items,
       };
       updateQueryParams(query, 'replace');
     },
-    [filter, updateQueryParams]
+    [updateQueryParams]
   );
 };

@@ -34,6 +34,7 @@ export interface BookResult {
 export interface BookDetails extends BookResult {
   description?: string;
   subjects?: string[];
+  numberOfPages?: number;
   onUserWatchlist?: boolean;
 }
 
@@ -152,6 +153,10 @@ export const mapOpenLibraryWork = (
   const coverId = work.covers?.[0];
   const isbnCandidates = mapEditionIsbnCandidates(editions);
   const selectedCandidate = isbnCandidates[0];
+  const publisher = editions
+    .flatMap((edition) => edition.publishers ?? [])
+    .map((name) => name.trim())
+    .find(Boolean);
 
   return {
     id: normalizeOpenLibraryWorkId(work.key),
@@ -168,6 +173,12 @@ export const mapOpenLibraryWork = (
     isbn13: selectedCandidate?.isbn,
     editionId: selectedCandidate?.editionId,
     isbnCandidates,
+    publisher,
+    numberOfPages: editions.find(
+      (edition) =>
+        Number.isFinite(edition.number_of_pages) &&
+        (edition.number_of_pages ?? 0) > 0
+    )?.number_of_pages,
     description,
     subjects: work.subjects?.slice(0, 20),
     mediaInfo: media,

@@ -159,6 +159,51 @@ describe('MusicBrainz response boundaries', () => {
     assert.ok(!('raw' in artist));
   });
 
+  it('sanitizes aggregate release-group ratings and rejects invalid values', () => {
+    const ratedAlbum = sanitizeMusicBrainzAlbum({
+      id: 'rated-album',
+      title: 'Rated Album',
+      'primary-type': 'Album',
+      rating: { value: 4.25, 'votes-count': 32 },
+    });
+    const invalidRatingAlbum = sanitizeMusicBrainzAlbum({
+      id: 'invalid-rating-album',
+      title: 'Invalid Rating Album',
+      'primary-type': 'Album',
+      rating: { value: 12, 'votes-count': -1 },
+    });
+
+    assert.deepStrictEqual(ratedAlbum?.rating, {
+      value: 4.25,
+      'votes-count': 32,
+    });
+    assert.strictEqual(invalidRatingAlbum?.rating, undefined);
+  });
+
+  it('requests aggregate ratings with release-group details', async () => {
+    const musicBrainz = new MusicBrainz();
+    let requestedInc = '';
+    Object.defineProperty(musicBrainz, 'get', {
+      configurable: true,
+      value: async (_path: string, options: { params?: { inc?: string } }) => {
+        requestedInc = options.params?.inc ?? '';
+        return {
+          id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          title: 'Rated Album',
+          'primary-type': 'Album',
+          rating: { value: 4, 'votes-count': 10 },
+        };
+      },
+    });
+
+    const result = await musicBrainz.getReleaseGroupDetails({
+      releaseGroupId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    });
+
+    assert.match(requestedInc, /(?:^|\+)ratings(?:\+|$)/);
+    assert.deepStrictEqual(result.rating, { value: 4, 'votes-count': 10 });
+  });
+
   it('sanitizes recording releases used by playlist matching', () => {
     const recording = sanitizeMusicBrainzRecording({
       id: 'recording-id',

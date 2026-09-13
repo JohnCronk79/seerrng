@@ -173,6 +173,19 @@ export const sanitizeMusicBrainzAlbum = (
     value['primary-type'] === 'Single' || value['primary-type'] === 'EP'
       ? value['primary-type']
       : 'Album';
+  const rawRating = isRecord(value.rating) ? value.rating : undefined;
+  const ratingValue = rawRating?.value;
+  const ratingVotes = rawRating?.['votes-count'];
+  const rating =
+    typeof ratingValue === 'number' &&
+    Number.isFinite(ratingValue) &&
+    ratingValue >= 0 &&
+    ratingValue <= 5 &&
+    typeof ratingVotes === 'number' &&
+    Number.isSafeInteger(ratingVotes) &&
+    ratingVotes >= 0
+      ? { value: ratingValue, 'votes-count': ratingVotes }
+      : undefined;
 
   return {
     id,
@@ -199,6 +212,7 @@ export const sanitizeMusicBrainzAlbum = (
     tags,
     links: sanitizeLinks(value.links),
     poster_path: boundText(value.poster_path, 2_048) || undefined,
+    rating,
   };
 };
 
@@ -633,7 +647,7 @@ class MusicBrainz extends ExternalAPI {
         `/release-group/${encodeURIComponent(normalizedReleaseGroupId)}`,
         {
           params: {
-            inc: 'artist-credits+releases',
+            inc: 'artist-credits+releases+ratings',
             fmt: 'json',
           },
         },

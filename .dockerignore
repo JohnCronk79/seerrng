@@ -12,7 +12,6 @@
 .pnpm-store
 .husky
 .npmrc
-!/.npmrc
 .next
 .prettierignore
 .vscode
@@ -31,6 +30,13 @@ coverage
 compose.yaml
 gen-docs
 docs
+!docs/
+docs/*
+!docs/maintainers/
+docs/maintainers/*
+!docs/maintainers/current-batch-acceptance-ledger.md
+!docs/maintainers/site-visual-audit-2026-09-11.md
+!docs/maintainers/ui-style-standard.md
 LICENSE
 node_modules
 report.xml

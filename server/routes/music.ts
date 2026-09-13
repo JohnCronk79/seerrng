@@ -3,11 +3,13 @@ import ListenBrainzAPI from '@server/api/listenbrainz';
 import type { LbAlbumDetails } from '@server/api/listenbrainz/interfaces';
 import MusicBrainz from '@server/api/musicbrainz';
 import type { MbAlbumDetails } from '@server/api/musicbrainz/interfaces';
+import LidarrAPI from '@server/api/servarr/lidarr';
 import TheAudioDb from '@server/api/theaudiodb';
 import TmdbPersonMapper from '@server/api/themoviedb/personMapper';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
+import { MediaRequest } from '@server/entity/MediaRequest';
 import MetadataArtist from '@server/entity/MetadataArtist';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
@@ -16,9 +18,16 @@ import {
   normalizeMusicBrainzId,
   prepareMusicBrainzBatchIds,
 } from '@server/lib/externalIds';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
+import { getAvailableMusicServices } from '@server/lib/musicQualityAvailability';
+import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import logger from '@server/logger';
-import { mapMusicDetails } from '@server/models/Music';
+import {
+  mapMusicDetails,
+  type MusicRatingResponse,
+} from '@server/models/Music';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import { parsePositiveInt } from '@server/utils/pagination';
 import {
@@ -230,6 +239,92 @@ const getAlbumDetails = async (
   }
 };
 
+musicRoutes.get('/:id/rating', async (req, res) => {
+  const parsedMbId = normalizeParsedMusicBrainzId(
+    parseMusicBrainzId(req.params.id)
+  );
+  if ('error' in parsedMbId) {
+    return res.status(404).json({ status: 404, message: 'Album not found' });
+  }
+
+  try {
+    const album = await new MusicBrainz().getReleaseGroupDetails({
+      releaseGroupId: parsedMbId.value,
+    });
+    if (album.rating) {
+      const response: MusicRatingResponse = {
+        rating: {
+          score: Math.round(album.rating.value * 20) / 10,
+          votes: album.rating['votes-count'],
+          url: `https://musicbrainz.org/release-group/${encodeURIComponent(
+            parsedMbId.value
+          )}`,
+          source: 'musicbrainz',
+        },
+      };
+      return res.status(200).json(response);
+    }
+  } catch (e) {
+    logger.warn('MusicBrainz album rating unavailable', {
+      label: 'Music API',
+      errorMessage: e instanceof Error ? e.message : 'Unknown error',
+      mbId: parsedMbId.value,
+    });
+  }
+
+  try {
+    const media = await getRepository(Media).findOne({
+      where: { mbId: parsedMbId.value, mediaType: MediaType.MUSIC },
+    });
+    const service = media?.serviceId
+      ? getExternalRuntimeConfig().lidarr.find(
+          (candidate) => candidate.id === media.serviceId
+        )
+      : undefined;
+    if (service && media?.externalServiceId) {
+      const album = await runWithServarrServiceSnapshot(
+        'lidarr',
+        service,
+        (currentService) =>
+          new LidarrAPI({
+            apiKey: currentService.apiKey,
+            url: LidarrAPI.buildUrl(currentService, '/api/v1'),
+          }).getAlbum({ id: media.externalServiceId! }, 300)
+      );
+      const ratings = album.ratings;
+      if (
+        ratings &&
+        Number.isFinite(ratings.value) &&
+        ratings.value >= 0 &&
+        ratings.value <= 10 &&
+        Number.isSafeInteger(ratings.votes) &&
+        ratings.votes >= 0
+      ) {
+        return res.status(200).json({
+          rating: {
+            score: Math.round(ratings.value * 10) / 10,
+            votes: ratings.votes,
+            url:
+              service.externalUrl ||
+              `https://musicbrainz.org/release-group/${encodeURIComponent(
+                parsedMbId.value
+              )}`,
+            source: 'lidarr',
+          },
+        } satisfies MusicRatingResponse);
+      }
+    }
+  } catch (e) {
+    logger.warn('Lidarr album rating unavailable', {
+      label: 'Music API',
+      errorMessage: e instanceof Error ? e.message : 'Unknown error',
+      mbId: parsedMbId.value,
+    });
+  }
+
+  return res.status(200).json({} satisfies MusicRatingResponse);
+});
+
 musicRoutes.get('/:id', async (req, res, next) => {
   const parsedMbId = normalizeParsedMusicBrainzId(
     parseMusicBrainzId(req.params.id)
@@ -391,8 +486,35 @@ musicRoutes.get('/:id', async (req, res, next) => {
         : resolvedMetadataArtist;
 
     const mappedDetails = mapMusicDetails(albumDetails, media, onUserWatchlist);
+    const destinationRequests = media?.id
+      ? await getRepository(MediaRequest)
+          .createQueryBuilder('request')
+          .select(['request.id', 'request.serviceTargets'])
+          .innerJoin('request.media', 'requestMedia')
+          .where('requestMedia.id = :mediaId', { mediaId: media.id })
+          .getMany()
+      : [];
+    const availableServices = getAvailableMusicServices(
+      media,
+      destinationRequests,
+      getExternalRuntimeConfig().lidarr
+    );
     const finalTrackArtistMetadata =
       updatedArtistMetadata || resolvedTrackArtistMetadata;
+
+    await upsertMediaSearchMetadata(media?.id, {
+      title: mappedDetails.title,
+      releaseDate: mappedDetails.releaseDate,
+      genres: mappedDetails.tags?.releaseGroup.map((tag) => tag.tag).join(', '),
+      runtime: mappedDetails.tracks.length
+        ? `${mappedDetails.tracks.length} tracks`
+        : undefined,
+      artist: mappedDetails.artist.name,
+      albumType: mappedDetails.type,
+      format: 'Music Album',
+      provider: 'MusicBrainz',
+      externalIds: mappedDetails.mbId,
+    });
 
     return res.status(200).json(
       filterEntityResponse(
@@ -416,6 +538,7 @@ musicRoutes.get('/:id', async (req, res, next) => {
           tmdbPersonId: updatedMetadataArtist?.tmdbPersonId
             ? Number(updatedMetadataArtist.tmdbPersonId)
             : null,
+          availableServices,
           tracks: mappedDetails.tracks.map((track) => ({
             ...track,
             artists: track.artists.map((artist) => {

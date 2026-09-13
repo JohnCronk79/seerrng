@@ -88,6 +88,7 @@ describe('MediaRequest.sendNotification', () => {
     ];
     assert.strictEqual(type, Notification.MEDIA_APPROVED);
     assert.strictEqual(payload.event, 'Music Request Approved');
+    assert.strictEqual(payload.notifyUser?.id, entity.requestedBy.id);
     assert.strictEqual(payload.mediaUrl, '/music/release-group-id');
     assert.strictEqual(payload.subject, 'Kind of Blue (1959)');
     assert.strictEqual(payload.message, 'Miles Davis');

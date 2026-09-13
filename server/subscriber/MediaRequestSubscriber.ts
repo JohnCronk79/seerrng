@@ -19,6 +19,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -27,7 +28,9 @@ import {
   MediaRequest,
   getRequestMutationAdmissionKey,
   runWithRequestAdmission,
+  type MediaRequestServiceTarget,
 } from '@server/entity/MediaRequest';
+import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
 import { RequestDispatchOutbox } from '@server/entity/RequestDispatchOutbox';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
@@ -38,6 +41,7 @@ import {
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import { getLidarrAlbumMediaStatus } from '@server/lib/musicAvailability';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import requestDispatchManager, {
   type RequestDispatchOutcome,
@@ -91,6 +95,26 @@ export const READARR_FAILED_RETRY_DELAY_MS = 6 * 60 * 60 * 1_000;
 export const READARR_MAX_LOOKUP_RESULTS = 50;
 export const READARR_LOOKUP_HYDRATION_CONCURRENCY = 5;
 const activeReadarrDispatches = new Map<number, Promise<number | undefined>>();
+
+const saveRequestServiceTarget = async (
+  request: MediaRequest,
+  target: MediaRequestServiceTarget
+): Promise<void> => {
+  const targets = request.serviceTargets ?? [];
+  const targetIndex = targets.findIndex(
+    (candidate) =>
+      candidate.serviceType === target.serviceType &&
+      candidate.format === target.format &&
+      candidate.serverId === target.serverId
+  );
+  request.serviceTargets =
+    targetIndex === -1
+      ? [...targets, target]
+      : targets.map((candidate, index) =>
+          index === targetIndex ? { ...candidate, ...target } : candidate
+        );
+  await getRepository(MediaRequest).save(request);
+};
 
 interface RequestDispatchServiceSelection {
   serviceType: ServarrServiceType;
@@ -427,6 +451,25 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           .getQuery();
         return `NOT EXISTS ${queued}`;
       })
+      .andWhere((query) => {
+        const latestStage = query
+          .subQuery()
+          .select('latestStatus.stage')
+          .from(MediaRequestStatusEvent, 'latestStatus')
+          .where('latestStatus.requestId = mediaRequest.id')
+          .orderBy('latestStatus.createdAt', 'DESC')
+          .addOrderBy('latestStatus.id', 'DESC')
+          .limit(1)
+          .getQuery();
+
+        return `COALESCE(${latestStage}, '') NOT IN (:...terminalStages)`;
+      })
+      .setParameter('terminalStages', [
+        RequestStatusStage.UNAVAILABLE,
+        RequestStatusStage.FAILED,
+        RequestStatusStage.CANCELLED,
+        RequestStatusStage.DECLINED,
+      ])
       .orderBy('mediaRequest.updatedAt', 'ASC')
       .addOrderBy('mediaRequest.id', 'ASC')
       .take(boundedLimit)
@@ -639,7 +682,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       return { delivered };
     }
     if (request.type === MediaType.MUSIC) {
-      await this.sendToLidarr(request);
+      const delivered = await this.sendToLidarr(request);
       const updatedMusicRequest = await getRepository(MediaRequest).findOne({
         where: { id: request.id },
         relations: { media: true },
@@ -654,6 +697,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           'No usable release is currently available.'
         );
       }
+      return { delivered };
     } else if (request.type === MediaType.BOOK) {
       const retryAfterMs = await this.sendToReadarr(request);
       if (retryAfterMs !== undefined) {
@@ -897,6 +941,19 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           freshMedia[entity.is4k ? 'serviceId4k' : 'serviceId'] =
             radarrSettings.id;
           await mediaRepository.save(freshMedia);
+          await saveRequestServiceTarget(entity, {
+            serviceType: 'radarr',
+            format: entity.is4k ? '4k' : 'standard',
+            serverId: radarrSettings.id,
+            profileId: qualityProfile,
+            rootFolder,
+            tags,
+            externalServiceId: radarrMovie.id,
+            externalServiceSlug: radarrMovie.titleSlug,
+            status:
+              freshMedia[entity.is4k ? 'status4k' : 'status'] ??
+              MediaStatus.PROCESSING,
+          });
         } finally {
           radarr.clearCache({
             tmdbId: movie.id,
@@ -1183,6 +1240,16 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           title: series.name,
           tvdbid: tvdbId,
           seasons: entity.seasons.map((season) => season.seasonNumber),
+          episodeSelections: entity.seasons.some(
+            (season) => season.episodeNumbers != null
+          )
+            ? entity.seasons.map((season) => ({
+                seasonNumber: season.seasonNumber,
+                ...(season.episodeNumbers
+                  ? { episodeNumbers: season.episodeNumbers }
+                  : {}),
+              }))
+            : undefined,
           seasonFolder: sonarrSettings.enableSeasonFolders,
           seriesType,
           tags,
@@ -1208,6 +1275,20 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           freshMedia[entity.is4k ? 'serviceId4k' : 'serviceId'] =
             sonarrSettings.id;
           await mediaRepository.save(freshMedia);
+          await saveRequestServiceTarget(entity, {
+            serviceType: 'sonarr',
+            format: entity.is4k ? '4k' : 'standard',
+            serverId: sonarrSettings.id,
+            profileId: qualityProfile,
+            languageProfileId: languageProfile,
+            rootFolder,
+            tags,
+            externalServiceId: sonarrSeries.id,
+            externalServiceSlug: sonarrSeries.titleSlug,
+            status:
+              freshMedia[entity.is4k ? 'status4k' : 'status'] ??
+              MediaStatus.PROCESSING,
+          });
         } finally {
           sonarr.clearCache({
             tvdbId,
@@ -1256,12 +1337,12 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     return true;
   }
 
-  public async sendToLidarr(entity: MediaRequest): Promise<void> {
+  public async sendToLidarr(entity: MediaRequest): Promise<boolean> {
     if (
       entity.status !== MediaRequestStatus.APPROVED ||
       entity.type !== MediaType.MUSIC
     ) {
-      return;
+      return true;
     }
 
     try {
@@ -1286,7 +1367,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           requestId: entity.id,
           mediaId: entity.media.id,
         });
-        return;
+        return false;
       }
 
       const media = await mediaRepository.findOne({
@@ -1299,10 +1380,20 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           requestId: entity.id,
           mediaId: entity.media.id,
         });
-        return;
+        return false;
       }
 
-      if (media.status === MediaStatus.AVAILABLE) {
+      const existingTarget = entity.serviceTargets?.find(
+        (target) =>
+          target.serviceType === 'lidarr' &&
+          target.format === 'music' &&
+          target.serverId === lidarrSettings.id
+      );
+      if (
+        existingTarget?.status === MediaStatus.AVAILABLE ||
+        (media.status === MediaStatus.AVAILABLE &&
+          media.serviceId === lidarrSettings.id)
+      ) {
         logger.warn('Music already exists, marking request as COMPLETED', {
           label: 'Media Request',
           requestId: entity.id,
@@ -1312,7 +1403,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         const requestRepository = getRepository(MediaRequest);
         entity.status = MediaRequestStatus.COMPLETED;
         await requestRepository.save(entity);
-        return;
+        return true;
       }
 
       const lidarr = new LidarrAPI({
@@ -1409,17 +1500,31 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       media.externalServiceId = result.id;
       media.externalServiceSlug = result.titleSlug;
       media.serviceId = lidarrSettings.id;
+      const observedStatus = getLidarrAlbumMediaStatus(result);
+      media.status =
+        observedStatus === MediaStatus.UNKNOWN
+          ? MediaStatus.PROCESSING
+          : observedStatus;
       await mediaRepository.save(media);
-
-      const requestRepository = getRepository(MediaRequest);
-      entity.status = MediaRequestStatus.COMPLETED;
-      await requestRepository.save(entity);
+      await saveRequestServiceTarget(entity, {
+        serviceType: 'lidarr',
+        format: 'music',
+        serverId: lidarrSettings.id,
+        profileId: qualityProfile,
+        metadataProfileId: metadataProfile,
+        rootFolder,
+        tags,
+        externalServiceId: result.id,
+        externalServiceSlug: result.titleSlug,
+        status: media.status,
+      });
 
       logger.info('Sent request to Lidarr', {
         label: 'Media Request',
         requestId: entity.id,
         mediaId: entity.media.id,
       });
+      return true;
     } catch (e) {
       const requestRepository = getRepository(MediaRequest);
       const mediaRepository = getRepository(Media);
@@ -1444,6 +1549,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           Notification.MEDIA_FAILED
         );
       }
+      return true;
     }
   }
 
@@ -1634,6 +1740,15 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         serviceType: 'ebook' | 'audiobook',
         allowServerOverride: boolean
       ): ReadarrSettings | undefined => {
+        const savedTarget = entity.serviceTargets?.find(
+          (target) =>
+            target.serviceType === 'readarr' && target.format === serviceType
+        );
+        if (savedTarget) {
+          return settings.readarr.find(
+            (readarr) => readarr.id === savedTarget.serverId
+          );
+        }
         if (
           allowServerOverride &&
           entity.serverId !== null &&
@@ -1769,24 +1884,32 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
               (edition) => normalizeValidIsbn(edition.isbn13) === normalizedIsbn
             )
           ) ?? searchResults[0];
+        const savedTarget = entity.serviceTargets?.find(
+          (target) =>
+            target.serviceType === 'readarr' && target.format === serviceType
+        );
         const rootFolder =
-          allowServerOverride && entity.rootFolder
+          savedTarget?.rootFolder ||
+          (allowServerOverride && entity.rootFolder
             ? entity.rootFolder
-            : readarrSettings.activeDirectory;
+            : readarrSettings.activeDirectory);
         const qualityProfile =
-          allowServerOverride &&
+          savedTarget?.profileId ??
+          (allowServerOverride &&
           entity.profileId !== null &&
           entity.profileId !== undefined
             ? entity.profileId
-            : readarrSettings.activeProfileId;
+            : readarrSettings.activeProfileId);
         const metadataProfile =
-          allowServerOverride &&
+          savedTarget?.metadataProfileId ??
+          (allowServerOverride &&
           entity.metadataProfileId !== null &&
           entity.metadataProfileId !== undefined
             ? entity.metadataProfileId
-            : (readarrSettings.activeMetadataProfileId ?? 1);
-        const tags =
-          allowServerOverride && entity.tags
+            : (readarrSettings.activeMetadataProfileId ?? 1));
+        const tags = savedTarget?.tags
+          ? [...savedTarget.tags]
+          : allowServerOverride && entity.tags
             ? [...entity.tags]
             : [...(readarrSettings.tags ?? [])];
 
@@ -1858,9 +1981,33 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             : bookInfo.author,
           editions: bookInfo.editions ?? [],
           addOptions: {
-            searchForNewBook: true,
+            // Seerr starts and tracks BookSearch explicitly after the add.
+            // The Bookshelf convenience flag depends on a later metadata
+            // refresh and does not expose the resulting command to Seerr.
+            searchForNewBook: false,
           },
         });
+
+        if (!result.id) {
+          throw new Error(
+            'Bookshelf returned no book ID after adding the book.'
+          );
+        }
+
+        const searchCommand = await readarr.startBookSearch(result.id);
+        await getRepository(BookRequestSearch).save(
+          new BookRequestSearch({
+            requestId: entity.id,
+            serviceId: readarrSettings.id,
+            format: serviceType,
+            bookId: result.id,
+            authorId: result.authorId ?? result.author?.id ?? null,
+            commandId: searchCommand.id,
+            createdBook: result.createdBook,
+            createdAuthor: result.createdAuthor,
+            state: 'searching',
+          })
+        );
 
         if (serviceType === 'audiobook') {
           media.audiobookExternalServiceId = result.id ?? null;
@@ -1874,6 +2021,18 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         }
 
         await mediaRepository.save(media);
+        await saveRequestServiceTarget(entity, {
+          serviceType: 'readarr',
+          format: serviceType,
+          serverId: readarrSettings.id,
+          profileId: qualityProfile,
+          metadataProfileId: metadataProfile,
+          rootFolder,
+          tags,
+          externalServiceId: result.id ?? null,
+          externalServiceSlug: result.titleSlug ?? result.foreignBookId,
+          status: media.status,
+        });
 
         const resultIsbn = result.editions?.find(
           (edition) => edition.isbn13

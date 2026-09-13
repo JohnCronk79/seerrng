@@ -21,6 +21,7 @@ export interface OpenLibrarySearchDoc {
   ratings_count?: number;
   want_to_read_count?: number;
   publisher?: string[];
+  subject?: string[];
 }
 
 interface OpenLibrarySearchResponse {
@@ -68,6 +69,7 @@ export interface OpenLibraryEdition {
   isbn_10?: string[];
   isbn_13?: string[];
   physical_format?: string;
+  number_of_pages?: number;
   works?: {
     key: string;
   }[];
@@ -107,6 +109,7 @@ export const OPENLIBRARY_SEARCH_FIELDS = [
   'ratings_count',
   'want_to_read_count',
   'publisher',
+  'subject',
 ].join(',');
 const MAX_OPENLIBRARY_TEXT_LENGTH = 512;
 const MAX_OPENLIBRARY_ARRAY_ITEMS = 200;
@@ -248,6 +251,7 @@ const sanitizeSearchDoc = (
         ? value.want_to_read_count
         : undefined,
     publisher: boundedStrings(value.publisher, 100, 512),
+    subject: boundedStrings(value.subject, 100, 512),
   };
 };
 
@@ -442,7 +446,9 @@ class OpenLibraryAPI extends ExternalAPI {
           ...(sort ? { sort } : {}),
         },
       },
-      43200
+      43200,
+      (data) =>
+        isRecord(data) && Array.isArray(data.docs) && data.docs.length > 0
     );
 
     if (!isRecord(response)) {

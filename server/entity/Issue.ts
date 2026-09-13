@@ -1,5 +1,6 @@
 import type { IssueType } from '@server/constants/issue';
 import { IssueStatus } from '@server/constants/issue';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   AfterLoad,
@@ -32,6 +33,15 @@ class Issue {
 
   @Column({ type: 'int', default: 0 })
   public problemEpisode: number;
+
+  @Column({ type: 'simple-json', nullable: true })
+  public problemEpisodes?: number[];
+
+  @Column({ type: 'simple-json', nullable: true })
+  public problemEpisodeSelections?: SeasonEpisodeSelection[];
+
+  @Column({ type: 'boolean', default: false })
+  public is4k: boolean;
 
   @ManyToOne(() => Media, (media) => media.issues, {
     eager: true,

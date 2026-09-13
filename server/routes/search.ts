@@ -17,10 +17,12 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { getAvailableMusicQualities } from '@server/lib/musicQualityAvailability';
 import {
   findSearchProvider,
   type CombinedSearchResponse,
 } from '@server/lib/search';
+import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
@@ -31,8 +33,14 @@ import {
 } from '@server/utils/concurrency';
 import { parsePositiveInt } from '@server/utils/pagination';
 import {
+  matchesAllSearchTerms,
+  toFieldedBooleanAndQuery,
+  toMusicAlbumRefinementQuery,
+} from '@server/utils/searchTerms';
+import {
   parseBoundedString,
   parseOptionalAllowedString,
+  parseOptionalBoundedString,
   parseOptionalLanguage,
 } from '@server/utils/validation';
 import { Router } from 'express';
@@ -200,6 +208,19 @@ searchRoutes.get('/', async (req, res, next) => {
     return res.status(400).json({ status: 400, message: parsedType.error });
   }
   const typeFilter = parsedType.value;
+  const parsedResultFilter = parseOptionalBoundedString(
+    req.query.resultFilter,
+    {
+      fieldName: 'Result filter',
+      maxLength: MAX_SEARCH_QUERY_LENGTH,
+    }
+  );
+  if ('error' in parsedResultFilter) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedResultFilter.error });
+  }
+  const resultFilter = parsedResultFilter.value;
   const parsedFormat = req.query.format
     ? parseOptionalAllowedString(req.query.format, {
         fieldName: 'Format',
@@ -296,12 +317,15 @@ searchRoutes.get('/', async (req, res, next) => {
             }),
         shouldSearchMusic && musicEnabled
           ? musicbrainz.searchAlbumWithTotal({
-              query: queryString,
+              query:
+                typeFilter === 'music' && resultFilter
+                  ? toMusicAlbumRefinementQuery(queryString, resultFilter)
+                  : queryString,
               limit: 20,
               offset: musicOffset,
             })
           : Promise.resolve({ results: [], totalResults: 0 }),
-        shouldSearchMusic && musicEnabled
+        shouldSearchMusic && musicEnabled && !resultFilter
           ? musicbrainz.searchArtistWithTotal({
               query: queryString,
               limit: 20,
@@ -310,7 +334,7 @@ searchRoutes.get('/', async (req, res, next) => {
           : Promise.resolve({ results: [], totalResults: 0 }),
         shouldSearchBooks && booksEnabled
           ? openLibrary.searchBooks({
-              query: queryString,
+              query: toFieldedBooleanAndQuery(queryString, ['title', 'author']),
               page,
               limit: 20,
             })
@@ -363,6 +387,20 @@ searchRoutes.get('/', async (req, res, next) => {
           ? (response.value as T)
           : fallback;
       };
+
+      const bookProviderResponse = providerResults.get(3);
+      if (
+        typeFilter === 'book' &&
+        shouldSearchBooks &&
+        booksEnabled &&
+        (!bookProviderResponse || bookProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+        });
+      }
 
       if (providerResponses.timedOut) {
         logger.debug('Global search provider deadline exceeded', {
@@ -419,7 +457,13 @@ searchRoutes.get('/', async (req, res, next) => {
         .map((p) => p.id.toString());
 
       const dedupedAlbumResults = dedupeAlbumSearchResults(albumResults);
-      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs);
+      const dedupedBookDocs = dedupeBookSearchDocs(bookResults.docs).filter(
+        (doc) =>
+          matchesAllSearchTerms(
+            [doc.title, ...(doc.author_name ?? [])],
+            queryString
+          )
+      );
 
       const albumIds = dedupedAlbumResults.map((album) =>
         normalizeMusicBrainzId(album.id)
@@ -675,10 +719,22 @@ searchRoutes.get('/', async (req, res, next) => {
     );
 
     const mappedResults = await mapSearchResults(results.results, media);
+    const qualityEnrichedResults = mappedResults.map((result) =>
+      result.mediaType === 'album'
+        ? {
+            ...result,
+            availableQualities: getAvailableMusicQualities(
+              result.mediaInfo,
+              result.mediaInfo?.requests ?? [],
+              getSettings().lidarr
+            ),
+          }
+        : result
+    );
     const creditEnrichedResults =
       typeFilter === 'movie' || typeFilter === 'tv'
         ? await mapWithConcurrency(
-            mappedResults,
+            qualityEnrichedResults,
             SEARCH_CREDIT_LOOKUP_CONCURRENCY,
             async (result) => {
               if (result.mediaType !== typeFilter) {
@@ -697,7 +753,7 @@ searchRoutes.get('/', async (req, res, next) => {
               }
             }
           )
-        : mappedResults;
+        : qualityEnrichedResults;
 
     const capabilityResults = creditEnrichedResults.filter(
       (result) =>

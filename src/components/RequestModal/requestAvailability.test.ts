@@ -1,0 +1,278 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
+import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+
+const selectedMusicTarget = createRequestDestination(
+  'lidarr',
+  'music',
+  {
+    id: 2,
+    name: 'FLAC',
+    is4k: false,
+    isDefault: true,
+    activeProfileId: 20,
+    activeMetadataProfileId: 30,
+    activeDirectory: '/music/flac',
+  },
+  null
+)!;
+
+test('availability matches the complete selected destination', () => {
+  const media = {
+    status: MediaStatus.AVAILABLE,
+    serviceId: 1,
+    requests: [
+      {
+        status: MediaRequestStatus.COMPLETED,
+        serviceTargets: [
+          {
+            ...selectedMusicTarget,
+            status: MediaStatus.AVAILABLE,
+          },
+        ],
+      },
+    ],
+  };
+
+  assert.equal(isRequestDestinationAvailable(media, selectedMusicTarget), true);
+  assert.equal(
+    isRequestDestinationAvailable(media, {
+      ...selectedMusicTarget,
+      profileId: 21,
+    }),
+    false
+  );
+  assert.equal(
+    isRequestDestinationAvailable(media, {
+      ...selectedMusicTarget,
+      metadataProfileId: 31,
+    }),
+    false
+  );
+  assert.equal(
+    isRequestDestinationAvailable(media, {
+      ...selectedMusicTarget,
+      rootFolder: '/music/alternate',
+    }),
+    false
+  );
+});
+
+test('active requests match the complete selected destination', () => {
+  const requests = [
+    {
+      status: MediaRequestStatus.PENDING,
+      type: 'music',
+      serviceTargets: [selectedMusicTarget],
+    },
+  ];
+
+  assert.equal(
+    isRequestDestinationRequested(requests, selectedMusicTarget),
+    true
+  );
+  assert.equal(
+    isRequestDestinationRequested(requests, {
+      ...selectedMusicTarget,
+      rootFolder: '/music/alternate',
+    }),
+    false
+  );
+});
+
+test('inactive request history does not block a destination', () => {
+  const requests = [
+    MediaRequestStatus.DECLINED,
+    MediaRequestStatus.FAILED,
+    MediaRequestStatus.COMPLETED,
+  ].map((status) => ({
+    status,
+    type: 'music',
+    serviceTargets: [selectedMusicTarget],
+  }));
+
+  assert.equal(
+    isRequestDestinationRequested(requests, selectedMusicTarget),
+    false
+  );
+});
+
+test('legacy destination records remain conservative when details are absent', () => {
+  assert.equal(
+    isRequestDestinationAvailable(
+      { status: MediaStatus.AVAILABLE },
+      selectedMusicTarget
+    ),
+    true
+  );
+  assert.equal(
+    isRequestDestinationRequested(
+      [
+        {
+          status: MediaRequestStatus.APPROVED,
+          type: 'music',
+          serverId: 2,
+        },
+      ],
+      selectedMusicTarget
+    ),
+    true
+  );
+});
+
+test('book request coverage blocks only active overlapping formats', () => {
+  const ebookTarget = {
+    ...selectedMusicTarget,
+    serviceType: 'readarr' as const,
+    format: 'ebook' as const,
+  };
+  const audiobookTarget = {
+    ...ebookTarget,
+    serverId: 3,
+    format: 'audiobook' as const,
+  };
+  const requests = [
+    {
+      status: MediaRequestStatus.PENDING,
+      type: 'book',
+      bookFormat: 'ebook' as const,
+      serviceTargets: [ebookTarget],
+    },
+  ];
+
+  assert.equal(isRequestDestinationRequested(requests, ebookTarget), true);
+  assert.equal(isRequestDestinationRequested(requests, audiobookTarget), false);
+});
+
+test('an available FLAC destination does not block an MP3 request', () => {
+  const mp3Target = {
+    ...selectedMusicTarget,
+    serverId: 3,
+    profileId: 21,
+    rootFolder: '/music/mp3',
+  };
+  const media = {
+    status: MediaStatus.AVAILABLE,
+    requests: [
+      {
+        status: MediaRequestStatus.COMPLETED,
+        serviceTargets: [
+          { ...selectedMusicTarget, status: MediaStatus.AVAILABLE },
+        ],
+      },
+    ],
+  };
+
+  assert.equal(isRequestDestinationAvailable(media, mp3Target), false);
+  assert.equal(isRequestDestinationRequested(media.requests, mp3Target), false);
+});
+
+test('an available MP3 destination does not block a FLAC request', () => {
+  const mp3Target = {
+    ...selectedMusicTarget,
+    serverId: 3,
+    profileId: 21,
+    rootFolder: '/music/mp3',
+  };
+  const media = {
+    status: MediaStatus.AVAILABLE,
+    requests: [
+      {
+        status: MediaRequestStatus.COMPLETED,
+        serviceTargets: [{ ...mp3Target, status: MediaStatus.AVAILABLE }],
+      },
+    ],
+  };
+
+  assert.equal(
+    isRequestDestinationAvailable(media, selectedMusicTarget),
+    false
+  );
+  assert.equal(
+    isRequestDestinationRequested(media.requests, selectedMusicTarget),
+    false
+  );
+});
+
+test('a manager can promote one matching pending destination', () => {
+  const pending = {
+    id: 91,
+    status: MediaRequestStatus.PENDING,
+    type: 'music',
+    requestedBy: { id: 7 },
+    serviceTargets: [selectedMusicTarget],
+  };
+
+  assert.equal(
+    canPromotePendingDestinationRequests([pending], [selectedMusicTarget], {
+      canManageRequests: true,
+      hasAutoApprove: true,
+    }),
+    true
+  );
+});
+
+test('auto approval lets the actor fulfill another user matching pending request', () => {
+  const pending = {
+    id: 92,
+    status: MediaRequestStatus.PENDING,
+    type: 'music',
+    requestedBy: { id: 7 },
+    serviceTargets: [selectedMusicTarget],
+  };
+
+  assert.equal(
+    canPromotePendingDestinationRequests([pending], [selectedMusicTarget], {
+      canManageRequests: false,
+      hasAutoApprove: true,
+    }),
+    true
+  );
+});
+
+test('approved requests and different pending requests cannot be promoted together', () => {
+  const secondTarget = { ...selectedMusicTarget, serverId: 3 };
+  const requests = [
+    {
+      id: 93,
+      status: MediaRequestStatus.PENDING,
+      requestedBy: { id: 7 },
+      serviceTargets: [selectedMusicTarget],
+    },
+    {
+      id: 94,
+      status: MediaRequestStatus.PENDING,
+      requestedBy: { id: 7 },
+      serviceTargets: [secondTarget],
+    },
+  ];
+
+  assert.equal(
+    canPromotePendingDestinationRequests(
+      requests,
+      [selectedMusicTarget, secondTarget],
+      { canManageRequests: true, hasAutoApprove: true }
+    ),
+    false
+  );
+  assert.equal(
+    canPromotePendingDestinationRequests(
+      [
+        {
+          ...requests[0],
+          status: MediaRequestStatus.APPROVED,
+        },
+      ],
+      [selectedMusicTarget],
+      { canManageRequests: true, hasAutoApprove: true }
+    ),
+    false
+  );
+});

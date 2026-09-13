@@ -9,6 +9,7 @@ import useSWR from 'swr';
 
 const messages = defineMessages('components.LanguageSelector', {
   originalLanguageDefault: 'All Languages',
+  any: 'Any',
   languageServerDefault: 'Default ({language})',
 });
 
@@ -34,6 +35,7 @@ interface LanguageSelectorProps {
   isUserSettings?: boolean;
   isDisabled?: boolean;
   fieldName?: string;
+  compact?: boolean;
 }
 
 const LanguageSelector = ({
@@ -43,6 +45,7 @@ const LanguageSelector = ({
   isUserSettings = false,
   isDisabled,
   fieldName = 'originalLanguage',
+  compact = false,
 }: LanguageSelectorProps) => {
   const intl = useIntl();
   const { data: languages } = useSWR<Language[]>('/api/v1/languages');
@@ -69,7 +72,7 @@ const LanguageSelector = ({
       value: language.iso_639_1,
     })) ?? [];
 
-  if (isUserSettings) {
+  if (isUserSettings && !compact) {
     options.unshift({
       value: 'server',
       label: intl.formatMessage(messages.languageServerDefault, {
@@ -91,7 +94,9 @@ const LanguageSelector = ({
 
   options.unshift({
     value: 'all',
-    label: intl.formatMessage(messages.originalLanguageDefault),
+    label: intl.formatMessage(
+      compact ? messages.any : messages.originalLanguageDefault
+    ),
     isFixed: true,
   });
 
@@ -100,13 +105,15 @@ const LanguageSelector = ({
       options={options}
       isMulti
       isDisabled={isDisabled}
-      className="react-select-container"
+      className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
       value={
         (isUserSettings && value === 'all') || (!isUserSettings && !value)
           ? {
               value: 'all',
-              label: intl.formatMessage(messages.originalLanguageDefault),
+              label: intl.formatMessage(
+                compact ? messages.any : messages.originalLanguageDefault
+              ),
               isFixed: true,
             }
           : (value === '' || !value || value === 'server') && isUserSettings

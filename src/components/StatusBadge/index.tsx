@@ -45,6 +45,7 @@ interface StatusBadgeProps {
   bookFormat?: RequestedBookFormat;
   title?: string | string[];
   statusLabelOverride?: string;
+  className?: string;
 }
 
 const StatusBadge = ({
@@ -61,6 +62,7 @@ const StatusBadge = ({
   bookFormat,
   title,
   statusLabelOverride,
+  className,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -217,7 +219,7 @@ const StatusBadge = ({
           <Badge
             badgeType="success"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -282,7 +284,7 @@ const StatusBadge = ({
           <Badge
             badgeType="success"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -347,7 +349,7 @@ const StatusBadge = ({
           <Badge
             badgeType="primary"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >
@@ -401,7 +403,7 @@ const StatusBadge = ({
     case MediaStatus.PENDING:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="warning" href={mediaLink}>
+          <Badge badgeType="warning" href={mediaLink} className={className}>
             {intl.formatMessage(is4k ? messages.status4k : messages.status, {
               status: intl.formatMessage(globalMessages.pending),
             })}
@@ -412,7 +414,7 @@ const StatusBadge = ({
     case MediaStatus.BLOCKLISTED:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="danger" href={mediaLink}>
+          <Badge badgeType="danger" href={mediaLink} className={className}>
             {intl.formatMessage(is4k ? messages.status4k : messages.status, {
               status:
                 statusLabelOverride ??
@@ -436,7 +438,7 @@ const StatusBadge = ({
           <Badge
             badgeType="danger"
             href={mediaLink}
-            className={`${
+            className={`${className ?? ''} ${
               inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
             } overflow-hidden`}
           >

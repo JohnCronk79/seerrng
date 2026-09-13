@@ -263,6 +263,63 @@ describe('Plex music and audiobook library scanning', () => {
     assert.strictEqual(media?.status, MediaStatus.AVAILABLE);
   });
 
+  it('retains separate MP3 and FLAC Plex album identifiers for the same release group', async () => {
+    const settings = getSettings();
+    settings.main = { ...settings.main, mediaServerType: MediaServerType.PLEX };
+    settings.radarr = [];
+    settings.sonarr = [];
+    settings.plex = {
+      ...settings.plex,
+      ip: 'plex.local',
+      port: 32400,
+      useSsl: false,
+      libraries: [
+        { id: 'mp3', name: 'MP3', enabled: true, type: 'music' },
+        { id: 'flac', name: 'FLAC', enabled: true, type: 'music' },
+      ],
+    };
+    mock.method(PlexAPI.prototype, 'getLibraries', async () => []);
+    mock.method(
+      PlexAPI.prototype,
+      'getLibraryContents',
+      async (libraryId: string) => ({
+        totalSize: 1,
+        items: [
+          {
+            ratingKey: `${libraryId}-album`,
+            title: 'Test Album',
+            guid: 'mbid://cf988074-7ee4-4eb3-8a39-42b1467b2de7',
+            addedAt: 1789059800,
+            updatedAt: 1789059802,
+            type: 'album',
+            Media: [
+              {
+                audioCodec: libraryId,
+                container: libraryId,
+              },
+            ],
+          } as PlexLibraryItem,
+        ],
+      })
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () => ({}) as never
+    );
+
+    await new PlexScanner().run();
+
+    const media = await getRepository(Media).findOneOrFail({
+      where: {
+        mbId: 'cf988074-7ee4-4eb3-8a39-42b1467b2de7',
+        mediaType: MediaType.MUSIC,
+      },
+    });
+    assert.strictEqual(media.ratingKeyMp3, 'mp3-album');
+    assert.strictEqual(media.ratingKeyFlac, 'flac-album');
+  });
+
   it('resolves an audiobook via an Open Library title/author search when Plex has no matched id', async () => {
     const settings = getSettings();
     settings.main = { ...settings.main, mediaServerType: MediaServerType.PLEX };

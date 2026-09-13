@@ -53,10 +53,19 @@ test('loadIndex rejects mismatched and malformed embeddings', () => {
   });
 });
 
-test('loadIndex rejects linked artifact paths', () => {
-  withIndexFile(validIndex(), (indexPath, directory) => {
-    const linkPath = path.join(directory, 'linked-index.json');
-    fs.symlinkSync(indexPath, linkPath);
-    assert.throws(() => loadIndex(linkPath), /private regular file/u);
-  });
-});
+test(
+  'loadIndex rejects linked artifact paths',
+  {
+    skip:
+      process.platform === 'win32'
+        ? 'Windows requires elevated symbolic-link privileges; Linux CI runs this boundary test.'
+        : false,
+  },
+  () => {
+    withIndexFile(validIndex(), (indexPath, directory) => {
+      const linkPath = path.join(directory, 'linked-index.json');
+      fs.symlinkSync(indexPath, linkPath);
+      assert.throws(() => loadIndex(linkPath), /private regular file/u);
+    });
+  }
+);

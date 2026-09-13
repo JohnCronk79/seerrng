@@ -10,19 +10,56 @@ describe('Movie Details', () => {
     );
   });
 
-  it('does not reopen the manager panel after closing and going back', () => {
+  it('shows standard and 4K requests in one segmented control', () => {
     cy.loginAsAdmin();
-
+    cy.intercept('GET', '/api/v1/settings/public', (request) => {
+      request.continue((response) => {
+        response.body.movie4kEnabled = true;
+      });
+    });
     cy.visit('/movie/438148');
+
+    cy.get('[data-testid=format-request-control]').should('be.visible');
+    cy.get('[data-testid=format-request-option-standard]').should('be.visible');
+    cy.get('[data-testid=format-request-option-4k]')
+      .should('be.visible')
+      .then(($fourKButton) => {
+        cy.get('[data-testid=format-request-option-standard]').then(
+          ($standardButton) => {
+            expect(
+              $fourKButton[0].getBoundingClientRect().left
+            ).to.be.greaterThan(
+              $standardButton[0].getBoundingClientRect().left
+            );
+          }
+        );
+      });
+  });
+
+  it('hides the 4K request action without 4K request permission', () => {
+    cy.loginAsUser();
+    cy.intercept('GET', '/api/v1/settings/public', (request) => {
+      request.continue((response) => {
+        response.body.movie4kEnabled = true;
+      });
+    });
+    cy.visit('/movie/438148');
+
+    cy.get('[data-testid=format-request-option-standard]').should('be.visible');
+    cy.get('[data-testid=format-request-option-4k]').should('not.exist');
+  });
+
+  it('keeps unavailable management visible but disabled with an explanation', () => {
+    cy.loginAsAdmin();
     cy.visit('/movie/438148?manage=1');
-
-    cy.get('button[aria-label="Close panel"]').should('be.visible').click();
-    cy.location('search').should('eq', '');
-    cy.get('button[aria-label="Close panel"]').should('not.exist');
-
-    cy.go('back');
-
-    cy.location('search').should('eq', '');
+    cy.get('button[aria-label="Manage Movie"]')
+      .should('be.visible')
+      .and('be.disabled')
+      .and(
+        'have.attr',
+        'title',
+        'This title must be added to a media service before it can be managed.'
+      );
     cy.get('button[aria-label="Close panel"]').should('not.exist');
   });
 });

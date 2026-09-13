@@ -25,11 +25,16 @@ import ImageProxy, {
   prepareRasterImageForCache,
   pruneStaleImageCacheEntries,
   readPrivateImageCacheFile,
+  resolveImageRequestUrl,
   sendImage,
   writePrivateImageCacheFile,
 } from './imageproxy';
 
 const temporaryDirectories: string[] = [];
+// Windows without Developer Mode cannot create the symbolic links exercised by
+// these POSIX filesystem-boundary tests, and it does not expose POSIX chmod
+// modes. Linux CI still runs every one of them.
+const posixIt = process.platform === 'win32' ? it.skip : it;
 
 afterEach(async () => {
   await Promise.all(
@@ -126,8 +131,24 @@ describe('ImageProxy cache scoping', () => {
   });
 });
 
+describe('resolveImageRequestUrl', () => {
+  it('accepts an absolute remote image URL without a configured base URL', () => {
+    assert.equal(
+      resolveImageRequestUrl('https://plex.tv/users/example/avatar?c=123', ''),
+      'https://plex.tv/users/example/avatar?c=123'
+    );
+  });
+
+  it('rejects a relative image path without a configured base URL', () => {
+    assert.throws(
+      () => resolveImageRequestUrl('/users/example/avatar', ''),
+      /Image URL is invalid/
+    );
+  });
+});
+
 describe('writePrivateImageCacheFile', () => {
-  it('creates private cache directories and files', async () => {
+  posixIt('creates private cache directories and files', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-images-'));
     temporaryDirectories.push(root);
     const directory = path.join(root, 'provider', 'cache-key');
@@ -152,26 +173,29 @@ describe('writePrivateImageCacheFile', () => {
     );
   });
 
-  it('rejects a symlinked cache directory without modifying its target', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-images-'));
-    temporaryDirectories.push(root);
-    const target = path.join(root, 'unrelated');
-    const directory = path.join(root, 'cache-key');
-    await fs.mkdir(target);
-    await fs.writeFile(path.join(target, 'keep'), 'unchanged');
-    await fs.symlink(target, directory);
+  posixIt(
+    'rejects a symlinked cache directory without modifying its target',
+    async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-images-'));
+      temporaryDirectories.push(root);
+      const target = path.join(root, 'unrelated');
+      const directory = path.join(root, 'cache-key');
+      await fs.mkdir(target);
+      await fs.writeFile(path.join(target, 'keep'), 'unchanged');
+      await fs.symlink(target, directory);
 
-    await assert.rejects(
-      writePrivateImageCacheFile(directory, 'image.webp', Buffer.from('new')),
-      /not a directory/
-    );
-    assert.equal(
-      await fs.readFile(path.join(target, 'keep'), 'utf8'),
-      'unchanged'
-    );
-  });
+      await assert.rejects(
+        writePrivateImageCacheFile(directory, 'image.webp', Buffer.from('new')),
+        /not a directory/
+      );
+      assert.equal(
+        await fs.readFile(path.join(target, 'keep'), 'utf8'),
+        'unchanged'
+      );
+    }
+  );
 
-  it('rejects symlinks above the direct cache directory', async () => {
+  posixIt('rejects symlinks above the direct cache directory', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-images-'));
     temporaryDirectories.push(root);
     const targetRoot = path.join(root, 'target');
@@ -217,39 +241,44 @@ describe('sendImage disk boundaries', () => {
     };
   };
 
-  it('rejects symlinked and hard-linked cache files at open time', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-send-image-'));
-    temporaryDirectories.push(root);
-    const target = path.join(root, 'target.webp');
-    const symlink = path.join(root, 'symlink.webp');
-    const hardlink = path.join(root, 'hardlink.webp');
-    await fs.writeFile(target, 'private');
-    await fs.symlink(target, symlink);
-    await fs.link(target, hardlink);
-
-    for (const filePath of [symlink, hardlink]) {
-      const result = createResponse();
-      await sendImage(
-        result.response,
-        {
-          filePath,
-          meta: {
-            revalidateAfter: 0,
-            curRevalidate: 0,
-            isStale: false,
-            etag: 'etag',
-            extension: 'webp',
-            cacheKey: 'cache-key',
-            cacheMiss: false,
-            lastModified: 0,
-          },
-        },
-        {}
+  posixIt(
+    'rejects symlinked and hard-linked cache files at open time',
+    async () => {
+      const root = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'seerr-send-image-')
       );
-      assert.strictEqual(result.statusCode, 500);
-      assert.strictEqual(result.ended, true);
+      temporaryDirectories.push(root);
+      const target = path.join(root, 'target.webp');
+      const symlink = path.join(root, 'symlink.webp');
+      const hardlink = path.join(root, 'hardlink.webp');
+      await fs.writeFile(target, 'private');
+      await fs.symlink(target, symlink);
+      await fs.link(target, hardlink);
+
+      for (const filePath of [symlink, hardlink]) {
+        const result = createResponse();
+        await sendImage(
+          result.response,
+          {
+            filePath,
+            meta: {
+              revalidateAfter: 0,
+              curRevalidate: 0,
+              isStale: false,
+              etag: 'etag',
+              extension: 'webp',
+              cacheKey: 'cache-key',
+              cacheMiss: false,
+              lastModified: 0,
+            },
+          },
+          {}
+        );
+        assert.strictEqual(result.statusCode, 500);
+        assert.strictEqual(result.ended, true);
+      }
     }
-  });
+  );
 
   it('does not release a disk response before the stream finishes', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-send-image-'));
@@ -313,7 +342,7 @@ describe('readPrivateImageCacheFile', () => {
     );
   });
 
-  it('rejects symlinked and hard-linked cache files', async () => {
+  posixIt('rejects symlinked and hard-linked cache files', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-read-image-'));
     temporaryDirectories.push(root);
     const target = path.join(root, 'target.webp');
@@ -334,7 +363,7 @@ describe('readPrivateImageCacheFile', () => {
 });
 
 describe('getBoundedDirectorySize', () => {
-  it('walks nested files without following symlinks', async () => {
+  posixIt('walks nested files without following symlinks', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-stats-'));
     temporaryDirectories.push(root);
     await fs.mkdir(path.join(root, 'provider', 'first'), { recursive: true });
@@ -488,7 +517,7 @@ describe('pruneStaleImageCacheEntries', () => {
     assert.equal((await fs.stat(freshDirectory)).isDirectory(), true);
   });
 
-  it('does not prune through a symlinked cache root', async () => {
+  posixIt('does not prune through a symlinked cache root', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-prune-'));
     temporaryDirectories.push(root);
     const target = path.join(root, 'target');

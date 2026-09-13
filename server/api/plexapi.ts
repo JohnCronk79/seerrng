@@ -2,7 +2,11 @@ import ExternalAPI from '@server/api/externalapi';
 import type { Library, PlexSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
-import { buildServiceUrl } from '@server/utils/serviceUrl';
+import AsyncLock from '@server/utils/asyncLock';
+import {
+  buildServiceUrl,
+  normalizeServiceHostname,
+} from '@server/utils/serviceUrl';
 
 interface PlexStatusResponse {
   MediaContainer: {
@@ -25,7 +29,7 @@ export interface PlexLibraryItem {
   Guid?: {
     id: string;
   }[];
-  type: 'movie' | 'show' | 'season' | 'episode' | 'artist' | 'album';
+  type: 'movie' | 'show' | 'season' | 'episode' | 'artist' | 'album' | 'track';
   Media: Media[];
 }
 
@@ -40,7 +44,7 @@ export interface PlexMetadata {
   ratingKey: string;
   parentRatingKey?: string;
   guid: string;
-  type: 'movie' | 'show' | 'season' | 'episode' | 'artist' | 'album';
+  type: 'movie' | 'show' | 'season' | 'episode' | 'artist' | 'album' | 'track';
   title: string;
   Guid: {
     id: string;
@@ -56,6 +60,26 @@ export interface PlexMetadata {
   addedAt: number;
   updatedAt: number;
   Media: Media[];
+}
+
+export interface PlexPlayQueue {
+  playQueueId: number;
+  selectedItemId: string;
+}
+
+export interface PlexPlaylist {
+  ratingKey: string;
+  key: string;
+  title: string;
+  playlistType: 'audio' | 'video';
+}
+
+export interface PlexClient {
+  clientIdentifier: string;
+  name: string;
+  product: string;
+  platform?: string;
+  connectionUri: string;
 }
 
 interface Media {
@@ -80,6 +104,7 @@ export const MAX_PLEX_METADATA_ITEMS = 10_000;
 export const MAX_PLEX_GUIDS = 100;
 export const MAX_PLEX_MEDIA_VARIANTS = 100;
 const MAX_PLEX_TEXT_LENGTH = 2_048;
+const plexPlaylistLock = new AsyncLock();
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -93,6 +118,69 @@ const plexNumber = (value: unknown): number =>
     : 0;
 
 const plexInteger = (value: unknown): number => Math.floor(plexNumber(value));
+
+const plexPort = (value: unknown): number => {
+  const port =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d{1,5}$/.test(value)
+        ? Number(value)
+        : 0;
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65_535 ? port : 0;
+};
+
+export const sanitizePlexClients = (value: unknown): PlexClient[] => {
+  const mediaContainer =
+    isRecord(value) && isRecord(value.MediaContainer)
+      ? value.MediaContainer
+      : {};
+
+  return (Array.isArray(mediaContainer.Server) ? mediaContainer.Server : [])
+    .slice(0, 250)
+    .flatMap((client) => {
+      if (!isRecord(client)) {
+        return [];
+      }
+
+      const clientIdentifier = boundedPlexText(client.machineIdentifier, 512);
+      const name = boundedPlexText(client.name, 512);
+      const product = boundedPlexText(client.product, 512);
+      const hostname = normalizeServiceHostname(
+        boundedPlexText(client.address || client.host, 512)
+      );
+      const port = plexPort(client.port);
+      const capabilities = boundedPlexText(client.protocolCapabilities, 1_024)
+        .split(',')
+        .map((capability) => capability.trim().toLocaleLowerCase());
+
+      if (
+        !clientIdentifier ||
+        !name ||
+        !product ||
+        !hostname ||
+        !port ||
+        !capabilities.includes('playback')
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          clientIdentifier,
+          name,
+          product,
+          platform:
+            boundedPlexText(client.platform || client.deviceClass, 512) ||
+            undefined,
+          connectionUri: buildServiceUrl({
+            useSsl: client.protocol === 'https',
+            hostname,
+            port,
+          }),
+        },
+      ];
+    });
+};
 
 const sanitizePlexMedia = (value: unknown): Media | undefined => {
   if (!isRecord(value)) {
@@ -131,6 +219,7 @@ const plexItemTypes = [
   'episode',
   'artist',
   'album',
+  'track',
 ] as const;
 
 export const sanitizePlexLibraryItem = (
@@ -213,6 +302,8 @@ export const sanitizePlexMetadata = (
 };
 
 class PlexAPI extends ExternalAPI {
+  private readonly configuredServerUrl: string;
+
   constructor({
     plexToken,
     plexSettings,
@@ -247,6 +338,7 @@ class PlexAPI extends ExternalAPI {
         },
       }
     );
+    this.configuredServerUrl = baseUrl;
   }
 
   public async getStatus(): Promise<PlexStatusResponse> {
@@ -297,6 +389,24 @@ class PlexAPI extends ExternalAPI {
           },
         ];
       });
+  }
+
+  public async getClients(): Promise<PlexClient[]> {
+    const response = await this.get<unknown>('/clients', undefined, 0);
+    return sanitizePlexClients(response).map((client) => {
+      const hostname = new URL(client.connectionUri).hostname.toLowerCase();
+      const isLoopback =
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        hostname.startsWith('127.');
+
+      // Some Plex clients advertise the Plex server's own loopback address.
+      // Route those Companion commands through the configured server instead;
+      // X-Plex-Target-Client-Identifier still identifies the actual player.
+      return isLoopback
+        ? { ...client, connectionUri: this.configuredServerUrl }
+        : client;
+    });
   }
 
   public async syncLibraries({
@@ -460,6 +570,150 @@ class PlexAPI extends ExternalAPI {
         const normalized = sanitizePlexMetadata(item);
         return normalized ? [normalized] : [];
       });
+  }
+
+  public async createPlayQueue(
+    ratingKeys: string[],
+    mediaType: 'audio' | 'video',
+    machineIdentifier: string
+  ): Promise<PlexPlayQueue> {
+    const safeRatingKeys = ratingKeys
+      .slice(0, 1_000)
+      .map((key) => boundedPlexText(key, 128))
+      .filter(Boolean);
+    const safeMachineIdentifier = boundedPlexText(machineIdentifier, 128);
+    if (safeRatingKeys.length === 0 || !safeMachineIdentifier) {
+      throw new Error(
+        'A Plex server and at least one media item are required.'
+      );
+    }
+
+    const response = await this.post<unknown>('/playQueues', undefined, {
+      params: {
+        type: mediaType,
+        shuffle: 0,
+        repeat: 0,
+        continuous: 0,
+        uri: `server://${safeMachineIdentifier}/com.plexapp.plugins.library/library/metadata/${safeRatingKeys.join(
+          ','
+        )}`,
+      },
+    });
+    const mediaContainer =
+      isRecord(response) && isRecord(response.MediaContainer)
+        ? response.MediaContainer
+        : {};
+    const playQueueId = plexInteger(mediaContainer.playQueueID);
+    if (!playQueueId) {
+      throw new Error('Plex did not create a playable queue.');
+    }
+
+    return { playQueueId, selectedItemId: safeRatingKeys[0] };
+  }
+
+  public async replacePlaylist(
+    title: string,
+    ratingKeys: string[],
+    mediaType: 'audio' | 'video',
+    machineIdentifier: string
+  ): Promise<PlexPlaylist> {
+    const safeTitle = boundedPlexText(title, 256).trim();
+    const safeMachineIdentifier = boundedPlexText(machineIdentifier, 128);
+    const safeRatingKeys = ratingKeys
+      .slice(0, 1_000)
+      .map((key) => boundedPlexText(key, 128))
+      .filter(Boolean);
+    if (!safeTitle || !safeMachineIdentifier || safeRatingKeys.length === 0) {
+      throw new Error(
+        'A playlist name, Plex server, and at least one media item are required.'
+      );
+    }
+
+    return plexPlaylistLock.dispatch(
+      `${safeMachineIdentifier}:${safeTitle}`,
+      async () => {
+        const playlistResponse = await this.get<unknown>(
+          '/playlists',
+          undefined,
+          0
+        );
+        const playlistContainer =
+          isRecord(playlistResponse) &&
+          isRecord(playlistResponse.MediaContainer)
+            ? playlistResponse.MediaContainer
+            : {};
+        const existingPlaylistIds = (
+          Array.isArray(playlistContainer.Metadata)
+            ? playlistContainer.Metadata
+            : []
+        )
+          .slice(0, 10_000)
+          .flatMap((playlist) => {
+            if (!isRecord(playlist)) {
+              return [];
+            }
+            const playlistTitle = boundedPlexText(playlist.title, 256);
+            const ratingKey = boundedPlexText(playlist.ratingKey, 128);
+            return playlistTitle === safeTitle && ratingKey ? [ratingKey] : [];
+          });
+
+        // The name is reserved for SeerrNG. Remove every exact-name remnant
+        // before creating the replacement so retries cannot accumulate lists.
+        for (const playlistId of existingPlaylistIds) {
+          try {
+            await this.request(
+              'DELETE',
+              `/playlists/${encodeURIComponent(playlistId)}`
+            );
+          } catch (error) {
+            if (
+              !isRecord(error) ||
+              !isRecord(error.response) ||
+              error.response.status !== 404
+            ) {
+              throw error;
+            }
+          }
+        }
+
+        const queue = await this.createPlayQueue(
+          safeRatingKeys,
+          mediaType,
+          safeMachineIdentifier
+        );
+        const response = await this.request<unknown>(
+          'POST',
+          '/playlists',
+          null,
+          {
+            params: {
+              type: mediaType,
+              title: safeTitle,
+              smart: 0,
+              playQueueID: queue.playQueueId,
+            },
+          }
+        );
+        const mediaContainer =
+          isRecord(response.data) && isRecord(response.data.MediaContainer)
+            ? response.data.MediaContainer
+            : {};
+        const metadata = Array.isArray(mediaContainer.Metadata)
+          ? mediaContainer.Metadata[0]
+          : undefined;
+        const ratingKey = isRecord(metadata)
+          ? boundedPlexText(metadata.ratingKey, 128)
+          : '';
+        const key = isRecord(metadata)
+          ? boundedPlexText(metadata.key, 256)
+          : '';
+        if (!ratingKey || !key) {
+          throw new Error('Plex did not create the replacement playlist.');
+        }
+
+        return { ratingKey, key, title: safeTitle, playlistType: mediaType };
+      }
+    );
   }
 
   public async getRecentlyAdded(

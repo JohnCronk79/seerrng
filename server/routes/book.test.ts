@@ -202,6 +202,7 @@ describe('GET /book/:id', () => {
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.id, 'OL45804W');
     assert.strictEqual(res.body.author, 'Test Author');
+    assert.strictEqual(res.body.editionCount, 1);
     assert.strictEqual(res.body.onUserWatchlist, true);
   });
 

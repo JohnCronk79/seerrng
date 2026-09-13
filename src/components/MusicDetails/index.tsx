@@ -1,19 +1,14 @@
 import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
-import CachedImage from '@app/components/Common/CachedImage';
+import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
-import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
-import type { PlayButtonLink } from '@app/components/Common/PlayButton';
-import PlayButton from '@app/components/Common/PlayButton';
 import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
-import MediaSlider from '@app/components/MediaSlider';
+import MusicDetailsLayout from '@app/components/MusicDetails/MusicDetailsLayout';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
-import StatusBadge from '@app/components/StatusBadge';
-import useDeepLinks from '@app/hooks/useDeepLinks';
-import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -24,7 +19,6 @@ import {
   normalizeMusicBrainzId,
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
-import { PlayIcon } from '@heroicons/react/24/outline';
 import {
   ArrowDownTrayIcon,
   CogIcon,
@@ -40,14 +34,16 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
-import { MediaServerType } from '@server/constants/server';
 import { UserType } from '@server/constants/user';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
-import type { MusicDetails as MusicDetailsType } from '@server/models/Music';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
+import type {
+  MusicDetails as MusicDetailsType,
+  MusicRatingResponse,
+} from '@server/models/Music';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -69,17 +65,7 @@ const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
 });
 
 const messages = defineMessages('components.MusicDetails', {
-  play: 'Listen on {mediaServerName}',
-  album: 'Album',
-  artist: 'Artist',
-  releasedate: 'Release Date',
-  recordlabel: 'Record Label',
-  notavailable: 'Not available',
-  identifiers: 'Identifiers',
-  musicbrainz: 'MusicBrainz',
-  tracks: 'Tracks',
-  noTracks: 'No tracks available.',
-  manage: 'Manage',
+  manage: 'Manage Music',
   reportissue: 'Report an Issue',
   openissues: 'Open Issues',
   watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
@@ -89,14 +75,20 @@ const messages = defineMessages('components.MusicDetails', {
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
   viewrequest: 'View Request',
-  similarartists: 'Similar Artists',
   requestdiscography: 'Request Discography',
+  selectToPlay: 'No playable tracks are currently available.',
+  mp3Available: 'The MP3 version is already available.',
+  flacAvailable: 'The FLAC version is already available.',
+  mp3Pending: 'An open MP3 request already exists.',
+  flacPending: 'An open FLAC request already exists.',
+  mp3ServiceUnavailable: 'No MP3 music service is configured.',
+  flacServiceUnavailable: 'No FLAC music service is configured.',
+  blocklisted: 'This title is blocklisted.',
 });
 
 const MusicDetails = () => {
   const router = useRouter();
   const intl = useIntl();
-  const settings = useSettings();
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -106,6 +98,7 @@ const MusicDetails = () => {
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [showManager, setShowManager] = useState(router.query.manage === '1');
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
+  const [requestServerId, setRequestServerId] = useState<number>();
   const [isBlocklisting, setIsBlocklisting] = useState(false);
   const [isWatchlistUpdating, setIsWatchlistUpdating] = useState(false);
   const [toggleWatchlist, setToggleWatchlist] = useState(true);
@@ -123,6 +116,15 @@ const MusicDetails = () => {
       ? `/api/v1/music/${encodeApiPathSegment(normalizedRouteMusicId)}`
       : null
   );
+  const { data: ratingData } = useSWR<MusicRatingResponse>(
+    normalizedRouteMusicId
+      ? `/api/v1/music/${encodeApiPathSegment(normalizedRouteMusicId)}/rating`
+      : null,
+    { shouldRetryOnError: false }
+  );
+  const { data: musicServices } = useSWR<ServiceCommonServer[]>(
+    '/api/v1/service/lidarr'
+  );
 
   useEffect(() => {
     setShowManager(router.query.manage === '1');
@@ -131,11 +133,6 @@ const MusicDetails = () => {
   useEffect(() => {
     setToggleWatchlist(!data?.onUserWatchlist);
   }, [data?.onUserWatchlist]);
-
-  const { mediaUrl: plexUrl } = useDeepLinks({
-    mediaUrl: data?.mediaInfo?.mediaUrl,
-    iOSPlexUrl: data?.mediaInfo?.iOSPlexUrl,
-  });
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -149,39 +146,27 @@ const MusicDetails = () => {
   const albumId = normalizeMusicBrainzId(data.id);
   const artistId = normalizeMusicBrainzId(data.artist.id);
 
-  const getAvailableMediaServerName = () => {
-    if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
-      return intl.formatMessage(messages.play, { mediaServerName: 'Emby' });
-    }
-
-    if (settings.currentSettings.mediaServerType === MediaServerType.PLEX) {
-      return intl.formatMessage(messages.play, { mediaServerName: 'Plex' });
-    }
-
-    return intl.formatMessage(messages.play, { mediaServerName: 'Jellyfin' });
-  };
-
   const canRequest = hasPermission(
     [Permission.REQUEST, Permission.REQUEST_MUSIC],
     { type: 'or' }
   );
-
-  const mediaLinks: PlayButtonLink[] = [];
-
-  if (plexUrl && canRequest) {
-    mediaLinks.push({
-      text: getAvailableMediaServerName(),
-      url: plexUrl,
-      svg: <PlayIcon />,
-    });
-  }
-
-  const canShowRequest =
-    canRequest &&
-    (!data.mediaInfo?.status ||
-      data.mediaInfo.status === MediaStatus.UNKNOWN ||
-      data.mediaInfo.status === MediaStatus.DELETED ||
-      data.mediaInfo.status === MediaStatus.PROCESSING);
+  const canChooseAlternateTarget = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
+    { type: 'or' }
+  );
+  const playbackActions = canRequest
+    ? (itemIds: string[]) => (
+        <MediaServerPlayButton
+          mediaUrl={data.mediaInfo?.mediaUrl}
+          iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
+          mediaId={data.mediaInfo?.id}
+          itemIds={itemIds}
+          disabled={itemIds.length === 0}
+          disabledReason={intl.formatMessage(messages.selectToPlay)}
+        />
+      )
+    : undefined;
+  const canShowRequest = canRequest;
   const activeMusicRequests =
     data.mediaInfo?.requests?.filter(
       (request) =>
@@ -197,23 +182,72 @@ const MusicDetails = () => {
     activeMusicRequests.length === 1
       ? activeMusicRequests[0]
       : undefined);
-  const canReportIssue =
-    !!data.mediaInfo?.id &&
-    data.mediaInfo.status === MediaStatus.AVAILABLE &&
-    hasPermission([Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES], {
-      type: 'or',
-    });
-  const canBlocklist =
-    hasPermission(Permission.MANAGE_BLOCKLIST) &&
-    data.mediaInfo?.status !== MediaStatus.PROCESSING &&
-    data.mediaInfo?.status !== MediaStatus.AVAILABLE &&
-    data.mediaInfo?.status !== MediaStatus.PARTIALLY_AVAILABLE &&
-    data.mediaInfo?.status !== MediaStatus.PENDING &&
+  const musicRequestOptions = (['mp3', 'flac'] as const).map((format) => {
+    const service = musicServices?.find((candidate) =>
+      candidate.name.toLocaleLowerCase().includes(format)
+    );
+    const available = data.availableServices?.some(
+      (candidate) => candidate.serverId === service?.id
+    );
+    const requested =
+      !!service &&
+      activeMusicRequests.some((request) => {
+        const targets = request.serviceTargets ?? [];
+        return (
+          targets.length === 0 ||
+          targets.some(
+            (target) =>
+              target.serviceType === 'lidarr' && target.serverId === service.id
+          )
+        );
+      });
+
+    return {
+      id: format,
+      label: format.toLocaleUpperCase(),
+      onClick: () => {
+        setEditRequest(undefined);
+        setRequestServerId(service?.id);
+        setShowRequestModal(true);
+      },
+      disabled:
+        !service ||
+        data.mediaInfo?.status === MediaStatus.BLOCKLISTED ||
+        (!canChooseAlternateTarget && (available || requested)),
+      disabledReason: !service
+        ? intl.formatMessage(
+            format === 'mp3'
+              ? messages.mp3ServiceUnavailable
+              : messages.flacServiceUnavailable
+          )
+        : data.mediaInfo?.status === MediaStatus.BLOCKLISTED
+          ? intl.formatMessage(messages.blocklisted)
+          : available
+            ? intl.formatMessage(
+                format === 'mp3'
+                  ? messages.mp3Available
+                  : messages.flacAvailable
+              )
+            : requested
+              ? intl.formatMessage(
+                  format === 'mp3' ? messages.mp3Pending : messages.flacPending
+                )
+              : undefined,
+    };
+  });
+  const canUseReportIssue = hasPermission(
+    [Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES],
+    { type: 'or' }
+  );
+  const isReportIssueAvailable =
+    !!data.mediaInfo?.id && data.mediaInfo.status === MediaStatus.AVAILABLE;
+  const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
+  const isBlocklistAvailable =
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
-  const canManage =
-    hasPermission(Permission.MANAGE_REQUESTS) &&
-    data.mediaInfo &&
-    data.mediaInfo.status !== MediaStatus.UNKNOWN;
+  const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
+  const isManageAvailable = Boolean(
+    data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
+  );
   const canWatchlist =
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     user?.userType !== UserType.PLEX;
@@ -323,10 +357,170 @@ const MusicDetails = () => {
     }
   };
 
+  const primaryActions = (
+    <>
+      {canUseBlocklist && (
+        <Tooltip
+          content={intl.formatMessage(
+            isBlocklistAvailable
+              ? globalMessages.addToBlocklist
+              : globalMessages.alreadyBlocklisted
+          )}
+        >
+          <Button
+            buttonType="blocklist"
+            buttonSize="sm"
+            onClick={() => setShowBlocklistModal(true)}
+            disabled={!isBlocklistAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.alreadyBlocklisted
+            )}
+            aria-label={intl.formatMessage(globalMessages.addToBlocklist)}
+          >
+            <EyeSlashIcon />
+          </Button>
+        </Tooltip>
+      )}
+      {canUseManage && (
+        <Tooltip
+          content={intl.formatMessage(
+            isManageAvailable
+              ? messages.manage
+              : globalMessages.manageUnavailable
+          )}
+        >
+          <Button
+            buttonType="manage"
+            buttonSize="sm"
+            onClick={() => setShowManager(true)}
+            disabled={!isManageAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.manageUnavailable
+            )}
+            className="relative"
+            aria-label={intl.formatMessage(messages.manage)}
+          >
+            <CogIcon className="!mr-0" />
+            {openIssues.length > 0 && (
+              <>
+                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
+                <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
+              </>
+            )}
+          </Button>
+        </Tooltip>
+      )}
+      {canUseReportIssue && (
+        <Tooltip
+          content={intl.formatMessage(
+            isReportIssueAvailable
+              ? messages.reportissue
+              : globalMessages.reportIssueUnavailable
+          )}
+        >
+          <Button
+            buttonType="reportIssue"
+            buttonSize="sm"
+            onClick={() => setShowIssueModal(true)}
+            disabled={!isReportIssueAvailable}
+            disabledReason={intl.formatMessage(
+              globalMessages.reportIssueUnavailable
+            )}
+            aria-label={intl.formatMessage(messages.reportissue)}
+          >
+            <ExclamationTriangleIcon />
+          </Button>
+        </Tooltip>
+      )}
+      <AssociationBadge mediaType="album" id={albumId} variant="button" />
+      {canRequest && artistId && (
+        <Button
+          buttonType="bulkRequest"
+          buttonSize="sm"
+          onClick={() => setShowBulkRequestModal(true)}
+        >
+          <ArrowDownTrayIcon />
+          <span>{intl.formatMessage(messages.requestdiscography)}</span>
+        </Button>
+      )}
+      {activeMusicRequest && (
+        <Button
+          buttonType="ghost"
+          buttonSize="sm"
+          onClick={() => {
+            setEditRequest(activeMusicRequest);
+            setRequestServerId(undefined);
+            setShowRequestModal(true);
+          }}
+        >
+          <InformationCircleIcon />
+          <span>{intl.formatMessage(messages.viewrequest)}</span>
+        </Button>
+      )}
+      {canShowRequest && musicRequestOptions.length > 0 && (
+        <FormatRequestControl options={musicRequestOptions} />
+      )}
+    </>
+  );
+
+  const secondaryActions = (
+    <>
+      {canWatchlist && (
+        <Tooltip
+          content={intl.formatMessage(
+            toggleWatchlist
+              ? messages.addtowatchlist
+              : messages.removefromwatchlist
+          )}
+        >
+          <Button
+            buttonType={toggleWatchlist ? 'ghost' : 'default'}
+            buttonSize="sm"
+            onClick={toggleWatchlist ? addToWatchlist : removeFromWatchlist}
+            aria-label={intl.formatMessage(
+              toggleWatchlist
+                ? messages.addtowatchlist
+                : messages.removefromwatchlist
+            )}
+          >
+            {isWatchlistUpdating ? (
+              <Spinner />
+            ) : toggleWatchlist ? (
+              <StarIcon className="text-amber-300" />
+            ) : (
+              <MinusCircleIcon />
+            )}
+          </Button>
+        </Tooltip>
+      )}
+    </>
+  );
+
+  const additionalContent =
+    hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
+      type: 'or',
+    }) && openIssues.length > 0 ? (
+      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+        <h2 className="px-3 py-2 text-xs font-semibold text-gray-200">
+          {intl.formatMessage(messages.openissues)}
+        </h2>
+        <ul className="border-t border-gray-700">
+          {openIssues.map((issue) => (
+            <li
+              key={`music-issue-${issue.id}`}
+              className="border-b border-gray-700 last:border-b-0"
+            >
+              <IssueBlock issue={issue} />
+            </li>
+          ))}
+        </ul>
+      </section>
+    ) : undefined;
+
   return (
     <>
       <PageTitle title={data.title} />
-      {showManager && canManage && (
+      {showManager && canUseManage && isManageAvailable && (
         <ExternalMediaManageSlideOver
           data={data}
           mediaType={MediaType.MUSIC}
@@ -368,6 +562,7 @@ const MusicDetails = () => {
           show={showRequestModal}
           type="music"
           mbId={albumId}
+          initialMusicServerId={requestServerId}
           onCancel={() => {
             setEditRequest(undefined);
             setShowRequestModal(false);
@@ -389,289 +584,13 @@ const MusicDetails = () => {
           onComplete={() => revalidate()}
         />
       )}
-      <div className="relative z-10 mt-4 flex flex-col gap-6 lg:flex-row">
-        <div className="w-full max-w-xs flex-shrink-0">
-          <div className="relative aspect-square overflow-hidden rounded-xl bg-gray-800 ring-1 ring-gray-700">
-            <CachedImage
-              type="music"
-              src={
-                data.posterPath ?? '/images/seerr_poster_not_found_logo_top.png'
-              }
-              alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              fill
-            />
-          </div>
-        </div>
-        <div className="min-w-0 flex-1 text-gray-300">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <MediaTypeBadge
-              mediaType="album"
-              variant="inline"
-              className="px-3 py-1 text-xs uppercase tracking-wider"
-            />
-            {data.mediaInfo?.status &&
-              data.mediaInfo.status !== MediaStatus.UNKNOWN && (
-                <StatusBadge
-                  status={data.mediaInfo.status}
-                  downloadItem={data.mediaInfo.downloadStatus}
-                  inProgress={(data.mediaInfo.downloadStatus ?? []).length > 0}
-                  mediaType="music"
-                  mbId={musicBrainzId}
-                  serviceUrl={data.mediaInfo.serviceUrl}
-                />
-              )}
-          </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <h1
-              className="min-w-0 break-words text-3xl font-bold text-white lg:text-5xl"
-              data-testid="media-title"
-            >
-              {data.title}
-            </h1>
-            <div className="flex-shrink-0">
-              <AssociationBadge
-                mediaType="album"
-                id={albumId}
-                variant="inline"
-              />
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-            <Link
-              href={`/artist/${encodeApiPathSegment(artistId)}`}
-              className="font-medium text-gray-100 transition hover:text-white"
-            >
-              {data.artist.name}
-            </Link>
-            {data.releaseDate && (
-              <span>
-                {intl.formatMessage(messages.releasedate)}:{' '}
-                {data.releaseDate.slice(0, 4)}
-              </span>
-            )}
-            {data.type && <span>{data.type}</span>}
-            <span>
-              {intl.formatMessage(messages.recordlabel)}:{' '}
-              {data.recordLabel ?? intl.formatMessage(messages.notavailable)}
-            </span>
-          </div>
-          {(canWatchlist ||
-            canShowRequest ||
-            canReportIssue ||
-            canBlocklist ||
-            canManage ||
-            mediaLinks.length > 0) && (
-            <div className="media-actions mt-6 justify-start gap-2 sm:justify-start xl:mt-6">
-              {mediaLinks.length > 0 && (
-                <div className="z-20">
-                  <PlayButton links={mediaLinks} />
-                </div>
-              )}
-              {canWatchlist && (
-                <>
-                  {toggleWatchlist ? (
-                    <Tooltip
-                      content={intl.formatMessage(messages.addtowatchlist)}
-                    >
-                      <Button buttonType="ghost" onClick={addToWatchlist}>
-                        {isWatchlistUpdating ? (
-                          <Spinner />
-                        ) : (
-                          <StarIcon className="text-amber-300" />
-                        )}
-                      </Button>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip
-                      content={intl.formatMessage(messages.removefromwatchlist)}
-                    >
-                      <Button onClick={removeFromWatchlist}>
-                        {isWatchlistUpdating ? (
-                          <Spinner />
-                        ) : (
-                          <MinusCircleIcon />
-                        )}
-                      </Button>
-                    </Tooltip>
-                  )}
-                </>
-              )}
-              {canShowRequest && (
-                <Button
-                  buttonType="primary"
-                  onClick={() => {
-                    setEditRequest(undefined);
-                    setShowRequestModal(true);
-                  }}
-                >
-                  <ArrowDownTrayIcon />
-                  <span>{intl.formatMessage(globalMessages.request)}</span>
-                </Button>
-              )}
-              {canRequest && artistId && (
-                <Button
-                  buttonType="default"
-                  onClick={() => setShowBulkRequestModal(true)}
-                >
-                  <ArrowDownTrayIcon />
-                  <span>{intl.formatMessage(messages.requestdiscography)}</span>
-                </Button>
-              )}
-              {activeMusicRequest && (
-                <Button
-                  buttonType="default"
-                  onClick={() => {
-                    setEditRequest(activeMusicRequest);
-                    setShowRequestModal(true);
-                  }}
-                >
-                  <InformationCircleIcon />
-                  <span>{intl.formatMessage(messages.viewrequest)}</span>
-                </Button>
-              )}
-              {canManage && (
-                <Tooltip content={intl.formatMessage(messages.manage)}>
-                  <Button
-                    buttonType="ghost"
-                    onClick={() => setShowManager(true)}
-                    className="relative"
-                    aria-label={intl.formatMessage(messages.manage)}
-                  >
-                    <CogIcon className="!mr-0" />
-                    {openIssues.length > 0 && (
-                      <>
-                        <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
-                        <div className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-                      </>
-                    )}
-                  </Button>
-                </Tooltip>
-              )}
-              {canReportIssue && (
-                <Tooltip content={intl.formatMessage(messages.reportissue)}>
-                  <Button
-                    buttonType="warning"
-                    onClick={() => setShowIssueModal(true)}
-                    aria-label={intl.formatMessage(messages.reportissue)}
-                  >
-                    <ExclamationTriangleIcon className="!mr-0" />
-                  </Button>
-                </Tooltip>
-              )}
-              {canBlocklist && (
-                <Tooltip
-                  content={intl.formatMessage(globalMessages.addToBlocklist)}
-                >
-                  <Button
-                    buttonType="ghost"
-                    onClick={() => setShowBlocklistModal(true)}
-                    aria-label={intl.formatMessage(
-                      globalMessages.addToBlocklist
-                    )}
-                  >
-                    <EyeSlashIcon className="!mr-0" />
-                  </Button>
-                </Tooltip>
-              )}
-            </div>
-          )}
-          <div className="media-facts mt-6 max-w-4xl">
-            <div className="media-fact">
-              <span>{intl.formatMessage(messages.artist)}</span>
-              <span className="media-fact-value">
-                <Link href={`/artist/${encodeApiPathSegment(artistId)}`}>
-                  {data.artist.name}
-                </Link>
-              </span>
-            </div>
-            {data.releaseDate && (
-              <div className="media-fact">
-                <span>{intl.formatMessage(messages.releasedate)}</span>
-                <span className="media-fact-value">{data.releaseDate}</span>
-              </div>
-            )}
-            {data.type && (
-              <div className="media-fact">
-                <span>{intl.formatMessage(messages.album)}</span>
-                <span className="media-fact-value">{data.type}</span>
-              </div>
-            )}
-            <div className="media-fact">
-              <span>{intl.formatMessage(messages.recordlabel)}</span>
-              <span className="media-fact-value">
-                {data.recordLabel ?? intl.formatMessage(messages.notavailable)}
-              </span>
-            </div>
-            <div className="media-fact">
-              <span>{intl.formatMessage(messages.identifiers)}</span>
-              <span className="media-fact-value">
-                <a
-                  href={`https://musicbrainz.org/release-group/${musicBrainzId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {intl.formatMessage(messages.musicbrainz)}
-                </a>
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-10">
-        {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
-          type: 'or',
-        }) &&
-          openIssues.length > 0 && (
-            <div className="mb-10">
-              <h2 className="mb-4 text-2xl font-bold text-white">
-                {intl.formatMessage(messages.openissues)}
-              </h2>
-              <div className="overflow-hidden rounded-lg ring-1 ring-gray-800">
-                <ul>
-                  {openIssues.map((issue) => (
-                    <li
-                      key={`music-issue-${issue.id}`}
-                      className="border-b border-gray-800 last:border-b-0"
-                    >
-                      <IssueBlock issue={issue} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-        <h2 className="mb-4 text-2xl font-bold text-white">
-          {intl.formatMessage(messages.tracks)}
-        </h2>
-        {data.tracks.length ? (
-          <ol className="divide-y divide-gray-800 overflow-hidden rounded-lg ring-1 ring-gray-800">
-            {data.tracks.map((track) => (
-              <li
-                key={`${track.position}-${track.recordingMbid}`}
-                className="flex items-center gap-4 bg-gray-900/40 px-4 py-3"
-              >
-                <span className="w-8 text-right text-sm text-gray-500">
-                  {track.position}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-gray-100">
-                  {track.name}
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <div className="text-gray-400">
-            {intl.formatMessage(messages.noTracks)}
-          </div>
-        )}
-      </div>
-      <MediaSlider
-        sliderKey="similar-artists"
-        title={intl.formatMessage(messages.similarartists)}
-        url={`/api/v1/music/${encodeApiPathSegment(albumId)}/artist-similar`}
-        hideWhenEmpty
+      <MusicDetailsLayout
+        data={data}
+        primaryActions={primaryActions}
+        secondaryActions={secondaryActions}
+        playbackActions={playbackActions}
+        ratingData={ratingData}
+        additionalContent={additionalContent}
       />
     </>
   );

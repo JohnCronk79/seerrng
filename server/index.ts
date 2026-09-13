@@ -397,6 +397,17 @@ Promise.resolve()
               errorStack: err.stack,
               errors: err.errors,
             });
+          } else if (
+            getRequestLogPath(req.originalUrl).startsWith('/api/v1/playback/')
+          ) {
+            logger.warn('Playback API request rejected before completion.', {
+              label: 'Playback',
+              method: req.method,
+              path: getRequestLogPath(req.originalUrl),
+              status,
+              errorMessage: err.message,
+              errors: err.errors,
+            });
           }
 
           res.status(status).json(formatApiErrorResponse(err, status));

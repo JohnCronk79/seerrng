@@ -22,7 +22,7 @@ provider-specific URL Base or API adapter.
 Configure Chaptarr in **Settings > Services** as a Bookshelf server:
 
 1. Add one service entry for each format you want to request. Set **Book
-   Format** to **Ebook** or **Audiobook** to match the Chaptarr root folder and
+   Format** to **Book** or **Audiobook** to match the Chaptarr root folder and
    profiles selected below it.
 2. Use Chaptarr's normal host, port, and API key. Leave **URL Base** blank
    unless you deliberately configured a URL Base in Chaptarr.
@@ -712,12 +712,12 @@ and both-format requests have been tested through SeerrNG.
 
 In **Settings > Services**, add two Bookshelf services.
 
-Ebook service:
+Book service:
 
 ```text
 Hostname: kspls0, 127.0.0.1, or the Docker host name reachable by SeerrNG
 Port: 8787
-Book Format: Ebook
+Book Format: Book
 Quality Profile: eBook
 Root Folder: /data/plex/books
 Default Server: enabled

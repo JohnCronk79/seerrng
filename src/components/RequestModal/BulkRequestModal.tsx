@@ -56,11 +56,11 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
     'Submitting {processed} of {total} {total, plural, one {item} other {items}}.',
   close: 'Close',
   noEbookServer:
-    'No ebook Bookshelf service is configured. Ebook requests are unavailable.',
+    'No Book Bookshelf service is configured. Book requests are unavailable.',
   noAudiobookServer:
     'No audiobook Bookshelf service is configured. Audiobook requests are unavailable.',
   noBothServers:
-    'Ebook + Audiobook requires ebook and audiobook Bookshelf services to be configured.',
+    'Book + Audiobook requires Book and Audiobook Bookshelf services to be configured.',
   releasetype: 'Release Type',
   loadmore: 'Load More',
   available: 'Available',

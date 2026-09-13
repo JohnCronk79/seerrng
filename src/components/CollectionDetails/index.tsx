@@ -1,90 +1,102 @@
+import BlocklistModal from '@app/components/BlocklistModal';
+import CollectionAssociationsButton from '@app/components/CollectionDetails/CollectionAssociationsButton';
+import CollectionMetadataDisclosures from '@app/components/CollectionDetails/CollectionMetadataDisclosures';
+import CollectionPlayOnDeviceButton from '@app/components/CollectionDetails/CollectionPlayOnDeviceButton';
 import Button from '@app/components/Common/Button';
-import ButtonWithDropdown from '@app/components/Common/ButtonWithDropdown';
 import CachedImage from '@app/components/Common/CachedImage';
+import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
-import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
 import Tooltip from '@app/components/Common/Tooltip';
-import Slider from '@app/components/Slider';
-import StatusBadge from '@app/components/StatusBadge';
-import TitleCard from '@app/components/TitleCard';
+import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
+import {
+  orderCollectionPartsOldestFirst,
+  reconcileCollectionPlaybackSelection,
+} from '@app/utils/collectionPlaybackSelection';
 import defineMessages from '@app/utils/defineMessages';
 import {
   getTmdbPosterImageUrl,
   getTmdbPosterImageVariants,
 } from '@app/utils/imageCache';
+import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
 import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
-import {
-  ArrowDownTrayIcon,
-  EyeIcon,
-  EyeSlashIcon,
-} from '@heroicons/react/24/outline';
+import { EyeSlashIcon } from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { Collection } from '@server/models/Collection';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
 });
-const BlocklistModal = dynamic(() => import('@app/components/BlocklistModal'), {
-  ssr: false,
-});
 
 const messages = defineMessages('components.CollectionDetails', {
   overview: 'Overview',
-  numberofmovies: '{count} Movies',
-  removefromblocklistpartialcount:
-    '{removeLabel} ({count, plural, one {# movie} other {# movies}})',
-  requestcollection: 'Request Collection',
-  requestcollection4k: 'Request Collection in 4K',
+  overviewUnavailable: 'Overview unavailable',
+  collectionSize: 'Collection Size',
+  genres: 'Genres',
+  collection: 'Collection',
+  availability: 'Availability',
+  available: 'Available',
+  notAvailable: 'Not Available',
+  releaseDate: 'Release Date',
+  userScore: 'TMDB User Score',
+  requestUnavailable:
+    'Every movie in this collection is already available or requested.',
+  request4kUnavailable:
+    'Every 4K movie in this collection is already available or requested.',
+  selection: 'Select this available movie for playback',
 });
 
 interface CollectionDetailsProps {
   collection?: Collection;
 }
 
+const requestableStatuses = new Set([MediaStatus.UNKNOWN, MediaStatus.DELETED]);
+const availableStatuses = new Set([
+  MediaStatus.AVAILABLE,
+  MediaStatus.PARTIALLY_AVAILABLE,
+]);
+
 const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   const intl = useIntl();
   const router = useRouter();
   const settings = useSettings();
   const { hasPermission } = useUser();
+  const { addToast } = useToasts();
   const [requestModal, setRequestModal] = useState(false);
   const [is4k, setIs4k] = useState(false);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const [isBlocklistUpdating, setIsBlocklistUpdating] = useState(false);
-  const { addToast } = useToasts();
+  const [selectedMediaIds, setSelectedMediaIds] = useState<number[]>([]);
+  const [hasManualPlaybackSelection, setHasManualPlaybackSelection] =
+    useState(false);
   const collectionId =
     typeof router.query.collectionId === 'string'
       ? router.query.collectionId
-      : collection?.id
-        ? collection.id.toString()
-        : '';
+      : (collection?.id?.toString() ?? '');
 
-  const returnCollectionDownloadItems = (data: Collection | undefined) => {
-    const [downloadStatus, downloadStatus4k] = [
-      data?.parts.flatMap((item) =>
-        item.mediaInfo?.downloadStatus ? item.mediaInfo?.downloadStatus : []
-      ),
-      data?.parts.flatMap((item) =>
-        item.mediaInfo?.downloadStatus4k ? item.mediaInfo?.downloadStatus4k : []
-      ),
-    ];
-
-    return { downloadStatus, downloadStatus4k };
-  };
-
+  const getDownloadItems = (value?: Collection) => ({
+    downloadStatus: value?.parts.flatMap(
+      (part) => part.mediaInfo?.downloadStatus ?? []
+    ),
+    downloadStatus4k: value?.parts.flatMap(
+      (part) => part.mediaInfo?.downloadStatus4k ?? []
+    ),
+  });
   const {
     data,
     error,
@@ -97,246 +109,155 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
       fallbackData: collection,
       revalidateOnMount: true,
       refreshInterval: refreshIntervalHelper(
-        returnCollectionDownloadItems(collection),
-        15000
+        getDownloadItems(collection),
+        15_000
       ),
     }
   );
+  const { data: genres } = useSWR<{ id: number; name: string }[]>(
+    '/api/v1/genres/movie'
+  );
 
-  const { data: genres } =
-    useSWR<{ id: number; name: string }[]>(`/api/v1/genres/movie`);
+  const orderedParts = useMemo(
+    () => orderCollectionPartsOldestFirst(data?.parts ?? []),
+    [data?.parts]
+  );
+  const availableParts = useMemo(
+    () =>
+      orderedParts.filter(
+        (part) =>
+          !!part.mediaInfo?.id &&
+          (availableStatuses.has(part.mediaInfo.status) ||
+            availableStatuses.has(part.mediaInfo.status4k))
+      ),
+    [orderedParts]
+  );
+  const availableMediaIds = useMemo(
+    () => availableParts.map((part) => part.mediaInfo!.id),
+    [availableParts]
+  );
+  const effectivePlaybackMediaIds = resolveCanonicalPlaybackSelection(
+    availableMediaIds,
+    selectedMediaIds
+  );
+  useEffect(() => {
+    setSelectedMediaIds((current) =>
+      reconcileCollectionPlaybackSelection(
+        current,
+        availableMediaIds,
+        hasManualPlaybackSelection
+      )
+    );
+  }, [availableMediaIds, hasManualPlaybackSelection]);
 
-  const onClickHideItemBtn = async (): Promise<void> => {
-    setIsBlocklistUpdating(true);
-
-    try {
-      await axios.post(
-        `/api/v1/blocklist/collection/${encodeApiPathSegment(data?.id ?? '')}`
-      );
-
-      addToast(
-        <span>
-          {intl.formatMessage(globalMessages.blocklistSuccess, {
-            title: data?.name,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'success', autoDismiss: true }
-      );
-
-      revalidate();
-    } catch {
-      addToast(intl.formatMessage(globalMessages.blocklistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-    }
-
-    setIsBlocklistUpdating(false);
-    setShowBlocklistModal(false);
-  };
-
-  const onClickUnblocklistBtn = async (): Promise<void> => {
-    if (!data) return;
-
-    setIsBlocklistUpdating(true);
-
-    try {
-      await axios.delete(
-        `/api/v1/blocklist/collection/${encodeApiPathSegment(data.id)}`
-      );
-
-      addToast(
-        <span>
-          {intl.formatMessage(globalMessages.removeFromBlocklistSuccess, {
-            title: data.name,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'success', autoDismiss: true }
-      );
-
-      revalidate();
-    } catch {
-      addToast(intl.formatMessage(globalMessages.blocklistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-    }
-
-    setIsBlocklistUpdating(false);
-  };
-
-  const [downloadStatus, downloadStatus4k] = useMemo(() => {
-    const downloadItems = returnCollectionDownloadItems(data);
-    return [downloadItems.downloadStatus, downloadItems.downloadStatus4k];
-  }, [data]);
-
-  const [titles, titles4k] = useMemo(() => {
-    return [
-      data?.parts
-        .filter((media) => (media.mediaInfo?.downloadStatus ?? []).length > 0)
-        .map((title) => title.title),
-      data?.parts
-        .filter((media) => (media.mediaInfo?.downloadStatus4k ?? []).length > 0)
-        .map((title) => title.title),
-    ];
-  }, [data?.parts]);
-
-  if (!data && !error) {
-    return <LoadingSpinner />;
-  }
-
-  if (!data) {
-    return <ErrorPage statusCode={404} />;
-  }
-
-  let collectionStatus = MediaStatus.UNKNOWN;
-  let collectionStatus4k = MediaStatus.UNKNOWN;
+  if (!data && !error) return <LoadingSpinner />;
+  if (!data) return <ErrorPage statusCode={404} />;
 
   const blocklistedParts = data.parts.filter(
-    (part) =>
-      part.mediaInfo && part.mediaInfo.status === MediaStatus.BLOCKLISTED
+    (part) => part.mediaInfo?.status === MediaStatus.BLOCKLISTED
   );
   const isCollectionBlocklisted = blocklistedParts.length > 0;
-  const isCollectionPartiallyBlocklisted =
-    blocklistedParts.length > 0 && blocklistedParts.length < data.parts.length;
-
-  if (isCollectionBlocklisted) {
-    collectionStatus = MediaStatus.BLOCKLISTED;
-  } else if (
-    data.parts.every(
-      (part) =>
-        part.mediaInfo && part.mediaInfo.status === MediaStatus.AVAILABLE
-    )
-  ) {
-    collectionStatus = MediaStatus.AVAILABLE;
-  } else if (
-    data.parts.some(
-      (part) =>
-        part.mediaInfo && part.mediaInfo.status === MediaStatus.AVAILABLE
-    )
-  ) {
-    collectionStatus = MediaStatus.PARTIALLY_AVAILABLE;
-  }
-
-  if (
-    data.parts.every(
-      (part) =>
-        part.mediaInfo && part.mediaInfo.status4k === MediaStatus.AVAILABLE
-    )
-  ) {
-    collectionStatus4k = MediaStatus.AVAILABLE;
-  } else if (
-    data.parts.some(
-      (part) =>
-        part.mediaInfo && part.mediaInfo.status4k === MediaStatus.AVAILABLE
-    )
-  ) {
-    collectionStatus4k = MediaStatus.PARTIALLY_AVAILABLE;
-  }
-
-  const hasRequestable =
-    hasPermission([Permission.REQUEST, Permission.REQUEST_MOVIE], {
-      type: 'or',
-    }) &&
-    data.parts.filter(
-      (part) =>
-        !part.mediaInfo ||
-        part.mediaInfo.status === MediaStatus.DELETED ||
-        part.mediaInfo.status === MediaStatus.UNKNOWN
-    ).length > 0;
-
-  const hasRequestable4k =
+  const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
+  const canRequest = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_MOVIE],
+    { type: 'or' }
+  );
+  const canRequest4k =
     settings.currentSettings.movie4kEnabled &&
     hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_MOVIE], {
       type: 'or',
-    }) &&
-    data.parts.filter(
-      (part) =>
-        !part.mediaInfo ||
-        part.mediaInfo.status4k === MediaStatus.DELETED ||
-        part.mediaInfo.status4k === MediaStatus.UNKNOWN
-    ).length > 0;
-
-  const blocklistVisibility = hasPermission(
-    [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
-    { type: 'or' }
+    });
+  const hasRequestable = data.parts.some((part) =>
+    requestableStatuses.has(part.mediaInfo?.status ?? MediaStatus.UNKNOWN)
   );
-
-  const collectionAttributes: React.ReactNode[] = [];
-
-  collectionAttributes.push(
-    intl.formatMessage(messages.numberofmovies, {
-      count: data.parts.length,
-    })
+  const hasRequestable4k = data.parts.some((part) =>
+    requestableStatuses.has(part.mediaInfo?.status4k ?? MediaStatus.UNKNOWN)
   );
-
-  if (genres && data.parts.some((part) => part.genreIds.length)) {
-    collectionAttributes.push(
-      [
-        ...new Set(
-          data.parts.reduce(
-            (genresList: number[], curr) => genresList.concat(curr.genreIds),
-            []
-          )
-        ),
-      ]
-        .map((genreId) => (
-          <Link
-            href={`/discover/movies/genre/${genreId}`}
-            key={`genre-${genreId}`}
-            className="hover:underline"
-          >
-            {genres.find((g) => g.id === genreId)?.name}
-          </Link>
-        ))
-        .reduce((prev, curr) => (
-          <Fragment key={`${prev.key}-${curr.key}`}>
-            {intl.formatMessage(globalMessages.delimitedlist, {
-              a: prev,
-              b: curr,
-            })}
-          </Fragment>
-        ))
+  const genreIds = [
+    ...new Set(data.parts.flatMap((part) => part.genreIds ?? [])),
+  ];
+  const weightedVotes = data.parts.reduce(
+    (sum, part) => sum + part.voteAverage * part.voteCount,
+    0
+  );
+  const voteCount = data.parts.reduce((sum, part) => sum + part.voteCount, 0);
+  const collectionScore =
+    voteCount > 0 ? (weightedVotes / voteCount).toFixed(1) : undefined;
+  const openRequest = (request4k: boolean) => {
+    setIs4k(request4k);
+    setRequestModal(true);
+  };
+  const togglePart = (mediaId: number) => {
+    setHasManualPlaybackSelection(true);
+    setSelectedMediaIds((current) =>
+      current.includes(mediaId)
+        ? current.filter((id) => id !== mediaId)
+        : [...current, mediaId]
     );
-  }
+  };
+  const onBlocklist = async () => {
+    setIsBlocklistUpdating(true);
+    try {
+      await axios.post(
+        `/api/v1/blocklist/collection/${encodeApiPathSegment(data.id)}`
+      );
+      addToast(
+        <span>
+          {intl.formatMessage(globalMessages.blocklistSuccess, {
+            title: data.name,
+            strong: (value: ReactNode) => <strong>{value}</strong>,
+          })}
+        </span>,
+        { appearance: 'success', autoDismiss: true }
+      );
+      await revalidate();
+    } catch {
+      addToast(intl.formatMessage(globalMessages.blocklistError), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+    } finally {
+      setIsBlocklistUpdating(false);
+      setShowBlocklistModal(false);
+    }
+  };
+
+  const requestOptions = [
+    ...(canRequest
+      ? [
+          {
+            id: 'hd',
+            label: 'HD',
+            onClick: () => openRequest(false),
+            disabled: !hasRequestable,
+            disabledReason: intl.formatMessage(messages.requestUnavailable),
+          },
+        ]
+      : []),
+    ...(canRequest4k
+      ? [
+          {
+            id: '4k',
+            label: '4K',
+            onClick: () => openRequest(true),
+            disabled: !hasRequestable4k,
+            disabledReason: intl.formatMessage(messages.request4kUnavailable),
+          },
+        ]
+      : []),
+  ];
 
   return (
-    <div
-      className="media-page"
-      style={{
-        height: 493,
-      }}
-    >
-      {data.backdropPath && (
-        <div className="media-page-bg-image">
-          <CachedImage
-            type="tmdb"
-            alt=""
-            src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            fill
-            priority
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(180deg, rgba(17, 24, 39, 0.47) 0%, rgba(17, 24, 39, 1) 100%)',
-            }}
-          />
-        </div>
-      )}
+    <div className="media-page">
       <PageTitle title={data.name} />
       {requestModal && (
         <RequestModal
           tmdbId={data.id}
-          show={requestModal}
+          show
           type="collection"
           is4k={is4k}
           onComplete={() => {
-            revalidate();
+            void revalidate();
             setRequestModal(false);
           }}
           onCancel={() => setRequestModal(false)}
@@ -346,206 +267,239 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
         <BlocklistModal
           tmdbId={data.id}
           type="collection"
-          show={showBlocklistModal}
+          show
           onCancel={() => setShowBlocklistModal(false)}
-          onComplete={onClickHideItemBtn}
+          onComplete={onBlocklist}
           isUpdating={isBlocklistUpdating}
         />
       )}
 
-      <div className="media-header">
-        <div className="media-poster">
-          <CachedImage
-            type="tmdb"
-            src={
-              data.posterPath
-                ? getTmdbPosterImageUrl(data.posterPath)
-                : '/images/seerr_poster_not_found.png'
-            }
-            variants={getTmdbPosterImageVariants(data.posterPath)}
-            alt=""
-            sizes="100vw"
-            style={{ width: '100%', height: 'auto' }}
-            width={600}
-            height={900}
-            priority
-          />
-        </div>
-        <div className="media-title">
-          <div className="media-status">
-            <MediaTypeBadge mediaType="collection" variant="inline" />
-            <StatusBadge
-              status={collectionStatus}
-              downloadItem={downloadStatus}
-              title={titles}
-              statusLabelOverride={
-                isCollectionPartiallyBlocklisted
-                  ? intl.formatMessage(globalMessages.partiallyblocklisted)
-                  : undefined
-              }
-              inProgress={data.parts.some(
-                (part) => (part.mediaInfo?.downloadStatus ?? []).length > 0
-              )}
+      <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
+        {data.backdropPath && (
+          <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
+            <CachedImage
+              type="tmdb"
+              src={`https://image.tmdb.org/t/p/original${data.backdropPath}`}
+              alt=""
+              fill
+              priority
+              sizes="100vw"
+              className="object-cover object-top"
             />
-            {settings.currentSettings.movie4kEnabled &&
-              hasPermission(
-                [Permission.REQUEST_4K, Permission.REQUEST_4K_MOVIE],
-                {
-                  type: 'or',
+            <div className="refreshed-artwork-scrim" />
+            <div className="refreshed-artwork-gradient" />
+          </div>
+        )}
+
+        <div className="relative z-10">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+            <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+              <CachedImage
+                type="tmdb"
+                src={
+                  data.posterPath
+                    ? getTmdbPosterImageUrl(data.posterPath)
+                    : '/images/seerr_poster_not_found.png'
                 }
-              ) && (
-                <StatusBadge
-                  status={collectionStatus4k}
-                  downloadItem={downloadStatus4k}
-                  title={titles4k}
-                  is4k
-                  inProgress={data.parts.some(
-                    (part) =>
-                      (part.mediaInfo?.downloadStatus4k ?? []).length > 0
+                variants={getTmdbPosterImageVariants(data.posterPath)}
+                alt=""
+                fill
+                priority
+                sizes="(min-width: 640px) 80px, 64px"
+                className="object-cover"
+              />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold leading-5 text-white">
+                {data.name}
+              </h1>
+              <dl className="mt-4 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_minmax(0,1fr)_1px_max-content_minmax(0,1fr)]">
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.collectionSize)}:
+                </dt>
+                <dd className="m-0">{data.parts.length}</dd>
+                <div className="hidden bg-gray-600 card:col-start-3 card:row-span-4 card:row-start-1 card:block" />
+                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  {intl.formatMessage(messages.genres)}:
+                </dt>
+                <dd className="m-0 min-w-0 break-words card:col-start-2 card:row-start-4">
+                  {genreIds.length > 0
+                    ? genreIds.map((genreId, index) => (
+                        <span key={genreId}>
+                          {index > 0 && ', '}
+                          <Link
+                            href={`/discover/movies?genre=${genreId}`}
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline"
+                          >
+                            {genres?.find((genre) => genre.id === genreId)
+                              ?.name ?? genreId}
+                          </Link>
+                        </span>
+                      ))
+                    : intl.formatMessage(messages.notAvailable)}
+                </dd>
+              </dl>
+            </div>
+          </div>
+
+          <div className="media-rating-row">
+            <div className="flex flex-wrap items-center gap-2">
+              <MediaServerPlayButton
+                collectionMediaIds={effectivePlaybackMediaIds}
+                disabled={availableMediaIds.length === 0}
+              />
+              <CollectionPlayOnDeviceButton
+                mediaIds={effectivePlaybackMediaIds}
+              />
+            </div>
+            {collectionScore && (
+              <Link
+                href={`https://www.themoviedb.org/collection/${data.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="media-rating-link"
+                aria-label={intl.formatMessage(messages.userScore)}
+              >
+                <span className="inline-flex h-6 items-center rounded bg-[#01b4e4] px-1.5 text-xs font-black text-[#0d253f]">
+                  TMDB
+                </span>
+                <span className="media-rating-value">{collectionScore}</span>
+              </Link>
+            )}
+          </div>
+
+          <div className="media-primary-action-row">
+            {canUseBlocklist && (
+              <Tooltip
+                content={intl.formatMessage(
+                  isCollectionBlocklisted
+                    ? globalMessages.alreadyBlocklisted
+                    : globalMessages.addToBlocklist
+                )}
+              >
+                <Button
+                  buttonType="blocklist"
+                  buttonSize="sm"
+                  disabled={isCollectionBlocklisted}
+                  disabledReason={intl.formatMessage(
+                    globalMessages.alreadyBlocklisted
                   )}
-                />
-              )}
-          </div>
-          <h1>{data.name}</h1>
-          <span className="media-attributes">
-            {collectionAttributes.length > 0 &&
-              collectionAttributes
-                .map((t, k) => <span key={k}>{t}</span>)
-                .reduce((prev, curr) => (
-                  <Fragment key={`${prev.key}-${curr.key}`}>
-                    {prev}
-                    <span>|</span>
-                    {curr}
-                  </Fragment>
-                ))}
-          </span>
-        </div>
-        <div className="media-actions">
-          {hasPermission([Permission.MANAGE_BLOCKLIST], { type: 'or' }) &&
-            (isCollectionBlocklisted ? (
-              <Tooltip
-                content={
-                  blocklistedParts.length === data.parts.length
-                    ? intl.formatMessage(globalMessages.removefromBlocklist)
-                    : intl.formatMessage(
-                        messages.removefromblocklistpartialcount,
-                        {
-                          removeLabel: intl.formatMessage(
-                            globalMessages.removefromBlocklist
-                          ),
-                          count: blocklistedParts.length,
-                        }
-                      )
-                }
-              >
-                <Button
-                  buttonType="ghost"
-                  className="z-40 mr-2"
-                  buttonSize="md"
-                  onClick={onClickUnblocklistBtn}
-                  disabled={isBlocklistUpdating}
-                >
-                  <EyeIcon />
-                </Button>
-              </Tooltip>
-            ) : (
-              <Tooltip
-                content={intl.formatMessage(globalMessages.addToBlocklist)}
-              >
-                <Button
-                  buttonType="ghost"
-                  className="z-40 mr-2"
-                  buttonSize="md"
                   onClick={() => setShowBlocklistModal(true)}
-                  disabled={isBlocklistUpdating}
+                  aria-label={intl.formatMessage(globalMessages.addToBlocklist)}
                 >
-                  <EyeSlashIcon />
+                  <EyeSlashIcon className="!mr-0" />
                 </Button>
               </Tooltip>
-            ))}
-          {(hasRequestable || hasRequestable4k) && (
-            <ButtonWithDropdown
-              buttonType="primary"
-              onClick={() => {
-                setRequestModal(true);
-                setIs4k(!hasRequestable);
-              }}
-              text={
-                <>
-                  <ArrowDownTrayIcon />
-                  <span>
-                    {intl.formatMessage(
-                      hasRequestable
-                        ? messages.requestcollection
-                        : messages.requestcollection4k
-                    )}
-                  </span>
-                </>
-              }
-            >
-              {hasRequestable && hasRequestable4k && (
-                <ButtonWithDropdown.Item
-                  buttonType="primary"
-                  onClick={() => {
-                    setRequestModal(true);
-                    setIs4k(true);
-                  }}
-                >
-                  <ArrowDownTrayIcon />
-                  <span>
-                    {intl.formatMessage(messages.requestcollection4k)}
-                  </span>
-                </ButtonWithDropdown.Item>
-              )}
-            </ButtonWithDropdown>
-          )}
-        </div>
-      </div>
-      {data.overview && (
-        <div className="media-overview">
-          <div className="flex-1">
-            <h2>{intl.formatMessage(messages.overview)}</h2>
-            <p>{data.overview}</p>
+            )}
+            <CollectionAssociationsButton parts={data.parts} />
+            <FormatRequestControl options={requestOptions} />
           </div>
+
+          <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+            <h2 className="text-xs font-semibold text-gray-200">
+              {intl.formatMessage(messages.overview)}
+            </h2>
+            <p className="refreshed-detail-text-muted mt-4 text-sm leading-5">
+              {data.overview ||
+                intl.formatMessage(messages.overviewUnavailable)}
+            </p>
+          </section>
+
+          <CollectionMetadataDisclosures parts={data.parts} />
+
+          <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+            <h2 className="text-xs font-semibold text-gray-200">
+              {intl.formatMessage(messages.collection)}
+            </h2>
+            <div className="mt-2 max-h-[312px] space-y-2 overflow-y-auto pr-1">
+              {orderedParts.map((part) => {
+                const mediaId = part.mediaInfo?.id;
+                const available =
+                  !!mediaId &&
+                  (availableStatuses.has(
+                    part.mediaInfo?.status ?? MediaStatus.UNKNOWN
+                  ) ||
+                    availableStatuses.has(
+                      part.mediaInfo?.status4k ?? MediaStatus.UNKNOWN
+                    ));
+                const selected =
+                  !!mediaId && selectedMediaIds.includes(mediaId);
+                const partGenres = part.genreIds
+                  .map((id) => genres?.find((genre) => genre.id === id)?.name)
+                  .filter(Boolean)
+                  .slice(0, 4)
+                  .join(', ');
+                return (
+                  <article
+                    key={part.id}
+                    className="refreshed-card-surface grid min-h-[96px] grid-cols-[56px_minmax(0,1fr)] gap-3 rounded-lg border border-gray-700 p-2"
+                  >
+                    <div className="relative h-20 w-14 overflow-hidden rounded ring-1 ring-gray-600">
+                      <CachedImage
+                        type="tmdb"
+                        src={
+                          part.posterPath
+                            ? getTmdbPosterImageUrl(part.posterPath)
+                            : '/images/seerr_poster_not_found.png'
+                        }
+                        variants={getTmdbPosterImageVariants(part.posterPath)}
+                        alt=""
+                        fill
+                        sizes="56px"
+                        className="object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0 text-[11px] leading-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <SelectionCircle
+                          disabled={!available}
+                          onClick={() => mediaId && togglePart(mediaId)}
+                          selected={selected}
+                          label={intl.formatMessage(messages.selection)}
+                        />
+                        <Link
+                          href={`/movie/${part.id}`}
+                          className="truncate text-sm font-semibold text-white hover:text-indigo-200 hover:underline"
+                        >
+                          {part.title}
+                        </Link>
+                      </div>
+                      <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3">
+                        <dt className="font-medium text-gray-100">
+                          {intl.formatMessage(messages.availability)}:
+                        </dt>
+                        <dd>
+                          <AvailabilityValue
+                            tone={available ? 'available' : 'unavailable'}
+                          >
+                            {intl.formatMessage(
+                              available
+                                ? messages.available
+                                : messages.notAvailable
+                            )}
+                          </AvailabilityValue>
+                        </dd>
+                        <dt className="font-medium text-gray-100">
+                          {intl.formatMessage(messages.releaseDate)}:
+                        </dt>
+                        <dd className="truncate">{part.releaseDate || '—'}</dd>
+                        <dt className="font-medium text-gray-100">
+                          {intl.formatMessage(messages.genres)}:
+                        </dt>
+                        <dd className="truncate">{partGenres || '—'}</dd>
+                        <dt className="font-medium text-gray-100">TMDB:</dt>
+                        <dd>
+                          {part.voteAverage ? part.voteAverage.toFixed(1) : '—'}
+                        </dd>
+                      </dl>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         </div>
-      )}
-      <div className="slider-header">
-        <div className="slider-title">
-          <span>{intl.formatMessage(globalMessages.movies)}</span>
-        </div>
-      </div>
-      <Slider
-        sliderKey="collection-movies"
-        isLoading={false}
-        isEmpty={data.parts.length === 0}
-        items={data.parts
-          .filter((title) => {
-            if (!blocklistVisibility) {
-              return title.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
-            }
-            return title;
-          })
-          .map((title) => (
-            <TitleCard
-              key={`collection-movie-${title.id}`}
-              id={title.id}
-              isAddedToWatchlist={title.mediaInfo?.watchlists?.length ?? 0}
-              image={title.posterPath}
-              status={title.mediaInfo?.status}
-              status4k={title.mediaInfo?.status4k}
-              summary={title.overview}
-              title={title.title}
-              userScore={title.voteAverage}
-              year={title.releaseDate}
-              mediaType={title.mediaType}
-              inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
-              inProgress4k={
-                (title.mediaInfo?.downloadStatus4k ?? []).length > 0
-              }
-              mutateParent={revalidate}
-            />
-          ))}
-      />
+      </article>
       <div className="extra-bottom-space relative" />
     </div>
   );

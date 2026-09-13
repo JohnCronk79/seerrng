@@ -54,7 +54,7 @@ const messages = defineMessages('components.Settings.ReadarrModal', {
   externalUrl: 'External URL',
   enableSearch: 'Enable Automatic Search',
   serviceType: 'Book Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   compatibilityNote:
     'Bookshelf is the recommended book backend. Readarr-compatible servers, including Chaptarr, can also be used. For Chaptarr, set Book Format to match the configured root folder; Seerr sends that format explicitly on every request.',

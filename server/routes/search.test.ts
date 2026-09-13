@@ -260,6 +260,84 @@ describe('GET /search', () => {
     assert.strictEqual(bookSearch.mock.callCount(), 0);
   });
 
+  it('limits global book keywords to visible title and author fields', async () => {
+    const bookSearch = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ query }: { query: string }) => {
+        assert.strictEqual(
+          query,
+          '(title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
+        );
+
+        return {
+          numFound: 2,
+          start: 0,
+          docs: [
+            {
+              key: '/works/OLWINDOWS11W',
+              title: 'Windows 11 Inside Out',
+              author_name: ['Ed Bott'],
+            },
+            {
+              key: '/works/OLHIDDENW',
+              title: 'A Completely Unrelated Novel',
+              subject: ['Windows', '11'],
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'windows 11',
+      type: 'book',
+      format: 'ebook',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(bookSearch.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['Windows 11 Inside Out']
+    );
+  });
+
+  it('keeps the main artist search while refining music by album title', async () => {
+    let albumQuery: string | undefined;
+    const artistSearch = mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal',
+      async () => ({
+        results: [],
+        totalResults: 0,
+      })
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        albumQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'Madonna',
+      type: 'music',
+      resultFilter: 'Prayer',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      albumQuery,
+      '(releasegroup:madonna OR artist:madonna) AND releasegroup:prayer'
+    );
+    assert.strictEqual(artistSearch.mock.callCount(), 0);
+  });
+
   it('rejects book formats on non-book searches', async () => {
     const agent = await loginAs('friend@seerr.dev', 'test1234');
     const res = await agent.get('/search').query({
@@ -281,6 +359,18 @@ describe('GET /search', () => {
   });
 
   it('returns global video, music, and book results together', async () => {
+    getSettings().lidarr = [
+      {
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as LidarrSettings,
+      {
+        id: 2,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as LidarrSettings,
+    ];
     mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
       results: [
         {
@@ -408,6 +498,15 @@ describe('GET /search', () => {
         caaUrl: 'https://covers.example/album.jpg',
       })
     );
+    const musicMedia = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mbId: 'a1a2a3a4-b1b2-c1c2-d1d2-e1e2e3e4e5e6',
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.AVAILABLE,
+        availableMusicServiceIds: [0, 2],
+      })
+    );
     const bookMedia = await getRepository(Media).save(
       new Media({
         tmdbId: 0,
@@ -441,6 +540,8 @@ describe('GET /search', () => {
       (result: { mediaType: string }) => result.mediaType === 'album'
     );
     assert.equal(album.posterPath, 'https://covers.example/album.jpg');
+    assert.equal(album.mediaInfo.id, musicMedia.id);
+    assert.deepStrictEqual(album.availableQualities, ['MP3', 'FLAC']);
 
     const book = res.body.results.find(
       (result: { mediaType: string }) => result.mediaType === 'book'
@@ -1003,14 +1104,16 @@ describe('search filters behind the OpenAPI validator', () => {
     return validatedApp;
   }
 
-  it('admits the music type and both book formats', async () => {
+  it('admits the music refinement and both book formats', async () => {
     const validatedApp = createValidatedApp();
     getSettings().lidarr = [];
     getSettings().readarr = [{ serviceType: 'ebook' } as ReadarrSettings];
 
-    const music = await request(validatedApp)
-      .get('/api/v1/search')
-      .query({ query: 'microsoft', type: 'music' });
+    const music = await request(validatedApp).get('/api/v1/search').query({
+      query: 'madonna',
+      type: 'music',
+      resultFilter: 'prayer',
+    });
     const audiobook = await request(validatedApp)
       .get('/api/v1/search')
       .query({ query: 'microsoft', type: 'book', format: 'audiobook' });

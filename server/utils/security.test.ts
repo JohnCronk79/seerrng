@@ -6,6 +6,7 @@ import {
   createSafeHttpRequestOptions,
   getRateLimitKey,
   isLocalOrPrivateAddress,
+  isLoopbackOrLinkLocalAddress,
   isSafeHttpUrl,
   isValidApplicationUrl,
   isValidHttpUrl,
@@ -384,6 +385,29 @@ describe('isLocalOrPrivateAddress', () => {
     assert.equal(isLocalOrPrivateAddress('2002:7f00:1::1'), true);
     assert.equal(isLocalOrPrivateAddress('3fff::1'), true);
     assert.equal(isLocalOrPrivateAddress('5f00::1'), true);
+  });
+});
+
+describe('isLoopbackOrLinkLocalAddress', () => {
+  it('rejects loopback addresses', () => {
+    assert.equal(isLoopbackOrLinkLocalAddress('127.0.0.1'), true);
+    assert.equal(isLoopbackOrLinkLocalAddress('127.255.255.255'), true);
+    assert.equal(isLoopbackOrLinkLocalAddress('localhost'), true);
+    assert.equal(isLoopbackOrLinkLocalAddress('::1'), true);
+  });
+
+  it('rejects link-local addresses, including the cloud metadata address', () => {
+    assert.equal(isLoopbackOrLinkLocalAddress('169.254.169.254'), true);
+    assert.equal(isLoopbackOrLinkLocalAddress('169.254.0.1'), true);
+    assert.equal(isLoopbackOrLinkLocalAddress('fe80::1'), true);
+  });
+
+  it('allows ordinary LAN addresses used by real player devices', () => {
+    assert.equal(isLoopbackOrLinkLocalAddress('192.168.1.50'), false);
+    assert.equal(isLoopbackOrLinkLocalAddress('10.0.0.5'), false);
+    assert.equal(isLoopbackOrLinkLocalAddress('172.16.4.4'), false);
+    assert.equal(isLoopbackOrLinkLocalAddress('8.8.8.8'), false);
+    assert.equal(isLoopbackOrLinkLocalAddress('fc00::1'), false);
   });
 });
 

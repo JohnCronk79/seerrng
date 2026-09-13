@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, describe, it, type TestContext } from 'node:test';
 import { Readable, Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 
@@ -17,6 +17,30 @@ import {
 } from './animelist';
 
 const temporaryDirectories: string[] = [];
+
+const createSymlinkOrSkip = async (
+  t: TestContext,
+  target: string,
+  symlinkPath: string,
+  type?: 'dir' | 'file' | 'junction'
+) => {
+  try {
+    await fs.symlink(target, symlinkPath, type);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      process.platform === 'win32' &&
+      ['EPERM', 'EACCES'].includes(code ?? '')
+    ) {
+      t.skip(
+        'Windows has not granted this process permission to create symlinks'
+      );
+      return false;
+    }
+    throw error;
+  }
+};
 
 afterEach(async () => {
   await Promise.all(
@@ -74,7 +98,7 @@ describe('assertMappingFileSize', () => {
 });
 
 describe('mapping file I/O', () => {
-  it('does not follow a predictable staging symlink', async () => {
+  it('does not follow a predictable staging symlink', async (t) => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-anime-list-')
     );
@@ -83,7 +107,9 @@ describe('mapping file I/O', () => {
     const unrelatedPath = path.join(directory, 'unrelated');
     const predictableTempPath = `${mappingPath}.tmp`;
     await fs.writeFile(unrelatedPath, 'do not overwrite');
-    await fs.symlink(unrelatedPath, predictableTempPath);
+    if (!(await createSymlinkOrSkip(t, unrelatedPath, predictableTempPath))) {
+      return;
+    }
 
     await writeMappingFileAtomically(
       Readable.from(['<anime-list />']),
@@ -95,7 +121,7 @@ describe('mapping file I/O', () => {
     assert.equal((await fs.stat(mappingPath)).mode & 0o777, 0o600);
   });
 
-  it('rejects symlinked mapping files during reads', async () => {
+  it('rejects symlinked mapping files during reads', async (t) => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-anime-list-')
     );
@@ -103,12 +129,14 @@ describe('mapping file I/O', () => {
     const mappingPath = path.join(directory, 'anime-list.xml');
     const targetPath = path.join(directory, 'target.xml');
     await fs.writeFile(targetPath, '<anime-list />');
-    await fs.symlink(targetPath, mappingPath);
+    if (!(await createSymlinkOrSkip(t, targetPath, mappingPath))) {
+      return;
+    }
 
     await assert.rejects(readMappingFile(mappingPath), /ELOOP|symlink/i);
   });
 
-  it('rejects symlinks above the mapping directory', async () => {
+  it('rejects symlinks above the mapping directory', async (t) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-anime-list-'));
     temporaryDirectories.push(root);
     const targetRoot = path.join(root, 'target');
@@ -119,7 +147,9 @@ describe('mapping file I/O', () => {
       path.join(targetDirectory, 'anime-list.xml'),
       '<anime-list />'
     );
-    await fs.symlink(targetRoot, linkedRoot);
+    if (!(await createSymlinkOrSkip(t, targetRoot, linkedRoot, 'dir'))) {
+      return;
+    }
     const mappingPath = path.join(linkedRoot, 'nested', 'anime-list.xml');
 
     await assert.rejects(readMappingFile(mappingPath), /symlink/i);

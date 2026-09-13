@@ -3,7 +3,6 @@ import GenreCard from '@app/components/GenreCard';
 import Slider from '@app/components/Slider';
 import useDiscoverRowSnapshot from '@app/hooks/useDiscoverRowSnapshot';
 import defineMessages from '@app/utils/defineMessages';
-import { ArrowRightCircleIcon } from '@heroicons/react/24/outline';
 import type { GenreSliderItem } from '@server/interfaces/api/discoverInterfaces';
 import Link from 'next/link';
 import React from 'react';
@@ -33,10 +32,10 @@ const TvGenreSlider = () => {
       <div className="slider-header">
         <Link href="/discover/tv/genres" className="slider-title">
           <span>{intl.formatMessage(messages.tvgenres)}</span>
-          <ArrowRightCircleIcon />
         </Link>
       </div>
       <Slider
+        compact
         sliderKey="tv-genres"
         isLoading={isLoading && !error}
         isEmpty={false}

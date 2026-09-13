@@ -18,7 +18,7 @@ RUN apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat bash && 
 FROM target-base AS prod-deps
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
 
 RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store CI=true pnpm install --prod --frozen-lockfile
@@ -63,14 +63,17 @@ ENV COMMIT_TAG=${COMMIT_TAG}
 ENV BUILD_VERSION=${BUILD_VERSION}
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
 
 RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_BINARY=0 pnpm install --frozen-lockfile
 
 COPY . .
 
-RUN pnpm build
+# The repository-wide current-batch contract is validated before the image build.
+# Its inputs intentionally include files excluded from the secure Docker context,
+# so run the in-context i18n check and the two application compilers directly.
+RUN pnpm i18n:check && pnpm build:next && pnpm build:server
 
 RUN rm -rf .next/cache
 

@@ -38,4 +38,4 @@ export const shouldSyncSearchInput = (
 ): boolean =>
   routeQuery !== searchValue &&
   searchValue === debouncedValue &&
-  !(pathname === '/search' && closingSearch);
+  !(pathname === '/search' && (closingSearch || searchValue === ''));

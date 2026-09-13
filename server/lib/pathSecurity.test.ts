@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
+const posixIt = process.platform === 'win32' ? it.skip : it;
+
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +19,7 @@ afterEach(async () => {
 });
 
 describe('assertNoSymlinkDirectoryComponents', () => {
-  it('rejects symlinks in non-final path components', async () => {
+  posixIt('rejects symlinks in non-final path components', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'seerr-path-'));
     temporaryDirectories.push(root);
     const target = path.join(root, 'target');

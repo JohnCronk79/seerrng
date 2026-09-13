@@ -99,6 +99,19 @@ describe('mapOpenLibraryWork', () => {
 
     assert.strictEqual(result.isbnCandidates?.length, MAX_BOOK_ISBN_CANDIDATES);
   });
+
+  it('preserves the first valid publisher from edition data', () => {
+    const result = mapOpenLibraryWork(
+      { key: '/works/OL123W', title: 'Test Book' },
+      undefined,
+      [
+        { key: '/books/OL1M', publishers: ['  '] },
+        { key: '/books/OL2M', publishers: ['Example Press'] },
+      ]
+    );
+
+    assert.strictEqual(result.publisher, 'Example Press');
+  });
 });
 
 describe('mapOpenLibrarySearchDoc', () => {

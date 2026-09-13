@@ -14,6 +14,7 @@ import type {
   TmdbTvDetails,
 } from '@server/api/themoviedb/interfaces';
 import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
+import { classifyAudioPlaybackFormats } from '@server/lib/audioPlaybackFormat';
 import { resolveOpenLibraryIdentifiersForPlexAudiobook } from '@server/lib/bookIdentifierResolver';
 import cacheManager from '@server/lib/cache';
 import {
@@ -585,9 +586,32 @@ export class PlexScanner
       return;
     }
 
+    let audioFormats = classifyAudioPlaybackFormats(
+      plexitem.Media.flatMap((media) => [media.audioCodec, media.container])
+    );
+    if (audioFormats.length === 0) {
+      try {
+        const tracks = await this.plexClient.getChildrenMetadata(
+          plexitem.ratingKey
+        );
+        audioFormats = classifyAudioPlaybackFormats(
+          tracks.flatMap((track) =>
+            track.Media.flatMap((media) => [media.audioCodec, media.container])
+          )
+        );
+      } catch (error) {
+        this.log('Unable to classify Plex album playback format', 'warn', {
+          ratingKey: plexitem.ratingKey,
+          errorMessage:
+            error instanceof Error ? error.message : 'Unknown provider error',
+        });
+      }
+    }
+
     await this.processMusic(mbId, {
       mediaAddedAt: new Date(plexitem.addedAt * 1000),
       ratingKey: plexitem.ratingKey,
+      audioFormats,
       title: plexitem.title,
       mutationGuard: (callback) => this.withConfigurationSnapshot(callback),
       outerMutationGuard: (callback) => this.withOwnerAuthority(callback),

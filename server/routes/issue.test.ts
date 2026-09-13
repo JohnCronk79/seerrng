@@ -11,6 +11,7 @@ import { getRepository } from '@server/datasource';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
 import Media from '@server/entity/Media';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
@@ -93,7 +94,8 @@ async function createIssue(
   email = 'admin@seerr.dev',
   tmdbId = 100,
   issueType = IssueType.VIDEO,
-  status = IssueStatus.OPEN
+  status = IssueStatus.OPEN,
+  mediaType = MediaType.MOVIE
 ) {
   const user = await getRepository(User).findOneByOrFail({
     email,
@@ -101,7 +103,7 @@ async function createIssue(
   const media = await getRepository(Media).save(
     new Media({
       tmdbId,
-      mediaType: MediaType.MOVIE,
+      mediaType,
       status: MediaStatus.AVAILABLE,
       status4k: MediaStatus.UNKNOWN,
     })
@@ -142,11 +144,140 @@ describe('Issue route validation', () => {
     assert.match(res.body.message, /Sort must be valid/);
   });
 
+  it('rejects unknown issue media type filters', async () => {
+    const agent = await login();
+    const res = await agent.get('/issue').query({ mediaType: 'podcast' });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Media type must be valid/);
+  });
+
+  it('rejects unknown issue type filters', async () => {
+    const agent = await login();
+    const res = await agent.get('/issue').query({ issueType: 'quality' });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Issue type must be valid/);
+  });
+
   it('accepts sorting issues by added date', async () => {
     const agent = await login();
     const res = await agent.get('/issue').query({ sort: 'added' });
 
     assert.notEqual(res.status, 400);
+  });
+
+  it('searches issue media through the locally stored metadata snapshot', async () => {
+    const issue = await createIssue('admin@seerr.dev', 108);
+    await getRepository(MediaSearchMetadata).save({
+      mediaId: issue.media.id,
+      media: issue.media,
+      title: 'Issue Metadata Movie',
+      director: 'Hidden Search Director',
+      genres: 'Science Fiction',
+      searchText:
+        'issue metadata movie hidden search director science fiction radarr-hd',
+    });
+    const agent = await login();
+
+    const res = await agent
+      .get('/issue')
+      .query({ search: 'hidden search director' });
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(
+      res.body.results.map(({ id }: { id: number }) => id),
+      [issue.id]
+    );
+  });
+
+  it('filters issues and task counts by media type', async () => {
+    const issue = await createIssue(
+      'admin@seerr.dev',
+      109,
+      IssueType.VIDEO,
+      IssueStatus.OPEN,
+      MediaType.TV
+    );
+    await getRepository(MediaSearchMetadata).save({
+      mediaId: issue.media.id,
+      media: issue.media,
+      title: 'Issue Media Filter Marker',
+      searchText: 'issue media filter marker',
+    });
+    const agent = await login();
+
+    const [seriesResponse, movieResponse] = await Promise.all([
+      agent.get('/issue').query({
+        search: 'issue media filter marker',
+        mediaType: MediaType.TV,
+      }),
+      agent.get('/issue').query({
+        search: 'issue media filter marker',
+        mediaType: MediaType.MOVIE,
+      }),
+    ]);
+
+    assert.strictEqual(seriesResponse.status, 200);
+    assert.deepStrictEqual(
+      seriesResponse.body.results.map(({ id }: { id: number }) => id),
+      [issue.id]
+    );
+    assert.deepStrictEqual(seriesResponse.body.counts, {
+      all: 1,
+      open: 1,
+      resolved: 0,
+    });
+    assert.strictEqual(movieResponse.status, 200);
+    assert.deepStrictEqual(movieResponse.body.results, []);
+    assert.deepStrictEqual(movieResponse.body.counts, {
+      all: 0,
+      open: 0,
+      resolved: 0,
+    });
+  });
+
+  it('filters issues and task counts by issue type', async () => {
+    const issue = await createIssue(
+      'admin@seerr.dev',
+      110,
+      IssueType.AUDIO,
+      IssueStatus.OPEN
+    );
+    await getRepository(MediaSearchMetadata).save({
+      mediaId: issue.media.id,
+      media: issue.media,
+      title: 'Issue Type Filter Marker',
+      searchText: 'issue type filter marker',
+    });
+    const agent = await login();
+
+    const [audioResponse, videoResponse] = await Promise.all([
+      agent
+        .get('/issue')
+        .query({ search: 'issue type filter marker', issueType: 'audio' }),
+      agent
+        .get('/issue')
+        .query({ search: 'issue type filter marker', issueType: 'video' }),
+    ]);
+
+    assert.strictEqual(audioResponse.status, 200);
+    assert.deepStrictEqual(
+      audioResponse.body.results.map(({ id }: { id: number }) => id),
+      [issue.id]
+    );
+    assert.deepStrictEqual(audioResponse.body.counts, {
+      all: 1,
+      open: 1,
+      resolved: 0,
+    });
+    assert.strictEqual(videoResponse.status, 200);
+    assert.deepStrictEqual(videoResponse.body.results, []);
+    assert.deepStrictEqual(videoResponse.body.counts, {
+      all: 0,
+      open: 0,
+      resolved: 0,
+    });
   });
 
   it('rejects malformed issue create numeric fields before media lookup', async () => {
@@ -183,6 +314,124 @@ describe('Issue route validation', () => {
 
     assert.strictEqual(res.status, 400);
     assert.match(res.body.message, /Issue type must be valid/);
+  });
+
+  it('persists the selected quality and affected series episodes', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 111,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.AVAILABLE,
+      })
+    );
+    const agent = await login();
+    const res = await agent.post('/issue').send({
+      issueType: IssueType.VIDEO,
+      mediaId: media.id,
+      message: 'Several episodes have visible artifacts.',
+      is4k: true,
+      problemSeason: 3,
+      problemEpisodes: [7, 5, 7, 6],
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.is4k, true);
+    assert.strictEqual(res.body.problemSeason, 3);
+    assert.strictEqual(res.body.problemEpisode, 5);
+    assert.deepStrictEqual(res.body.problemEpisodes, [5, 6, 7]);
+
+    const persisted = await getRepository(Issue).findOneByOrFail({
+      id: res.body.id,
+    });
+    assert.strictEqual(persisted.is4k, true);
+    assert.deepStrictEqual(persisted.problemEpisodes, [5, 6, 7]);
+  });
+
+  it('persists independent episode selections for multiple seasons', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 113,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const selections = [
+      { seasonNumber: 1, episodeNumbers: [4, 2, 4] },
+      { seasonNumber: 3 },
+      { seasonNumber: 5, episodeNumbers: [8, 7] },
+    ];
+    const agent = await login();
+    const res = await agent.post('/issue').send({
+      issueType: IssueType.AUDIO,
+      mediaId: media.id,
+      message: 'Several episodes have audio problems.',
+      problemEpisodeSelections: selections,
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body.problemEpisodeSelections, [
+      { seasonNumber: 1, episodeNumbers: [2, 4] },
+      { seasonNumber: 3 },
+      { seasonNumber: 5, episodeNumbers: [7, 8] },
+    ]);
+    assert.strictEqual(res.body.problemSeason, 1);
+    assert.strictEqual(res.body.problemEpisode, 2);
+    assert.deepStrictEqual(res.body.problemEpisodes, [2, 4]);
+
+    const persisted = await getRepository(Issue).findOneByOrFail({
+      id: res.body.id,
+    });
+    assert.deepStrictEqual(persisted.problemEpisodeSelections, [
+      { seasonNumber: 1, episodeNumbers: [2, 4] },
+      { seasonNumber: 3 },
+      { seasonNumber: 5, episodeNumbers: [7, 8] },
+    ]);
+    assert.deepStrictEqual(persisted.problemEpisodes, [2, 4]);
+  });
+
+  it('rejects an empty partial-season episode selection', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 114,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const agent = await login();
+    const res = await agent.post('/issue').send({
+      issueType: IssueType.VIDEO,
+      mediaId: media.id,
+      message: 'The selected episode is broken.',
+      problemEpisodeSelections: [{ seasonNumber: 1, episodeNumbers: [] }],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /must include at least one episode/);
+  });
+
+  it('rejects malformed affected episode selections', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 112,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const agent = await login();
+    const res = await agent.post('/issue').send({
+      issueType: IssueType.VIDEO,
+      mediaId: media.id,
+      message: 'The selected episode is broken.',
+      problemSeason: 1,
+      problemEpisodes: [1, '2'],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /positive integers/);
   });
 
   it('returns issue details without requiring a request body', async () => {

@@ -4,7 +4,6 @@ import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import useDiscoverRowSnapshot from '@app/hooks/useDiscoverRowSnapshot';
 import { useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
-import { ArrowRightCircleIcon } from '@heroicons/react/24/outline';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import Link from 'next/link';
 import { useMemo } from 'react';
@@ -93,7 +92,6 @@ const PlexWatchlistSlider = () => {
       <div className="slider-header">
         <Link href="/discover/watchlist" className="slider-title">
           <span>{intl.formatMessage(messages.plexwatchlist)}</span>
-          <ArrowRightCircleIcon />
         </Link>
       </div>
       <Slider

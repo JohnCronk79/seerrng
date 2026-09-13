@@ -57,7 +57,7 @@ const messages = defineMessages('components.ManageSlideOver', {
   manageModalMedia: 'Media',
   manageModalMedia4k: '4K Media',
   manageModalAdvanced: 'Advanced',
-  manageModalNoRequests: 'No requests.',
+  manageModalNoRequests: 'No requests',
   manageModalClearMedia: 'Clear Data',
   manageModalClearMediaWarning:
     '* This will irreversibly remove all data for this {mediaType}, including any requests. If this item exists in your {mediaServerName} library, the media information will be recreated during the next scan.',

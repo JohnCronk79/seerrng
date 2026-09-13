@@ -37,6 +37,15 @@ describe('PLEX_OAUTH_HTTP_OPTIONS', () => {
   });
 });
 
+describe('Plex popup return URL', () => {
+  it('returns only to the local Seerr completion page', () => {
+    assert.equal(
+      getPlexPopupReturnUrl('http://localhost:5065'),
+      'http://localhost:5065/login/plex/loading?complete=1'
+    );
+  });
+});
+
 describe('Plex PIN response boundaries', () => {
   it('falls back to the hard deadline for malformed expiration values', () => {
     const hardDeadline = Date.parse('2026-07-16T12:15:00.000Z');

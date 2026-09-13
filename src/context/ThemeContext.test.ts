@@ -78,6 +78,7 @@ describe('themePalettes', () => {
         return [
           tokens.pageBg,
           tokens.pageGlowStart,
+          tokens.pageGlowEnd,
           tokens.searchbarScrolled,
           tokens.sidebarStart,
           tokens.sidebarEnd,

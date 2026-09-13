@@ -49,6 +49,10 @@ export interface MbAlbumDetails extends MbAlbumResult {
   }[];
   links?: MbLink[];
   poster_path?: string;
+  rating?: {
+    value: number;
+    'votes-count': number;
+  };
 }
 
 export interface MbRecordingRelease {

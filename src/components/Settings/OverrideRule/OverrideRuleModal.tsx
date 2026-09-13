@@ -45,7 +45,7 @@ const messages = defineMessages('components.Settings.OverrideRuleModal', {
   qualityprofile: 'Quality Profile',
   selectQualityProfile: 'Select quality profile',
   tags: 'Tags',
-  notagoptions: 'No tags.',
+  notagoptions: 'No tags',
   selecttags: 'Select tags',
   ruleCreated: 'Override rule created successfully!',
   ruleUpdated: 'Override rule updated successfully!',

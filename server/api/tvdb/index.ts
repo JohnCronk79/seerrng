@@ -388,7 +388,10 @@ class Tvdb extends ExternalAPI implements TvShowProvider {
     const tvdbData = await this.fetchTvdbShowData(tvdbId);
 
     if (!tvdbData) {
-      logger.error(`Failed to fetch TVDB data for ID: ${tvdbId}`);
+      logger.error('Failed to fetch TVDB data', {
+        label: 'TVDB API',
+        tvdbId,
+      });
       return this.createEmptySeasonResponse(tvId);
     }
 
@@ -401,9 +404,11 @@ class Tvdb extends ExternalAPI implements TvShowProvider {
     );
 
     if (!season) {
-      logger.error(
-        `Failed to find season ${seasonNumber} for TVDB ID: ${tvdbId}`
-      );
+      logger.error('Failed to find TVDB season', {
+        label: 'TVDB API',
+        seasonNumber,
+        tvdbId,
+      });
       return this.createEmptySeasonResponse(tvId);
     }
 
@@ -445,9 +450,11 @@ class Tvdb extends ExternalAPI implements TvShowProvider {
     language: string
   ): Promise<TmdbSeasonWithEpisodes> {
     if (!season) {
-      logger.error(
-        `Failed to find season ${seasonNumber} for TVDB ID: ${tvdbId}`
-      );
+      logger.error('Failed to find TVDB season', {
+        label: 'TVDB API',
+        seasonNumber,
+        tvdbId,
+      });
       return this.createEmptySeasonResponse(tvId);
     }
 
@@ -553,9 +560,11 @@ class Tvdb extends ExternalAPI implements TvShowProvider {
     season: TvdbSeasonDetails
   ): Promise<TmdbSeasonWithEpisodes> {
     if (!season) {
-      logger.error(
-        `Failed to find season ${seasonNumber} for TVDB ID: ${tvdbId}`
-      );
+      logger.error('Failed to find TVDB season', {
+        label: 'TVDB API',
+        seasonNumber,
+        tvdbId,
+      });
       return this.createEmptySeasonResponse(tvId);
     }
 

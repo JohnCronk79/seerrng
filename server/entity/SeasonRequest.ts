@@ -1,4 +1,5 @@
 import { MediaRequestStatus } from '@server/constants/media';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   Column,
@@ -22,6 +23,10 @@ class SeasonRequest {
 
   @Column({ type: 'int', default: MediaRequestStatus.PENDING })
   public status: MediaRequestStatus;
+
+  /** Null means the request covers the entire season. */
+  @Column({ type: 'simple-json', nullable: true })
+  public episodeNumbers?: SeasonEpisodeSelection['episodeNumbers'];
 
   @ManyToOne(() => MediaRequest, (request) => request.seasons, {
     onDelete: 'CASCADE',

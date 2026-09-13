@@ -1,42 +1,44 @@
-import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { Menu, Transition } from '@headlessui/react';
-import { EllipsisVerticalIcon } from '@heroicons/react/24/solid';
+import { Transition } from '@headlessui/react';
+import {
+  PencilSquareIcon,
+  TrashIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import { CheckIcon } from '@heroicons/react/24/solid';
 import { MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
 import type { default as IssueCommentType } from '@server/entity/IssueComment';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
 import Link from 'next/link';
 import { Fragment, useState } from 'react';
-import { FormattedRelativeTime, useIntl } from 'react-intl';
+import { FormattedDate, useIntl } from 'react-intl';
 import ReactMarkdown from 'react-markdown';
 import * as Yup from 'yup';
 
 const messages = defineMessages('components.IssueDetails.IssueComment', {
-  postedby: 'Posted {relativeTime} by {username}',
-  postedbyedited: 'Posted {relativeTime} by {username} (Edited)',
-  delete: 'Delete Comment',
+  delete: 'Delete',
+  deleteTitle: 'Delete Comment',
   areyousuredelete: 'Are you sure you want to delete this comment?',
   validationComment: 'You must enter a message',
   validationCommentLength:
     'Comment must be {maxLength, number} characters or fewer',
-  edit: 'Edit Comment',
+  edit: 'Edit',
+  edited: 'Edited',
 });
 
 interface IssueCommentProps {
   comment: IssueCommentType;
-  isReversed?: boolean;
   isActiveUser?: boolean;
   onUpdate?: () => void;
 }
 
 const IssueComment = ({
   comment,
-  isReversed = false,
   isActiveUser = false,
   onUpdate,
 }: IssueCommentProps) => {
@@ -44,8 +46,11 @@ const IssueComment = ({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const { hasPermission } = useUser();
-
-  const EditCommentSchema = Yup.object().shape({
+  const canDelete = isActiveUser || hasPermission(Permission.MANAGE_ISSUES);
+  const edited =
+    new Date(comment.createdAt).getTime() !==
+    new Date(comment.updatedAt).getTime();
+  const schema = Yup.object().shape({
     newMessage: Yup.string()
       .max(
         MAX_ISSUE_MESSAGE_LENGTH,
@@ -59,21 +64,14 @@ const IssueComment = ({
   const deleteComment = async () => {
     try {
       await axios.delete(`/api/v1/issueComment/${comment.id}`);
-    } catch {
-      // something went wrong deleting the comment
     } finally {
-      if (onUpdate) {
-        onUpdate();
-      }
+      setShowDeleteModal(false);
+      onUpdate?.();
     }
   };
 
   return (
-    <div
-      className={`flex ${
-        isReversed ? 'flex-row' : 'flex-row-reverse space-x-reverse'
-      } mt-4 space-x-4`}
-    >
+    <div className="grid grid-cols-[max-content_2rem_minmax(0,1fr)] items-start gap-x-3 border-t border-gray-700/70 py-2 first:border-t-0">
       <Transition
         as={Fragment}
         enter="transition-opacity duration-300"
@@ -85,197 +83,130 @@ const IssueComment = ({
         show={showDeleteModal}
       >
         <Modal
-          title={intl.formatMessage(messages.delete)}
+          title={intl.formatMessage(messages.deleteTitle)}
           onCancel={() => setShowDeleteModal(false)}
-          onOk={() => deleteComment()}
+          onOk={() => void deleteComment()}
           okText={intl.formatMessage(messages.delete)}
           okButtonType="danger"
         >
           {intl.formatMessage(messages.areyousuredelete)}
         </Modal>
       </Transition>
+
+      <time
+        className="refreshed-detail-text-muted whitespace-nowrap text-xs leading-4"
+        dateTime={new Date(comment.createdAt).toISOString()}
+      >
+        <FormattedDate value={comment.createdAt} dateStyle="medium" />
+        <span aria-hidden="true"> </span>
+        <FormattedDate value={comment.createdAt} timeStyle="short" />
+      </time>
       <Link href={isActiveUser ? '/profile' : `/users/${comment.user.id}`}>
         <CachedImage
           type="avatar"
           src={comment.user.avatar}
           alt=""
-          className="h-10 w-10 scale-100 transform-gpu rounded-full object-cover ring-1 ring-gray-500 transition duration-300 hover:scale-105"
-          width={40}
-          height={40}
+          className="h-8 w-8 rounded-full object-cover ring-1 ring-gray-500 transition hover:ring-indigo-400"
+          width={32}
+          height={32}
         />
       </Link>
-      <div className="relative flex-1">
-        <div className="w-full rounded-md shadow ring-1 ring-gray-500">
-          {(isActiveUser || hasPermission(Permission.MANAGE_ISSUES)) && (
-            <Menu
-              as="div"
-              className="absolute right-1 top-2 z-40 inline-block text-left"
-            >
-              {({ open }) => (
-                <>
-                  <div>
-                    <Menu.Button className="flex items-center rounded-full text-gray-400 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-100">
-                      <span className="sr-only">Open options</span>
-                      <EllipsisVerticalIcon
-                        className="h-5 w-5"
-                        aria-hidden="true"
-                      />
-                    </Menu.Button>
-                  </div>
 
-                  <Transition
-                    as={Fragment}
-                    show={open}
-                    enter="transition ease-out duration-100"
-                    enterFrom="opacity-0 scale-95"
-                    enterTo="opacity-100 scale-100"
-                    leave="transition ease-in duration-75"
-                    leaveFrom="opacity-100 scale-100"
-                    leaveTo="opacity-0 scale-95"
-                  >
-                    <Menu.Items
-                      static
-                      className="absolute right-0 mt-2 w-56 origin-top-right rounded-md bg-gray-700 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none"
-                    >
-                      <div className="py-1">
-                        {isActiveUser && (
-                          <Menu.Item>
-                            {({ active }) => (
-                              <button
-                                onClick={() => setIsEditing(true)}
-                                className={`block w-full px-4 py-2 text-left text-sm ${
-                                  active
-                                    ? 'bg-gray-600 text-white'
-                                    : 'text-gray-100'
-                                }`}
-                              >
-                                {intl.formatMessage(messages.edit)}
-                              </button>
-                            )}
-                          </Menu.Item>
-                        )}
-                        <Menu.Item>
-                          {({ active }) => (
-                            <button
-                              onClick={() => setShowDeleteModal(true)}
-                              className={`block w-full px-4 py-2 text-left text-sm ${
-                                active
-                                  ? 'bg-gray-600 text-white'
-                                  : 'text-gray-100'
-                              }`}
-                            >
-                              {intl.formatMessage(messages.delete)}
-                            </button>
-                          )}
-                        </Menu.Item>
-                      </div>
-                    </Menu.Items>
-                  </Transition>
-                </>
-              )}
-            </Menu>
-          )}
-          <div
-            className={`absolute top-3 z-10 h-3 w-3 rotate-45 bg-gray-800 shadow ring-1 ring-gray-500 ${
-              isReversed ? '-left-1' : '-right-1'
-            }`}
-          />
-          <div className="relative z-20 w-full rounded-md bg-gray-800 py-4 pl-4 pr-8">
-            {isEditing ? (
-              <Formik
-                initialValues={{ newMessage: comment.message }}
-                onSubmit={async (values) => {
-                  await axios.put(`/api/v1/issueComment/${comment.id}`, {
-                    message: values.newMessage,
-                  });
-
-                  if (onUpdate) {
-                    onUpdate();
-                  }
-
-                  setIsEditing(false);
-                }}
-                validationSchema={EditCommentSchema}
+      <div className="refreshed-detail-text min-w-0 text-xs leading-4">
+        {!isEditing && (isActiveUser || canDelete) && (
+          <div className="float-right mb-1 ml-3 flex items-start gap-1">
+            {isActiveUser && (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="inline-flex h-[22px] items-center gap-1 rounded-md border border-indigo-500/80 bg-indigo-700/35 px-2 text-[11px] font-semibold text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
-                {({ isValid, isSubmitting, errors, touched }) => {
-                  return (
-                    <Form>
-                      <Field
-                        as="textarea"
-                        id="newMessage"
-                        name="newMessage"
-                        className="h-24"
-                      />
-                      {errors.newMessage &&
-                        touched.newMessage &&
-                        typeof errors.newMessage === 'string' && (
-                          <div className="error">{errors.newMessage}</div>
-                        )}
-                      <div className="mt-4 flex items-center justify-end space-x-2">
-                        <Button
-                          type="button"
-                          onClick={() => setIsEditing(false)}
-                        >
-                          {intl.formatMessage(globalMessages.cancel)}
-                        </Button>
-                        <Button
-                          buttonType="primary"
-                          disabled={!isValid || isSubmitting}
-                        >
-                          {intl.formatMessage(globalMessages.save)}
-                        </Button>
-                      </div>
-                    </Form>
-                  );
-                }}
-              </Formik>
-            ) : (
-              <div className="prose w-full max-w-full">
-                <ReactMarkdown
-                  skipHtml
-                  allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}
-                >
-                  {comment.message}
-                </ReactMarkdown>
-              </div>
+                <PencilSquareIcon className="h-3.5 w-3.5" />
+                {intl.formatMessage(messages.edit)}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold text-red-200 hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+              >
+                <TrashIcon className="h-3.5 w-3.5" />
+                {intl.formatMessage(messages.delete)}
+              </button>
             )}
           </div>
+        )}
+        <div className="leading-4">
+          <Link
+            href={isActiveUser ? '/profile' : `/users/${comment.user.id}`}
+            className="font-medium text-gray-200 hover:text-white hover:underline"
+          >
+            {comment.user.displayName}
+          </Link>
+          {edited && (
+            <span className="refreshed-detail-text-muted ml-1">
+              ({intl.formatMessage(messages.edited)})
+            </span>
+          )}
         </div>
-        <div
-          className={`flex items-center justify-between pt-2 text-xs ${
-            isReversed ? 'flex-row-reverse' : 'flex-row'
-          }`}
-        >
-          <span>
-            {intl.formatMessage(
-              comment.createdAt !== comment.updatedAt
-                ? messages.postedbyedited
-                : messages.postedby,
-              {
-                username: (
-                  <Link
-                    href={
-                      isActiveUser ? '/profile' : `/users/${comment.user.id}`
-                    }
-                    className="font-semibold text-gray-100 transition duration-300 hover:text-white hover:underline"
+        {isEditing ? (
+          <Formik
+            initialValues={{ newMessage: comment.message }}
+            validationSchema={schema}
+            onSubmit={async (values) => {
+              await axios.put(`/api/v1/issueComment/${comment.id}`, {
+                message: values.newMessage,
+              });
+              onUpdate?.();
+              setIsEditing(false);
+            }}
+          >
+            {({ isValid, isSubmitting, errors, touched }) => (
+              <Form className="mt-1">
+                <Field
+                  as="textarea"
+                  rows={3}
+                  id={`comment-${comment.id}`}
+                  name="newMessage"
+                  className="max-h-28 w-full resize-y overflow-y-auto rounded-md border-gray-600 bg-gray-900/60 text-xs text-gray-100"
+                />
+                {errors.newMessage && touched.newMessage && (
+                  <div className="mt-1 text-xs text-red-300">
+                    {String(errors.newMessage)}
+                  </div>
+                )}
+                <div className="mt-1 flex justify-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(false)}
+                    className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold text-red-200 hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
                   >
-                    {comment.user.displayName}
-                  </Link>
-                ),
-                relativeTime: (
-                  <FormattedRelativeTime
-                    value={Math.floor(
-                      (new Date(comment.createdAt).getTime() - Date.now()) /
-                        1000
-                    )}
-                    updateIntervalInSeconds={1}
-                    numeric="auto"
-                  />
-                ),
-              }
+                    <XMarkIcon className="h-3.5 w-3.5" />
+                    {intl.formatMessage(globalMessages.cancel)}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!isValid || isSubmitting}
+                    className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold text-emerald-200 hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-40"
+                  >
+                    <CheckIcon className="h-3.5 w-3.5" />
+                    {intl.formatMessage(globalMessages.save)}
+                  </button>
+                </div>
+              </Form>
             )}
-          </span>
-        </div>
+          </Formik>
+        ) : (
+          <div className="refreshed-detail-text-muted prose prose-sm max-w-full text-xs leading-4 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
+            <ReactMarkdown
+              skipHtml
+              allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}
+            >
+              {comment.message}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );

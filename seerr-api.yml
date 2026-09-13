@@ -974,6 +974,20 @@ components:
           type: string
         releaseDate:
           type: string
+        availableServices:
+          type: array
+          description: Available Lidarr destinations and their configured quality-profile labels.
+          items:
+            type: object
+            required:
+              - serverId
+              - quality
+            properties:
+              serverId:
+                type: number
+              quality:
+                type: string
+                example: FLAC
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
     ArtistResult:
@@ -1474,6 +1488,20 @@ components:
           type: number
         voteCount:
           type: number
+    SeasonEpisodeSelection:
+      type: object
+      properties:
+        seasonNumber:
+          type: number
+          minimum: 0
+        episodeNumbers:
+          type: array
+          description: Omit to select the entire season.
+          items:
+            type: number
+            minimum: 1
+      required:
+        - seasonNumber
     Season:
       type: object
       properties:
@@ -1808,12 +1836,18 @@ components:
               type: integer
             completed:
               type: integer
+            unavailable:
+              type: integer
+            failed:
+              type: integer
           required:
             - total
             - active
             - incomplete
             - attention
             - completed
+            - unavailable
+            - failed
         olderCount:
           type: integer
           description: Number of requests in the same scope that predate the selected rolling time window.
@@ -2783,6 +2817,26 @@ components:
         issueType:
           type: number
           example: 1
+        problemSeason:
+          type: number
+          example: 2
+        problemEpisode:
+          type: number
+          example: 4
+        problemEpisodes:
+          type: array
+          nullable: true
+          items:
+            type: number
+          example: [4, 5, 6]
+        problemEpisodeSelections:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/SeasonEpisodeSelection'
+        is4k:
+          type: boolean
+          example: false
         media:
           $ref: '#/components/schemas/MediaInfo'
         createdBy:
@@ -3161,6 +3215,156 @@ components:
         - totalItems
         - matchedItems
         - items
+    PlaybackDevice:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        client:
+          type: string
+        platform:
+          type: string
+        serverType:
+          type: integer
+      required:
+        - id
+        - name
+        - client
+        - serverType
+    PlaybackCatalogItem:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        index:
+          type: integer
+        parentIndex:
+          type: integer
+        kind:
+          type: string
+          enum:
+            - movie
+            - episode
+            - track
+        available:
+          type: boolean
+          enum:
+            - true
+      required:
+        - id
+        - title
+        - index
+        - kind
+        - available
+    PlaybackCatalogGroup:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        index:
+          type: integer
+        available:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaybackCatalogItem'
+      required:
+        - id
+        - title
+        - index
+        - available
+        - items
+    PlaybackCatalogResponse:
+      type: object
+      properties:
+        mediaId:
+          type: integer
+        serverType:
+          type: integer
+        is4k:
+          type: boolean
+        rootItem:
+          $ref: '#/components/schemas/PlaybackCatalogItem'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaybackCatalogGroup'
+      required:
+        - mediaId
+        - serverType
+        - is4k
+        - groups
+    PlaybackCommand:
+      type: object
+      properties:
+        deviceId:
+          type: string
+          maxLength: 512
+        itemIds:
+          type: array
+          minItems: 0
+          items:
+            type: string
+        is4k:
+          type: boolean
+      required:
+        - deviceId
+        - itemIds
+    PlaybackPlaylistCommand:
+      type: object
+      properties:
+        itemIds:
+          type: array
+          minItems: 0
+          maxItems: 1000
+          items:
+            type: string
+            maxLength: 128
+        is4k:
+          type: boolean
+      required:
+        - itemIds
+    PlaybackPlaylistResponse:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+      required:
+        - url
+    CollectionPlaybackCommand:
+      type: object
+      properties:
+        deviceId:
+          type: string
+          maxLength: 512
+        mediaIds:
+          type: array
+          minItems: 1
+          items:
+            type: integer
+      required:
+        - deviceId
+        - mediaIds
+    CollectionPlaylistCommand:
+      type: object
+      properties:
+        mediaIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: integer
+            minimum: 1
+      required:
+        - mediaIds
   securitySchemes:
     cookieAuth:
       type: apiKey
@@ -5935,6 +6139,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+  /user/{userId}/avatar:
+    put:
+      summary: Upload a local user's profile picture
+      description: |
+        Replaces the signed-in local user's profile picture. Profile pictures
+        for Plex, Jellyfin, and Emby accounts remain managed by their provider.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Profile picture updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid profile picture
+        '403':
+          description: Access denied
+        '409':
+          description: Profile picture is managed by a linked provider
+        '413':
+          description: Profile picture exceeds the upload limit
   /user/jellyfin/{jellyfinUserId}:
     get:
       summary: Get user by Jellyfin user ID
@@ -6084,7 +6332,31 @@ paths:
           schema:
             type: string
             enum: [all, manual, blocklistedTags]
-            default: manual
+            default: all
+        - in: query
+          name: timeFrame
+          schema:
+            type: string
+            enum: [all, 7d, 14d, 30d, 6m]
+            default: all
+        - in: query
+          name: mediaType
+          schema:
+            type: string
+            enum: [all, movie, tv, music, book]
+            default: all
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [date, title, mediaType]
+            default: date
+        - in: query
+          name: sortDirection
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         '200':
           description: Blocklisted items returned
@@ -6095,6 +6367,16 @@ paths:
                 properties:
                   pageInfo:
                     $ref: '#/components/schemas/PageInfo'
+                  counts:
+                    type: object
+                    required: [all, manual, blocklistedTags]
+                    properties:
+                      all:
+                        type: integer
+                      manual:
+                        type: integer
+                      blocklistedTags:
+                        type: integer
                   results:
                     type: array
                     items:
@@ -6948,6 +7230,11 @@ paths:
               - ebook
               - audiobook
             description: Select the configured book service format. Valid only when type is book.
+        - in: query
+          name: resultFilter
+          schema:
+            type: string
+          description: Refine music search results by album title while preserving the main search query.
       responses:
         '200':
           description: Results
@@ -7140,6 +7427,19 @@ paths:
           schema:
             type: string
             example: en
+        - in: query
+          name: search
+          description: Searches movie titles instead of using structured discovery filters
+          schema:
+            type: string
+            maxLength: 256
+            example: Star Trek
+        - in: query
+          name: availability
+          description: Selects the client-side scanned library quality view
+          schema:
+            type: string
+            enum: [hd, 4k]
         - in: query
           name: genre
           schema:
@@ -7472,6 +7772,19 @@ paths:
           schema:
             type: string
             example: en
+        - in: query
+          name: search
+          description: Searches TV titles instead of using structured discovery filters
+          schema:
+            type: string
+            maxLength: 256
+            example: Reacher
+        - in: query
+          name: availability
+          description: Selects the client-side scanned library quality view
+          schema:
+            type: string
+            enum: [hd, 4k]
         - in: query
           name: genre
           schema:
@@ -7912,6 +8225,12 @@ paths:
             type: string
             example: kind of blue
         - in: query
+          name: availability
+          description: Selects the client-side scanned Lidarr quality view
+          schema:
+            type: string
+            enum: [mp3, flac]
+        - in: query
           name: shuffleSeed
           schema:
             type: string
@@ -7980,14 +8299,41 @@ paths:
               - oldest
               - random
               - rating
+              - rating.asc
+              - rating.desc
               - editions
             default: ranked
+        - in: query
+          name: firstPublishYear
+          schema:
+            type: string
+            maxLength: 16
+            example: '2024'
+        - in: query
+          name: language
+          schema:
+            type: string
+            maxLength: 3
+            example: eng
+        - in: query
+          name: minRating
+          schema:
+            type: string
+            maxLength: 3
+            example: '4.0'
         - in: query
           name: shuffleSeed
           schema:
             type: string
             maxLength: 128
             example: refresh-1
+        - in: query
+          name: responseVersion
+          description: Client response-contract version used to retire incompatible browser cache entries.
+          schema:
+            type: integer
+            enum: [2]
+            default: 2
       responses:
         '200':
           description: Book discovery results
@@ -8841,6 +9187,11 @@ paths:
                         minimum: 0
                     - type: string
                       enum: [all]
+                seasonRequests:
+                  type: array
+                  description: Exact season and episode selections. Omit episodeNumbers to request an entire season.
+                  items:
+                    $ref: '#/components/schemas/SeasonEpisodeSelection'
                 is4k:
                   type: boolean
                   example: false
@@ -8963,7 +9314,7 @@ paths:
             type: number
             minimum: 1
             maximum: 100
-            default: 25
+            default: 10
         - in: query
           name: skip
           schema:
@@ -9028,6 +9379,9 @@ paths:
             enum:
               [
                 all,
+                pending,
+                processing,
+                deleted,
                 active,
                 incomplete,
                 attention,
@@ -9045,6 +9399,13 @@ paths:
                 completed,
               ]
             default: all
+        - in: query
+          name: search
+          description: Search locally stored request, media, requester, service, and external identifier metadata.
+          schema:
+            type: string
+            maxLength: 512
+            nullable: true
       responses:
         '200':
           description: Request lifecycle statuses returned
@@ -9237,6 +9598,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+  /request/{requestId}/status:
+    delete:
+      summary: Delete request status entry
+      description: |
+        Cancels and cleans up active work when required, then permanently removes the request and its lifecycle history. The owner may remove their own request; users with `MANAGE_REQUESTS` or `ADMIN` may remove any request.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          description: Request ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      responses:
+        '204':
+          description: Request status entry and history removed
+        '409':
+          description: Active work could not be cleaned up safely
   /request/{requestId}/{status}:
     post:
       summary: Update a request's status
@@ -10345,8 +10726,14 @@ paths:
           name: sort
           schema:
             type: string
-            enum: [added, modified]
+            enum: [added, modified, status]
             default: added
+        - in: query
+          name: sortDirection
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - in: query
           name: filter
           schema:
@@ -10359,6 +10746,30 @@ paths:
             type: number
             nullable: true
             example: 1
+        - in: query
+          name: timeFrame
+          schema:
+            type: string
+            enum: [7d, 14d, 30d, 6m, all]
+            default: all
+        - in: query
+          name: mediaType
+          schema:
+            type: string
+            enum: [all, movie, tv, music, book]
+            default: all
+        - in: query
+          name: issueType
+          schema:
+            type: string
+            enum: [all, audio, video, subtitle, other]
+            default: all
+        - in: query
+          name: search
+          schema:
+            type: string
+            nullable: true
+            example: playback
       responses:
         '200':
           description: Issues returned
@@ -10392,6 +10803,25 @@ paths:
                   type: string
                 mediaId:
                   type: number
+                problemSeason:
+                  type: number
+                  minimum: 0
+                problemEpisode:
+                  type: number
+                  minimum: 0
+                problemEpisodes:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: number
+                    minimum: 1
+                problemEpisodeSelections:
+                  type: array
+                  maxItems: 100
+                  items:
+                    $ref: '#/components/schemas/SeasonEpisodeSelection'
+                is4k:
+                  type: boolean
                 userId:
                   type: number
                   nullable: true
@@ -10993,6 +11423,164 @@ paths:
                   message:
                     type: string
                     example: 'The playlist could not be read or matched right now.'
+  /playback/devices:
+    get:
+      summary: List active playback devices available to the current user
+      tags:
+        - playback
+      responses:
+        '200':
+          description: Active playback devices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaybackDevice'
+        '502':
+          description: Playback devices could not be retrieved.
+  /playback/media/{mediaId}:
+    get:
+      summary: Get the playable catalog for a media item
+      tags:
+        - playback
+      parameters:
+        - in: path
+          name: mediaId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: is4k
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Playable catalog for the requested media item.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackCatalogResponse'
+        '403':
+          description: Playback is not permitted for this user.
+        '502':
+          description: Playable media could not be retrieved.
+  /playback/media/{mediaId}/play:
+    post:
+      summary: Start playback for selected items on a media-server device
+      tags:
+        - playback
+      parameters:
+        - in: path
+          name: mediaId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackCommand'
+      responses:
+        '204':
+          description: Playback started.
+        '400':
+          description: The playback selection is invalid.
+        '403':
+          description: Playback is not permitted for this user.
+        '404':
+          description: The selected playback device is unavailable.
+        '409':
+          description: No media server is configured.
+        '502':
+          description: Playback could not be started.
+  /playback/media/{mediaId}/playlist:
+    post:
+      summary: Replace the current user's media-server playlist with selected items
+      tags:
+        - playback
+      parameters:
+        - in: path
+          name: mediaId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackPlaylistCommand'
+      responses:
+        '200':
+          description: Playlist replaced and ready to open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackPlaylistResponse'
+        '400':
+          description: The playlist selection is invalid.
+        '403':
+          description: Playback is not permitted for this user.
+        '409':
+          description: No media server is configured.
+        '502':
+          description: The media-server playlist could not be replaced.
+  /playback/collection/play:
+    post:
+      summary: Start playback for selected collection movies
+      tags:
+        - playback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionPlaybackCommand'
+      responses:
+        '204':
+          description: Collection playback started.
+        '400':
+          description: The collection playback selection is invalid.
+        '403':
+          description: Playback is not permitted for this user.
+        '404':
+          description: The selected playback device is unavailable.
+        '409':
+          description: No media server is configured.
+        '502':
+          description: Collection playback could not be started.
+  /playback/collection/playlist:
+    post:
+      summary: Replace the current user's media-server playlist with selected collection movies
+      tags:
+        - playback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionPlaylistCommand'
+      responses:
+        '200':
+          description: Playlist replaced and ready to open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackPlaylistResponse'
+        '400':
+          description: The collection playlist selection is invalid.
+        '403':
+          description: Playback is not permitted for this user.
+        '409':
+          description: No media server is configured.
+        '502':
+          description: The media-server playlist could not be replaced.
 security:
   - cookieAuth: []
   - apiKey: []

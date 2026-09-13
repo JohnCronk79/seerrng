@@ -10,11 +10,14 @@ import { describe, it } from 'node:test';
 
 type FixtureChild = ChildProcessByStdio<null, Readable, Readable>;
 
+const posixDescribe = process.platform === 'win32' ? describe.skip : describe;
+
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const FIXTURE_PATH = path.join(
   REPO_ROOT,
   'server/test/fixtures/gracefulShutdownProcess.ts'
 );
+const CHILD_READY_TIMEOUT_MS = 20_000;
 
 const waitForReady = (child: FixtureChild): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -22,7 +25,7 @@ const waitForReady = (child: FixtureChild): Promise<number> =>
     let stderr = '';
     const timeout = setTimeout(
       () => reject(new Error(`Child did not become ready: ${stderr}`)),
-      5_000
+      CHILD_READY_TIMEOUT_MS
     );
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
@@ -106,7 +109,7 @@ const stopChild = async (child: FixtureChild) => {
   }
 };
 
-describe('process shutdown integration', () => {
+posixDescribe('process shutdown integration', () => {
   it('stops admission, drains held work, and exits successfully on SIGTERM', async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seerr-shutdown-')

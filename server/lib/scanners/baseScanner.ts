@@ -12,6 +12,7 @@ import MediaRequest, {
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
+import type { AudioPlaybackFormat } from '@server/lib/audioPlaybackFormat';
 import {
   normalizeExternalBookId,
   normalizeMusicBrainzId,
@@ -73,6 +74,7 @@ export interface ProcessOptions {
   mediaAddedAt?: Date;
   ratingKey?: string;
   jellyfinMediaId?: string;
+  audioFormats?: AudioPlaybackFormat[];
   imdbId?: string;
   serviceId?: number;
   externalServiceId?: number;
@@ -352,6 +354,7 @@ class BaseScanner<T> {
       externalServiceId,
       externalServiceSlug,
       jellyfinMediaId,
+      audioFormats = [],
       processing = false,
       title = 'Unknown Album',
       hasFile = true,
@@ -369,12 +372,24 @@ class BaseScanner<T> {
           this.asyncLock.dispatch(normalizedMbId, () =>
             this.runProcessMutation(mutationGuard, async () => {
               const existing = await mediaRepository.findOne({
-                where: { mbId: normalizedMbId, mediaType: MediaType.MUSIC },
+                where: [
+                  { mbId: normalizedMbId, mediaType: MediaType.MUSIC },
+                  ...(serviceId !== undefined && externalServiceId !== undefined
+                    ? [
+                        {
+                          serviceId,
+                          externalServiceId,
+                          mediaType: MediaType.MUSIC,
+                        },
+                      ]
+                    : []),
+                ],
               });
 
               if (existing) {
                 let changedExisting = false;
                 const previousStatus = existing.status;
+                const isAvailableOnService = !processing && hasFile;
 
                 existing.status =
                   !processing && hasFile
@@ -409,6 +424,36 @@ class BaseScanner<T> {
                   changedExisting = true;
                 }
 
+                if (serviceId !== undefined) {
+                  const currentAvailableServiceIds =
+                    existing.availableMusicServiceIds ?? [];
+                  const nextAvailableServiceIds = isAvailableOnService
+                    ? [...new Set([...currentAvailableServiceIds, serviceId])]
+                    : currentAvailableServiceIds.filter(
+                        (availableServiceId) => availableServiceId !== serviceId
+                      );
+                  if (
+                    existing.availableMusicServiceIds === null ||
+                    existing.availableMusicServiceIds === undefined ||
+                    nextAvailableServiceIds.length !==
+                      currentAvailableServiceIds.length ||
+                    nextAvailableServiceIds.some(
+                      (availableServiceId, index) =>
+                        availableServiceId !== currentAvailableServiceIds[index]
+                    )
+                  ) {
+                    existing.availableMusicServiceIds = nextAvailableServiceIds;
+                    changedExisting = true;
+                  }
+                  if (
+                    nextAvailableServiceIds.length > 0 &&
+                    existing.status !== MediaStatus.AVAILABLE
+                  ) {
+                    existing.status = MediaStatus.AVAILABLE;
+                    changedExisting = true;
+                  }
+                }
+
                 if (
                   externalServiceId !== undefined &&
                   existing.externalServiceId !== externalServiceId
@@ -441,6 +486,39 @@ class BaseScanner<T> {
                   changedExisting = true;
                 }
 
+                if (
+                  ratingKey !== undefined &&
+                  audioFormats.includes('mp3') &&
+                  existing.ratingKeyMp3 !== ratingKey
+                ) {
+                  existing.ratingKeyMp3 = ratingKey;
+                  changedExisting = true;
+                }
+                if (
+                  ratingKey !== undefined &&
+                  audioFormats.includes('flac') &&
+                  existing.ratingKeyFlac !== ratingKey
+                ) {
+                  existing.ratingKeyFlac = ratingKey;
+                  changedExisting = true;
+                }
+                if (
+                  jellyfinMediaId !== undefined &&
+                  audioFormats.includes('mp3') &&
+                  existing.jellyfinMediaIdMp3 !== jellyfinMediaId
+                ) {
+                  existing.jellyfinMediaIdMp3 = jellyfinMediaId;
+                  changedExisting = true;
+                }
+                if (
+                  jellyfinMediaId !== undefined &&
+                  audioFormats.includes('flac') &&
+                  existing.jellyfinMediaIdFlac !== jellyfinMediaId
+                ) {
+                  existing.jellyfinMediaIdFlac = jellyfinMediaId;
+                  changedExisting = true;
+                }
+
                 if (changedExisting) {
                   await mediaRepository.save(existing);
                   this.log(`Updating existing album: ${title}`, 'info');
@@ -453,10 +531,32 @@ class BaseScanner<T> {
                     mediaType: MediaType.MUSIC,
                     mediaAddedAt,
                     ratingKey,
+                    ratingKeyMp3:
+                      ratingKey && audioFormats.includes('mp3')
+                        ? ratingKey
+                        : undefined,
+                    ratingKeyFlac:
+                      ratingKey && audioFormats.includes('flac')
+                        ? ratingKey
+                        : undefined,
                     serviceId,
+                    availableMusicServiceIds:
+                      serviceId !== undefined && !processing && hasFile
+                        ? [serviceId]
+                        : serviceId !== undefined
+                          ? []
+                          : undefined,
                     externalServiceId,
                     externalServiceSlug,
                     jellyfinMediaId,
+                    jellyfinMediaIdMp3:
+                      jellyfinMediaId && audioFormats.includes('mp3')
+                        ? jellyfinMediaId
+                        : undefined,
+                    jellyfinMediaIdFlac:
+                      jellyfinMediaId && audioFormats.includes('flac')
+                        ? jellyfinMediaId
+                        : undefined,
                     status:
                       !processing && hasFile
                         ? MediaStatus.AVAILABLE

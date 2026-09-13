@@ -89,11 +89,11 @@ describe('mergeQueryString', () => {
 
     strictEqual(
       route.pathname,
-      '/discover/books?subject=science%2Ffiction&query=space+opera+%26+fantasy'
+      '/discover/books?subject=science%2Ffiction&query=space%20opera%20%26%20fantasy'
     );
     strictEqual(
       route.path,
-      '/discover/books?subject=science%2Ffiction&query=space+opera+%26+fantasy'
+      '/discover/books?subject=science%2Ffiction&query=space%20opera%20%26%20fantasy'
     );
   });
 

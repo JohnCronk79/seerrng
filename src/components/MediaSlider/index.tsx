@@ -1,4 +1,6 @@
+import Button from '@app/components/Common/Button';
 import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityToggle';
+import Tooltip from '@app/components/Common/Tooltip';
 import ShowMoreCard from '@app/components/MediaSlider/ShowMoreCard';
 import PersonCard from '@app/components/PersonCard';
 import Slider from '@app/components/Slider';
@@ -28,13 +30,9 @@ import {
   hasMediaSliderResults,
   shouldShowMoreSliderCard,
 } from '@app/utils/mediaSlider';
-import {
-  ArrowPathIcon,
-  ArrowRightCircleIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { DiscoverHomeStateResponse } from '@server/interfaces/api/discoverHomeInterfaces';
-import { Permission } from '@server/lib/permissions';
 import type {
   AlbumResult,
   ArtistResult,
@@ -100,7 +98,7 @@ const MediaSlider = ({
 }: MediaSliderProps) => {
   const settings = useSettings();
   const { visibility } = useCardTextVisibility();
-  const { hasPermission, user } = useUser();
+  const { user } = useUser();
   const { ref, inView } = useInView({
     rootMargin: '450px 0px',
     triggerOnce: true,
@@ -325,7 +323,6 @@ const MediaSlider = ({
         }
 
         if (
-          settings.currentSettings.hideBlocklisted &&
           'mediaInfo' in item &&
           item.mediaInfo?.status === MediaStatus.BLOCKLISTED
         ) {
@@ -337,30 +334,8 @@ const MediaSlider = ({
     }
 
     return filteredTitles;
-  }, [
-    data,
-    settings.currentSettings.hideAvailable,
-    settings.currentSettings.hideBlocklisted,
-  ]);
-  const blocklistVisibility = hasPermission(
-    [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
-    { type: 'or' }
-  );
-
-  const renderableTitles = useMemo(
-    () =>
-      titles.filter((title) => {
-        if (blocklistVisibility) {
-          return true;
-        }
-
-        return (
-          (title as TvResult | MovieResult | AlbumResult | BookResult).mediaInfo
-            ?.status !== MediaStatus.BLOCKLISTED
-        );
-      }),
-    [blocklistVisibility, titles]
-  );
+  }, [data, settings.currentSettings.hideAvailable]);
+  const renderableTitles = titles;
   const visibleTitles = useMemo(
     () => renderableTitles.slice(0, MEDIA_SLIDER_TITLE_LIMIT),
     [renderableTitles]
@@ -503,6 +478,7 @@ const MediaSlider = ({
                 title.releaseDate ?? title['first-release-date']?.split('-')[0]
               }
               mediaType={title.mediaType}
+              availableQualities={title.availableQualities}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
               needsCoverArt={title.needsCoverArt}
               showText={visibility.album === 'always'}
@@ -576,34 +552,38 @@ const MediaSlider = ({
     return null;
   }
 
+  const visibleMediaTypes = (['movie', 'tv', 'album', 'book'] as const).filter(
+    (mediaType) => visibleTitles.some((item) => item.mediaType === mediaType)
+  );
+
   return (
     <div ref={ref}>
       <div className="slider-header">
         {linkUrl ? (
-          <Link href={linkUrl} className="slider-title min-w-0 pr-16">
+          <Link href={linkUrl} className="slider-title min-w-0">
             <span className="truncate">{title}</span>
-            <ArrowRightCircleIcon />
           </Link>
         ) : (
           <div className="slider-title">
             <span>{title}</span>
           </div>
         )}
-        {(['movie', 'tv', 'album', 'book'] as const).map((mediaType) =>
-          visibleTitles.some((item) => item.mediaType === mediaType) ? (
-            <CardTextVisibilityToggle key={mediaType} mediaType={mediaType} />
-          ) : null
+        {visibleMediaTypes.length > 0 && (
+          <CardTextVisibilityToggle mediaType={visibleMediaTypes} />
         )}
         {randomizeOrder && (
-          <button
-            type="button"
-            onClick={refreshRandomizedOrder}
-            className="ml-2 inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-700 text-gray-300 transition hover:border-indigo-500 hover:bg-indigo-600/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            aria-label={`Refresh ${title}`}
-            title={`Refresh ${title}`}
-          >
-            <ArrowPathIcon className="h-4 w-4" />
-          </button>
+          <Tooltip content={`Refresh ${title}`}>
+            <Button
+              type="button"
+              buttonType="default"
+              buttonSize="sm"
+              onClick={refreshRandomizedOrder}
+              className="h-8 w-8 p-0"
+              aria-label={`Refresh ${title}`}
+            >
+              <ArrowPathIcon className="h-4 w-4" />
+            </Button>
+          </Tooltip>
         )}
       </div>
       <Slider

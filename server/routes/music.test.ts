@@ -6,7 +6,11 @@ import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import TheAudioDb from '@server/api/theaudiodb';
 import { IssueStatus, IssueType } from '@server/constants/issue';
-import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
@@ -455,6 +459,43 @@ describe('GET /music/:id', () => {
     ]);
   });
 
+  it('returns the normalized MusicBrainz release-group rating and vote count', async () => {
+    mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () =>
+        ({
+          id: 'release-group-id',
+          score: 100,
+          media_type: 'album',
+          title: 'Rated Album',
+          'primary-type': 'Album',
+          'first-release-date': '2024-02-03',
+          'artist-credit': [],
+          posterPath: undefined,
+          'type-id': '',
+          'primary-type-id': '',
+          count: 0,
+          releases: [],
+          releasedate: '2024-02-03',
+          rating: { value: 4.25, 'votes-count': 32 },
+        }) as Awaited<ReturnType<MusicBrainz['getReleaseGroupDetails']>>
+    );
+
+    const agent = await login();
+    const res = await agent.get('/music/release-group-id/rating');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, {
+      rating: {
+        score: 8.5,
+        votes: 32,
+        url: 'https://musicbrainz.org/release-group/release-group-id',
+        source: 'musicbrainz',
+      },
+    });
+  });
+
   it('returns 404 when neither music detail provider has the album', async () => {
     mock.method(ListenBrainzAPI.prototype, 'getAlbum', async () => {
       throw new Error('[ListenBrainz] Failed to fetch album details: 404');
@@ -511,6 +552,114 @@ describe('GET /music/:id', () => {
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.mediaInfo.mbId, 'release-group-id');
+  });
+
+  it('returns every available Lidarr quality without exposing completed requests', async (t) => {
+    mock.method(ListenBrainzAPI.prototype, 'getAlbum', async () => ({
+      release_group_mbid: 'quality-release-group-id',
+      type: 'Album',
+      release_group_metadata: {
+        release_group: { name: 'Quality Album', date: '2024-01-01' },
+        artist: { name: 'Quality Artist', artists: [] },
+        tag: { artist: [], release_group: [] },
+      },
+      listening_stats: {
+        total_listen_count: 0,
+        total_user_count: 0,
+        listeners: [],
+      },
+      mediums: [],
+    }));
+
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        id: 1,
+        name: 'Lidarr MP3',
+        hostname: 'lidarr-mp3.local',
+        port: 8686,
+        apiKey: 'mp3-key',
+        useSsl: false,
+        activeProfileId: 1,
+        activeProfileName: 'MP3',
+        activeMetadataProfileId: 1,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/music-mp3',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+      {
+        id: 2,
+        name: 'Lidarr FLAC',
+        hostname: 'lidarr-flac.local',
+        port: 8686,
+        apiKey: 'flac-key',
+        useSsl: false,
+        activeProfileId: 2,
+        activeProfileName: 'FLAC',
+        activeMetadataProfileId: 1,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/music-flac',
+        tags: [],
+        is4k: false,
+        isDefault: false,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    t.after(() => {
+      settings.lidarr = [];
+    });
+
+    const user = await getRepository(User).findOneByOrFail({
+      email: 'admin@seerr.dev',
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mbId: 'quality-release-group-id',
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.AVAILABLE,
+        serviceId: 1,
+        externalServiceId: 10,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        status: MediaRequestStatus.COMPLETED,
+        media,
+        requestedBy: user,
+        is4k: false,
+        serverId: 2,
+        serviceTargets: [
+          {
+            serviceType: 'lidarr',
+            format: 'music',
+            serverId: 2,
+            externalServiceId: 20,
+            status: MediaStatus.AVAILABLE,
+          },
+        ],
+      })
+    );
+
+    const agent = await login();
+    const res = await agent.get('/music/quality-release-group-id');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body.availableServices, [
+      { serverId: 1, quality: 'MP3' },
+      { serverId: 2, quality: 'FLAC' },
+    ]);
+    assert.strictEqual(res.body.mediaInfo.requests.length, 0);
   });
 
   it('hydrates independent request and issue trees without dropping detail state', async () => {

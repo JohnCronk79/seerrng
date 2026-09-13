@@ -4,6 +4,7 @@ import {
   MAX_ISSUE_COMMENTS,
   MAX_ISSUE_MESSAGE_LENGTH,
 } from '@server/constants/issue';
+import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
@@ -13,6 +14,7 @@ import type {
   IssueRequestBody,
   IssueResultsResponse,
 } from '@server/interfaces/api/issueInterfaces';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import { hydrateIssueRelations } from '@server/lib/issueHydration';
 import issueMutationCoordinator from '@server/lib/issueMutation';
 import { Permission } from '@server/lib/permissions';
@@ -29,6 +31,8 @@ import {
   parsePageParams,
 } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
+import { getSearchTerms } from '@server/utils/searchTerms';
+import { escapeSqlLikePattern } from '@server/utils/sqlLike';
 import {
   parseBoundedString,
   parseOptionalAllowedString,
@@ -40,8 +44,31 @@ class IssueUserNotFoundError extends Error {}
 
 const issueRoutes = Router();
 const MAX_ISSUE_ROUTE_ID = 1_000_000_000;
-const issueSortFields = ['added', 'modified'] as const;
-const issueStatusFilters = ['open', 'resolved'] as const;
+const MAX_AFFECTED_EPISODES = 500;
+const MAX_AFFECTED_SEASONS = 100;
+const issueSortFields = ['added', 'modified', 'status'] as const;
+const issueStatusFilters = ['all', 'open', 'resolved'] as const;
+const issueTimeFrames = ['7d', '14d', '30d', '6m', 'all'] as const;
+const issueMediaTypeFilters = [
+  'all',
+  MediaType.MOVIE,
+  MediaType.TV,
+  MediaType.MUSIC,
+  MediaType.BOOK,
+] as const;
+const issueTypeFilters = [
+  'all',
+  'audio',
+  'video',
+  'subtitle',
+  'other',
+] as const;
+const issueTypeByFilter = {
+  audio: IssueType.AUDIO,
+  video: IssueType.VIDEO,
+  subtitle: IssueType.SUBTITLES,
+  other: IssueType.OTHER,
+} as const;
 
 const parseIssueStatusAction = (status: unknown): IssueStatus | undefined => {
   switch (status) {
@@ -89,6 +116,117 @@ const parseIssueBodyObject = (
   return { value: body as Record<string, unknown> };
 };
 
+const parseIssueBodyBoolean = (value: unknown, fieldName: string) => {
+  if (value === undefined || value === null) {
+    return { value: false };
+  }
+
+  return typeof value === 'boolean'
+    ? { value }
+    : { error: `${fieldName} must be a boolean.` };
+};
+
+const parseIssueBodyEpisodeList = (value: unknown) => {
+  if (value === undefined || value === null) {
+    return { value: [] as number[] };
+  }
+  if (!Array.isArray(value)) {
+    return { error: 'Problem episodes must be an array.' };
+  }
+  if (value.length > MAX_AFFECTED_EPISODES) {
+    return {
+      error: `Problem episodes must contain no more than ${MAX_AFFECTED_EPISODES} entries.`,
+    };
+  }
+
+  const episodes: number[] = [];
+  for (const episode of value) {
+    const parsed = parseOptionalNonNegativeInteger(episode, MAX_ISSUE_ROUTE_ID);
+    if (parsed === undefined || parsed < 1) {
+      return { error: 'Problem episodes must contain positive integers.' };
+    }
+    if (!episodes.includes(parsed)) {
+      episodes.push(parsed);
+    }
+  }
+
+  return { value: episodes.sort((a, b) => a - b) };
+};
+
+const parseIssueBodyEpisodeSelections = (
+  value: unknown
+): { value: SeasonEpisodeSelection[] } | { error: string } => {
+  if (value === undefined || value === null) {
+    return { value: [] as SeasonEpisodeSelection[] };
+  }
+  if (!Array.isArray(value)) {
+    return { error: 'Problem episode selections must be an array.' };
+  }
+  if (value.length > MAX_AFFECTED_SEASONS) {
+    return {
+      error: `Problem episode selections must contain no more than ${MAX_AFFECTED_SEASONS} seasons.`,
+    };
+  }
+
+  const selections: SeasonEpisodeSelection[] = [];
+  let episodeCount = 0;
+  for (const selection of value) {
+    if (
+      !selection ||
+      typeof selection !== 'object' ||
+      Array.isArray(selection)
+    ) {
+      return { error: 'Each problem episode selection must be an object.' };
+    }
+    const rawSelection = selection as Record<string, unknown>;
+    const seasonNumber = parseOptionalNonNegativeInteger(
+      rawSelection.seasonNumber,
+      MAX_ISSUE_ROUTE_ID
+    );
+    if (seasonNumber === undefined) {
+      return { error: 'Affected seasons must be non-negative integers.' };
+    }
+    if (selections.some((item) => item.seasonNumber === seasonNumber)) {
+      return { error: 'Affected seasons must not contain duplicates.' };
+    }
+
+    const parsedEpisodes = parseIssueBodyEpisodeList(
+      rawSelection.episodeNumbers
+    );
+    if ('error' in parsedEpisodes) {
+      return {
+        error:
+          parsedEpisodes.error ?? 'Problem episodes must contain valid values.',
+      };
+    }
+    if (
+      rawSelection.episodeNumbers !== undefined &&
+      parsedEpisodes.value.length === 0
+    ) {
+      return {
+        error: 'An affected partial season must include at least one episode.',
+      };
+    }
+    episodeCount += parsedEpisodes.value.length;
+    if (episodeCount > MAX_AFFECTED_EPISODES) {
+      return {
+        error: `Problem episode selections must contain no more than ${MAX_AFFECTED_EPISODES} episodes.`,
+      };
+    }
+
+    selections.push({
+      seasonNumber,
+      ...(rawSelection.episodeNumbers !== undefined
+        ? { episodeNumbers: parsedEpisodes.value }
+        : {}),
+    });
+  }
+
+  return {
+    value: selections.sort((a, b) => a.seasonNumber - b.seasonNumber),
+  };
+};
+
 issueRoutes.get<
   Record<string, string>,
   IssueResultsResponse | { status: number; message: string }
@@ -131,11 +269,58 @@ issueRoutes.get<
       return next({ status: 400, message: parsedFilter.error });
     }
 
+    const parsedDirection = parseOptionalAllowedString(
+      req.query.sortDirection,
+      {
+        fieldName: 'Sort direction',
+        allowedValues: ['asc', 'desc'] as const,
+        maxLength: 4,
+      }
+    );
+    if ('error' in parsedDirection) {
+      return next({ status: 400, message: parsedDirection.error });
+    }
+    const parsedTimeFrame = parseOptionalAllowedString(req.query.timeFrame, {
+      fieldName: 'Time frame',
+      allowedValues: issueTimeFrames,
+      maxLength: 8,
+    });
+    if ('error' in parsedTimeFrame) {
+      return next({ status: 400, message: parsedTimeFrame.error });
+    }
+    const parsedMediaType = parseOptionalAllowedString(req.query.mediaType, {
+      fieldName: 'Media type',
+      allowedValues: issueMediaTypeFilters,
+      maxLength: 16,
+    });
+    if ('error' in parsedMediaType) {
+      return next({ status: 400, message: parsedMediaType.error });
+    }
+    const parsedIssueType = parseOptionalAllowedString(req.query.issueType, {
+      fieldName: 'Issue type',
+      allowedValues: issueTypeFilters,
+      maxLength: 16,
+    });
+    if ('error' in parsedIssueType) {
+      return next({ status: 400, message: parsedIssueType.error });
+    }
+    const parsedSearch = parseBoundedString(req.query.search ?? '', {
+      fieldName: 'Search',
+      maxLength: 512,
+      required: false,
+    });
+    if ('error' in parsedSearch) {
+      return next({ status: 400, message: parsedSearch.error });
+    }
+
     let sortFilter: string;
 
     switch (parsedSort.value) {
       case 'modified':
         sortFilter = 'issue.updatedAt';
+        break;
+      case 'status':
+        sortFilter = 'issue.status';
         break;
       default:
         sortFilter = 'issue.createdAt';
@@ -159,9 +344,10 @@ issueRoutes.get<
       .leftJoinAndSelect('issue.createdBy', 'createdBy')
       .leftJoinAndSelect('issue.media', 'media')
       .leftJoinAndSelect('issue.modifiedBy', 'modifiedBy')
-      .where('issue.status IN (:...issueStatus)', {
-        issueStatus: statusFilter,
-      });
+      .leftJoin('media.searchMetadata', 'searchMetadata')
+      .leftJoin('issue.comments', 'searchComments')
+      .where('1 = 1')
+      .distinct(true);
 
     if (
       !req.user?.hasPermission(
@@ -181,8 +367,77 @@ issueRoutes.get<
       query = query.andWhere('createdBy.id = :id', { id: createdBy });
     }
 
+    if (parsedMediaType.value && parsedMediaType.value !== 'all') {
+      query = query.andWhere('media.mediaType = :issueMediaType', {
+        issueMediaType: parsedMediaType.value,
+      });
+    }
+    if (parsedIssueType.value && parsedIssueType.value !== 'all') {
+      query = query.andWhere('issue.issueType = :selectedIssueType', {
+        selectedIssueType: issueTypeByFilter[parsedIssueType.value],
+      });
+    }
+
+    const now = Date.now();
+    const timeFrameMs =
+      parsedTimeFrame.value === '7d'
+        ? 7 * 24 * 60 * 60 * 1000
+        : parsedTimeFrame.value === '14d'
+          ? 14 * 24 * 60 * 60 * 1000
+          : parsedTimeFrame.value === '30d'
+            ? 30 * 24 * 60 * 60 * 1000
+            : parsedTimeFrame.value === '6m'
+              ? 183 * 24 * 60 * 60 * 1000
+              : undefined;
+    if (timeFrameMs) {
+      query = query.andWhere('issue.createdAt >= :issueSince', {
+        issueSince: new Date(now - timeFrameMs),
+      });
+    }
+
+    for (const [termIndex, term] of getSearchTerms(
+      parsedSearch.value
+    ).entries()) {
+      const searchParameter = `issueSearch${termIndex}`;
+      const searchOpenParameter = `searchOpen${termIndex}`;
+      const searchResolvedParameter = `searchResolved${termIndex}`;
+      query = query.andWhere(
+        `(LOWER(COALESCE(searchMetadata.searchText, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR LOWER(COALESCE(createdBy.username, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR LOWER(COALESCE(createdBy.plexUsername, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR LOWER(COALESCE(createdBy.jellyfinUsername, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR LOWER(COALESCE(createdBy.email, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR LOWER(COALESCE(searchComments.message, '')) LIKE :${searchParameter} ESCAPE '\\'
+          OR (:${searchOpenParameter} = 1 AND issue.status = :openStatus)
+          OR (:${searchResolvedParameter} = 1 AND issue.status = :resolvedStatus))`,
+        {
+          [searchParameter]: `%${escapeSqlLikePattern(term)}%`,
+          [searchOpenParameter]: term === 'open' ? 1 : 0,
+          [searchResolvedParameter]: term === 'resolved' ? 1 : 0,
+          openStatus: IssueStatus.OPEN,
+          resolvedStatus: IssueStatus.RESOLVED,
+        }
+      );
+    }
+
+    const rawCounts = await query
+      .clone()
+      .select('issue.status', 'status')
+      .addSelect('COUNT(DISTINCT issue.id)', 'count')
+      .groupBy('issue.status')
+      .getRawMany<{ status: string; count: string }>();
+    const countFor = (status: IssueStatus) =>
+      Number(
+        rawCounts.find((row) => Number(row.status) === status)?.count ?? 0
+      );
+
+    query = query.andWhere('issue.status IN (:...issueStatus)', {
+      issueStatus: statusFilter,
+    });
+
     const [issueRows, issueCount] = await query
-      .orderBy(sortFilter, 'DESC')
+      .orderBy(sortFilter, parsedDirection.value === 'asc' ? 'ASC' : 'DESC')
+      .addOrderBy('issue.id', parsedDirection.value === 'asc' ? 'ASC' : 'DESC')
       .take(pageSize)
       .skip(skip)
       .getManyAndCount();
@@ -196,6 +451,11 @@ issueRoutes.get<
         page: Math.ceil(skip / pageSize) + 1,
       },
       results: filterEntityResponse(issues, req.user),
+      counts: {
+        all: countFor(IssueStatus.OPEN) + countFor(IssueStatus.RESOLVED),
+        open: countFor(IssueStatus.OPEN),
+        resolved: countFor(IssueStatus.RESOLVED),
+      },
     });
   }
 );
@@ -249,6 +509,20 @@ issueRoutes.post<Record<string, string>, Issue, IssueRequestBody>(
     if ('error' in problemEpisode) {
       return next({ status: 400, message: problemEpisode.error });
     }
+    const problemEpisodes = parseIssueBodyEpisodeList(body.problemEpisodes);
+    if ('error' in problemEpisodes) {
+      return next({ status: 400, message: problemEpisodes.error });
+    }
+    const problemEpisodeSelections = parseIssueBodyEpisodeSelections(
+      body.problemEpisodeSelections
+    );
+    if ('error' in problemEpisodeSelections) {
+      return next({ status: 400, message: problemEpisodeSelections.error });
+    }
+    const is4k = parseIssueBodyBoolean(body.is4k, 'Issue quality');
+    if ('error' in is4k) {
+      return next({ status: 400, message: is4k.error });
+    }
     const onBehalfOfUserId = parseOptionalPositiveInt(body.userId) ?? null;
 
     const media = await mediaRepository.findOne({
@@ -257,6 +531,18 @@ issueRoutes.post<Record<string, string>, Issue, IssueRequestBody>(
 
     if (!media) {
       return next({ status: 404, message: 'Media does not exist.' });
+    }
+
+    if (
+      (problemEpisodes.value.length > 0 ||
+        problemEpisodeSelections.value.length > 0) &&
+      media.mediaType !== MediaType.TV
+    ) {
+      return next({
+        status: 400,
+        message:
+          'Problem episodes require a series issue and an affected season.',
+      });
     }
 
     try {
@@ -291,8 +577,26 @@ issueRoutes.post<Record<string, string>, Issue, IssueRequestBody>(
             new Issue({
               createdBy,
               issueType: issueType.value,
-              problemSeason: problemSeason.value,
-              problemEpisode: problemEpisode.value,
+              problemSeason:
+                problemEpisodeSelections.value[0]?.seasonNumber ??
+                problemSeason.value,
+              problemEpisode:
+                problemEpisodeSelections.value[0]?.episodeNumbers?.[0] ??
+                problemEpisodes.value[0] ??
+                problemEpisode.value,
+              problemEpisodes:
+                problemEpisodes.value.length > 0
+                  ? problemEpisodes.value
+                  : problemEpisodeSelections.value[0]?.episodeNumbers,
+              problemEpisodeSelections:
+                problemEpisodeSelections.value.length > 0
+                  ? problemEpisodeSelections.value
+                  : undefined,
+              is4k:
+                media.mediaType === MediaType.MOVIE ||
+                media.mediaType === MediaType.TV
+                  ? is4k.value
+                  : false,
               media,
               comments: [
                 new IssueComment({

@@ -1,4 +1,5 @@
 import { MediaServerType } from '@server/constants/server';
+import { UserType } from '@server/constants/user';
 import { getRepository } from '@server/datasource';
 import { User } from '@server/entity/User';
 import {
@@ -10,6 +11,7 @@ import ImageProxy, {
   sendImage,
   type ImageResponse,
 } from '@server/lib/imageproxy';
+import { readLocalAvatar } from '@server/lib/localAvatar';
 import { getRemoteAvatarCacheUrl } from '@server/lib/remoteAvatarCache';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -17,6 +19,7 @@ import { getAppVersion } from '@server/utils/appVersion';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import { createDeterministicKey } from '@server/utils/deterministicKey';
 import { getHostname } from '@server/utils/getHostname';
+import { parsePositiveRouteId } from '@server/utils/routeId';
 import { getRateLimitKey } from '@server/utils/security';
 import { parseOptionalBoundedString } from '@server/utils/validation';
 import { Router, type Response } from 'express';
@@ -304,6 +307,76 @@ router.get('/remote', avatarProxyRateLimit, async (req, res) => {
     if (!res.headersSent) {
       return res.status(502).json({ error: 'Unable to load avatar image.' });
     }
+  }
+});
+
+router.get('/local/:userId', avatarProxyRateLimit, async (req, res) => {
+  try {
+    const userId = parsePositiveRouteId(req.params.userId, 1_000_000_000);
+    if (!userId) {
+      return res.status(400).json({ error: 'Invalid user ID.' });
+    }
+
+    const versionParam = parseOptionalBoundedString(req.query.v, {
+      fieldName: 'Avatar version',
+      maxLength: MAX_AVATAR_VERSION_LENGTH,
+    });
+    if ('error' in versionParam) {
+      return res.status(400).json({ error: versionParam.error });
+    }
+
+    const user = await getRepository(User).findOne({
+      select: ['id', 'avatarVersion', 'userType'],
+      where: { id: userId, userType: UserType.LOCAL },
+    });
+    if (
+      !user?.avatarVersion ||
+      (versionParam.value && versionParam.value !== user.avatarVersion)
+    ) {
+      return res.status(404).end();
+    }
+
+    const image = await readLocalAvatar(user.id, user.avatarVersion);
+    if (!image) {
+      return res.status(404).end();
+    }
+
+    const etag = `"${user.avatarVersion}"`;
+    const ifNoneMatch = Array.isArray(req.headers['if-none-match'])
+      ? req.headers['if-none-match'].join(',')
+      : req.headers['if-none-match'];
+    const cacheControl = versionParam.value
+      ? 'public, max-age=31536000, immutable'
+      : 'public, max-age=0, must-revalidate';
+
+    if (
+      ifNoneMatch
+        ?.split(',')
+        .map((value) => value.trim())
+        .includes(etag)
+    ) {
+      return res
+        .status(304)
+        .set({ 'Cache-Control': cacheControl, ETag: etag })
+        .end();
+    }
+
+    return res
+      .status(200)
+      .set({
+        'Cache-Control': cacheControl,
+        'Content-Type': 'image/webp',
+        ETag: etag,
+      })
+      .send(image);
+  } catch (error) {
+    logger.error('Failed to load a local profile picture', {
+      label: 'Avatar Proxy',
+      userId: req.params.userId,
+      errorMessage:
+        error instanceof Error ? error.message : 'Unknown avatar error',
+    });
+    return res.status(500).json({ error: 'Unable to load profile picture.' });
   }
 });
 
