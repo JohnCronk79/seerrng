@@ -34,6 +34,7 @@ interface RequestModalProps {
   mbId?: string;
   bookId?: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
+  initialMusicServerId?: number;
   initialIs4k?: boolean;
   is4k?: boolean;
   editRequest?: NonFunctionProperties<MediaRequest>;
@@ -50,6 +51,7 @@ const RequestModal = ({
   mbId,
   bookId,
   initialBookFormat,
+  initialMusicServerId,
   initialIs4k,
   is4k,
   editRequest,
@@ -106,6 +108,7 @@ const RequestModal = ({
           onComplete={onComplete}
           onCancel={onCancel}
           mbId={mbId}
+          initialServerId={initialMusicServerId}
           onUpdating={onUpdating}
           editRequest={editRequest}
         />

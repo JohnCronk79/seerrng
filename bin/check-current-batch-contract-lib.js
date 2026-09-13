@@ -59,6 +59,26 @@ const validateCurrentBatchContract = (files) => {
     'must retain the exact final acceptance rule'
   );
   requireText(
+    '.dockerignore',
+    '.npmrc',
+    'the Docker context must exclude the root npm credential file'
+  );
+  rejectText(
+    '.dockerignore',
+    '!/.npmrc',
+    'the Docker context must not re-include the root npm credential file'
+  );
+  requireText(
+    '.dockerignore',
+    '!docs/maintainers/site-visual-audit-2026-09-11.md',
+    'the Docker context must include the visual audit required by the prebuild contract'
+  );
+  requireText(
+    'scripts/check-container-security.test.mjs',
+    'a later negation re-exposes the root .npmrc',
+    'the container security test must evaluate later npmrc negation rules'
+  );
+  requireText(
     'docs/maintainers/ui-style-standard.md',
     'use the shared 22-pixel `DetailDisclosureButton`',
     'must document the intentional disclosure-button size exception'
@@ -68,8 +88,357 @@ const validateCurrentBatchContract = (files) => {
     "Sonarr's generic Series rating is not identified as IMDb",
     'must preserve the evidence-based Series IMDb decision'
   );
+  requireText(
+    ledger,
+    "rename every instance of 'Ebook' to 'Book' excluding the name of our services.",
+    'must preserve the Book terminology decision'
+  );
+  requireText(
+    ledger,
+    'Are you sure you want to blocklist this item?',
+    'must preserve the exact shared Blocklist confirmation copy'
+  );
+  requireText(
+    ledger,
+    '## Deferred requested-Movie View Request refresh',
+    'must retain the tagged View Request refresh as a deferred feature'
+  );
+  requireText(
+    ledger,
+    '## Deferred media-detail action-row redesign',
+    'must retain the tagged action-row redesign as a deferred feature'
+  );
+  requireText(
+    ledger,
+    '## Contextual Global Search filters',
+    'must preserve the accepted contextual Global Search filter work'
+  );
+  requireText(
+    ledger,
+    '## Series and Books discovery filter corrections',
+    'must preserve the accepted Series and Books filter corrections'
+  );
+  requireText(
+    ledger,
+    '## Workflow-page Media Filters sections',
+    'must preserve the accepted workflow-page Media Filters grouping'
+  );
+  requireText(
+    ledger,
+    'all consume the single shared `SelectionCircle` component and its global CSS contract',
+    'the acceptance ledger must preserve the cross-page selector standard'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'Request Status uses one wrapping Task Filters row in this exact order',
+    'the style standard must preserve the single wrapping Request Status task row'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'separate media type into a dedicated `Media Filters` section',
+    'the style standard must preserve workflow-page Media Filters sections'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'On Books, `All Books` is not a reset control',
+    'the style standard must keep All Books distinct from Clear Filters'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'Request cards show approval state in the right details group',
+    'the style standard must keep Approval in the right request-details group'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'Remove duplicate approval text beside `Advanced Options`',
+    'the style standard must reject duplicate Approval beside Advanced Options'
+  );
+  requireText(
+    'docs/maintainers/site-visual-audit-2026-09-11.md',
+    'every rendered claim in this document is\nhistorical evidence from the laptop r3 image created at 2026-09-12 04:18:02 MDT',
+    'the historical visual audit must not claim current render evidence for post-r3 source'
+  );
+
+  requireOrder(
+    'src/components/RequestStatus/index.tsx',
+    [
+      "key: 'all'",
+      "key: 'completed'",
+      "key: 'incomplete'",
+      "key: 'active'",
+      "key: 'attention'",
+      "key: 'unavailable'",
+      "key: 'failed'",
+    ],
+    'Request Status task summaries must retain the approved single-row order'
+  );
+  for (const fileName of [
+    'src/components/RequestModal/MovieRequestModal.tsx',
+    'src/components/RequestModal/TvRequestModal.tsx',
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'src/components/RequestModal/BookRequestModal.tsx',
+  ]) {
+    requireOrder(
+      fileName,
+      ['{intl.formatMessage(messages.approval)}:', '<RequestFooterStatus'],
+      'request forms must render Approval in their details grid'
+    );
+  }
+  rejectText(
+    'src/components/RequestModal/AdvancedRequester/index.tsx',
+    'RequestFooterStatus',
+    'Advanced Options must not render a duplicate Approval status'
+  );
+  requireText(
+    'server/entity/MediaRequest.ts',
+    'findPromotablePendingRequest',
+    'request admission must identify a matching promotable pending request'
+  );
+  requireText(
+    'server/entity/MediaRequest.ts',
+    'currentRequest.modifiedBy = actor;',
+    'pending-request promotion must record the acting approver'
+  );
+  requireText(
+    'server/routes/request.test.ts',
+    'promotes matching pending Movie, Series, Music, and Book requests without replacing their requester or timeline',
+    'matching-pending promotion must retain cross-media route coverage'
+  );
+  for (const fileName of [
+    'src/components/RequestModal/MovieRequestModal.tsx',
+    'src/components/RequestModal/TvRequestModal.tsx',
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'src/components/RequestModal/BookRequestModal.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'canPromotePendingDestinationRequests',
+      'request forms must permit authorized matching-pending promotion'
+    );
+  }
+
+  const blocklistConfirmation =
+    'src/components/BlocklistConfirmationModal/index.tsx';
+  requireText(
+    blocklistConfirmation,
+    "confirmation: 'Are you sure you want to blocklist this item?'",
+    'shared Blocklist confirmation must use the exact approved sentence'
+  );
+  requireText(
+    blocklistConfirmation,
+    'dialogClass="app-blocklist-confirmation-card"',
+    'shared Blocklist confirmation must use the website-gradient card'
+  );
+  requireText(
+    blocklistConfirmation,
+    'cancelButtonType="danger"',
+    'shared Blocklist confirmation must use the standard red Cancel button'
+  );
+  requireText(
+    blocklistConfirmation,
+    'okButtonType="success"',
+    'shared Blocklist confirmation must use the standard green Blocklist button'
+  );
+  requireText(
+    blocklistConfirmation,
+    'actionsClass="!justify-center gap-3"',
+    'shared Blocklist confirmation buttons must be horizontally centered'
+  );
+  requireText(
+    blocklistConfirmation,
+    'actionButtonSize="sm"',
+    'shared Blocklist confirmation buttons must use standard small sizing'
+  );
+  for (const fileName of [
+    'src/components/BlocklistModal/index.tsx',
+    'src/components/ExternalBlocklistModal/index.tsx',
+    'src/components/TitleCard/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'BlocklistConfirmationModal',
+      'every Blocklist entry path must use the shared confirmation'
+    );
+  }
+  rejectText(
+    'src/components/TitleCard/index.tsx',
+    'onClick={() => void onClickHideItemBtn()}',
+    'poster/title cards must not mutate the Blocklist before confirmation'
+  );
+
+  const visibleTerminologyFiles = Object.keys(files).filter(
+    (fileName) =>
+      (fileName.startsWith('src/components/') ||
+        fileName === 'src/i18n/globalMessages.ts' ||
+        fileName === 'src/i18n/locale/en.json') &&
+      fileName !== 'src/components/RequestModal/AdvancedRequester/index.tsx'
+  );
+  for (const fileName of visibleTerminologyFiles) {
+    const sourceWithoutServiceNames = requireFile(fileName).replaceAll(
+      'Bookshelf-Ebook',
+      ''
+    );
+    if (/\bEbooks?\b/.test(sourceWithoutServiceNames)) {
+      errors.push(
+        `${fileName}: user-visible Ebook terminology must be Book; configured service names are the only exception`
+      );
+    }
+  }
+  requireText(
+    'src/i18n/globalMessages.ts',
+    "ebookAndAudiobook: 'Book + Audiobook'",
+    'shared format labels must use Book terminology'
+  );
+  requireText(
+    'src/components/Search/index.tsx',
+    "ebooks: 'Books'",
+    'Search must label the ebook-format filter as Books'
+  );
+  requireOrder(
+    'src/components/Search/index.tsx',
+    [
+      'intl.formatMessage(messages.mediaFilters)',
+      '{searchCategories.map',
+      'intl.formatMessage(messages.filter)',
+      'getFilterResetButtonClass(!hasActiveFilters)',
+      '<CardTextVisibilityToggle',
+      '<ContextualSearchFilters',
+    ],
+    'Global Search must separate Media Filters from the continuous regular filter row'
+  );
+  requireText(
+    'src/components/Search/ContextualSearchFilters.tsx',
+    '<div className="contents">',
+    'Global Search contextual controls must participate in the wrapping regular filter row'
+  );
+  requireText(
+    'src/components/Search/ContextualSearchFilters.tsx',
+    "category === 'all'",
+    'Global Search All must retain its keyword-only contextual row'
+  );
+  requireOrder(
+    'src/components/Search/ContextualSearchFilters.tsx',
+    [
+      'messages.keywordSearch',
+      'messages.firstPublished',
+      'messages.genres',
+      'messages.rating',
+      'messages.language',
+    ],
+    'Book and Audiobook Search filters must preserve their discovery-page order'
+  );
+  requireOrder(
+    'src/components/Search/ContextualSearchFilters.tsx',
+    [
+      'messages.keywordSearch',
+      'messages.releaseYear',
+      'messages.releaseType',
+      'messages.genres',
+    ],
+    'Music Search filters must preserve their discovery-page order'
+  );
+  requireText(
+    'src/components/Discover/FilterPanel/index.tsx',
+    "variant?: 'discover' | 'search';",
+    'Movie and Series filters must support the shared contextual Search layout'
+  );
+  requireText(
+    'src/components/Search/ContextualSearchFilters.tsx',
+    'variant="search"',
+    'Global Search must use the shared Movie and Series contextual filter layout'
+  );
+  requireText(
+    'src/components/Search/searchFilters.ts',
+    "return '/api/v1/search';",
+    'Global Search All must keep the combined provider search source'
+  );
+  requireText(
+    'src/components/Search/searchFilters.ts',
+    "return '/api/v1/discover/music';",
+    'typed Global Search filters without a main query must use the corresponding discovery source'
+  );
+  requireText(
+    'src/components/Search/searchFilters.ts',
+    'if (mainQuery.trim())',
+    'a populated main search must retain the combined provider search source'
+  );
+  requireText(
+    'src/components/Search/searchFilters.test.ts',
+    'preserves the main query but removes stale contextual and sort state when media type changes',
+    'Global Search media-type transitions must retain regression coverage'
+  );
+  requireText(
+    'src/components/Search/searchFilters.test.ts',
+    'does not pre-populate the result filter from the main search query',
+    'Global Search Keyword Search must remain independent from the main query'
+  );
+  requireText(
+    'src/components/Search/searchFilters.test.ts',
+    'narrows Madonna music results to an album without replacing the main search',
+    'Global Search must retain the Madonna then Prayer two-stage regression case'
+  );
+  requireText(
+    'server/utils/searchTerms.test.ts',
+    "toMusicAlbumRefinementQuery('Madonna', 'Prayer')",
+    'Music provider search must retain the Madonna then Prayer refinement regression case'
+  );
+  requireText(
+    'src/components/Search/index.tsx',
+    "category.key === 'music' && resultFilter",
+    'Music Search must send its independent album refinement to the provider'
+  );
+  requireText(
+    'seerr-api.yml',
+    'name: resultFilter',
+    'the public Search contract must admit the independent music result refinement'
+  );
+  requireText(
+    'src/components/Layout/index.tsx',
+    'pointer-events-none absolute left-0 top-1',
+    'Global Search progress must use the existing title margin without reflowing the header or page'
+  );
+  rejectText(
+    'src/components/Layout/SearchInput/index.tsx',
+    'useSearchActivity',
+    'the fixed global search header must not own the progress indicator'
+  );
+  requireText(
+    'src/components/RequestStatus/index.tsx',
+    "ebookAndAudiobook: 'Book + Audiobook'",
+    'Request Status must use Book terminology for combined requests'
+  );
+  requireText(
+    'src/components/RequestModal/BookRequestModal.tsx',
+    'No Book Bookshelf service is configured. Book requests are unavailable.',
+    'Book request guidance must use Book terminology'
+  );
+  requireText(
+    'src/i18n/locale/en.json',
+    '"i18n.ebook": "Book"',
+    'the generated English language catalogue must use Book terminology'
+  );
+  requireText(
+    'src/i18n/locale/en.json',
+    '"components.RequestStatus.ebookAndAudiobook": "Book + Audiobook"',
+    'the English Request Status translation must use Book terminology'
+  );
 
   const globals = 'src/styles/globals.css';
+  requireText(
+    globals,
+    '.app-blocklist-confirmation-card',
+    'shared Blocklist confirmation must define one global card style'
+  );
+  requireText(
+    globals,
+    'max-width: 18rem !important;',
+    'Blocklist confirmation must remain twice the compact genre-card width'
+  );
+  requireText(
+    globals,
+    'min-height: 9rem;',
+    'Blocklist confirmation must remain twice the compact genre-card height'
+  );
   for (const variant of [
     'blocklist',
     'manage',
@@ -142,6 +511,256 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
+    '.media-rating-row {\n    @apply flex min-h-8 flex-wrap items-center justify-between gap-x-3',
+    'playback actions and ratings must use the compact full-width shared row'
+  );
+  requireText(
+    globals,
+    '.availability-quality-control',
+    'quality availability must use one shared segmented control style'
+  );
+  requireText(
+    globals,
+    '.refreshed-detail-text',
+    'refreshed detail text must use the shared palette-aware content tone'
+  );
+  requireText(
+    globals,
+    '.media-primary-action-row',
+    'detail primary actions must use one shared full-width row'
+  );
+  requireText(
+    globals,
+    '.media-availability-cell',
+    'availability headings and status icons must share one centered cell style'
+  );
+  for (const fileName of [
+    'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
+    'src/components/MediaDetails/AlbumTrackList.tsx',
+    'src/components/MediaDetails/PlaybackTrackList.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'className="media-availability-cell"',
+      'availability headings and row status icons must use the shared centered cell'
+    );
+    rejectText(
+      fileName,
+      'mx-auto h-4 w-4 text-green-400',
+      'availability icons must not use standalone margin centering'
+    );
+  }
+  requireText(
+    'src/components/Discover/FilterPanel/index.tsx',
+    'order-[13]',
+    'streaming services must remain after Clear Filters and Title View'
+  );
+  rejectText(
+    'src/components/Discover/FilterPanel/index.tsx',
+    'order-13',
+    'Tailwind does not generate the non-standard order-13 utility'
+  );
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+    'src/components/CollectionDetails/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'refreshed-detail-text',
+      'every refreshed media detail card must inherit the shared blue content tone'
+    );
+    requireText(
+      fileName,
+      'media-primary-action-row',
+      'every refreshed media detail card must distribute primary actions across the full row'
+    );
+  }
+
+  for (const [fileName, ratingRowToken] of [
+    [
+      'src/components/MovieDetails/MovieDetailsLayout.tsx',
+      'className="media-rating-row"',
+    ],
+    [
+      'src/components/TvDetails/SeriesDetailsLayout.tsx',
+      'className="media-rating-row"',
+    ],
+    [
+      'src/components/MusicDetails/MusicDetailsLayout.tsx',
+      'className="media-rating-row"',
+    ],
+    [
+      'src/components/BookDetails/BookDetailsLayout.tsx',
+      'className="media-rating-row justify-start"',
+    ],
+    [
+      'src/components/CollectionDetails/index.tsx',
+      'className="media-rating-row"',
+    ],
+  ]) {
+    requireOrder(
+      fileName,
+      [ratingRowToken, 'className="media-primary-action-row"'],
+      'playback and ratings must appear above the primary action row'
+    );
+  }
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+  ]) {
+    requireText(
+      fileName,
+      '<AvailabilityValue',
+      'paired media-detail availability values must use the shared semantic color component'
+    );
+  }
+  requireText(
+    'src/components/MediaDetails/AvailabilityValue.tsx',
+    "available: 'text-emerald-300'",
+    'available media-detail values must use the shared green tone'
+  );
+  requireText(
+    'src/components/MediaDetails/AvailabilityValue.tsx',
+    "processing: 'text-amber-300'",
+    'processing media-detail values must use the shared yellow tone'
+  );
+  requireText(
+    'src/components/MediaDetails/AvailabilityValue.tsx',
+    "unavailable: 'text-red-300'",
+    'unavailable media-detail values must use the shared red tone'
+  );
+  for (const fileName of [
+    'src/components/MovieDetails/index.tsx',
+    'src/components/TvDetails/index.tsx',
+    'src/components/MusicDetails/index.tsx',
+    'src/components/BookDetails/index.tsx',
+  ]) {
+    rejectText(
+      fileName,
+      'ml-auto hidden sm:block',
+      'detail primary actions must not use an auto-margin spacer'
+    );
+  }
+  requireText(
+    globals,
+    '.selection-circle {\n    @apply flex h-4 w-4 flex-none items-center justify-center rounded-full border border-gray-600 bg-gray-800 text-transparent',
+    'selection circles must use the fixed global inactive geometry and palette'
+  );
+  requireText(
+    globals,
+    ".selection-circle[aria-pressed='true'] {\n    @apply border-emerald-400 bg-emerald-500 text-white;",
+    'selected circles must use the established green fill and white check state'
+  );
+  requireText(
+    globals,
+    ".selection-circle[data-partial='true'] {\n    @apply border-emerald-600 bg-emerald-800 text-white;",
+    'partially selected seasons must use the shared dark-green circle state'
+  );
+  requireText(
+    globals,
+    '.selection-circle-icon {\n    @apply h-3 w-3;',
+    'selection-circle icon geometry must remain global'
+  );
+  requireText(
+    globals,
+    '.playback-button-label {\n    @apply inline-flex min-w-0 items-center gap-2 leading-none;',
+    'playback labels must share centered text and explicit logo spacing'
+  );
+  requireText(
+    globals,
+    'svg.playback-provider-icon {\n    @apply m-0 h-[1em] w-auto max-w-12 flex-none;',
+    'playback provider artwork must preserve full text-height sizing and intrinsic aspect ratio'
+  );
+  requireText(
+    globals,
+    '.app-search-input {',
+    'global search must consume the shared blue control surface'
+  );
+  requireText(
+    'package.json',
+    'node bin/check-current-batch-contract.js && node bin/check-refreshed-ui-style.js',
+    'the current batch gate must run the refreshed UI style-boundary validator'
+  );
+  requireText(
+    'bin/check-refreshed-ui-style-lib.test.mjs',
+    'rejects visual inline and embedded styles in refreshed components',
+    'the style-boundary validator must retain inline and embedded-style regression coverage'
+  );
+  requireText(
+    globals,
+    '.app-filter-button-idle {',
+    'inactive filter controls must consume the shared blue control surface'
+  );
+  requireText(
+    globals,
+    '.app-filter-section-gap {',
+    'filter categories must use the shared larger vertical gap'
+  );
+  requireText(
+    globals,
+    '.app-filter-section-heading {',
+    'discovery filter headings must use the shared larger vertical gap'
+  );
+  for (const fileName of [
+    'src/components/Search/index.tsx',
+    'src/components/RequestStatus/index.tsx',
+    'src/components/IssueList/index.tsx',
+    'src/components/Blocklist/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'app-filter-section-gap',
+      'filter categories must retain the shared larger vertical gap'
+    );
+  }
+  for (const fileName of [
+    'src/components/Discover/DiscoverMovies/index.tsx',
+    'src/components/Discover/DiscoverTv/index.tsx',
+    'src/components/Discover/DiscoverMusic/index.tsx',
+    'src/components/Discover/DiscoverBooks/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'app-filter-section-heading',
+      'discovery filter categories must retain the shared larger vertical gap'
+    );
+  }
+  for (const fileName of [
+    'src/components/Common/BookFormatSelector/index.tsx',
+    'src/components/Common/CardTextVisibilityToggle/index.tsx',
+    'src/components/Discover/FilterPanel/index.tsx',
+    'src/components/Blocklist/index.tsx',
+    'src/components/IssueList/index.tsx',
+    'src/components/RequestStatus/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'getFilterToggleButtonClass',
+      'neutral filter buttons must consume the shared global blue control style'
+    );
+    rejectText(
+      fileName,
+      "'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'",
+      'neutral filter buttons must not restore the copied near-black component style'
+    );
+  }
+  for (const fileName of [
+    'src/components/MediaSlider/index.tsx',
+    'src/components/Slider/index.tsx',
+  ]) {
+    rejectText(
+      fileName,
+      'border-gray-600 bg-gray-900/70',
+      'neutral slider controls must use the shared global button style'
+    );
+  }
+  requireText(
+    globals,
     'linear-gradient(\n        40deg,',
     'page gradient must use 40 degrees'
   );
@@ -152,9 +771,26 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
-    '.refreshed-card-surface {\n    background-color: rgb(var(--color-gray-800) / 0.2)',
-    'refreshed cards must use the translucent surface standard'
+    '.refreshed-card-surface {\n    background-color: rgb(var(--theme-page-gradient-main) / 0.38);\n    color: rgb(var(--theme-control-text) / 0.86)',
+    'refreshed cards must use the translucent blue surface and content-tone standard'
   );
+  requireText(
+    globals,
+    '.refreshed-inset-surface {\n    background-color: rgb(var(--theme-control-surface) / 0.32);\n    color: rgb(var(--theme-control-text) / 0.86)',
+    'refreshed inset cards must use the translucent blue control surface and content-tone standard'
+  );
+  for (const fileName of [
+    'src/components/RequestStatus/index.tsx',
+    'src/components/Blocklist/index.tsx',
+    'src/components/IssueList/IssueItem/index.tsx',
+    'src/components/IssueDetails/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'refreshed-detail-text',
+      'workflow and issue cards must use the shared blue content tone'
+    );
+  }
   requireText(
     globals,
     '.slider-item-compact {\n    contain-intrinsic-inline-size: auto 9rem;\n    contain-intrinsic-block-size: auto 4.5rem;',
@@ -202,13 +838,13 @@ const validateCurrentBatchContract = (files) => {
   const requestButton = 'src/components/RequestButton/index.tsx';
   requireText(
     requestButton,
-    'separateButtons ? (',
-    'detail-page request choices must support individual standard buttons'
+    '<FormatRequestControl options={requestOptions}',
+    'Movie and Series detail requests must use the shared segmented control'
   );
   requireText(
     requestButton,
-    'data-testid={`request-action-',
-    'separate request choices must retain stable browser-audit targets'
+    'canChooseAlternateTarget',
+    'Movie and Series entry controls must not hide valid alternate destinations'
   );
   requireText(
     requestButton,
@@ -231,10 +867,63 @@ const validateCurrentBatchContract = (files) => {
   ]) {
     requireText(
       fileName,
-      'shows standard and 4K requests as adjacent individual buttons',
-      'Movie and Series details must test separate standard and 4K request actions'
+      'shows standard and 4K requests in one segmented control',
+      'Movie and Series details must test the shared segmented request control'
     );
   }
+
+  const dropdown = 'src/components/Common/Dropdown/index.tsx';
+  requireText(
+    dropdown,
+    "buttonSize?: 'default' | 'md' | 'sm';",
+    'dropdown triggers must expose standard shared sizing'
+  );
+  requireText(
+    dropdown,
+    "buttonSize === 'sm' ? 'button-sm' : 'button-md'",
+    'small dropdown triggers must not inherit the oversized default geometry'
+  );
+  for (const fileName of [
+    'src/components/Common/MediaServerPlayButton/index.tsx',
+    'src/components/Common/PlayOnDeviceButton/index.tsx',
+    'src/components/CollectionDetails/CollectionPlayOnDeviceButton.tsx',
+  ]) {
+    const source = requireFile(fileName);
+    if (
+      !source.includes('buttonSize="sm"') &&
+      !source.includes("buttonSize = 'sm'")
+    ) {
+      errors.push(
+        `${fileName}: playback triggers must use the shared small height`
+      );
+    }
+    requireText(
+      fileName,
+      'className="playback-provider-icon"',
+      'media-server artwork must consume the shared text-height provider-logo standard'
+    );
+  }
+  requireText(
+    'src/components/Common/PlayButton/index.tsx',
+    'className="playback-button-label"',
+    'direct and dropdown playback links must retain centered logo spacing'
+  );
+
+  requireOrder(
+    requestButton,
+    ["id: 'decline-request'", "buttonType: 'danger'"],
+    'single-request decline must use the semantic red button role'
+  );
+  requireOrder(
+    requestButton,
+    ["id: 'decline-4k-request'", "buttonType: 'danger'"],
+    '4K decline must use the semantic red button role'
+  );
+  requireText(
+    requestButton,
+    'buttonType={button.buttonType ?? buttonType}',
+    'request actions must prefer their semantic approve or decline role'
+  );
 
   const detailIndexes = [
     'src/components/MovieDetails/index.tsx',
@@ -282,10 +971,10 @@ const validateCurrentBatchContract = (files) => {
       'isReportIssueAvailable',
       'Report an Issue must remain visible but disabled until media is available'
     );
-    rejectText(
+    requireText(
       fileName,
-      'PlayButton',
-      'Play on Plex/media-server was removed from detail pages'
+      'MediaServerPlayButton',
+      'detail pages must retain the approved Play on media server action'
     );
     const source = requireFile(fileName);
     const reportStart = source.indexOf('buttonType="reportIssue"');
@@ -312,17 +1001,6 @@ const validateCurrentBatchContract = (files) => {
       'Blocklist must not disappear for available or processing media'
     );
   }
-  for (const fileName of [
-    'src/components/MovieDetails/index.tsx',
-    'src/components/TvDetails/index.tsx',
-  ]) {
-    requireText(
-      fileName,
-      'separateButtons',
-      'Movie and Series details must render normal and 4K request actions as separate buttons'
-    );
-  }
-
   requireText(
     'server/api/openlibrary/index.ts',
     'Array.isArray(data.docs) && data.docs.length > 0',
@@ -390,7 +1068,7 @@ const validateCurrentBatchContract = (files) => {
     );
     requireText(
       fileName,
-      'refreshed-card-surface relative overflow-hidden',
+      'refreshed-card-surface refreshed-detail-text relative overflow-hidden',
       'artwork must live inside the main card'
     );
     requireText(
@@ -407,6 +1085,54 @@ const validateCurrentBatchContract = (files) => {
       fileName,
       'const DropdownButton =',
       'must not restore per-page disclosure styling'
+    );
+  }
+
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'data-testid="media-details-poster"',
+      'main detail cards must retain the standard contained poster'
+    );
+    requireText(
+      fileName,
+      'sm:grid-cols-[80px_minmax(0,1fr)]',
+      'main detail cards must retain the responsive poster and detail geometry'
+    );
+    requireText(
+      fileName,
+      'data-testid="media-details-genres"',
+      'main detail cards must retain the shared Genres row'
+    );
+    requireText(
+      fileName,
+      'card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)]',
+      'main detail cards must keep the first two detail groups in one shared table grid'
+    );
+    requireText(
+      fileName,
+      'card:col-span-5 card:col-start-3',
+      'main detail card Genres value must begin in the first value column and span through the second detail group'
+    );
+    requireText(
+      fileName,
+      'min-w-0 break-words',
+      'main detail card Genres value must wrap naturally within its combined width'
+    );
+    rejectText(
+      fileName,
+      'line-clamp-2 min-w-0',
+      'main detail card Genres value must wrap rather than be clamped'
+    );
+    requireText(
+      fileName,
+      'media-primary-action-row',
+      'detail actions must use one full-width justified wrapping row'
     );
   }
 
@@ -427,10 +1153,45 @@ const validateCurrentBatchContract = (files) => {
     ['qualityLabels.map', '<Badge', 'messages.available'],
     'MP3/FLAC badges must be immediately left of Available'
   );
+  requireOrder(
+    musicLayout,
+    ["(['MP3', 'FLAC'] as const)", 'qualityAvailability.map'],
+    'Music details must list MP3 availability before FLAC availability'
+  );
   requireText(
     musicLayout,
-    '<AlbumTrackList tracks={data.tracks} twoColumnsOnly />',
-    'music details must use the two-column track layout'
+    "tone={available ? 'available' : 'unavailable'}",
+    'Music quality availability values must use shared green and red semantic tones'
+  );
+  requireText(
+    musicLayout,
+    '<AlbumTrackList',
+    'music details must use the shared track selection layout'
+  );
+  requireText(
+    musicLayout,
+    'catalog={playbackCatalog}',
+    'music track selection must use the media-server availability catalog'
+  );
+  requireText(
+    musicLayout,
+    'onSelectionChange={setSelectedPlaybackItemIds}',
+    'music track selection must control the playback playlist'
+  );
+  requireText(
+    musicLayout,
+    'data-testid="music-playback-rating-row"',
+    'music playback and provider rating must share the standard rating row'
+  );
+  requireText(
+    musicLayout,
+    "ratingData.rating.source === 'lidarr'",
+    'music ratings must visibly identify the Lidarr fallback source'
+  );
+  requireText(
+    musicLayout,
+    'const safeRatingUrl = getSafeHref(ratingData?.rating?.url);',
+    'music rating links must pass through the shared safe URL boundary'
   );
 
   const seriesLayout = 'src/components/TvDetails/SeriesDetailsLayout.tsx';
@@ -441,15 +1202,25 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     seriesLayout,
-    '<SeriesSeasonEpisodeBrowser tvId={data.id} seasons={visibleSeasons} />',
-    'series details must use the read-only season and episode browser'
+    '<SeriesSeasonEpisodeBrowser',
+    'series details must use the shared season and episode selector'
+  );
+  requireText(
+    seriesLayout,
+    'catalog={playbackCatalog}',
+    'series selection must use the media-server availability catalog'
+  );
+  requireText(
+    seriesLayout,
+    'onSelectionChange={setSelectedPlaybackItemIds}',
+    'series selections must control the playback playlist'
   );
   const seriesBrowser =
     'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx';
-  rejectText(
+  requireText(
     seriesBrowser,
-    'type="checkbox"',
-    'series detail season/episode rows are informational only'
+    'const toggleSeason =',
+    'series selection must support selecting all available episodes in a season'
   );
   requireText(
     seriesBrowser,
@@ -461,6 +1232,150 @@ const validateCurrentBatchContract = (files) => {
     'data-testid="episode-list"',
     'the read-only episode list must retain a stable browser-audit target'
   );
+  requireText(
+    seriesBrowser,
+    'disabled={!playableItem}',
+    'unavailable episodes must remain visible but cannot be selected'
+  );
+  requireText(
+    seriesBrowser,
+    'onClick={() => toggleItems(allPlayableItemIds)}',
+    'the Season heading must expose a select-all control'
+  );
+  requireText(
+    seriesBrowser,
+    'onClick={() => toggleItems(activeItemIds)}',
+    'the Episode heading must expose a select-all control'
+  );
+  requireText(
+    seriesBrowser,
+    'className="text-left"',
+    'Season, Episode, and Title headings must remain left aligned'
+  );
+  requireText(
+    seriesBrowser,
+    'className="text-center"',
+    'episode counts and availability headings must remain centered'
+  );
+  requireText(
+    seriesBrowser,
+    "import SelectionCircle from '@app/components/Common/SelectionCircle';",
+    'Series selection controls must consume the shared SelectionCircle component'
+  );
+
+  const albumTrackList = 'src/components/MediaDetails/AlbumTrackList.tsx';
+  requireText(
+    albumTrackList,
+    'columnItemIds.forEach((itemId) =>',
+    'each Music track table must expose its own select-all control'
+  );
+  requireText(
+    albumTrackList,
+    "import SelectionCircle from '@app/components/Common/SelectionCircle';",
+    'Music track controls must consume the shared SelectionCircle component'
+  );
+
+  const selectionCircle = 'src/components/Common/SelectionCircle/index.tsx';
+  requireText(
+    selectionCircle,
+    "import { CheckIcon } from '@heroicons/react/24/solid';",
+    'selector component must use the established solid CheckIcon'
+  );
+  requireText(
+    selectionCircle,
+    'className="selection-circle"',
+    'selector component must delegate its appearance to global CSS'
+  );
+  requireText(
+    selectionCircle,
+    'className="selection-circle-icon"',
+    'selector icon must delegate its geometry to global CSS'
+  );
+  rejectText(
+    selectionCircle,
+    'CheckCircleIcon',
+    'outlined availability artwork must never be used by the selection control'
+  );
+  requireText(
+    selectionCircle,
+    'data-partial',
+    'selection circles must expose the approved partial-season state'
+  );
+  requireText(
+    seriesBrowser,
+    'partial={partiallySelected}',
+    'Series playback season rows must show partial episode selection'
+  );
+  requireText(
+    'src/components/Common/SeriesSeasonEpisodeSelector.tsx',
+    'partial={partial}',
+    'Request and Issue season rows must show partial episode selection'
+  );
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'The outlined `CheckCircleIcon` and `XCircleIcon` are availability/status symbols only.',
+    'the style standard must distinguish selection controls from availability icons'
+  );
+
+  for (const selectorConsumer of [
+    'src/components/Common/SeriesSeasonEpisodeSelector.tsx',
+    seriesBrowser,
+    albumTrackList,
+    'src/components/MediaDetails/PlaybackTrackList.tsx',
+    'src/components/CollectionDetails/index.tsx',
+  ]) {
+    requireText(
+      selectorConsumer,
+      "import SelectionCircle from '@app/components/Common/SelectionCircle';",
+      'selection controls must consume the shared SelectionCircle component'
+    );
+    requireText(
+      selectorConsumer,
+      '<SelectionCircle',
+      'selection controls must render the shared SelectionCircle component'
+    );
+    rejectText(
+      selectorConsumer,
+      'playback-selection-button',
+      'legacy page-local selector styling is forbidden'
+    );
+    rejectText(
+      selectorConsumer,
+      'fill-indigo-500/30',
+      'availability-icon fill styling must not be reused for selection state'
+    );
+  }
+  rejectText(
+    'src/components/Common/SeriesSeasonEpisodeSelector.tsx',
+    'const SelectCircle',
+    'request and issue selectors must not retain a page-local selector component'
+  );
+  for (const [componentFile, componentSource] of Object.entries(files)) {
+    if (!componentFile.startsWith('src/components/')) continue;
+
+    if (
+      componentSource.includes('playback-selection-button') ||
+      componentSource.includes('fill-indigo-500/30')
+    ) {
+      errors.push(
+        `${componentFile}: obsolete defective selector styling is forbidden repository-wide`
+      );
+    }
+
+    const buttonBlocks =
+      componentSource.match(/<button\b[\s\S]*?<\/button>/g) ?? [];
+    if (
+      buttonBlocks.some(
+        (buttonBlock) =>
+          buttonBlock.includes('aria-pressed') &&
+          buttonBlock.includes('CheckCircleIcon')
+      )
+    ) {
+      errors.push(
+        `${componentFile}: interactive selection controls must use SelectionCircle instead of embedding CheckCircleIcon`
+      );
+    }
+  }
 
   const bookLayout = 'src/components/BookDetails/BookDetailsLayout.tsx';
   requireText(
@@ -472,6 +1387,21 @@ const validateCurrentBatchContract = (files) => {
     bookLayout,
     '/discover/books?subject=',
     'book Genres must link to matching books'
+  );
+  requireText(
+    bookLayout,
+    '<ReactMarkdown',
+    'book overview provider Markdown must render as safe links'
+  );
+  requireText(
+    bookLayout,
+    'urlTransform={getSafeMarkdownHref}',
+    'book overview links must pass through the shared safe URL transform'
+  );
+  requireText(
+    'src/utils/bookMarkdown.test.ts',
+    'removes stray emphasis text after an https Markdown link',
+    'the observed malformed provider link must have regression coverage'
   );
 
   const requestModals = [
@@ -489,12 +1419,22 @@ const validateCurrentBatchContract = (files) => {
     requireText(
       fileName,
       '<RequestFooterStatus',
-      'request status must sit beside Advanced Options'
+      'Approval must render in the request details area'
     );
     requireText(
       fileName,
       'selectedDestinationAvailable',
       'must evaluate selected service/quality availability'
+    );
+    requireText(
+      fileName,
+      'selectedDestinationRequested',
+      'must evaluate active requests against the selected destination'
+    );
+    requireText(
+      fileName,
+      'selectedDestinationCovered',
+      'must block duplicate submissions for available and actively requested destinations'
     );
     requireText(
       fileName,
@@ -530,8 +1470,8 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     advanced,
-    'relative inline-flex h-[22px]',
-    'Requested By must retain the fixed-height flex alignment standard'
+    'invisible col-start-1 row-start-1 whitespace-nowrap',
+    'Requested By must size itself to the longest available username'
   );
   const requestMediaCard = 'src/components/RequestModal/RequestMediaCard.tsx';
   requireText(
@@ -550,6 +1490,162 @@ const validateCurrentBatchContract = (files) => {
     'request artwork must use the shared scrim'
   );
 
+  const formatRequestControl =
+    'src/components/Common/FormatRequestControl/index.tsx';
+  requireText(
+    formatRequestControl,
+    'data-testid="format-request-control"',
+    'format-aware requests must use the shared segmented Request control'
+  );
+
+  for (const fileName of [
+    'src/components/BookDetails/index.tsx',
+    'src/components/MusicDetails/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'canChooseAlternateTarget',
+      'format entry controls must defer exact alternate-target decisions to the request card'
+    );
+  }
+  requireText(
+    formatRequestControl,
+    'data-testid={`format-request-option-${option.id}`}',
+    'segmented format choices must retain stable browser-audit targets'
+  );
+  requireText(
+    formatRequestControl,
+    'disabled={option.disabled}',
+    'unavailable or pending request formats must stay visible but disabled'
+  );
+
+  const collectionDetails = 'src/components/CollectionDetails/index.tsx';
+  for (const token of [
+    'className="refreshed-artwork-scrim"',
+    'getTmdbPosterImageVariants(data.posterPath)',
+    '<CollectionAssociationsButton',
+    '<FormatRequestControl options={requestOptions}',
+    '<CollectionPlayOnDeviceButton',
+    'mediaIds={effectivePlaybackMediaIds}',
+    '<CollectionMetadataDisclosures',
+    'max-h-[312px]',
+    'messages.availability',
+    '<AvailabilityValue',
+    "tone={available ? 'available' : 'unavailable'}",
+    'card:col-start-1 card:row-start-4',
+    'card:col-start-2 card:row-start-4',
+    '<SelectionCircle',
+  ]) {
+    requireText(
+      collectionDetails,
+      token,
+      `refreshed Collection Details contract is missing ${token}`
+    );
+  }
+  rejectText(
+    collectionDetails,
+    'ButtonWithDropdown',
+    'Collection requests must use the shared segmented format control'
+  );
+  requireText(
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'className="object-cover object-top brightness-[0.6]',
+    'the Movie Details collection link artwork must remain top aligned'
+  );
+  for (const forbidden of ['ReportIssue', 'WatchTrailer', 'ManageSlideOver']) {
+    rejectText(
+      collectionDetails,
+      forbidden,
+      `Collection action row must omit ${forbidden}`
+    );
+  }
+  requireText(
+    'src/components/CollectionDetails/CollectionPlayOnDeviceButton.tsx',
+    "axios.post('/api/v1/playback/collection/play'",
+    'Collection Play on Device must send the selected movie queue'
+  );
+  requireText(
+    'server/routes/playback.ts',
+    "playbackRoutes.post('/collection/play'",
+    'server must expose collection playlist playback'
+  );
+  requireText(
+    'server/routes/playback.ts',
+    'buildPlexPlaylistWebUrl({',
+    'Plex playlist playback must use the dedicated playlist web URL builder'
+  );
+  requireText(
+    'server/lib/plexPlaylistUrl.ts',
+    '}/playlist?key=${encodeURIComponent(playlistPageKey)}`',
+    'Plex playlist links must use the playlist route and derived container key'
+  );
+  requireOrder(
+    'server/api/plexapi.ts',
+    [
+      'const key = isRecord(metadata)',
+      'boundedPlexText(metadata.key, 256)',
+      'return { ratingKey, key, title: safeTitle, playlistType: mediaType }',
+    ],
+    'Plex playlist creation must retain the returned playlist content key'
+  );
+  requireText(
+    'server/routes/playback.ts',
+    'const uniqueMediaIds = [...new Set(requestedMediaIds)]',
+    'Collection playback must preserve the ordered unique selection'
+  );
+  for (const token of [
+    'orderCollectionPartsOldestFirst(data?.parts ?? [])',
+    'reconcileCollectionPlaybackSelection(',
+    'hasManualPlaybackSelection',
+    'resolveCanonicalPlaybackSelection(',
+    'const effectivePlaybackMediaIds',
+    'disabled={availableMediaIds.length === 0}',
+    'orderedParts.map((part)',
+  ]) {
+    requireText(
+      collectionDetails,
+      token,
+      'Collection playback must preserve oldest-first ordering and make an empty selection mean all available items'
+    );
+  }
+  requireText(
+    'src/utils/collectionPlaybackSelection.test.ts',
+    'preserves an intentionally empty selection after availability refreshes',
+    'Collection playback must test the manual empty-selection state'
+  );
+  const collectionRequestModal =
+    'src/components/RequestModal/CollectionRequestModal.tsx';
+  for (const token of [
+    '<RequestMediaCard',
+    '<SelectionCircle',
+    'const visibleParts = orderCollectionPartsOldestFirst(',
+    'getCollectionPartRequestPresentation(',
+    "? 'text-green-400'",
+    "? 'text-yellow-300'",
+    'messages.readyToRequest',
+  ]) {
+    requireText(
+      collectionRequestModal,
+      token,
+      'Collection requests must use the shared card, selector, ordering, and status presentation'
+    );
+  }
+  rejectText(
+    collectionRequestModal,
+    'role="checkbox"',
+    'Collection requests must not restore the legacy sliding selection toggles'
+  );
+  rejectText(
+    collectionRequestModal,
+    'style={{',
+    'Collection request artwork must use shared classes instead of embedded styles'
+  );
+  requireText(
+    'src/utils/collectionRequestState.test.ts',
+    'presents ready and available collection status with distinct states',
+    'Collection request Ready and Available states must have regression coverage'
+  );
+
   const paginationPages = [
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/index.tsx',
@@ -565,6 +1661,22 @@ const validateCurrentBatchContract = (files) => {
       'paginated pages must use the Issues footer standard'
     );
   }
+  const paginationFooter = 'src/components/Common/PaginationFooter/index.tsx';
+  requireText(
+    paginationFooter,
+    'grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]',
+    'shared pagination must use stable left, center, and right zones'
+  );
+  requireOrder(
+    paginationFooter,
+    [
+      'messages.resultsPerPage',
+      'messages.page',
+      'globalMessages.previous',
+      'globalMessages.next',
+    ],
+    'pagination must place Results Per Page left, page count center, and Previous then Next right'
+  );
 
   const issueDetails = 'src/components/IssueDetails/index.tsx';
   requireOrder(
@@ -574,8 +1686,8 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     issueDetails,
-    'messages.openEbookInBookshelf',
-    'Book issues must retain the format-specific Ebook service action'
+    'messages.openBookInBookshelf',
+    'Book issues must retain the format-specific Book service action'
   );
   requireText(
     issueDetails,
@@ -583,10 +1695,70 @@ const validateCurrentBatchContract = (files) => {
     'Book issues must retain the format-specific Audiobook service action'
   );
   requireText(
+    issueDetails,
+    '<article className="refreshed-card-surface relative overflow-hidden',
+    'Issue Details must contain every region in one artwork-backed outer card'
+  );
+  requireText(
+    issueDetails,
+    'className="object-cover object-top"',
+    'Issue Details outer artwork must fill from the top edge'
+  );
+  requireText(
+    issueDetails,
+    '<IssueMediaSummary',
+    'Issue Details must retain the standard media summary'
+  );
+  requireText(
+    issueDetails,
+    'embedded',
+    'the Issue summary must render as an inset inside the outer artwork card'
+  );
+  requireText(
+    issueDetails,
+    'className="mt-[5px] max-h-32 w-full',
+    'Issue Details comment entry must sit directly beneath Comments without another wrapper card'
+  );
+  rejectText(
+    issueDetails,
+    '<div className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-2">\n                    <Field',
+    'Issue Details must not wrap the comment textarea in a second inset card'
+  );
+  requireText(
     'src/components/IssueList/IssueItem/index.tsx',
     'border-emerald-600/80',
     'View Issue must be green'
   );
+  const issueList = 'src/components/IssueList/index.tsx';
+  requireText(
+    issueList,
+    "useState<Filter>('all')",
+    'Issues must show All Issues by default'
+  );
+  requireOrder(
+    issueList,
+    [
+      'globalMessages.resolved',
+      'intl.formatMessage(messages.issueType)',
+      'intl.formatMessage(messages.mediaFilters)',
+      'intl.formatMessage(messages.filters)',
+    ],
+    'Issues must separate Task Filters, Media Filters, and regular Filters'
+  );
+  for (const fileName of [
+    'src/components/RequestStatus/index.tsx',
+    'src/components/Blocklist/index.tsx',
+  ]) {
+    requireOrder(
+      fileName,
+      [
+        'intl.formatMessage(messages.taskFilters)',
+        'intl.formatMessage(messages.mediaFilters)',
+        'intl.formatMessage(messages.filter',
+      ],
+      'workflow pages must separate Task Filters, Media Filters, and regular Filters'
+    );
+  }
   requireText(
     'src/components/IssueModal/CreateIssueModal/index.tsx',
     'getAvailableIssueQualities(data?.mediaInfo)',
@@ -595,28 +1767,13 @@ const validateCurrentBatchContract = (files) => {
   const issueSummary = 'src/components/IssueDetails/IssueMediaSummary.tsx';
   requireText(
     issueSummary,
-    'refreshed-card-surface relative rounded-xl',
-    'issue artwork must be contained by the complete summary card'
+    'embedded?: boolean;',
+    'issue summaries must support the outer-card embedded treatment'
   );
   requireText(
     issueSummary,
-    'pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl',
-    'issue artwork must be clipped independently inside the card'
-  );
-  requireText(
-    issueSummary,
-    'className="refreshed-artwork-scrim"',
-    'issue artwork must use the shared readability scrim'
-  );
-  requireText(
-    issueSummary,
-    'className="refreshed-artwork-gradient"',
-    'issue artwork must use the shared horizontal gradient'
-  );
-  requireText(
-    issueSummary,
-    '<div className="relative z-10">',
-    'issue summary content must remain above its artwork'
+    "embedded ? 'refreshed-inset-surface' : 'refreshed-card-surface shadow-lg shadow-gray-950/20'",
+    'embedded Issue Details summary must use the shared inset transparency'
   );
   rejectText(
     issueSummary,
@@ -701,6 +1858,131 @@ const validateCurrentBatchContract = (files) => {
     'retryTimer = setTimeout(preloadAvatar, retryDelay)',
     'remote avatar cache warm-up retries must remain bounded and delayed'
   );
+
+  requireText(
+    'src/components/Layout/SearchInput/index.tsx',
+    'w-full min-w-0 max-w-2xl',
+    'the global search control must be wide enough for its complete placeholder'
+  );
+  requireText(
+    'src/hooks/useSearchInput.ts',
+    'delete remainingQuery.query;',
+    'backspacing search to empty must remove the stale route query'
+  );
+  requireText(
+    'src/hooks/useSearchInput.utils.ts',
+    "!(pathname === '/search' && (closingSearch || searchValue === ''))",
+    'empty search input must not be repopulated from a stale route value'
+  );
+  requireText(
+    'src/hooks/useSearchInput.test.ts',
+    'removes the route query after backspacing the search input to empty',
+    'search clearing must have a routing regression test'
+  );
+
+  requireText(
+    'server/models/Music.ts',
+    "source: 'musicbrainz' | 'lidarr';",
+    'music rating responses must identify their provider source'
+  );
+  requireText(
+    'server/api/servarr/lidarr.ts',
+    'ratings?: LidarrRating;',
+    'Lidarr album responses must expose their optional rating metadata'
+  );
+  requireText(
+    'server/routes/music.ts',
+    "source: 'musicbrainz'",
+    'MusicBrainz must remain the preferred album rating source'
+  );
+  requireText(
+    'server/routes/music.ts',
+    "source: 'lidarr'",
+    'music rating lookup must fall back to the configured Lidarr album'
+  );
+  requireText(
+    'server/routes/index.ts',
+    "router.use('/playback', isAuthenticated(), playbackRoutes);",
+    'the playback catalog and command API must be registered in the production server'
+  );
+  for (const playbackPath of [
+    '  /playback/devices:',
+    '  /playback/media/{mediaId}:',
+    '  /playback/media/{mediaId}/play:',
+    '  /playback/media/{mediaId}/playlist:',
+    '  /playback/collection/play:',
+    '  /playback/collection/playlist:',
+  ]) {
+    requireText(
+      'seerr-api.yml',
+      playbackPath,
+      'every playback route must be admitted by the production OpenAPI request gate'
+    );
+  }
+  requireText(
+    'server/routes/workflow.openapi.test.ts',
+    'admits media and collection playlist replacement commands',
+    'the playback OpenAPI boundary must have executable regression coverage'
+  );
+  for (const [fileName, token, description] of [
+    [
+      'server/routes/playback.ts',
+      "const CURRENT_SELECTION_PLAYLIST_NAME = 'SeerrNG - Current Selection'",
+      'provider playback must use the one canonical replacement-playlist name',
+    ],
+    [
+      'server/routes/playback.ts',
+      'resolvePlaylistItemIds(',
+      'both playback actions must validate and canonicalize media selections',
+    ],
+    [
+      'src/components/Common/MediaServerPlayButton/index.tsx',
+      "'/api/v1/playback/collection/playlist'",
+      'Collection Play on Server must replace the provider playlist',
+    ],
+    [
+      'src/components/Common/MediaServerPlayButton/index.tsx',
+      '`/api/v1/playback/media/${mediaId}/playlist`',
+      'Media Play on Server must replace the provider playlist',
+    ],
+    [
+      'server/entity/Media.ts',
+      'ratingKeyFlac',
+      'Plex music must retain a distinct FLAC playback identifier',
+    ],
+    [
+      'server/entity/Media.ts',
+      'jellyfinMediaIdFlac',
+      'Jellyfin and Emby music must retain a distinct FLAC playback identifier',
+    ],
+    [
+      'server/migration/sqlite/1784800000000-AddAudioPlaybackVariants.ts',
+      'ratingKeyFlac',
+      'SQLite must migrate the separate audio playback identifiers',
+    ],
+    [
+      'server/migration/postgres/1784800000000-AddAudioPlaybackVariants.ts',
+      'ratingKeyFlac',
+      'PostgreSQL must migrate the separate audio playback identifiers',
+    ],
+    [
+      'server/lib/playbackMediaRoot.ts',
+      'media.ratingKeyFlac ??',
+      'Plex playback must prefer FLAC before MP3 and the legacy identifier',
+    ],
+    [
+      'server/lib/playbackMediaRoot.ts',
+      'media.jellyfinMediaIdFlac ??',
+      'Jellyfin and Emby playback must prefer FLAC before MP3 and the legacy identifier',
+    ],
+    [
+      'server/lib/audioPlaybackFormat.test.ts',
+      "classifyAudioPlaybackFormats(['audio/mpeg-1-layer-3'])",
+      'audio format classification must cover normalized MP3 codec names',
+    ],
+  ]) {
+    requireText(fileName, token, description);
+  }
   requireText(
     'package.json',
     'node bin/run-prettier.mjs --check',
@@ -833,6 +2115,70 @@ const validateCurrentBatchContract = (files) => {
     'useSearchActivityReporter(',
     'movie and series keyword search must report activity'
   );
+  requireOrder(
+    filterPanel,
+    [
+      'const clearAllFilters = () => {',
+      "routedSearchRef.current = '';",
+      "setSearchValue('');",
+      'batchUpdateQueryParams({',
+      '...clearedFilters,',
+      '[searchQueryKey]: undefined,',
+      'onClick={clearAllFilters}',
+    ],
+    'movie and series Clear Filters must clear both routed and debounced keyword state'
+  );
+  requireOrder(
+    filterPanel,
+    [
+      'getFilterResetButtonClass(!hasActiveFilters)',
+      '<CardTextVisibilityToggle',
+      '<AvailabilityQualityControl',
+      'className="order-3"',
+      'className="order-4 basis-full"',
+      '<form',
+      'order-5',
+    ],
+    'movie and series must preserve Clear Filters, Title View, Quality Available, then the Keyword Search row break'
+  );
+  requireOrder(
+    'src/components/Discover/AvailabilityQualityControl/index.tsx',
+    [
+      '{ label: intl.formatMessage(messages.all) }',
+      "{ label: 'MP3', value: 'mp3' }",
+      "{ label: 'FLAC', value: 'flac' }",
+    ],
+    'Music quality filtering must preserve All, MP3, FLAC order'
+  );
+  requireOrder(
+    'src/components/Discover/AvailabilityQualityControl/index.tsx',
+    [
+      '{ label: intl.formatMessage(messages.all) }',
+      "{ label: 'HD', value: 'hd' }",
+      "{ label: '4K', value: '4k' }",
+    ],
+    'Movie and Series quality filtering must preserve All, HD, 4K order'
+  );
+  requireText(
+    'src/utils/availabilityQuality.ts',
+    'availableStatuses.has(status)',
+    'Discover quality matching must accept only scanned available video states'
+  );
+  requireText(
+    'src/hooks/useDiscover.ts',
+    'matchesAvailableQuality(item, availableQuality)',
+    'Discover results must enforce the selected scanned availability quality'
+  );
+  requireText(
+    'server/routes/discover.ts',
+    'availableQualities',
+    'Music discovery must expose separately persisted Lidarr qualities'
+  );
+  requireText(
+    'server/routes/discover.test.ts',
+    'exposes every scanned Lidarr quality for discovery filtering',
+    'Music discovery quality metadata must have route coverage'
+  );
   for (const fileName of [
     'src/components/Discover/DiscoverMusic/index.tsx',
     'src/components/Discover/DiscoverBooks/index.tsx',
@@ -852,6 +2198,115 @@ const validateCurrentBatchContract = (files) => {
     'src/components/Discover/DiscoverBooks/index.tsx',
     '{discover.error && (',
     'Books must show a provider error instead of No Results'
+  );
+  requireOrder(
+    'src/components/Discover/BookFormatTabs/index.tsx',
+    ["format: 'all'", "format: 'ebook'", "format: 'audiobook'"],
+    'Books discovery must preserve the All Books, Books, Audiobooks format order'
+  );
+  requireText(
+    'src/pages/discover/books/index.tsx',
+    '<DiscoverBooks format="all" />',
+    'Books discovery must default to All Books'
+  );
+  requireOrder(
+    'src/components/Discover/DiscoverBooks/index.tsx',
+    [
+      'messages.mediaFilters',
+      '<BookFormatTabs',
+      'messages.filters',
+      'getFilterResetButtonClass(!hasActiveFilters)',
+      '<CardTextVisibilityToggle',
+      '<form',
+      'messages.firstPublished',
+      'messages.genres',
+      'messages.ratingFilter',
+      'messages.language',
+    ],
+    'Books and Audiobooks must separate Media Filters from the continuous regular filter row'
+  );
+  requireOrder(
+    'src/components/Discover/DiscoverMusic/index.tsx',
+    [
+      'getFilterResetButtonClass(!hasActiveFilters)',
+      '<CardTextVisibilityToggle',
+      '<AvailabilityQualityControl',
+      'className="order-3"',
+      'className="order-4 basis-full"',
+      '<form',
+      'order-5',
+    ],
+    'Music must preserve Clear Filters, Title View, Quality Available, then the Keyword Search row break'
+  );
+  requireOrder(
+    'src/components/Discover/FilterPanel/index.tsx',
+    ['<form', "type === 'tv'", 'messages.status', 'messages.releaseDate'],
+    'Series Status must sit immediately after Keyword Search'
+  );
+  requireText(
+    'src/components/Selector/index.tsx',
+    'defaultOptions={availableGenreOptions}',
+    'the shared Movie and Series genre selector must preload its options'
+  );
+  requireText(
+    'src/components/Selector/genreOptions.test.ts',
+    'prepares the complete Series genre list for the default dropdown',
+    'Series genre preloading must retain focused regression coverage'
+  );
+  requireText(
+    'src/components/TitleCard/index.tsx',
+    "request: '1'",
+    'the Book poster-card Request action must navigate to the auto-open Details flow'
+  );
+  requireText(
+    'src/components/BookDetails/index.tsx',
+    "router.query.request !== '1'",
+    'Book Details must recognize the one-time automatic request-card handoff'
+  );
+  requireText(
+    'src/components/BookDetails/index.tsx',
+    'router.replace(',
+    'Book Details must consume the automatic-open route state so refresh does not reopen it'
+  );
+  requireText(
+    'server/routes/discover.ts',
+    'Open Library returned an empty default discovery feed.',
+    'an empty default all-books provider response must surface as a provider failure'
+  );
+  requireText(
+    'server/routes/discover.test.ts',
+    'uses one broad query for the default all-books feed',
+    'the broad 50-book default feed must have regression coverage'
+  );
+  requireText(
+    'server/routes/discover.test.ts',
+    'reports provider failure instead of an empty default book feed',
+    'the empty default all-books response must have regression coverage'
+  );
+  for (const token of [
+    'const bookDiscoveryContext = {',
+    "? 'audiobook'",
+    "? 'book'",
+    ": 'all'",
+    'keyword: searchQuery || undefined',
+    'pageSize: itemsPerPage',
+    'sort: sortByValue',
+    'genre: subjectQuery || undefined',
+    'firstPublishYear: firstPublishYear || undefined',
+    'language: language || undefined',
+    'minRating: parsedRatingNumber',
+    'discoveryContext: bookDiscoveryContext',
+  ]) {
+    requireText(
+      'server/routes/discover.ts',
+      token,
+      'Books discovery failures must log one sanitized structured request context'
+    );
+  }
+  requireText(
+    'server/routes/discover.test.ts',
+    'reports one sanitized structured context when Open Library is unavailable',
+    'Books discovery structured failure logging must have regression coverage'
   );
   requireText(
     'src/hooks/useUpdateQueryParams.ts',
@@ -873,6 +2328,33 @@ const validateCurrentBatchContract = (files) => {
     'book request coverage blocks only active overlapping formats',
     'Book request overlap handling must preserve complementary-format requests'
   );
+  for (const testName of [
+    'removes only the ebook link when an audiobook link remains',
+    'removes only the audiobook link when an ebook link remains',
+    'persists successful book format removals when another format fails',
+    'persists audiobook removal when ebook removal fails',
+  ]) {
+    requireText(
+      'server/routes/media.test.ts',
+      testName,
+      `Book removal matrix is missing ${testName}`
+    );
+  }
+  requireText(
+    'server/lib/downloadtracker.test.ts',
+    'continues polling remaining configured instances when one fails',
+    'download polling must retain multi-instance failure isolation coverage'
+  );
+  for (const testName of [
+    'stores audiobook service data separately from ebook service data',
+    'stores ebook service data separately from audiobook service data',
+  ]) {
+    requireText(
+      'server/lib/scanners/readarr/readarr.test.ts',
+      testName,
+      `Bookshelf reclassification matrix is missing ${testName}`
+    );
+  }
   requireText(
     'server/routes/discover.ts',
     "toFieldedBooleanAndQuery(searchQuery, ['title', 'author'])",

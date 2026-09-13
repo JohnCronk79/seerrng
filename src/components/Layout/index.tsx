@@ -6,19 +6,29 @@ import ThemePicker from '@app/components/Layout/ThemePicker';
 import UserDropdown from '@app/components/Layout/UserDropdown';
 import UserWarnings from '@app/components/Layout/UserWarnings';
 import useLocale from '@app/hooks/useLocale';
+import useSearchActivity from '@app/hooks/useSearchActivity';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
+import defineMessages from '@app/utils/defineMessages';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { ArrowLeftIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/solid';
 import type { AvailableLocale } from '@server/types/languages';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
+import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 type LayoutProps = {
   children: React.ReactNode;
 };
 
+const messages = defineMessages('components.Layout', {
+  searching: 'Searching',
+});
+
 const Layout = ({ children }: LayoutProps) => {
+  const intl = useIntl();
+  const isSearching = useSearchActivity();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const isScrolledRef = useRef(false);
@@ -194,7 +204,21 @@ const Layout = ({ children }: LayoutProps) => {
           <div className="mb-6">
             <div className="max-w-8xl mx-auto px-4">
               <UserWarnings />
-              {children}
+              <div className="relative">
+                <div
+                  className="pointer-events-none absolute left-0 top-1 flex h-6 items-center gap-2 text-sm text-gray-200"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {isSearching && (
+                    <>
+                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
+                      <span>{intl.formatMessage(messages.searching)}</span>
+                    </>
+                  )}
+                </div>
+                {children}
+              </div>
             </div>
           </div>
         </main>

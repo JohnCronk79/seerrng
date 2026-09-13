@@ -13,6 +13,10 @@ import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
+import {
+  getFilterResetButtonClass,
+  getFilterToggleButtonClass,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
@@ -87,6 +91,7 @@ const messages = defineMessages('components.RequestStatus', {
   active: 'Active',
   attention: 'Needs Attention',
   completed: 'Completed',
+  incomplete: 'Incomplete',
   pending: 'Pending',
   processing: 'Active',
   deleted: 'Deleted',
@@ -112,8 +117,8 @@ const messages = defineMessages('components.RequestStatus', {
   fourK: '4K',
   hd: 'HD',
   musicFormat: 'Music',
-  ebookAndAudiobook: 'Ebook + Audiobook',
-  ebook: 'Ebook',
+  ebookAndAudiobook: 'Book + Audiobook',
+  ebook: 'Book',
   minutes: '{count} minutes',
   notAvailable: 'Not available',
   releaseDate: 'Release Date',
@@ -144,10 +149,11 @@ const messages = defineMessages('components.RequestStatus', {
     '{count, plural, =1 {# older request is outside this window.} other {# older requests are outside this window.}}',
   viewAllHistory: 'View All History',
   filter: 'Filters',
+  mediaFilters: 'Media Filters',
   allMedia: 'All Media',
   movies: 'Movies',
   music: 'Music',
-  ebooks: 'Ebooks',
+  ebooks: 'Books',
   audiobooks: 'Audiobooks',
   mediaAndFormat: 'Media & format',
   showingFormat: 'Showing requests for',
@@ -270,6 +276,7 @@ const requestTypeFilterValues = [
   'all',
   'pending',
   'completed',
+  'incomplete',
   'processing',
   'attention',
   ...statusStageValues,
@@ -1294,7 +1301,7 @@ const RequestStatusCard = ({
 
             <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
               <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                <dl className="refreshed-detail-text grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
                   <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
@@ -1368,7 +1375,7 @@ const RequestStatusCard = ({
                 </dl>
               </div>
 
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-l-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="refreshed-detail-text mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-l-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.requestedByLabel)}:
                 </dt>
@@ -1414,7 +1421,7 @@ const RequestStatusCard = ({
             <button
               type="button"
               onClick={() => scrollTimeline(-1)}
-              className="absolute left-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm"
+              className="app-button app-button-default absolute left-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressLeft)}
             >
               <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
@@ -1456,7 +1463,7 @@ const RequestStatusCard = ({
                           ? 'border-indigo-300 bg-indigo-500 text-white shadow-sm shadow-indigo-900/50'
                           : isComplete
                             ? 'border-emerald-400 bg-emerald-500 text-white'
-                            : 'border-gray-600 bg-gray-800 text-gray-500'
+                            : 'border-gray-600 bg-gray-800 text-transparent'
                       }`}
                     >
                       {isComplete ? (
@@ -1467,7 +1474,9 @@ const RequestStatusCard = ({
                     </span>
                     <span
                       className={`mt-1 whitespace-nowrap text-[11px] leading-4 ${
-                        isCurrent ? 'font-semibold text-white' : 'text-gray-400'
+                        isCurrent
+                          ? 'font-semibold text-white'
+                          : 'refreshed-detail-text-muted'
                       }`}
                     >
                       {getStageLabel(intl, stage)}
@@ -1481,7 +1490,7 @@ const RequestStatusCard = ({
             <button
               type="button"
               onClick={() => scrollTimeline(1)}
-              className="absolute right-1 top-1/2 z-10 flex h-10 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-indigo-400/40 bg-gray-900/80 text-indigo-200 backdrop-blur-sm"
+              className="app-button app-button-default absolute right-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressRight)}
             >
               <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
@@ -1500,7 +1509,10 @@ const RequestStatusCard = ({
                 </span>
                 {current.size !== null && current.sizeLeft !== null && (
                   <>
-                    <span className="text-gray-500" aria-hidden="true">
+                    <span
+                      className="refreshed-detail-text-muted"
+                      aria-hidden="true"
+                    >
                       |
                     </span>
                     <span>
@@ -1561,7 +1573,7 @@ const RequestStatusCard = ({
           {actionControls}
           <button
             type="button"
-            className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="detail-disclosure-button"
             aria-expanded={isHistoryOpen}
             onClick={() => onToggleHistory(item.request.id)}
           >
@@ -1582,7 +1594,7 @@ const RequestStatusCard = ({
               {intl.formatMessage(messages.history)}
             </h4>
             {chronologicalHistory.length === 0 ? (
-              <p className="text-xs text-gray-500">
+              <p className="refreshed-detail-text-muted text-xs">
                 {intl.formatMessage(messages.noHistory)}
               </p>
             ) : (
@@ -1596,13 +1608,13 @@ const RequestStatusCard = ({
                   return (
                     <li key={event.id} className="contents text-xs">
                       <time
-                        className="whitespace-nowrap text-gray-500"
+                        className="refreshed-detail-text-muted whitespace-nowrap"
                         dateTime={eventDate.toISOString()}
                       >
                         <FormattedDate value={eventDate} dateStyle="medium" />
                       </time>
                       <time
-                        className="whitespace-nowrap text-gray-500"
+                        className="refreshed-detail-text-muted whitespace-nowrap"
                         dateTime={eventDate.toISOString()}
                       >
                         <FormattedDate value={eventDate} timeStyle="medium" />
@@ -1610,7 +1622,7 @@ const RequestStatusCard = ({
                       <span className="font-medium text-gray-200">
                         {getStageLabel(intl, event.stage as StatusStage)}
                       </span>
-                      <span className="min-w-0 text-gray-400">
+                      <span className="refreshed-detail-text min-w-0">
                         {event.message ??
                           getStageLabel(intl, event.stage as StatusStage)}
                         {event.percent !== null && ` · ${event.percent}%`}
@@ -2070,15 +2082,18 @@ const RequestStatus = () => {
     pushRouteQuery(routeQuery({ nextPage }));
   };
   const selectedTaskFilter =
-    filter === 'all'
-      ? 'all'
-      : filter === 'completed'
-        ? 'completed'
-        : filter === 'processing'
-          ? 'active'
-          : filter === 'attention'
-            ? 'attention'
-            : null;
+    filter === 'processing'
+      ? 'active'
+      : [
+            'all',
+            'completed',
+            'incomplete',
+            'attention',
+            'unavailable',
+            'failed',
+          ].includes(filter)
+        ? filter
+        : null;
   const hasFilters =
     searchFilter.trim() !== '' ||
     filter !== 'all' ||
@@ -2164,16 +2179,18 @@ const RequestStatus = () => {
           </span>
         </h2>
         {isAdminView && canViewOtherUsers && (
-          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+          <label className="discover-filter-control h-8 flex-shrink-0 self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                selectedUser !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label ${
+                selectedUser !== 'all'
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               {intl.formatMessage(messages.userFilter)}
             </span>
             <select
-              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="w-28 border-0 bg-transparent px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-0"
               value={selectedUser ?? currentUser?.id ?? ''}
               onChange={(event) => updateUser(event.target.value)}
               aria-label={intl.formatMessage(messages.selectUser)}
@@ -2210,7 +2227,7 @@ const RequestStatus = () => {
       )}
 
       <section
-        className="mb-3 mt-4"
+        className="app-filter-section-gap mt-4"
         aria-label={intl.formatMessage(messages.taskFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
@@ -2220,7 +2237,7 @@ const RequestStatus = () => {
           <button
             type="button"
             onClick={clearFilters}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className={getFilterResetButtonClass(false)}
           >
             <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
             {intl.formatMessage(messages.clearFilters)}
@@ -2239,6 +2256,12 @@ const RequestStatus = () => {
               value: data.counts.completed,
             },
             {
+              key: 'incomplete',
+              filter: 'incomplete',
+              label: messages.incomplete,
+              value: data.counts.incomplete,
+            },
+            {
               key: 'active',
               filter: 'processing',
               label: messages.active,
@@ -2250,12 +2273,26 @@ const RequestStatus = () => {
               label: messages.attention,
               value: data.counts.attention,
             },
+            {
+              key: 'unavailable',
+              filter: 'unavailable',
+              label: messages.noReleaseFoundFilter,
+              value: data.counts.unavailable,
+            },
+            {
+              key: 'failed',
+              filter: 'failed',
+              label: messages.failed,
+              value: data.counts.failed,
+            },
           ].map((summary) => (
             <button
               key={summary.key}
               type="button"
               onClick={() => updateFilter(summary.filter)}
-              className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${selectedTaskFilter === summary.key ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+              className={getFilterToggleButtonClass(
+                selectedTaskFilter === summary.key
+              )}
             >
               <span>{intl.formatMessage(summary.label)}</span>
               <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
@@ -2264,41 +2301,14 @@ const RequestStatus = () => {
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {[
-            {
-              value: 'unavailable',
-              label: messages.noReleaseFoundFilter,
-              count: data.counts.unavailable,
-            },
-            {
-              value: 'failed',
-              label: messages.failed,
-              count: data.counts.failed,
-            },
-          ].map((status) => (
-            <button
-              key={status.value}
-              type="button"
-              aria-pressed={filter === status.value}
-              onClick={() => updateFilter(status.value)}
-              className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${filter === status.value ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
-            >
-              <span>{intl.formatMessage(status.label)}</span>
-              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
-                {status.count}
-              </span>
-            </button>
-          ))}
-        </div>
       </section>
 
       <section
-        className="mb-5"
-        aria-label={intl.formatMessage(messages.filter)}
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.mediaFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.filter)}
+          {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
           {mediaFilters.map((option) => (
@@ -2307,23 +2317,36 @@ const RequestStatus = () => {
               type="button"
               aria-pressed={mediaFilter === option.value}
               onClick={() => updateMediaFilter(option.value)}
-              className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${mediaFilter === option.value ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+              className={getFilterToggleButtonClass(
+                mediaFilter === option.value
+              )}
             >
               {intl.formatMessage(messages[option.label])}
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+      </section>
+
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.filter)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filter)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="discover-filter-control h-8 flex-shrink-0 self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label ${
+                timeFrame !== 'all'
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               {intl.formatMessage(messages.timeFrame)}
             </span>
             <select
-              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="w-28 border-0 bg-transparent px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-0"
               value={timeFrame}
               onChange={(event) =>
                 updateTimeFrame(event.target.value as TimeFrame)
@@ -2347,10 +2370,12 @@ const RequestStatus = () => {
               </option>
             </select>
           </label>
-          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+          <label className="discover-filter-control h-8 w-72 flex-none self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                searchFilter.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                searchFilter.trim()
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2362,7 +2387,7 @@ const RequestStatus = () => {
               onChange={(event) => setSearchFilter(event.target.value)}
               placeholder={intl.formatMessage(messages.searchRequests)}
               aria-label={intl.formatMessage(messages.searchRequests)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
         </div>
@@ -2400,7 +2425,7 @@ const RequestStatus = () => {
         </div>
       )}
 
-      <section className="mb-5">
+      <section className="app-filter-section-gap">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.sortBy)}
         </div>
@@ -2421,7 +2446,7 @@ const RequestStatus = () => {
                 aria-pressed={active}
                 aria-label={`${intl.formatMessage(messages[option.label])} (${intl.formatMessage(active && sortDirection === 'asc' ? messages.sortAscending : messages.sortDescending)})`}
                 onClick={() => updateSort(option.value)}
-                className={`inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+                className={getFilterToggleButtonClass(active)}
               >
                 {intl.formatMessage(messages[option.label])}
                 <DirectionIcon className="h-4 w-4" aria-hidden="true" />
@@ -2454,7 +2479,7 @@ const RequestStatus = () => {
       </div>
 
       {data.results.length === 0 && (
-        <div className="refreshed-card-surface flex min-h-12 flex-row flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 p-2 text-center text-gray-400">
+        <div className="refreshed-card-surface flex min-h-12 flex-row flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 p-2 text-center">
           <span>{intl.formatMessage(messages.noResults)}</span>
           {hasFilters && (
             <Button buttonType="default" buttonSize="sm" onClick={clearFilters}>

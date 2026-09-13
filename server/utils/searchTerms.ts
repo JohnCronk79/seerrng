@@ -50,6 +50,28 @@ export const toFieldedBooleanAndQuery = (
     )
     .join(' AND ');
 
+const escapeLuceneTerm = (term: string): string =>
+  term.replace(/(&&|\|\||[+\-!(){}[\]^"~*?:\\/])/g, '\\$1');
+
+const getLuceneTerms = (search: string): string[] =>
+  getSearchTerms(search).flatMap((term) =>
+    term.split(/\s+/).map(escapeLuceneTerm).filter(Boolean)
+  );
+
+export const toMusicAlbumRefinementQuery = (
+  mainSearch: string,
+  albumFilter: string
+): string => {
+  const mainQuery = getLuceneTerms(mainSearch)
+    .map((term) => `(releasegroup:${term} OR artist:${term})`)
+    .join(' AND ');
+  const filterQuery = getLuceneTerms(albumFilter)
+    .map((term) => `releasegroup:${term}`)
+    .join(' AND ');
+
+  return [mainQuery, filterQuery].filter(Boolean).join(' AND ');
+};
+
 export const matchesAllSearchTerms = (
   values: unknown[],
   search: string

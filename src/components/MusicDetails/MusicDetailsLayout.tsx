@@ -1,14 +1,22 @@
+import MusicBrainzLogo from '@app/assets/musicbrainz.svg';
+import LidarrLogo from '@app/assets/services/lidarr.svg';
 import Badge from '@app/components/Common/Badge';
 import CachedImage from '@app/components/Common/CachedImage';
+import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
+import Tooltip from '@app/components/Common/Tooltip';
 import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
+import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import MediaSlider from '@app/components/MediaSlider';
+import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
+import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
+import { getSafeHref } from '@app/utils/safeUrl';
 import { MediaStatus } from '@server/constants/media';
-import type { MusicDetails } from '@server/models/Music';
+import type { MusicDetails, MusicRatingResponse } from '@server/models/Music';
 import Link from 'next/link';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.MusicDetails.Layout', {
@@ -35,12 +43,16 @@ const messages = defineMessages('components.MusicDetails.Layout', {
   available: 'Available',
   albumArtist: 'Album Artist',
   trackArtist: 'Track Artist',
+  musicBrainzRating: 'MusicBrainz rating: {score} from {votes} votes',
+  lidarrRating: 'Lidarr rating: {score} from {votes} votes',
 });
 
 interface MusicDetailsLayoutProps {
   data: MusicDetails;
   primaryActions: ReactNode;
   secondaryActions: ReactNode;
+  playbackActions?: (itemIds: string[]) => ReactNode;
+  ratingData?: MusicRatingResponse;
   additionalContent?: ReactNode;
 }
 
@@ -77,11 +89,36 @@ const MusicDetailsLayout = ({
   data,
   primaryActions,
   secondaryActions,
+  playbackActions,
+  ratingData,
   additionalContent,
 }: MusicDetailsLayoutProps) => {
   const intl = useIntl();
   const [showArtists, setShowArtists] = useState(false);
   const [showTags, setShowTags] = useState(false);
+  const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
+    string[]
+  >([]);
+  const { data: playbackCatalog } = usePlaybackCatalog(data.mediaInfo?.id);
+  const safeRatingUrl = getSafeHref(ratingData?.rating?.url);
+  useEffect(() => {
+    const allowedIds = new Set(
+      playbackCatalog?.groups.flatMap((group) =>
+        group.items.map((item) => item.id)
+      ) ?? []
+    );
+    setSelectedPlaybackItemIds((current) =>
+      current.filter((itemId) => allowedIds.has(itemId))
+    );
+  }, [playbackCatalog]);
+  const availablePlaybackItemIds =
+    playbackCatalog?.groups.flatMap((group) =>
+      group.items.map((item) => item.id)
+    ) ?? [];
+  const effectivePlaybackItemIds = resolveCanonicalPlaybackSelection(
+    availablePlaybackItemIds,
+    selectedPlaybackItemIds
+  );
   const unavailable = intl.formatMessage(messages.notAvailable);
   const albumId = encodeApiPathSegment(data.id);
   const artistId = encodeApiPathSegment(data.artist.id);
@@ -118,6 +155,10 @@ const MusicDetailsLayout = ({
         .filter(Boolean)
     ),
   ];
+  const qualityAvailability = (['MP3', 'FLAC'] as const).map((quality) => ({
+    quality,
+    available: qualityLabels.some((label) => label.includes(quality)),
+  }));
   const mediaAndFormat = `Music · Album${
     qualityLabels.length > 0 ? ` · ${qualityLabels.join(' + ')}` : ''
   }`;
@@ -183,7 +224,7 @@ const MusicDetailsLayout = ({
 
   return (
     <div className="media-page">
-      <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 text-gray-400 shadow-lg shadow-gray-950/20">
+      <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {backdrop && (
           <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
             <CachedImage
@@ -201,128 +242,219 @@ const MusicDetailsLayout = ({
         )}
 
         <div className="relative z-10">
-          <h1
-            className="text-lg font-semibold leading-5 text-white"
-            data-testid="media-title"
-          >
-            {data.title}
-            {data.releaseDate ? ` (${data.releaseDate.slice(0, 4)})` : ''}
-          </h1>
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+            <div
+              className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20"
+              data-testid="media-details-poster"
+            >
+              <CachedImage
+                type="music"
+                src={data.posterPath || '/images/seerr_poster_not_found.png'}
+                alt=""
+                fill
+                priority
+                sizes="(min-width: 640px) 80px, 64px"
+                className="object-cover"
+              />
+            </div>
 
-          {qualityLabels.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {qualityLabels.map((quality, index) => (
-                <span
-                  key={quality}
-                  className={`inline-flex h-[22px] cursor-default items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold uppercase leading-none ${subjectTagTones[index % subjectTagTones.length]}`}
-                >
-                  {quality}
-                </span>
-              ))}
-              <Badge
-                badgeType="success"
-                className="h-[22px] items-center !px-2 !text-[11px] !leading-none"
+            <div className="flex min-w-0 flex-col">
+              <h1
+                className="text-lg font-semibold leading-5 text-white"
+                data-testid="media-title"
               >
-                {intl.formatMessage(messages.available)}
-              </Badge>
+                {data.title}
+                {data.releaseDate ? ` (${data.releaseDate.slice(0, 4)})` : ''}
+              </h1>
+
+              {qualityLabels.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {qualityLabels.map((quality, index) => (
+                    <span
+                      key={quality}
+                      className={`inline-flex h-[22px] cursor-default items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold uppercase leading-none ${subjectTagTones[index % subjectTagTones.length]}`}
+                    >
+                      {quality}
+                    </span>
+                  ))}
+                  <Badge
+                    badgeType="success"
+                    className="h-[22px] items-center !px-2 !text-[11px] !leading-none"
+                  >
+                    {intl.formatMessage(messages.available)}
+                  </Badge>
+                </div>
+              )}
+
+              <div className="mt-4 grid min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
+                <div className="min-w-0 card:col-span-2 card:pr-3">
+                  <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                      {intl.formatMessage(messages.mediaAndFormat)}:
+                    </dt>
+                    <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                      {mediaAndFormat}
+                    </dd>
+                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                      {intl.formatMessage(messages.releaseDate)}:
+                    </dt>
+                    <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                      {formattedReleaseDate}
+                    </dd>
+                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                      {intl.formatMessage(messages.runtime)}:
+                    </dt>
+                    <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                      {runtimeMinutes > 0
+                        ? intl.formatMessage(messages.minutes, {
+                            minutes: runtimeMinutes,
+                          })
+                        : unavailable}
+                    </dd>
+                    <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+                    <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                      <dt className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.artist)}:
+                      </dt>
+                      <dd className="m-0 truncate">
+                        <Link
+                          href={`/artist/${artistId}`}
+                          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        >
+                          {data.artist.name || unavailable}
+                        </Link>
+                      </dd>
+                      <dt className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.albumType)}:
+                      </dt>
+                      <dd className="m-0 truncate">
+                        {data.type || unavailable}
+                      </dd>
+                      <dt className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.trackCount)}:
+                      </dt>
+                      <dd className="m-0 truncate">
+                        {intl.formatNumber(data.tracks.length)}
+                      </dd>
+                    </div>
+
+                    <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                      {intl.formatMessage(messages.genres)}:
+                    </dt>
+                    <dd
+                      className="m-0 mt-0.5 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4"
+                      data-testid="media-details-genres"
+                    >
+                      {tags.length > 0
+                        ? tags.slice(0, 4).map((tag, index) => (
+                            <span key={tag.name}>
+                              {index > 0 && ', '}
+                              <Link
+                                href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                              >
+                                {tag.name}
+                              </Link>
+                            </span>
+                          ))
+                        : unavailable}
+                    </dd>
+                  </dl>
+                </div>
+
+                <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+                  {qualityAvailability.map(({ quality, available }) => (
+                    <div className="contents" key={quality}>
+                      <dt className="font-medium uppercase text-gray-100">
+                        {quality}:
+                      </dt>
+                      <dd className="m-0 truncate font-medium">
+                        <AvailabilityValue
+                          tone={available ? 'available' : 'unavailable'}
+                        >
+                          {intl.formatMessage(
+                            available
+                              ? messages.available
+                              : messages.notAvailable
+                          )}
+                        </AvailabilityValue>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </div>
+          </div>
+
+          <AlbumTrackList
+            tracks={data.tracks}
+            twoColumnsOnly
+            catalog={playbackCatalog}
+            selectedItemIds={selectedPlaybackItemIds}
+            onSelectionChange={setSelectedPlaybackItemIds}
+          />
+
+          {(playbackActions || ratingData?.rating) && (
+            <div
+              className="media-rating-row"
+              data-testid="music-playback-rating-row"
+            >
+              {playbackActions?.(effectivePlaybackItemIds)}
+              {playbackActions && (
+                <PlayOnDeviceButton
+                  mediaId={data.mediaInfo?.id}
+                  itemIds={effectivePlaybackItemIds}
+                />
+              )}
+              {ratingData?.rating && safeRatingUrl && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    ratingData.rating.source === 'lidarr'
+                      ? messages.lidarrRating
+                      : messages.musicBrainzRating,
+                    {
+                      score: intl.formatNumber(ratingData.rating.score, {
+                        maximumFractionDigits: 1,
+                      }),
+                      votes: intl.formatNumber(ratingData.rating.votes),
+                    }
+                  )}
+                >
+                  <a
+                    href={safeRatingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="media-rating-link"
+                    aria-label={intl.formatMessage(
+                      ratingData.rating.source === 'lidarr'
+                        ? messages.lidarrRating
+                        : messages.musicBrainzRating,
+                      {
+                        score: intl.formatNumber(ratingData.rating.score, {
+                          maximumFractionDigits: 1,
+                        }),
+                        votes: intl.formatNumber(ratingData.rating.votes),
+                      }
+                    )}
+                  >
+                    {ratingData.rating.source === 'lidarr' ? (
+                      <LidarrLogo className="media-rating-icon" />
+                    ) : (
+                      <MusicBrainzLogo className="media-rating-icon" />
+                    )}
+                    <span className="media-rating-value">
+                      {intl.formatNumber(ratingData.rating.score, {
+                        maximumFractionDigits: 1,
+                      })}
+                    </span>
+                  </a>
+                </Tooltip>
+              )}
             </div>
           )}
 
-          <div className="mt-4 grid min-w-0 grid-cols-1 card:grid-cols-3">
-            <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.mediaAndFormat)}:
-              </dt>
-              <dd className="m-0 truncate">{mediaAndFormat}</dd>
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.releaseDate)}:
-              </dt>
-              <dd className="m-0 truncate">{formattedReleaseDate}</dd>
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.runtime)}:
-              </dt>
-              <dd className="m-0 truncate">
-                {runtimeMinutes > 0
-                  ? intl.formatMessage(messages.minutes, {
-                      minutes: runtimeMinutes,
-                    })
-                  : unavailable}
-              </dd>
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.genres)}:
-              </dt>
-              <dd className="m-0 line-clamp-2 min-w-0">
-                {tags.length > 0
-                  ? tags.slice(0, 4).map((tag, index) => (
-                      <span key={tag.name}>
-                        {index > 0 && ', '}
-                        <Link
-                          href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                        >
-                          {tag.name}
-                        </Link>
-                      </span>
-                    ))
-                  : unavailable}
-              </dd>
-            </dl>
-
-            <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.artist)}:
-              </dt>
-              <dd className="m-0 truncate">
-                <Link
-                  href={`/artist/${artistId}`}
-                  className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  {data.artist.name || unavailable}
-                </Link>
-              </dd>
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.albumType)}:
-              </dt>
-              <dd className="m-0 truncate">{data.type || unavailable}</dd>
-              <dt className="font-medium text-gray-100">
-                {intl.formatMessage(messages.trackCount)}:
-              </dt>
-              <dd className="m-0 truncate">
-                {intl.formatNumber(data.tracks.length)}
-              </dd>
-            </dl>
-
-            <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
-              {qualityLabels.length > 0 ? (
-                qualityLabels.map((quality) => (
-                  <div className="contents" key={quality}>
-                    <dt className="font-medium uppercase text-gray-100">
-                      {quality}:
-                    </dt>
-                    <dd className="m-0 truncate">
-                      {intl.formatMessage(messages.available)}
-                    </dd>
-                  </div>
-                ))
-              ) : (
-                <>
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.status)}:
-                  </dt>
-                  <dd className="m-0 truncate">
-                    {getAvailabilityText(data.mediaInfo?.status, unavailable)}
-                  </dd>
-                </>
-              )}
-            </dl>
-          </div>
-
-          <AlbumTrackList tracks={data.tracks} twoColumnsOnly />
-
-          <div className="mt-[5px] flex flex-wrap items-center justify-start gap-2">
+          <div className="media-primary-action-row">
             {primaryActions}
-          </div>
-          <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
             {secondaryActions}
           </div>
 
@@ -345,7 +477,7 @@ const MusicDetailsLayout = ({
                 {intl.formatMessage(messages.fullArtistList)}
               </h2>
               {artists.length === 0 ? (
-                <p className="text-xs text-gray-500">
+                <p className="refreshed-detail-text-muted text-xs">
                   {intl.formatMessage(messages.noArtists)}
                 </p>
               ) : (
@@ -378,7 +510,7 @@ const MusicDetailsLayout = ({
                         <span className="truncate text-xs font-semibold text-gray-200 group-hover:text-white">
                           {artist.name}
                         </span>
-                        <span className="mt-0.5 line-clamp-2 text-xs leading-4 text-gray-400">
+                        <span className="refreshed-detail-text-muted mt-0.5 line-clamp-2 text-xs leading-4">
                           {artist.role}
                         </span>
                       </span>
@@ -395,7 +527,7 @@ const MusicDetailsLayout = ({
                 {intl.formatMessage(messages.subjectTags)}
               </h2>
               {tags.length === 0 ? (
-                <p className="text-xs text-gray-500">
+                <p className="refreshed-detail-text-muted text-xs">
                   {intl.formatMessage(messages.noTags)}
                 </p>
               ) : (
@@ -426,7 +558,9 @@ const MusicDetailsLayout = ({
                   {intl.formatMessage(messages.status)}:
                 </dt>
                 <dd className="m-0">
-                  {getAvailabilityText(data.mediaInfo?.status, unavailable)}
+                  <AvailabilityValue status={data.mediaInfo?.status}>
+                    {getAvailabilityText(data.mediaInfo?.status, unavailable)}
+                  </AvailabilityValue>
                 </dd>
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.releaseDate)}:

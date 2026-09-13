@@ -22,7 +22,7 @@ const ExpandableCreditList = ({
   <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
     <h2 className="mb-2 text-xs font-semibold text-gray-200">{title}</h2>
     {credits.length === 0 ? (
-      <p className="text-xs text-gray-500">{emptyLabel}</p>
+      <p className="refreshed-detail-text-muted text-xs">{emptyLabel}</p>
     ) : (
       <div className="grid max-h-[252px] grid-cols-3 gap-1.5 overflow-y-auto pr-1">
         {credits.map((credit, index) => (
@@ -50,7 +50,7 @@ const ExpandableCreditList = ({
               <span className="truncate text-xs font-semibold text-gray-200 group-hover:text-white">
                 {credit.name}
               </span>
-              <span className="mt-0.5 line-clamp-2 text-xs leading-4 text-gray-400">
+              <span className="refreshed-detail-text mt-0.5 line-clamp-2 text-xs leading-4">
                 {credit.role}
               </span>
             </span>

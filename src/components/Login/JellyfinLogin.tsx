@@ -24,6 +24,8 @@ const messages = defineMessages('components.Login', {
   validationusernamerequired: 'Username required',
   validationpasswordrequired: 'Password required',
   loginerror: 'Something went wrong while trying to sign in.',
+  sessionerror:
+    'Sign-in succeeded, but SeerrNG could not establish a browser session. Use HTTPS or enable authenticated HTTP sessions, then try again.',
   adminerror: 'You must use an admin account to sign in.',
   noadminerror: 'No admin user found on the server.',
   credentialerror: 'The username or password is incorrect.',
@@ -37,7 +39,7 @@ const messages = defineMessages('components.Login', {
 });
 
 interface JellyfinLoginProps {
-  revalidate: () => void;
+  revalidate: () => Promise<unknown>;
   serverType?: MediaServerType;
 }
 
@@ -89,11 +91,14 @@ const JellyfinLogin = ({ revalidate, serverType }: JellyfinLoginProps) => {
         validateOnBlur={false}
         onSubmit={async (values) => {
           try {
-            await axios.post('/api/v1/auth/jellyfin', {
+            const response = await axios.post('/api/v1/auth/jellyfin', {
               username: values.username,
               password: values.password,
               email: values.username,
             });
+            if (!response.data?.id || !(await revalidate())) {
+              throw new Error('browser-session-not-established');
+            }
           } catch (e) {
             let errorMessage = messages.loginerror;
             switch (e?.response?.data?.message) {
@@ -110,6 +115,12 @@ const JellyfinLogin = ({ revalidate, serverType }: JellyfinLoginProps) => {
                 errorMessage = messages.noadminerror;
                 break;
             }
+            if (
+              e instanceof Error &&
+              e.message === 'browser-session-not-established'
+            ) {
+              errorMessage = messages.sessionerror;
+            }
             toasts.addToast(
               intl.formatMessage(errorMessage, mediaServerFormatValues),
               {
@@ -117,8 +128,6 @@ const JellyfinLogin = ({ revalidate, serverType }: JellyfinLoginProps) => {
                 appearance: 'error',
               }
             );
-          } finally {
-            revalidate();
           }
         }}
       >

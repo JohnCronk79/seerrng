@@ -1,9 +1,50 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { getThemeTokens, themePalettes } from './ThemeContext';
+import {
+  DEFAULT_THEME_PALETTE_ID,
+  getThemeTokens,
+  themePalettes,
+} from './ThemeContext';
 
 describe('themePalettes', () => {
+  it('uses the Seerr palette as the default', () => {
+    assert.equal(DEFAULT_THEME_PALETTE_ID, 'classic');
+    assert.equal(themePalettes[0].id, DEFAULT_THEME_PALETTE_ID);
+    assert.equal(themePalettes[0].name, 'Seerr');
+  });
+
+  it('preserves the Seerr dark chrome in the default palette', () => {
+    const tokens = getThemeTokens('dark', 'classic');
+
+    assert.equal(tokens.pageBg, '17 24 39');
+    assert.equal(tokens.pageGlowStart, '31 41 55');
+    assert.equal(tokens.searchbarScrolled, '55 65 81');
+    assert.equal(tokens.sidebarStart, '31 41 55');
+    assert.equal(tokens.sidebarEnd, '19 25 40');
+    assert.equal(tokens.sidebarBorder, '55 65 81');
+    assert.equal(tokens.sidebarHover, '55 65 81');
+    assert.equal(tokens.primaryScale[6], '79 70 229');
+    assert.equal(tokens.secondaryScale[6], '147 51 234');
+  });
+
+  it('exposes a distinct Seerr-branded blue palette', () => {
+    const seerr = themePalettes.find((palette) => palette.id === 'seerr');
+
+    assert.deepStrictEqual(seerr, {
+      id: 'seerr',
+      name: 'SeerrNG',
+      swatches: ['#0f172a', '#2563eb', '#38bdf8'],
+      surface: 'slate',
+      primary: 'blue',
+      secondary: 'sky',
+    });
+    assert.notEqual(
+      getThemeTokens('dark', 'seerr').pageBg,
+      getThemeTokens('dark', 'classic').pageBg
+    );
+  });
+
   it('includes the Sietch palette displayed by the theme picker', () => {
     assert.deepEqual(themePalettes.map((palette) => palette.id).slice(-3), [
       'violet',
@@ -36,7 +77,6 @@ describe('themePalettes', () => {
 
         return [
           tokens.pageBg,
-          tokens.pageGlowHighlight,
           tokens.pageGlowStart,
           tokens.pageGlowEnd,
           tokens.searchbarScrolled,

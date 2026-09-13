@@ -7,11 +7,15 @@ import axios from 'axios';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import { isBrowserTransportReady } from './Setup/transportReadiness';
 
 const messages = defineMessages('components.TransportSecurityNotice', {
   httpsRequiredTitle: 'HTTPS is required for browser sign-in',
   httpsRequiredDescription:
-    'This page is reachable over HTTP, but SeerrNG will not create a persistent login session there. Use an HTTPS reverse proxy or enable built-in TLS before signing in.',
+    'This page is reachable over HTTP, but SeerrNG will not create a persistent login session there. Use an HTTPS reverse proxy, enable built-in TLS, or explicitly allow authenticated HTTP sessions on a trusted LAN before signing in.',
+  proxyHttpsTitle: 'HTTPS is active through your reverse proxy',
+  proxyHttpsDescription:
+    'This browser connection is encrypted, so you can continue setup. The built-in HTTPS listener remains disabled because your reverse proxy provides transport security.',
   insecureTitle: 'Insecure HTTP sign-in is enabled',
   insecureDescription:
     'SEERR_ALLOW_HTTP_AUTH is enabled. Anyone who can observe this network traffic could steal a session cookie. Use this only on a trusted LAN and prefer HTTPS whenever possible.',
@@ -45,6 +49,9 @@ const messages = defineMessages('components.TransportSecurityNotice', {
   savingTransport: 'Saving…',
   transportSaved:
     'Transport choice saved. Restart SeerrNG, then open the displayed HTTPS address or continue over HTTP if you explicitly enabled it.',
+  restartRequiredTitle: 'Restart SeerrNG before signing in',
+  restartRequiredDescription:
+    'The browser transport choice was saved but is not active yet. Restart SeerrNG and reload this page before signing in or configuring a media server.',
   transportSaveFailed: 'The transport choice could not be saved.',
   environmentManaged:
     'Transport is controlled by environment variables ({variables}). Change those variables instead of using this setup control.',
@@ -52,16 +59,23 @@ const messages = defineMessages('components.TransportSecurityNotice', {
 
 type SetupTlsMode = 'disabled' | 'self-signed' | 'provided';
 
+interface TransportSecurityNoticeProps {
+  onReadinessChange?: (ready: boolean) => void;
+}
+
 const formatHost = (host: string): string =>
   host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 
-const TransportSecurityNotice = () => {
+const TransportSecurityNotice = ({
+  onReadinessChange,
+}: TransportSecurityNoticeProps) => {
   const intl = useIntl();
   const { addToast } = useToasts();
   const { data } = useSWR<TlsStatusResponse>('/api/v1/status/tls', {
     revalidateOnFocus: false,
     refreshInterval: 0,
   });
+  const [browserUsesHttps, setBrowserUsesHttps] = useState(false);
   const [setupMode, setSetupMode] = useState<SetupTlsMode>('disabled');
   const [setupHttpsPort, setSetupHttpsPort] = useState('5056');
   const [setupHosts, setSetupHosts] = useState('localhost,127.0.0.1,::1');
@@ -75,6 +89,10 @@ const TransportSecurityNotice = () => {
   const [setupSaved, setSetupSaved] = useState(false);
 
   useEffect(() => {
+    setBrowserUsesHttps(window.location.protocol === 'https:');
+  }, []);
+
+  useEffect(() => {
     if (!data) return;
     setSetupMode(data.configuredMode);
     setSetupHttpsPort(String(data.configuredHttpsPort ?? 5056));
@@ -84,6 +102,14 @@ const TransportSecurityNotice = () => {
     setSetupRedirectHttp(data.configuredRedirectsHttpToHttps);
     setSetupAllowHttp(data.configuredHttpAuthAllowed);
   }, [data]);
+
+  const transportReady = data
+    ? isBrowserTransportReady(data, browserUsesHttps)
+    : false;
+
+  useEffect(() => {
+    onReadinessChange?.(transportReady);
+  }, [onReadinessChange, transportReady]);
 
   if (!data) {
     return null;
@@ -270,6 +296,27 @@ const TransportSecurityNotice = () => {
       : data.hosts.map(
           (host) => `https://${formatHost(host)}:${data.httpsPort}`
         );
+
+  if (data.pendingRestart && !browserUsesHttps) {
+    return (
+      <Alert
+        type="warning"
+        title={intl.formatMessage(messages.restartRequiredTitle)}
+      >
+        {intl.formatMessage(messages.restartRequiredDescription)}
+        {setupControls}
+      </Alert>
+    );
+  }
+
+  if (data.mode === 'disabled' && !data.httpAuthAllowed && browserUsesHttps) {
+    return (
+      <Alert type="info" title={intl.formatMessage(messages.proxyHttpsTitle)}>
+        {intl.formatMessage(messages.proxyHttpsDescription)}
+        {setupControls}
+      </Alert>
+    );
+  }
 
   if (data.mode === 'disabled' && !data.httpAuthAllowed) {
     return (

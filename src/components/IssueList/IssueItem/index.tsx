@@ -282,7 +282,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
   if (!url && inView) {
     return (
       <div
-        className="flex h-64 w-full flex-col justify-center rounded-xl bg-gray-800 py-4 text-gray-400 shadow-md ring-1 ring-red-500 xl:h-28 xl:flex-row"
+        className="refreshed-card-surface flex h-64 w-full flex-col justify-center rounded-xl py-4 shadow-md ring-1 ring-red-500 xl:h-28 xl:flex-row"
         ref={ref}
       >
         <div className="flex w-full flex-col justify-center overflow-hidden px-4">
@@ -306,7 +306,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
   if (!title) {
     return (
       <div
-        className="flex h-64 w-full flex-col justify-center rounded-xl bg-gray-800 py-4 text-gray-400 shadow-md ring-1 ring-red-500 xl:h-28 xl:flex-row"
+        className="refreshed-card-surface flex h-64 w-full flex-col justify-center rounded-xl py-4 shadow-md ring-1 ring-red-500 xl:h-28 xl:flex-row"
         ref={ref}
       >
         <div className="flex w-full flex-col justify-center overflow-hidden px-4">
@@ -349,7 +349,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
       : 'border-emerald-500 bg-emerald-800/60 text-emerald-100';
 
   return (
-    <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 text-gray-400 shadow-lg shadow-gray-950/20">
+    <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
       {backdrop && (
         <div className="absolute inset-0 z-0">
           <CachedImage
@@ -397,7 +397,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
           </Link>
           <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
             <div className="min-w-0 card:col-span-2 card:pr-3">
-              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+              <dl className="refreshed-detail-text grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
                 <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                   {intl.formatMessage(messages.mediaAndFormat)}:
                 </dt>
@@ -460,7 +460,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
               </dl>
             </div>
 
-            <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+            <dl className="refreshed-detail-text mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
               <dt className="font-medium text-gray-100">
                 {intl.formatMessage(messages.createdBy)}:
               </dt>

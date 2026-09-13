@@ -28,6 +28,13 @@ describe('PLEX_OAUTH_HTTP_OPTIONS', () => {
   it('bounds browser-side Plex OAuth requests', () => {
     assert.equal(PLEX_OAUTH_HTTP_OPTIONS.timeout, 10_000);
   });
+
+  it('builds a same-origin completion URL for the popup return', () => {
+    assert.equal(
+      getPlexPopupReturnUrl('https://seerr.example'),
+      'https://seerr.example/login/plex/loading?complete=1'
+    );
+  });
 });
 
 describe('Plex popup return URL', () => {
@@ -86,6 +93,52 @@ describe('Plex PIN response boundaries', () => {
 });
 
 describe('Plex login attempt ownership', () => {
+  it('keeps PIN polling while providing a completed popup return URL', async () => {
+    const popup = {
+      closed: false,
+      close() {
+        this.closed = true;
+      },
+      focus() {},
+      location: { href: '' },
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        innerHeight: 800,
+        innerWidth: 1200,
+        location: { origin: 'https://seerr.example' },
+        navigator: { userAgent: 'Mozilla/5.0' },
+        open: () => popup,
+        screen: { height: 800, width: 1200 },
+        screenLeft: 0,
+        screenTop: 0,
+      },
+    });
+
+    const originalPost = axios.post;
+    const originalGet = axios.get;
+    axios.post = (async () => ({
+      data: { code: 'abcd', id: 42 },
+    })) as typeof axios.post;
+    axios.get = (async () => ({
+      data: { authToken: 'token' },
+    })) as typeof axios.get;
+
+    try {
+      const oauth = new PlexOAuth();
+      const attempt = oauth.preparePopup();
+      assert.equal(await oauth.login('client-id', attempt), 'token');
+      assert.match(
+        decodeURIComponent(popup.location.href),
+        /forwardUrl=https:\/\/seerr\.example\/login\/plex\/loading\?complete=1/
+      );
+    } finally {
+      axios.post = originalPost;
+      axios.get = originalGet;
+    }
+  });
+
   it('does not let a stale cancellation close a newer popup', () => {
     const popups: { closed: boolean; close: () => void; focus: () => void }[] =
       [];

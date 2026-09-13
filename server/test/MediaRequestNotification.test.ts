@@ -43,6 +43,7 @@ describe('MediaRequest.sendNotification', () => {
       async () =>
         ({
           release_group_mbid: 'release-group-id',
+          caa_release_mbid: 'release-mbid',
           release_group_metadata: {
             release_group: {
               name: 'Kind of Blue',
@@ -87,9 +88,14 @@ describe('MediaRequest.sendNotification', () => {
     ];
     assert.strictEqual(type, Notification.MEDIA_APPROVED);
     assert.strictEqual(payload.event, 'Music Request Approved');
+    assert.strictEqual(payload.notifyUser?.id, entity.requestedBy.id);
     assert.strictEqual(payload.mediaUrl, '/music/release-group-id');
     assert.strictEqual(payload.subject, 'Kind of Blue (1959)');
     assert.strictEqual(payload.message, 'Miles Davis');
+    assert.strictEqual(
+      payload.image,
+      'https://coverartarchive.org/release/release-mbid/front-500'
+    );
     assert.deepStrictEqual(payload.extra, [
       {
         name: 'Artist',

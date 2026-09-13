@@ -44,6 +44,13 @@ SeerrNG before attempting the first login. This is intentional: changing the
 listener and session-cookie policy while the process is serving requests would
 make the result ambiguous.
 
+The setup page keeps media-server choices disabled until the active transport
+can persist a browser session. If a previous version of the page saved the
+media-server details before the session was established, restart SeerrNG after
+fixing the transport choice and use the normal `/login` page to sign in again.
+Do not submit the first-run Jellyfin hostname a second time; it is already
+stored and the setup page will guide you back to sign-in.
+
 Existing installations are not switched during upgrade. Their persisted
 transport mode remains `disabled` unless an administrator changes it. Use
 **Settings > Network > Browser Transport Security** to select a mode, save it,
@@ -261,6 +268,25 @@ returns `421` instead of creating an open redirect. Add every browser-visible
 hostname and IP to the environment variable before starting the server.
 
 ## Troubleshooting sign-in
+
+If Jellyfin setup appears to save, does not advance, and a retry reports that
+the hostname is already configured, the first request probably saved the
+server details but the browser did not retain the session cookie. This happens
+when direct HTTP is being used without the explicit HTTP fallback, or when a
+new transport choice was saved but SeerrNG was not restarted yet.
+
+Check the public status endpoint:
+
+```text
+GET /api/v1/status/tls
+```
+
+Before direct HTTP sign-in, the response must report `mode: "disabled"`,
+`httpAuthAllowed: true`, and `pendingRestart: false`. For HTTPS, open the
+HTTPS URL after trusting the local CA or configure the reverse proxy to pass
+`X-Forwarded-Proto: https` with proxy support enabled. After the transport is
+active, open `/login` and sign in again; the saved Jellyfin server does not
+need to be entered again.
 
 If Plex or local sign-in appears to succeed but the browser immediately returns
 to the login page:

@@ -146,9 +146,9 @@ const Slider = ({
     <div className="relative" data-testid="media-slider">
       <div className="absolute right-0 -mt-10 flex gap-1 text-gray-400">
         <Button
-          buttonType="ghost"
+          buttonType="default"
           buttonSize="sm"
-          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
+          className="h-8 w-8 p-0 disabled:text-gray-600"
           onClick={() => slide(Direction.LEFT)}
           disabled={scrollPos.isStart}
           disabledReason={intl.formatMessage(globalMessages.noPreviousItems)}
@@ -158,9 +158,9 @@ const Slider = ({
           <ChevronLeftIcon className="h-4 w-4" />
         </Button>
         <Button
-          buttonType="ghost"
+          buttonType="default"
           buttonSize="sm"
-          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
+          className="h-8 w-8 p-0 disabled:text-gray-600"
           onClick={() => slide(Direction.RIGHT)}
           disabled={scrollPos.isEnd}
           disabledReason={intl.formatMessage(globalMessages.noNextItems)}

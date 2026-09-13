@@ -7,6 +7,12 @@ import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
@@ -67,7 +73,9 @@ const messages = defineMessages('components.RequestModal', {
   network: 'Network',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
   readyToRequest: 'Ready to Request',
+  requested: 'Requested',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
 });
@@ -115,10 +123,6 @@ const TvRequestModal = ({
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const effectiveIs4k = requestOverrides?.is4k ?? is4k;
-  const selectedDestinationAvailable =
-    !editRequest &&
-    data?.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] ===
-      MediaStatus.AVAILABLE;
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -144,6 +148,44 @@ const TvRequestModal = ({
       revalidateOnFocus: false,
     }
   );
+  const selectedService = sonarrServers?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = sonarrServers?.find(
+    (server) => server.isDefault && server.is4k === effectiveIs4k
+  );
+  const selectedDestination = createRequestDestination(
+    'sonarr',
+    effectiveIs4k ? '4k' : 'standard',
+    selectedService ?? fallbackService,
+    requestOverrides
+  );
+  const selectedDestinationAvailable =
+    !editRequest &&
+    isRequestDestinationAvailable(data?.mediaInfo, selectedDestination);
+  const selectedDestinationRequested =
+    !editRequest &&
+    isRequestDestinationRequested(
+      data?.mediaInfo?.requests,
+      selectedDestination
+    );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'tv',
+          effectiveIs4k
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
 
   const currentlyRemaining =
     (quota?.tv.remaining ?? 0) -
@@ -221,7 +263,7 @@ const TvRequestModal = ({
   };
 
   const sendRequest = async () => {
-    if (selectedDestinationAvailable) {
+    if (selectedDestinationCovered) {
       return;
     }
 
@@ -377,12 +419,6 @@ const TvRequestModal = ({
   );
   const isAnime =
     data?.keywords.some((keyword) => keyword.id === ANIME_KEYWORD_ID) ?? false;
-  const selectedService = sonarrServers?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const fallbackService = sonarrServers?.find(
-    (server) => server.isDefault && server.is4k === effectiveIs4k
-  );
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const firstAirDate = data?.firstAirDate
     ? intl.formatDate(new Date(`${data.firstAirDate}T00:00:00`), {
@@ -435,7 +471,7 @@ const TvRequestModal = ({
             );
   const requestDisabled = editRequest
     ? false
-    : selectedDestinationAvailable ||
+    : selectedDestinationCovered ||
       (!settings.currentSettings.partialRequestsEnabled &&
         quota?.tv.limit &&
         unrequestedSeasons.length > quota.tv.limit &&
@@ -625,7 +661,9 @@ const TvRequestModal = ({
                   {intl.formatMessage(
                     selectedDestinationAvailable
                       ? globalMessages.available
-                      : messages.readyToRequest
+                      : selectedDestinationRequested
+                        ? messages.requested
+                        : messages.readyToRequest
                   )}
                 </dd>
                 <dt className="font-medium text-gray-100">
@@ -635,6 +673,16 @@ const TvRequestModal = ({
                   {selectedService?.name ??
                     fallbackService?.name ??
                     notAvailable}
+                </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.approval)}:
+                </dt>
+                <dd className="m-0 min-w-0">
+                  <RequestFooterStatus
+                    available={selectedDestinationAvailable}
+                    requested={selectedDestinationRequested}
+                    hasAutoApprove={hasAutoApprove}
+                  />
                 </dd>
               </dl>
             </div>
@@ -700,7 +748,7 @@ const TvRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="detail-disclosure-button"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -715,10 +763,6 @@ const TvRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
             className="flex h-[22px] items-center"

@@ -5,6 +5,9 @@ import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
 import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import useCardTextVisibility from '@app/hooks/useCardTextVisibility';
 import useVerticalScroll from '@app/hooks/useVerticalScroll';
+import useWarmImageCache, {
+  MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+} from '@app/hooks/useWarmImageCache';
 import globalMessages from '@app/i18n/globalMessages';
 import {
   canRequestMissingBookFormat,
@@ -70,6 +73,11 @@ const ListView = ({
       ),
     [items]
   );
+
+  useWarmImageCache(visibleItems ?? [], {
+    maxUrls: MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+    posterOnly: true,
+  });
   const plexCards = useMemo(
     () =>
       plexItems?.flatMap((title, index) => {
@@ -200,6 +208,7 @@ const ListView = ({
                   title['first-release-date']?.split('-')[0]
                 }
                 mediaType={title.mediaType}
+                availableQualities={title.availableQualities}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
                 needsCoverArt={title.needsCoverArt}
                 canExpand
@@ -293,7 +302,7 @@ const ListView = ({
           {emptyMessage ?? intl.formatMessage(globalMessages.noresults)}
         </div>
       )}
-      <ul className="cards-vertical">
+      <ul className="cards-vertical poster-grid">
         {plexCards}
         {itemCards}
         {isLoading && !isReachingEnd && placeholderCards}

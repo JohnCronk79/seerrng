@@ -94,7 +94,7 @@ const IssueComment = ({
       </Transition>
 
       <time
-        className="whitespace-nowrap text-xs leading-4 text-gray-500"
+        className="refreshed-detail-text-muted whitespace-nowrap text-xs leading-4"
         dateTime={new Date(comment.createdAt).toISOString()}
       >
         <FormattedDate value={comment.createdAt} dateStyle="medium" />
@@ -112,7 +112,7 @@ const IssueComment = ({
         />
       </Link>
 
-      <div className="min-w-0 text-xs leading-4 text-gray-400">
+      <div className="refreshed-detail-text min-w-0 text-xs leading-4">
         {!isEditing && (isActiveUser || canDelete) && (
           <div className="float-right mb-1 ml-3 flex items-start gap-1">
             {isActiveUser && (
@@ -145,7 +145,7 @@ const IssueComment = ({
             {comment.user.displayName}
           </Link>
           {edited && (
-            <span className="ml-1 text-gray-500">
+            <span className="refreshed-detail-text-muted ml-1">
               ({intl.formatMessage(messages.edited)})
             </span>
           )}
@@ -198,7 +198,7 @@ const IssueComment = ({
             )}
           </Formik>
         ) : (
-          <div className="prose prose-sm max-w-full text-xs leading-4 text-gray-400 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
+          <div className="refreshed-detail-text-muted prose prose-sm max-w-full text-xs leading-4 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
             <ReactMarkdown
               skipHtml
               allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}

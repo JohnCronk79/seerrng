@@ -25,6 +25,7 @@ import { useIntl } from 'react-intl';
 import type { MultiValue, SingleValue } from 'react-select';
 import AsyncSelect from 'react-select/async';
 import useSWR from 'swr';
+import { getGenreSelectorOptions } from './genreOptions';
 
 const messages = defineMessages('components.Selector', {
   any: 'Any',
@@ -177,6 +178,12 @@ export const GenreSelector = ({
   type,
 }: GenreSelectorProps) => {
   const intl = useIntl();
+  const genreUrl = `/api/v1/genres/${type}`;
+  const { data: availableGenres } = useSWR<TmdbGenre[]>(genreUrl);
+  const availableGenreOptions = useMemo(
+    () => getGenreSelectorOptions(availableGenres ?? []),
+    [availableGenres]
+  );
   const [defaultDataValue, setDefaultDataValue] = useState<
     { label: string; value: number }[] | null
   >(null);
@@ -226,25 +233,19 @@ export const GenreSelector = ({
   }, [defaultValue, type]);
 
   const loadGenreOptions = async (inputValue: string) => {
-    const results = await axios.get<TmdbGenre[]>(`/api/v1/genres/${type}`);
+    const genres =
+      availableGenres ?? (await axios.get<TmdbGenre[]>(genreUrl)).data;
 
-    return results.data
-      .map((result) => ({
-        label: result.name,
-        value: result.id,
-      }))
-      .filter(({ label }) =>
-        label.toLowerCase().includes(inputValue.toLowerCase())
-      );
+    return getGenreSelectorOptions(genres, inputValue);
   };
 
   return (
     <AsyncSelect
-      key={`genre-select-${type}-${defaultDataValue}`}
+      key={`genre-select-${type}-${defaultDataValue}-${availableGenreOptions.length}`}
       className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
-      defaultOptions
+      defaultOptions={availableGenreOptions}
       cacheOptions
       isMulti={isMulti}
       isDisabled={isDisabled}

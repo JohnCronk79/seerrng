@@ -147,7 +147,7 @@ const ProfileHeader = ({ user, isSettingsPage }: ProfileHeaderProps) => {
                 />
                 <button
                   type="button"
-                  className="absolute -bottom-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full border border-gray-600 bg-gray-900/90 px-2 py-0.5 text-xs font-medium text-gray-200 shadow transition hover:border-indigo-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-wait disabled:opacity-70"
+                  className="app-button app-button-default absolute -bottom-2 left-1/2 -translate-x-1/2 gap-1 rounded-full px-2 py-0.5 text-xs shadow disabled:cursor-wait disabled:opacity-70"
                   aria-label={intl.formatMessage(messages.editAvatarLabel)}
                   disabled={isUploadingAvatar}
                   onClick={() => avatarInputRef.current?.click()}

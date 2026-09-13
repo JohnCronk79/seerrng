@@ -4,6 +4,7 @@ import type { MediaRequestServiceTarget } from '@server/entity/MediaRequest';
 interface MusicAvailabilityMedia {
   status?: MediaStatus;
   serviceId?: number | null;
+  availableMusicServiceIds?: number[] | null;
 }
 
 interface MusicAvailabilityRequest {
@@ -31,7 +32,18 @@ export const getAvailableMusicServices = (
   }
 
   const availableServerIds = new Set<number>();
-  if (media.status === MediaStatus.AVAILABLE && media.serviceId != null) {
+  if (media.availableMusicServiceIds != null) {
+    for (const serverId of media.availableMusicServiceIds ?? []) {
+      if (Number.isSafeInteger(serverId) && serverId >= 0) {
+        availableServerIds.add(serverId);
+      }
+    }
+  } else if (
+    media.status === MediaStatus.AVAILABLE &&
+    media.serviceId != null
+  ) {
+    // Compatibility for rows created before per-destination availability was
+    // persisted. The next complete Lidarr scan replaces this fallback.
     availableServerIds.add(media.serviceId);
   }
   for (const request of requests) {
@@ -55,4 +67,22 @@ export const getAvailableMusicServices = (
       ? [{ serverId: service.id, quality: quality.toLocaleUpperCase() }]
       : [];
   });
+};
+
+export const getAvailableMusicQualities = (
+  media: MusicAvailabilityMedia | null | undefined,
+  requests: MusicAvailabilityRequest[],
+  services: MusicAvailabilityService[]
+): ('MP3' | 'FLAC')[] => {
+  const availableServiceQualities = getAvailableMusicServices(
+    media,
+    requests,
+    services
+  ).map((service) => service.quality.toLocaleUpperCase());
+
+  return (['MP3', 'FLAC'] as const).filter((quality) =>
+    availableServiceQualities.some((serviceQuality) =>
+      serviceQuality.includes(quality)
+    )
+  );
 };

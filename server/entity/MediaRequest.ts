@@ -17,7 +17,6 @@ import MediaIdentifier, {
 import OverrideRule from '@server/entity/OverrideRule';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
-import { isRequestedBookFormatAvailable } from '@server/lib/bookAvailability';
 import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryEditionId,
@@ -40,6 +39,12 @@ import {
 } from '@server/lib/overrideRules';
 import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import requestAdmissionCoordinator from '@server/lib/requestAdmission';
+import {
+  hasTrackedAvailableDestination,
+  isDestinationAvailableInTargets,
+  isDestinationCoveredByActiveRequest,
+  type RequestDestination,
+} from '@server/lib/requestDestination';
 import {
   runWithServarrServiceAdmission,
   type ServarrServiceType,
@@ -218,6 +223,55 @@ const saveRequestWithFreshMedia = async (
     .getRepository(MediaRequest)
     .findOneOrFail({ where: { id: savedRequest.id } });
 };
+
+const findPromotablePendingRequest = (
+  requests: MediaRequest[],
+  destinations: RequestDestination[],
+  actor: User,
+  mediaType: MediaType,
+  is4k = false
+): MediaRequest | undefined => {
+  if (destinations.length === 0) {
+    return undefined;
+  }
+
+  return requests.find((request) => {
+    if (
+      request.status !== MediaRequestStatus.PENDING ||
+      !destinations.every((destination) =>
+        isDestinationCoveredByActiveRequest([request], destination)
+      )
+    ) {
+      return false;
+    }
+
+    return (
+      actor.hasPermission(Permission.MANAGE_REQUESTS) ||
+      hasAutoApprovePermission(actor.permissions, mediaType, is4k)
+    );
+  });
+};
+
+const promotePendingRequest = async (
+  pendingRequest: MediaRequest,
+  actor: User
+): Promise<MediaRequest> =>
+  dataSource.transaction(async (manager) => {
+    const requestRepository = manager.getRepository(MediaRequest);
+    const currentRequest = await requestRepository.findOneOrFail({
+      where: { id: pendingRequest.id },
+    });
+
+    if (currentRequest.status !== MediaRequestStatus.PENDING) {
+      throw new DuplicateMediaRequestError(
+        'The matching request is no longer pending approval.'
+      );
+    }
+
+    currentRequest.status = MediaRequestStatus.APPROVED;
+    currentRequest.modifiedBy = actor;
+    return saveRequestWithFreshMedia(manager, currentRequest);
+  });
 
 const resolveMusicReleaseGroupId = async (
   mediaId: string,
@@ -789,63 +843,6 @@ export class MediaRequest {
 
       const selectedLidarr = requestedLidarr ?? defaultLidarr;
       const serverId = selectedLidarr?.id;
-      const destinationRequests = media.id
-        ? await requestRepository
-            .createQueryBuilder('request')
-            .select(['request.id', 'request.serviceTargets'])
-            .innerJoin('request.media', 'requestMedia')
-            .where('requestMedia.id = :mediaId', { mediaId: media.id })
-            .getMany()
-        : [];
-      const selectedDestinationAlreadyAvailable = destinationRequests.some(
-        (request) =>
-          request.serviceTargets?.some(
-            (target) =>
-              target.serviceType === 'lidarr' &&
-              target.format === 'music' &&
-              target.serverId === serverId &&
-              target.status === MediaStatus.AVAILABLE
-          )
-      );
-
-      if (
-        (media.status === MediaStatus.AVAILABLE &&
-          (media.serviceId == null || media.serviceId === serverId)) ||
-        selectedDestinationAlreadyAvailable
-      ) {
-        throw new DuplicateMediaRequestError(
-          'This album is already available on the selected service.'
-        );
-      }
-
-      const hasActiveRequestForTarget = await requestRepository
-        .createQueryBuilder('request')
-        .leftJoin('request.media', 'media')
-        .where('media.mbId = :mbId', { mbId: musicMbId })
-        .andWhere('media.mediaType = :mediaType', {
-          mediaType: MediaType.MUSIC,
-        })
-        .andWhere('request.status NOT IN (:...inactiveStatuses)', {
-          inactiveStatuses: [
-            MediaRequestStatus.DECLINED,
-            MediaRequestStatus.FAILED,
-            MediaRequestStatus.COMPLETED,
-          ],
-        })
-        .andWhere(
-          serverId === undefined
-            ? 'request.serverId IS NULL'
-            : '(request.serverId = :serverId OR request.serverId IS NULL)',
-          serverId === undefined ? {} : { serverId }
-        )
-        .getExists();
-
-      if (hasActiveRequestForTarget) {
-        throw new DuplicateMediaRequestError(
-          'Request for this album already exists for the selected service.'
-        );
-      }
-
       let rootFolder = useAdvancedOptions
         ? (requestBody.rootFolder ?? selectedLidarr?.activeDirectory)
         : selectedLidarr?.activeDirectory;
@@ -886,6 +883,83 @@ export class MediaRequest {
         if (overrideTags.length > 0) {
           tags = [...new Set([...(tags || []), ...overrideTags])];
         }
+      }
+
+      const selectedDestination: RequestDestination | undefined =
+        serverId === undefined
+          ? undefined
+          : {
+              serviceType: 'lidarr',
+              format: 'music',
+              serverId,
+              profileId: profileId ?? null,
+              metadataProfileId: metadataProfileId ?? null,
+              rootFolder: rootFolder ?? null,
+            };
+      const destinationRequests = media.id
+        ? await requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .select([
+              'request.id',
+              'request.status',
+              'request.type',
+              'request.serverId',
+              'request.profileId',
+              'request.metadataProfileId',
+              'request.rootFolder',
+              'request.serviceTargets',
+              'requestedBy.id',
+            ])
+            .innerJoin('request.media', 'requestMedia')
+            .where('requestMedia.id = :mediaId', { mediaId: media.id })
+            .getMany()
+        : [];
+      const selectedDestinationAlreadyAvailable =
+        !!selectedDestination &&
+        isDestinationAvailableInTargets(
+          destinationRequests,
+          selectedDestination
+        );
+
+      if (
+        ((!selectedDestination ||
+          !hasTrackedAvailableDestination(
+            destinationRequests,
+            selectedDestination
+          )) &&
+          media.status === MediaStatus.AVAILABLE &&
+          (media.serviceId == null || media.serviceId === serverId)) ||
+        selectedDestinationAlreadyAvailable
+      ) {
+        throw new DuplicateMediaRequestError(
+          'This album is already available on the selected service.'
+        );
+      }
+
+      const promotablePendingRequest = selectedDestination
+        ? findPromotablePendingRequest(
+            destinationRequests,
+            [selectedDestination],
+            user,
+            MediaType.MUSIC
+          )
+        : undefined;
+      if (promotablePendingRequest) {
+        return promotePendingRequest(promotablePendingRequest, user);
+      }
+
+      const hasActiveRequestForTarget =
+        !!selectedDestination &&
+        isDestinationCoveredByActiveRequest(
+          destinationRequests,
+          selectedDestination
+        );
+
+      if (hasActiveRequestForTarget) {
+        throw new DuplicateMediaRequestError(
+          'Request for this album already exists for the selected service.'
+        );
       }
 
       const autoApproved = hasAutoApprovePermission(
@@ -990,59 +1064,8 @@ export class MediaRequest {
         });
 
         throw new BlocklistedMediaError('This book is blocklisted.');
-      } else if (isRequestedBookFormatAvailable(media, requestedBookFormat)) {
-        throw new DuplicateMediaRequestError(
-          requestedBookFormat === 'both'
-            ? 'Both requested book formats are already available.'
-            : `This ${requestedBookFormat} is already available.`
-        );
       } else if (media.status === MediaStatus.UNKNOWN) {
         media.status = MediaStatus.PENDING;
-      }
-
-      const duplicateBookServiceType =
-        requestedBookFormat === 'audiobook' ? 'audiobook' : 'ebook';
-      const duplicateBookServerId =
-        canUseAdvancedRequestOptions(user) && requestBody.serverId != null
-          ? requestBody.serverId
-          : settings.readarr.find(
-              (readarr) =>
-                readarr.isDefault &&
-                (readarr.serviceType ?? 'ebook') === duplicateBookServiceType
-            )?.id;
-      let activeBookRequestQuery = requestRepository
-        .createQueryBuilder('request')
-        .where('request.media = :mediaId', { mediaId: media.id })
-        .andWhere('request.status NOT IN (:...inactiveStatuses)', {
-          inactiveStatuses: [
-            MediaRequestStatus.DECLINED,
-            MediaRequestStatus.FAILED,
-            MediaRequestStatus.COMPLETED,
-          ],
-        })
-        .andWhere(
-          duplicateBookServerId === undefined
-            ? 'request.serverId IS NULL'
-            : '(request.serverId = :duplicateBookServerId OR request.serverId IS NULL)',
-          duplicateBookServerId === undefined ? {} : { duplicateBookServerId }
-        );
-      if (requestedBookFormat === 'ebook') {
-        activeBookRequestQuery = activeBookRequestQuery.andWhere(
-          `COALESCE(request.bookFormat, 'ebook') IN ('ebook', 'both')`
-        );
-      } else if (requestedBookFormat === 'audiobook') {
-        activeBookRequestQuery = activeBookRequestQuery.andWhere(
-          `request.bookFormat IN ('audiobook', 'both')`
-        );
-      }
-      const hasActiveOverlappingBookRequest = media.id
-        ? await activeBookRequestQuery.getExists()
-        : false;
-
-      if (hasActiveOverlappingBookRequest) {
-        throw new DuplicateMediaRequestError(
-          'Request for this book already exists.'
-        );
       }
 
       const requestedServiceType =
@@ -1155,6 +1178,85 @@ export class MediaRequest {
         );
       }
 
+      const destinationRequests = media.id
+        ? await requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .select([
+              'request.id',
+              'request.status',
+              'request.type',
+              'request.serverId',
+              'request.profileId',
+              'request.metadataProfileId',
+              'request.rootFolder',
+              'request.bookFormat',
+              'request.serviceTargets',
+              'requestedBy.id',
+            ])
+            .where('request.media = :mediaId', { mediaId: media.id })
+            .getMany()
+        : [];
+      const isLegacyBookTargetAvailable = (
+        target: MediaRequestServiceTarget
+      ): boolean => {
+        if (
+          media.status !== MediaStatus.AVAILABLE ||
+          hasTrackedAvailableDestination(destinationRequests, target)
+        ) {
+          return false;
+        }
+
+        const isAudiobook = target.format === 'audiobook';
+        const externalServiceId = isAudiobook
+          ? media.audiobookExternalServiceId
+          : media.externalServiceId;
+        const serviceId = isAudiobook
+          ? media.audiobookServiceId
+          : media.serviceId;
+        return (
+          externalServiceId != null &&
+          (serviceId == null || serviceId === target.serverId)
+        );
+      };
+      const uncoveredBookTargets = bookTargets.filter(
+        (target) =>
+          !isLegacyBookTargetAvailable(target) &&
+          !isDestinationAvailableInTargets(destinationRequests, target) &&
+          !isDestinationCoveredByActiveRequest(destinationRequests, target)
+      );
+
+      const unavailableBookTargets = bookTargets.filter(
+        (target) =>
+          !isLegacyBookTargetAvailable(target) &&
+          !isDestinationAvailableInTargets(destinationRequests, target)
+      );
+      const promotablePendingRequest = findPromotablePendingRequest(
+        destinationRequests,
+        unavailableBookTargets,
+        user,
+        MediaType.BOOK
+      );
+      if (promotablePendingRequest) {
+        return promotePendingRequest(promotablePendingRequest, user);
+      }
+
+      if (
+        bookTargets.some((target) =>
+          isDestinationCoveredByActiveRequest(destinationRequests, target)
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          'Request for this book already exists.'
+        );
+      }
+
+      if (uncoveredBookTargets.length === 0) {
+        throw new DuplicateMediaRequestError(
+          'Every selected book destination is already available or requested.'
+        );
+      }
+
       const autoApproved = hasAutoApprovePermission(
         requestUser.permissions,
         'book'
@@ -1183,7 +1285,7 @@ export class MediaRequest {
         tags: useAdvancedOptions
           ? (requestBody.tags ?? selectedReadarr?.tags)
           : selectedReadarr?.tags,
-        serviceTargets: bookTargets,
+        serviceTargets: uncoveredBookTargets,
         bookFormat: requestedBookFormat,
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
@@ -1286,17 +1388,6 @@ export class MediaRequest {
       }
 
       if (
-        media[requestBody.is4k ? 'status4k' : 'status'] ===
-        MediaStatus.AVAILABLE
-      ) {
-        throw new DuplicateMediaRequestError(
-          `This ${
-            requestBody.mediaType === MediaType.MOVIE ? 'movie' : 'series'
-          } is already available in the selected quality.`
-        );
-      }
-
-      if (
         (media.status === MediaStatus.UNKNOWN ||
           media.status === MediaStatus.DELETED) &&
         !requestBody.is4k
@@ -1311,98 +1402,6 @@ export class MediaRequest {
       ) {
         media.status4k = MediaStatus.PENDING;
       }
-    }
-
-    const duplicateCheckUsesAdvancedOptions =
-      canUseAdvancedRequestOptions(user);
-    const duplicateCheckDefaultServer =
-      requestBody.mediaType === MediaType.MOVIE
-        ? settings.radarr.find(
-            ({ is4k, isDefault }) =>
-              isDefault && is4k === Boolean(requestBody.is4k)
-          )
-        : settings.sonarr.find(
-            ({ is4k, isDefault }) =>
-              isDefault && is4k === Boolean(requestBody.is4k)
-          );
-    const duplicateCheckServerId =
-      duplicateCheckUsesAdvancedOptions && requestBody.serverId != null
-        ? requestBody.serverId
-        : duplicateCheckDefaultServer?.id;
-    const existingRequestQuery = requestRepository
-      .createQueryBuilder('request')
-      .leftJoin('request.media', 'media')
-      .where('request.is4k = :is4k', { is4k: requestBody.is4k })
-      .andWhere('media.mediaType = :mediaType', {
-        mediaType: requestBody.mediaType,
-      })
-      .andWhere(
-        duplicateCheckServerId === undefined
-          ? 'request.serverId IS NULL'
-          : '(request.serverId = :duplicateCheckServerId OR request.serverId IS NULL)',
-        duplicateCheckServerId === undefined ? {} : { duplicateCheckServerId }
-      );
-
-    if (requestBody.mediaType === MediaType.TV && tvdbId) {
-      existingRequestQuery.andWhere(
-        '(media.tmdbId = :tmdbId OR media.tvdbId = :tvdbId)',
-        { tmdbId: tmdbMedia.id, tvdbId }
-      );
-    } else {
-      existingRequestQuery.andWhere('media.tmdbId = :tmdbId', {
-        tmdbId: tmdbMedia.id,
-      });
-    }
-
-    // If there is an existing active movie request, don't allow a new one.
-    if (requestBody.mediaType === MediaType.MOVIE) {
-      const hasActiveMovieRequest = await existingRequestQuery
-        .clone()
-        .andWhere('request.status NOT IN (:...inactiveStatuses)', {
-          inactiveStatuses: [
-            MediaRequestStatus.DECLINED,
-            MediaRequestStatus.FAILED,
-            MediaRequestStatus.COMPLETED,
-          ],
-        })
-        .getExists();
-      if (hasActiveMovieRequest) {
-        logger.warn('Duplicate request for media blocked', {
-          tmdbId: tmdbMedia.id,
-          mediaType: requestBody.mediaType,
-          is4k: requestBody.is4k,
-          label: 'Media Request',
-        });
-
-        throw new DuplicateMediaRequestError(
-          'Request for this media already exists.'
-        );
-      }
-    }
-
-    // If an existing auto-request for this media exists from the same user,
-    // don't allow a new one, unless the previously requested media was
-    // since deleted.
-    const autoRequestStatusColumn = requestBody.is4k
-      ? 'media.status4k'
-      : 'media.status';
-    const hasExistingAutoRequest = await existingRequestQuery
-      .clone()
-      .innerJoin('request.requestedBy', 'requestedBy')
-      .andWhere('requestedBy.id = :requestUserId', {
-        requestUserId: requestUser.id,
-      })
-      .andWhere('request.isAutoRequest = :isAutoRequest', {
-        isAutoRequest: true,
-      })
-      .andWhere(`${autoRequestStatusColumn} != :deletedStatus`, {
-        deletedStatus: MediaStatus.DELETED,
-      })
-      .getExists();
-    if (hasExistingAutoRequest) {
-      throw new DuplicateMediaRequestError(
-        'Auto-request for this media and user already exists.'
-      );
     }
 
     const useAdvancedOptions = canUseAdvancedRequestOptions(user);
@@ -1557,6 +1556,92 @@ export class MediaRequest {
       }
     }
 
+    const selectedDestination: RequestDestination | undefined =
+      serverId === undefined
+        ? undefined
+        : {
+            serviceType:
+              requestBody.mediaType === MediaType.MOVIE ? 'radarr' : 'sonarr',
+            format: requestBody.is4k ? '4k' : 'standard',
+            serverId,
+            profileId: profileId ?? null,
+            languageProfileId: languageProfileId ?? null,
+            rootFolder: rootFolder ?? null,
+          };
+    const loadDestinationRequests = async (
+      requestMedia: Media
+    ): Promise<MediaRequest[]> =>
+      requestMedia.id
+        ? requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .leftJoinAndSelect('request.seasons', 'seasons')
+            .where('request.media = :mediaId', { mediaId: requestMedia.id })
+            .getMany()
+        : [];
+    const destinationRequests = await loadDestinationRequests(media);
+
+    if (selectedDestination) {
+      const hasTrackedAvailability = hasTrackedAvailableDestination(
+        destinationRequests,
+        selectedDestination
+      );
+      const isLegacyDestinationAvailable =
+        !hasTrackedAvailability &&
+        media[requestBody.is4k ? 'status4k' : 'status'] ===
+          MediaStatus.AVAILABLE &&
+        (media[requestBody.is4k ? 'serviceId4k' : 'serviceId'] == null ||
+          media[requestBody.is4k ? 'serviceId4k' : 'serviceId'] === serverId);
+      if (
+        isLegacyDestinationAvailable ||
+        isDestinationAvailableInTargets(
+          destinationRequests,
+          selectedDestination
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          `This ${
+            requestBody.mediaType === MediaType.MOVIE ? 'movie' : 'series'
+          } is already available at the selected destination.`
+        );
+      }
+
+      if (
+        requestBody.mediaType === MediaType.MOVIE &&
+        isDestinationCoveredByActiveRequest(
+          destinationRequests,
+          selectedDestination
+        )
+      ) {
+        const promotablePendingRequest = findPromotablePendingRequest(
+          destinationRequests,
+          [selectedDestination],
+          user,
+          MediaType.MOVIE,
+          requestBody.is4k
+        );
+        if (promotablePendingRequest) {
+          return promotePendingRequest(promotablePendingRequest, user);
+        }
+
+        throw new DuplicateMediaRequestError(
+          'Request for this media already exists at the selected destination.'
+        );
+      }
+
+      const hasExistingAutoRequest = destinationRequests.some(
+        (request) =>
+          request.isAutoRequest &&
+          request.requestedBy?.id === requestUser.id &&
+          isDestinationCoveredByActiveRequest([request], selectedDestination)
+      );
+      if (hasExistingAutoRequest) {
+        throw new DuplicateMediaRequestError(
+          'Auto-request for this media, user, and destination already exists.'
+        );
+      }
+    }
+
     if (requestBody.mediaType === MediaType.MOVIE) {
       const request = new MediaRequest({
         type: MediaType.MOVIE,
@@ -1626,37 +1711,59 @@ export class MediaRequest {
         );
       }
 
+      const selectionIsCoveredByRequest = (
+        request: MediaRequest,
+        selection: SeasonEpisodeSelection
+      ): boolean => {
+        const matchingRows = (request.seasons ?? []).filter(
+          (season) => season.seasonNumber === selection.seasonNumber
+        );
+        if (!selection.episodeNumbers) {
+          return matchingRows.some((season) => season.episodeNumbers == null);
+        }
+
+        const coveredEpisodes = new Set<number>();
+        for (const season of matchingRows) {
+          if (season.episodeNumbers == null) {
+            return true;
+          }
+          season.episodeNumbers.forEach((episode) =>
+            coveredEpisodes.add(episode)
+          );
+        }
+        return selection.episodeNumbers.every((episode) =>
+          coveredEpisodes.has(episode)
+        );
+      };
+      const promotablePendingRequest = selectedDestination
+        ? findPromotablePendingRequest(
+            destinationRequests.filter((request) =>
+              requestedSeasonSelections.every((selection) =>
+                selectionIsCoveredByRequest(request, selection)
+              )
+            ),
+            [selectedDestination],
+            user,
+            MediaType.TV,
+            requestBody.is4k
+          )
+        : undefined;
+      if (promotablePendingRequest) {
+        return promotePendingRequest(promotablePendingRequest, user);
+      }
+
       const getFinalSeasons = async (
         requestMedia: Media
       ): Promise<SeasonEpisodeSelection[]> => {
-        const activeRequestedSeasonRows: SeasonRequest[] = requestMedia.id
-          ? await getRepository(SeasonRequest)
-              .createQueryBuilder('requestedSeason')
-              .innerJoin('requestedSeason.request', 'existingRequest')
-              .innerJoin('existingRequest.media', 'existingMedia')
-              .where('existingMedia.id = :mediaId', {
-                mediaId: requestMedia.id,
-              })
-              .andWhere('existingRequest.is4k = :is4k', {
-                is4k: requestBody.is4k,
-              })
-              .andWhere(
-                serverId === undefined
-                  ? 'existingRequest.serverId IS NULL'
-                  : '(existingRequest.serverId = :serverId OR existingRequest.serverId IS NULL)',
-                serverId === undefined ? {} : { serverId }
+        const activeRequestedSeasonRows: SeasonRequest[] = selectedDestination
+          ? (await loadDestinationRequests(requestMedia))
+              .filter((request) =>
+                isDestinationCoveredByActiveRequest(
+                  [request],
+                  selectedDestination
+                )
               )
-              .andWhere(
-                'existingRequest.status NOT IN (:...inactiveStatuses)',
-                {
-                  inactiveStatuses: [
-                    MediaRequestStatus.DECLINED,
-                    MediaRequestStatus.FAILED,
-                    MediaRequestStatus.COMPLETED,
-                  ],
-                }
-              )
-              .getMany()
+              .flatMap((request) => request.seasons ?? [])
           : [];
         const fullyRequestedSeasons = new Set(
           activeRequestedSeasonRows

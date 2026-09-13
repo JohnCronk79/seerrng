@@ -36,6 +36,16 @@ You should enable this if you are having issues loading external images directly
 
 Set the default display language for Seerr. Users can override this setting in their user settings.
 
+## Version Check
+
+When enabled, SeerrNG checks the public release tags in the SeerrNG GitHub repository. It only reports an update when a published stable tag is newer than the installed version, so a build created ahead of the next public release is not incorrectly marked as out of date.
+
+## Theme and color palette
+
+Open the paintbrush menu in the top-right corner to choose light or dark mode and a color palette. **Seerr** is SeerrNG's default blue-gray appearance when the browser has no saved palette preference.
+
+The **SeerrNG** palette provides a separate navy, blue, and sky treatment. Theme choices are stored in the current browser, not in the Seerr server configuration. A saved choice is preserved when Seerr is upgraded, and it does not change the palette for other installations.
+
 ## Discover Region, Discover Language & Streaming Region
 
 These settings filter content shown on the "Discover" home page based on regional availability and original language, respectively. The Streaming Region filters the available streaming providers on the media page. Users can override these global settings by configuring these same options in their user settings.

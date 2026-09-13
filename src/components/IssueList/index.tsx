@@ -2,6 +2,10 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
+import {
+  getFilterResetButtonClass,
+  getFilterToggleButtonClass,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import IssueItem from '@app/components/IssueList/IssueItem';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
@@ -28,6 +32,7 @@ const messages = defineMessages('components.IssueList', {
   issues: 'Issues',
   allIssues: 'All Issues',
   taskFilters: 'Task Filters',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   clearFilters: 'Clear Filters',
   sortBy: 'Sort By',
@@ -63,13 +68,10 @@ type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
 type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book';
 type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 
-const controlClass = (active: boolean) =>
-  `inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`;
-
 const IssueList = () => {
   const intl = useIntl();
   const router = useRouter();
-  const [filter, setFilter] = useState<Filter>('open');
+  const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('added');
   const [direction, setDirection] = useState<Direction>('desc');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
@@ -134,7 +136,7 @@ const IssueList = () => {
           {intl.formatMessage(messages.issues)}
         </span>
       </h2>
-      <section className="mb-3 mt-4">
+      <section className="app-filter-section-gap mt-4">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
         </div>
@@ -142,7 +144,7 @@ const IssueList = () => {
           <button
             type="button"
             onClick={clearFilters}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className={getFilterResetButtonClass(false)}
           >
             <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
             {intl.formatMessage(messages.clearFilters)}
@@ -162,7 +164,7 @@ const IssueList = () => {
                 setFilter(value);
                 resetPage();
               }}
-              className={controlClass(filter === value)}
+              className={getFilterToggleButtonClass(filter === value)}
             >
               {intl.formatMessage(label)}
               <span className="rounded-full bg-black/25 px-1.5 text-[10px]">
@@ -170,11 +172,48 @@ const IssueList = () => {
               </span>
             </button>
           ))}
+          <label className="discover-filter-control h-8 self-center">
+            <span
+              className={`discover-filter-control-label ${
+                issueTypeFilter !== 'all'
+                  ? 'discover-filter-control-label-active'
+                  : ''
+              }`}
+            >
+              {intl.formatMessage(messages.issueType)}
+            </span>
+            <select
+              value={issueTypeFilter}
+              onChange={(event) => {
+                setIssueTypeFilter(event.target.value as IssueTypeFilter);
+                resetPage();
+              }}
+              className="w-24 border-0 bg-transparent px-1.5 py-1 text-xs text-gray-300 focus:ring-0"
+              aria-label={intl.formatMessage(messages.issueType)}
+            >
+              {(
+                [
+                  ['all', messages.any],
+                  ['audio', messages.audio],
+                  ['video', messages.video],
+                  ['subtitle', messages.subtitle],
+                  ['other', messages.other],
+                ] as const
+              ).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {intl.formatMessage(label)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
-      <section className="mb-5">
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.mediaFilters)}
+      >
         <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.filters)}
+          {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {(
@@ -194,49 +233,27 @@ const IssueList = () => {
                 setMediaFilter(value);
                 resetPage();
               }}
-              className={controlClass(mediaFilter === value)}
+              className={getFilterToggleButtonClass(mediaFilter === value)}
             >
               {intl.formatMessage(label)}
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+      </section>
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.filters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="discover-filter-control h-8 self-center">
             <span
-              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                issueTypeFilter !== 'all' ? 'bg-indigo-500/35 text-white' : ''
-              }`}
-            >
-              {intl.formatMessage(messages.issueType)}
-            </span>
-            <select
-              value={issueTypeFilter}
-              onChange={(event) => {
-                setIssueTypeFilter(event.target.value as IssueTypeFilter);
-                resetPage();
-              }}
-              className="w-24 border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-              aria-label={intl.formatMessage(messages.issueType)}
-            >
-              {(
-                [
-                  ['all', messages.any],
-                  ['audio', messages.audio],
-                  ['video', messages.video],
-                  ['subtitle', messages.subtitle],
-                  ['other', messages.other],
-                ] as const
-              ).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {intl.formatMessage(label)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span
-              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label ${
+                timeFrame !== 'all'
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               {intl.formatMessage(messages.timePeriod)}
@@ -247,7 +264,7 @@ const IssueList = () => {
                 setTimeFrame(event.target.value as TimeFrame);
                 resetPage();
               }}
-              className="border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="border-0 bg-transparent px-1.5 py-1 text-xs text-gray-300 focus:ring-0"
             >
               <option value="all">
                 {intl.formatMessage(messages.allTime)}
@@ -266,10 +283,10 @@ const IssueList = () => {
               </option>
             </select>
           </label>
-          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+          <label className="discover-filter-control h-8 w-72 flex-none self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                search.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                search.trim() ? 'discover-filter-control-label-active' : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -284,12 +301,12 @@ const IssueList = () => {
               }}
               placeholder={intl.formatMessage(messages.searchIssues)}
               aria-label={intl.formatMessage(messages.searchIssues)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
         </div>
       </section>
-      <section className="mb-5">
+      <section className="app-filter-section-gap">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.sortBy)}
         </div>
@@ -312,7 +329,7 @@ const IssueList = () => {
                 type="button"
                 aria-pressed={active}
                 onClick={() => updateSort(value)}
-                className={controlClass(active)}
+                className={getFilterToggleButtonClass(active)}
               >
                 {intl.formatMessage(label)}
                 <Icon className="h-4 w-4" />
@@ -328,7 +345,7 @@ const IssueList = () => {
       ))}
       {data.results.length === 0 && (
         <div className="refreshed-card-surface flex min-h-16 w-full flex-col items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-white">
-          <span className="text-sm text-gray-400">
+          <span className="refreshed-detail-text text-sm">
             {intl.formatMessage(globalMessages.noresults)}
           </span>
           {filter !== 'all' && (

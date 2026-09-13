@@ -43,6 +43,9 @@ let getEpisodesImpl: (
   seriesID: string,
   seasonID: string
 ) => Promise<JellyfinLibraryItem[]> = async () => [];
+let getAudioChildrenWithMediaInfoImpl: (
+  parentId: string
+) => Promise<JellyfinLibraryItemExtended[]> = async () => [];
 let getReleaseGroupImpl: (
   releaseId: string
 ) => Promise<string | null> = async () => null;
@@ -75,6 +78,15 @@ Object.defineProperty(JellyfinAPI.prototype, 'getEpisodes', {
   get() {
     return async (seriesID: string, seasonID: string) =>
       getEpisodesImpl(seriesID, seasonID);
+  },
+  set() {},
+  configurable: true,
+});
+
+Object.defineProperty(JellyfinAPI.prototype, 'getAudioChildrenWithMediaInfo', {
+  get() {
+    return async (parentId: string) =>
+      getAudioChildrenWithMediaInfoImpl(parentId);
   },
   set() {},
   configurable: true,
@@ -254,6 +266,7 @@ describe('Jellyfin Scanner', () => {
     getItemDataImpl = async () => undefined;
     getSeasonsImpl = async () => [];
     getEpisodesImpl = async () => [];
+    getAudioChildrenWithMediaInfoImpl = async () => [];
     getReleaseGroupImpl = async () => null;
     getTvShowImpl = async () => fakeTmdbShow(1);
 
@@ -309,6 +322,45 @@ describe('Jellyfin Scanner', () => {
       where: { mbId: releaseGroupId, mediaType: MediaType.MUSIC },
     });
     assert.strictEqual(media.status, MediaStatus.AVAILABLE);
+  });
+
+  it('retains separate MP3 and FLAC album identifiers for the same release group', async () => {
+    const releaseGroupId = 'jellyfin-audio-variants';
+    configureJellyfinWithLibrary([
+      { id: 'mp3', name: 'MP3', enabled: true, type: 'music' },
+      { id: 'flac', name: 'FLAC', enabled: true, type: 'music' },
+    ]);
+    getLibraryContentsImpl = async (libraryId) => [
+      fakeJellyfinMusicAlbumItem(`${libraryId}-album`),
+    ];
+    getItemDataImpl = async (itemId) => ({
+      ...fakeJellyfinMusicAlbumItem(itemId),
+      ProviderIds: { MusicBrainzReleaseGroup: releaseGroupId },
+      MediaSources: [
+        {
+          Protocol: 'File',
+          Id: `${itemId}-source`,
+          Path: `/music/${itemId}`,
+          Type: 'Default',
+          VideoType: 'None',
+          MediaStreams: [
+            {
+              Codec: itemId.startsWith('flac') ? 'flac' : 'mp3',
+              Type: 'Audio',
+              DisplayTitle: 'Audio',
+            },
+          ],
+        },
+      ],
+    });
+
+    await jellyfinFullScanner.run();
+
+    const media = await getRepository(Media).findOneOrFail({
+      where: { mbId: releaseGroupId, mediaType: MediaType.MUSIC },
+    });
+    assert.strictEqual(media.jellyfinMediaIdMp3, 'mp3-album');
+    assert.strictEqual(media.jellyfinMediaIdFlac, 'flac-album');
   });
 
   describe('empty TMDB season handling', () => {

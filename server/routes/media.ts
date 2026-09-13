@@ -722,6 +722,7 @@ mediaRoutes.delete(
                   const removeEbook = bookFormat !== 'audiobook';
                   const removeAudiobook = bookFormat !== 'ebook';
                   let removedBookFormat = false;
+                  const bookRemovalErrors: unknown[] = [];
 
                   const updateBookStatus = async () => {
                     const hasRemainingBookServiceLink =
@@ -747,36 +748,45 @@ mediaRoutes.delete(
                     media.externalServiceId !== null &&
                     media.externalServiceId !== undefined
                   ) {
-                    const ebookSettings = settings.readarr.find(
-                      (readarr) => readarr.id === media.serviceId
-                    );
+                    try {
+                      const ebookSettings = settings.readarr.find(
+                        (readarr) => readarr.id === media.serviceId
+                      );
 
-                    if (!ebookSettings) {
-                      throw new Error('Bookshelf ebook server not configured');
-                    }
-
-                    const ebookService = new ReadarrAPI({
-                      apiKey: ebookSettings.apiKey,
-                      url: ReadarrAPI.buildUrl(ebookSettings, '/api/v1'),
-                      mediaType: 'ebook',
-                    });
-                    const ebook = await ebookService.getBook(
-                      media.externalServiceId,
-                      0
-                    );
-                    await ebookService.removeBook(media.externalServiceId);
-                    if (ebook.authorId !== undefined) {
-                      const remainingBooks =
-                        await ebookService.getBooksByAuthor(ebook.authorId, 0);
-                      if (remainingBooks.length === 0) {
-                        await ebookService.removeAuthor(ebook.authorId);
+                      if (!ebookSettings) {
+                        throw new Error(
+                          'Bookshelf ebook server not configured'
+                        );
                       }
+
+                      const ebookService = new ReadarrAPI({
+                        apiKey: ebookSettings.apiKey,
+                        url: ReadarrAPI.buildUrl(ebookSettings, '/api/v1'),
+                        mediaType: 'ebook',
+                      });
+                      const ebook = await ebookService.getBook(
+                        media.externalServiceId,
+                        0
+                      );
+                      await ebookService.removeBook(media.externalServiceId);
+                      if (ebook.authorId !== undefined) {
+                        const remainingBooks =
+                          await ebookService.getBooksByAuthor(
+                            ebook.authorId,
+                            0
+                          );
+                        if (remainingBooks.length === 0) {
+                          await ebookService.removeAuthor(ebook.authorId);
+                        }
+                      }
+                      removedBookFormat = true;
+                      media.serviceId = null;
+                      media.externalServiceId = null;
+                      media.externalServiceSlug = null;
+                      await updateBookStatus();
+                    } catch (error) {
+                      bookRemovalErrors.push(error);
                     }
-                    removedBookFormat = true;
-                    media.serviceId = null;
-                    media.externalServiceId = null;
-                    media.externalServiceSlug = null;
-                    await updateBookStatus();
                   }
 
                   if (
@@ -786,45 +796,54 @@ mediaRoutes.delete(
                     media.audiobookExternalServiceId !== null &&
                     media.audiobookExternalServiceId !== undefined
                   ) {
-                    const audiobookSettings = settings.readarr.find(
-                      (readarr) => readarr.id === media.audiobookServiceId
-                    );
-
-                    if (!audiobookSettings) {
-                      throw new Error(
-                        'Bookshelf audiobook server not configured'
+                    try {
+                      const audiobookSettings = settings.readarr.find(
+                        (readarr) => readarr.id === media.audiobookServiceId
                       );
-                    }
 
-                    const audiobookService = new ReadarrAPI({
-                      apiKey: audiobookSettings.apiKey,
-                      url: ReadarrAPI.buildUrl(audiobookSettings, '/api/v1'),
-                      mediaType: 'audiobook',
-                    });
-                    const audiobook = await audiobookService.getBook(
-                      media.audiobookExternalServiceId,
-                      0
-                    );
-                    await audiobookService.removeBook(
-                      media.audiobookExternalServiceId
-                    );
-                    if (audiobook.authorId !== undefined) {
-                      const remainingBooks =
-                        await audiobookService.getBooksByAuthor(
-                          audiobook.authorId,
-                          0
+                      if (!audiobookSettings) {
+                        throw new Error(
+                          'Bookshelf audiobook server not configured'
                         );
-                      if (remainingBooks.length === 0) {
-                        await audiobookService.removeAuthor(audiobook.authorId);
                       }
+
+                      const audiobookService = new ReadarrAPI({
+                        apiKey: audiobookSettings.apiKey,
+                        url: ReadarrAPI.buildUrl(audiobookSettings, '/api/v1'),
+                        mediaType: 'audiobook',
+                      });
+                      const audiobook = await audiobookService.getBook(
+                        media.audiobookExternalServiceId,
+                        0
+                      );
+                      await audiobookService.removeBook(
+                        media.audiobookExternalServiceId
+                      );
+                      if (audiobook.authorId !== undefined) {
+                        const remainingBooks =
+                          await audiobookService.getBooksByAuthor(
+                            audiobook.authorId,
+                            0
+                          );
+                        if (remainingBooks.length === 0) {
+                          await audiobookService.removeAuthor(
+                            audiobook.authorId
+                          );
+                        }
+                      }
+                      removedBookFormat = true;
+                      media.audiobookServiceId = null;
+                      media.audiobookExternalServiceId = null;
+                      media.audiobookExternalServiceSlug = null;
+                      await updateBookStatus();
+                    } catch (error) {
+                      bookRemovalErrors.push(error);
                     }
-                    removedBookFormat = true;
-                    media.audiobookServiceId = null;
-                    media.audiobookExternalServiceId = null;
-                    media.audiobookExternalServiceSlug = null;
-                    await updateBookStatus();
                   }
 
+                  if (bookRemovalErrors.length > 0) {
+                    throw bookRemovalErrors[0];
+                  }
                   if (!removedBookFormat) {
                     throw new Error('Bookshelf book ID not found');
                   }

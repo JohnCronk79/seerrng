@@ -18,6 +18,10 @@ const number = (value: unknown): number =>
 const integer = (value: unknown): number =>
   Number.isSafeInteger(value) ? (value as number) : 0;
 const boolean = (value: unknown): boolean => value === true;
+const textArray = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : []).flatMap((item) =>
+    typeof item === 'string' ? [text(item)] : []
+  );
 const optionalText = (value: unknown): string | undefined => {
   const normalized = text(value);
   return normalized || undefined;
@@ -73,10 +77,22 @@ export const sanitizeRadarrMovie = (
         qualityCutoffNotMet: boolean(value.movieFile.qualityCutoffNotMet),
       }
     : undefined;
+  const ratings = isRecord(value.ratings) ? value.ratings : {};
 
   return {
     id: id > 0 ? id : 0,
     title,
+    originalTitle: text(value.originalTitle),
+    year: integer(value.year),
+    overview: text(value.overview),
+    studio: text(value.studio),
+    runtime: integer(value.runtime),
+    certification: text(value.certification),
+    genres: textArray(value.genres),
+    ratings: {
+      votes: integer(ratings.votes),
+      value: number(ratings.value),
+    },
     isAvailable: boolean(value.isAvailable),
     monitored: boolean(value.monitored),
     tmdbId,
@@ -91,6 +107,18 @@ export const sanitizeRadarrMovie = (
     tags: (Array.isArray(value.tags) ? value.tags : [])
       .slice(0, MAX_RADARR_TAGS)
       .filter((tag): tag is number => Number.isSafeInteger(tag) && tag >= 0),
+    images: (Array.isArray(value.images) ? value.images : []).flatMap(
+      (image) =>
+        isRecord(image)
+          ? [
+              {
+                coverType: optionalText(image.coverType),
+                url: optionalText(image.url),
+                remoteUrl: optionalText(image.remoteUrl),
+              },
+            ]
+          : []
+    ),
     movieFile,
   };
 };
@@ -123,6 +151,17 @@ export interface RadarrMovieOptions {
 export interface RadarrMovie {
   id: number;
   title: string;
+  originalTitle?: string;
+  year?: number;
+  overview?: string;
+  studio?: string;
+  runtime?: number;
+  certification?: string;
+  genres?: string[];
+  ratings?: {
+    votes: number;
+    value: number;
+  };
   isAvailable: boolean;
   monitored: boolean;
   tmdbId: number;

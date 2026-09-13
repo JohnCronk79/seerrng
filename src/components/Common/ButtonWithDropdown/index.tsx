@@ -7,7 +7,7 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
 type ButtonWithDropdownProps = {
   text: React.ReactNode;
   dropdownIcon?: React.ReactNode;
-  buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest';
+  buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest' | 'playback';
   buttonSize?: 'default' | 'sm';
   disabledReason?: string;
 } & (
@@ -31,6 +31,7 @@ const ButtonWithDropdown = ({
     ghost: 'app-button-ghost',
     success: 'app-button-success',
     detailRequest: 'app-button-detail-request',
+    playback: 'app-button-playback',
   };
   const sharedClasses = `app-button ${buttonTypeClassNames[buttonType]} ${
     isSmall ? 'button-sm' : 'button-md'

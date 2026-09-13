@@ -63,7 +63,7 @@ const messages = defineMessages('components.RequestCard', {
   deleterequest: 'Delete Request',
   unknowntitle: 'Unknown Title',
   bookFormat: 'Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   both: 'Both',
   partialBookService: 'Partial Bookshelf link',

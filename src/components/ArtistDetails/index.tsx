@@ -45,6 +45,7 @@ interface Album {
   'primary-type'?: string;
   secondary_types?: string[];
   'artist-credit'?: { name: string }[];
+  availableQualities?: ('MP3' | 'FLAC')[];
   mediaInfo?: Media;
 }
 
@@ -324,6 +325,7 @@ const ArtistDetails = () => {
                         artist={album['artist-credit']?.[0]?.name ?? artistName}
                         type={album['primary-type']}
                         status={album.mediaInfo?.status ?? MediaStatus.UNKNOWN}
+                        availableQualities={album.availableQualities}
                         inProgress={
                           (album.mediaInfo?.downloadStatus ?? []).length > 0
                         }

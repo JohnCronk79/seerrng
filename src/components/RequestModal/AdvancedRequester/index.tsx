@@ -243,7 +243,7 @@ const AdvancedRequester = ({
           { type: 'or' }
         )
       ),
-    [selectedIs4k, type, userData?.results]
+    [hasPermission, selectedIs4k, type, userData?.results]
   );
 
   useEffect(() => {
@@ -524,7 +524,7 @@ const AdvancedRequester = ({
               setIgnoreQuota(false);
               setSelectedUser(value);
             }}
-            className="relative inline-flex h-[22px] min-w-0 max-w-56 flex-shrink-0 items-stretch overflow-visible rounded-md border border-gray-600 bg-gray-900/70"
+            className="relative inline-flex h-[22px] max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border border-gray-600 bg-gray-900/70"
           >
             {({ open }) => (
               <>
@@ -539,9 +539,20 @@ const AdvancedRequester = ({
                     {intl.formatMessage(messages.requestedBy)}
                   </span>
                 </Listbox.Label>
-                <Listbox.Button className="inline-flex h-full min-w-24 flex-1 items-center justify-between gap-2 rounded-r-[5px] px-2 py-0 text-[11px] font-semibold leading-none text-gray-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-400">
-                  <span className="relative top-px truncate">
-                    {selectedUser.displayName}
+                <Listbox.Button className="inline-grid h-full max-w-[min(24rem,55vw)] grid-cols-[minmax(6rem,max-content)_auto] items-center gap-2 rounded-r-[5px] px-2 py-0 text-[11px] font-semibold leading-none text-gray-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-400">
+                  <span className="grid min-w-0">
+                    {(filteredUserData ?? []).map((candidate) => (
+                      <span
+                        key={candidate.id}
+                        aria-hidden="true"
+                        className="invisible col-start-1 row-start-1 whitespace-nowrap"
+                      >
+                        {candidate.displayName}
+                      </span>
+                    ))}
+                    <span className="relative top-px col-start-1 row-start-1 truncate">
+                      {selectedUser.displayName}
+                    </span>
                   </span>
                   <ChevronDownIcon
                     className="h-3.5 w-3.5 flex-shrink-0 text-gray-500"
@@ -632,7 +643,7 @@ const AdvancedRequester = ({
             <div className="truncate text-sm font-semibold text-white">
               {mediaTitle || intl.formatMessage(messages.advancedoptions)}
             </div>
-            <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 text-xs leading-5 text-gray-400">
+            <dl className="refreshed-detail-text mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 text-xs leading-5">
               <dt className="font-medium text-gray-200">
                 {intl.formatMessage(messages.status)}:
               </dt>
@@ -657,7 +668,7 @@ const AdvancedRequester = ({
           <span className="flex-shrink-0 text-xs font-semibold text-indigo-300 group-open:hidden">
             {intl.formatMessage(messages.showOptions)}
           </span>
-          <ChevronDownIcon className="h-5 w-5 flex-shrink-0 text-gray-400 transition group-open:rotate-180" />
+          <ChevronDownIcon className="refreshed-detail-text-muted h-5 w-5 flex-shrink-0 transition group-open:rotate-180" />
         </summary>
         <div
           className={`${panelOnly ? 'refreshed-inset-surface rounded-lg border border-gray-700 p-3' : 'border-t border-gray-700 p-3'} ${!rootFolderTable && serviceOptionsHidden ? 'hidden' : ''}`}
@@ -891,15 +902,15 @@ const AdvancedRequester = ({
               </h4>
               <div className="grid w-fit max-w-full grid-cols-[minmax(0,max-content)_max-content] justify-start gap-x-3 gap-y-1 text-xs">
                 <div className="col-span-2 mb-1 grid grid-cols-subgrid border-b border-gray-600 px-1 pb-2">
-                  <span className="font-medium text-gray-400">
+                  <span className="refreshed-detail-text font-medium">
                     {intl.formatMessage(messages.rootfolder)}
                   </span>
-                  <span className="font-medium text-gray-400">
+                  <span className="refreshed-detail-text font-medium">
                     {intl.formatMessage(messages.availableSpace)}
                   </span>
                 </div>
                 {isValidating || !serverData ? (
-                  <span className="col-span-2 text-gray-500">
+                  <span className="refreshed-detail-text-muted col-span-2">
                     {intl.formatMessage(globalMessages.loading)}
                   </span>
                 ) : (
@@ -918,7 +929,7 @@ const AdvancedRequester = ({
                         }`}
                       >
                         <span className="truncate">{folder.path}</span>
-                        <span className="whitespace-nowrap text-gray-400">
+                        <span className="refreshed-detail-text whitespace-nowrap">
                           {formatBytes(folder.freeSpace ?? 0)}
                         </span>
                       </button>
@@ -989,7 +1000,7 @@ const AdvancedRequester = ({
                 {intl.formatMessage(messages.ignoreQuotaTitle)}
               </label>
               <div className="flex items-center justify-between">
-                <p className="text-sm text-gray-400">
+                <p className="refreshed-detail-text text-sm">
                   {intl.formatMessage(messages.ignoreQuotaDescription)}
                 </p>
                 <SlideCheckbox

@@ -44,7 +44,7 @@ const ThemePicker = () => {
             <button
               type="button"
               onClick={toggleMode}
-              className="mb-3 flex w-full items-center justify-between rounded border border-gray-700 bg-gray-900/60 px-3 py-2 text-sm font-medium text-gray-200 transition hover:border-gray-500 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="app-button app-button-default mb-3 flex w-full justify-between px-3 py-2 text-sm"
             >
               <span className="flex items-center">
                 {mode === 'dark' ? (

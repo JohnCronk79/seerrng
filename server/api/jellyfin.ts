@@ -77,7 +77,14 @@ export interface JellyfinLibraryItem {
   Name: string;
   Id: string;
   HasSubtitles: boolean;
-  Type: 'Movie' | 'Episode' | 'Season' | 'Series' | 'MusicAlbum';
+  Type:
+    | 'Movie'
+    | 'Episode'
+    | 'Season'
+    | 'Series'
+    | 'MusicAlbum'
+    | 'Audio'
+    | 'AudioBook';
   LocationType: 'FileSystem' | 'Offline' | 'Remote' | 'Virtual';
   SeriesName?: string;
   SeriesId?: string;
@@ -137,6 +144,26 @@ export interface JellyfinItemsReponse {
   StartIndex: number;
 }
 
+export interface JellyfinSession {
+  Id: string;
+  DeviceId?: string;
+  DeviceName: string;
+  Client: string;
+  UserId?: string;
+  UserName?: string;
+  IsActive: boolean;
+  SupportsMediaControl: boolean;
+  SupportsRemoteControl: boolean;
+  PlayableMediaTypes: string[];
+  SupportedCommands: string[];
+}
+
+export interface JellyfinPlaylist {
+  Id: string;
+  Name: string;
+  MediaType: 'Audio' | 'Video';
+}
+
 export const MAX_JELLYFIN_USERS = 1_000;
 export const MAX_JELLYFIN_LIBRARIES = 10_000;
 export const MAX_JELLYFIN_LIBRARY_ITEMS = 100_000;
@@ -169,6 +196,8 @@ const jellyfinItemTypes = [
   'Season',
   'Series',
   'MusicAlbum',
+  'Audio',
+  'AudioBook',
 ] as const;
 const jellyfinLocationTypes = [
   'FileSystem',
@@ -399,6 +428,47 @@ export const sanitizeJellyfinSystemInfo = (
   const id = boundedJellyfinText(value.Id, 128);
   const serverName = boundedJellyfinText(value.ServerName, 512);
   return id && serverName ? { Id: id, ServerName: serverName } : undefined;
+};
+
+export const sanitizeJellyfinSession = (
+  value: unknown
+): JellyfinSession | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const id = boundedJellyfinText(value.Id, 128);
+  const deviceName = boundedJellyfinText(value.DeviceName, 512);
+  const client = boundedJellyfinText(value.Client, 512);
+  if (!id || !deviceName || !client) {
+    return undefined;
+  }
+
+  return {
+    Id: id,
+    DeviceId: boundedJellyfinText(value.DeviceId, 128) || undefined,
+    DeviceName: deviceName,
+    Client: client,
+    UserId: boundedJellyfinText(value.UserId, 128) || undefined,
+    UserName: boundedJellyfinText(value.UserName, 512) || undefined,
+    IsActive: value.IsActive === true,
+    SupportsMediaControl: value.SupportsMediaControl === true,
+    SupportsRemoteControl: value.SupportsRemoteControl === true,
+    PlayableMediaTypes: (Array.isArray(value.PlayableMediaTypes)
+      ? value.PlayableMediaTypes
+      : []
+    )
+      .slice(0, 20)
+      .map((item) => boundedJellyfinText(item, 32))
+      .filter(Boolean),
+    SupportedCommands: (Array.isArray(value.SupportedCommands)
+      ? value.SupportedCommands
+      : []
+    )
+      .slice(0, 100)
+      .map((item) => boundedJellyfinText(item, 64))
+      .filter(Boolean),
+  };
 };
 
 class JellyfinAPI extends ExternalAPI {
@@ -789,6 +859,175 @@ class JellyfinAPI extends ExternalAPI {
       );
       throw new ApiError(e.response?.status, ApiErrorCode.InvalidAuthToken);
     }
+  }
+
+  public async getChildren(
+    parentId: string,
+    includeItemTypes: ('Audio' | 'AudioBook')[] = ['Audio', 'AudioBook']
+  ): Promise<JellyfinLibraryItem[]> {
+    const itemResponse = await this.get<unknown>('/Items', {
+      params: {
+        ParentId: boundedJellyfinText(parentId, 128),
+        IncludeItemTypes: includeItemTypes.join(','),
+        Recursive: true,
+        SortBy: 'ParentIndexNumber,IndexNumber,SortName',
+        SortOrder: 'Ascending',
+      },
+    });
+    const items =
+      isRecord(itemResponse) && Array.isArray(itemResponse.Items)
+        ? itemResponse.Items
+        : [];
+
+    return sanitizeJellyfinLibraryItems(items, MAX_JELLYFIN_LIBRARY_ITEMS, {
+      excludeVirtual: true,
+    }) as JellyfinLibraryItem[];
+  }
+
+  public async getAudioChildrenWithMediaInfo(
+    parentId: string
+  ): Promise<JellyfinLibraryItemExtended[]> {
+    const itemResponse = await this.get<unknown>('/Items', {
+      params: {
+        ParentId: boundedJellyfinText(parentId, 128),
+        IncludeItemTypes: 'Audio,AudioBook',
+        Recursive: true,
+        SortBy: 'ParentIndexNumber,IndexNumber,SortName',
+        SortOrder: 'Ascending',
+        Fields: 'MediaSources',
+      },
+    });
+    const items =
+      isRecord(itemResponse) && Array.isArray(itemResponse.Items)
+        ? itemResponse.Items
+        : [];
+
+    return sanitizeJellyfinLibraryItems(items, MAX_JELLYFIN_LIBRARY_ITEMS, {
+      includeExtended: true,
+      excludeVirtual: true,
+    }) as JellyfinLibraryItemExtended[];
+  }
+
+  public async getControllableSessions(
+    controllingUserId: string
+  ): Promise<JellyfinSession[]> {
+    const response = await this.get<unknown>('/Sessions', {
+      params: {
+        ControllableByUserId: boundedJellyfinText(controllingUserId, 128),
+        ActiveWithinSeconds: 300,
+      },
+    });
+
+    return (Array.isArray(response) ? response : [])
+      .slice(0, 100)
+      .flatMap((session) => {
+        const normalized = sanitizeJellyfinSession(session);
+        return normalized ? [normalized] : [];
+      })
+      .filter(
+        (session) =>
+          session.IsActive &&
+          session.SupportsMediaControl &&
+          session.SupportsRemoteControl
+      );
+  }
+
+  public async playOnSession(
+    sessionId: string,
+    itemIds: string[]
+  ): Promise<void> {
+    const safeSessionId = boundedJellyfinText(sessionId, 128);
+    const safeItemIds = itemIds
+      .slice(0, 1_000)
+      .map((itemId) => boundedJellyfinText(itemId, 128))
+      .filter(Boolean);
+    if (!safeSessionId || safeItemIds.length === 0) {
+      throw new Error(
+        'A playback session and at least one media item are required.'
+      );
+    }
+
+    await this.post(
+      `/Sessions/${encodeURIComponent(safeSessionId)}/Playing`,
+      undefined,
+      {
+        params: {
+          PlayCommand: 'PlayNow',
+          ItemIds: safeItemIds.join(','),
+          StartIndex: 0,
+        },
+      }
+    );
+  }
+
+  public async replacePlaylist(
+    name: string,
+    itemIds: string[],
+    mediaType: 'Audio' | 'Video',
+    userId: string
+  ): Promise<JellyfinPlaylist> {
+    const safeName = boundedJellyfinText(name, 256).trim();
+    const safeUserId = boundedJellyfinText(userId, 128);
+    const safeItemIds = itemIds
+      .slice(0, 1_000)
+      .map((itemId) => boundedJellyfinText(itemId, 128))
+      .filter(Boolean);
+    if (!safeName || !safeUserId || safeItemIds.length === 0) {
+      throw new Error(
+        'A playlist name, user, and at least one media item are required.'
+      );
+    }
+
+    const playlistResponse = await this.get<unknown>(
+      `/Users/${encodeURIComponent(safeUserId)}/Items`,
+      {
+        params: {
+          IncludeItemTypes: 'Playlist',
+          Recursive: true,
+          Fields: 'MediaType',
+        },
+      },
+      0
+    );
+    const existingPlaylistIds = (
+      isRecord(playlistResponse) && Array.isArray(playlistResponse.Items)
+        ? playlistResponse.Items
+        : []
+    )
+      .slice(0, 10_000)
+      .flatMap((playlist) => {
+        if (!isRecord(playlist)) {
+          return [];
+        }
+        const playlistName = boundedJellyfinText(playlist.Name, 256);
+        const playlistId = boundedJellyfinText(playlist.Id, 128);
+        return playlistName === safeName && playlistId ? [playlistId] : [];
+      });
+
+    // This exact name is SeerrNG-owned. Delete any remnants first so the
+    // replacement remains one list even when media type changes.
+    for (const playlistId of existingPlaylistIds) {
+      await this.request('DELETE', `/Items/${encodeURIComponent(playlistId)}`);
+    }
+
+    const response = await this.request<unknown>('POST', '/Playlists', null, {
+      params: {
+        UserId: safeUserId,
+        Name: safeName,
+        Ids: safeItemIds.join(','),
+        MediaType: mediaType,
+      },
+    });
+    const playlistId = isRecord(response.data)
+      ? boundedJellyfinText(response.data.Id, 128)
+      : '';
+    if (!playlistId) {
+      throw new Error(
+        `${this.mediaServerType === MediaServerType.EMBY ? 'Emby' : 'Jellyfin'} did not create the replacement playlist.`
+      );
+    }
+
+    return { Id: playlistId, Name: safeName, MediaType: mediaType };
   }
 
   public async getSeasons(seriesID: string): Promise<JellyfinLibraryItem[]> {

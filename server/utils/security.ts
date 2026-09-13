@@ -344,6 +344,42 @@ export const isLocalOrPrivateAddress = (hostname: string): boolean => {
   return false;
 };
 
+/**
+ * Narrower than isLocalOrPrivateAddress: true only for loopback and
+ * link-local addresses (which includes the 169.254.169.254 cloud metadata
+ * address), not general RFC1918/CGNAT ranges. Callers that must allow
+ * private-address targets (e.g. LAN player discovery) but still want to
+ * refuse the handful of addresses that are never a legitimate third-party
+ * device — the host itself, or a cloud metadata endpoint — should use this
+ * instead of disabling private-address protection outright.
+ */
+export const isLoopbackOrLinkLocalAddress = (hostname: string): boolean => {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+
+  if (!normalized || normalized === 'localhost') {
+    return true;
+  }
+
+  if (net.isIPv4(normalized)) {
+    const parts = normalized.split('.').map(Number);
+    const [a, b] = parts;
+    return a === 127 || (a === 169 && b === 254);
+  }
+
+  if (net.isIPv6(normalized)) {
+    const words = parseIPv6Words(normalized.split('%', 1)[0]);
+    if (!words) {
+      return true;
+    }
+    return normalized === '::1' || (words[0] & 0xffc0) === 0xfe80;
+  }
+
+  return false;
+};
+
 export const resolvesToLocalOrPrivateAddress = async (
   hostname: string
 ): Promise<boolean> => {

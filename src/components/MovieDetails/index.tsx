@@ -2,10 +2,13 @@ import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
+import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import Tooltip from '@app/components/Common/Tooltip';
 import MovieDetailsLayout from '@app/components/MovieDetails/MovieDetailsLayout';
 import RequestButton from '@app/components/RequestButton';
+import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
@@ -26,6 +29,7 @@ import {
 import type { RatingResponse } from '@server/api/ratings';
 import { IssueStatus } from '@server/constants/issue';
 import { MediaStatus, MediaType } from '@server/constants/media';
+import { MediaServerType } from '@server/constants/server';
 import type { MovieDetails as MovieDetailsType } from '@server/models/Movie';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
@@ -104,6 +108,16 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   });
   const { data: ratingData } = useSWR<RatingResponse>(
     movieId ? `/api/v1/movie/${movieId}/ratingscombined` : null
+  );
+  const canUse4kPlayback =
+    settings.currentSettings.movie4kEnabled &&
+    hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_MOVIE], {
+      type: 'or',
+    });
+  const { data: playbackCatalog } = usePlaybackCatalog(data?.mediaInfo?.id);
+  const { data: playbackCatalog4k } = usePlaybackCatalog(
+    canUse4kPlayback ? data?.mediaInfo?.id : undefined,
+    true
   );
   const sortedCrew = useMemo(
     () => sortCrewPriority(data?.credits.crew ?? []),
@@ -277,6 +291,38 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       data.mediaInfo.status !== MediaStatus.UNKNOWN ||
       data.mediaInfo.status4k !== MediaStatus.UNKNOWN)
   );
+  const canPlayMedia = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_MOVIE],
+    { type: 'or' }
+  );
+  const preferHighQualityPlayback =
+    settings.currentSettings.mediaServerType !== MediaServerType.PLEX &&
+    !!playbackCatalog4k?.rootItem;
+  const devicePlaybackItem = preferHighQualityPlayback
+    ? playbackCatalog4k.rootItem
+    : (playbackCatalog?.rootItem ?? playbackCatalog4k?.rootItem);
+  const devicePlaybackIs4k =
+    !!devicePlaybackItem &&
+    devicePlaybackItem.id === playbackCatalog4k?.rootItem?.id;
+  const playbackActions = canPlayMedia ? (
+    <>
+      <MediaServerPlayButton
+        mediaUrl={data.mediaInfo?.mediaUrl}
+        mediaUrl4k={data.mediaInfo?.mediaUrl4k}
+        iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
+        iOSPlexUrl4k={data.mediaInfo?.iOSPlexUrl4k}
+        mediaId={data.mediaInfo?.id}
+        itemIds={devicePlaybackItem ? [devicePlaybackItem.id] : []}
+        defaultIs4k={devicePlaybackIs4k}
+        include4k={canUse4kPlayback}
+      />
+      <PlayOnDeviceButton
+        mediaId={data.mediaInfo?.id}
+        itemIds={devicePlaybackItem ? [devicePlaybackItem.id] : []}
+        is4k={devicePlaybackIs4k}
+      />
+    </>
+  ) : null;
 
   const primaryActions = (
     <>
@@ -374,12 +420,10 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         </Button>
       )}
       <AssociationBadge mediaType="movie" id={data.id} variant="button" />
-      <span className="ml-auto hidden sm:block" aria-hidden="true" />
       <RequestButton
         buttonSize="sm"
         buttonType="detailRequest"
         className="ml-0"
-        separateButtons
         mediaType="movie"
         media={data.mediaInfo}
         tmdbId={data.id}
@@ -480,6 +524,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        playbackActions={playbackActions}
       />
     </>
   );

@@ -43,6 +43,7 @@ const messages = defineMessages('components.Settings', {
   toastPlexConnecting: 'Attempting to connect to Plex…',
   toastPlexConnectingSuccess: 'Plex connection established successfully!',
   toastPlexConnectingFailure: 'Failed to connect to Plex.',
+  toastPlexLibraryUpdateFailure: 'Failed to update Plex libraries.',
   settingUpPlexDescription:
     'To set up Plex, you can either enter the details manually or select a server retrieved from <RegisterPlexTVLink>plex.tv</RegisterPlexTVLink>. Press the button to the right of the dropdown to fetch the list of available servers.',
   hostname: 'Hostname or IP Address',
@@ -80,12 +81,18 @@ const messages = defineMessages('components.Settings', {
   toastTautulliSettingsSuccess: 'Tautulli settings saved successfully!',
   toastTautulliSettingsFailure:
     'Something went wrong while saving Tautulli settings.',
+  reclassifyToAudiobook: 'Reclassify as an Audiobooks library',
+  reclassifyToMusic: 'Reclassify as a Music library',
+  audiobooks: 'Audiobooks',
+  toastReclassifyFailure:
+    'Something went wrong while reclassifying the library.',
 });
 
 interface Library {
   id: string;
   name: string;
   enabled: boolean;
+  type: 'show' | 'movie' | 'music' | 'book';
 }
 
 interface SyncStatus {
@@ -250,9 +257,17 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
       params.enable = activeLibraries.join(',');
     }
 
-    await axios.post('/api/v1/settings/plex/library', params);
-    setIsSyncing(false);
-    revalidate();
+    try {
+      await axios.post('/api/v1/settings/plex/library', params);
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastPlexLibraryUpdateFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const refreshPresetServers = async () => {
@@ -311,27 +326,55 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
 
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
-    if (activeLibraries.includes(libraryId)) {
-      const params: { enable?: string } = {};
+    try {
+      if (activeLibraries.includes(libraryId)) {
+        const params: { enable?: string } = {};
 
-      if (activeLibraries.length > 1) {
-        params.enable = activeLibraries
-          .filter((id) => id !== libraryId)
-          .join(',');
+        if (activeLibraries.length > 1) {
+          params.enable = activeLibraries
+            .filter((id) => id !== libraryId)
+            .join(',');
+        }
+
+        await axios.post('/api/v1/settings/plex/library', params);
+      } else {
+        await axios.post('/api/v1/settings/plex/library', {
+          enable: [...activeLibraries, libraryId].join(','),
+        });
       }
 
-      await axios.post('/api/v1/settings/plex/library', params);
-    } else {
-      await axios.post('/api/v1/settings/plex/library', {
-        enable: [...activeLibraries, libraryId].join(','),
+      if (onComplete) {
+        onComplete();
+      }
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastPlexLibraryUpdateFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const reclassifyLibrary = async (
+    libraryId: string,
+    nextType: 'music' | 'book'
+  ) => {
+    try {
+      await axios.put(
+        `/api/v1/settings/plex/library/${encodeURIComponent(libraryId)}/type`,
+        {
+          type: nextType,
+        }
+      );
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastReclassifyFailure), {
+        autoDismiss: true,
+        appearance: 'error',
       });
     }
-
-    if (onComplete) {
-      onComplete();
-    }
-    setIsSyncing(false);
-    revalidate();
   };
 
   if ((!data || !dataTautulli) && !error) {
@@ -652,9 +695,31 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           {data?.libraries.map((library) => (
             <LibraryItem
               name={library.name}
+              type={library.type}
+              typeLabel={
+                library.type === 'book'
+                  ? intl.formatMessage(messages.audiobooks)
+                  : undefined
+              }
               isEnabled={library.enabled}
               key={`setting-library-${library.id}`}
               onToggle={() => toggleLibrary(library.id)}
+              reclassify={
+                library.type === 'music' || library.type === 'book'
+                  ? {
+                      label: intl.formatMessage(
+                        library.type === 'music'
+                          ? messages.reclassifyToAudiobook
+                          : messages.reclassifyToMusic
+                      ),
+                      onReclassify: () =>
+                        reclassifyLibrary(
+                          library.id,
+                          library.type === 'music' ? 'book' : 'music'
+                        ),
+                    }
+                  : undefined
+              }
             />
           ))}
         </ul>

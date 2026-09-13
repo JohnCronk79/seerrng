@@ -55,7 +55,7 @@ const messages = defineMessages('components.IssueDetails', {
   exit: 'Exit',
   playonserver: 'Play on {mediaServerName}',
   openinarr: 'Open in {arr}',
-  openEbookInBookshelf: 'Open Ebook in Bookshelf',
+  openBookInBookshelf: 'Open Book in Bookshelf',
   openAudiobookInBookshelf: 'Open Audiobook in Bookshelf',
   toaststatusupdated: 'Issue status updated successfully!',
   toaststatusupdatefailed:
@@ -153,7 +153,7 @@ const IssueDetails = () => {
     ? [
         {
           url: getSafeHref(issueData.media.serviceUrl),
-          label: intl.formatMessage(messages.openEbookInBookshelf),
+          label: intl.formatMessage(messages.openBookInBookshelf),
         },
         {
           url: getSafeHref(issueData.media.audiobookServiceUrl),
@@ -219,238 +219,257 @@ const IssueDetails = () => {
   return (
     <div className="media-page min-h-screen pb-8">
       <PageTitle title={[intl.formatMessage(messages.issuepagetitle), title]} />
-      {backdropPath && (
-        <div className="media-page-bg-image">
-          <CachedImage
-            type={isBook ? 'book' : isMusic ? 'music' : 'tmdb'}
-            alt=""
-            src={backdropPath}
-            fill
-            priority
-            className="object-cover"
-          />
-          <div className="absolute inset-0 bg-gray-900/55" />
-        </div>
-      )}
-
       <div className="relative z-10 pt-4">
         <h1 className="mb-2 text-2xl font-bold text-indigo-300 sm:text-3xl">
           {intl.formatMessage(messages.issuepagetitle)}
         </h1>
 
-        <IssueMediaSummary
-          data={data}
-          mediaType={issueData.media.mediaType}
-          is4k={issueData.is4k}
-          mediaHref={mediaHref}
-          rightDetails={[
-            {
-              label: 'Created By',
-              value: (
-                <Link
-                  href={
-                    belongsToUser
-                      ? '/profile'
-                      : `/users/${issueData.createdBy.id}`
-                  }
-                  className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  {issueData.createdBy.displayName}
-                </Link>
-              ),
-            },
-            {
-              label: 'Created On',
-              value: (
-                <FormattedDate value={issueData.createdAt} dateStyle="medium" />
-              ),
-            },
-            {
-              value: (
-                <FormattedDate value={issueData.createdAt} timeStyle="short" />
-              ),
-            },
-            {
-              label: 'Issue Type',
-              value: intl.formatMessage(
-                issueOption?.name ?? messages.unknownissuetype
-              ),
-            },
-          ]}
-        />
-
-        {issueData.media.mediaType === MediaType.TV &&
-          !isMovie &&
-          !isMusic &&
-          !isBook && <IssueAffectedEpisodes issue={issueData} tvId={data.id} />}
-
-        <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-          <h2 className="mb-2 text-xs font-semibold text-gray-200">
-            {intl.formatMessage(messages.description)}
-          </h2>
-          <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-3 text-xs leading-4">
-            <time
-              className="whitespace-nowrap text-gray-500"
-              dateTime={new Date(issueData.createdAt).toISOString()}
+        <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-2 shadow-lg shadow-gray-950/20">
+          {backdropPath && (
+            <div
+              className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl"
+              aria-hidden
             >
-              <FormattedDate value={issueData.createdAt} dateStyle="medium" />
-              <span aria-hidden="true"> </span>
-              <FormattedDate value={issueData.createdAt} timeStyle="short" />
-            </time>
-            <div className="prose prose-sm max-w-full text-xs leading-4 text-gray-400 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
-              <ReactMarkdown
-                skipHtml
-                allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}
-              >
-                {descriptionComment?.message ?? ''}
-              </ReactMarkdown>
+              <CachedImage
+                type={isBook ? 'book' : isMusic ? 'music' : 'tmdb'}
+                alt=""
+                src={backdropPath}
+                fill
+                priority
+                className="object-cover object-top"
+              />
+              <div className="absolute inset-0 bg-gray-900/55" />
             </div>
-          </div>
-        </section>
-
-        <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-          <h2 className="mb-2 text-xs font-semibold text-gray-200">
-            {intl.formatMessage(messages.comments)}
-          </h2>
-          {comments.length > 0 ? (
-            <div>
-              {comments.map((comment) => (
-                <IssueComment
-                  comment={comment}
-                  key={comment.id}
-                  isActiveUser={comment.user.id === currentUser?.id}
-                  onUpdate={() => void revalidateIssue()}
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="py-2 text-xs text-gray-500">
-              {intl.formatMessage(messages.nocomments)}
-            </p>
           )}
-
-          <Formik
-            initialValues={{ message: '' }}
-            validationSchema={commentSchema}
-            onSubmit={async (values, { resetForm }) => {
-              await axios.post(`/api/v1/issue/${issueData.id}/comment`, {
-                message: values.message,
-              });
-              await revalidateIssue();
-              resetForm();
-            }}
-          >
-            {({ isValid, isSubmitting, values, handleSubmit }) => (
-              <Form>
-                {canComment && (
-                  <div className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-2">
-                    <Field
-                      as="textarea"
-                      rows={3}
-                      id="message"
-                      name="message"
-                      placeholder={intl.formatMessage(
-                        messages.commentplaceholder
-                      )}
-                      className="max-h-32 w-full resize-none overflow-y-auto rounded-md border-gray-600 bg-gray-900/60 text-sm text-gray-100 placeholder:text-gray-500"
-                    />
-                  </div>
-                )}
-
-                <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
-                  <div className="mr-auto flex flex-wrap gap-2">
-                    {selectedMediaUrl && (
-                      <a
-                        href={selectedMediaUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
-                      >
-                        <PlayIcon className="h-3.5 w-3.5" />
-                        {intl.formatMessage(messages.playonserver, {
-                          mediaServerName,
-                        })}
-                      </a>
-                    )}
-                    {!isBook &&
-                      selectedServiceUrl &&
-                      hasPermission(Permission.ADMIN) && (
-                        <a
-                          href={selectedServiceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
-                        >
-                          <ServerIcon className="h-3.5 w-3.5" />
-                          {intl.formatMessage(messages.openinarr, {
-                            arr: arrName,
-                          })}
-                        </a>
-                      )}
-                    {isBook &&
-                      hasPermission(Permission.ADMIN) &&
-                      bookServiceLinks.map((link) => (
-                        <a
-                          key={link.label}
-                          href={link.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
-                        >
-                          <ServerIcon className="h-3.5 w-3.5" />
-                          {link.label}
-                        </a>
-                      ))}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={leaveIssue}
-                    className={`${actionButton} border-red-600/80 bg-red-800/25 text-red-200 hover:border-red-500 hover:text-white focus:ring-red-500`}
-                  >
-                    <ArrowLeftIcon className="h-3.5 w-3.5" />
-                    {intl.formatMessage(messages.exit)}
-                  </button>
-                  {canComment && (
-                    <button
-                      type="button"
-                      onClick={() => handleSubmit()}
-                      disabled={!isValid || isSubmitting || !values.message}
-                      className={`${actionButton} border-yellow-500/80 bg-yellow-700/30 text-yellow-100 hover:border-yellow-300 hover:bg-yellow-600/50 hover:text-white focus:ring-yellow-400`}
-                    >
-                      <ChatBubbleOvalLeftEllipsisIcon className="h-3.5 w-3.5" />
-                      {intl.formatMessage(messages.addcomment)}
-                    </button>
-                  )}
-                  {canComment && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void updateIssueStatus(
-                          issueData.status === IssueStatus.OPEN
-                            ? 'resolved'
-                            : 'open'
-                        )
+          <div className="relative z-10">
+            <IssueMediaSummary
+              data={data}
+              mediaType={issueData.media.mediaType}
+              is4k={issueData.is4k}
+              mediaHref={mediaHref}
+              embedded
+              rightDetails={[
+                {
+                  label: 'Created By',
+                  value: (
+                    <Link
+                      href={
+                        belongsToUser
+                          ? '/profile'
+                          : `/users/${issueData.createdBy.id}`
                       }
-                      className={`${actionButton} border-emerald-600/80 bg-emerald-800/25 text-emerald-200 hover:border-emerald-500 hover:text-white focus:ring-emerald-500`}
+                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
                     >
-                      {issueData.status === IssueStatus.OPEN ? (
-                        <CheckCircleIcon className="h-3.5 w-3.5" />
-                      ) : (
-                        <ArrowPathIcon className="h-3.5 w-3.5" />
-                      )}
-                      {intl.formatMessage(
-                        issueData.status === IssueStatus.OPEN
-                          ? messages.closeissue
-                          : messages.reopenissue
-                      )}
-                    </button>
-                  )}
+                      {issueData.createdBy.displayName}
+                    </Link>
+                  ),
+                },
+                {
+                  label: 'Created On',
+                  value: (
+                    <FormattedDate
+                      value={issueData.createdAt}
+                      dateStyle="medium"
+                    />
+                  ),
+                },
+                {
+                  value: (
+                    <FormattedDate
+                      value={issueData.createdAt}
+                      timeStyle="short"
+                    />
+                  ),
+                },
+                {
+                  label: 'Issue Type',
+                  value: intl.formatMessage(
+                    issueOption?.name ?? messages.unknownissuetype
+                  ),
+                },
+              ]}
+            />
+
+            {issueData.media.mediaType === MediaType.TV &&
+              !isMovie &&
+              !isMusic &&
+              !isBook && (
+                <IssueAffectedEpisodes issue={issueData} tvId={data.id} />
+              )}
+
+            <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+              <h2 className="mb-2 text-xs font-semibold text-gray-200">
+                {intl.formatMessage(messages.description)}
+              </h2>
+              <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-3 text-xs leading-4">
+                <time
+                  className="refreshed-detail-text-muted whitespace-nowrap"
+                  dateTime={new Date(issueData.createdAt).toISOString()}
+                >
+                  <FormattedDate
+                    value={issueData.createdAt}
+                    dateStyle="medium"
+                  />
+                  <span aria-hidden="true"> </span>
+                  <FormattedDate
+                    value={issueData.createdAt}
+                    timeStyle="short"
+                  />
+                </time>
+                <div className="refreshed-detail-text-muted prose prose-sm max-w-full text-xs leading-4 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
+                  <ReactMarkdown
+                    skipHtml
+                    allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}
+                  >
+                    {descriptionComment?.message ?? ''}
+                  </ReactMarkdown>
                 </div>
-              </Form>
-            )}
-          </Formik>
-        </section>
+              </div>
+            </section>
+
+            <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+              <h2 className="mb-2 text-xs font-semibold text-gray-200">
+                {intl.formatMessage(messages.comments)}
+              </h2>
+              {comments.length > 0 ? (
+                <div>
+                  {comments.map((comment) => (
+                    <IssueComment
+                      comment={comment}
+                      key={comment.id}
+                      isActiveUser={comment.user.id === currentUser?.id}
+                      onUpdate={() => void revalidateIssue()}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="refreshed-detail-text-muted py-2 text-xs">
+                  {intl.formatMessage(messages.nocomments)}
+                </p>
+              )}
+
+              <Formik
+                initialValues={{ message: '' }}
+                validationSchema={commentSchema}
+                onSubmit={async (values, { resetForm }) => {
+                  await axios.post(`/api/v1/issue/${issueData.id}/comment`, {
+                    message: values.message,
+                  });
+                  await revalidateIssue();
+                  resetForm();
+                }}
+              >
+                {({ isValid, isSubmitting, values, handleSubmit }) => (
+                  <Form>
+                    {canComment && (
+                      <Field
+                        as="textarea"
+                        rows={3}
+                        id="message"
+                        name="message"
+                        placeholder={intl.formatMessage(
+                          messages.commentplaceholder
+                        )}
+                        className="mt-[5px] max-h-32 w-full resize-none overflow-y-auto rounded-md border-gray-600 bg-gray-900/60 text-sm text-gray-100 placeholder:text-gray-500"
+                      />
+                    )}
+
+                    <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
+                      <div className="mr-auto flex flex-wrap gap-2">
+                        {selectedMediaUrl && (
+                          <a
+                            href={selectedMediaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                          >
+                            <PlayIcon className="h-3.5 w-3.5" />
+                            {intl.formatMessage(messages.playonserver, {
+                              mediaServerName,
+                            })}
+                          </a>
+                        )}
+                        {!isBook &&
+                          selectedServiceUrl &&
+                          hasPermission(Permission.ADMIN) && (
+                            <a
+                              href={selectedServiceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                            >
+                              <ServerIcon className="h-3.5 w-3.5" />
+                              {intl.formatMessage(messages.openinarr, {
+                                arr: arrName,
+                              })}
+                            </a>
+                          )}
+                        {isBook &&
+                          hasPermission(Permission.ADMIN) &&
+                          bookServiceLinks.map((link) => (
+                            <a
+                              key={link.label}
+                              href={link.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                            >
+                              <ServerIcon className="h-3.5 w-3.5" />
+                              {link.label}
+                            </a>
+                          ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={leaveIssue}
+                        className={`${actionButton} border-red-600/80 bg-red-800/25 text-red-200 hover:border-red-500 hover:text-white focus:ring-red-500`}
+                      >
+                        <ArrowLeftIcon className="h-3.5 w-3.5" />
+                        {intl.formatMessage(messages.exit)}
+                      </button>
+                      {canComment && (
+                        <button
+                          type="button"
+                          onClick={() => handleSubmit()}
+                          disabled={!isValid || isSubmitting || !values.message}
+                          className={`${actionButton} border-yellow-500/80 bg-yellow-700/30 text-yellow-100 hover:border-yellow-300 hover:bg-yellow-600/50 hover:text-white focus:ring-yellow-400`}
+                        >
+                          <ChatBubbleOvalLeftEllipsisIcon className="h-3.5 w-3.5" />
+                          {intl.formatMessage(messages.addcomment)}
+                        </button>
+                      )}
+                      {canComment && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void updateIssueStatus(
+                              issueData.status === IssueStatus.OPEN
+                                ? 'resolved'
+                                : 'open'
+                            )
+                          }
+                          className={`${actionButton} border-emerald-600/80 bg-emerald-800/25 text-emerald-200 hover:border-emerald-500 hover:text-white focus:ring-emerald-500`}
+                        >
+                          {issueData.status === IssueStatus.OPEN ? (
+                            <CheckCircleIcon className="h-3.5 w-3.5" />
+                          ) : (
+                            <ArrowPathIcon className="h-3.5 w-3.5" />
+                          )}
+                          {intl.formatMessage(
+                            issueData.status === IssueStatus.OPEN
+                              ? messages.closeissue
+                              : messages.reopenissue
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </Form>
+                )}
+              </Formik>
+            </section>
+          </div>
+        </article>
       </div>
     </div>
   );

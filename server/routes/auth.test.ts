@@ -1154,6 +1154,60 @@ describe('POST /auth/jellyfin', () => {
     assert.strictEqual(settings.jellyfin.apiKey, 'bootstrap-api-key');
   });
 
+  it('keeps the initial Jellyfin setup session available to the next request', async (t) => {
+    const userRepository = getRepository(User);
+    await userRepository.clear();
+    const settings = getSettings();
+    settings.main.mediaServerType = MediaServerType.NOT_CONFIGURED;
+    settings.jellyfin.ip = '';
+    const loginMock = mock.method(JellyfinAPI.prototype, 'login', async () => ({
+      User: {
+        Id: 'aabbccddeeff00112233445566778899',
+        Name: 'session-jellyfin-owner',
+        ServerId: 'session-server',
+        ServerName: 'Session Server',
+        Configuration: { GroupedFolders: [] },
+        Policy: { IsAdministrator: true },
+      },
+      AccessToken: 'session-access-token',
+    }));
+    const tokenMock = mock.method(
+      JellyfinAPI.prototype,
+      'createApiToken',
+      async () => 'session-api-key'
+    );
+    const nameMock = mock.method(
+      JellyfinAPI.prototype,
+      'getServerName',
+      async () => 'Session Server'
+    );
+    t.after(() => {
+      loginMock.mock.restore();
+      tokenMock.mock.restore();
+      nameMock.mock.restore();
+    });
+
+    const agent = request.agent(app);
+    const response = await agent.post('/auth/jellyfin').send({
+      username: 'session-jellyfin-owner',
+      password: 'bootstrap-password',
+      email: 'session-jellyfin-owner@seerr.dev',
+      hostname: '127.0.0.1',
+      port: 8096,
+      useSsl: false,
+      serverType: MediaServerType.JELLYFIN,
+    });
+
+    assert.strictEqual(response.status, 200);
+    const authenticated = await agent.get('/auth/me');
+    assert.strictEqual(authenticated.status, 200);
+    assert.strictEqual(authenticated.body.id, 1);
+    assert.strictEqual(
+      authenticated.body.jellyfinUsername,
+      'session-jellyfin-owner'
+    );
+  });
+
   it('admits only one concurrent Jellyfin bootstrap configuration', async (t) => {
     const userRepository = getRepository(User);
     await userRepository.clear();

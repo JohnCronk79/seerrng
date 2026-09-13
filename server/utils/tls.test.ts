@@ -147,9 +147,7 @@ describe('built-in local TLS material', () => {
       for (const file of ['ca.crt', 'ca.key', 'server.crt', 'server.key']) {
         const stat = await fs.stat(path.join(directory, file));
         assert.equal(stat.isFile(), true);
-        if (process.platform !== 'win32') {
-          assert.equal(stat.mode & 0o077, 0);
-        }
+        assert.equal(stat.mode & 0o077, 0);
       }
 
       const caCertificate = new X509Certificate(

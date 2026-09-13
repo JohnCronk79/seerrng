@@ -43,6 +43,7 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
   const [error, setError] = useState('');
   const [isProcessing, setProcessing] = useState(false);
   const [authToken, setAuthToken] = useState<string | undefined>(undefined);
+  const [transportReady, setTransportReady] = useState(false);
   const [mediaServerLogin, setMediaServerLogin] = useState(
     settings.currentSettings.mediaServerLogin
   );
@@ -218,7 +219,7 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
         </div>
       </div>
       <div className="relative z-50 mt-4 sm:mx-auto sm:w-full sm:max-w-md">
-        <TransportSecurityNotice />
+        <TransportSecurityNotice onReadinessChange={setTransportReady} />
       </div>
       <div className="relative z-50 mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div
@@ -250,7 +251,7 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
               </div>
             </Transition>
             <div className="px-10 py-8">
-              {loginFormVisible && (
+              {transportReady && loginFormVisible && (
                 <SwitchTransition mode="out-in">
                   <CSSTransition
                     key={mediaServerLogin ? 'ms' : 'local'}
@@ -287,7 +288,8 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
                 </SwitchTransition>
               )}
 
-              {additionalLoginOptions.length > 0 &&
+              {transportReady &&
+                additionalLoginOptions.length > 0 &&
                 (loginFormVisible ? (
                   <div className="flex items-center py-5">
                     <div className="flex-grow border-t border-gray-600" />
@@ -302,13 +304,15 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
                   </h2>
                 ))}
 
-              <div
-                className={`flex w-full flex-wrap gap-2 ${
-                  !loginFormVisible ? 'flex-col' : ''
-                }`}
-              >
-                {additionalLoginOptions}
-              </div>
+              {transportReady && (
+                <div
+                  className={`flex w-full flex-wrap gap-2 ${
+                    !loginFormVisible ? 'flex-col' : ''
+                  }`}
+                >
+                  {additionalLoginOptions}
+                </div>
+              )}
             </div>
           </>
         </div>

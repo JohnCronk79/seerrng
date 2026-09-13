@@ -10,6 +10,10 @@ import MediaTypeBadge, {
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
+import {
+  getFilterResetButtonClass,
+  getFilterToggleButtonClass,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
@@ -52,6 +56,7 @@ import useSWR from 'swr';
 
 const messages = defineMessages('components.Blocklist', {
   taskFilters: 'Task Filters',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   clearFilters: 'Clear Filters',
   all: 'All Blocklisted',
@@ -375,7 +380,7 @@ const Blocklist = () => {
       </h2>
 
       <section
-        className="mb-5 mt-4"
+        className="app-filter-section-gap mt-4"
         aria-label={intl.formatMessage(messages.taskFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
@@ -385,7 +390,7 @@ const Blocklist = () => {
           <button
             type="button"
             onClick={clearFilters}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className={getFilterResetButtonClass(false)}
           >
             <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
             {intl.formatMessage(messages.clearFilters)}
@@ -399,11 +404,9 @@ const Blocklist = () => {
                 setCurrentFilter(option.value);
                 resetPage();
               }}
-              className={`inline-flex h-8 items-center whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+              className={getFilterToggleButtonClass(
                 currentFilter === option.value
-                  ? 'border-indigo-400 bg-indigo-500 text-white'
-                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-              }`}
+              )}
             >
               {intl.formatMessage(option.label)}
               <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
@@ -415,11 +418,11 @@ const Blocklist = () => {
       </section>
 
       <section
-        className="mb-5"
-        aria-label={intl.formatMessage(messages.filters)}
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.mediaFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.filters)}
+          {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {(
@@ -439,21 +442,28 @@ const Blocklist = () => {
                 setMediaFilter(value);
                 resetPage();
               }}
-              className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-                mediaFilter === value
-                  ? 'border-indigo-400 bg-indigo-500 text-white'
-                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-              }`}
+              className={getFilterToggleButtonClass(mediaFilter === value)}
             >
               {intl.formatMessage(label)}
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+      </section>
+
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.filters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="discover-filter-control h-8 flex-shrink-0 self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label ${
+                timeFrame !== 'all'
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               {intl.formatMessage(messages.timePeriod)}
@@ -464,7 +474,7 @@ const Blocklist = () => {
                 setTimeFrame(event.target.value as TimeFrame);
                 resetPage();
               }}
-              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="w-28 border-0 bg-transparent px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-0"
               aria-label={intl.formatMessage(messages.timePeriod)}
             >
               <option value="all">
@@ -484,10 +494,12 @@ const Blocklist = () => {
               </option>
             </select>
           </label>
-          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+          <label className="discover-filter-control h-8 w-72 flex-none self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                searchFilter.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                searchFilter.trim()
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -502,13 +514,13 @@ const Blocklist = () => {
               }}
               placeholder={intl.formatMessage(messages.searchPlaceholder)}
               aria-label={intl.formatMessage(messages.searchPlaceholder)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
         </div>
       </section>
 
-      <section className="mb-5">
+      <section className="app-filter-section-gap">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.sortBy)}
         </div>
@@ -531,7 +543,7 @@ const Blocklist = () => {
                 type="button"
                 aria-pressed={active}
                 onClick={() => updateSort(value)}
-                className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+                className={getFilterToggleButtonClass(active)}
               >
                 {intl.formatMessage(label)}
                 <DirectionIcon className="h-4 w-4" />
@@ -544,7 +556,7 @@ const Blocklist = () => {
       {!data ? (
         <LoadingSpinner />
       ) : data.results.length === 0 ? (
-        <div className="refreshed-card-surface flex min-h-16 w-full items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-sm text-gray-400">
+        <div className="refreshed-card-surface flex min-h-16 w-full items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-sm">
           {intl.formatMessage(messages.noResults)}
         </div>
       ) : (
@@ -745,7 +757,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
           </Link>
           <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
             <div className="min-w-0 card:col-span-2 card:pr-3">
-              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+              <dl className="refreshed-detail-text grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
                 <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                   {intl.formatMessage(messages.mediaAndFormat)}:
                 </dt>
@@ -826,7 +838,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
               </dl>
             </div>
 
-            <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+            <dl className="refreshed-detail-text mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
               <dt className="font-medium text-gray-100">
                 {intl.formatMessage(messages.blocklistedBy)}:
               </dt>

@@ -1,5 +1,5 @@
-import Button from '@app/components/Common/Button';
-import ButtonWithDropdown from '@app/components/Common/ButtonWithDropdown';
+import Button, { type ButtonType } from '@app/components/Common/Button';
+import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -15,11 +15,13 @@ import {
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
+import { hasAutoApprovePermission } from '@server/lib/permissions';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import { useMemo, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
-import { mutate } from 'swr';
+import useSWR, { mutate } from 'swr';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -44,6 +46,12 @@ const messages = defineMessages('components.RequestButton', {
     'Decline {requestCount, plural, one {4K Request} other {{requestCount} 4K Requests}}',
   requestupdatesfailed:
     '{failed, plural, one {One request could not be updated.} other {{failed} requests could not be updated.}}',
+  hd: 'HD',
+  pendingFormat: 'An open pending request already exists for this format.',
+  availableFormat: 'This format is already available.',
+  unavailableFormat: 'This format cannot be requested in the current state.',
+  noService: 'No service is configured for this format.',
+  blocklisted: 'This title is blocklisted.',
 });
 
 const REQUEST_MUTATION_CONCURRENCY = 5;
@@ -53,6 +61,7 @@ interface ButtonOption {
   text: string;
   action: () => void;
   svg?: React.ReactNode;
+  buttonType?: ButtonType;
 }
 
 interface RequestButtonProps {
@@ -65,7 +74,6 @@ interface RequestButtonProps {
   buttonSize?: 'default' | 'sm';
   buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest';
   className?: string;
-  separateButtons?: boolean;
 }
 
 const RequestButton = ({
@@ -78,12 +86,15 @@ const RequestButton = ({
   buttonSize = 'default',
   buttonType = 'primary',
   className = 'ml-2',
-  separateButtons = false,
 }: RequestButtonProps) => {
   const intl = useIntl();
   const settings = useSettings();
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
+  const serviceType = mediaType === 'movie' ? 'radarr' : 'sonarr';
+  const { data: requestServices } = useSWR<ServiceCommonServer[]>(
+    `/api/v1/service/${serviceType}`
+  );
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showRequest4kModal, setShowRequest4kModal] = useState(false);
   const [editRequest, setEditRequest] = useState(false);
@@ -217,6 +228,7 @@ const RequestButton = ({
       buttons.push(
         {
           id: 'approve-request',
+          buttonType: 'success',
           text: intl.formatMessage(messages.approverequest),
           action: () => {
             void modifyRequest(activeRequest, 'approve');
@@ -225,6 +237,7 @@ const RequestButton = ({
         },
         {
           id: 'decline-request',
+          buttonType: 'danger',
           text: intl.formatMessage(messages.declinerequest),
           action: () => {
             void modifyRequest(activeRequest, 'decline');
@@ -241,6 +254,7 @@ const RequestButton = ({
       buttons.push(
         {
           id: 'approve-request-batch',
+          buttonType: 'success',
           text: intl.formatMessage(messages.approverequests, {
             requestCount: activeRequests.length,
           }),
@@ -251,6 +265,7 @@ const RequestButton = ({
         },
         {
           id: 'decline-request-batch',
+          buttonType: 'danger',
           text: intl.formatMessage(messages.declinerequests, {
             requestCount: activeRequests.length,
           }),
@@ -287,6 +302,7 @@ const RequestButton = ({
       buttons.push(
         {
           id: 'approve-4k-request',
+          buttonType: 'success',
           text: intl.formatMessage(messages.approverequest4k),
           action: () => {
             void modifyRequest(active4kRequest, 'approve');
@@ -295,6 +311,7 @@ const RequestButton = ({
         },
         {
           id: 'decline-4k-request',
+          buttonType: 'danger',
           text: intl.formatMessage(messages.declinerequest4k),
           action: () => {
             void modifyRequest(active4kRequest, 'decline');
@@ -311,6 +328,7 @@ const RequestButton = ({
       buttons.push(
         {
           id: 'approve-4k-request-batch',
+          buttonType: 'success',
           text: intl.formatMessage(messages.approve4krequests, {
             requestCount: active4kRequests.length,
           }),
@@ -321,6 +339,7 @@ const RequestButton = ({
         },
         {
           id: 'decline-4k-request-batch',
+          buttonType: 'danger',
           text: intl.formatMessage(messages.decline4krequests, {
             requestCount: active4kRequests.length,
           }),
@@ -426,9 +445,137 @@ const RequestButton = ({
     });
   }
 
-  const [buttonOne, ...others] = buttons;
+  const requestActionIds = new Set([
+    'request',
+    'request-more',
+    'request4k',
+    'request-more-4k',
+  ]);
+  const nonRequestButtons = buttons.filter(
+    (button) => !requestActionIds.has(button.id)
+  );
+  const standardRequestButton = buttons.find(
+    (button) => button.id === 'request' || button.id === 'request-more'
+  );
+  const request4kButton = buttons.find(
+    (button) => button.id === 'request4k' || button.id === 'request-more-4k'
+  );
+  const canRequestStandard = hasPermission(
+    [
+      Permission.REQUEST,
+      mediaType === 'movie' ? Permission.REQUEST_MOVIE : Permission.REQUEST_TV,
+    ],
+    { type: 'or' }
+  );
+  const canRequest4k =
+    ((settings.currentSettings.movie4kEnabled && mediaType === 'movie') ||
+      (settings.currentSettings.series4kEnabled && mediaType === 'tv')) &&
+    hasPermission(
+      [
+        Permission.REQUEST_4K,
+        mediaType === 'movie'
+          ? Permission.REQUEST_4K_MOVIE
+          : Permission.REQUEST_4K_TV,
+      ],
+      { type: 'or' }
+    );
+  const canChooseAlternateTarget = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
+    { type: 'or' }
+  );
+  const hasStandardService =
+    requestServices === undefined ||
+    requestServices.some((service) => !service.is4k);
+  const has4kService =
+    requestServices === undefined ||
+    requestServices.some((service) => service.is4k);
+  const isBlocklisted = media?.status === MediaStatus.BLOCKLISTED;
+  const canApproveStandard =
+    !!user &&
+    !!activeRequest &&
+    hasAutoApprovePermission(user.permissions, mediaType);
+  const canApprove4k =
+    !!user &&
+    !!active4kRequest &&
+    hasAutoApprovePermission(user.permissions, mediaType, true);
+  const standardIsAvailable =
+    media?.status === MediaStatus.AVAILABLE ||
+    (mediaType === 'movie' &&
+      media?.status === MediaStatus.PARTIALLY_AVAILABLE);
+  const fourKIsAvailable =
+    media?.status4k === MediaStatus.AVAILABLE ||
+    (mediaType === 'movie' &&
+      media?.status4k === MediaStatus.PARTIALLY_AVAILABLE);
+  const canOpenStandardAlternate =
+    canChooseAlternateTarget && hasStandardService && !isBlocklisted;
+  const canOpen4kAlternate =
+    canChooseAlternateTarget && has4kService && !isBlocklisted;
+  const requestOptions = [
+    ...(canRequestStandard
+      ? [
+          {
+            id: 'standard',
+            label: intl.formatMessage(messages.hd),
+            onClick: standardRequestButton
+              ? standardRequestButton.action
+              : canApproveStandard && activeRequest
+                ? () => void modifyRequest(activeRequest, 'approve')
+                : () => {
+                    setEditRequest(false);
+                    setShowRequestModal(true);
+                  },
+            disabled:
+              !hasStandardService ||
+              isBlocklisted ||
+              (!standardRequestButton &&
+                !(canApproveStandard && activeRequest) &&
+                !canOpenStandardAlternate),
+            disabledReason: !hasStandardService
+              ? intl.formatMessage(messages.noService)
+              : isBlocklisted
+                ? intl.formatMessage(messages.blocklisted)
+                : activeRequest
+                  ? intl.formatMessage(messages.pendingFormat)
+                  : standardIsAvailable
+                    ? intl.formatMessage(messages.availableFormat)
+                    : intl.formatMessage(messages.unavailableFormat),
+          },
+        ]
+      : []),
+    ...(canRequest4k
+      ? [
+          {
+            id: '4k',
+            label: '4K',
+            onClick: request4kButton
+              ? request4kButton.action
+              : canApprove4k && active4kRequest
+                ? () => void modifyRequest(active4kRequest, 'approve')
+                : () => {
+                    setEditRequest(false);
+                    setShowRequest4kModal(true);
+                  },
+            disabled:
+              !has4kService ||
+              isBlocklisted ||
+              (!request4kButton &&
+                !(canApprove4k && active4kRequest) &&
+                !canOpen4kAlternate),
+            disabledReason: !has4kService
+              ? intl.formatMessage(messages.noService)
+              : isBlocklisted
+                ? intl.formatMessage(messages.blocklisted)
+                : active4kRequest
+                  ? intl.formatMessage(messages.pendingFormat)
+                  : fourKIsAvailable
+                    ? intl.formatMessage(messages.availableFormat)
+                    : intl.formatMessage(messages.unavailableFormat),
+          },
+        ]
+      : []),
+  ];
 
-  if (!buttonOne) {
+  if (nonRequestButtons.length === 0 && requestOptions.length === 0) {
     return null;
   }
 
@@ -463,49 +610,20 @@ const RequestButton = ({
           onCancel={() => setShowRequest4kModal(false)}
         />
       )}
-      {separateButtons ? (
-        buttons.map((button) => (
-          <Button
-            key={`request-option-${button.id}`}
-            buttonSize={buttonSize}
-            buttonType={buttonType}
-            onClick={button.action}
-            disabled={isModifying}
-            className={className}
-            data-testid={`request-action-${button.id}`}
-          >
-            {button.svg}
-            <span className="ml-1.5">{button.text}</span>
-          </Button>
-        ))
-      ) : (
-        <ButtonWithDropdown
+      {nonRequestButtons.map((button) => (
+        <Button
+          key={`request-option-${button.id}`}
           buttonSize={buttonSize}
-          buttonType={buttonType}
-          text={
-            <>
-              {buttonOne.svg}
-              <span>{buttonOne.text}</span>
-            </>
-          }
-          onClick={buttonOne.action}
+          buttonType={button.buttonType ?? buttonType}
+          onClick={button.action}
           disabled={isModifying}
           className={className}
         >
-          {others && others.length > 0
-            ? others.map((button) => (
-                <ButtonWithDropdown.Item
-                  onClick={button.action}
-                  key={`request-option-${button.id}`}
-                  buttonType={buttonType}
-                >
-                  {button.svg}
-                  <span>{button.text}</span>
-                </ButtonWithDropdown.Item>
-              ))
-            : null}
-        </ButtonWithDropdown>
-      )}
+          {button.svg}
+          <span>{button.text}</span>
+        </Button>
+      ))}
+      <FormatRequestControl options={requestOptions} className={className} />
     </>
   );
 };

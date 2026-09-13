@@ -70,7 +70,7 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   removemediaerror: 'Something went wrong while removing the media.',
   profileName: 'Profile',
   bookFormat: 'Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   both: 'Both',
   partialBookService: 'Partial Bookshelf link',

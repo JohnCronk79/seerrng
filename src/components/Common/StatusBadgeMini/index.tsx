@@ -13,9 +13,11 @@ import { MediaStatus } from '@server/constants/media';
 import { memo } from 'react';
 import { useIntl } from 'react-intl';
 
+export type StatusBadgeQuality = 'HD' | '4K' | 'MP3' | 'FLAC';
+
 interface StatusBadgeMiniProps {
   status: MediaStatus;
-  is4k?: boolean;
+  quality?: StatusBadgeQuality;
   inProgress?: boolean;
   // Should the badge shrink on mobile to a smaller size? (TitleCard)
   shrink?: boolean;
@@ -24,7 +26,7 @@ interface StatusBadgeMiniProps {
 const StatusBadgeMini = memo(
   ({
     status,
-    is4k = false,
+    quality,
     inProgress = false,
     shrink = false,
   }: StatusBadgeMiniProps) => {
@@ -100,9 +102,7 @@ const StatusBadgeMini = memo(
           return undefined;
       }
     })();
-    const label = [is4k ? '4K' : undefined, statusLabel]
-      .filter(Boolean)
-      .join(' ');
+    const label = [quality, statusLabel].filter(Boolean).join(' ');
 
     const badge = (
       <div
@@ -113,7 +113,7 @@ const StatusBadgeMini = memo(
         aria-label={label || undefined}
       >
         <div className={badgeStyle.join(' ')}>{indicatorIcon}</div>
-        {is4k && <span className="pl-1 pr-2 text-gray-200">4K</span>}
+        {quality && <span className="pl-1 pr-2 text-gray-200">{quality}</span>}
       </div>
     );
 

@@ -1,5 +1,5 @@
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
-import { CheckIcon } from '@heroicons/react/24/solid';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import type { SeasonWithEpisodes, TvDetails } from '@server/models/Tv';
 import useSWR from 'swr';
@@ -14,33 +14,6 @@ interface SeriesSeasonEpisodeSelectorProps {
   disabledSeasons?: number[];
   disabledEpisodes?: Record<number, number[]>;
 }
-
-const SelectCircle = ({
-  selected,
-  disabled = false,
-  label,
-  onClick,
-}: {
-  selected: boolean;
-  disabled?: boolean;
-  label: string;
-  onClick: () => void;
-}) => (
-  <button
-    type="button"
-    disabled={disabled}
-    onClick={onClick}
-    aria-label={label}
-    aria-pressed={selected}
-    className={`flex h-4 w-4 flex-none items-center justify-center rounded-full border focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-40 ${
-      selected
-        ? 'border-emerald-400 bg-emerald-500 text-white'
-        : 'border-gray-600 bg-gray-800 text-transparent'
-    }`}
-  >
-    <CheckIcon className="h-3 w-3" aria-hidden="true" />
-  </button>
-);
 
 const normalizeSelections = (selections: SeasonEpisodeSelection[]) =>
   [...selections]
@@ -92,7 +65,9 @@ const SeriesSeasonEpisodeSelector = ({
     selectableSeasons.length > 0 &&
     selectableSeasons.every((season) =>
       selections.some(
-        (selection) => selection.seasonNumber === season.seasonNumber
+        (selection) =>
+          selection.seasonNumber === season.seasonNumber &&
+          selection.episodeNumbers === undefined
       )
     );
 
@@ -206,7 +181,7 @@ const SeriesSeasonEpisodeSelector = ({
     <div className="mt-[5px] grid min-w-0 gap-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
       <section className="refreshed-inset-surface min-w-[12rem] rounded-lg border border-gray-700 p-2">
         <div className="grid grid-cols-[1.25rem_minmax(5.5rem,1fr)_4rem] items-center gap-x-2 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
-          <SelectCircle
+          <SelectionCircle
             selected={allSeasonsSelected}
             label={
               allSeasonsSelected ? 'Clear all seasons' : 'Select all seasons'
@@ -218,9 +193,12 @@ const SeriesSeasonEpisodeSelector = ({
         </div>
         <div className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1">
           {seasons.map((season) => {
-            const selected = selections.some(
+            const seasonSelection = selections.find(
               (selection) => selection.seasonNumber === season.seasonNumber
             );
+            const selected =
+              !!seasonSelection && seasonSelection.episodeNumbers === undefined;
+            const partial = Boolean(seasonSelection?.episodeNumbers?.length);
             const disabled = disabledSeasons.includes(season.seasonNumber);
             return (
               <div
@@ -229,10 +207,11 @@ const SeriesSeasonEpisodeSelector = ({
                   activeSeason === season.seasonNumber ? 'bg-indigo-500/10' : ''
                 }`}
               >
-                <SelectCircle
+                <SelectionCircle
                   selected={selected || disabled}
+                  partial={partial}
                   disabled={disabled}
-                  label={`${selected ? 'Clear' : 'Select'} ${season.name}`}
+                  label={`${seasonSelection ? 'Clear' : 'Select'} ${season.name}`}
                   onClick={() => toggleSeason(season.seasonNumber)}
                 />
                 <button
@@ -244,7 +223,7 @@ const SeriesSeasonEpisodeSelector = ({
                     ? 'Specials'
                     : `Season ${season.seasonNumber}`}
                 </button>
-                <span className="text-center text-xs text-gray-400">
+                <span className="refreshed-detail-text text-center text-xs">
                   {season.episodeCount}
                 </span>
               </div>
@@ -255,7 +234,7 @@ const SeriesSeasonEpisodeSelector = ({
 
       <section className="refreshed-inset-surface min-w-0 rounded-lg border border-gray-700 p-2">
         <div className="grid grid-cols-[1.25rem_4.5rem_minmax(0,1fr)] items-center gap-x-2 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
-          <SelectCircle
+          <SelectionCircle
             selected={allEpisodesSelected}
             disabled={activeSeason < 0 || episodeNumbers.length === 0}
             label={
@@ -273,7 +252,7 @@ const SeriesSeasonEpisodeSelector = ({
             </div>
           )}
           {activeSeason < 0 && (
-            <p className="px-1 py-2 text-xs text-gray-400">
+            <p className="refreshed-detail-text-muted px-1 py-2 text-xs">
               Select a season to view its episodes.
             </p>
           )}
@@ -296,7 +275,7 @@ const SeriesSeasonEpisodeSelector = ({
                 key={episode.id}
                 className="grid w-full grid-cols-[1.25rem_4.5rem_minmax(0,1fr)] items-center gap-x-2 rounded px-1 py-1 hover:bg-indigo-500/15"
               >
-                <SelectCircle
+                <SelectionCircle
                   selected={selected}
                   disabled={disabled}
                   label={`${selected ? 'Clear' : 'Select'} Episode ${episode.episodeNumber}`}
@@ -305,7 +284,7 @@ const SeriesSeasonEpisodeSelector = ({
                 <span className="text-xs font-medium text-gray-100">
                   Episode {episode.episodeNumber}
                 </span>
-                <span className="truncate text-xs text-gray-400">
+                <span className="refreshed-detail-text truncate text-xs">
                   {episode.name || 'Untitled'}
                 </span>
               </div>
