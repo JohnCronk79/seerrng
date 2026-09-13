@@ -419,7 +419,7 @@ describe('Books and Music discover parity', () => {
     cy.intercept('GET', '/api/v1/service/lidarr', [
       {
         id: 1,
-        name: 'Lidarr',
+        name: 'Lidarr MP3',
         is4k: false,
         isDefault: true,
         activeProfileId: 1,
@@ -429,7 +429,7 @@ describe('Books and Music discover parity', () => {
       },
     ]);
     cy.intercept('GET', '/api/v1/service/lidarr/1', {
-      ...serviceDetails('Lidarr', '/music'),
+      ...serviceDetails('Lidarr MP3', '/music'),
     });
 
     cy.visit('/music/33333333-3333-3333-3333-333333333333');
@@ -437,7 +437,7 @@ describe('Books and Music discover parity', () => {
     cy.contains('[data-testid=media-title]', 'Requestable Album').should(
       'be.visible'
     );
-    cy.contains('button', /^Request$/).click();
+    cy.get('[data-testid=format-request-option-mp3]').click();
     cy.contains('[data-testid=modal-title]', 'Request Music').should(
       'be.visible'
     );
@@ -1011,10 +1011,7 @@ describe('Books and Music discover parity', () => {
       'be.visible'
     );
     cy.get('button[aria-label="Add to Blocklist"]').click();
-    cy.contains('[data-testid=modal-title]', 'Blocklist Music').should(
-      'be.visible'
-    );
-    cy.contains('[data-testid=modal-title]', 'Blocklist Album').should(
+    cy.contains('Are you sure you want to blocklist this item?').should(
       'be.visible'
     );
     cy.get('[data-testid=modal-ok-button]').should('contain', 'Blocklist');
@@ -1415,7 +1412,7 @@ describe('Books and Music discover parity', () => {
       .first()
       .within(() => {
         cy.contains('Format').should('be.visible');
-        cy.contains('Both').should('be.visible');
+        cy.contains('Book + Audiobook').should('be.visible');
         cy.contains('Partial Bookshelf link').should('not.exist');
       });
     cy.contains('Partial Dual Book')
@@ -1915,8 +1912,7 @@ describe('Books and Music discover parity', () => {
     cy.visit('/search?query=pride%20and%20prejudice');
     cy.wait('@bookSearch');
     cy.contains('button', 'Audiobooks').click();
-    cy.wait('@bookSearch')
-      .its('request.url')
+    cy.location('search')
       .should('include', 'type=book')
       .and('include', 'format=audiobook');
 

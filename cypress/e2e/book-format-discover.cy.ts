@@ -8,7 +8,9 @@ describe('Book discovery formats', () => {
       request.alias =
         request.query.format === 'audiobook'
           ? 'discoverAudiobooks'
-          : 'discoverBooks';
+          : request.query.format === 'ebook'
+            ? 'discoverEbooks'
+            : 'discoverBooks';
       request.reply({
         page: 1,
         totalPages: 1,
@@ -35,7 +37,7 @@ describe('Book discovery formats', () => {
       .and('contain', 'All Books');
 
     cy.get('[data-testid=book-format-tab-ebook]').click();
-    cy.wait('@discoverBooks')
+    cy.wait('@discoverEbooks')
       .its('request.url')
       .should('include', 'format=ebook');
     cy.get('[data-testid=book-format-tab-ebook]')
