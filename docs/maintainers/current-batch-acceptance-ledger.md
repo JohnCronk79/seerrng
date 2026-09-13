@@ -922,7 +922,7 @@ it is not part of this ordered conflict list.
 
 ## Discovery availability and poster quality badges
 
-> “how about we show <checkmark> hd then <checkmark> 4k? but keep the media type badge and association button on the first row were it was.”
+> “how about we show `<checkmark>` hd then `<checkmark>` 4k? but keep the media type badge and association button on the first row were it was.”
 
 > “hopefully you can do the same thing for series and music as well”
 
