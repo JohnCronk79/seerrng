@@ -11,7 +11,10 @@ import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
-import { getTitleCardStatusBadges } from '@app/components/TitleCard/statusBadges';
+import {
+  getTitleCardStatusBadges,
+  getTitleCardStatusBadgeSlots,
+} from '@app/components/TitleCard/statusBadges';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -37,7 +40,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
-import type { MediaType } from '@server/models/Search';
+import type { AlbumResult, MediaType } from '@server/models/Search';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -73,6 +76,7 @@ interface TitleCardProps {
   priority?: boolean;
   preferredBookFormat?: 'ebook' | 'audiobook';
   availableQualities?: ('MP3' | 'FLAC')[];
+  qualityStatuses?: AlbumResult['qualityStatuses'];
 }
 
 const messages = defineMessages('components.TitleCard', {
@@ -107,6 +111,7 @@ const TitleCard = ({
   priority = false,
   preferredBookFormat,
   availableQualities,
+  qualityStatuses,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
   const router = useRouter();
@@ -131,7 +136,10 @@ const TitleCard = ({
     inProgress,
     inProgress4k,
     availableQualities,
+    qualityStatuses,
   });
+  const { primary: primaryStatusBadge, secondary: secondaryStatusBadge } =
+    getTitleCardStatusBadgeSlots(statusBadges);
 
   // Just to get the year from the date
   if (year) {
@@ -602,8 +610,8 @@ const TitleCard = ({
             priority={priority}
           />
           <div className="absolute right-0 left-0 p-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] gap-x-2 gap-y-1">
+              <div className="flex min-w-0 items-center">
                 {isBook ? (
                   <BookFormatBadge
                     format={preferredBookFormat}
@@ -617,18 +625,40 @@ const TitleCard = ({
                     className="pointer-events-none z-40 self-start"
                   />
                 )}
-                {currentStatus !== MediaStatus.BLOCKLISTED && (
-                  <div className="z-40 flex items-center">
-                    <AssociationBadge
-                      mediaType={mediaType}
-                      id={id}
-                      variant="card"
-                      hideWhenEmpty={hideAssociationWhenEmpty}
-                    />
-                  </div>
+              </div>
+              <div className="z-40 flex min-h-6 items-center justify-end">
+                {primaryStatusBadge && (
+                  <StatusBadgeMini
+                    status={primaryStatusBadge.status}
+                    quality={primaryStatusBadge.quality}
+                    inProgress={primaryStatusBadge.inProgress}
+                    shrink
+                  />
                 )}
               </div>
-              {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
+              <div className="z-40 flex min-h-6 items-center">
+                {currentStatus !== MediaStatus.BLOCKLISTED && (
+                  <AssociationBadge
+                    mediaType={mediaType}
+                    id={id}
+                    variant="card"
+                    hideWhenEmpty={hideAssociationWhenEmpty}
+                  />
+                )}
+              </div>
+              <div className="z-40 flex min-h-6 items-center justify-end">
+                {secondaryStatusBadge && (
+                  <StatusBadgeMini
+                    status={secondaryStatusBadge.status}
+                    quality={secondaryStatusBadge.quality}
+                    inProgress={secondaryStatusBadge.inProgress}
+                    shrink
+                  />
+                )}
+              </div>
+            </div>
+            {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
+              <div className="mt-1 flex justify-end">
                 <div className="flex flex-col items-end gap-1">
                   {canUseWatchlistActions &&
                     user?.userType !== UserType.PLEX &&
@@ -674,10 +704,12 @@ const TitleCard = ({
                       </Tooltip>
                     )}
                 </div>
-              )}
-              {showDetail &&
-                showHideButton &&
-                currentStatus == MediaStatus.BLOCKLISTED && (
+              </div>
+            )}
+            {showDetail &&
+              showHideButton &&
+              currentStatus == MediaStatus.BLOCKLISTED && (
+                <div className="mt-1 flex justify-end">
                   <Tooltip
                     content={intl.formatMessage(
                       globalMessages.removefromBlocklist
@@ -692,22 +724,8 @@ const TitleCard = ({
                       <EyeIcon className={'h-3'} />
                     </Button>
                   </Tooltip>
-                )}
-            </div>
-            {statusBadges.length > 0 && (
-              <div className="mt-1 flex justify-end gap-1">
-                {statusBadges.map((badge) => (
-                  <div key={badge.quality ?? 'status'} className="z-40 flex">
-                    <StatusBadgeMini
-                      status={badge.status}
-                      quality={badge.quality}
-                      inProgress={badge.inProgress}
-                      shrink
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
           </div>
           <Transition
             as={Fragment}

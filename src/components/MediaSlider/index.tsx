@@ -479,6 +479,7 @@ const MediaSlider = ({
               }
               mediaType={title.mediaType}
               availableQualities={title.availableQualities}
+              qualityStatuses={title.qualityStatuses}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
               needsCoverArt={title.needsCoverArt}
               showText={visibility.album === 'always'}

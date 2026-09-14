@@ -39,7 +39,10 @@ import {
 import { extractImageCacheUrls } from '@server/lib/imageCacheUrls';
 import { enqueueImageCacheWarm } from '@server/lib/imageCacheWarmer';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
-import { getAvailableMusicQualities } from '@server/lib/musicQualityAvailability';
+import {
+  getAvailableMusicQualities,
+  getMusicQualityStatuses,
+} from '@server/lib/musicQualityAvailability';
 import { getSettings } from '@server/lib/settings';
 import {
   clampNumber,
@@ -430,15 +433,21 @@ const mapDiscoverAlbumResult = (
   relatedMediaMap: Map<string, MediaEntity>
 ) => {
   const media = getRelatedMusicMedia(relatedMediaMap, album.id);
+  const services = getSettings().lidarr;
   const availableQualities = getAvailableMusicQualities(
     media,
     media?.requests ?? [],
-    getSettings().lidarr
+    services
   );
 
   return {
     ...mapAlbumResult(album, media),
     availableQualities,
+    qualityStatuses: getMusicQualityStatuses(
+      media,
+      media?.requests ?? [],
+      services
+    ),
   };
 };
 
@@ -609,6 +618,11 @@ const getLocalAvailableMusic = async ({
           item
         ),
         availableQualities,
+        qualityStatuses: getMusicQualityStatuses(
+          item,
+          item.requests ?? [],
+          settings.lidarr
+        ),
       })
     ),
   };

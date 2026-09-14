@@ -556,17 +556,37 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Common/StatusBadgeMini/index.tsx',
-    'className="format-request-control h-6 items-center gap-1.5 px-2 font-semibold text-green-300 backdrop-blur"',
-    'available poster qualities must reuse the compact green Request control style'
+    'data-testid="poster-quality-status-badge"',
+    'poster quality states must use the shared rounded status badge'
+  );
+  requireText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px]',
+    'poster quality states must match the rounded media-type badge silhouette'
   );
   requireOrder(
     'src/components/Common/StatusBadgeMini/index.tsx',
     [
-      'data-testid="poster-availability-badge"',
+      'data-testid="poster-quality-status-badge"',
       '<span>{quality}</span>',
       '<AvailabilityIcon',
     ],
     'available poster qualities must place the outlined availability icon after the green quality label'
+  );
+  requireOrder(
+    'src/components/TitleCard/index.tsx',
+    [
+      'grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto]',
+      '{primaryStatusBadge && (',
+      '<AssociationBadge',
+      '{secondaryStatusBadge && (',
+    ],
+    'poster overlays must keep primary status on row one, Associations on row two left, and secondary status on row two right'
+  );
+  requireText(
+    'server/lib/musicQualityAvailability.ts',
+    'export const getMusicQualityStatuses',
+    'music posters must preserve separate MP3 and FLAC request states'
   );
   requireText(
     globals,

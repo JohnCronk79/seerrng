@@ -157,8 +157,11 @@ test('reports poster availability control drift', () => {
   const errors = validateCurrentBatchContract(proxy);
 
   for (const expected of [
-    'available poster qualities must reuse the compact green Request control style',
+    'poster quality states must use the shared rounded status badge',
+    'poster quality states must match the rounded media-type badge silhouette',
     'available poster qualities must place the outlined availability icon after the green quality label',
+    'poster overlays must keep primary status on row one, Associations on row two left, and secondary status on row two right',
+    'music posters must preserve separate MP3 and FLAC request states',
   ]) {
     assert.ok(
       errors.some((error) => error.includes(expected)),

@@ -21,7 +21,11 @@ import {
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
-import { getAvailableMusicServices } from '@server/lib/musicQualityAvailability';
+import {
+  getAvailableMusicQualities,
+  getAvailableMusicServices,
+  getMusicQualityStatuses,
+} from '@server/lib/musicQualityAvailability';
 import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import logger from '@server/logger';
 import {
@@ -742,11 +746,13 @@ musicRoutes.get('/:id/artist-discography', async (req, res, next) => {
         .filter((media) => media.mbId)
         .map((media) => [normalizeMusicBrainzId(media.mbId as string), media])
     );
+    const lidarrServices = getExternalRuntimeConfig().lidarr;
 
     const transformedReleaseGroups = paginatedReleaseGroups.map(
       (releaseGroup) => {
         const releaseGroupId = normalizeMusicBrainzId(releaseGroup.mbid);
         const posterPath = coverArtByAlbumId[releaseGroupId] ?? null;
+        const media = relatedMediaMap.get(releaseGroupId);
         return {
           id: releaseGroupId,
           mediaType: 'album',
@@ -756,7 +762,17 @@ musicRoutes.get('/:id/artist-discography', async (req, res, next) => {
           'primary-type': releaseGroup.type || 'Other',
           posterPath,
           needsCoverArt: !posterPath,
-          mediaInfo: relatedMediaMap.get(releaseGroupId),
+          mediaInfo: media,
+          availableQualities: getAvailableMusicQualities(
+            media,
+            media?.requests ?? [],
+            lidarrServices
+          ),
+          qualityStatuses: getMusicQualityStatuses(
+            media,
+            media?.requests ?? [],
+            lidarrServices
+          ),
         };
       }
     );

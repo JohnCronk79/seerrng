@@ -33,9 +33,7 @@ const StatusBadgeMini = memo(
   }: StatusBadgeMiniProps) => {
     const intl = useIntl();
     const badgeStyle = [
-      `rounded-full shadow-md ${
-        shrink ? 'h-6 w-6 border p-0' : 'w-5 ring-1 p-0.5'
-      }`,
+      `rounded-full shadow-md ${shrink ? 'h-3.5 w-3.5' : 'w-5 p-0.5'}`,
     ];
 
     let indicatorIcon: React.ReactNode;
@@ -105,28 +103,37 @@ const StatusBadgeMini = memo(
     })();
     const label = [quality, statusLabel].filter(Boolean).join(' ');
 
-    if (
-      shrink &&
-      quality &&
-      status === MediaStatus.AVAILABLE &&
-      !inProgress
-    ) {
-      const availableBadge = (
+    if (shrink && quality) {
+      const tone = inProgress
+        ? 'border-indigo-400/80 bg-indigo-700/70 text-indigo-50'
+        : status === MediaStatus.AVAILABLE ||
+            status === MediaStatus.PARTIALLY_AVAILABLE
+          ? 'border-green-500/80 bg-green-700/70 text-green-50'
+          : status === MediaStatus.PENDING
+            ? 'border-yellow-400/80 bg-yellow-700/70 text-yellow-50'
+            : 'border-indigo-400/80 bg-indigo-700/70 text-indigo-50';
+      const qualityBadge = (
         <div
-          className="format-request-control h-6 items-center gap-1.5 px-2 font-semibold text-green-300 backdrop-blur"
-          data-testid="poster-availability-badge"
+          className={`inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] leading-none font-semibold shadow-md backdrop-blur ${tone}`}
+          data-testid="poster-quality-status-badge"
           role="img"
           aria-label={label}
         >
-          <span>{quality}</span>
-          <AvailabilityIcon
-            className="h-4 w-4 shrink-0 text-green-400"
-            aria-hidden
-          />
+          {status === MediaStatus.AVAILABLE && !inProgress ? (
+            <>
+              <span>{quality}</span>
+              <AvailabilityIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            </>
+          ) : (
+            <>
+              <span className="h-3.5 w-3.5 shrink-0">{indicatorIcon}</span>
+              <span>{quality}</span>
+            </>
+          )}
         </div>
       );
 
-      return <Tooltip content={label}>{availableBadge}</Tooltip>;
+      return <Tooltip content={label}>{qualityBadge}</Tooltip>;
     }
 
     const badge = (

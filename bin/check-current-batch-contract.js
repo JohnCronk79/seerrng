@@ -126,6 +126,8 @@ const fileNames = [
   'server/lib/bookRequestSearch.test.ts',
   'server/lib/downloadtracker.test.ts',
   'server/lib/scanners/lidarr/lidarr.test.ts',
+  'server/lib/musicQualityAvailability.ts',
+  'server/lib/musicQualityAvailability.test.ts',
   'server/lib/scanners/readarr/readarr.test.ts',
   'server/routes/media.test.ts',
   'server/routes/discover.test.ts',

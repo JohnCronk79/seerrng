@@ -19,12 +19,14 @@ asks for the work to start.
 
 > “task: fix the poster display so media type badget, association button and availability are aligned”
 
-- Status: Open task; captured but not yet started.
-- Identify every poster-card variant that displays the media-type badge,
-  Associations action, and availability/quality state. Establish one shared
-  alignment contract without hiding or changing any state or permission rule.
-- Verify representative Movie, Series, Music, Book, Audiobook, and Collection
-  cards at desktop and narrow widths when this task becomes active.
+- Status: Implemented in source and protected by focused helper and current-batch
+  contracts. A fresh build and rendered desktop/narrow verification remain
+  pending under John's no-build gate.
+- The media-type badge remains on the first row at left. Associations occupies
+  the second row at left. HD or MP3 holds the first-row right slot, while 4K or
+  FLAC holds the second-row right slot even when the first slot is empty.
+- The same fixed slots render available, pending-approval, processing, and
+  active-download states without shifting neighboring controls.
 
 ### Poster overlay shadows
 
@@ -42,8 +44,8 @@ asks for the work to start.
 > “apply the same style that we used on the associations button in this image to the associations icon on the poster.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. The fresh production build passed; rendered poster verification
-  remains pending.
+  contract. The association control has moved to its second-row position; a
+  fresh build and rendered poster verification remain pending.
 - The compact poster action reuses the shared aqua Associations button style
   while retaining its circular size, artwork blur, and shadow. The existing
   popover, tooltip, visibility rules, and click behavior remain unchanged.
@@ -53,13 +55,15 @@ asks for the work to start.
 > “put the check mark and text inside a button. the style of the button will be the same as the request button ... keep the text inside the button green ... availability icon ... to the right of the text.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. The fresh production build passed; rendered poster verification
-  remains pending.
-- Fully available HD, 4K, MP3, and FLAC poster states use a compact version of
-  the shared green Request control. The green quality label precedes the small
-  outlined availability icon used by the media-detail availability tables.
-- Pending, processing, partially available, blocked, and deleted states retain
-  their distinct status indicators.
+  contract. The source has changed since the prior successful build, so a fresh
+  build and rendered poster verification remain pending.
+- HD, 4K, MP3, and FLAC use compact rounded status badges matching the media-type
+  badge silhouette. Available formats stay green with the outlined availability
+  icon after the quality label.
+- Pending approval uses the bell badge; approved/processing uses the timer
+  badge. Music request targets are resolved separately so MP3 and FLAC retain
+  their correct first- and second-row positions. Unknown, blocked, and deleted
+  quality states do not create an availability badge.
 
 ### Media-detail disclosure spacing and subcard contrast
 
