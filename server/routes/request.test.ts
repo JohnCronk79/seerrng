@@ -1438,8 +1438,10 @@ describe('POST /request', () => {
 
   it('uses an explicitly selected zero-valued screen service without a default', async (t) => {
     const settings = getSettings();
+    const legacyStandardSettings = createRadarrSettings(0, false);
+    Reflect.deleteProperty(legacyStandardSettings, 'is4k');
     settings.radarr = [
-      createRadarrSettings(0, false),
+      legacyStandardSettings,
       { ...createRadarrSettings(1, false), is4k: true },
     ];
     const providerMediaIds: number[] = [];

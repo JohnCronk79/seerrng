@@ -204,8 +204,16 @@ const MovieRequestModal = ({
           { appearance: 'success', autoDismiss: true }
         );
       }
-    } catch {
-      addToast(intl.formatMessage(messages.requesterror), {
+    } catch (error) {
+      const responseMessage = axios.isAxiosError<{ message?: unknown }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      const errorMessage =
+        typeof responseMessage === 'string' && responseMessage.length > 0
+          ? responseMessage
+          : intl.formatMessage(messages.requesterror);
+
+      addToast(errorMessage, {
         appearance: 'error',
         autoDismiss: true,
       });

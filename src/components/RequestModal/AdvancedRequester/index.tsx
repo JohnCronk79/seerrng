@@ -196,7 +196,7 @@ const AdvancedRequester = ({
     () =>
       (data ?? []).filter(
         (server) =>
-          (allow4kServerSelection || server.is4k === is4k) &&
+          (allow4kServerSelection || Boolean(server.is4k) === is4k) &&
           (type !== 'book' ||
             (server.serviceType ?? 'ebook') === bookServiceType)
       ),
@@ -264,7 +264,7 @@ const AdvancedRequester = ({
       const formatMatches =
         type !== 'book' || (server.serviceType ?? 'ebook') === bookServiceType;
 
-      return server.isDefault && is4k === server.is4k && formatMatches;
+      return server.isDefault && Boolean(server.is4k) === is4k && formatMatches;
     });
 
     if (!defaultServer && type === 'book') {
@@ -478,8 +478,9 @@ const AdvancedRequester = ({
     (server) => server.id === selectedServer
   );
   const defaultService =
-    serviceServers.find((server) => server.isDefault && server.is4k === is4k) ??
-    serviceServers[0];
+    serviceServers.find(
+      (server) => server.isDefault && Boolean(server.is4k) === is4k
+    ) ?? serviceServers[0];
   const defaultProfileId = serverData
     ? isAnime && serverData.server.activeAnimeProfileId
       ? serverData.server.activeAnimeProfileId

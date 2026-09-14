@@ -513,7 +513,7 @@ export class MediaRequest {
       if (
         (requestBody.mediaType === MediaType.MOVIE ||
           requestBody.mediaType === MediaType.TV) &&
-        selectedService.is4k !== Boolean(requestBody.is4k)
+        Boolean(selectedService.is4k) !== Boolean(requestBody.is4k)
       ) {
         throw new ServiceConfigurationError(
           `Selected ${serviceName} server does not match the requested quality tier.`
@@ -708,7 +708,7 @@ export class MediaRequest {
             ? requestBody.serverId
             : settings.radarr.find(
                 ({ is4k, isDefault }) =>
-                  isDefault && is4k === Boolean(requestBody.is4k)
+                  isDefault && Boolean(is4k) === Boolean(requestBody.is4k)
               )?.id
         );
       } else if (requestBody.mediaType === MediaType.TV) {
@@ -718,7 +718,7 @@ export class MediaRequest {
             ? requestBody.serverId
             : settings.sonarr.find(
                 ({ is4k, isDefault }) =>
-                  isDefault && is4k === Boolean(requestBody.is4k)
+                  isDefault && Boolean(is4k) === Boolean(requestBody.is4k)
               )?.id
         );
       } else if (requestBody.mediaType === MediaType.MUSIC) {
@@ -1430,7 +1430,10 @@ export class MediaRequest {
         } server does not exist.`
       );
     }
-    if (requestedServer && requestedServer.is4k !== Boolean(requestBody.is4k)) {
+    if (
+      requestedServer &&
+      Boolean(requestedServer.is4k) !== Boolean(requestBody.is4k)
+    ) {
       throw new ServiceConfigurationError(
         `Selected ${
           requestBody.mediaType === MediaType.MOVIE ? 'Radarr' : 'Sonarr'

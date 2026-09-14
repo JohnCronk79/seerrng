@@ -30,7 +30,7 @@ export const hasSameServarrServiceAuthority = (
   current.baseUrl === snapshot.baseUrl &&
   current.apiKey === snapshot.apiKey &&
   current.syncEnabled === snapshot.syncEnabled &&
-  current.is4k === snapshot.is4k &&
+  Boolean(current.is4k) === Boolean(snapshot.is4k) &&
   (current.serviceType ?? 'ebook') === (snapshot.serviceType ?? 'ebook');
 
 export class ServarrServiceAuthorityChangedError extends Error {}
