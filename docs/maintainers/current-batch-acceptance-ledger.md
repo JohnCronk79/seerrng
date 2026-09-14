@@ -37,6 +37,17 @@ asks for the work to start.
 - Verify normal, hover, focus, selected, available, unavailable, and disabled
   poster states when this task becomes active.
 
+### Poster Associations styling
+
+> “apply the same style that we used on the associations button in this image to the associations icon on the poster.”
+
+- Status: Implemented in source and protected by the focused current-batch
+  contract. Fresh build and rendered poster verification remain pending under
+  John's explicit no-build gate.
+- The compact poster action reuses the shared aqua Associations button style
+  while retaining its circular size, artwork blur, and shadow. The existing
+  popover, tooltip, visibility rules, and click behavior remain unchanged.
+
 ### Main-menu cleanup
 
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”

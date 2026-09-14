@@ -550,6 +550,11 @@ const validateCurrentBatchContract = (files) => {
     'Associations must use aqua styling'
   );
   requireText(
+    'src/components/Association/AssociationBadge.tsx',
+    "'app-button app-button-association h-6 w-6 rounded-full p-0",
+    'the poster Associations action must reuse the shared association button style'
+  );
+  requireText(
     globals,
     '.media-rating-icon {\n    @apply h-5 w-5',
     'rating icons must share the tomato height'

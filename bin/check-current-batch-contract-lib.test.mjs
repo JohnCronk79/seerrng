@@ -127,6 +127,25 @@ test('reports duplicate Audiobooks and Request Status primary navigation entries
   );
 });
 
+test('reports poster Associations style drift', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'the poster Associations action must reuse the shared association button style'
+      )
+    )
+  );
+});
+
 test('reports recovered visual-contract and evidence-provenance regressions', () => {
   const proxy = new Proxy(
     {},
