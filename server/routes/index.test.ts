@@ -105,6 +105,8 @@ describe('Public endpoint resource boundaries', () => {
       ...originalTls,
       mode: 'self-signed',
       redirectHttpToHttps: false,
+      allowHttpAuth: false,
+      httpAuthAcknowledged: false,
     };
 
     try {

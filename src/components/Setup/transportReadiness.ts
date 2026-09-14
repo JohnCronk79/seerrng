@@ -7,8 +7,8 @@ type BrowserTransportStatus = Pick<
 
 /**
  * A browser can sign in only when the current request is HTTPS or the
- * explicitly acknowledged direct-HTTP fallback is active. A saved transport
- * choice is not enough because listener and cookie changes require a restart.
+ * direct-HTTP authentication is active. A saved transport choice is not
+ * enough because listener and cookie changes require a restart.
  */
 export const isBrowserTransportReady = (
   status: BrowserTransportStatus,

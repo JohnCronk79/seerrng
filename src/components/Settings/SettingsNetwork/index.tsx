@@ -67,7 +67,7 @@ const messages = defineMessages('components.Settings.SettingsNetwork', {
   transportSecurityDescription:
     'Choose how Seerr protects browser login sessions. Listener changes require a server restart.',
   tlsMode: 'Built-in HTTPS mode',
-  tlsDisabled: 'Disabled (use a reverse proxy or explicit HTTP fallback)',
+  tlsDisabled: 'Disabled (direct HTTP sign-in or use a reverse proxy)',
   tlsSelfSigned: 'Self-signed local HTTPS',
   tlsProvided: 'Provided certificate',
   httpsPort: 'HTTPS Port',
@@ -195,8 +195,8 @@ const SettingsNetwork = () => {
             tlsKeyFile: data?.tls?.keyFile ?? '',
             tlsCaFile: data?.tls?.caFile ?? '',
             tlsRedirectHttpToHttps: data?.tls?.redirectHttpToHttps ?? false,
-            tlsAllowHttpAuth: data?.tls?.allowHttpAuth ?? false,
-            tlsHttpAuthAcknowledged: data?.tls?.httpAuthAcknowledged ?? false,
+            tlsAllowHttpAuth: data?.tls?.allowHttpAuth ?? true,
+            tlsHttpAuthAcknowledged: data?.tls?.httpAuthAcknowledged ?? true,
           }}
           enableReinitialize
           validationSchema={NetworkSettingsSchema}
@@ -311,7 +311,7 @@ const SettingsNetwork = () => {
                 </div>
                 {values.tlsMode !== 'disabled' && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label htmlFor="tlsHttpsPort" className="text-label">
                           {intl.formatMessage(messages.httpsPort)}
@@ -558,7 +558,7 @@ const SettingsNetwork = () => {
                 </div>
                 {values.dnsCacheEnabled && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label
                           htmlFor="dnsCacheForceMinTtl"
@@ -659,7 +659,7 @@ const SettingsNetwork = () => {
                 </div>
                 {values.proxyEnabled && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label
                           htmlFor="proxyHostname"

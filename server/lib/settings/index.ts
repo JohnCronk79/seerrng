@@ -721,8 +721,8 @@ class Settings {
           keyFile: '',
           caFile: '',
           redirectHttpToHttps: false,
-          allowHttpAuth: false,
-          httpAuthAcknowledged: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
         },
         proxy: {
           enabled: false,
@@ -1454,8 +1454,8 @@ class Settings {
           keyFile: '',
           caFile: '',
           redirectHttpToHttps: false,
-          allowHttpAuth: false,
-          httpAuthAcknowledged: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
         },
         proxy: {
           enabled: false,

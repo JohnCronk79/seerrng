@@ -459,7 +459,7 @@ Promise.resolve()
         );
         if (tlsConfiguration.httpAuthAllowed) {
           logger.warn(
-            'SEERR_ALLOW_HTTP_AUTH is enabled. Browser sessions may be intercepted by anyone who can observe this HTTP connection; use built-in HTTPS or an HTTPS reverse proxy when possible.',
+            'Direct HTTP browser authentication is enabled. Browser sessions may be intercepted by anyone who can observe this HTTP connection; use built-in HTTPS or an HTTPS reverse proxy when possible.',
             { label: 'Security' }
           );
         }

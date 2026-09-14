@@ -29,14 +29,13 @@ To confirm that the container image you are using is authentic and unmodified, p
 :::
 
 :::note Authentication transport
-The default container listener on port 5055 serves HTTP, but authenticated
-session cookies remain HTTPS-only. For direct LAN HTTPS without Caddy, Traefik,
-or another proxy, follow the [built-in HTTPS guide](/using-seerr/advanced/built-in-tls)
-and publish port 5056 as well. The first-run page can save the self-signed or
-provided-certificate choice before the first login; restart the container to
-activate it. The explicit `SEERR_ALLOW_HTTP_AUTH=true` fallback is available
-for trusted LANs that cannot use TLS, but requires a deliberate risk
-acknowledgement when configured from the UI.
+The default container listener on port 5055 serves HTTP, and direct browser
+sign-in works with a warning. HTTPS is recommended: for direct LAN HTTPS
+without Caddy, Traefik, or another proxy, follow the [built-in HTTPS
+guide](/using-seerr/advanced/built-in-tls) and publish port 5056 as well. The
+first-run page can save the self-signed or provided-certificate choice before
+the first login; restart the container to activate it. Set
+`SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS for direct browser sign-in.
 :::
 
 ## Unix (Linux, macOS)

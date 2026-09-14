@@ -28,6 +28,12 @@ describe('TLS configuration parsing', () => {
     assert.equal(parseTlsBoolean('FLAG', '1'), true);
     assert.throws(() => parseTlsMode('automatic'), /SEERR_TLS_MODE/);
     assert.throws(() => parseTlsBoolean('FLAG', 'yes'), /true.*false/);
+
+    assert.equal(
+      getTlsConfigurationStatus(undefined, { NODE_ENV: 'test' })
+        .httpAuthAllowed,
+      true
+    );
   });
 
   it('rejects redirect hosts that are not explicitly in the TLS SAN list', () => {
