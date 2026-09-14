@@ -73,6 +73,19 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.21.2](https://github.com/snapetech/seerrng/compare/v3.21.1..v3.21.2) - 2026-09-14
+
+### User-facing changes
+
+#### Fixed
+
+- **Requests:** Movie requests now work with older standard Radarr configurations, and failed requests show the server’s actionable reason instead of only a generic error.
+
+### 🐛 Bug Fixes
+- *(requests)* Support legacy standard Servarr tiers - ([21c09ec](https://github.com/snapetech/seerrng/commit/21c09ec8669f294a4d4db651d53460ec7b8a921a))
+
 ## [3.21.1](https://github.com/snapetech/seerrng/compare/v3.21.0..v3.21.1) - 2026-09-14
 
 ### User-facing changes
