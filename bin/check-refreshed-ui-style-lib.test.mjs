@@ -64,25 +64,27 @@ test('allows data-driven geometry without permitting visual overrides', () => {
   assert.deepStrictEqual(result.errors, []);
 });
 
-test('requires disclosure buttons to use the shared blue control palette', () => {
+test('requires disclosure controls to match the Destination Server treatment', () => {
   const rejected = validateRefreshedUiStyleBoundaries({
     'src/styles/globals.css': `
-      .detail-disclosure-button {
-        @apply border-gray-600 bg-gray-900 text-gray-300;
+      .detail-disclosure-control {
+        @apply border-indigo-500 bg-indigo-900 text-indigo-300;
       }
     `,
   });
-  assert.ok(rejected.errors.some((error) => error.includes('near-black')));
   assert.ok(
-    rejected.errors.some((error) => error.includes('blue control palette'))
+    rejected.errors.some((error) => error.includes('Destination Server border'))
+  );
+  assert.ok(
+    rejected.errors.some((error) =>
+      error.includes('Destination Server surface')
+    )
   );
 
   const accepted = validateRefreshedUiStyleBoundaries({
     'src/styles/globals.css': `
-      .detail-disclosure-button {
-        color: rgb(var(--theme-control-text) / 0.9);
-        border-color: rgb(var(--theme-control-border) / 0.7);
-        background-color: rgb(var(--theme-control-surface) / 0.28);
+      .detail-disclosure-control {
+        @apply border-gray-600 bg-gray-900/70 text-gray-300;
       }
     `,
   });

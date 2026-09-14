@@ -7,6 +7,7 @@ import Tooltip from '@app/components/Common/Tooltip';
 import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
+import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
@@ -230,21 +231,7 @@ const MusicDetailsLayout = ({
   return (
     <div className="media-page">
       <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
-        {backdrop && (
-          <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
-            <CachedImage
-              type="music"
-              src={backdrop}
-              alt=""
-              fill
-              priority
-              sizes="100vw"
-              className="object-cover object-top"
-            />
-            <div className="refreshed-artwork-scrim" />
-            <div className="refreshed-artwork-gradient" />
-          </div>
-        )}
+        {backdrop && <MediaDetailArtwork type="music" src={backdrop} />}
 
         <div className="relative z-10">
           <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">

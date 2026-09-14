@@ -42,8 +42,8 @@ asks for the work to start.
 > “apply the same style that we used on the associations button in this image to the associations icon on the poster.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. Fresh build and rendered poster verification remain pending under
-  John's explicit no-build gate.
+  contract. The fresh production build passed; rendered poster verification
+  remains pending.
 - The compact poster action reuses the shared aqua Associations button style
   while retaining its circular size, artwork blur, and shadow. The existing
   popover, tooltip, visibility rules, and click behavior remain unchanged.
@@ -53,8 +53,8 @@ asks for the work to start.
 > “put the check mark and text inside a button. the style of the button will be the same as the request button ... keep the text inside the button green ... availability icon ... to the right of the text.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. Fresh build and rendered poster verification remain pending under
-  John's explicit no-build gate.
+  contract. The fresh production build passed; rendered poster verification
+  remains pending.
 - Fully available HD, 4K, MP3, and FLAC poster states use a compact version of
   the shared green Request control. The green quality label precedes the small
   outlined availability icon used by the media-detail availability tables.
@@ -68,8 +68,8 @@ asks for the work to start.
 > “make the sub cards on all pages a little bit darker ... just the subcards like the overview card.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. Fresh build and rendered cross-page verification remain pending
-  under John's explicit no-build gate.
+  contract. The fresh production build passed; rendered cross-page verification
+  remains pending.
 - Disclosure rows use the same five-pixel spacing above and below. The shared
   inset/subcard surface opacity increased from 32 to 42 percent, while the
   outer/main card surface is unchanged.
@@ -79,8 +79,8 @@ asks for the work to start.
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. Fresh build and rendered desktop/mobile verification remain pending
-  under John's explicit no-build gate.
+  contract. The fresh production build passed; rendered desktop/mobile
+  verification remains pending.
 - Remove the Request Status entry from the main navigation and remove the
   duplicate Audiobooks entry. This is a navigation cleanup only: preserve the
   underlying Request Status and Audiobooks routes and functionality unless John
@@ -145,9 +145,9 @@ asks for the work to start.
 > “feature: add a pin to the cast crew and tags button on the media details page.”
 
 - Status: Implemented in source with database, API, optimistic-client,
-  accessibility, and focused contract coverage. Fresh migration execution,
-  build, and rendered desktop/narrow verification remain pending under John's
-  explicit no-build gate.
+  accessibility, and focused contract coverage. The test database preparation
+  and fresh production build passed; rendered desktop/narrow verification
+  remains pending.
 - Cast, Crew, and Subject Tags each have an independent pin segment to the left
   of the disclosure label. Selected pins use a solid icon and `aria-pressed`;
   unselected pins use an outline icon and an explanatory tooltip.
@@ -166,8 +166,8 @@ asks for the work to start.
 > “set it so the advanced options are always visible ... make the advanced options card scrollable if and when the number of root folders are more than 5 items long ... use our site background here ... use the same style as the destination dropdown button ... make the horizontal lines and the divider lines the same dark blue.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. Fresh build and rendered desktop/narrow verification remain pending
-  under John's explicit no-build gate.
+  contract. The fresh production build passed; rendered desktop/narrow
+  verification remains pending.
 - Fresh Movie, Series, Music, and Book request forms open Advanced Options by
   default; the older Collection, bulk, and edit-request presentation keeps its
   Advanced Options content open.
@@ -179,6 +179,18 @@ asks for the work to start.
   sizes and behavior.
 - Full-size request modal surfaces use the site background gradient. Inner
   artwork-backed request cards preserve their artwork and readability layers.
+
+## Firefox detail-card artwork resize stability
+
+> “when the cast and crew cards are opened ... when he collapses the cards and reopens them his browser keeps zooming the background image ... he uses Firefox.”
+
+- Status: Implemented in source with a browser-scoped contract. The fresh
+  production build passed; Firefox rendering remains to be confirmed by Keith
+  in the laptop preview.
+- Preserve the intended expanding `cover` artwork behavior. In Firefox only,
+  render the same resolved cached artwork URL through a stable CSS background
+  layer and suppress the replaced-image paint path that accumulates zoom.
+- Chrome and other browsers retain the existing image rendering path.
 
 ## Series collections and franchise groups
 

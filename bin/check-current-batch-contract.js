@@ -47,6 +47,7 @@ const fileNames = [
   'src/components/BlocklistConfirmationModal/index.tsx',
   'src/components/MediaDetails/ExpandableCreditList.tsx',
   'src/components/MediaDetails/DetailDisclosureButton.tsx',
+  'src/components/MediaDetails/MediaDetailArtwork.tsx',
   'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
   'src/components/MediaDetails/AlbumTrackList.tsx',
   'src/components/MediaDetails/PlaybackTrackList.tsx',

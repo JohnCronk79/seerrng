@@ -160,7 +160,10 @@ test('reports poster availability control drift', () => {
     'available poster qualities must reuse the compact green Request control style',
     'available poster qualities must place the outlined availability icon after the green quality label',
   ]) {
-    assert.ok(errors.some((error) => error.includes(expected)), expected);
+    assert.ok(
+      errors.some((error) => error.includes(expected)),
+      expected
+    );
   }
 });
 
@@ -182,7 +185,10 @@ test('reports persistent detail disclosure pin contract drift', () => {
     'the Subject Tags pin must carry into Music details',
     'refreshed inset cards must use the darker translucent control surface without changing outer cards',
   ]) {
-    assert.ok(errors.some((error) => error.includes(expected)), expected);
+    assert.ok(
+      errors.some((error) => error.includes(expected)),
+      expected
+    );
   }
 });
 
@@ -203,7 +209,33 @@ test('reports request-card contrast and Advanced Options contract drift', () => 
     'fresh request forms must open Advanced Options by default',
     'full-size request cards must use the site background gradient',
   ]) {
-    assert.ok(errors.some((error) => error.includes(expected)), expected);
+    assert.ok(
+      errors.some((error) => error.includes(expected)),
+      expected
+    );
+  }
+});
+
+test('reports Firefox dynamic detail-artwork contract drift', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  for (const expected of [
+    'artwork-backed detail cards must use the stable shared artwork layer',
+    'the Firefox artwork fallback must reuse the resolved cached image URL',
+    'the dynamic artwork workaround must remain Firefox-specific',
+    'Firefox must render expanding detail artwork through a stable background layer',
+  ]) {
+    assert.ok(
+      errors.some((error) => error.includes(expected)),
+      expected
+    );
   }
 });
 

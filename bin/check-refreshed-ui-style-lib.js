@@ -63,27 +63,23 @@ const hasVisualInlineProperty = (styleText) =>
 const validateGlobalStylesheet = (fileName, source) => {
   const errors = [];
   const disclosureRule = source.match(
-    /\.detail-disclosure-button\s*\{([\s\S]*?)\}/
+    /\.detail-disclosure-control\s*\{([\s\S]*?)\}/
   );
 
   if (!disclosureRule) {
-    return [`${fileName}:1: shared detail disclosure button rule is required`];
+    return [`${fileName}:1: shared detail disclosure control rule is required`];
   }
 
   const line = source.slice(0, disclosureRule.index).split('\n').length;
   const declaration = disclosureRule[1];
-  if (/\bbg-(?:black|gray-(?:800|900|950))\b/.test(declaration)) {
+  if (!declaration.includes('border-gray-600')) {
     errors.push(
-      `${fileName}:${line}: detail disclosure buttons may not use a near-black surface`
+      `${fileName}:${line}: detail disclosure controls must match the Destination Server border`
     );
   }
-  if (
-    !declaration.includes('var(--theme-control-surface)') ||
-    !declaration.includes('var(--theme-control-border)') ||
-    !declaration.includes('var(--theme-control-text)')
-  ) {
+  if (!declaration.includes('bg-gray-900/70')) {
     errors.push(
-      `${fileName}:${line}: detail disclosure buttons must use the shared blue control palette`
+      `${fileName}:${line}: detail disclosure controls must match the Destination Server surface`
     );
   }
 

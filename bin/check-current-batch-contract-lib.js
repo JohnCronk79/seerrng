@@ -1152,7 +1152,12 @@ const validateCurrentBatchContract = (files) => {
   );
   requireOrder(
     disclosure,
-    ['className={`detail-disclosure-pin', 'aria-pressed={pinned}', '{label}', '<ChevronDownIcon'],
+    [
+      'className={`detail-disclosure-pin',
+      'aria-pressed={pinned}',
+      '{label}',
+      '<ChevronDownIcon',
+    ],
     'the selectable pin must precede the disclosure label and unfold icon'
   );
 
@@ -1229,6 +1234,34 @@ const validateCurrentBatchContract = (files) => {
     'src/components/MusicDetails/MusicDetailsLayout.tsx',
     "onPinClick={() => void togglePinned('subjectTags')}",
     'the Subject Tags pin must carry into Music details'
+  );
+
+  const mediaDetailArtwork =
+    'src/components/MediaDetails/MediaDetailArtwork.tsx';
+  requireText(
+    mediaDetailArtwork,
+    "'--media-detail-artwork-url': `url(${JSON.stringify(resolvedSrc)})`",
+    'the Firefox artwork fallback must reuse the resolved cached image URL'
+  );
+  requireText(
+    mediaDetailArtwork,
+    'className="media-detail-artwork-image object-cover object-top"',
+    'the standard artwork image must preserve the expanding cover behavior'
+  );
+  requireText(
+    globals,
+    '@supports (-moz-appearance: none)',
+    'the dynamic artwork workaround must remain Firefox-specific'
+  );
+  requireText(
+    globals,
+    'background-image: var(--media-detail-artwork-url);',
+    'Firefox must render expanding detail artwork through a stable background layer'
+  );
+  requireText(
+    globals,
+    '.media-detail-artwork-image {\n      opacity: 0;',
+    'Firefox must hide the replaced-image paint path that accumulates zoom'
   );
 
   const advancedRequester =
@@ -1326,8 +1359,8 @@ const validateCurrentBatchContract = (files) => {
     );
     requireText(
       fileName,
-      'className="refreshed-artwork-scrim"',
-      'artwork must use the shared scrim'
+      '<MediaDetailArtwork',
+      'artwork-backed detail cards must use the stable shared artwork layer'
     );
     requireText(
       fileName,
@@ -1774,7 +1807,7 @@ const validateCurrentBatchContract = (files) => {
 
   const collectionDetails = 'src/components/CollectionDetails/index.tsx';
   for (const token of [
-    'className="refreshed-artwork-scrim"',
+    '<MediaDetailArtwork',
     'getTmdbPosterImageVariants(data.posterPath)',
     '<CollectionAssociationsButton',
     '<FormatRequestControl options={requestOptions}',

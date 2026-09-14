@@ -11,6 +11,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import SelectionCircle from '@app/components/Common/SelectionCircle';
 import Tooltip from '@app/components/Common/Tooltip';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
+import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -276,19 +277,10 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
 
       <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {data.backdropPath && (
-          <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
-            <CachedImage
-              type="tmdb"
-              src={`https://image.tmdb.org/t/p/original${data.backdropPath}`}
-              alt=""
-              fill
-              priority
-              sizes="100vw"
-              className="object-cover object-top"
-            />
-            <div className="refreshed-artwork-scrim" />
-            <div className="refreshed-artwork-gradient" />
-          </div>
+          <MediaDetailArtwork
+            type="tmdb"
+            src={`https://image.tmdb.org/t/p/original${data.backdropPath}`}
+          />
         )}
 
         <div className="relative z-10">

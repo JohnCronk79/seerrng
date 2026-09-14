@@ -571,6 +571,24 @@
     background-color: rgb(var(--theme-page-gradient-main) / 0.46);
   }
 
+  .media-detail-artwork-layer {
+    @apply pointer-events-none absolute inset-0 z-0 overflow-hidden;
+  }
+
+  @supports (-moz-appearance: none) {
+    .media-detail-artwork-layer {
+      background-image: var(--media-detail-artwork-url);
+      background-position: top;
+      background-repeat: no-repeat;
+      background-size: cover;
+      contain: paint;
+    }
+
+    .media-detail-artwork-image {
+      opacity: 0;
+    }
+  }
+
   .refreshed-artwork-gradient {
     background: linear-gradient(
       90deg,
