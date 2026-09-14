@@ -61,6 +61,19 @@ asks for the work to start.
 - Pending, processing, partially available, blocked, and deleted states retain
   their distinct status indicators.
 
+### Media-detail disclosure spacing and subcard contrast
+
+> “there is no space between the overview card and the view cast button row. please make it the same space as between the button row and the movie details card.”
+>
+> “make the sub cards on all pages a little bit darker ... just the subcards like the overview card.”
+
+- Status: Implemented in source and protected by the focused current-batch
+  contract. Fresh build and rendered cross-page verification remain pending
+  under John's explicit no-build gate.
+- Disclosure rows use the same five-pixel spacing above and below. The shared
+  inset/subcard surface opacity increased from 32 to 42 percent, while the
+  outer/main card surface is unchanged.
+
 ### Main-menu cleanup
 
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”
@@ -131,18 +144,41 @@ asks for the work to start.
 
 > “feature: add a pin to the cast crew and tags button on the media details page.”
 
-- Status: Future feature; captured but not yet started.
-- Add a pin affordance to the Cast, Crew, and Tags disclosure controls on media
-  details pages.
-- Before implementation, confirm whether pinning keeps a disclosure open only
-  during the current page visit, survives navigation within the session, or is
-  saved as a user preference. Also confirm whether each disclosure is pinned
-  independently and which Movie, Series, Music, Book, Audiobook, and Collection
-  pages should expose it.
-- Preserve the existing disclosure content, ordering, permissions, responsive
-  behavior, keyboard access, and unpinned expand/collapse behavior.
-- Add shared-state, accessibility, desktop, and narrow-layout verification when
-  this feature becomes active.
+- Status: Implemented in source with database, API, optimistic-client,
+  accessibility, and focused contract coverage. Fresh migration execution,
+  build, and rendered desktop/narrow verification remain pending under John's
+  explicit no-build gate.
+- Cast, Crew, and Subject Tags each have an independent pin segment to the left
+  of the disclosure label. Selected pins use a solid icon and `aria-pressed`;
+  unselected pins use an outline icon and an explanatory tooltip.
+- A pinned disclosure defaults open across Movie, Series, and Collection
+  details. Subject Tags also carries into Music details. Users may temporarily
+  collapse a pinned section during the current page visit; it opens again on
+  the next applicable page.
+- Persist all three preferences on the existing per-user settings record and
+  expose them through the authenticated `/settings/detail-disclosures`
+  endpoint. The settings survive navigation, devices, and later logins.
+- Preserve existing disclosure content, ordering, visibility, responsive
+  behavior, and unpinned expand/collapse behavior.
+
+## Request-card contrast and Advanced Options
+
+> “set it so the advanced options are always visible ... make the advanced options card scrollable if and when the number of root folders are more than 5 items long ... use our site background here ... use the same style as the destination dropdown button ... make the horizontal lines and the divider lines the same dark blue.”
+
+- Status: Implemented in source and protected by the focused current-batch
+  contract. Fresh build and rendered desktop/narrow verification remain pending
+  under John's explicit no-build gate.
+- Fresh Movie, Series, Music, and Book request forms open Advanced Options by
+  default; the older Collection, bulk, and edit-request presentation keeps its
+  Advanced Options content open.
+- Root-folder data rows scroll only when more than five exist, with the table
+  heading left visible. Request-card rules and details dividers match the
+  `gray-900/70` Destination Server value background.
+- Advanced Options, Requested By, Cast, Crew, and Subject Tags controls share
+  the darker Destination Server control treatment while retaining their compact
+  sizes and behavior.
+- Full-size request modal surfaces use the site background gradient. Inner
+  artwork-backed request cards preserve their artwork and readability layers.
 
 ## Series collections and franchise groups
 

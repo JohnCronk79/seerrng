@@ -164,6 +164,49 @@ test('reports poster availability control drift', () => {
   }
 });
 
+test('reports persistent detail disclosure pin contract drift', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  for (const expected of [
+    'detail disclosure pins must expose their selected state',
+    'detail disclosure pins must use the authenticated per-user settings endpoint',
+    'detail disclosure pin settings must expose one read and one write route',
+    'the disclosure row must keep the same five-pixel gap above and below',
+    'the Subject Tags pin must carry into Music details',
+    'refreshed inset cards must use the darker translucent control surface without changing outer cards',
+  ]) {
+    assert.ok(errors.some((error) => error.includes(expected)), expected);
+  }
+});
+
+test('reports request-card contrast and Advanced Options contract drift', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  for (const expected of [
+    'request controls must match the dark Destination Server dropdown treatment',
+    'request table and details dividers must match the Destination Server value background',
+    'root-folder scrolling must begin only after five rows',
+    'fresh request forms must open Advanced Options by default',
+    'full-size request cards must use the site background gradient',
+  ]) {
+    assert.ok(errors.some((error) => error.includes(expected)), expected);
+  }
+});
+
 test('reports recovered visual-contract and evidence-provenance regressions', () => {
   const proxy = new Proxy(
     {},

@@ -196,6 +196,15 @@ export class UserSettings {
   @Column({ nullable: true })
   public cardTextVisibilityBook?: CardTextVisibility;
 
+  @Column({ default: false })
+  public detailDisclosureCastPinned: boolean;
+
+  @Column({ default: false })
+  public detailDisclosureCrewPinned: boolean;
+
+  @Column({ default: false })
+  public detailDisclosureSubjectTagsPinned: boolean;
+
   @Column({
     type: 'text',
     nullable: true,
@@ -237,6 +246,10 @@ export class UserSettings {
       cardTextVisibilityTv: this.cardTextVisibilityTv,
       cardTextVisibilityAlbum: this.cardTextVisibilityAlbum,
       cardTextVisibilityBook: this.cardTextVisibilityBook,
+      detailDisclosureCastPinned: this.detailDisclosureCastPinned,
+      detailDisclosureCrewPinned: this.detailDisclosureCrewPinned,
+      detailDisclosureSubjectTagsPinned:
+        this.detailDisclosureSubjectTagsPinned,
     };
   }
 

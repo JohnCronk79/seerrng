@@ -12,6 +12,14 @@ export interface UserSettingsCardTextResponse {
   book?: CardTextVisibility;
 }
 
+export type DetailDisclosurePin = 'cast' | 'crew' | 'subjectTags';
+
+export interface UserSettingsDetailDisclosureResponse {
+  cast?: boolean;
+  crew?: boolean;
+  subjectTags?: boolean;
+}
+
 export interface UserSettingsGeneralResponse {
   username?: string;
   email?: string;

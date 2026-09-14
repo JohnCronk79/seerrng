@@ -11,6 +11,7 @@ import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosur
 import ExpandableCreditList from '@app/components/MediaDetails/ExpandableCreditList';
 import SeriesSeasonEpisodeBrowser from '@app/components/MediaDetails/SeriesSeasonEpisodeBrowser';
 import MediaSlider from '@app/components/MediaSlider';
+import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import useLocale from '@app/hooks/useLocale';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import useSettings from '@app/hooks/useSettings';
@@ -122,9 +123,15 @@ const SeriesDetailsLayout = ({
   const intl = useIntl();
   const settings = useSettings();
   const { locale } = useLocale();
+  const { pins, togglePinned } = useDetailDisclosurePins();
   const [showCast, setShowCast] = useState(false);
   const [showCrew, setShowCrew] = useState(false);
   const [showTags, setShowTags] = useState(false);
+  useEffect(() => {
+    if (pins.cast) setShowCast(true);
+    if (pins.crew) setShowCrew(true);
+    if (pins.subjectTags) setShowTags(true);
+  }, [pins.cast, pins.crew, pins.subjectTags]);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
     string[]
   >([]);
@@ -548,21 +555,27 @@ const SeriesDetailsLayout = ({
             )}
           </section>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="mt-[5px] flex flex-wrap items-center gap-2">
             <DetailDisclosureButton
               label={intl.formatMessage(messages.viewCast)}
               open={showCast}
               onClick={() => setShowCast((open) => !open)}
+              pinned={pins.cast}
+              onPinClick={() => void togglePinned('cast')}
             />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.viewCrew)}
               open={showCrew}
               onClick={() => setShowCrew((open) => !open)}
+              pinned={pins.crew}
+              onPinClick={() => void togglePinned('crew')}
             />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.subjectTags)}
               open={showTags}
               onClick={() => setShowTags((open) => !open)}
+              pinned={pins.subjectTags}
+              onPinClick={() => void togglePinned('subjectTags')}
             />
           </div>
 

@@ -124,7 +124,7 @@ const BookRequestModal = ({
   const [selectedIsbn, setSelectedIsbn] = useState<string>('');
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const normalizedBookId = normalizeOpenLibraryWorkId(bookId);
@@ -683,7 +683,7 @@ const BookRequestModal = ({
       title={requestLabel}
       okText={requestButtonLabel}
       okButtonType="primary"
-      dialogClass="sm:max-w-5xl"
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
       {(quota?.book?.limit ?? 0) > 0 && (
         <QuotaDisplay
@@ -739,9 +739,9 @@ const BookRequestModal = ({
                       : notAvailable}
                   </dd>
 
-                  <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
+                  <div className="request-divider-fill-dark card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden" />
 
-                  <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
+                  <div className="request-divider-dark card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2">
                     <dt className="font-medium text-gray-100">
                       {intl.formatMessage(messages.author)}:
                     </dt>
@@ -765,7 +765,7 @@ const BookRequestModal = ({
                 </dl>
               </div>
 
-              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400">
+              <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4 text-gray-400">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>
@@ -866,7 +866,7 @@ const BookRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="detail-disclosure-button"
+                className="request-form-control inline-flex h-[22px] items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >

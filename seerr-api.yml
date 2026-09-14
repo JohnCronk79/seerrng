@@ -230,6 +230,18 @@ components:
           example: true
         cardTextVisibility:
           $ref: '#/components/schemas/CardTextVisibilitySettings'
+        detailDisclosureCastPinned:
+          type: boolean
+          description: 'Keep Cast open by default on supported detail pages'
+          example: false
+        detailDisclosureCrewPinned:
+          type: boolean
+          description: 'Keep Crew open by default on supported detail pages'
+          example: false
+        detailDisclosureSubjectTagsPinned:
+          type: boolean
+          description: 'Keep Subject Tags open by default on supported detail pages'
+          example: false
     CardTextVisibilitySettings:
       type: object
       properties:
@@ -261,6 +273,18 @@ components:
             - always
             - hover
           example: always
+    DetailDisclosurePinSettings:
+      type: object
+      properties:
+        cast:
+          type: boolean
+          example: false
+        crew:
+          type: boolean
+          example: false
+        subjectTags:
+          type: boolean
+          example: false
     MainSettings:
       type: object
       properties:
@@ -6825,6 +6849,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CardTextVisibilitySettings'
+  /user/{userId}/settings/detail-disclosures:
+    get:
+      summary: Get pinned detail disclosure settings for a user
+      description: Returns persistent Cast, Crew, and Subject Tags pin preferences for a specific user. Requires `MANAGE_USERS` permission if viewing another user.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Pinned detail disclosure settings returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailDisclosurePinSettings'
+    post:
+      summary: Update pinned detail disclosure settings for a user
+      description: Updates and returns persistent Cast, Crew, and Subject Tags pin preferences for a specific user. Requires `MANAGE_USERS` permission if editing another user.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetailDisclosurePinSettings'
+      responses:
+        '200':
+          description: Updated pinned detail disclosure settings returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailDisclosurePinSettings'
   /user/{userId}/settings/password:
     get:
       summary: Get password page informatiom

@@ -8,6 +8,7 @@ import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import MediaSlider from '@app/components/MediaSlider';
+import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
@@ -94,6 +95,7 @@ const MusicDetailsLayout = ({
   additionalContent,
 }: MusicDetailsLayoutProps) => {
   const intl = useIntl();
+  const { pins, togglePinned } = useDetailDisclosurePins();
   const [showArtists, setShowArtists] = useState(false);
   const [showTags, setShowTags] = useState(false);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
@@ -101,6 +103,9 @@ const MusicDetailsLayout = ({
   >([]);
   const { data: playbackCatalog } = usePlaybackCatalog(data.mediaInfo?.id);
   const safeRatingUrl = getSafeHref(ratingData?.rating?.url);
+  useEffect(() => {
+    if (pins.subjectTags) setShowTags(true);
+  }, [pins.subjectTags]);
   useEffect(() => {
     const allowedIds = new Set(
       playbackCatalog?.groups.flatMap((group) =>
@@ -468,6 +473,8 @@ const MusicDetailsLayout = ({
               label={intl.formatMessage(messages.subjectTags)}
               open={showTags}
               onClick={() => setShowTags((open) => !open)}
+              pinned={pins.subjectTags}
+              onPinClick={() => void togglePinned('subjectTags')}
             />
           </div>
 

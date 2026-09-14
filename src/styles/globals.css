@@ -528,8 +528,42 @@
   }
 
   .refreshed-inset-surface {
-    background-color: rgb(var(--theme-control-surface) / 0.32);
+    background-color: rgb(var(--theme-control-surface) / 0.42);
     color: rgb(var(--theme-control-text) / 0.86);
+  }
+
+  .request-modal-site-surface {
+    background:
+      radial-gradient(
+        ellipse 34% 27% at 100% 0%,
+        rgb(var(--theme-page-spotlight-center) / 0.98) 0%,
+        rgb(var(--theme-page-spotlight-edge) / 0.72) 34%,
+        rgb(var(--theme-page-gradient-light) / 0) 100%
+      ),
+      linear-gradient(
+        40deg,
+        rgb(var(--theme-page-gradient-black)) 0%,
+        rgb(var(--theme-page-gradient-deep)) 36%,
+        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-light)) 100%
+      ) !important;
+  }
+
+  .request-form-control {
+    @apply border-gray-600 bg-gray-900/70 text-gray-300;
+  }
+
+  .request-form-control:hover {
+    @apply border-gray-500 bg-gray-800/90 text-white;
+  }
+
+  .request-divider-dark {
+    border-color: rgb(var(--color-gray-900) / 0.7);
+  }
+
+  .request-divider-dark::before,
+  .request-divider-fill-dark {
+    background-color: rgb(var(--color-gray-900) / 0.7);
   }
 
   .refreshed-artwork-scrim {
@@ -973,17 +1007,30 @@
     @apply border-gray-600 bg-transparent text-white hover:border-gray-200 hover:text-white focus:border-gray-100 active:border-gray-100;
   }
 
-  .detail-disclosure-button {
-    @apply inline-flex h-[22px] items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none;
-    color: rgb(var(--theme-control-text) / 0.9);
-    border-color: rgb(var(--theme-control-border) / 0.7);
-    background-color: rgb(var(--theme-control-surface) / 0.28);
+  .detail-disclosure-control {
+    @apply inline-flex h-[22px] items-stretch overflow-hidden rounded-md border border-gray-600 bg-gray-900/70 text-[11px] font-medium text-gray-300 transition;
   }
 
-  .detail-disclosure-button:hover {
-    @apply text-white;
-    border-color: rgb(var(--theme-control-border));
-    background-color: rgb(var(--theme-control-surface-hover) / 0.52);
+  .detail-disclosure-control:hover {
+    @apply border-gray-500 bg-gray-800/90 text-white;
+  }
+
+  .detail-disclosure-pin,
+  .detail-disclosure-button {
+    @apply inline-flex items-center justify-center transition focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset;
+    color: inherit;
+  }
+
+  .detail-disclosure-pin {
+    @apply w-6 flex-none border-r border-gray-600;
+  }
+
+  .detail-disclosure-pin-active {
+    @apply bg-indigo-500/35 text-white;
+  }
+
+  .detail-disclosure-button {
+    @apply gap-1.5 px-2;
   }
 
   .media-rating-row {

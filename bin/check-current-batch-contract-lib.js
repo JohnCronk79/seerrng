@@ -850,8 +850,23 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
-    '.refreshed-inset-surface {\n    background-color: rgb(var(--theme-control-surface) / 0.32);\n    color: rgb(var(--theme-control-text) / 0.86)',
-    'refreshed inset cards must use the translucent blue control surface and content-tone standard'
+    '.refreshed-inset-surface {\n    background-color: rgb(var(--theme-control-surface) / 0.42);\n    color: rgb(var(--theme-control-text) / 0.86)',
+    'refreshed inset cards must use the darker translucent control surface without changing outer cards'
+  );
+  requireText(
+    globals,
+    '.request-form-control {\n    @apply border-gray-600 bg-gray-900/70 text-gray-300;',
+    'request controls must match the dark Destination Server dropdown treatment'
+  );
+  requireText(
+    globals,
+    '.request-divider-dark {\n    border-color: rgb(var(--color-gray-900) / 0.7);',
+    'request table and details dividers must match the Destination Server value background'
+  );
+  requireText(
+    globals,
+    '.request-modal-site-surface {',
+    'full-size request surfaces must expose the shared site-gradient treatment'
   );
   for (const fileName of [
     'src/components/RequestStatus/index.tsx',
@@ -1117,8 +1132,172 @@ const validateCurrentBatchContract = (files) => {
   const disclosure = 'src/components/MediaDetails/DetailDisclosureButton.tsx';
   requireText(
     disclosure,
+    'className="detail-disclosure-control"',
+    'detail disclosures must use the shared segmented control surface'
+  );
+  requireText(
+    globals,
+    '.detail-disclosure-control {\n    @apply inline-flex h-[22px] items-stretch overflow-hidden rounded-md border border-gray-600 bg-gray-900/70',
+    'Cast, Crew, and Subject Tags must match the Destination Server dropdown surface'
+  );
+  requireText(
+    disclosure,
     'className="detail-disclosure-button"',
     'detail disclosure controls must consume one shared style'
+  );
+  requireText(
+    disclosure,
+    'aria-pressed={pinned}',
+    'detail disclosure pins must expose their selected state'
+  );
+  requireOrder(
+    disclosure,
+    ['className={`detail-disclosure-pin', 'aria-pressed={pinned}', '{label}', '<ChevronDownIcon'],
+    'the selectable pin must precede the disclosure label and unfold icon'
+  );
+
+  requireText(
+    'src/hooks/useDetailDisclosurePins.ts',
+    '/settings/detail-disclosures',
+    'detail disclosure pins must use the authenticated per-user settings endpoint'
+  );
+  requireText(
+    'src/hooks/useDetailDisclosurePins.ts',
+    'optimisticData: mutation.next',
+    'detail disclosure pins must update optimistically'
+  );
+  requireCount(
+    'server/routes/user/usersettings.ts',
+    "'/detail-disclosures'",
+    2,
+    'detail disclosure pin settings must expose one read and one write route'
+  );
+  for (const fieldName of [
+    'detailDisclosureCastPinned',
+    'detailDisclosureCrewPinned',
+    'detailDisclosureSubjectTagsPinned',
+  ]) {
+    requireText(
+      'server/entity/UserSettings.ts',
+      fieldName,
+      `user settings must persist ${fieldName}`
+    );
+    requireText(
+      'server/migration/sqlite/1785000000000-AddDetailDisclosurePins.ts',
+      fieldName,
+      `SQLite migration must add ${fieldName}`
+    );
+    requireText(
+      'server/migration/postgres/1785000000000-AddDetailDisclosurePins.ts',
+      fieldName,
+      `PostgreSQL migration must add ${fieldName}`
+    );
+  }
+  requireText(
+    'seerr-api.yml',
+    '/user/{userId}/settings/detail-disclosures:',
+    'the public API contract must document persistent detail disclosure pins'
+  );
+
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/CollectionDetails/CollectionMetadataDisclosures.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'className="mt-[5px] flex flex-wrap items-center gap-2"',
+      'the disclosure row must keep the same five-pixel gap above and below'
+    );
+    requireText(
+      fileName,
+      "onPinClick={() => void togglePinned('cast')}",
+      'Cast must expose its persistent pin'
+    );
+    requireText(
+      fileName,
+      "onPinClick={() => void togglePinned('crew')}",
+      'Crew must expose its persistent pin'
+    );
+    requireText(
+      fileName,
+      "onPinClick={() => void togglePinned('subjectTags')}",
+      'Subject Tags must expose its persistent pin'
+    );
+  }
+  requireText(
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    "onPinClick={() => void togglePinned('subjectTags')}",
+    'the Subject Tags pin must carry into Music details'
+  );
+
+  const advancedRequester =
+    'src/components/RequestModal/AdvancedRequester/index.tsx';
+  requireText(
+    advancedRequester,
+    'open={panelOnly ? expanded : true}',
+    'non-panel Advanced Options must remain visible'
+  );
+  requireText(
+    advancedRequester,
+    '(serverData?.rootFolders.length ?? 0) > 5',
+    'root-folder scrolling must begin only after five rows'
+  );
+  requireText(
+    advancedRequester,
+    "'max-h-[8.5rem] overflow-y-auto pr-1'",
+    'long root-folder tables must scroll their data rows'
+  );
+  requireText(
+    advancedRequester,
+    'className="request-divider-dark col-span-2 mb-1 grid grid-cols-subgrid border-b px-1 pb-2"',
+    'root-folder table rules must use the dark Destination Server color'
+  );
+  requireText(
+    advancedRequester,
+    'className="request-form-control relative inline-flex h-[22px]',
+    'Requested By must use the dark Destination Server control treatment'
+  );
+  for (const fileName of [
+    'src/components/RequestModal/MovieRequestModal.tsx',
+    'src/components/RequestModal/TvRequestModal.tsx',
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'src/components/RequestModal/BookRequestModal.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'useState(true)',
+      'fresh request forms must open Advanced Options by default'
+    );
+    requireText(
+      fileName,
+      'className="request-form-control inline-flex h-[22px]',
+      'Advanced Options buttons must match the Destination Server control treatment'
+    );
+  }
+  for (const fileName of [
+    'src/components/RequestModal/MovieRequestModal.tsx',
+    'src/components/RequestModal/TvRequestModal.tsx',
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'src/components/RequestModal/BookRequestModal.tsx',
+    'src/components/RequestModal/CollectionRequestModal.tsx',
+    'src/components/RequestModal/BulkRequestModal.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'request-modal-site-surface sm:max-w-5xl',
+      'full-size request cards must use the site background gradient'
+    );
+  }
+  requireText(
+    'docs/maintainers/ui-style-standard.md',
+    'same dark `gray-900` at 70-percent opacity surface and `gray-600` border as the Destination Server dropdown',
+    'the style standard must document the shared dark request-control treatment'
+  );
+  requireText(
+    'docs/maintainers/current-batch-acceptance-ledger.md',
+    '## Request-card contrast and Advanced Options',
+    'the acceptance ledger must retain the request-card contrast work'
   );
 
   for (const fileName of [
@@ -2585,6 +2764,26 @@ const validateCurrentBatchContract = (files) => {
       'server/routes/userAvatar.openapi.test.ts',
       'avatar',
       'must test the local avatar route contract',
+    ],
+    [
+      'server/routes/user.test.ts',
+      'persists independent detail disclosure pins per user',
+      'must test database-backed detail disclosure pin persistence',
+    ],
+    [
+      'src/hooks/detailDisclosurePinsMutation.test.ts',
+      'does not roll back a newer detail disclosure pin mutation',
+      'must test stale optimistic pin rollback protection',
+    ],
+    [
+      'server/migration/sqlite/1785000000000-AddDetailDisclosurePins.test.ts',
+      'default to unpinned and migrate reversibly',
+      'must test the SQLite detail disclosure pin migration',
+    ],
+    [
+      'server/migration/postgres/1785000000000-AddDetailDisclosurePins.test.ts',
+      'migrate reversibly',
+      'must test the PostgreSQL detail disclosure pin migration contract',
     ],
   ];
   for (const [fileName, text, reason] of evidence) {

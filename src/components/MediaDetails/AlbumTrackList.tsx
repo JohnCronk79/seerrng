@@ -171,7 +171,7 @@ const AlbumTrackList = ({
                 key={`track-column-${columnIndex}`}
                 className="refreshed-inset-surface rounded-lg border border-gray-700 p-2"
               >
-                <div className="grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
+                <div className="request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
                   <SelectionCircle
                     disabled={columnItemIds.length === 0}
                     onClick={() => {

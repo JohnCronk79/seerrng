@@ -525,7 +525,7 @@ const AdvancedRequester = ({
               setIgnoreQuota(false);
               setSelectedUser(value);
             }}
-            className="relative inline-flex h-[22px] max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border border-gray-600 bg-gray-900/70"
+            className="request-form-control relative inline-flex h-[22px] max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border"
           >
             {({ open }) => (
               <>
@@ -613,7 +613,7 @@ const AdvancedRequester = ({
     <>
       {requestedByControl}
       <details
-        open={panelOnly ? expanded : undefined}
+        open={panelOnly ? expanded : true}
         className={
           panelOnly
             ? expanded
@@ -623,6 +623,7 @@ const AdvancedRequester = ({
         }
       >
         <summary
+          onClick={panelOnly ? undefined : (event) => event.preventDefault()}
           className={
             panelOnly
               ? 'hidden'
@@ -902,7 +903,7 @@ const AdvancedRequester = ({
                 {intl.formatMessage(messages.availableRootFolders)}
               </h4>
               <div className="grid w-fit max-w-full grid-cols-[minmax(0,max-content)_max-content] justify-start gap-x-3 gap-y-1 text-xs">
-                <div className="col-span-2 mb-1 grid grid-cols-subgrid border-b border-gray-600 px-1 pb-2">
+                <div className="request-divider-dark col-span-2 mb-1 grid grid-cols-subgrid border-b px-1 pb-2">
                   <span className="refreshed-detail-text font-medium">
                     {intl.formatMessage(messages.rootfolder)}
                   </span>
@@ -910,33 +911,41 @@ const AdvancedRequester = ({
                     {intl.formatMessage(messages.availableSpace)}
                   </span>
                 </div>
-                {isValidating || !serverData ? (
-                  <span className="refreshed-detail-text-muted col-span-2">
-                    {intl.formatMessage(globalMessages.loading)}
-                  </span>
-                ) : (
-                  serverData.rootFolders.map((folder) => {
-                    const isSelected = folder.path === selectedFolder;
+                <div
+                  className={`col-span-2 grid grid-cols-subgrid gap-y-1 ${
+                    (serverData?.rootFolders.length ?? 0) > 5
+                      ? 'max-h-[8.5rem] overflow-y-auto pr-1'
+                      : ''
+                  }`}
+                >
+                  {isValidating || !serverData ? (
+                    <span className="refreshed-detail-text-muted col-span-2">
+                      {intl.formatMessage(globalMessages.loading)}
+                    </span>
+                  ) : (
+                    serverData.rootFolders.map((folder) => {
+                      const isSelected = folder.path === selectedFolder;
 
-                    return (
-                      <button
-                        type="button"
-                        key={`folder-card-${folder.id}`}
-                        onClick={() => setSelectedFolder(folder.path ?? '')}
-                        className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
-                          isSelected
-                            ? 'bg-indigo-500/20 text-indigo-200'
-                            : 'text-gray-300 hover:bg-gray-800/80 hover:text-white'
-                        }`}
-                      >
-                        <span className="truncate">{folder.path}</span>
-                        <span className="refreshed-detail-text whitespace-nowrap">
-                          {formatBytes(folder.freeSpace ?? 0)}
-                        </span>
-                      </button>
-                    );
-                  })
-                )}
+                      return (
+                        <button
+                          type="button"
+                          key={`folder-card-${folder.id}`}
+                          onClick={() => setSelectedFolder(folder.path ?? '')}
+                          className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
+                            isSelected
+                              ? 'bg-indigo-500/20 text-indigo-200'
+                              : 'text-gray-300 hover:bg-gray-800/80 hover:text-white'
+                          }`}
+                        >
+                          <span className="truncate">{folder.path}</span>
+                          <span className="refreshed-detail-text whitespace-nowrap">
+                            {formatBytes(folder.freeSpace ?? 0)}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
           )}

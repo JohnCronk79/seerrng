@@ -363,7 +363,7 @@ const CollectionRequestModal = ({
       }
       okDisabled={selectedParts.length === 0 || isUpdating}
       okButtonType={'primary'}
-      dialogClass="sm:max-w-5xl"
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
       {hasAutoApprove && !quota?.movie.restricted && (
         <div className="mt-6">
@@ -420,7 +420,7 @@ const CollectionRequestModal = ({
         </div>
 
         <section className="refreshed-inset-surface mt-3 overflow-hidden rounded-lg border border-gray-700 p-2">
-          <div className="grid grid-cols-[2rem_minmax(0,1fr)_8rem] items-center gap-x-2 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
+          <div className="request-divider-dark grid grid-cols-[2rem_minmax(0,1fr)_8rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
             <SelectionCircle
               disabled={selectAllDisabled}
               onClick={toggleAllParts}

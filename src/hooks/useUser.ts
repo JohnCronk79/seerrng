@@ -48,6 +48,9 @@ export interface UserSettings {
   cardTextVisibilityAlbum?: CardTextVisibility;
   cardTextVisibilityBook?: CardTextVisibility;
   cardTextVisibility?: UserSettingsCardTextResponse;
+  detailDisclosureCastPinned?: boolean;
+  detailDisclosureCrewPinned?: boolean;
+  detailDisclosureSubjectTagsPinned?: boolean;
 }
 
 interface UserHookResponse {
