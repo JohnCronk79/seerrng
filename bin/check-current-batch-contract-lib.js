@@ -605,6 +605,15 @@ const validateCurrentBatchContract = (files) => {
     'data-testid="poster-quality-status-badge"',
     'poster quality states must use the shared rounded status badge'
   );
+  requireOrder(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    [
+      "pendingApproval: '{quality}: Pending approval'",
+      "approvedProcessing: '{quality}: Approved and processing'",
+      '<Tooltip content={tooltipLabel}>',
+    ],
+    'pending bell and processing timer badges must explain their meaning in tooltips'
+  );
   requireText(
     'src/components/Common/StatusBadgeMini/index.tsx',
     'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px]',

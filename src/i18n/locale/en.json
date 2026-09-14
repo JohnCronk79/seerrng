@@ -179,6 +179,8 @@
   "components.Common.QuickConnectModal.expiredMessage": "This Quick Connect code has expired. Please try again.",
   "components.Common.QuickConnectModal.tryAgain": "Try Again",
   "components.Common.QuickConnectModal.waitingForAuth": "Waiting for authorization...",
+  "components.Common.StatusBadgeMini.approvedProcessing": "{quality}: Approved and processing",
+  "components.Common.StatusBadgeMini.pendingApproval": "{quality}: Pending approval",
   "components.Discover.AvailabilityQualityControl.all": "All",
   "components.Discover.AvailabilityQualityControl.label": "Quality Available",
   "components.Discover.BookFormatTabs.allBooks": "All Books",

@@ -195,6 +195,7 @@ test('reports poster availability control drift', () => {
     'available poster qualities must place the outlined availability icon after the green quality label',
     'poster overlays must keep primary status on row one, Associations on row two left, and secondary status on row two right',
     'music posters must preserve separate MP3 and FLAC request states',
+    'pending bell and processing timer badges must explain their meaning in tooltips',
   ]) {
     assert.ok(
       errors.some((error) => error.includes(expected)),

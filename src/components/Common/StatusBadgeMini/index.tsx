@@ -1,6 +1,7 @@
 import Spinner from '@app/assets/spinner.svg';
 import Tooltip from '@app/components/Common/Tooltip';
 import globalMessages from '@app/i18n/globalMessages';
+import defineMessages from '@app/utils/defineMessages';
 import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import { CheckCircleIcon as AvailabilityIcon } from '@heroicons/react/24/outline';
 import {
@@ -13,6 +14,11 @@ import {
 import { MediaStatus } from '@server/constants/media';
 import { memo } from 'react';
 import { useIntl } from 'react-intl';
+
+const messages = defineMessages('components.Common.StatusBadgeMini', {
+  pendingApproval: '{quality}: Pending approval',
+  approvedProcessing: '{quality}: Approved and processing',
+});
 
 export type StatusBadgeQuality = 'HD' | '4K' | 'MP3' | 'FLAC';
 
@@ -102,6 +108,12 @@ const StatusBadgeMini = memo(
       }
     })();
     const label = [quality, statusLabel].filter(Boolean).join(' ');
+    const tooltipLabel =
+      quality && !inProgress && status === MediaStatus.PENDING
+        ? intl.formatMessage(messages.pendingApproval, { quality })
+        : quality && !inProgress && status === MediaStatus.PROCESSING
+          ? intl.formatMessage(messages.approvedProcessing, { quality })
+          : label;
 
     if (shrink && quality) {
       const tone = inProgress
@@ -117,7 +129,7 @@ const StatusBadgeMini = memo(
           className={`inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] leading-none font-semibold shadow-md backdrop-blur ${tone}`}
           data-testid="poster-quality-status-badge"
           role="img"
-          aria-label={label}
+          aria-label={tooltipLabel}
         >
           {status === MediaStatus.AVAILABLE && !inProgress ? (
             <>
@@ -133,7 +145,7 @@ const StatusBadgeMini = memo(
         </div>
       );
 
-      return <Tooltip content={label}>{qualityBadge}</Tooltip>;
+      return <Tooltip content={tooltipLabel}>{qualityBadge}</Tooltip>;
     }
 
     const badge = (

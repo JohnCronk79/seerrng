@@ -64,6 +64,9 @@ asks for the work to start.
   badge. Music request targets are resolved separately so MP3 and FLAC retain
   their correct first- and second-row positions. Unknown, blocked, and deleted
   quality states do not create an availability badge.
+- The bell tooltip identifies the state as pending approval, while the timer
+  tooltip identifies it as approved and processing. Both include the affected
+  HD, 4K, MP3, or FLAC format.
 
 ### Media-detail disclosure spacing and subcard contrast
 
