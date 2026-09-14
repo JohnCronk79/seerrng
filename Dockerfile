@@ -20,6 +20,7 @@ FROM target-base AS prod-deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
+COPY patches ./patches
 
 RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store CI=true pnpm install --prod --frozen-lockfile
 
@@ -65,6 +66,7 @@ ENV BUILD_VERSION=${BUILD_VERSION}
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
+COPY patches ./patches
 
 RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_BINARY=0 pnpm install --frozen-lockfile
 
