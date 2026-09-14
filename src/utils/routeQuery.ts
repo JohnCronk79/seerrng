@@ -7,20 +7,20 @@ export const parseQueryFromPath = (path: string): ParsedUrlQuery => {
     return {};
   }
 
-  const query: ParsedUrlQuery = {};
+  const queryValues = new Map<string, string | string[]>();
   const searchParams = new URLSearchParams(queryString);
 
   searchParams.forEach((value, key) => {
-    const currentValue = query[key];
+    const currentValue = queryValues.get(key);
 
     if (currentValue === undefined) {
-      query[key] = value;
+      queryValues.set(key, value);
     } else if (Array.isArray(currentValue)) {
-      query[key] = [...currentValue, value];
+      queryValues.set(key, [...currentValue, value]);
     } else {
-      query[key] = [currentValue, value];
+      queryValues.set(key, [currentValue, value]);
     }
   });
 
-  return query;
+  return Object.fromEntries(queryValues) as ParsedUrlQuery;
 };
