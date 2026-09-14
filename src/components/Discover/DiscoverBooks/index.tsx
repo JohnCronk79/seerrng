@@ -193,7 +193,12 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
     }),
   ];
   const hasActiveFilters = Boolean(
-    query || subject || firstPublishYear || language || minRating
+    query ||
+    subject ||
+    firstPublishYear ||
+    language ||
+    minRating ||
+    sortBy !== 'ranked'
   );
   const providerMessage = (
     discover.error as { response?: { data?: { message?: string } } } | undefined
@@ -227,6 +232,7 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
                 firstPublishYear: undefined,
                 language: undefined,
                 minRating: undefined,
+                sortBy: undefined,
               });
             }}
           >

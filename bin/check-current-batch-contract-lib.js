@@ -167,11 +167,57 @@ const validateCurrentBatchContract = (files) => {
       1,
       'primary navigation must contain exactly one Audiobooks entry'
     );
+    requireCount(
+      navigationFile,
+      "href: '/requests'",
+      1,
+      'primary navigation must retain exactly one main Requests entry'
+    );
     rejectText(
       navigationFile,
       "href: '/requests/status'",
       'primary navigation must not contain the removed Request Status entry'
     );
+  }
+  requireText(
+    'src/styles/globals.css',
+    'background-color: transparent !important;',
+    'compact discovery selectors must override the white third-party control surface'
+  );
+  for (const [fileName, tokens] of [
+    ['src/components/Discover/FilterPanel/index.tsx', ['sortBy: undefined,']],
+    [
+      'src/components/Discover/DiscoverBooks/index.tsx',
+      ["sortBy !== 'ranked'", 'sortBy: undefined,'],
+    ],
+    [
+      'src/components/Discover/DiscoverMusic/index.tsx',
+      ["sortBy !== 'ranked'", 'sortBy: undefined,'],
+    ],
+    [
+      'src/components/Blocklist/index.tsx',
+      ["setSort('date');", "setSortDirection('desc');"],
+    ],
+    [
+      'src/components/IssueList/index.tsx',
+      ["setSort('added');", "setDirection('desc');"],
+    ],
+    [
+      'src/components/RequestStatus/index.tsx',
+      ["setSort('added');", "setSortDirection('desc');"],
+    ],
+    [
+      'src/components/Search/index.tsx',
+      ['query: { query: query || undefined }'],
+    ],
+  ]) {
+    for (const token of tokens) {
+      requireText(
+        fileName,
+        token,
+        'Clear Filters must restore the default sort order on every filtered page'
+      );
+    }
   }
   rejectText(
     ledger,

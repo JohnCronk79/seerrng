@@ -135,15 +135,14 @@ const FilterPanel = ({
     type === 'movie' ? 'primaryReleaseDateGte' : 'firstAirDateGte';
   const dateLte =
     type === 'movie' ? 'primaryReleaseDateLte' : 'firstAirDateLte';
-  const hasActiveFilters = Object.keys(currentFilters).some(
-    (key) => key !== 'sortBy'
-  );
+  const hasActiveFilters = Object.keys(currentFilters).length > 0;
   const clearAllFilters = () => {
     routedSearchRef.current = '';
     setSearchValue('');
     batchUpdateQueryParams({
       ...clearedFilters,
       [searchQueryKey]: undefined,
+      sortBy: undefined,
     });
   };
   const updateFilter = (key: string, value?: string) => {

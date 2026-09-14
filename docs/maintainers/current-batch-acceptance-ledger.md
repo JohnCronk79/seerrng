@@ -83,14 +83,30 @@ asks for the work to start.
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. The fresh production build passed; rendered desktop/mobile
-  verification remains pending.
+  contract. The source has changed since the prior successful build, so a fresh
+  build and rendered desktop/mobile verification remain pending.
 - Remove the Request Status entry from the main navigation and remove the
-  duplicate Audiobooks entry. This is a navigation cleanup only: preserve the
+  duplicate Audiobooks entry. Preserve the distinct main Requests entry and the
   underlying Request Status and Audiobooks routes and functionality unless John
   explicitly requests their removal.
 - The desktop Sidebar and Mobile Menu now each contain exactly one Audiobooks
-  entry and no Request Status entry. Both underlying routes remain present.
+  entry, exactly one main Requests entry, and no Request Status entry. All
+  underlying routes remain present.
+
+### Filter control and reset corrections
+
+> “the white buttons in the image have lost their correctly style.”
+>
+> “the clear filters button should also reset the default sort order, make this site wide please”
+
+- Status: Implemented in source and protected by the current-batch contract. A
+  fresh build and rendered verification remain pending under John's no-build
+  gate.
+- Compact third-party selectors now explicitly retain the shared dark control
+  surface instead of falling back to their white library default.
+- Clear Filters restores each page's native default sort as well as its other
+  filters across Movies, Series, Music, Books, Search, Requests, Blocklist, and
+  Issues.
 
 ## Keith-requested feature
 

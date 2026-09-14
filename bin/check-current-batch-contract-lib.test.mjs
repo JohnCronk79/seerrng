@@ -97,7 +97,7 @@ test('reports an incomplete Books discovery navigation contract', () => {
   );
 });
 
-test('reports duplicate Audiobooks and Request Status primary navigation entries', () => {
+test('reports incomplete primary navigation cleanup', () => {
   const proxy = new Proxy(
     {},
     {
@@ -122,6 +122,39 @@ test('reports duplicate Audiobooks and Request Status primary navigation entries
     errors.some((error) =>
       error.includes(
         'primary navigation must not contain the removed Request Status entry'
+      )
+    )
+  );
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'primary navigation must retain exactly one main Requests entry'
+      )
+    )
+  );
+});
+
+test('reports filter-control and reset regressions', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'compact discovery selectors must override the white third-party control surface'
+      )
+    )
+  );
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'Clear Filters must restore the default sort order on every filtered page'
       )
     )
   );

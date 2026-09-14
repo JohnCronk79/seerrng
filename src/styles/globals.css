@@ -1336,6 +1336,9 @@
   .discover-filter-control .react-select__control,
   .discover-filter-control .react-select__control--is-focused {
     @apply min-h-[30px] rounded-none border-0 bg-transparent shadow-none hover:border-0;
+    background-color: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
   }
 
   .discover-filter-control .react-select__value-container {
@@ -1344,6 +1347,7 @@
 
   .discover-filter-control .react-select__indicator {
     @apply py-1;
+    color: rgb(var(--theme-control-text) / 0.72) !important;
   }
 
   .discover-filter-control .react-select__menu-list {
@@ -1356,6 +1360,8 @@
 
   .discover-filter-control .discover-compact-select .react-select__menu {
     @apply left-0 mt-1 w-max max-w-80 min-w-full rounded-md border border-gray-600 bg-gray-800 py-0 text-xs shadow-xl;
+    background-color: rgb(var(--color-gray-800)) !important;
+    color: rgb(var(--theme-control-text)) !important;
     top: 100%;
   }
 
@@ -1378,6 +1384,7 @@
     .discover-compact-select
     .react-select__multi-value__label {
     @apply text-xs leading-4;
+    color: rgb(var(--theme-control-text) / 0.86) !important;
   }
 
   .discover-filter-control .discover-compact-select .react-select__multi-value {

@@ -367,6 +367,8 @@ const Blocklist = () => {
     setTimeFrame('all');
     setMediaFilter('all');
     setSearchFilter('');
+    setSort('date');
+    setSortDirection('desc');
     resetPage();
   };
 

@@ -124,6 +124,8 @@ const IssueList = () => {
     setMediaFilter('all');
     setIssueTypeFilter('all');
     setSearch('');
+    setSort('added');
+    setDirection('desc');
     resetPage();
   };
   const totalPages = Math.max(data.pageInfo.pages, 1);

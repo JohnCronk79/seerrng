@@ -176,7 +176,8 @@ const DiscoverMusic = () => {
     genre ||
     releaseType ||
     releaseDateGte ||
-    releaseDateLte
+    releaseDateLte ||
+    sortBy !== 'ranked'
   );
   return (
     <>
@@ -211,6 +212,7 @@ const DiscoverMusic = () => {
                 releaseType: undefined,
                 primaryReleaseDateGte: undefined,
                 primaryReleaseDateLte: undefined,
+                sortBy: undefined,
               });
             }}
             className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
