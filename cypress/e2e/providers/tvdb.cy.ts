@@ -45,7 +45,9 @@ describe('TVDB Integration', () => {
     return cy.wait('@testConnection');
   };
 
-  const saveMetadataSettings = (customBody = null) => {
+  const saveMetadataSettings = (
+    customBody: Record<string, string> | null = null
+  ) => {
     if (customBody) {
       cy.intercept('PUT', '/api/v1/settings/metadatas', (req) => {
         req.body = customBody;
@@ -61,7 +63,7 @@ describe('TVDB Integration', () => {
 
   beforeEach(() => {
     // Perform login
-    cy.login(Cypress.env('ADMIN_EMAIL'), Cypress.env('ADMIN_PASSWORD'));
+    cy.loginAsAdmin();
 
     // Navigate to Metadata settings
     navigateToMetadataSettings();
@@ -77,6 +79,9 @@ describe('TVDB Integration', () => {
 
     // Test the connection
     testAndVerifyMetadataConnection().then(({ response }) => {
+      if (!response) {
+        throw new Error('TVDB test connection did not return a response');
+      }
       expect(response.statusCode).to.equal(200);
       // Check TVDB connection status
       cy.get(SELECTORS.tvdbStatus).should('contain', 'Operational');
@@ -87,6 +92,9 @@ describe('TVDB Integration', () => {
       anime: 'tvdb',
       tv: 'tvdb',
     }).then(({ response }) => {
+      if (!response) {
+        throw new Error('Metadata settings save did not return a response');
+      }
       expect(response.statusCode).to.equal(200);
       expect(response.body.tv).to.equal('tvdb');
     });

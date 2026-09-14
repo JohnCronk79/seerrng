@@ -21,8 +21,13 @@ describe('User List', () => {
   it('can find the admin user and friend user in the user list', () => {
     cy.visit('/users');
 
-    cy.get('[data-testid=user-list-row]').contains(Cypress.env('ADMIN_EMAIL'));
-    cy.get('[data-testid=user-list-row]').contains(Cypress.env('USER_EMAIL'));
+    cy.env<{ ADMIN_EMAIL: string; USER_EMAIL: string }>([
+      'ADMIN_EMAIL',
+      'USER_EMAIL',
+    ]).then(({ ADMIN_EMAIL, USER_EMAIL }) => {
+      cy.get('[data-testid=user-list-row]').contains(ADMIN_EMAIL);
+      cy.get('[data-testid=user-list-row]').contains(USER_EMAIL);
+    });
   });
 
   it('can create a local user', () => {
