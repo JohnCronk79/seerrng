@@ -101,6 +101,23 @@ asks for the work to start.
 - Preserve the existing Rotten Tomatoes critic, Rotten Tomatoes audience, and
   TMDB ratings until the separate IMDb integration is designed and verified.
 
+## Pinned Cast, Crew, and Tags disclosures
+
+> “feature: add a pin to the cast crew and tags button on the media details page.”
+
+- Status: Future feature; captured but not yet started.
+- Add a pin affordance to the Cast, Crew, and Tags disclosure controls on media
+  details pages.
+- Before implementation, confirm whether pinning keeps a disclosure open only
+  during the current page visit, survives navigation within the session, or is
+  saved as a user preference. Also confirm whether each disclosure is pinned
+  independently and which Movie, Series, Music, Book, Audiobook, and Collection
+  pages should expose it.
+- Preserve the existing disclosure content, ordering, permissions, responsive
+  behavior, keyboard access, and unpinned expand/collapse behavior.
+- Add shared-state, accessibility, desktop, and narrow-layout verification when
+  this feature becomes active.
+
 ## Series collections and franchise groups
 
 > “agreed, put that as a feature: and add it to our task list.”

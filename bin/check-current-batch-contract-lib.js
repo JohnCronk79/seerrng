@@ -95,6 +95,11 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     ledger,
+    '## Pinned Cast, Crew, and Tags disclosures',
+    'must retain the pinned media-detail disclosure feature'
+  );
+  requireText(
+    ledger,
     '## Series collections and franchise groups',
     'must retain the future Series collections feature'
   );
