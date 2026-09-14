@@ -394,7 +394,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Layout/index.tsx',
-    'pointer-events-none absolute left-0 top-1',
+    'pointer-events-none absolute top-1 left-0',
     'Global Search progress must use the existing title margin without reflowing the header or page'
   );
   rejectText(
@@ -1861,7 +1861,7 @@ const validateCurrentBatchContract = (files) => {
 
   requireText(
     'src/components/Layout/SearchInput/index.tsx',
-    'w-full min-w-0 max-w-2xl',
+    'w-full max-w-2xl min-w-0',
     'the global search control must be wide enough for its complete placeholder'
   );
   requireText(
