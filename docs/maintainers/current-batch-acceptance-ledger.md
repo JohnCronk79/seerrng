@@ -7,19 +7,47 @@ this file.
 Baseline reviewed on 2026-09-14: SeerrNG `v3.21.2`, commit
 `e677ebf3451d0ddcf95bfbeb7f7715bd56f757ff`.
 
-Task-capture rule: a message prefixed with `feature:`, `bug:`, or `issue:` is an
-instruction to preserve the complete item on the task list. The tag alone is
-not authorization to begin implementing it. Implementation begins only when
-the user later places that item into an active batch or explicitly asks for the
-work to start.
+Task-capture rule: a message prefixed with `task:`, `feature:`, `bug:`, or
+`issue:` is an instruction to preserve the complete item on the task list. The
+tag alone is not authorization to begin implementing it. Implementation begins
+only when the user later places that item into an active batch or explicitly
+asks for the work to start.
 
 ## New v3.21.2 corrections
 
-- Status: Open intake. John has reported that the current server build needs
-  fixes, but the individual defects have not yet been supplied.
-- Record each defect here with its affected route, reproduction steps, expected
-  behavior, actual behavior, and representative permission/media state before
-  implementation begins.
+### Poster overlay alignment
+
+> “task: fix the poster display so media type badget, association button and availability are aligned”
+
+- Status: Open task; captured but not yet started.
+- Identify every poster-card variant that displays the media-type badge,
+  Associations action, and availability/quality state. Establish one shared
+  alignment contract without hiding or changing any state or permission rule.
+- Verify representative Movie, Series, Music, Book, Audiobook, and Collection
+  cards at desktop and narrow widths when this task becomes active.
+
+### Poster overlay shadows
+
+> “task add shadow to poster icons and text.”
+
+- Status: Open task; captured but not yet started.
+- Add the shadow through the shared poster-overlay style rather than copied or
+  inline styling. Preserve semantic colors and confirm that icons, badges, and
+  text remain legible over both light and dark artwork.
+- Verify normal, hover, focus, selected, available, unavailable, and disabled
+  poster states when this task becomes active.
+
+### Main-menu cleanup
+
+> “task: remove request stat main menu item, as well the dupicate audiobooks item.”
+
+- Status: Open task; captured but not yet started.
+- Remove the Request Status entry from the main navigation and remove the
+  duplicate Audiobooks entry. This is a navigation cleanup only: preserve the
+  underlying Request Status and Audiobooks routes and functionality unless John
+  explicitly requests their removal.
+- Audit desktop, mobile, and account/permission-specific navigation so the
+  change does not leave another duplicate or an unintended navigation gap.
 
 ## Keith-requested feature
 

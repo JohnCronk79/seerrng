@@ -45,7 +45,7 @@ const validateCurrentBatchContract = (files) => {
   const ledger = 'docs/maintainers/current-batch-acceptance-ledger.md';
   requireText(
     ledger,
-    'Task-capture rule: a message prefixed with `feature:`, `bug:`, or `issue:`',
+    'Task-capture rule: a message prefixed with `task:`, `feature:`, `bug:`, or',
     'must preserve the tagged-prompt capture rule'
   );
   requireText(
@@ -127,6 +127,21 @@ const validateCurrentBatchContract = (files) => {
     ledger,
     '## New v3.21.2 corrections',
     'must retain the pending v3.21.2 correction intake'
+  );
+  requireText(
+    ledger,
+    '### Poster overlay alignment',
+    'must retain the poster overlay alignment task'
+  );
+  requireText(
+    ledger,
+    '### Poster overlay shadows',
+    'must retain the poster overlay shadow task'
+  );
+  requireText(
+    ledger,
+    '### Main-menu cleanup',
+    'must retain the main-menu cleanup task'
   );
   rejectText(
     ledger,
