@@ -71,6 +71,42 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.21.1](https://github.com/snapetech/seerrng/compare/v3.21.0..v3.21.1) - 2026-09-14
+
+### User-facing changes
+
+#### Changed
+
+- **Runtime:** **Breaking:** SeerrNG refreshes its runtime and database dependencies, including the embedded SQLite driver, while keeping existing SQLite databases supported.
+  - **Action required:** Upgrade Node.js to 22.22.2 or newer before upgrading.
+
+#### Fixed
+
+- **Release Pipeline:** Multi-architecture container builds now include the repository's pinned dependency patches, so release images can be rebuilt reliably from a clean checkout.
+- **Discovery:** Book format switches now preserve active discovery filters, and the theme and account menus open, close, and remain usable after changing display settings.
+- **Authentication:** Installations using the default HTTP listener can now sign in and keep browser sessions with a visible network warning, while HSTS is sent only over HTTPS. Set `SEERR_ALLOW_HTTP_AUTH=false` when direct browser access must require HTTPS.
+- **Database:** Fresh SQLite installations and database restores now complete all historical migrations with the current database driver while preserving existing data and schema.
+
+#### Security
+
+- **Discovery:** Discovery links now handle untrusted query parameter names safely, preventing crafted URLs from changing application object state.
+- **Tooling:** The duplicate-detector tooling now pins a patched archive dependency so its bundled runtime no longer resolves vulnerable adm-zip versions.
+
+### 🐛 Bug Fixes
+- *(ci)* Include pnpm patches in container builds - ([cbb6224](https://github.com/snapetech/seerrng/commit/cbb6224f38a1845706b41c8fe28d52346513e6c6))
+- *(ci)* Align UI contract with formatter - ([46a9ea1](https://github.com/snapetech/seerrng/commit/46a9ea19fc8740b2167d975635d2d004fb8c14c3))
+- *(ci)* Migrate Cypress tests to v16 APIs - ([2127f6b](https://github.com/snapetech/seerrng/commit/2127f6b606252b2e6f8615801ee510b32e945d66))
+- *(deps)* Repair SQLite migrations and pin adm-zip - ([949700b](https://github.com/snapetech/seerrng/commit/949700bcb356f6233bc07de161e1006afac81b1d))
+- *(deps)* Refresh runtime dependencies and migrate SQLite driver - ([b007292](https://github.com/snapetech/seerrng/commit/b007292890a87ee203e44127c9c4cf22e105b1aa))
+- *(security)* Harden route query parsing - ([750377d](https://github.com/snapetech/seerrng/commit/750377d864d09929b100af10efc1bf4b9b46e03f))
+- *(ui)* Preserve discovery filters and migrate transitions - ([db47b39](https://github.com/snapetech/seerrng/commit/db47b39197ab7c60dca029f9ebdadedc595efbe0))
+- Restore default HTTP sign-in and scope HSTS - ([96199ad](https://github.com/snapetech/seerrng/commit/96199ad2c4f39f2837b592cf341fca3ac2ed075d))
+
+### ⚙️ Miscellaneous Tasks
+- *(ci)* Settle release-note validation - ([d08e07c](https://github.com/snapetech/seerrng/commit/d08e07cf17db8b7fb09e416f0058be03c50ec51e))
+
 ## [3.21.0](https://github.com/snapetech/seerrng/compare/v3.20.4..v3.21.0) - 2026-09-13
 
 ### User-facing changes
