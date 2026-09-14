@@ -29,6 +29,15 @@ const validateCurrentBatchContract = (files) => {
       errors.push(`${fileName}: ${reason}`);
     }
   };
+  const requireCount = (fileName, text, expected, reason) => {
+    const source = requireFile(fileName);
+    const actual = source.split(text).length - 1;
+    if (actual !== expected) {
+      errors.push(
+        `${fileName}: ${reason} (expected ${expected}, found ${actual})`
+      );
+    }
+  };
   const requireOrder = (fileName, tokens, reason) => {
     const source = requireFile(fileName);
     let previous = -1;
@@ -148,6 +157,22 @@ const validateCurrentBatchContract = (files) => {
     '### Main-menu cleanup',
     'must retain the main-menu cleanup task'
   );
+  for (const navigationFile of [
+    'src/components/Layout/Sidebar/index.tsx',
+    'src/components/Layout/MobileMenu/index.tsx',
+  ]) {
+    requireCount(
+      navigationFile,
+      "href: '/discover/audiobooks'",
+      1,
+      'primary navigation must contain exactly one Audiobooks entry'
+    );
+    rejectText(
+      navigationFile,
+      "href: '/requests/status'",
+      'primary navigation must not contain the removed Request Status entry'
+    );
+  }
   rejectText(
     ledger,
     '## Keith v3.20.2 upstream integration',

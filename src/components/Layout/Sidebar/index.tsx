@@ -9,7 +9,6 @@ import versionedAsset from '@app/utils/versionedAsset';
 import { Transition } from '@headlessui/react';
 import {
   BookOpenIcon,
-  ClockIcon,
   CogIcon,
   ExclamationTriangleIcon,
   EyeSlashIcon,
@@ -35,7 +34,6 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   browseaudiobooks: 'Audiobooks',
   browsetv: 'Series',
   requests: 'Requests',
-  requeststatus: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
   users: 'Users',
@@ -98,18 +96,6 @@ const SidebarLinks: SidebarLinkProps[] = [
     messagesKey: 'browseaudiobooks',
     svgIcon: <SpeakerWaveIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/discover\/audiobooks$/,
-  },
-  {
-    href: '/discover/audiobooks',
-    messagesKey: 'browseaudiobooks',
-    svgIcon: <SpeakerWaveIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/discover\/audiobooks$/,
-  },
-  {
-    href: '/requests/status',
-    messagesKey: 'requeststatus',
-    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/requests\/status/,
   },
   {
     href: '/blocklist',

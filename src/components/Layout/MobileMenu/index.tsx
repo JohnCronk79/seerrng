@@ -7,7 +7,6 @@ import { isOptionalCatalogPathEnabled } from '@app/utils/serviceAvailability';
 import { Transition } from '@headlessui/react';
 import {
   BookOpenIcon,
-  ClockIcon,
   CogIcon,
   EllipsisHorizontalIcon,
   ExclamationTriangleIcon,
@@ -21,7 +20,6 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   BookOpenIcon as FilledBookOpenIcon,
-  ClockIcon as FilledClockIcon,
   CogIcon as FilledCogIcon,
   ExclamationTriangleIcon as FilledExclamationTriangleIcon,
   EyeSlashIcon as FilledEyeSlashIcon,
@@ -143,20 +141,6 @@ const MobileMenu = ({
         svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
         svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
         activeRegExp: /^\/discover\/audiobooks$/,
-      },
-      {
-        href: '/discover/audiobooks',
-        content: intl.formatMessage(menuMessages.browseaudiobooks),
-        svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
-        svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
-        activeRegExp: /^\/discover\/audiobooks$/,
-      },
-      {
-        href: '/requests/status',
-        content: intl.formatMessage(menuMessages.requeststatus),
-        svgIcon: <ClockIcon className="h-6 w-6" />,
-        svgIconSelected: <FilledClockIcon className="h-6 w-6" />,
-        activeRegExp: /^\/requests\/status/,
       },
       {
         href: '/blocklist',

@@ -97,6 +97,36 @@ test('reports an incomplete Books discovery navigation contract', () => {
   );
 });
 
+test('reports duplicate Audiobooks and Request Status primary navigation entries', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: (_target, key) =>
+        String(key).includes('Layout/Sidebar') ||
+        String(key).includes('Layout/MobileMenu')
+          ? "href: '/discover/audiobooks' href: '/discover/audiobooks' href: '/requests/status'"
+          : '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'primary navigation must contain exactly one Audiobooks entry'
+      )
+    )
+  );
+  assert.ok(
+    errors.some((error) =>
+      error.includes(
+        'primary navigation must not contain the removed Request Status entry'
+      )
+    )
+  );
+});
+
 test('reports recovered visual-contract and evidence-provenance regressions', () => {
   const proxy = new Proxy(
     {},

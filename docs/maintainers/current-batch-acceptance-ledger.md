@@ -41,13 +41,15 @@ asks for the work to start.
 
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”
 
-- Status: Open task; captured but not yet started.
+- Status: Implemented in source and protected by the focused current-batch
+  contract. Fresh build and rendered desktop/mobile verification remain pending
+  under John's explicit no-build gate.
 - Remove the Request Status entry from the main navigation and remove the
   duplicate Audiobooks entry. This is a navigation cleanup only: preserve the
   underlying Request Status and Audiobooks routes and functionality unless John
   explicitly requests their removal.
-- Audit desktop, mobile, and account/permission-specific navigation so the
-  change does not leave another duplicate or an unintended navigation gap.
+- The desktop Sidebar and Mobile Menu now each contain exactly one Audiobooks
+  entry and no Request Status entry. Both underlying routes remain present.
 
 ## Keith-requested feature
 
