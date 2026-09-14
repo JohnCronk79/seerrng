@@ -78,13 +78,13 @@ export const CompactSelect = ({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="absolute left-0 top-full z-50 mt-1 max-h-60 w-max min-w-full max-w-80 overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none">
+          <Listbox.Options className="absolute top-full left-0 z-50 mt-1 max-h-60 w-max max-w-80 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none">
             {options.map((option) => (
               <Listbox.Option
                 key={option.value}
                 value={option}
                 className={({ active }) =>
-                  `relative cursor-default select-none py-1 pl-7 pr-2 ${
+                  `relative cursor-default py-1 pr-2 pl-7 select-none ${
                     active ? 'bg-indigo-600 text-white' : 'text-gray-300'
                   }`
                 }
@@ -93,7 +93,7 @@ export const CompactSelect = ({
                   <>
                     {optionSelected && (
                       <CheckIcon
-                        className="absolute left-1.5 top-1 h-4 w-4 text-indigo-200"
+                        className="absolute top-1 left-1.5 h-4 w-4 text-indigo-200"
                         aria-hidden="true"
                       />
                     )}
@@ -193,7 +193,7 @@ export const CompactRatingSelect = ({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="absolute left-0 top-full z-50 mt-1 w-max min-w-full max-w-80 overflow-visible rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none">
+          <Listbox.Options className="absolute top-full left-0 z-50 mt-1 w-max max-w-80 min-w-full overflow-visible rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none">
             {options.map((option) => {
               const hasScore = option.score !== undefined;
 
@@ -202,7 +202,7 @@ export const CompactRatingSelect = ({
                   key={option.value}
                   value={option}
                   className={({ active }) =>
-                    `relative flex cursor-default select-none items-center gap-1 py-1 pl-7 pr-2 ${
+                    `relative flex cursor-default items-center gap-1 py-1 pr-2 pl-7 select-none ${
                       active ? 'bg-indigo-600 text-white' : 'text-gray-300'
                     }`
                   }
@@ -211,7 +211,7 @@ export const CompactRatingSelect = ({
                     <>
                       {optionSelected && (
                         <CheckIcon
-                          className="absolute left-1.5 top-1 h-4 w-4 text-indigo-200"
+                          className="absolute top-1 left-1.5 h-4 w-4 text-indigo-200"
                           aria-hidden="true"
                         />
                       )}

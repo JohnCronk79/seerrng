@@ -351,8 +351,7 @@ const parseRequestStatusAction = (
 };
 
 type RequestOptionValidationResult<T> =
-  | { value: T }
-  | { error: { status: number; message: string } };
+  { value: T } | { error: { status: number; message: string } };
 
 const parseOptionalRequestOptionId = (
   value: unknown,
@@ -2896,8 +2895,7 @@ requestRoutes.put<{ requestId: string }>(
                     const requestedSeasons =
                       body.seasons === 'all' ? undefined : body.seasons;
                     const requestedSelections:
-                      | SeasonEpisodeSelection[]
-                      | undefined =
+                      SeasonEpisodeSelection[] | undefined =
                       body.seasonRequests?.length &&
                       body.seasonRequests.length > 0
                         ? body.seasonRequests

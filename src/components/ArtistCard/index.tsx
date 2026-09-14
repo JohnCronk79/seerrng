@@ -48,10 +48,10 @@ const ArtistCard = ({
       >
         <div style={{ paddingBottom: '150%' }}>
           <div className="absolute inset-0 flex h-full w-full flex-col items-center p-2">
-            <div className="absolute left-2 top-2 z-10">
+            <div className="absolute top-2 left-2 z-10">
               <MediaTypeBadge mediaType="artist" variant="card" />
             </div>
-            <div className="relative mb-4 mt-2 flex h-1/2 w-full justify-center">
+            <div className="relative mt-2 mb-4 flex h-1/2 w-full justify-center">
               {artistThumb ? (
                 <div className="relative h-full w-3/4 overflow-hidden rounded-full ring-1 ring-gray-700">
                   <CachedImage
@@ -73,7 +73,7 @@ const ArtistCard = ({
             <div className="w-full truncate text-center font-bold">{name}</div>
             {subName && (
               <div
-                className="overflow-hidden whitespace-normal text-center text-sm text-gray-300"
+                className="overflow-hidden text-center text-sm whitespace-normal text-gray-300"
                 style={{
                   WebkitLineClamp: 2,
                   display: '-webkit-box',
@@ -85,7 +85,7 @@ const ArtistCard = ({
               </div>
             )}
             <div
-              className={`absolute bottom-0 left-0 right-0 h-12 rounded-b-xl bg-gradient-to-t ${
+              className={`absolute right-0 bottom-0 left-0 h-12 rounded-b-xl bg-gradient-to-t ${
                 isHovered ? 'from-gray-800' : 'from-gray-900'
               }`}
             />

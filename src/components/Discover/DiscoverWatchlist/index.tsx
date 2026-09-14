@@ -55,7 +55,7 @@ const DiscoverWatchlist = () => {
   return (
     <>
       <PageTitle title={[title, userId ? user?.displayName : '']} />
-      <div className="mb-5 mt-1">
+      <div className="mt-1 mb-5">
         <Header
           subtext={
             userId ? (

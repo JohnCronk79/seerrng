@@ -258,7 +258,7 @@ const IssueDetails = () => {
                           ? '/profile'
                           : `/users/${issueData.createdBy.id}`
                       }
-                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                     >
                       {issueData.createdBy.displayName}
                     </Link>
@@ -316,7 +316,7 @@ const IssueDetails = () => {
                     timeStyle="short"
                   />
                 </time>
-                <div className="refreshed-detail-text-muted prose prose-sm max-w-full text-xs leading-4 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
+                <div className="refreshed-detail-text-muted prose prose-sm prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4 max-w-full text-xs leading-4">
                   <ReactMarkdown
                     skipHtml
                     allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}

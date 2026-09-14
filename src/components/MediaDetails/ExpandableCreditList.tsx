@@ -30,7 +30,7 @@ const ExpandableCreditList = ({
             key={`${credit.id}-${credit.role}-${index}`}
             href={`/person/${credit.id}`}
             prefetch={false}
-            className="group flex h-20 min-w-0 overflow-hidden rounded-lg border border-gray-700 bg-gray-900/30 transition hover:border-indigo-400 hover:bg-indigo-500/15 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="group flex h-20 min-w-0 overflow-hidden rounded-lg border border-gray-700 bg-gray-900/30 transition hover:border-indigo-400 hover:bg-indigo-500/15 focus:ring-2 focus:ring-indigo-400 focus:outline-none"
           >
             <span className="relative h-full w-[54px] flex-shrink-0 overflow-hidden border-r border-gray-700 bg-white">
               <CachedImage

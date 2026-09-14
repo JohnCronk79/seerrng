@@ -204,7 +204,7 @@ const SettingsAbout = () => {
                 href="https://www.paypal.com/donate/?business=donations%40snape.tech"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center rounded-full border border-blue-400/40 bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-700 transition hover:border-blue-500 hover:bg-blue-500/20 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-blue-300"
+                className="inline-flex items-center rounded-full border border-blue-400/40 bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-700 transition hover:border-blue-500 hover:bg-blue-500/20 focus:ring-2 focus:ring-blue-400 focus:outline-none dark:text-blue-300"
               >
                 {intl.formatMessage(messages.paypal)}
               </a>
@@ -212,7 +212,7 @@ const SettingsAbout = () => {
                 href="https://ko-fi.com/snapetech"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center rounded-full border border-rose-400/40 bg-rose-500/10 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:border-rose-500 hover:bg-rose-500/20 focus:outline-none focus:ring-2 focus:ring-rose-400 dark:text-rose-300"
+                className="inline-flex items-center rounded-full border border-rose-400/40 bg-rose-500/10 px-3 py-1.5 text-sm font-semibold text-rose-700 transition hover:border-rose-500 hover:bg-rose-500/20 focus:ring-2 focus:ring-rose-400 focus:outline-none dark:text-rose-300"
               >
                 {intl.formatMessage(messages.kofi)}
               </a>

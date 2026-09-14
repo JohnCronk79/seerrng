@@ -556,7 +556,7 @@ export const WatchProviderSelector = ({
                     role="button"
                     tabIndex={0}
                   >
-                    <div className="relative m-2 aspect-1">
+                    <div className="aspect-1 relative m-2">
                       <CachedImage
                         type="tmdb"
                         src={`https://image.tmdb.org/t/p/w185${provider.logoPath}`}
@@ -566,7 +566,7 @@ export const WatchProviderSelector = ({
                       />
                     </div>
                     {isActive && (
-                      <div className="pointer-events-none absolute -left-1 -top-1 flex items-center justify-center text-indigo-100 opacity-90">
+                      <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                         <CheckCircleIcon className="h-6 w-6" />
                       </div>
                     )}
@@ -599,7 +599,7 @@ export const WatchProviderSelector = ({
                       role="button"
                       tabIndex={0}
                     >
-                      <div className="relative m-2 aspect-1">
+                      <div className="aspect-1 relative m-2">
                         <CachedImage
                           type="tmdb"
                           src={`https://image.tmdb.org/t/p/w185${provider.logoPath}`}
@@ -609,7 +609,7 @@ export const WatchProviderSelector = ({
                         />
                       </div>
                       {isActive && (
-                        <div className="pointer-events-none absolute -left-1 -top-1 flex items-center justify-center text-indigo-100 opacity-90">
+                        <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                           <CheckCircleIcon className="h-6 w-6" />
                         </div>
                       )}

@@ -1,8 +1,7 @@
 import { withProperties } from '@app/utils/typeHelpers';
-import { Menu, Transition } from '@headlessui/react';
+import { Menu } from '@headlessui/react';
 import { ChevronDownIcon } from '@heroicons/react/24/solid';
 import {
-  Fragment,
   useRef,
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
@@ -10,11 +9,7 @@ import {
 } from 'react';
 
 type DropdownButtonType =
-  | 'primary'
-  | 'ghost'
-  | 'success'
-  | 'detailRequest'
-  | 'playback';
+  'primary' | 'ghost' | 'success' | 'detailRequest' | 'playback';
 
 interface DropdownItemProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
   buttonType?: DropdownButtonType;
@@ -59,34 +54,25 @@ const DropdownItems = ({
   ...props
 }: DropdownItemsProps) => {
   return (
-    <Transition
-      as={Fragment}
-      enter="transition ease-out duration-100"
-      enterFrom="opacity-0 scale-95"
-      enterTo="opacity-100 scale-100"
-      leave="transition ease-in duration-75"
-      leaveFrom="opacity-100 scale-100"
-      leaveTo="opacity-0 scale-95"
+    <Menu.Items
+      transition
+      className={[
+        'absolute right-0 z-40 mt-2 -mr-1 w-56 origin-top-right rounded-md p-1 shadow-lg transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0',
+        dropdownType === 'ghost'
+          ? 'border border-gray-700 bg-gray-800/80 backdrop-blur'
+          : dropdownType === 'playback'
+            ? 'border border-gray-500 bg-black/95 backdrop-blur'
+            : dropdownType === 'detailRequest'
+              ? 'border border-green-500/90 bg-gray-950/95 backdrop-blur'
+              : dropdownType === 'success'
+                ? 'bg-green-600'
+                : 'bg-indigo-600',
+        className,
+      ].join(' ')}
+      {...props}
     >
-      <Menu.Items
-        className={[
-          'absolute right-0 z-40 -mr-1 mt-2 w-56 origin-top-right rounded-md p-1 shadow-lg',
-          dropdownType === 'ghost'
-            ? 'border border-gray-700 bg-gray-800/80 backdrop-blur'
-            : dropdownType === 'playback'
-              ? 'border border-gray-500 bg-black/95 backdrop-blur'
-              : dropdownType === 'detailRequest'
-                ? 'border border-green-500/90 bg-gray-950/95 backdrop-blur'
-                : dropdownType === 'success'
-                  ? 'bg-green-600'
-                  : 'bg-indigo-600',
-          className,
-        ].join(' ')}
-        {...props}
-      >
-        <div className="py-1">{children}</div>
-      </Menu.Items>
-    </Transition>
+      <div className="py-1">{children}</div>
+    </Menu.Items>
   );
 };
 
@@ -116,7 +102,7 @@ const Dropdown = ({
       <Menu.Button
         type="button"
         className={[
-          `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center gap-2 rounded-md border font-medium leading-5 transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
+          `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center gap-2 rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
           buttonType === 'ghost'
             ? 'border-gray-600 bg-transparent text-white hover:border-gray-200 focus:border-gray-100 active:border-gray-100'
             : buttonType === 'playback'

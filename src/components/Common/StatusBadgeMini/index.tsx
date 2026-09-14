@@ -106,14 +106,14 @@ const StatusBadgeMini = memo(
 
     const badge = (
       <div
-        className={`relative inline-flex whitespace-nowrap rounded-full border-gray-700 text-xs font-semibold leading-5 ring-gray-700 ${
+        className={`relative inline-flex rounded-full border-gray-700 text-xs leading-5 font-semibold whitespace-nowrap ring-gray-700 ${
           shrink ? '' : 'ring-1'
         }`}
         role="img"
         aria-label={label || undefined}
       >
         <div className={badgeStyle.join(' ')}>{indicatorIcon}</div>
-        {quality && <span className="pl-1 pr-2 text-gray-200">{quality}</span>}
+        {quality && <span className="pr-2 pl-1 text-gray-200">{quality}</span>}
       </div>
     );
 

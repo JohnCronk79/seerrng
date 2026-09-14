@@ -231,11 +231,9 @@ authorRoutes.get<
       OPENLIBRARY_AUTHOR_REQUEST_TIMEOUT_MS
     );
     const authorResult = authorRequests.results[0] as
-      | PromiseSettledResult<AuthorResponse>
-      | undefined;
+      PromiseSettledResult<AuthorResponse> | undefined;
     const worksResult = authorRequests.results[1] as
-      | PromiseSettledResult<AuthorWorksPayload>
-      | undefined;
+      PromiseSettledResult<AuthorWorksPayload> | undefined;
 
     if (authorRequests.timedOut) {
       logger.warn('Author details request timed out', {
@@ -318,11 +316,9 @@ authorRoutes.get<{ id: string }>('/:id/works', async (req, res, next) => {
       OPENLIBRARY_AUTHOR_REQUEST_TIMEOUT_MS
     );
     const authorResult = authorRequests.results[0] as
-      | PromiseSettledResult<AuthorResponse | undefined>
-      | undefined;
+      PromiseSettledResult<AuthorResponse | undefined> | undefined;
     const worksResult = authorRequests.results[1] as
-      | PromiseSettledResult<AuthorWorksPayload>
-      | undefined;
+      PromiseSettledResult<AuthorWorksPayload> | undefined;
 
     if (authorRequests.timedOut) {
       logger.warn('Author works request timed out', {

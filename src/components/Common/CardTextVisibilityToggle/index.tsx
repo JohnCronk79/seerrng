@@ -14,8 +14,7 @@ const messages = defineMessages('components.Common.CardTextVisibilityToggle', {
 
 interface CardTextVisibilityToggleProps {
   mediaType:
-    | keyof UserSettingsCardTextResponse
-    | (keyof UserSettingsCardTextResponse)[];
+    keyof UserSettingsCardTextResponse | (keyof UserSettingsCardTextResponse)[];
   className?: string;
 }
 

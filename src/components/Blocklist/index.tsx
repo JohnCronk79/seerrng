@@ -373,7 +373,7 @@ const Blocklist = () => {
   return (
     <>
       <PageTitle title={intl.formatMessage(globalMessages.blocklist)} />
-      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+      <h2 className="mt-8 text-2xl leading-7 font-bold text-gray-100 sm:text-4xl sm:leading-9">
         <span className="text-overseerr">
           {intl.formatMessage(globalMessages.blocklist)}
         </span>
@@ -409,7 +409,7 @@ const Blocklist = () => {
               )}
             >
               {intl.formatMessage(option.label)}
-              <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
+              <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] leading-none font-semibold text-gray-100">
                 {option.count}
               </span>
             </button>
@@ -738,7 +738,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
             sizes="(min-width: 640px) 80px, 64px"
             className="object-cover"
           />
-          <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+          <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
             <MediaTypeBadge
               mediaType={getMediaTypeBadgeType(item.mediaType) ?? 'movie'}
               variant="compact"
@@ -750,18 +750,18 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
         <div className="flex min-w-0 flex-col">
           <Link
             href={mediaHref}
-            className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline"
+            className="-mt-0.5 block truncate text-lg leading-5 font-semibold text-white hover:underline"
           >
             {displayTitle}
             {year ? ` (${year})` : ''}
           </Link>
-          <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
-            <div className="min-w-0 card:col-span-2 card:pr-3">
-              <dl className="refreshed-detail-text grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+          <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1">
+            <div className="card:col-span-2 card:pr-3 min-w-0">
+              <dl className="refreshed-detail-text card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                   {intl.formatMessage(messages.mediaAndFormat)}:
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                   {item.mediaType === 'tv'
                     ? 'Series'
                     : item.mediaType === 'music'
@@ -770,7 +770,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                         ? 'Book'
                         : 'Movie'}
                 </dd>
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                   {intl.formatMessage(
                     title && isBook(title)
                       ? messages.firstPublished
@@ -778,20 +778,20 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                   )}
                   :
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                   {releaseDate || unavailable}
                 </dd>
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                   {intl.formatMessage(
                     title && isBook(title) ? messages.pages : messages.runtime
                   )}
                   :
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                   {title ? getRuntime(title, unavailable) : unavailable}
                 </dd>
-                <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
+                <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                   {secondaryDetails.map((detail) => (
                     <div className="contents" key={detail.label}>
                       <dt className="font-medium text-gray-100">
@@ -804,7 +804,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                             {value.href ? (
                               <Link
                                 href={value.href}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {value.name}
                               </Link>
@@ -817,17 +817,17 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                     </div>
                   ))}
                 </div>
-                <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
                   {intl.formatMessage(messages.genres)}:
                 </dt>
-                <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
                   {genres.length > 0
                     ? genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
                           <Link
                             href={genre.href}
-                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                           >
                             {genre.name}
                           </Link>
@@ -838,7 +838,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
               </dl>
             </div>
 
-            <dl className="refreshed-detail-text mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+            <dl className="refreshed-detail-text card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
               <dt className="font-medium text-gray-100">
                 {intl.formatMessage(messages.blocklistedBy)}:
               </dt>
@@ -902,7 +902,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
               type="button"
               disabled={isUpdating}
               onClick={() => void removeFromBlocklist()}
-              className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-40"
+              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
             >
               <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
               {intl.formatMessage(globalMessages.removefromBlocklist)}

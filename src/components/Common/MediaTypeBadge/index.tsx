@@ -12,12 +12,7 @@ import { useIntl } from 'react-intl';
 import { twMerge } from 'tailwind-merge';
 
 export type MediaTypeBadgeType =
-  | 'movie'
-  | 'tv'
-  | 'collection'
-  | 'album'
-  | 'artist'
-  | 'book';
+  'movie' | 'tv' | 'collection' | 'album' | 'artist' | 'book';
 
 export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
   movie: 'border-blue-500/70 bg-blue-700/70 text-blue-50',
@@ -124,7 +119,7 @@ const MediaTypeBadge = ({
   const badge = (
     <span
       className={twMerge(
-        'inline-flex max-w-full items-center gap-1 rounded-full border font-semibold leading-none',
+        'inline-flex max-w-full items-center gap-1 rounded-full border leading-none font-semibold',
         variantClasses[variant],
         config.tone,
         className

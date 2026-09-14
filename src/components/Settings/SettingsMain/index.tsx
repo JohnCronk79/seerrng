@@ -672,7 +672,7 @@ const SettingsMain = () => {
                     />
                   </div>
                 </div>
-                <div className="mb-2 mt-8 border-t border-gray-700 pt-6">
+                <div className="mt-8 mb-2 border-t border-gray-700 pt-6">
                   <h4 className="heading text-lg">
                     {intl.formatMessage(messages.playlistIntegrations)}
                   </h4>

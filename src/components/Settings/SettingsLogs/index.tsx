@@ -188,7 +188,7 @@ const SettingsLogs = () => {
                 <div className="text-label">
                   {intl.formatMessage(messages.time)}
                 </div>
-                <div className="mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     {intl.formatDate(activeLog.log?.timestamp, {
                       year: 'numeric',
@@ -205,7 +205,7 @@ const SettingsLogs = () => {
                 <div className="text-label">
                   {intl.formatMessage(messages.level)}
                 </div>
-                <div className="mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     <Badge
                       badgeType={
@@ -227,7 +227,7 @@ const SettingsLogs = () => {
                 <div className="text-label">
                   {intl.formatMessage(messages.label)}
                 </div>
-                <div className="mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     {activeLog.log?.label}
                   </div>
@@ -237,7 +237,7 @@ const SettingsLogs = () => {
                 <div className="text-label">
                   {intl.formatMessage(messages.message)}
                 </div>
-                <div className="col-span-2 mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="col-span-2 mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     {activeLog.log?.message}
                   </div>
@@ -248,8 +248,8 @@ const SettingsLogs = () => {
                   <div className="text-label">
                     {intl.formatMessage(messages.extraData)}
                   </div>
-                  <div className="col-span-2 mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
-                    <code className="block max-h-64 w-full overflow-auto whitespace-pre bg-gray-800 px-6 py-4 ring-1 ring-gray-700">
+                  <div className="col-span-2 mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
+                    <code className="block max-h-64 w-full overflow-auto bg-gray-800 px-6 py-4 whitespace-pre ring-1 ring-gray-700">
                       {JSON.stringify(activeLog.log?.data, null, ' ')}
                     </code>
                   </div>
@@ -264,7 +264,7 @@ const SettingsLogs = () => {
         <p className="description">
           {intl.formatMessage(messages.logsDescription, {
             code: (msg: React.ReactNode) => (
-              <code className="whitespace-normal break-words bg-gray-800/50">
+              <code className="bg-gray-800/50 break-words whitespace-normal">
                 {msg}
               </code>
             ),
@@ -272,7 +272,7 @@ const SettingsLogs = () => {
           })}
         </p>
         <div className="mt-2 flex flex-grow flex-col sm:flex-grow-0 sm:flex-row sm:justify-end">
-          <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 md:flex-grow-0">
+          <div className="mb-2 flex flex-grow sm:mr-2 sm:mb-0 md:flex-grow-0">
             <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100">
               <MagnifyingGlassIcon className="h-6 w-6" />
             </span>

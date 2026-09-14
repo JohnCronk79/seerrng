@@ -105,12 +105,7 @@ const messages = defineMessages('components.UserList', {
 });
 
 type Sort =
-  | 'created'
-  | 'updated'
-  | 'requests'
-  | 'displayname'
-  | 'usertype'
-  | 'role';
+  'created' | 'updated' | 'requests' | 'displayname' | 'usertype' | 'role';
 type SortDirection = 'asc' | 'desc';
 const USER_SORT_OPTIONS: readonly Sort[] = [
   'created',
@@ -642,7 +637,7 @@ const UserList = () => {
         <div className="mt-2 flex flex-grow flex-col lg:flex-grow-0 lg:flex-row">
           <div className="mb-2 flex flex-grow flex-col justify-between sm:flex-row lg:mb-0 lg:flex-grow-0">
             <Button
-              className="mb-2 flex-grow sm:mb-0 sm:mr-2"
+              className="mb-2 flex-grow sm:mr-2 sm:mb-0"
               buttonType="primary"
               onClick={() => setCreateModal({ isOpen: true })}
             >
@@ -774,7 +769,7 @@ const UserList = () => {
             >
               {intl.formatMessage(messages.created)}
             </SortableColumnHeader>
-            <Table.TH className="w-1/12 min-w-[12rem] whitespace-nowrap text-right">
+            <Table.TH className="w-1/12 min-w-[12rem] text-right whitespace-nowrap">
               {(data.results ?? []).length > 1 && (
                 <div className="flex justify-end">
                   <Button
@@ -825,7 +820,7 @@ const UserList = () => {
                   <div className="ml-4">
                     <Link
                       href={`/users/${user.id}`}
-                      className="text-base font-bold leading-5 transition duration-300 hover:underline"
+                      className="text-base leading-5 font-bold transition duration-300 hover:underline"
                       data-testid="user-list-username-link"
                     >
                       {user.username ||

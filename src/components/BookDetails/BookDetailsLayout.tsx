@@ -162,45 +162,45 @@ const BookDetailsLayout = ({
 
             <div className="flex min-w-0 flex-col">
               <h1
-                className="text-lg font-semibold leading-5 text-white"
+                className="text-lg leading-5 font-semibold text-white"
                 data-testid="media-title"
               >
                 {data.title}
                 {data.firstPublishYear ? ` (${data.firstPublishYear})` : ''}
               </h1>
 
-              <div className="mt-4 grid min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
-                <div className="min-w-0 card:col-span-2 card:pr-3">
-                  <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+              <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
+                <div className="card:col-span-2 card:pr-3 min-w-0">
+                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                    <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                    <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                       {mediaAndFormat}
                     </dd>
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                    <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                       {intl.formatMessage(messages.firstPublished)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                    <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                       {data.firstPublishYear ?? unavailable}
                     </dd>
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                    <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                       {intl.formatMessage(messages.pages)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                    <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                       {data.numberOfPages
                         ? intl.formatNumber(data.numberOfPages)
                         : unavailable}
                     </dd>
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                    <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                       {intl.formatMessage(messages.publisher)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-4">
+                    <dd className="card:col-start-3 card:row-start-4 m-0 truncate">
                       {data.publisher || unavailable}
                     </dd>
 
-                    <div className="hidden bg-gray-600 card:col-start-5 card:row-span-4 card:row-start-1 card:block" />
-                    <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-4 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                    <div className="card:col-start-5 card:row-span-4 card:row-start-1 card:block hidden bg-gray-600" />
+                    <div className="card:col-span-1 card:col-start-7 card:row-span-4 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.author)}:
                       </dt>
@@ -209,7 +209,7 @@ const BookDetailsLayout = ({
                           authorId ? (
                             <Link
                               href={`/author/${authorId}`}
-                              className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                              className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                             >
                               {data.author}
                             </Link>
@@ -236,11 +236,11 @@ const BookDetailsLayout = ({
                       </dd>
                     </div>
 
-                    <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-5">
+                    <dt className="card:col-start-1 card:row-start-5 mt-0.5 font-medium text-gray-100">
                       {intl.formatMessage(messages.genres)}:
                     </dt>
                     <dd
-                      className="m-0 mt-0.5 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-5"
+                      className="card:col-span-5 card:col-start-3 card:row-start-5 m-0 mt-0.5 min-w-0 break-words"
                       data-testid="media-details-genres"
                     >
                       {genres.length > 0
@@ -249,7 +249,7 @@ const BookDetailsLayout = ({
                               {index > 0 && ', '}
                               <Link
                                 href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {genre}
                               </Link>
@@ -260,7 +260,7 @@ const BookDetailsLayout = ({
                   </dl>
                 </div>
 
-                <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+                <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
                   {formatCoverage.map((coverage) => (
                     <div className="contents" key={coverage.format}>
                       <dt className="font-medium text-gray-100">
@@ -317,7 +317,7 @@ const BookDetailsLayout = ({
             <h2 className="text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.overview)}
             </h2>
-            <div className="refreshed-detail-text-muted prose prose-sm mt-4 max-w-none text-sm leading-5 prose-p:my-0 prose-p:leading-5 prose-a:text-indigo-300 prose-a:underline prose-a:hover:text-indigo-200">
+            <div className="refreshed-detail-text-muted prose prose-sm prose-p:my-0 prose-p:leading-5 prose-a:text-indigo-300 prose-a:underline prose-a:hover:text-indigo-200 mt-4 max-w-none text-sm leading-5">
               <ReactMarkdown
                 skipHtml
                 urlTransform={getSafeMarkdownHref}
@@ -360,7 +360,7 @@ const BookDetailsLayout = ({
                     <Link
                       key={genre}
                       href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
-                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                         genreTones[index % genreTones.length]
                       }`}
                     >
@@ -376,7 +376,7 @@ const BookDetailsLayout = ({
             <h2 className="mb-3 text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.bookDetails)}
             </h2>
-            <div className="grid grid-cols-1 card:grid-cols-3">
+            <div className="card:grid-cols-3 grid grid-cols-1">
               <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.firstPublished)}:
@@ -402,7 +402,7 @@ const BookDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.publisher)}:
                 </dt>
@@ -417,7 +417,7 @@ const BookDetailsLayout = ({
                     authorId ? (
                       <Link
                         href={`/author/${authorId}`}
-                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                       >
                         {data.author}
                       </Link>
@@ -436,7 +436,7 @@ const BookDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.openLibrary)}:
                 </dt>
@@ -445,7 +445,7 @@ const BookDetailsLayout = ({
                     href={`https://openlibrary.org/works/${workId}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                   >
                     {data.id}
                   </a>

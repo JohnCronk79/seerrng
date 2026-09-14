@@ -171,7 +171,7 @@ const Slider = ({
         </Button>
       </div>
       <div
-        className={`hide-scrollbar relative -my-2 -ml-4 -mr-4 overflow-y-auto overflow-x-scroll overscroll-x-contain whitespace-nowrap px-2 py-2 ${
+        className={`hide-scrollbar relative -my-2 -mr-4 -ml-4 overflow-x-scroll overflow-y-auto overscroll-x-contain px-2 py-2 whitespace-nowrap ${
           compact ? 'min-h-[5.5rem]' : 'min-h-[13.5rem] md:min-h-[17rem]'
         }`}
         ref={containerRef}
@@ -195,7 +195,7 @@ const Slider = ({
             </div>
           ))}
         {isEmpty && (
-          <div className="mb-16 mt-16 text-center font-medium text-gray-300">
+          <div className="mt-16 mb-16 text-center font-medium text-gray-300">
             {emptyMessage
               ? emptyMessage
               : intl.formatMessage(globalMessages.noresults)}

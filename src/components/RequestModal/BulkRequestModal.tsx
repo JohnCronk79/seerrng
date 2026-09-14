@@ -1015,7 +1015,7 @@ const BulkRequestModal = ({
                               )}
                           </div>
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
                           {reason ? (
                             <Badge badgeType="warning">{reason}</Badge>
                           ) : (

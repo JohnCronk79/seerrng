@@ -189,7 +189,7 @@ const StatusBadge = ({
 
   const badgeDownloadProgress = (
     <div
-      className={`absolute left-0 top-0 z-10 flex h-full ${
+      className={`absolute top-0 left-0 z-10 flex h-full ${
         status === MediaStatus.DELETED
           ? 'bg-red-600/80'
           : status === MediaStatus.PROCESSING

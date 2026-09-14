@@ -1,5 +1,6 @@
 import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import defineMessages from '@app/utils/defineMessages';
+import { parseQueryFromPath } from '@app/utils/routeQuery';
 import {
   BookOpenIcon,
   SpeakerWaveIcon,
@@ -14,8 +15,41 @@ export type BookDiscoveryFormat = 'all' | 'ebook' | 'audiobook';
 interface BookFormatTabsProps {
   format: BookDiscoveryFormat;
   query: ParsedUrlQuery;
+  currentPath?: string;
   className?: string;
 }
+
+const getBookFormatHref = (
+  pathname: string,
+  query: ParsedUrlQuery,
+  queryFormat?: 'ebook'
+): string => {
+  const queryParams = new URLSearchParams();
+
+  Object.entries(query).forEach(([key, value]) => {
+    if (key === 'page' || key === 'format') {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item) {
+          queryParams.append(key, item);
+        }
+      });
+    } else if (value) {
+      queryParams.append(key, value);
+    }
+  });
+
+  if (queryFormat) {
+    queryParams.set('format', queryFormat);
+  }
+
+  const queryString = queryParams.toString().replace(/\+/g, '%20');
+
+  return `${pathname}${queryString ? `?${queryString}` : ''}`;
+};
 
 const messages = defineMessages('components.Discover.BookFormatTabs', {
   format: 'Book format',
@@ -27,6 +61,7 @@ const messages = defineMessages('components.Discover.BookFormatTabs', {
 const BookFormatTabs = ({
   format,
   query,
+  currentPath,
   className = '',
 }: BookFormatTabsProps) => {
   const intl = useIntl();
@@ -57,9 +92,11 @@ const BookFormatTabs = ({
       pathname: '/discover/audiobooks',
     },
   ];
-  const preservedQuery = Object.fromEntries(
-    Object.entries(query).filter(([key]) => key !== 'page' && key !== 'format')
-  );
+  // During hydration Next.js can expose an incomplete router.query object.
+  // The browser path is already the user's source of truth, so use it when it
+  // contains a query string and fall back to the parsed router query otherwise.
+  const pathQuery = currentPath ? parseQueryFromPath(currentPath) : {};
+  const preservedQuery = Object.keys(pathQuery).length > 0 ? pathQuery : query;
 
   return (
     <nav
@@ -74,13 +111,11 @@ const BookFormatTabs = ({
         return (
           <Link
             key={tab.format}
-            href={{
-              pathname: tab.pathname,
-              query: {
-                ...preservedQuery,
-                ...(tab.queryFormat ? { format: tab.queryFormat } : {}),
-              },
-            }}
+            href={getBookFormatHref(
+              tab.pathname,
+              preservedQuery,
+              tab.queryFormat
+            )}
             aria-current={isSelected ? 'page' : undefined}
             data-testid={`book-format-tab-${tab.format}`}
             className={getFilterToggleButtonClass(isSelected)}

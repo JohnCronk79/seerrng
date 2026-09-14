@@ -1116,7 +1116,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.approveTooltip)}>
             <button
               type="button"
-              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-40"
+              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('approve')}
             >
@@ -1127,7 +1127,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.declineTooltip)}>
             <button
               type="button"
-              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-40"
+              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('decline')}
             >
@@ -1138,7 +1138,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.editTooltip)}>
             <button
               type="button"
-              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] font-semibold leading-none text-amber-200 transition hover:border-amber-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-40"
+              className="inline-flex h-[22px] items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => setShowEditModal(true)}
             >
@@ -1151,7 +1151,7 @@ const RequestStatusCard = ({
       <Tooltip content={intl.formatMessage(messages.retryTooltip)}>
         <button
           type="button"
-          className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] font-semibold leading-none text-amber-300 transition hover:border-amber-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex h-[22px] items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canRetry || isRetrying || isDeleting || isRemoving}
           onClick={() => void onRetry(item.request.id)}
         >
@@ -1163,7 +1163,7 @@ const RequestStatusCard = ({
         <Tooltip content={intl.formatMessage(messages.deleteTooltip)}>
           <button
             type="button"
-            className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
             disabled={isDeleting || isRetrying || isRemoving}
             onClick={() => onDelete(item.request.id)}
           >
@@ -1184,7 +1184,7 @@ const RequestStatusCard = ({
         >
           <button
             type="button"
-            className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-rose-400 bg-rose-500/25 px-2 text-[11px] font-semibold leading-none text-rose-100 transition hover:border-rose-200 hover:bg-rose-500/45 hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-300 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-rose-400 bg-rose-500/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-rose-100 transition hover:border-rose-200 hover:bg-rose-500/45 hover:text-white focus:ring-2 focus:ring-rose-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
             disabled={!canRemove || isRemoving || isRetrying || isDeleting}
             onClick={() =>
               onRemove(
@@ -1254,7 +1254,7 @@ const RequestStatusCard = ({
               <Link
                 href={detailHref}
                 aria-label={displayTitle}
-                className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 motion-reduce:transition-none sm:h-[120px] sm:w-20"
+                className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none motion-reduce:transition-none sm:h-[120px] sm:w-20"
               >
                 <CachedImage
                   src={poster.src}
@@ -1264,7 +1264,7 @@ const RequestStatusCard = ({
                   sizes="(min-width: 640px) 80px, 64px"
                   className="object-cover"
                 />
-                <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+                <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
                   {posterBadge}
                 </span>
               </Link>
@@ -1278,7 +1278,7 @@ const RequestStatusCard = ({
                   sizes="(min-width: 640px) 80px, 64px"
                   className="object-cover"
                 />
-                <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+                <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
                   {posterBadge}
                 </span>
               </div>
@@ -1289,41 +1289,41 @@ const RequestStatusCard = ({
             {detailHref ? (
               <Link
                 href={detailHref}
-                className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="-mt-0.5 block truncate text-lg leading-5 font-semibold text-white hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
               >
                 {displayTitle}
               </Link>
             ) : (
-              <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+              <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
                 {displayTitle}
               </h3>
             )}
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
-              <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="refreshed-detail-text grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
+              <div className="card:col-span-2 card:pr-3 min-w-0">
+                <dl className="refreshed-detail-text card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                     {getMediaBadge(intl, item)} · {getMediaFormat(intl, item)}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                     {getReleaseDateLabel(intl, item)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                     {displayReleaseDate}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                     {getRuntimeLabel(intl, item)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                     {getRuntimeOrPages(intl, details, item)}
                   </dd>
 
-                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
+                  <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
 
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                     {[...featuredCredits, ...secondaryDetails].map(
                       (credit, index) => (
                         <div
@@ -1337,7 +1337,7 @@ const RequestStatusCard = ({
                             {credit.href ? (
                               <Link
                                 href={credit.href}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {credit.name}
                               </Link>
@@ -1350,17 +1350,17 @@ const RequestStatusCard = ({
                     )}
                   </div>
 
-                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
                   {genres.length > 0 ? (
-                    <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
                       {genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
                           <Link
                             href={genre.href}
-                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                           >
                             {genre.name}
                           </Link>
@@ -1368,21 +1368,21 @@ const RequestStatusCard = ({
                       ))}
                     </dd>
                   ) : (
-                    <dd className="m-0 mt-0.5 card:col-span-5 card:col-start-3 card:row-start-4">
+                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5">
                       {notAvailable}
                     </dd>
                   )}
                 </dl>
               </div>
 
-              <dl className="refreshed-detail-text mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-l-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="refreshed-detail-text card:relative card:mt-0 card:border-l-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.requestedByLabel)}:
                 </dt>
                 <dd className="m-0 truncate">
                   <Link
                     href={`/users/${item.request.requestedBy.id}`}
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                   >
                     {item.request.requestedBy.displayName}
                   </Link>
@@ -1421,7 +1421,7 @@ const RequestStatusCard = ({
             <button
               type="button"
               onClick={() => scrollTimeline(-1)}
-              className="app-button app-button-default absolute left-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
+              className="app-button app-button-default absolute top-1/2 left-1 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressLeft)}
             >
               <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
@@ -1449,7 +1449,7 @@ const RequestStatusCard = ({
                   >
                     {index < timelineStages.length - 1 && (
                       <span
-                        className={`absolute left-1/2 right-[-50%] top-[6px] h-0.5 ${
+                        className={`absolute top-[6px] right-[-50%] left-1/2 h-0.5 ${
                           !terminalWithoutProgress && index < activeIndex
                             ? 'bg-emerald-400'
                             : 'bg-gray-700'
@@ -1473,7 +1473,7 @@ const RequestStatusCard = ({
                       ) : null}
                     </span>
                     <span
-                      className={`mt-1 whitespace-nowrap text-[11px] leading-4 ${
+                      className={`mt-1 text-[11px] leading-4 whitespace-nowrap ${
                         isCurrent
                           ? 'font-semibold text-white'
                           : 'refreshed-detail-text-muted'
@@ -1490,7 +1490,7 @@ const RequestStatusCard = ({
             <button
               type="button"
               onClick={() => scrollTimeline(1)}
-              className="app-button app-button-default absolute right-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
+              className="app-button app-button-default absolute top-1/2 right-1 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressRight)}
             >
               <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
@@ -2171,7 +2171,7 @@ const RequestStatus = () => {
       <PageTitle title={intl.formatMessage(messages.title)} />
       <div className="mt-8 flex items-center justify-between gap-4">
         <h2
-          className="min-w-0 flex-1 truncate text-2xl font-bold leading-7 text-gray-100 sm:overflow-visible sm:text-4xl sm:leading-9"
+          className="min-w-0 flex-1 truncate text-2xl leading-7 font-bold text-gray-100 sm:overflow-visible sm:text-4xl sm:leading-9"
           data-testid="page-header"
         >
           <span className="text-overseerr">
@@ -2295,7 +2295,7 @@ const RequestStatus = () => {
               )}
             >
               <span>{intl.formatMessage(summary.label)}</span>
-              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
+              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] leading-none font-semibold text-gray-100">
                 {summary.value}
               </span>
             </button>

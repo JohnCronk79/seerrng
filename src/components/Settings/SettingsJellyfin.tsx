@@ -318,7 +318,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           ))}
         </ul>
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           <FormattedMessage {...messages.manualscanJellyfin} />
         </h3>
@@ -354,7 +354,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
             {dataSync?.running && (
               <>
                 {dataSync.currentLibrary && (
-                  <div className="mb-2 mr-0 flex items-center sm:mb-0 sm:mr-2">
+                  <div className="mr-0 mb-2 flex items-center sm:mr-2 sm:mb-0">
                     <Badge>
                       <FormattedMessage
                         {...messages.currentlibrary}
@@ -434,7 +434,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           {intl.formatMessage(messages.scanbackground)}
         </div>
       )}
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(
             messages.jellyfinSettings,

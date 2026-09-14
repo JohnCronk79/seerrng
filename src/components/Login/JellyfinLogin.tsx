@@ -142,7 +142,7 @@ const JellyfinLogin = ({ revalidate, serverType }: JellyfinLoginProps) => {
                     })}
                   </h2>
 
-                  <div className="mb-4 mt-1">
+                  <div className="mt-1 mb-4">
                     <div className="form-input-field">
                       <Field
                         id="username"
@@ -166,7 +166,7 @@ const JellyfinLogin = ({ revalidate, serverType }: JellyfinLoginProps) => {
                     )}
                   </div>
 
-                  <div className="mb-2 mt-1">
+                  <div className="mt-1 mb-2">
                     <div className="form-input-field">
                       <SensitiveInput
                         as="field"

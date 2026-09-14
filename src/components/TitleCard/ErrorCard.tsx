@@ -55,15 +55,15 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
       data-testid="title-card"
     >
-      <div className="relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover shadow outline-none ring-1 ring-gray-700 transition duration-300">
+      <div className="relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover shadow ring-1 ring-gray-700 transition duration-300 outline-none">
         <div className="absolute inset-0 h-full w-full overflow-hidden">
-          <div className="absolute left-0 right-0 flex items-center justify-between p-2">
+          <div className="absolute right-0 left-0 flex items-center justify-between p-2">
             <div
               className={`pointer-events-none z-40 rounded-full shadow ${
                 type === 'movie' ? 'bg-blue-500' : 'bg-purple-600'
               }`}
             >
-              <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
+              <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium tracking-wider text-white uppercase sm:h-5">
                 {type === 'movie'
                   ? intl.formatMessage(globalMessages.movie)
                   : intl.formatMessage(globalMessages.tvshow)}
@@ -79,7 +79,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
           <div className="flex h-full w-full items-end">
             <div className="px-2 pb-11 text-white">
               <h1
-                className="line-clamp-3 whitespace-normal break-words text-xl font-bold leading-tight"
+                className="line-clamp-3 text-xl leading-tight font-bold break-words whitespace-normal"
                 data-testid="title-card-title"
               >
                 {intl.formatMessage(messages.mediaerror, {
@@ -90,7 +90,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
                   ),
                 })}
               </h1>
-              <div className="line-clamp-3 whitespace-normal break-words text-xs">
+              <div className="line-clamp-3 text-xs break-words whitespace-normal">
                 <div className="flex items-center">
                   <span className="mr-2 font-bold text-gray-400">
                     {intl.formatMessage(messages.tmdbid)}
@@ -109,7 +109,7 @@ const ErrorCard = ({ id, tmdbId, tvdbId, type, canExpand }: ErrorCardProps) => {
             </div>
           </div>
 
-          <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 py-2">
+          <div className="absolute right-0 bottom-0 left-0 flex justify-between px-2 py-2">
             <Button
               buttonType="danger"
               buttonSize="sm"

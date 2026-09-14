@@ -104,7 +104,7 @@ const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
 
         {sameMedium.length > 0 && (
           <div className="mb-2">
-            <div className="px-2 pb-1 pt-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+            <div className="px-2 pt-2 pb-1 text-xs font-bold tracking-wider text-gray-500 uppercase">
               {similarLabel}
             </div>
             {sameMedium.map((edge) => (
@@ -118,7 +118,7 @@ const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
 
         {connected.length > 0 && (
           <div>
-            <div className="px-2 pb-1 pt-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+            <div className="px-2 pt-2 pb-1 text-xs font-bold tracking-wider text-gray-500 uppercase">
               {intl.formatMessage(messages.alsoconnected)}
             </div>
             {connected.map((edge) => (

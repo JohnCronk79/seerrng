@@ -1,8 +1,5 @@
 export type InlineStyleProperty =
-  | 'overflow'
-  | 'overscrollBehavior'
-  | 'overscrollBehaviorY'
-  | 'touchAction';
+  'overflow' | 'overscrollBehavior' | 'overscrollBehaviorY' | 'touchAction';
 
 type InlineStyleLeaseState = {
   originalValue: string;

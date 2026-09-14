@@ -38,7 +38,7 @@ const LibraryItem = ({
 
   return (
     <li className="col-span-1 flex rounded-md shadow-sm">
-      <div className="flex flex-1 items-center justify-between truncate rounded-md border-b border-r border-t border-gray-700 bg-gray-600">
+      <div className="flex flex-1 items-center justify-between truncate rounded-md border-t border-r border-b border-gray-700 bg-gray-600">
         <div className="flex min-w-0 flex-1 cursor-default items-center gap-2 truncate px-4 py-6 text-sm leading-5">
           {badgeType && (
             <MediaTypeBadge
@@ -81,7 +81,7 @@ const LibraryItem = ({
             }}
             className={`${
               isEnabled ? 'bg-indigo-600' : 'bg-gray-700'
-            } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring`}
+            } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:ring focus:outline-none`}
           >
             <span
               aria-hidden="true"

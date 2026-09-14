@@ -529,7 +529,7 @@ const AdvancedRequester = ({
             {({ open }) => (
               <>
                 <Listbox.Label
-                  className={`inline-flex h-full flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-2 py-0 font-semibold text-indigo-100 transition-colors ${
+                  className={`inline-flex h-full flex-shrink-0 items-center justify-center rounded-l-[5px] border-r border-gray-600 px-2 py-0 font-semibold whitespace-nowrap text-indigo-100 transition-colors ${
                     selectedUser.id !== currentUser?.id
                       ? 'bg-indigo-500/35 text-white'
                       : ''
@@ -539,7 +539,7 @@ const AdvancedRequester = ({
                     {intl.formatMessage(messages.requestedBy)}
                   </span>
                 </Listbox.Label>
-                <Listbox.Button className="inline-grid h-full max-w-[min(24rem,55vw)] grid-cols-[minmax(6rem,max-content)_auto] items-center gap-2 rounded-r-[5px] px-2 py-0 text-[11px] font-semibold leading-none text-gray-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-400">
+                <Listbox.Button className="inline-grid h-full max-w-[min(24rem,55vw)] grid-cols-[minmax(6rem,max-content)_auto] items-center gap-2 rounded-r-[5px] px-2 py-0 text-[11px] leading-none font-semibold text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset">
                   <span className="grid min-w-0">
                     {(filteredUserData ?? []).map((candidate) => (
                       <span
@@ -570,13 +570,13 @@ const AdvancedRequester = ({
                 >
                   <Listbox.Options
                     static
-                    className="absolute bottom-full right-0 z-50 mb-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
+                    className="absolute right-0 bottom-full z-50 mb-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
                   >
                     {(filteredUserData ?? []).map((candidate) => (
                       <Listbox.Option key={candidate.id} value={candidate}>
                         {({ selected, active }) => (
                           <div
-                            className={`relative cursor-default select-none whitespace-nowrap py-1.5 pl-7 pr-3 ${
+                            className={`relative cursor-default py-1.5 pr-3 pl-7 whitespace-nowrap select-none ${
                               active
                                 ? 'bg-indigo-600 text-white'
                                 : 'text-gray-300'
@@ -591,7 +591,7 @@ const AdvancedRequester = ({
                             </span>
                             {selected && (
                               <CheckIcon
-                                className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                                className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2"
                                 aria-hidden="true"
                               />
                             )}
@@ -625,7 +625,7 @@ const AdvancedRequester = ({
           className={
             panelOnly
               ? 'hidden'
-              : 'flex cursor-pointer list-none items-center gap-3 p-3 focus:outline-none focus:ring-2 focus:ring-indigo-400'
+              : 'flex cursor-pointer list-none items-center gap-3 p-3 focus:ring-2 focus:ring-indigo-400 focus:outline-none'
           }
         >
           <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded ring-1 ring-gray-600">
@@ -692,7 +692,7 @@ const AdvancedRequester = ({
                     onChange={(e) => setSelectedServer(Number(e.target.value))}
                     onBlur={(e) => setSelectedServer(Number(e.target.value))}
                     aria-label={intl.formatMessage(messages.destinationserver)}
-                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
                   >
                     {serviceServers.map((server) => (
                       <option
@@ -729,7 +729,7 @@ const AdvancedRequester = ({
                         setSelectedMetadataProfile(Number(e.target.value))
                       }
                       aria-label={intl.formatMessage(messages.metadataprofile)}
-                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
                       disabled={isValidating || !serverData}
                     >
                       {(isValidating || !serverData) && (
@@ -776,7 +776,7 @@ const AdvancedRequester = ({
                     onChange={(e) => setSelectedProfile(Number(e.target.value))}
                     onBlur={(e) => setSelectedProfile(Number(e.target.value))}
                     aria-label={intl.formatMessage(messages.qualityprofile)}
-                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
                     disabled={isValidating || !serverData}
                   >
                     {(isValidating || !serverData) && (
@@ -824,7 +824,7 @@ const AdvancedRequester = ({
                       onChange={(e) => setSelectedFolder(e.target.value)}
                       onBlur={(e) => setSelectedFolder(e.target.value)}
                       aria-label={intl.formatMessage(messages.rootfolder)}
-                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
                       disabled={isValidating || !serverData}
                     >
                       {(isValidating || !serverData) && (
@@ -872,7 +872,7 @@ const AdvancedRequester = ({
                         setSelectedLanguage(parseInt(e.target.value))
                       }
                       aria-label={intl.formatMessage(messages.languageprofile)}
-                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
                       disabled={isValidating || !serverData}
                     >
                       {(isValidating || !serverData) && (
@@ -922,7 +922,7 @@ const AdvancedRequester = ({
                         type="button"
                         key={`folder-card-${folder.id}`}
                         onClick={() => setSelectedFolder(folder.path ?? '')}
-                        className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                        className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                           isSelected
                             ? 'bg-indigo-500/20 text-indigo-200'
                             : 'text-gray-300 hover:bg-gray-800/80 hover:text-white'

@@ -13,10 +13,7 @@ type CollectionRequestStatePart = {
 };
 
 export type CollectionPartRequestPresentation =
-  | 'ready'
-  | 'requested'
-  | 'available'
-  | 'blocklisted';
+  'ready' | 'requested' | 'available' | 'blocklisted';
 
 const isActiveRequest = (status: MediaRequestStatus): boolean =>
   status !== MediaRequestStatus.DECLINED &&

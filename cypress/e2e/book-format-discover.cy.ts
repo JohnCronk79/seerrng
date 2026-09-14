@@ -63,9 +63,18 @@ describe('Book discovery formats', () => {
       'aria-current',
       'page'
     );
+    // Cypress treats a rendered ancestor with content-visibility: auto as
+    // hidden, so assert the badge's rendered geometry instead of using its
+    // visibility heuristic.
+    cy.get('[data-testid=title-card]').first().scrollIntoView();
     cy.get('[data-testid=title-card]')
       .first()
       .find('[title=Audiobook]')
-      .should('be.visible');
+      .should('have.attr', 'title', 'Audiobook')
+      .and(($badge) => {
+        const { width, height } = $badge[0].getBoundingClientRect();
+        expect(width).to.be.greaterThan(0);
+        expect(height).to.be.greaterThan(0);
+      });
   });
 });

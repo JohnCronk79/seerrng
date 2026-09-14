@@ -191,7 +191,7 @@ const SeriesSeasonEpisodeSelector = ({
           <span>Season</span>
           <span className="text-center">Episodes</span>
         </div>
-        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1">
+        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-1">
           {seasons.map((season) => {
             const seasonSelection = selections.find(
               (selection) => selection.seasonNumber === season.seasonNumber
@@ -217,7 +217,7 @@ const SeriesSeasonEpisodeSelector = ({
                 <button
                   type="button"
                   onClick={() => onActiveSeasonChange(season.seasonNumber)}
-                  className="truncate text-left text-xs font-medium text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  className="truncate text-left text-xs font-medium text-gray-100 focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                 >
                   {season.seasonNumber === 0
                     ? 'Specials'
@@ -245,7 +245,7 @@ const SeriesSeasonEpisodeSelector = ({
           <span>Episodes</span>
           <span>Title</span>
         </div>
-        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1">
+        <div className="max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-1">
           {!data && !error && activeSeason >= 0 && (
             <div className="flex h-20 items-center justify-center">
               <LoadingSpinner />

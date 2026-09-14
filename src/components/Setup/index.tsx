@@ -263,7 +263,7 @@ const Setup = () => {
           ) ?? []
         }
       />
-      <div className="absolute right-4 top-4 z-50">
+      <div className="absolute top-4 right-4 z-50">
         <LanguagePicker />
       </div>
       <div className="relative z-40 px-4 sm:mx-auto sm:w-full sm:max-w-4xl">
@@ -329,7 +329,7 @@ const Setup = () => {
                         setCurrentStep(2);
                       }}
                       disabled={!transportReady}
-                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
+                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm leading-5 font-medium text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configjellyfin)}
                     </button>
@@ -346,7 +346,7 @@ const Setup = () => {
                         setCurrentStep(2);
                       }}
                       disabled={!transportReady}
-                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
+                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm leading-5 font-medium text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configplex)}
                     </button>
@@ -363,7 +363,7 @@ const Setup = () => {
                         setCurrentStep(2);
                       }}
                       disabled={!transportReady}
-                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm font-medium leading-5 text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
+                      className="button-md relative z-10 inline-flex h-full w-full items-center justify-center rounded-md border border-gray-600 bg-transparent px-4 py-2 text-sm leading-5 font-medium text-white transition duration-150 ease-in-out hover:z-20 hover:border-gray-200 focus:z-20 focus:border-gray-100 focus:outline-none active:border-gray-100"
                     >
                       {intl.formatMessage(messages.configemby)}
                     </button>

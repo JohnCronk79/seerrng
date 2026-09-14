@@ -310,19 +310,19 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
               />
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold leading-5 text-white">
+              <h1 className="text-lg leading-5 font-semibold text-white">
                 {data.name}
               </h1>
-              <dl className="mt-4 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_minmax(0,1fr)_1px_max-content_minmax(0,1fr)]">
+              <dl className="card:grid-cols-[max-content_minmax(0,1fr)_1px_max-content_minmax(0,1fr)] mt-4 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.collectionSize)}:
                 </dt>
                 <dd className="m-0">{data.parts.length}</dd>
-                <div className="hidden bg-gray-600 card:col-start-3 card:row-span-4 card:row-start-1 card:block" />
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                <div className="card:col-start-3 card:row-span-4 card:row-start-1 card:block hidden bg-gray-600" />
+                <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                   {intl.formatMessage(messages.genres)}:
                 </dt>
-                <dd className="m-0 min-w-0 break-words card:col-start-2 card:row-start-4">
+                <dd className="card:col-start-2 card:row-start-4 m-0 min-w-0 break-words">
                   {genreIds.length > 0
                     ? genreIds.map((genreId, index) => (
                         <span key={genreId}>

@@ -594,36 +594,36 @@ const TvRequestModal = ({
           </div>
 
           <div className="flex min-w-0 flex-col">
-            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+            <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
               {data?.name}
               {releaseYear ? ` (${releaseYear})` : ''}
             </h3>
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
-              <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
+              <div className="card:col-span-2 card:pr-3 min-w-0">
+                <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400">
+                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                     Series · {effectiveIs4k ? '4K' : 'HD'}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                     {intl.formatMessage(messages.releaseDate)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                     {firstAirDate}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                     {intl.formatMessage(messages.runtime)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                     {runtime
                       ? `${intl.formatNumber(runtime)} minutes`
                       : notAvailable}
                   </dd>
-                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
+                  <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                     {featuredCrew.map((person) => (
                       <div
                         className="contents"
@@ -640,10 +640,10 @@ const TvRequestModal = ({
                     </dt>
                     <dd className="m-0 truncate">{network}</dd>
                   </div>
-                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
-                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                  <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
                     {data?.genres?.length
                       ? data.genres
                           .slice(0, 3)
@@ -653,7 +653,7 @@ const TvRequestModal = ({
                   </dd>
                 </dl>
               </div>
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>
@@ -772,7 +772,7 @@ const TvRequestModal = ({
             type="button"
             onClick={closeAction}
             data-testid="modal-cancel-button"
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none"
           >
             <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {editRequest
@@ -784,7 +784,7 @@ const TvRequestModal = ({
             disabled={requestDisabled}
             onClick={() => void submitAction()}
             data-testid="modal-ok-button"
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {requestButtonLabel}

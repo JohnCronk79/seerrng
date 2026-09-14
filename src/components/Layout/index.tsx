@@ -163,7 +163,7 @@ const Layout = ({ children }: LayoutProps) => {
       <div className="relative mb-16 flex w-0 min-w-0 flex-1 flex-col lg:ml-64">
         <PullToRefresh />
         <div
-          className={`searchbar fixed left-0 right-0 top-0 z-10 flex flex-shrink-0 transition duration-300 ${
+          className={`searchbar fixed top-0 right-0 left-0 z-10 flex flex-shrink-0 transition duration-300 ${
             isScrolled ? 'app-searchbar-scrolled' : 'bg-transparent'
           } lg:left-64`}
           style={{
@@ -171,7 +171,7 @@ const Layout = ({ children }: LayoutProps) => {
             WebkitBackdropFilter: isScrolled ? 'blur(5px)' : undefined,
           }}
         >
-          <div className="flex flex-1 items-center justify-between px-4 md:pl-4 md:pr-4">
+          <div className="flex flex-1 items-center justify-between px-4 md:pr-4 md:pl-4">
             <button
               className={`mr-2 hidden text-white sm:block ${
                 isScrolled ? 'opacity-90' : 'opacity-70'
@@ -206,7 +206,7 @@ const Layout = ({ children }: LayoutProps) => {
               <UserWarnings />
               <div className="relative">
                 <div
-                  className="pointer-events-none absolute left-0 top-1 flex h-6 items-center gap-2 text-sm text-gray-200"
+                  className="pointer-events-none absolute top-1 left-0 flex h-6 items-center gap-2 text-sm text-gray-200"
                   role="status"
                   aria-live="polite"
                 >

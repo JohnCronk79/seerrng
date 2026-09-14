@@ -59,10 +59,7 @@ interface TmdbPaginatedResponse {
 
 export interface TmdbSearchMultiResponse extends TmdbPaginatedResponse {
   results: (
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
+    TmdbMovieResult | TmdbTvResult | TmdbPersonResult | TmdbCollectionResult
   )[];
 }
 

@@ -25,6 +25,7 @@ import useDiscoverScrollRestoration from '@app/hooks/useDiscoverScrollRestoratio
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import defineMessages from '@app/utils/defineMessages';
+import { parseQueryFromPath } from '@app/utils/routeQuery';
 import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
@@ -32,7 +33,7 @@ import {
 } from '@heroicons/react/24/solid';
 import type { BookResult } from '@server/models/Book';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Discover.DiscoverBooks', {
@@ -67,12 +68,28 @@ interface DiscoverBooksProps {
 const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
   const intl = useIntl();
   const router = useRouter();
-  const update = useBatchUpdateQueryParams({});
-  const query =
-    typeof router.query.search === 'string' ? router.query.search : '';
+  const [currentPath, setCurrentPath] = useState<string>();
+  useEffect(() => {
+    const syncCurrentPath = () => {
+      setCurrentPath(`${window.location.pathname}${window.location.search}`);
+    };
+
+    syncCurrentPath();
+    router.events.on('routeChangeComplete', syncCurrentPath);
+
+    return () => {
+      router.events.off('routeChangeComplete', syncCurrentPath);
+    };
+  }, [router.events]);
+  const routeQuery = currentPath
+    ? parseQueryFromPath(currentPath)
+    : router.query;
+  const isRouteReady = currentPath !== undefined;
+  const update = useBatchUpdateQueryParams(routeQuery);
+  const query = typeof routeQuery.search === 'string' ? routeQuery.search : '';
   const routedFormat =
-    router.query.format === 'ebook' || router.query.format === 'audiobook'
-      ? router.query.format
+    routeQuery.format === 'ebook' || routeQuery.format === 'audiobook'
+      ? routeQuery.format
       : undefined;
   const activeFormat = routedFormat ?? format;
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
@@ -82,19 +99,19 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
     setSearch(query);
   }, [query, setSearch]);
   const subject =
-    typeof router.query.subject === 'string' ? router.query.subject : '';
+    typeof routeQuery.subject === 'string' ? routeQuery.subject : '';
   const firstPublishYear =
-    typeof router.query.firstPublishYear === 'string'
-      ? router.query.firstPublishYear
+    typeof routeQuery.firstPublishYear === 'string'
+      ? routeQuery.firstPublishYear
       : '';
   const language =
-    typeof router.query.language === 'string' ? router.query.language : '';
+    typeof routeQuery.language === 'string' ? routeQuery.language : '';
   const minRating =
-    typeof router.query.minRating === 'string' ? router.query.minRating : '';
+    typeof routeQuery.minRating === 'string' ? routeQuery.minRating : '';
   const sortBy =
-    typeof router.query.sortBy === 'string' &&
-    bookSortOptions.has(router.query.sortBy)
-      ? router.query.sortBy
+    typeof routeQuery.sortBy === 'string' &&
+    bookSortOptions.has(routeQuery.sortBy)
+      ? routeQuery.sortBy
       : 'ranked';
   const discover = useDiscover<BookResult>(
     '/api/v1/discover/books',
@@ -111,6 +128,7 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
       responseVersion: 2,
     },
     {
+      enabled: isRouteReady,
       randomizeOrder: sortBy === 'ranked',
       showErrorToast: false,
       hideErrorWithResults: false,
@@ -118,6 +136,7 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
   );
   useSearchActivityReporter(
     Boolean(search.trim()) &&
+      isRouteReady &&
       (search.trim() !== query.trim() ||
         discover.isLoadingInitialData ||
         discover.isValidating),
@@ -127,7 +146,8 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
     mediaType: 'book',
     itemCount: discover.titles.length,
     shuffleSeed: discover.shuffleSeed,
-    isLoading: discover.isLoadingInitialData || discover.isLoadingMore,
+    isLoading:
+      !isRouteReady || discover.isLoadingInitialData || discover.isLoadingMore,
     isReachingEnd: discover.isReachingEnd,
     fetchMore: discover.fetchMore,
   });
@@ -186,7 +206,11 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
         <div className="app-filter-section-heading">
           {intl.formatMessage(messages.mediaFilters)}
         </div>
-        <BookFormatTabs format={activeFormat} query={router.query} />
+        <BookFormatTabs
+          format={activeFormat}
+          query={routeQuery}
+          currentPath={currentPath}
+        />
         <div className="app-filter-section-heading">
           {intl.formatMessage(messages.filters)}
         </div>
@@ -358,8 +382,9 @@ const DiscoverBooks = ({ format = 'ebook' }: DiscoverBooksProps) => {
           preferredBookFormat={
             activeFormat === 'audiobook' ? 'audiobook' : 'ebook'
           }
-          isEmpty={discover.isEmpty}
+          isEmpty={isRouteReady && discover.isEmpty}
           isLoading={
+            !isRouteReady ||
             discover.isLoadingInitialData ||
             (discover.isLoadingMore && discover.titles.length > 0)
           }

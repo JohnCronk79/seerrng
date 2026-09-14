@@ -12,6 +12,11 @@ interface SelectableDownloadListProps {
   items: SelectableDownloadListItem[];
 }
 
+type SelectionModifiers = Pick<
+  MouseEvent<HTMLLIElement>,
+  'shiftKey' | 'ctrlKey' | 'metaKey'
+>;
+
 const SelectableDownloadList = ({ items }: SelectableDownloadListProps) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchorId, setAnchorId] = useState<string | undefined>();
@@ -51,17 +56,14 @@ const SelectableDownloadList = ({ items }: SelectableDownloadListProps) => {
     [anchorId, getRangeIds]
   );
 
-  const handleRowClick = useCallback(
-    (event: MouseEvent<HTMLLIElement>, id: string) => {
-      event.preventDefault();
-      listRef.current?.focus();
-
-      if (event.shiftKey) {
-        selectRange(id, event.ctrlKey || event.metaKey);
+  const selectRow = useCallback(
+    (id: string, modifiers: SelectionModifiers) => {
+      if (modifiers.shiftKey) {
+        selectRange(id, modifiers.ctrlKey || modifiers.metaKey);
         return;
       }
 
-      if (event.ctrlKey || event.metaKey) {
+      if (modifiers.ctrlKey || modifiers.metaKey) {
         setSelectedIds((currentIds) =>
           currentIds.includes(id)
             ? currentIds.filter((currentId) => currentId !== id)
@@ -75,6 +77,27 @@ const SelectableDownloadList = ({ items }: SelectableDownloadListProps) => {
       setAnchorId(id);
     },
     [selectRange]
+  );
+
+  const handleRowClick = useCallback(
+    (event: MouseEvent<HTMLLIElement>, id: string) => {
+      event.preventDefault();
+      listRef.current?.focus();
+      selectRow(id, event);
+    },
+    [selectRow]
+  );
+
+  const handleRowKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLLIElement>, id: string) => {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+
+      event.preventDefault();
+      selectRow(id, event);
+    },
+    [selectRow]
   );
 
   const handleKeyDown = useCallback(
@@ -95,7 +118,7 @@ const SelectableDownloadList = ({ items }: SelectableDownloadListProps) => {
       role="listbox"
       aria-multiselectable="true"
       onKeyDown={handleKeyDown}
-      className="select-none outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+      className="outline-none select-none focus-visible:ring-2 focus-visible:ring-indigo-500"
     >
       {items.map((item) => {
         const selected = selectedIds.includes(item.id);
@@ -104,11 +127,12 @@ const SelectableDownloadList = ({ items }: SelectableDownloadListProps) => {
             key={item.id}
             role="option"
             aria-selected={selected}
-            tabIndex={-1}
+            tabIndex={0}
             onClick={(event) => handleRowClick(event, item.id)}
+            onKeyDown={(event) => handleRowKeyDown(event, item.id)}
             className={`cursor-default border-b border-gray-700 transition-colors last:border-b-0 ${
               selected
-                ? 'bg-indigo-500/25 ring-1 ring-inset ring-indigo-400/60'
+                ? 'bg-indigo-500/25 ring-1 ring-indigo-400/60 ring-inset'
                 : 'hover:bg-gray-700/40'
             }`}
           >

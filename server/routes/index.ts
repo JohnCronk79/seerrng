@@ -620,8 +620,7 @@ router.get('/backdrops', publicBackdropsRateLimit, async (req, res, next) => {
         timeWindow: 'week',
       })
     ).results.filter((result) => !isPerson(result)) as (
-      | TmdbMovieResult
-      | TmdbTvResult
+      TmdbMovieResult | TmdbTvResult
     )[];
 
     return res.status(200).json(

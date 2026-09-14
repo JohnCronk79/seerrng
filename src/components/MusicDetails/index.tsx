@@ -403,8 +403,8 @@ const MusicDetails = () => {
             <CogIcon className="!mr-0" />
             {openIssues.length > 0 && (
               <>
-                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
-                <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
+                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-600" />
+                <span className="absolute -top-1 -right-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
               </>
             )}
           </Button>

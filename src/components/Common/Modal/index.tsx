@@ -99,15 +99,9 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       <Transition.Child
         as="div"
         data-testid="modal-root"
-        className={`fixed bottom-0 left-0 right-0 top-0 z-[60] flex h-full w-full justify-center overflow-y-auto bg-gray-800/70 ${
-          alignTop ? 'items-start pb-4 pt-[49px] sm:pt-[65px]' : 'items-center'
-        }`}
-        enter="transition-opacity duration-300"
-        enterFrom="opacity-0"
-        enterTo="opacity-100"
-        leave="transition-opacity duration-300"
-        leaveFrom="opacity-100"
-        leaveTo="opacity-0"
+        className={`fixed top-0 right-0 bottom-0 left-0 z-[60] flex h-full w-full justify-center overflow-y-auto bg-gray-800/70 ${
+          alignTop ? 'items-start pt-[49px] pb-4 sm:pt-[65px]' : 'items-center'
+        } transition-opacity duration-300 data-closed:opacity-0`}
         ref={parentRef}
       >
         <Transition
@@ -125,11 +119,11 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
           </div>
         </Transition>
         <Transition
-          className={`relative inline-block w-full overflow-auto bg-gray-800 px-4 pb-4 pt-4 text-left align-bottom shadow-xl ring-1 ring-gray-700 transition-all sm:max-w-3xl sm:rounded-lg sm:align-middle ${
+          className={`relative inline-block w-full overflow-auto bg-gray-800 px-4 pt-4 pb-4 text-left align-bottom shadow-xl ring-1 ring-gray-700 transition-all sm:max-w-3xl sm:rounded-lg sm:align-middle ${
             alignTop
               ? 'my-0 max-h-[calc(100dvh-65px)] sm:max-h-[calc(100dvh-81px)]'
               : 'hide-scrollbar sm:my-8'
-          } ${dialogClass}`}
+          } ${dialogClass} transition duration-300 data-closed:scale-75 data-closed:opacity-0`}
           role="dialog"
           aria-modal="true"
           aria-labelledby="modal-headline"
@@ -141,17 +135,11 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                 }
           }
           as="div"
-          enter="transition duration-300"
-          enterFrom="opacity-0 scale-75"
-          enterTo="opacity-100 scale-100"
-          leave="transition-opacity duration-300"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
           show={!loading}
           ref={modalRef}
         >
           {backdrop && (
-            <div className="absolute left-0 right-0 top-0 z-0 h-64 max-h-full w-full">
+            <div className="absolute top-0 right-0 left-0 z-0 h-64 max-h-full w-full">
               <CachedImage
                 type="tmdb"
                 alt=""
@@ -171,7 +159,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                 <div className="flex flex-col space-y-1">
                   {title && (
                     <span
-                      className="text-overseerr truncate pb-0.5 text-2xl font-bold leading-6"
+                      className="text-overseerr truncate pb-0.5 text-2xl leading-6 font-bold"
                       id="modal-headline"
                       data-testid="modal-title"
                     >
@@ -180,7 +168,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                   )}
                   {subTitle && (
                     <span
-                      className="truncate text-lg font-semibold leading-6 text-gray-200"
+                      className="truncate text-lg leading-6 font-semibold text-gray-200"
                       id="modal-headline"
                       data-testid="modal-title"
                     >

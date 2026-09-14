@@ -567,8 +567,7 @@ class ExternalAPI {
       : Symbol(pendingKey);
     if (coalesce) {
       const pendingRequest = ExternalAPI.pendingRequests.get(requestKey) as
-        | Promise<T>
-        | undefined;
+        Promise<T> | undefined;
       if (pendingRequest) {
         return pendingRequest;
       }

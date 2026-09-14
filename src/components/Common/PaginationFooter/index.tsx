@@ -59,7 +59,7 @@ const PaginationFooter = ({
           ))}
         </select>
       </label>
-      <span className="justify-self-center whitespace-nowrap text-sm text-gray-400">
+      <span className="justify-self-center text-sm whitespace-nowrap text-gray-400">
         {intl.formatMessage(messages.page, {
           page,
           pages: normalizedTotalPages,

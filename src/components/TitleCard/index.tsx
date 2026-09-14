@@ -572,7 +572,7 @@ const TitleCard = ({
         </>
       )}
       <div
-        className={`group relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover outline-none ring-1 transition duration-300 ${
+        className={`group relative aspect-[2/3] transform-gpu cursor-default overflow-hidden rounded-xl bg-gray-800 bg-cover ring-1 transition duration-300 outline-none ${
           showDetail
             ? 'scale-105 shadow-lg ring-gray-500'
             : 'scale-100 shadow ring-gray-700'
@@ -601,7 +601,7 @@ const TitleCard = ({
             fill
             priority={priority}
           />
-          <div className="absolute left-0 right-0 p-2">
+          <div className="absolute right-0 left-0 p-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 {isBook ? (
@@ -755,7 +755,7 @@ const TitleCard = ({
                     {year && <div className="text-sm font-medium">{year}</div>}
 
                     <h1
-                      className={`whitespace-normal break-words text-xl font-bold leading-tight ${
+                      className={`text-xl leading-tight font-bold break-words whitespace-normal ${
                         showFullDetailOverlay ? 'line-clamp-3' : 'line-clamp-2'
                       }`}
                       data-testid="title-card-title"
@@ -769,7 +769,7 @@ const TitleCard = ({
                     )}
                     {showFullDetailOverlay && (
                       <div
-                        className={`whitespace-normal break-words text-xs ${
+                        className={`text-xs break-words whitespace-normal ${
                           canShowRequestButton ? 'line-clamp-3' : 'line-clamp-5'
                         }`}
                       >
@@ -780,7 +780,7 @@ const TitleCard = ({
                 </div>
               </Link>
 
-              <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 py-2">
+              <div className="absolute right-0 bottom-0 left-0 flex justify-between px-2 py-2">
                 {canShowRequestButton && showFullDetailOverlay && (
                   <Button
                     buttonType="primary"

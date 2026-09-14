@@ -408,7 +408,7 @@ const CollectionRequestModal = ({
             />
           </div>
           <div className="min-w-0">
-            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+            <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
               {data?.name}
             </h3>
             <p className="refreshed-detail-text mt-1 text-xs">
@@ -430,7 +430,7 @@ const CollectionRequestModal = ({
             <span>{intl.formatMessage(globalMessages.movie)}</span>
             <span>{intl.formatMessage(messages.status)}</span>
           </div>
-          <div className="max-h-[312px] space-y-1 overflow-y-auto pr-1 pt-1">
+          <div className="max-h-[312px] space-y-1 overflow-y-auto pt-1 pr-1">
             {visibleParts.map((part) => {
               const presentation = getCollectionPartRequestPresentation(
                 part,

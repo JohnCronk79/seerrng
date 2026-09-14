@@ -142,7 +142,7 @@ const SeriesSeasonEpisodeBrowser = ({
   return (
     <div className="mt-[5px] grid min-w-0 gap-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
       <section className="refreshed-inset-surface min-w-[12rem] rounded-lg border border-gray-700 p-2">
-        <div className="grid grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 border-b border-gray-600 pb-2 pl-1 pr-2 text-xs font-semibold text-gray-200">
+        <div className="grid grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 border-b border-gray-600 pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
           <SelectionCircle
             disabled={allPlayableItemIds.length === 0}
             onClick={() => toggleItems(allPlayableItemIds)}
@@ -158,7 +158,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1"
+          className="max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-1"
           data-testid="season-list"
         >
           {visibleSeasons.length === 0 && (
@@ -198,7 +198,7 @@ const SeriesSeasonEpisodeBrowser = ({
                   type="button"
                   onClick={() => setActiveSeason(season.seasonNumber)}
                   aria-pressed={activeSeason === season.seasonNumber}
-                  className="truncate rounded text-left text-xs font-medium text-gray-100 transition hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  className="truncate rounded text-left text-xs font-medium text-gray-100 transition hover:text-white focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                 >
                   {season.seasonNumber === 0
                     ? intl.formatMessage(messages.specials)
@@ -217,7 +217,7 @@ const SeriesSeasonEpisodeBrowser = ({
       </section>
 
       <section className="refreshed-inset-surface min-w-0 rounded-lg border border-gray-700 p-2">
-        <div className="grid grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b border-gray-600 pb-2 pl-1 pr-2 text-xs font-semibold text-gray-200">
+        <div className="grid grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b border-gray-600 pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
           <SelectionCircle
             disabled={activeItemIds.length === 0}
             onClick={() => toggleItems(activeItemIds)}
@@ -233,7 +233,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="max-h-[214px] space-y-0.5 overflow-y-auto pr-1 pt-1"
+          className="max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-1"
           data-testid="episode-list"
         >
           {!data && !error && activeSeason >= 0 && (

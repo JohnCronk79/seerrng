@@ -2,11 +2,7 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 
 export type RequestServiceType = 'radarr' | 'sonarr' | 'lidarr' | 'readarr';
 export type RequestTargetFormat =
-  | 'standard'
-  | '4k'
-  | 'music'
-  | 'ebook'
-  | 'audiobook';
+  'standard' | '4k' | 'music' | 'ebook' | 'audiobook';
 
 export interface RequestDestination {
   serviceType: RequestServiceType;

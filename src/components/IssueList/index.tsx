@@ -131,7 +131,7 @@ const IssueList = () => {
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.issues)} />
-      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+      <h2 className="mt-8 text-2xl leading-7 font-bold text-gray-100 sm:text-4xl sm:leading-9">
         <span className="text-overseerr">
           {intl.formatMessage(messages.issues)}
         </span>

@@ -668,7 +668,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           );
         }}
       </Formik>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.plexlibraries)}
         </h3>
@@ -724,7 +724,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           ))}
         </ul>
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">{intl.formatMessage(messages.manualscan)}</h3>
         <p className="description">
           {intl.formatMessage(messages.manualscanDescription)}
@@ -755,7 +755,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
             {dataSync?.running && (
               <>
                 {dataSync.currentLibrary && (
-                  <div className="mb-2 mr-0 flex items-center sm:mb-0 sm:mr-2">
+                  <div className="mr-0 mb-2 flex items-center sm:mr-2 sm:mb-0">
                     <Badge>
                       {intl.formatMessage(messages.currentlibrary, {
                         name: dataSync.currentLibrary.name,
@@ -801,7 +801,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
       </div>
       {!onComplete && (
         <>
-          <div className="mb-6 mt-10">
+          <div className="mt-10 mb-6">
             <h3 className="heading">
               {intl.formatMessage(messages.tautulliSettings)}
             </h3>

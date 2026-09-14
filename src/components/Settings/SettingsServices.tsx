@@ -164,7 +164,7 @@ const ServerInstance = ({
       <div className="flex w-full items-center justify-between space-x-6 p-6">
         <div className="flex-1 truncate">
           <div className="mb-2 flex items-center space-x-2">
-            <h3 className="truncate font-medium leading-5 text-white">
+            <h3 className="truncate leading-5 font-medium text-white">
               <a
                 href={serviceUrl}
                 target="_blank"
@@ -246,7 +246,7 @@ const ServerInstance = ({
           <div className="flex w-0 flex-1 border-r border-gray-500">
             <button
               onClick={() => onEdit()}
-              className="focus:ring-blue relative -mr-px inline-flex w-0 flex-1 items-center justify-center rounded-bl-lg border border-transparent py-4 text-sm font-medium leading-5 text-gray-200 transition duration-150 ease-in-out hover:text-white focus:z-10 focus:border-gray-500 focus:outline-none"
+              className="focus:ring-blue relative -mr-px inline-flex w-0 flex-1 items-center justify-center rounded-bl-lg border border-transparent py-4 text-sm leading-5 font-medium text-gray-200 transition duration-150 ease-in-out hover:text-white focus:z-10 focus:border-gray-500 focus:outline-none"
             >
               <PencilIcon className="mr-2 h-5 w-5" />
               <span>{intl.formatMessage(globalMessages.edit)}</span>
@@ -255,7 +255,7 @@ const ServerInstance = ({
           <div className="-ml-px flex w-0 flex-1">
             <button
               onClick={() => onDelete()}
-              className="focus:ring-blue relative inline-flex w-0 flex-1 items-center justify-center rounded-br-lg border border-transparent py-4 text-sm font-medium leading-5 text-gray-200 transition duration-150 ease-in-out hover:text-white focus:z-10 focus:border-gray-500 focus:outline-none"
+              className="focus:ring-blue relative inline-flex w-0 flex-1 items-center justify-center rounded-br-lg border border-transparent py-4 text-sm leading-5 font-medium text-gray-200 transition duration-150 ease-in-out hover:text-white focus:z-10 focus:border-gray-500 focus:outline-none"
             >
               <TrashIcon className="mr-2 h-5 w-5" />
               <span>{intl.formatMessage(globalMessages.delete)}</span>
@@ -528,7 +528,7 @@ const SettingsServices = () => {
                 <div className="flex h-full w-full items-center justify-center">
                   <Button
                     buttonType="ghost"
-                    className="mb-3 mt-3"
+                    className="mt-3 mb-3"
                     onClick={() =>
                       setEditRadarrModal({ open: true, radarr: null })
                     }
@@ -542,7 +542,7 @@ const SettingsServices = () => {
           </>
         )}
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.sonarrsettings)}
         </h3>
@@ -630,7 +630,7 @@ const SettingsServices = () => {
           </>
         )}
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.lidarrsettings)}
         </h3>
@@ -692,7 +692,7 @@ const SettingsServices = () => {
           </>
         )}
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.readarrsettings)}
         </h3>
@@ -776,7 +776,7 @@ const SettingsServices = () => {
           </>
         )}
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.overrideRules)}
         </h3>

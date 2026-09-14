@@ -203,7 +203,7 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
           ) ?? []
         }
       />
-      <div className="absolute right-4 top-4 z-50">
+      <div className="absolute top-4 right-4 z-50">
         <LanguagePicker />
       </div>
       <div className="relative z-40 mt-10 flex flex-col items-center px-4 sm:mx-auto sm:w-full sm:max-w-md">

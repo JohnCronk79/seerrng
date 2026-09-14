@@ -260,7 +260,7 @@ const MusicDetailsLayout = ({
 
             <div className="flex min-w-0 flex-col">
               <h1
-                className="text-lg font-semibold leading-5 text-white"
+                className="text-lg leading-5 font-semibold text-white"
                 data-testid="media-title"
               >
                 {data.title}
@@ -272,7 +272,7 @@ const MusicDetailsLayout = ({
                   {qualityLabels.map((quality, index) => (
                     <span
                       key={quality}
-                      className={`inline-flex h-[22px] cursor-default items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-semibold uppercase leading-none ${subjectTagTones[index % subjectTagTones.length]}`}
+                      className={`inline-flex h-[22px] cursor-default items-center rounded-full border px-2 text-[11px] leading-none font-semibold whitespace-nowrap uppercase ${subjectTagTones[index % subjectTagTones.length]}`}
                     >
                       {quality}
                     </span>
@@ -286,40 +286,40 @@ const MusicDetailsLayout = ({
                 </div>
               )}
 
-              <div className="mt-4 grid min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
-                <div className="min-w-0 card:col-span-2 card:pr-3">
-                  <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+              <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
+                <div className="card:col-span-2 card:pr-3 min-w-0">
+                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                    <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                    <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                       {mediaAndFormat}
                     </dd>
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                    <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                       {intl.formatMessage(messages.releaseDate)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                    <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                       {formattedReleaseDate}
                     </dd>
-                    <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                    <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                       {intl.formatMessage(messages.runtime)}:
                     </dt>
-                    <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                    <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                       {runtimeMinutes > 0
                         ? intl.formatMessage(messages.minutes, {
                             minutes: runtimeMinutes,
                           })
                         : unavailable}
                     </dd>
-                    <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                    <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                    <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
+                    <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.artist)}:
                       </dt>
                       <dd className="m-0 truncate">
                         <Link
                           href={`/artist/${artistId}`}
-                          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                         >
                           {data.artist.name || unavailable}
                         </Link>
@@ -338,11 +338,11 @@ const MusicDetailsLayout = ({
                       </dd>
                     </div>
 
-                    <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                    <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
                       {intl.formatMessage(messages.genres)}:
                     </dt>
                     <dd
-                      className="m-0 mt-0.5 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4"
+                      className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
                       data-testid="media-details-genres"
                     >
                       {tags.length > 0
@@ -351,7 +351,7 @@ const MusicDetailsLayout = ({
                               {index > 0 && ', '}
                               <Link
                                 href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {tag.name}
                               </Link>
@@ -362,10 +362,10 @@ const MusicDetailsLayout = ({
                   </dl>
                 </div>
 
-                <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+                <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
                   {qualityAvailability.map(({ quality, available }) => (
                     <div className="contents" key={quality}>
-                      <dt className="font-medium uppercase text-gray-100">
+                      <dt className="font-medium text-gray-100 uppercase">
                         {quality}:
                       </dt>
                       <dd className="m-0 truncate font-medium">
@@ -487,7 +487,7 @@ const MusicDetailsLayout = ({
                       key={artist.id}
                       href={`/artist/${encodeApiPathSegment(artist.id)}`}
                       prefetch={false}
-                      className="group flex h-20 min-w-0 overflow-hidden rounded-lg border border-gray-700 bg-gray-900/30 transition hover:border-indigo-400 hover:bg-indigo-500/15 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      className="group flex h-20 min-w-0 overflow-hidden rounded-lg border border-gray-700 bg-gray-900/30 transition hover:border-indigo-400 hover:bg-indigo-500/15 focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                     >
                       <span className="relative h-full w-[54px] flex-shrink-0 overflow-hidden border-r border-gray-700 bg-white">
                         <CachedImage
@@ -536,7 +536,7 @@ const MusicDetailsLayout = ({
                     <Link
                       key={tag.name}
                       href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                         subjectTagTones[index % subjectTagTones.length]
                       }`}
                     >
@@ -552,7 +552,7 @@ const MusicDetailsLayout = ({
             <h2 className="mb-3 text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.albumDetails)}
             </h2>
-            <div className="grid grid-cols-1 card:grid-cols-3">
+            <div className="card:grid-cols-3 grid grid-cols-1">
               <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
@@ -574,14 +574,14 @@ const MusicDetailsLayout = ({
                     href={`https://musicbrainz.org/release-group/${albumId}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                   >
                     {data.mbId}
                   </a>
                 </dd>
               </dl>
 
-              <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.albumType)}:
                 </dt>
@@ -604,14 +604,14 @@ const MusicDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.artist)}:
                 </dt>
                 <dd className="m-0 truncate">
                   <Link
                     href={`/artist/${artistId}`}
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                   >
                     {data.artist.name || unavailable}
                   </Link>
@@ -633,7 +633,7 @@ const MusicDetailsLayout = ({
                       )}&type=area&method=indexed`}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                     >
                       {data.artist.area}
                     </a>

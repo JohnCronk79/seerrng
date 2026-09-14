@@ -159,8 +159,7 @@ const getReadarrErrorMessage = (error: unknown): string => {
 
   const status = error.response?.status;
   const data = error.response?.data as
-    | { message?: unknown; errorMessage?: unknown }
-    | undefined;
+    { message?: unknown; errorMessage?: unknown } | undefined;
   const message =
     typeof data?.message === 'string'
       ? data.message
@@ -784,7 +783,9 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         MAX_SERVARR_LIBRARY_RESULTS
       );
     } catch (e) {
-      throw new Error(`[Readarr] Failed to retrieve books: ${e.message}`);
+      throw new Error(`[Readarr] Failed to retrieve books: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -1229,7 +1230,9 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         })
       );
     } catch (e) {
-      throw new Error(`[Readarr] Failed to remove book: ${e.message}`);
+      throw new Error(`[Readarr] Failed to remove book: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 

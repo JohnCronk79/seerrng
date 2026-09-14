@@ -8,10 +8,7 @@ import {
 } from 'typeorm';
 
 export type DownloadRecoveryServiceType =
-  | 'radarr'
-  | 'sonarr'
-  | 'lidarr'
-  | 'readarr';
+  'radarr' | 'sonarr' | 'lidarr' | 'readarr';
 
 @Entity('download_recovery_state')
 @Index(

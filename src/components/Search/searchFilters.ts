@@ -1,12 +1,7 @@
 import type { ParsedUrlQuery } from 'querystring';
 
 export type SearchFilterCategory =
-  | 'all'
-  | 'movie'
-  | 'tv'
-  | 'book'
-  | 'audiobook'
-  | 'music';
+  'all' | 'movie' | 'tv' | 'book' | 'audiobook' | 'music';
 
 export const searchContextualFilterKeys = [
   'availability',

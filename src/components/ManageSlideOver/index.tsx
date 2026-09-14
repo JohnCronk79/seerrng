@@ -398,8 +398,8 @@ const ManageSlideOver = ({
                           </div>
                         </div>
                         {!!watchData.data.users.length && (
-                          <div className="flex flex-row space-x-2 px-4 pb-2 pt-3">
-                            <span className="shrink-0 font-bold leading-8">
+                          <div className="flex flex-row space-x-2 px-4 pt-3 pb-2">
+                            <span className="shrink-0 leading-8 font-bold">
                               {intl.formatMessage(messages.playedby)}
                             </span>
                             <span className="flex flex-row flex-wrap">
@@ -558,8 +558,8 @@ const ManageSlideOver = ({
                           </div>
                         </div>
                         {!!watchData.data4k.users.length && (
-                          <div className="flex flex-row space-x-2 px-4 pb-2 pt-3">
-                            <span className="shrink-0 font-bold leading-8">
+                          <div className="flex flex-row space-x-2 px-4 pt-3 pb-2">
+                            <span className="shrink-0 leading-8 font-bold">
                               {intl.formatMessage(messages.playedby)}
                             </span>
                             <span className="flex flex-row flex-wrap">
