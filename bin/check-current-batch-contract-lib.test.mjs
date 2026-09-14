@@ -146,6 +146,24 @@ test('reports poster Associations style drift', () => {
   );
 });
 
+test('reports poster availability control drift', () => {
+  const proxy = new Proxy(
+    {},
+    {
+      has: () => true,
+      get: () => '',
+    }
+  );
+  const errors = validateCurrentBatchContract(proxy);
+
+  for (const expected of [
+    'available poster qualities must reuse the compact green Request control style',
+    'available poster qualities must place the outlined availability icon after the green quality label',
+  ]) {
+    assert.ok(errors.some((error) => error.includes(expected)), expected);
+  }
+});
+
 test('reports recovered visual-contract and evidence-provenance regressions', () => {
   const proxy = new Proxy(
     {},

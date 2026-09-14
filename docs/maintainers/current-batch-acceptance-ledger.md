@@ -48,6 +48,19 @@ asks for the work to start.
   while retaining its circular size, artwork blur, and shadow. The existing
   popover, tooltip, visibility rules, and click behavior remain unchanged.
 
+### Poster available-quality control
+
+> “put the check mark and text inside a button. the style of the button will be the same as the request button ... keep the text inside the button green ... availability icon ... to the right of the text.”
+
+- Status: Implemented in source and protected by the focused current-batch
+  contract. Fresh build and rendered poster verification remain pending under
+  John's explicit no-build gate.
+- Fully available HD, 4K, MP3, and FLAC poster states use a compact version of
+  the shared green Request control. The green quality label precedes the small
+  outlined availability icon used by the media-detail availability tables.
+- Pending, processing, partially available, blocked, and deleted states retain
+  their distinct status indicators.
+
 ### Main-menu cleanup
 
 > “task: remove request stat main menu item, as well the dupicate audiobooks item.”

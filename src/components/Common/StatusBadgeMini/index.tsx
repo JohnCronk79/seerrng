@@ -2,6 +2,7 @@ import Spinner from '@app/assets/spinner.svg';
 import Tooltip from '@app/components/Common/Tooltip';
 import globalMessages from '@app/i18n/globalMessages';
 import { CheckCircleIcon } from '@heroicons/react/20/solid';
+import { CheckCircleIcon as AvailabilityIcon } from '@heroicons/react/24/outline';
 import {
   BellIcon,
   ClockIcon,
@@ -103,6 +104,30 @@ const StatusBadgeMini = memo(
       }
     })();
     const label = [quality, statusLabel].filter(Boolean).join(' ');
+
+    if (
+      shrink &&
+      quality &&
+      status === MediaStatus.AVAILABLE &&
+      !inProgress
+    ) {
+      const availableBadge = (
+        <div
+          className="format-request-control h-6 items-center gap-1.5 px-2 font-semibold text-green-300 backdrop-blur"
+          data-testid="poster-availability-badge"
+          role="img"
+          aria-label={label}
+        >
+          <span>{quality}</span>
+          <AvailabilityIcon
+            className="h-4 w-4 shrink-0 text-green-400"
+            aria-hidden
+          />
+        </div>
+      );
+
+      return <Tooltip content={label}>{availableBadge}</Tooltip>;
+    }
 
     const badge = (
       <div

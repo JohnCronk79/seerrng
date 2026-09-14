@@ -555,6 +555,20 @@ const validateCurrentBatchContract = (files) => {
     'the poster Associations action must reuse the shared association button style'
   );
   requireText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'className="format-request-control h-6 items-center gap-1.5 px-2 font-semibold text-green-300 backdrop-blur"',
+    'available poster qualities must reuse the compact green Request control style'
+  );
+  requireOrder(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    [
+      'data-testid="poster-availability-badge"',
+      '<span>{quality}</span>',
+      '<AvailabilityIcon',
+    ],
+    'available poster qualities must place the outlined availability icon after the green quality label'
+  );
+  requireText(
     globals,
     '.media-rating-icon {\n    @apply h-5 w-5',
     'rating icons must share the tomato height'
