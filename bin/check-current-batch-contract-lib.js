@@ -50,13 +50,13 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     ledger,
-    'Status: Future feature, explicitly deferred by the user',
-    'must keep the music artist refresh deferred'
+    'Completed work belongs in Git history and release notes, not',
+    'must remain an outstanding-work-only ledger'
   );
   requireText(
     ledger,
-    'Every item above must be classified as verified, corrected, intentionally deferred',
-    'must retain the exact final acceptance rule'
+    '## Hardcover-enriched Book search',
+    'must retain the future Hardcover Book-search integration'
   );
   requireText(
     '.dockerignore',
@@ -90,13 +90,13 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     ledger,
-    "rename every instance of 'Ebook' to 'Book' excluding the name of our services.",
-    'must preserve the Book terminology decision'
+    '## Music artist page refresh',
+    'must keep the music artist refresh deferred'
   );
   requireText(
     ledger,
-    'Are you sure you want to blocklist this item?',
-    'must preserve the exact shared Blocklist confirmation copy'
+    '## Series collections and franchise groups',
+    'must retain the future Series collections feature'
   );
   requireText(
     ledger,
@@ -110,23 +110,33 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     ledger,
-    '## Contextual Global Search filters',
-    'must preserve the accepted contextual Global Search filter work'
+    '## Collection request-page refresh and cross-media collections',
+    'must retain the future cross-media Collection request work'
   );
   requireText(
     ledger,
-    '## Series and Books discovery filter corrections',
-    'must preserve the accepted Series and Books filter corrections'
+    '## Deferred refresh of pages not yet redesigned',
+    'must retain the deferred-page refresh inventory'
   );
   requireText(
     ledger,
-    '## Workflow-page Media Filters sections',
-    'must preserve the accepted workflow-page Media Filters grouping'
+    '## Keith-requested feature',
+    'must retain the pending Keith feature intake'
   );
   requireText(
     ledger,
-    'all consume the single shared `SelectionCircle` component and its global CSS contract',
-    'the acceptance ledger must preserve the cross-page selector standard'
+    '## New v3.21.2 corrections',
+    'must retain the pending v3.21.2 correction intake'
+  );
+  rejectText(
+    ledger,
+    '## Keith v3.20.2 upstream integration',
+    'must not list completed release integration work'
+  );
+  rejectText(
+    ledger,
+    '## Final visual-correction batch before laptop preview',
+    'must not list completed visual-correction work'
   );
   requireText(
     'docs/maintainers/ui-style-standard.md',
