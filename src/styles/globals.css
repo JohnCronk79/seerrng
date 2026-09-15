@@ -703,6 +703,16 @@
     contain-intrinsic-block-size: auto 4.5rem;
   }
 
+  .discover-home .title-card-shell {
+    width: 10rem;
+  }
+
+  @media (min-width: 768px) {
+    .discover-home .title-card-shell {
+      width: 12rem;
+    }
+  }
+
   .provider-icons {
     grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr));
   }

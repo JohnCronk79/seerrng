@@ -284,6 +284,17 @@ asks for the work to start.
 - Spotify actions use shared buttons, while the Spotify and YouTube guidance
   uses the shared darker inset-card surface and divider treatment.
 
+### Discover poster sizing
+
+> “on the discover page, can you make the poster a bit larger ... the series silo has its media type truncated because of the limited width.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Discover title posters retain the existing 2:3 ratio while increasing to 160
+  pixels on smaller screens and 192 pixels at the desktop breakpoint.
+- The larger width is scoped to Discover and includes loading placeholders, so
+  library grids and detail-page recommendation shelves do not change size.
+
 ## Firefox detail-card artwork resize stability
 
 > “when the cast and crew cards are opened ... when he collapses the cards and reopens them his browser keeps zooming the background image ... he uses Firefox.”

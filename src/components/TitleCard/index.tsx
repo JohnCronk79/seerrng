@@ -535,7 +535,9 @@ const TitleCard = ({
 
   return (
     <div
-      className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
+      className={`title-card-shell ${
+        canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'
+      }`}
       data-testid="title-card"
       ref={cardRef}
     >

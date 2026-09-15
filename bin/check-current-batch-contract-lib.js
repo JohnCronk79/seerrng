@@ -708,6 +708,16 @@ const validateCurrentBatchContract = (files) => {
     'playlist URL input must use the shared request control styling'
   );
   requireText(
+    'src/components/Discover/index.tsx',
+    '<div className="discover-home">',
+    'Discover must scope its larger poster-card treatment to the home page'
+  );
+  requireText(
+    globals,
+    '.discover-home .title-card-shell',
+    'Discover poster cards must retain their wider responsive sizing'
+  );
+  requireText(
     'server/routes/request.test.ts',
     'allows simultaneous active music requests for different Lidarr destinations',
     'MP3 and FLAC must retain independent active-request regression coverage'
