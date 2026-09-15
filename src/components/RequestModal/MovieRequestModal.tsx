@@ -365,13 +365,23 @@ const MovieRequestModal = ({
         }
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(globalMessages.close)}
-        backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+        backdrop={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            : undefined
+        }
+        backdropFull
+        alignTop
+        actionButtonSize="default"
+        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
       >
-        {isOwner
-          ? intl.formatMessage(messages.pendingapproval)
-          : intl.formatMessage(messages.requestfrom, {
-              username: editRequest.requestedBy.displayName,
-            })}
+        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+          {isOwner
+            ? intl.formatMessage(messages.pendingapproval)
+            : intl.formatMessage(messages.requestfrom, {
+                username: editRequest.requestedBy.displayName,
+              })}
+        </div>
         {(hasPermission(Permission.REQUEST_ADVANCED) ||
           hasPermission(Permission.MANAGE_REQUESTS)) && (
           <AdvancedRequester

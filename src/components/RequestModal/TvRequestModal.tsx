@@ -538,15 +538,28 @@ const TvRequestModal = ({
             ? intl.formatMessage(globalMessages.back)
             : intl.formatMessage(globalMessages.cancel)
       }
-      dialogClass="request-modal-site-surface sm:max-w-5xl"
+      backdrop={
+        editRequest && data?.backdropPath
+          ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+          : undefined
+      }
+      backdropFull={Boolean(editRequest)}
+      actionButtonSize={editRequest ? 'default' : 'sm'}
+      dialogClass={
+        editRequest
+          ? 'refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl'
+          : 'request-modal-site-surface sm:max-w-5xl'
+      }
     >
-      {editRequest
-        ? isOwner
-          ? intl.formatMessage(messages.pendingapproval)
-          : intl.formatMessage(messages.requestfrom, {
-              username: editRequest?.requestedBy.displayName,
-            })
-        : null}
+      {editRequest && (
+        <div className="refreshed-inset-surface mb-[5px] rounded-lg border border-gray-700 p-3">
+          {isOwner
+            ? intl.formatMessage(messages.pendingapproval)
+            : intl.formatMessage(messages.requestfrom, {
+                username: editRequest.requestedBy.displayName,
+              })}
+        </div>
+      )}
       {(quota?.tv.limit ?? 0) > 0 && (
         <QuotaDisplay
           mediaType="tv"

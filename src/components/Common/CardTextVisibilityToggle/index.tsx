@@ -1,6 +1,5 @@
 import Button from '@app/components/Common/Button';
 import Tooltip from '@app/components/Common/Tooltip';
-import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import useCardTextVisibility from '@app/hooks/useCardTextVisibility';
 import defineMessages from '@app/utils/defineMessages';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
@@ -35,9 +34,9 @@ const CardTextVisibilityToggle = ({
   return (
     <Tooltip content={label}>
       <Button
-        buttonType="ghost"
+        buttonType={isAlwaysVisible ? 'primary' : 'default'}
         buttonSize="sm"
-        className={`${getFilterToggleButtonClass(isAlwaysVisible)} w-8 p-0 ${className}`}
+        className={`h-8 w-8 p-0 ${className}`}
         aria-label={label}
         onClick={(e) => {
           e.preventDefault();

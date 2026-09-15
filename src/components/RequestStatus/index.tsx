@@ -2133,8 +2133,12 @@ const RequestStatus = () => {
             loading={deletingRequestId !== null}
             onOk={() => void deleteRequest()}
             onCancel={() => setDeleteRequestId(null)}
+            actionButtonSize="sm"
+            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
           >
-            <p>{intl.formatMessage(messages.deleteDescription)}</p>
+            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+              {intl.formatMessage(messages.deleteDescription)}
+            </p>
           </Modal>
         </Transition>
       )}
@@ -2158,8 +2162,10 @@ const RequestStatus = () => {
             loading={removingRequestId !== null}
             onOk={() => void removeRequestFromLibrary()}
             onCancel={() => setRemoveSelection(null)}
+            actionButtonSize="sm"
+            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
           >
-            <p>
+            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
               {intl.formatMessage(messages.removeDescription, {
                 title: removeSelection.title,
                 service: removeSelection.service,

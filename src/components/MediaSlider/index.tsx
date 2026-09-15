@@ -576,7 +576,7 @@ const MediaSlider = ({
           <Tooltip content={`Refresh ${title}`}>
             <Button
               type="button"
-              buttonType="default"
+              buttonType="trailer"
               buttonSize="sm"
               onClick={refreshRandomizedOrder}
               className="h-8 w-8 p-0"

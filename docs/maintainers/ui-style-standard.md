@@ -145,6 +145,9 @@ Use `CompactSelect`, `CompactRatingSelect`, `getFilterResetButtonClass`, and `ge
 
 ### Discover Page
 
+- Discover shelf controls use the standard 32-pixel shared button geometry. Title visibility uses the default button and the selected primary treatment, randomized Refresh uses the orange treatment, and Previous and Next use green. Icon-only controls remain square with accessible labels and tooltips.
+- Discover filter and sort actions use the same 32-pixel shared filter geometry. React Select controls embedded in the filter row must force both their control and selected-value pills onto the shared dark translucent surface; provider defaults may not reintroduce a solid white selection background.
+- Studio and Network shelf buttons display the original-resolution color PNG logo returned by TMDB without a duotone URL transform. Their linked result page keeps the company name as a normal top-left page heading, centers the same original logo above the controls, and reuses the complete Movie or Series filter and sort interface with that Studio or Network locked as the originating filter.
 - Discover category headings do not show the circular arrow-link icon. Keep exactly one title-visibility control, position it one compact gap from its heading, and remove duplicate visibility controls from the same category row.
 - Use the vertical distance between the Request Cards region and the following Trending heading as the standard category-to-category gap throughout Discover. Do not allow individual sliders or category wrappers to introduce oversized blank regions.
 - Every Discover badge and button uses the shared compact treatments from this standard; do not retain page-local oversized or legacy variants.

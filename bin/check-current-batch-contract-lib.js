@@ -1040,7 +1040,6 @@ const validateCurrentBatchContract = (files) => {
   }
   for (const fileName of [
     'src/components/Common/BookFormatSelector/index.tsx',
-    'src/components/Common/CardTextVisibilityToggle/index.tsx',
     'src/components/Discover/FilterPanel/index.tsx',
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/index.tsx',
@@ -1067,6 +1066,31 @@ const validateCurrentBatchContract = (files) => {
       'neutral slider controls must use the shared global button style'
     );
   }
+  requireText(
+    'src/components/Common/CardTextVisibilityToggle/index.tsx',
+    "buttonType={isAlwaysVisible ? 'primary' : 'default'}",
+    'Discover title visibility must use the shared standard button treatment'
+  );
+  requireText(
+    'src/components/MediaSlider/index.tsx',
+    'buttonType="trailer"',
+    'Discover refresh must use the shared orange button treatment'
+  );
+  requireText(
+    'src/components/Slider/index.tsx',
+    'buttonType="success"',
+    'Discover previous and next controls must use the shared green button treatment'
+  );
+  requireText(
+    globals,
+    '.discover-filter-control .discover-compact-select .react-select__multi-value',
+    'Discover-linked filter selections must use the shared dark dropdown surface'
+  );
+  requireText(
+    globals,
+    'background-color: rgb(var(--theme-control-surface-hover) / 0.58) !important;',
+    'Discover-linked filter selection pills must override the legacy white react-select background'
+  );
   requireText(
     globals,
     'linear-gradient(\n        40deg,',
@@ -2692,6 +2716,94 @@ const validateCurrentBatchContract = (files) => {
     "actionButtonSize = 'sm'",
     'modal confirmation actions must default to the standard 32-pixel size site-wide'
   );
+
+  for (const editRequestFile of [
+    'src/components/RequestModal/MovieRequestModal.tsx',
+    'src/components/RequestModal/TvRequestModal.tsx',
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'src/components/RequestModal/BookRequestModal.tsx',
+  ]) {
+    requireText(
+      editRequestFile,
+      'backdropFull',
+      'edit-request cards must use full-card artwork'
+    );
+    requireText(
+      editRequestFile,
+      'refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl',
+      'edit-request cards must use the refreshed centered main-card layout'
+    );
+    requireText(
+      editRequestFile,
+      'refreshed-inset-surface',
+      'edit-request content must retain darker inset subcards'
+    );
+  }
+  for (const token of [
+    'title={intl.formatMessage(messages.deleteTitle)}',
+    'title={intl.formatMessage(messages.removeTitle,',
+  ]) {
+    requireOrder(
+      'src/components/RequestStatus/index.tsx',
+      [
+        token,
+        'dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"',
+        '<p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">',
+      ],
+      'request deletion confirmations must use the standard site-background card and inset message layout'
+    );
+  }
+
+  for (const [fileName, prop, description] of [
+    [
+      'src/components/Discover/DiscoverStudio/index.tsx',
+      '<DiscoverMovies studio={studio} />',
+      'Studio results must reuse the complete Movie filter page',
+    ],
+    [
+      'src/components/Discover/DiscoverNetwork/index.tsx',
+      '<DiscoverTv network={network} />',
+      'Network results must reuse the complete Series filter page',
+    ],
+  ]) {
+    requireText(fileName, prop, description);
+  }
+  for (const [fileName, titleToken] of [
+    [
+      'src/components/Discover/DiscoverMovies/index.tsx',
+      "studioMovies: '{studio} Movies'",
+    ],
+    [
+      'src/components/Discover/DiscoverTv/index.tsx',
+      "networkSeries: '{network} Series'",
+    ],
+  ]) {
+    requireText(
+      fileName,
+      titleToken,
+      'Discover-linked company result pages must retain a named top-left title'
+    );
+    requireText(
+      fileName,
+      'https://image.tmdb.org/t/p/original',
+      'Discover-linked company result pages must show the original provider logo above the filters'
+    );
+  }
+  for (const fileName of [
+    'src/components/Discover/StudioSlider/index.tsx',
+    'src/components/Discover/NetworkSlider/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'https://image.tmdb.org/t/p/original',
+      'Discover company buttons must use original-resolution provider logos'
+    );
+    rejectText(
+      fileName,
+      'filter(duotone',
+      'Discover company buttons must preserve the provider logo colors'
+    );
+  }
 
   for (const manageFile of [
     'src/components/ManageSlideOver/index.tsx',

@@ -419,6 +419,10 @@ const MusicRequestModal = ({
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(messages.close)}
         backdrop={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
+        backdropFull
+        alignTop
+        actionButtonSize="default"
+        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
       >
         {serviceUnavailable && (
           <div className="mb-4">
@@ -428,11 +432,13 @@ const MusicRequestModal = ({
             />
           </div>
         )}
-        {isOwner
-          ? intl.formatMessage(messages.pendingapproval)
-          : intl.formatMessage(messages.requestfrom, {
-              username: editRequest.requestedBy.displayName,
-            })}
+        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+          {isOwner
+            ? intl.formatMessage(messages.pendingapproval)
+            : intl.formatMessage(messages.requestfrom, {
+                username: editRequest.requestedBy.displayName,
+              })}
+        </div>
         {(hasPermission(Permission.REQUEST_ADVANCED) ||
           hasPermission(Permission.MANAGE_REQUESTS)) && (
           <AdvancedRequester

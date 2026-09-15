@@ -1436,6 +1436,8 @@
 
   .discover-filter-control .discover-compact-select .react-select__multi-value {
     @apply my-0;
+    border-color: rgb(var(--theme-control-border) / 0.75) !important;
+    background-color: rgb(var(--theme-control-surface-hover) / 0.58) !important;
   }
 
   .discover-filter-control

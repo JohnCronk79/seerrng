@@ -361,6 +361,36 @@ asks for the work to start.
   neighboring request actions, with a translucent green surface, border, and
   text plus the standard brighter hover treatment.
 
+### Edit request and destructive-confirmation cards
+
+> “when you edit a request ... apply the same styling and layout to this card as the other cards ... the popup card ... delete or delete library should follow our standard styling.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Movie, Series, Music, and Book edit-request surfaces use a centered,
+  artwork-backed refreshed main card with visible page spacing, the shared
+  border and shadow, darker inset content, and standard-sized actions.
+- Delete Request and Delete From Library confirmations use the site-background
+  card surface, a darker inset explanation, and standard modal actions while
+  preserving the existing destructive confirmation behavior.
+
+### Discover controls and linked company filters
+
+> “make sure [Discover controls] are the same styling and size as our standard buttons ... refresh orange ... forward and back green ... fix [the white Genres dropdown] ... studio title ... same filters ... high res color logo ... same treatment to networks.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Title visibility uses the standard small default/selected button treatment,
+  Refresh is orange, and Previous and Next are green. All remain the standard
+  32-pixel control size.
+- Discover filter and sort controls retain the shared 32-pixel filter geometry.
+  Selected React Select values now force the shared dark translucent surface,
+  removing the legacy white Genre pill across Movie and Series filter links.
+- Studio and Network buttons use TMDB's original-resolution PNG logo assets
+  without the old duotone conversion. Their linked pages show the named Studio
+  or Network title at top left, the same original logo centered above the
+  filters, and the complete Movie or Series filter and sort toolset.
+
 ### Manage media Collection-style card
 
 > “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”
