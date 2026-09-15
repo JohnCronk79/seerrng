@@ -758,7 +758,7 @@ const BulkRequestModal = ({
   };
 
   const renderFailures = (failures: BulkMediaRequestResult[]) => (
-    <div className="mt-4 max-h-48 overflow-y-auto rounded-md border border-gray-700">
+    <div className="scrollable-card mt-4 max-h-48 overflow-y-auto rounded-md border border-gray-700">
       {failures.map((failure) => (
         <div
           key={`${failure.mediaId}-${failure.reason}`}

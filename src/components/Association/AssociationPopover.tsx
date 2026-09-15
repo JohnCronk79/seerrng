@@ -71,7 +71,7 @@ const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
     .slice(0, 4);
 
   return (
-    <div className="max-h-[min(60vh,32rem)] overflow-y-auto pr-1">
+    <div className="scrollable-card max-h-[min(60vh,32rem)] overflow-y-auto">
       {isLoading && (
         <div className="space-y-2 px-2 py-3">
           <div className="mb-3 flex justify-center">

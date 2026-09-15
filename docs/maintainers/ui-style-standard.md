@@ -171,6 +171,9 @@ Use `CompactSelect`, `CompactRatingSelect`, `getFilterResetButtonClass`, and `ge
 - All detail actions use the shared small control dimensions. Request and Request in 4K controls and device-play dropdown triggers must not grow taller than neighboring controls.
 
 - A Collection link card on Movie Details top-aligns its background artwork. Collection Details places `Collection Size` in row one and linked `Genres` in row four of the first detail group. Collection item selection reuses the exact shared season/episode selector appearance; do not create a collection-only selector palette.
+- Collection item cards follow the request-summary three-column layout. Their poster and title link to the item; compact availability, release, and linked Genre values occupy the first two groups; and TMDB, Rotten Tomatoes critic, Rotten Tomatoes audience, and IMDb values occupy the third group in that order. Load third-party ratings only as an item approaches the visible scroll region.
+- Text links inside detail cards always have a visible underline at rest and a heavier underline on hover. Standard button links keep their button treatment and do not inherit text-link decoration.
+- Scrollable card regions use the shared thin scrollbar, transparent track, and stable gutter. Extend the scroll region through its containing card's right padding so the scrollbar meets the inside right edge while equivalent content padding keeps rows clear of the thumb. Header and row grids must reserve the same right-side space so availability columns remain aligned.
 
 - Issue Details places its summary, affected episodes, description, comments, comment entry, and actions inside one clipped outer artwork-backed card. Every inset region uses the same shared translucency, and no independent artwork fade or mismatched surface opacity is introduced.
 

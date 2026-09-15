@@ -423,6 +423,31 @@ asks for the work to start.
   remain visible, and the selector still appears when playable audiobook tracks
   exist.
 
+### Collection entries, linked text, and card scrollbars
+
+> “collection card details cards should match the same layout and formatting as the request details card ... move the TMDB heading and value to the right column, then add the other ratings ... posters ... clickable ... scroll bar ... far right edge ... thin ... apply ... to all scrollable cards ... availability icon ... line up.”
+>
+> “in all details cards, any text that is clickable should have an underline.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered Collection, Series, Firefox, and narrow-layout review
+  remain pending under John's no-build gate.
+- Collection entries use the request-summary three-column rhythm: clickable
+  poster, compact availability/release and linked Genre groups, then a ratings
+  column. TMDB appears first, followed by lazily loaded Rotten Tomatoes critic,
+  Rotten Tomatoes audience, and IMDb values.
+- Every textual link inside media, request, issue, and collection detail cards
+  has a visible resting underline that becomes heavier on hover. Standard
+  button links retain their button presentation.
+- Scrollable card regions use one shared thin scrollbar with a transparent
+  track and stable gutter. Collection entries extend that region through the
+  card's right padding so the scrollbar meets the inside right edge.
+- Season, episode, track, people, association, request-selection, filter, theme,
+  and status card scroll regions use the same scrollbar. Series season and
+  episode lists extend through their right padding so row availability icons
+  align with the header availability icon while the scrollbar remains at the
+  card edge.
+
 ### Manage media Collection-style card
 
 > “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”

@@ -222,7 +222,7 @@ const IssueDetails = () => {
           {intl.formatMessage(messages.issuepagetitle)}
         </h1>
 
-        <article className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-2 shadow-lg shadow-gray-950/20">
+        <article className="media-detail-card refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-2 shadow-lg shadow-gray-950/20">
           {backdropPath && (
             <div
               className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl"

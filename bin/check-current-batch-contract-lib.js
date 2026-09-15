@@ -1657,7 +1657,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     advancedRequester,
-    "'max-h-[8.5rem] overflow-y-auto pr-1'",
+    "'scrollable-card max-h-[8.5rem] overflow-y-auto'",
     'long root-folder tables must scroll their data rows'
   );
   requireText(
@@ -2244,6 +2244,65 @@ const validateCurrentBatchContract = (files) => {
     'playbackCatalog && availablePlaybackItemIds.length > 0 &&',
     'Book Details must hide the empty playable-track message while retaining populated selectors'
   );
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+    'src/components/CollectionDetails/index.tsx',
+    'src/components/RequestModal/RequestMediaCard.tsx',
+    'src/components/IssueDetails/index.tsx',
+    'src/components/RequestStatus/index.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'media-detail-card',
+      'detail cards must inherit the shared visible text-link treatment'
+    );
+  }
+  requireText(
+    'src/styles/globals.css',
+    '.media-detail-card a:not(.app-button)',
+    'linked detail-card text must be visibly underlined without decorating button links'
+  );
+  for (const scrollbarToken of [
+    'scrollbar-width: thin;',
+    'scrollbar-gutter: stable;',
+    '.scrollable-card::-webkit-scrollbar',
+  ]) {
+    requireText(
+      'src/styles/globals.css',
+      scrollbarToken,
+      'scrollable cards must retain the shared thin stable-gutter scrollbar'
+    );
+  }
+  requireOrder(
+    'src/components/CollectionDetails/index.tsx',
+    [
+      "id: 'tmdb'",
+      "id: 'rt-critics'",
+      "id: 'rt-audience'",
+      "id: 'imdb'",
+      '<CollectionPartRatings',
+    ],
+    'Collection item ratings must preserve TMDB, RT critic, RT audience, and IMDb order'
+  );
+  requireText(
+    'src/components/CollectionDetails/index.tsx',
+    'href={`/${part.mediaType}/${part.id}`}',
+    'Collection item posters and titles must link to their media detail page'
+  );
+  requireText(
+    'src/components/CollectionDetails/index.tsx',
+    'scrollable-card mt-2 -mr-3',
+    'the Collection item scrollbar must meet the card right edge'
+  );
+  requireCount(
+    'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
+    'scrollable-card -mr-2',
+    2,
+    'Series season and episode scroll regions must share edge-aligned scrollbar geometry'
+  );
   requireText(
     'src/utils/bookMarkdown.test.ts',
     'removes stray emphasis text after an https Markdown link',
@@ -2571,7 +2630,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     issueDetails,
-    '<article className="refreshed-card-surface relative overflow-hidden',
+    '<article className="media-detail-card refreshed-card-surface relative overflow-hidden',
     'Issue Details must contain every region in one artwork-backed outer card'
   );
   requireText(

@@ -53,7 +53,7 @@ const ThemePicker = () => {
               {intl.formatMessage(messages.toggle)}
             </span>
           </Menu.Item>
-          <div className="grid max-h-96 grid-cols-2 gap-2 overflow-y-auto pr-1">
+          <div className="scrollable-card grid max-h-96 grid-cols-2 gap-2 overflow-y-auto">
             {themePalettes.map((themePalette) => (
               <Menu.Item
                 key={themePalette.id}

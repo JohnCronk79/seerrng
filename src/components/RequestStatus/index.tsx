@@ -1231,7 +1231,7 @@ const RequestStatusCard = ({
         />
       )}
       <article
-        className="refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20"
+        className="media-detail-card refreshed-card-surface relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20"
         data-testid={`request-status-${item.request.id}`}
       >
         {backdrop && (

@@ -252,7 +252,7 @@ const MusicDetailsLayout = ({
 
   return (
     <div className="media-page">
-      <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
+      <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {backdrop && <MediaDetailArtwork type="music" src={backdrop} />}
 
         <div className="relative z-10">
@@ -492,7 +492,7 @@ const MusicDetailsLayout = ({
                   {intl.formatMessage(messages.noArtists)}
                 </p>
               ) : (
-                <div className="grid max-h-[252px] grid-cols-3 gap-1.5 overflow-y-auto pr-1">
+                <div className="scrollable-card -mr-3 grid max-h-[252px] grid-cols-3 gap-1.5 overflow-y-auto pr-3">
                   {artists.map((artist) => (
                     <Link
                       key={artist.id}

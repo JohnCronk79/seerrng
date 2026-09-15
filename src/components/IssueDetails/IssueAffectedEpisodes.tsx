@@ -91,7 +91,7 @@ const IssueAffectedEpisodes = ({ issue, tvId }: IssueAffectedEpisodesProps) => {
           <LoadingSpinner />
         </div>
       ) : (
-        <div className="max-h-56 overflow-y-auto pr-1">
+        <div className="scrollable-card -mr-3 max-h-56 overflow-y-auto pr-3">
           {legacyEntireSeries ? (
             <div className="grid min-h-7 grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-x-3 px-1 text-xs">
               <span className="font-medium text-gray-200">All Seasons</span>

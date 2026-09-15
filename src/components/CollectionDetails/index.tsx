@@ -29,14 +29,18 @@ import {
 } from '@app/utils/imageCache';
 import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
 import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { getSafeHref } from '@app/utils/safeUrl';
 import { EyeSlashIcon } from '@heroicons/react/24/outline';
+import type { RatingResponse } from '@server/api/ratings';
 import { MediaStatus } from '@server/constants/media';
 import type { Collection } from '@server/models/Collection';
+import type { MovieResult } from '@server/models/Search';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useInView } from 'react-intersection-observer';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -55,6 +59,10 @@ const messages = defineMessages('components.CollectionDetails', {
   notAvailable: 'Not Available',
   releaseDate: 'Release Date',
   userScore: 'TMDB User Score',
+  tmdb: 'TMDB',
+  rtCritics: 'RT Critics',
+  rtAudience: 'RT Audience',
+  imdb: 'IMDb',
   requestUnavailable:
     'Every movie in this collection is already available or requested.',
   request4kUnavailable:
@@ -71,6 +79,83 @@ const availableStatuses = new Set([
   MediaStatus.AVAILABLE,
   MediaStatus.PARTIALLY_AVAILABLE,
 ]);
+
+const CollectionPartRatings = ({ part }: { part: MovieResult }) => {
+  const intl = useIntl();
+  const { ref, inView } = useInView({
+    rootMargin: '160px 0px',
+    triggerOnce: true,
+  });
+  const { data: ratings } = useSWR<RatingResponse>(
+    inView ? `/api/v1/movie/${part.id}/ratingscombined` : null
+  );
+  const ratingRows = [
+    {
+      id: 'tmdb',
+      label: intl.formatMessage(messages.tmdb),
+      value: part.voteAverage ? part.voteAverage.toFixed(1) : '—',
+      href: `https://www.themoviedb.org/movie/${part.id}`,
+    },
+    {
+      id: 'rt-critics',
+      label: intl.formatMessage(messages.rtCritics),
+      value:
+        typeof ratings?.rt?.criticsScore === 'number'
+          ? `${ratings.rt.criticsScore}%`
+          : '—',
+      href: ratings?.rt?.url,
+    },
+    {
+      id: 'rt-audience',
+      label: intl.formatMessage(messages.rtAudience),
+      value:
+        typeof ratings?.rt?.audienceScore === 'number'
+          ? `${ratings.rt.audienceScore}%`
+          : '—',
+      href: ratings?.rt?.url,
+    },
+    {
+      id: 'imdb',
+      label: intl.formatMessage(messages.imdb),
+      value:
+        typeof ratings?.imdb?.criticsScore === 'number'
+          ? ratings.imdb.criticsScore.toFixed(1)
+          : '—',
+      href: ratings?.imdb?.url,
+    },
+  ];
+
+  return (
+    <dl
+      ref={ref}
+      className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-[11px] leading-4"
+    >
+      {ratingRows.map((rating) => {
+        const safeHref = rating.href ? getSafeHref(rating.href) : undefined;
+
+        return (
+          <div className="contents" key={rating.id}>
+            <dt className="font-medium text-gray-100">{rating.label}:</dt>
+            <dd className="m-0 truncate">
+              {safeHref && rating.value !== '—' ? (
+                <a
+                  href={safeHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-300 hover:text-indigo-200"
+                >
+                  {rating.value}
+                </a>
+              ) : (
+                rating.value
+              )}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+};
 
 const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   const intl = useIntl();
@@ -275,7 +360,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
         />
       )}
 
-      <article className="refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
+      <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {data.backdropPath && (
           <MediaDetailArtwork
             type="tmdb"
@@ -403,7 +488,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             <h2 className="text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.collection)}
             </h2>
-            <div className="mt-2 max-h-[312px] space-y-2 overflow-y-auto pr-1">
+            <div className="scrollable-card mt-2 -mr-3 max-h-[312px] space-y-2 overflow-y-auto pr-3">
               {orderedParts.map((part) => {
                 const mediaId = part.mediaInfo?.id;
                 const available =
@@ -417,16 +502,24 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                 const selected =
                   !!mediaId && selectedMediaIds.includes(mediaId);
                 const partGenres = part.genreIds
-                  .map((id) => genres?.find((genre) => genre.id === id)?.name)
-                  .filter(Boolean)
-                  .slice(0, 4)
-                  .join(', ');
+                  .map((id) => ({
+                    id,
+                    name: genres?.find((genre) => genre.id === id)?.name,
+                  }))
+                  .filter(
+                    (genre): genre is { id: number; name: string } =>
+                      !!genre.name
+                  )
+                  .slice(0, 4);
                 return (
                   <article
                     key={part.id}
                     className="refreshed-card-surface grid min-h-[96px] grid-cols-[56px_minmax(0,1fr)] gap-3 rounded-lg border border-gray-700 p-2"
                   >
-                    <div className="relative h-20 w-14 overflow-hidden rounded ring-1 ring-gray-600">
+                    <Link
+                      href={`/${part.mediaType}/${part.id}`}
+                      className="relative h-20 w-14 overflow-hidden rounded ring-1 ring-gray-600 transition hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                    >
                       <CachedImage
                         type="tmdb"
                         src={
@@ -435,12 +528,12 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                             : '/images/seerr_poster_not_found.png'
                         }
                         variants={getTmdbPosterImageVariants(part.posterPath)}
-                        alt=""
+                        alt={part.title}
                         fill
                         sizes="56px"
                         className="object-cover"
                       />
-                    </div>
+                    </Link>
                     <div className="min-w-0 text-[11px] leading-4">
                       <div className="flex min-w-0 items-center gap-3">
                         <SelectionCircle
@@ -450,40 +543,60 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                           label={intl.formatMessage(messages.selection)}
                         />
                         <Link
-                          href={`/movie/${part.id}`}
-                          className="truncate text-sm font-semibold text-white hover:text-indigo-200 hover:underline"
+                          href={`/${part.mediaType}/${part.id}`}
+                          className="truncate text-sm font-semibold text-white hover:text-indigo-200"
                         >
                           {part.title}
                         </Link>
                       </div>
-                      <dl className="mt-1 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3">
-                        <dt className="font-medium text-gray-100">
-                          {intl.formatMessage(messages.availability)}:
-                        </dt>
-                        <dd>
-                          <AvailabilityValue
-                            tone={available ? 'available' : 'unavailable'}
-                          >
-                            {intl.formatMessage(
-                              available
-                                ? messages.available
-                                : messages.notAvailable
-                            )}
-                          </AvailabilityValue>
-                        </dd>
-                        <dt className="font-medium text-gray-100">
-                          {intl.formatMessage(messages.releaseDate)}:
-                        </dt>
-                        <dd className="truncate">{part.releaseDate || '—'}</dd>
-                        <dt className="font-medium text-gray-100">
-                          {intl.formatMessage(messages.genres)}:
-                        </dt>
-                        <dd className="truncate">{partGenres || '—'}</dd>
-                        <dt className="font-medium text-gray-100">TMDB:</dt>
-                        <dd>
-                          {part.voteAverage ? part.voteAverage.toFixed(1) : '—'}
-                        </dd>
-                      </dl>
+                      <div className="card:grid-cols-3 mt-1 grid min-w-0 grid-cols-1 items-stretch">
+                        <div className="card:col-span-2 card:pr-3 min-w-0">
+                          <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                            <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
+                              {intl.formatMessage(messages.availability)}:
+                            </dt>
+                            <dd className="card:col-start-3 card:row-start-1 m-0">
+                              <AvailabilityValue
+                                tone={available ? 'available' : 'unavailable'}
+                              >
+                                {intl.formatMessage(
+                                  available
+                                    ? messages.available
+                                    : messages.notAvailable
+                                )}
+                              </AvailabilityValue>
+                            </dd>
+                            <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
+                              {intl.formatMessage(messages.releaseDate)}:
+                            </dt>
+                            <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
+                              {part.releaseDate || '—'}
+                            </dd>
+                            <div className="request-divider-fill-dark card:col-start-5 card:row-span-2 card:row-start-1 card:block hidden" />
+                            <div className="card:col-start-7 card:row-span-2 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 border-t border-gray-600 pt-2">
+                              <dt className="font-medium text-gray-100">
+                                {intl.formatMessage(messages.genres)}:
+                              </dt>
+                              <dd className="m-0 line-clamp-2 min-w-0">
+                                {partGenres.length > 0
+                                  ? partGenres.map((genre, index) => (
+                                      <span key={genre.id}>
+                                        {index > 0 && ', '}
+                                        <Link
+                                          href={`/discover/movies?genre=${genre.id}`}
+                                          className="text-indigo-300 hover:text-indigo-200"
+                                        >
+                                          {genre.name}
+                                        </Link>
+                                      </span>
+                                    ))
+                                  : '—'}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <CollectionPartRatings part={part} />
+                      </div>
                     </div>
                   </article>
                 );

@@ -210,7 +210,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -276,7 +277,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -342,7 +344,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -432,7 +435,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),

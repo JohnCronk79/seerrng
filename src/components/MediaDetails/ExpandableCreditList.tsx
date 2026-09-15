@@ -24,7 +24,7 @@ const ExpandableCreditList = ({
     {credits.length === 0 ? (
       <p className="refreshed-detail-text-muted text-xs">{emptyLabel}</p>
     ) : (
-      <div className="grid max-h-[252px] grid-cols-3 gap-1.5 overflow-y-auto pr-1">
+      <div className="scrollable-card -mr-3 grid max-h-[252px] grid-cols-3 gap-1.5 overflow-y-auto pr-3">
         {credits.map((credit, index) => (
           <Link
             key={`${credit.id}-${credit.role}-${index}`}

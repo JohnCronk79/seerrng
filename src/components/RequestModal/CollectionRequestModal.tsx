@@ -430,7 +430,7 @@ const CollectionRequestModal = ({
             <span>{intl.formatMessage(globalMessages.movie)}</span>
             <span>{intl.formatMessage(messages.status)}</span>
           </div>
-          <div className="max-h-[312px] space-y-1 overflow-y-auto pt-1 pr-1">
+          <div className="scrollable-card -mr-3 max-h-[312px] space-y-1 overflow-y-auto pt-1 pr-3">
             {visibleParts.map((part) => {
               const presentation = getCollectionPartRequestPresentation(
                 part,

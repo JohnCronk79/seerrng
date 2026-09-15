@@ -611,7 +611,7 @@ const FilterPanel = ({
         <section
           className={`${
             variant === 'search' ? 'w-full basis-full' : ''
-          } mt-2 max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900/40 p-3 pb-7`}
+          } scrollable-card mt-2 max-h-80 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900/40 p-3 pb-7`}
         >
           <WatchProviderSelector
             type={type}

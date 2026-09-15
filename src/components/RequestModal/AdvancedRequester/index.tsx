@@ -952,7 +952,7 @@ const AdvancedRequester = ({
                 <div
                   className={`col-span-2 grid grid-cols-subgrid gap-y-1 ${
                     (serverData?.rootFolders.length ?? 0) > 5
-                      ? 'max-h-[8.5rem] overflow-y-auto pr-1'
+                      ? 'scrollable-card max-h-[8.5rem] overflow-y-auto'
                       : ''
                   }`}
                 >

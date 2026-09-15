@@ -520,6 +520,40 @@
     @apply flex items-center justify-center;
   }
 
+  .media-detail-card a:not(.app-button) {
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  .media-detail-card a:not(.app-button):hover {
+    text-decoration-thickness: 2px;
+  }
+
+  .scrollable-card {
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+    scrollbar-color: rgb(var(--color-gray-600)) transparent;
+  }
+
+  .scrollable-card::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollable-card::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollable-card::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: rgb(var(--color-gray-600));
+  }
+
+  .scrollable-card:hover::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--color-gray-500));
+  }
+
   .refreshed-card-surface {
     background-color: rgb(var(--theme-page-gradient-main) / 0.38);
     color: rgb(var(--theme-control-text) / 0.86);

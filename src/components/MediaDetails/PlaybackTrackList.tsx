@@ -80,7 +80,7 @@ const PlaybackTrackList = ({
           </span>
         </Tooltip>
       </div>
-      <div className="max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-1">
+      <div className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2">
         {tracks.map((track, index) => {
           const selected = selection.has(track.id);
           return (
