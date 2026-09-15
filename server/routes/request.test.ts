@@ -2893,6 +2893,57 @@ describe('POST /request', () => {
     assert.match(duplicateResponse.body.message, /already available/i);
   });
 
+  it('allows simultaneous active music requests for different Lidarr destinations', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(0, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'simultaneous-quality-music-release-group';
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Two Quality Album' },
+            artist: { name: 'Two Quality Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const mp3Response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+    const flacResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 0,
+    });
+
+    assert.strictEqual(mp3Response.status, 201);
+    assert.strictEqual(flacResponse.status, 201);
+    assert.strictEqual(mp3Response.body.serverId, 10);
+    assert.strictEqual(flacResponse.body.serverId, 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
   it('allows an MP3 request when the FLAC destination is already available', async (t) => {
     const settings = getSettings();
     settings.lidarr = [

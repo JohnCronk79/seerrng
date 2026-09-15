@@ -101,7 +101,7 @@ const MusicRequestModal = ({
   const [isUpdating, setIsUpdating] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(
-      initialServerId ? { server: initialServerId } : null
+      initialServerId !== undefined ? { server: initialServerId } : null
     );
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
   const [requestedByPortal, setRequestedByPortal] =
@@ -166,7 +166,9 @@ const MusicRequestModal = ({
   );
 
   useEffect(() => {
-    setRequestOverrides(initialServerId ? { server: initialServerId } : null);
+    setRequestOverrides(
+      initialServerId !== undefined ? { server: initialServerId } : null
+    );
   }, [editRequest?.id, initialServerId, mbId]);
 
   useEffect(() => {
@@ -226,11 +228,19 @@ const MusicRequestModal = ({
           { appearance: 'success', autoDismiss: true }
         );
       }
-    } catch {
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+    } catch (error) {
+      const responseMessage = axios.isAxiosError<{ message?: unknown }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      addToast(
+        typeof responseMessage === 'string' && responseMessage.length > 0
+          ? responseMessage
+          : intl.formatMessage(messages.requesterror),
+        {
+          appearance: 'error',
+          autoDismiss: true,
+        }
+      );
     } finally {
       setIsUpdating(false);
     }

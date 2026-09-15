@@ -162,6 +162,7 @@ const TitleCard = ({
         setCurrentStatus(newStatus);
       }
       mutateParent?.();
+      setIsUpdating(false);
       setShowRequestModal(false);
     },
     [mutateParent]
@@ -414,7 +415,10 @@ const TitleCard = ({
     setIsUpdating(false);
   };
 
-  const closeModal = useCallback(() => setShowRequestModal(false), []);
+  const closeModal = useCallback(() => {
+    setIsUpdating(false);
+    setShowRequestModal(false);
+  }, []);
 
   const isAlbum = mediaType === 'album';
   const isArtist = mediaType === 'artist';
@@ -738,7 +742,7 @@ const TitleCard = ({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <div className="absolute inset-0 z-40 flex items-center justify-center rounded-xl bg-gray-800/75 text-white">
+            <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-xl bg-gray-800/75 text-white">
               <Spinner className="h-10 w-10" />
             </div>
           </Transition>

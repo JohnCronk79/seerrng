@@ -251,6 +251,26 @@ asks for the work to start.
 - Full-size request modal surfaces use the site background gradient. Inner
   artwork-backed request cards preserve their artwork and readability layers.
 
+### Background request interaction and independent qualities
+
+> “the request process should be in the background and not prevent you from interact with the poster or requesting another media quality.”
+
+- Status: Implemented in source with focused request-admission and current-batch
+  coverage. A fresh build and rendered poster/request verification remain
+  pending under John's no-build gate.
+- MP3 and FLAC remain independent Lidarr destinations while either request is
+  pending or processing. A zero-valued Lidarr service ID remains an explicit
+  selection instead of falling back to the default service.
+- Poster-local request loading is cleared before the request modal unmounts.
+  Its visual spinner layer ignores pointer input, so transient or stale loading
+  feedback cannot intercept the poster link or prevent opening media details.
+- Automation-service dispatch remains asynchronous after request admission.
+  The browser receives the saved request without waiting for the complete
+  Radarr, Sonarr, Lidarr, or Bookshelf workflow, allowing another uncovered
+  quality to be requested independently.
+- Request errors show the server's safe returned explanation when available
+  instead of always replacing it with the generic submission message.
+
 ## Firefox detail-card artwork resize stability
 
 > “when the cast and crew cards are opened ... when he collapses the cards and reopens them his browser keeps zooming the background image ... he uses Firefox.”

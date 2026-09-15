@@ -693,6 +693,26 @@ const validateCurrentBatchContract = (files) => {
     'music posters must preserve separate MP3 and FLAC request states'
   );
   requireText(
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'initialServerId !== undefined',
+    'zero-valued Lidarr service IDs must remain valid explicit music destinations'
+  );
+  requireText(
+    'server/routes/request.test.ts',
+    'allows simultaneous active music requests for different Lidarr destinations',
+    'MP3 and FLAC must retain independent active-request regression coverage'
+  );
+  requireOrder(
+    'src/components/TitleCard/index.tsx',
+    ['setIsUpdating(false);', 'setShowRequestModal(false);'],
+    'request completion must clear poster-local loading before unmounting the modal'
+  );
+  requireText(
+    'src/components/TitleCard/index.tsx',
+    'pointer-events-none absolute inset-0 z-40',
+    'poster mutation feedback must never intercept detail navigation'
+  );
+  requireText(
     globals,
     '.media-rating-icon {\n    @apply h-5 w-5',
     'rating icons must share the tomato height'
