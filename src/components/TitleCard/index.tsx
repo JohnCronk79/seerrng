@@ -517,6 +517,13 @@ const TitleCard = ({
             ? globalMessages.request4k
             : globalMessages.request
         );
+  const canShowBlocklistAction =
+    showDetail &&
+    showHideButton &&
+    currentStatus !== MediaStatus.PROCESSING &&
+    currentStatus !== MediaStatus.AVAILABLE &&
+    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
+    currentStatus !== MediaStatus.PENDING;
 
   if (wasBlocklistedHere) {
     return null;
@@ -635,6 +642,23 @@ const TitleCard = ({
                     shrink
                   />
                 )}
+                {!primaryStatusBadge && canShowBlocklistAction && (
+                  <Tooltip
+                    content={intl.formatMessage(globalMessages.addToBlocklist)}
+                  >
+                    <Button
+                      buttonType="ghost"
+                      className="z-40 h-6 w-6 rounded-full border-red-600/80 bg-red-950/75 p-0 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
+                      buttonSize="sm"
+                      aria-label={intl.formatMessage(
+                        globalMessages.addToBlocklist
+                      )}
+                      onClick={() => setShowBlocklistModal(true)}
+                    >
+                      <EyeSlashIcon className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                )}
               </div>
               <div className="z-40 flex min-h-6 items-center">
                 {currentStatus !== MediaStatus.BLOCKLISTED && (
@@ -680,29 +704,6 @@ const TitleCard = ({
                         <MinusCircleIcon className={'h-3'} />
                       </Button>
                     ))}
-                  {showHideButton &&
-                    currentStatus !== MediaStatus.PROCESSING &&
-                    currentStatus !== MediaStatus.AVAILABLE &&
-                    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
-                    currentStatus !== MediaStatus.PENDING && (
-                      <Tooltip
-                        content={intl.formatMessage(
-                          globalMessages.addToBlocklist
-                        )}
-                      >
-                        <Button
-                          buttonType="ghost"
-                          className="z-40 h-6 w-6 rounded-full border-red-600/80 bg-red-950/75 p-0 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
-                          buttonSize="sm"
-                          aria-label={intl.formatMessage(
-                            globalMessages.addToBlocklist
-                          )}
-                          onClick={() => setShowBlocklistModal(true)}
-                        >
-                          <EyeSlashIcon className="h-3.5 w-3.5" />
-                        </Button>
-                      </Tooltip>
-                    )}
                 </div>
               </div>
             )}

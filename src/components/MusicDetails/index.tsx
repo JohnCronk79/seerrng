@@ -155,12 +155,13 @@ const MusicDetails = () => {
     { type: 'or' }
   );
   const playbackActions = canRequest
-    ? (itemIds: string[]) => (
+    ? (itemIds: string[], useFlac: boolean) => (
         <MediaServerPlayButton
           mediaUrl={data.mediaInfo?.mediaUrl}
           iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
           mediaId={data.mediaInfo?.id}
           itemIds={itemIds}
+          defaultIs4k={useFlac}
           disabled={itemIds.length === 0}
           disabledReason={intl.formatMessage(messages.selectToPlay)}
         />

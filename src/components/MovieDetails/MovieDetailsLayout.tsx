@@ -10,6 +10,7 @@ import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import ExpandableCreditList from '@app/components/MediaDetails/ExpandableCreditList';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import useLocale from '@app/hooks/useLocale';
@@ -75,7 +76,7 @@ interface MovieDetailsLayoutProps {
   show4kAvailability: boolean;
   primaryActions: ReactNode;
   secondaryActions: ReactNode;
-  playbackActions?: ReactNode;
+  playbackActions?: (is4k: boolean) => ReactNode;
 }
 
 const availableStatuses = new Set([
@@ -128,6 +129,13 @@ const MovieDetailsLayout = ({
   const [showCast, setShowCast] = useState(false);
   const [showCrew, setShowCrew] = useState(false);
   const [showTags, setShowTags] = useState(false);
+  const [selectedQuality, setSelectedQuality] = useState<'hd' | '4k'>(() =>
+    show4kAvailability &&
+    !availableStatuses.has(data.mediaInfo?.status as MediaStatus) &&
+    availableStatuses.has(data.mediaInfo?.status4k as MediaStatus)
+      ? '4k'
+      : 'hd'
+  );
   useEffect(() => {
     if (pins.cast) setShowCast(true);
     if (pins.crew) setShowCrew(true);
@@ -346,31 +354,47 @@ const MovieDetailsLayout = ({
                   </dl>
                 </div>
 
-                <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.hd)}:
-                  </dt>
-                  <dd className="m-0 truncate">
-                    <AvailabilityValue status={data.mediaInfo?.status}>
-                      {getAvailabilityText(data.mediaInfo?.status, unavailable)}
-                    </AvailabilityValue>
-                  </dd>
-                  {show4kAvailability && (
-                    <>
-                      <dt className="font-medium text-gray-100">
-                        {intl.formatMessage(messages.ultraHd)}:
-                      </dt>
-                      <dd className="m-0 truncate">
-                        <AvailabilityValue status={data.mediaInfo?.status4k}>
-                          {getAvailabilityText(
-                            data.mediaInfo?.status4k,
-                            unavailable
-                          )}
-                        </AvailabilityValue>
-                      </dd>
-                    </>
-                  )}
-                </dl>
+                <div className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 flex min-w-0 flex-col border-t pt-2 text-xs leading-4">
+                  <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.hd)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      <AvailabilityValue status={data.mediaInfo?.status}>
+                        {getAvailabilityText(
+                          data.mediaInfo?.status,
+                          unavailable
+                        )}
+                      </AvailabilityValue>
+                    </dd>
+                    {show4kAvailability && (
+                      <>
+                        <dt className="font-medium text-gray-100">
+                          {intl.formatMessage(messages.ultraHd)}:
+                        </dt>
+                        <dd className="m-0 truncate">
+                          <AvailabilityValue status={data.mediaInfo?.status4k}>
+                            {getAvailabilityText(
+                              data.mediaInfo?.status4k,
+                              unavailable
+                            )}
+                          </AvailabilityValue>
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                  <MediaQualitySelect
+                    value={selectedQuality}
+                    options={[
+                      { label: 'HD', value: 'hd' },
+                      ...(show4kAvailability
+                        ? ([{ label: '4K', value: '4k' }] as const)
+                        : []),
+                    ]}
+                    onChange={setSelectedQuality}
+                    className="mt-2 self-end"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -381,7 +405,7 @@ const MovieDetailsLayout = ({
             ratingData?.imdb?.criticsScore !== undefined ||
             data.voteCount > 0) && (
             <div className="media-rating-row">
-              {playbackActions}
+              {playbackActions?.(selectedQuality === '4k')}
               {ratingData?.rt?.criticsRating &&
                 typeof ratingData.rt.criticsScore === 'number' && (
                   <Tooltip

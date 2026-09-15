@@ -16,7 +16,6 @@ const messages = defineMessages('components.MediaDetails.AlbumTrackList', {
   runtime: 'Runtime',
   notAvailable: 'Not available',
   noTracks: 'No Tracks Available',
-  album: 'Album',
   selection: 'Select items to play',
   availabilityLegend: 'Green check: available. Red X: not available.',
 });
@@ -139,54 +138,28 @@ const AlbumTrackList = ({
 
   return (
     <>
-      <div className="refreshed-inset-surface mt-2 grid grid-cols-[2rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 rounded-lg border border-gray-700 px-3 py-2 text-xs font-semibold text-gray-200">
-        <SelectionCircle
-          disabled={playableTracks.length === 0}
-          onClick={toggleAllTracks}
-          selected={allSelected}
-          label={intl.formatMessage(messages.selection)}
-        />
-        <span>{intl.formatMessage(messages.album)}</span>
-        <AvailabilityHeading />
-      </div>
       {layouts.map(({ columns, className }) => (
         <div
           key={`${columns.length}-${className}`}
           className={`mt-2 max-h-[214px] gap-2 overflow-y-auto pr-1 ${className}`}
         >
           {columns.map((columnTracks, columnIndex) => {
-            const columnItemIds = columnTracks.flatMap((track) => {
-              const position = track.position || tracks.indexOf(track) + 1;
-              const item = playableTracks.find(
-                (candidate) => candidate.index === position
-              );
-              return item ? [item.id] : [];
-            });
-            const columnAllSelected =
-              columnItemIds.length > 0 &&
-              columnItemIds.every((itemId) => selection.has(itemId));
-
             return (
               <section
                 key={`track-column-${columnIndex}`}
                 className="refreshed-inset-surface rounded-lg border border-gray-700 p-2"
               >
                 <div className="request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
-                  <SelectionCircle
-                    disabled={columnItemIds.length === 0}
-                    onClick={() => {
-                      if (!onSelectionChange) return;
-                      const next = new Set(selection);
-                      columnItemIds.forEach((itemId) =>
-                        columnAllSelected
-                          ? next.delete(itemId)
-                          : next.add(itemId)
-                      );
-                      onSelectionChange([...next]);
-                    }}
-                    selected={columnAllSelected}
-                    label={intl.formatMessage(messages.selection)}
-                  />
+                  {columnIndex === 0 ? (
+                    <SelectionCircle
+                      disabled={playableTracks.length === 0}
+                      onClick={toggleAllTracks}
+                      selected={allSelected}
+                      label={intl.formatMessage(messages.selection)}
+                    />
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
                   <span className="text-left">
                     {intl.formatMessage(messages.track)}
                   </span>

@@ -1,6 +1,5 @@
 import MusicBrainzLogo from '@app/assets/musicbrainz.svg';
 import LidarrLogo from '@app/assets/services/lidarr.svg';
-import Badge from '@app/components/Common/Badge';
 import CachedImage from '@app/components/Common/CachedImage';
 import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import Tooltip from '@app/components/Common/Tooltip';
@@ -8,6 +7,7 @@ import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
@@ -53,7 +53,7 @@ interface MusicDetailsLayoutProps {
   data: MusicDetails;
   primaryActions: ReactNode;
   secondaryActions: ReactNode;
-  playbackActions?: (itemIds: string[]) => ReactNode;
+  playbackActions?: (itemIds: string[], useFlac: boolean) => ReactNode;
   ratingData?: MusicRatingResponse;
   additionalContent?: ReactNode;
 }
@@ -102,7 +102,37 @@ const MusicDetailsLayout = ({
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
     string[]
   >([]);
-  const { data: playbackCatalog } = usePlaybackCatalog(data.mediaInfo?.id);
+  const qualityLabels = [
+    ...new Set(
+      (data.availableServices ?? [])
+        .map((service) => service.quality.trim().toLocaleUpperCase())
+        .filter(Boolean)
+    ),
+  ];
+  const qualityAvailability = (['MP3', 'FLAC'] as const).map((quality) => ({
+    quality,
+    available: qualityLabels.some((label) => label.includes(quality)),
+  }));
+  const [selectedQuality, setSelectedQuality] = useState<'mp3' | 'flac'>(() =>
+    !qualityAvailability.some(
+      ({ quality, available }) => quality === 'MP3' && available
+    ) &&
+    qualityAvailability.some(
+      ({ quality, available }) => quality === 'FLAC' && available
+    )
+      ? 'flac'
+      : 'mp3'
+  );
+  const { data: mp3PlaybackCatalog } = usePlaybackCatalog(
+    data.mediaInfo?.id,
+    false
+  );
+  const { data: flacPlaybackCatalog } = usePlaybackCatalog(
+    data.mediaInfo?.id,
+    true
+  );
+  const playbackCatalog =
+    selectedQuality === 'flac' ? flacPlaybackCatalog : mp3PlaybackCatalog;
   const safeRatingUrl = getSafeHref(ratingData?.rating?.url);
   useEffect(() => {
     if (pins.subjectTags) setShowTags(true);
@@ -154,17 +184,6 @@ const MusicDetailsLayout = ({
   const runtimeMinutes = Math.round(
     data.tracks.reduce((total, track) => total + track.length, 0) / 60000
   );
-  const qualityLabels = [
-    ...new Set(
-      (data.availableServices ?? [])
-        .map((service) => service.quality.trim().toLocaleUpperCase())
-        .filter(Boolean)
-    ),
-  ];
-  const qualityAvailability = (['MP3', 'FLAC'] as const).map((quality) => ({
-    quality,
-    available: qualityLabels.some((label) => label.includes(quality)),
-  }));
   const mediaAndFormat = `Music · Album${
     qualityLabels.length > 0 ? ` · ${qualityLabels.join(' + ')}` : ''
   }`;
@@ -259,121 +278,104 @@ const MusicDetailsLayout = ({
                 {data.releaseDate ? ` (${data.releaseDate.slice(0, 4)})` : ''}
               </h1>
 
-              {qualityLabels.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {qualityLabels.map((quality, index) => (
-                    <span
-                      key={quality}
-                      className={`inline-flex h-[22px] cursor-default items-center rounded-full border px-2 text-[11px] leading-none font-semibold whitespace-nowrap uppercase ${subjectTagTones[index % subjectTagTones.length]}`}
-                    >
-                      {quality}
-                    </span>
-                  ))}
-                  <Badge
-                    badgeType="success"
-                    className="h-[22px] items-center !px-2 !text-[11px] !leading-none"
-                  >
-                    {intl.formatMessage(messages.available)}
-                  </Badge>
-                </div>
-              )}
-
               <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
-                <div className="card:col-span-2 card:pr-3 min-w-0">
-                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
-                    <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
-                      {intl.formatMessage(messages.mediaAndFormat)}:
-                    </dt>
-                    <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
-                      {mediaAndFormat}
-                    </dd>
-                    <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
-                      {intl.formatMessage(messages.releaseDate)}:
-                    </dt>
-                    <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
-                      {formattedReleaseDate}
-                    </dd>
-                    <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
-                      {intl.formatMessage(messages.runtime)}:
-                    </dt>
-                    <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
-                      {runtimeMinutes > 0
-                        ? intl.formatMessage(messages.minutes, {
-                            minutes: runtimeMinutes,
-                          })
-                        : unavailable}
-                    </dd>
-                    <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
-                    <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
-                      <dt className="font-medium text-gray-100">
-                        {intl.formatMessage(messages.artist)}:
-                      </dt>
-                      <dd className="m-0 truncate">
-                        <Link
-                          href={`/artist/${artistId}`}
-                          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                        >
-                          {data.artist.name || unavailable}
-                        </Link>
-                      </dd>
-                      <dt className="font-medium text-gray-100">
-                        {intl.formatMessage(messages.albumType)}:
-                      </dt>
-                      <dd className="m-0 truncate">
-                        {data.type || unavailable}
-                      </dd>
-                      <dt className="font-medium text-gray-100">
-                        {intl.formatMessage(messages.trackCount)}:
-                      </dt>
-                      <dd className="m-0 truncate">
-                        {intl.formatNumber(data.tracks.length)}
-                      </dd>
-                    </div>
-
-                    <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
-                      {intl.formatMessage(messages.genres)}:
-                    </dt>
-                    <dd
-                      className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
-                      data-testid="media-details-genres"
-                    >
-                      {tags.length > 0
-                        ? tags.slice(0, 4).map((tag, index) => (
-                            <span key={tag.name}>
-                              {index > 0 && ', '}
-                              <Link
-                                href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                              >
-                                {tag.name}
-                              </Link>
-                            </span>
-                          ))
-                        : unavailable}
-                    </dd>
-                  </dl>
-                </div>
-
-                <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
-                  {qualityAvailability.map(({ quality, available }) => (
-                    <div className="contents" key={quality}>
-                      <dt className="font-medium text-gray-100 uppercase">
-                        {quality}:
-                      </dt>
-                      <dd className="m-0 truncate font-medium">
-                        <AvailabilityValue
-                          tone={available ? 'available' : 'unavailable'}
-                        >
-                          {intl.formatMessage(
-                            available
-                              ? messages.available
-                              : messages.notAvailable
-                          )}
-                        </AvailabilityValue>
-                      </dd>
-                    </div>
-                  ))}
+                <dl className="card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.mediaAndFormat)}:
+                  </dt>
+                  <dd className="m-0 truncate">{mediaAndFormat}</dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.releaseDate)}:
+                  </dt>
+                  <dd className="m-0 truncate">{formattedReleaseDate}</dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.runtime)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {runtimeMinutes > 0
+                      ? intl.formatMessage(messages.minutes, {
+                          minutes: runtimeMinutes,
+                        })
+                      : unavailable}
+                  </dd>
+                  <dt className="mt-0.5 font-medium text-gray-100">
+                    {intl.formatMessage(messages.genres)}:
+                  </dt>
+                  <dd
+                    className="m-0 mt-0.5 min-w-0 break-words"
+                    data-testid="media-details-genres"
+                  >
+                    {tags.length > 0
+                      ? tags.slice(0, 4).map((tag, index) => (
+                          <span key={tag.name}>
+                            {index > 0 && ', '}
+                            <Link
+                              href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
+                              className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                            >
+                              {tag.name}
+                            </Link>
+                          </span>
+                        ))
+                      : unavailable}
+                  </dd>
                 </dl>
+
+                <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.artist)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    <Link
+                      href={`/artist/${artistId}`}
+                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                    >
+                      {data.artist.name || unavailable}
+                    </Link>
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.albumType)}:
+                  </dt>
+                  <dd className="m-0 truncate">{data.type || unavailable}</dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.trackCount)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {intl.formatNumber(data.tracks.length)}
+                  </dd>
+                </dl>
+
+                <div className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 flex min-w-0 flex-col border-t pt-2 text-xs leading-4">
+                  <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                    {qualityAvailability.map(({ quality, available }) => (
+                      <div className="contents" key={quality}>
+                        <dt className="font-medium text-gray-100 uppercase">
+                          {quality}:
+                        </dt>
+                        <dd className="m-0 truncate font-medium">
+                          <AvailabilityValue
+                            tone={available ? 'available' : 'unavailable'}
+                          >
+                            {intl.formatMessage(
+                              available
+                                ? messages.available
+                                : messages.notAvailable
+                            )}
+                          </AvailabilityValue>
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <MediaQualitySelect
+                    value={selectedQuality}
+                    options={[
+                      { label: 'MP3', value: 'mp3' },
+                      { label: 'FLAC', value: 'flac' },
+                    ]}
+                    onChange={setSelectedQuality}
+                    className="mt-2 self-end"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -391,11 +393,15 @@ const MusicDetailsLayout = ({
               className="media-rating-row"
               data-testid="music-playback-rating-row"
             >
-              {playbackActions?.(effectivePlaybackItemIds)}
+              {playbackActions?.(
+                effectivePlaybackItemIds,
+                selectedQuality === 'flac'
+              )}
               {playbackActions && (
                 <PlayOnDeviceButton
                   mediaId={data.mediaInfo?.id}
                   itemIds={effectivePlaybackItemIds}
+                  is4k={selectedQuality === 'flac'}
                 />
               )}
               {ratingData?.rating && safeRatingUrl && (

@@ -619,6 +619,16 @@ const validateCurrentBatchContract = (files) => {
     'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px]',
     'poster quality states must match the rounded media-type badge silhouette'
   );
+  requireText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'bg-indigo-700/35',
+    'processing timer badges must preserve the translucent poster surface'
+  );
+  requireText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'bg-yellow-700/35',
+    'pending bell badges must preserve the translucent poster surface'
+  );
   requireOrder(
     'src/components/Common/StatusBadgeMini/index.tsx',
     [
@@ -637,6 +647,16 @@ const validateCurrentBatchContract = (files) => {
       '{secondaryStatusBadge && (',
     ],
     'poster overlays must keep primary status on row one, Associations on row two left, and secondary status on row two right'
+  );
+  requireOrder(
+    'src/components/TitleCard/index.tsx',
+    [
+      'const canShowBlocklistAction =',
+      '{primaryStatusBadge && (',
+      '{!primaryStatusBadge && canShowBlocklistAction && (',
+      '<AssociationBadge',
+    ],
+    'the no-request blocklist action must occupy the empty top-right poster status slot'
   );
   requireText(
     'server/lib/musicQualityAvailability.ts',
@@ -759,7 +779,6 @@ const validateCurrentBatchContract = (files) => {
   for (const fileName of [
     'src/components/MovieDetails/MovieDetailsLayout.tsx',
     'src/components/TvDetails/SeriesDetailsLayout.tsx',
-    'src/components/MusicDetails/MusicDetailsLayout.tsx',
     'src/components/BookDetails/BookDetailsLayout.tsx',
   ]) {
     requireText(
@@ -1502,7 +1521,6 @@ const validateCurrentBatchContract = (files) => {
   for (const fileName of [
     'src/components/MovieDetails/MovieDetailsLayout.tsx',
     'src/components/TvDetails/SeriesDetailsLayout.tsx',
-    'src/components/MusicDetails/MusicDetailsLayout.tsx',
     'src/components/BookDetails/BookDetailsLayout.tsx',
   ]) {
     requireText(
@@ -1548,6 +1566,30 @@ const validateCurrentBatchContract = (files) => {
   }
 
   const musicLayout = 'src/components/MusicDetails/MusicDetailsLayout.tsx';
+  for (const [token, description] of [
+    [
+      'data-testid="media-details-poster"',
+      'Music details must retain the standard contained poster',
+    ],
+    [
+      'sm:grid-cols-[80px_minmax(0,1fr)]',
+      'Music details must retain the responsive poster and detail geometry',
+    ],
+    [
+      'data-testid="media-details-genres"',
+      'Music details must retain the shared Genres row',
+    ],
+    [
+      'card:grid-cols-3',
+      'Music details must divide the post-poster detail space into equal thirds',
+    ],
+    [
+      'media-primary-action-row',
+      'Music detail actions must retain the shared full-width row',
+    ],
+  ]) {
+    requireText(musicLayout, token, description);
+  }
   rejectText(
     musicLayout,
     'totalListeners',
@@ -1559,10 +1601,15 @@ const validateCurrentBatchContract = (files) => {
     'musicbrainz.org/search?query=',
     'Origin must remain a navigable MusicBrainz link'
   );
-  requireOrder(
+  rejectText(
     musicLayout,
-    ['qualityLabels.map', '<Badge', 'messages.available'],
-    'MP3/FLAC badges must be immediately left of Available'
+    'qualityLabels.map',
+    'Music details must not repeat MP3 and FLAC badges beneath the title'
+  );
+  rejectText(
+    musicLayout,
+    "import Badge from '@app/components/Common/Badge';",
+    'Music details must not render the removed overall availability badge beneath the title'
   );
   requireOrder(
     musicLayout,
@@ -1588,6 +1635,21 @@ const validateCurrentBatchContract = (files) => {
     musicLayout,
     'onSelectionChange={setSelectedPlaybackItemIds}',
     'music track selection must control the playback playlist'
+  );
+  requireText(
+    musicLayout,
+    '<MediaQualitySelect',
+    'Music details must expose the MP3 and FLAC quality selector'
+  );
+  requireText(
+    musicLayout,
+    "? 'flac'\n      : 'mp3'",
+    'Music details must default to MP3 unless FLAC is the only available quality'
+  );
+  requireText(
+    musicLayout,
+    "selectedQuality === 'flac'",
+    'Music playback must pass the exact selected quality to server and device actions'
   );
   requireText(
     musicLayout,
@@ -1626,6 +1688,26 @@ const validateCurrentBatchContract = (files) => {
     'onSelectionChange={setSelectedPlaybackItemIds}',
     'series selections must control the playback playlist'
   );
+  for (const detailLayout of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    seriesLayout,
+  ]) {
+    requireText(
+      detailLayout,
+      '<MediaQualitySelect',
+      'Movie and Series details must expose the HD and 4K quality selector'
+    );
+    requireText(
+      detailLayout,
+      "? '4k'\n      : 'hd'",
+      'Movie and Series details must default to HD unless 4K is the only available quality'
+    );
+    requireText(
+      detailLayout,
+      "selectedQuality === '4k'",
+      'Movie and Series playback must use the exact selected quality'
+    );
+  }
   const seriesBrowser =
     'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx';
   requireText(
@@ -1677,8 +1759,18 @@ const validateCurrentBatchContract = (files) => {
   const albumTrackList = 'src/components/MediaDetails/AlbumTrackList.tsx';
   requireText(
     albumTrackList,
+    'onClick={toggleAllTracks}',
+    'the Music track selector must expose one all-tracks selection control'
+  );
+  requireText(
+    albumTrackList,
+    'columnIndex === 0',
+    'only the left Music track-card heading may render the all-tracks selector'
+  );
+  rejectText(
+    albumTrackList,
     'columnItemIds.forEach((itemId) =>',
-    'each Music track table must expose its own select-all control'
+    'Music track cards must not retain independent per-column select-all behavior'
   );
   requireText(
     albumTrackList,
@@ -2378,13 +2470,18 @@ const validateCurrentBatchContract = (files) => {
     ],
     [
       'server/lib/playbackMediaRoot.ts',
-      'media.ratingKeyFlac ??',
-      'Plex playback must prefer FLAC before MP3 and the legacy identifier',
+      'const selectedVariant = is4k ? media.ratingKeyFlac : media.ratingKeyMp3;',
+      'Plex music playback must resolve the exact selected MP3 or FLAC identifier',
     ],
     [
       'server/lib/playbackMediaRoot.ts',
-      'media.jellyfinMediaIdFlac ??',
-      'Jellyfin and Emby playback must prefer FLAC before MP3 and the legacy identifier',
+      '? media.jellyfinMediaIdFlac\n        : media.jellyfinMediaIdMp3;',
+      'Jellyfin and Emby music playback must resolve the exact selected MP3 or FLAC identifier',
+    ],
+    [
+      'server/lib/playbackSelection.test.ts',
+      'translates a music selection into only the selected quality catalog',
+      'playlist selection must have regression coverage against mixed music qualities',
     ],
     [
       'server/lib/audioPlaybackFormat.test.ts',

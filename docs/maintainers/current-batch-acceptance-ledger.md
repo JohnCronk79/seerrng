@@ -67,6 +67,32 @@ asks for the work to start.
 - The bell tooltip identifies the state as pending approval, while the timer
   tooltip identifies it as approved and processing. Both include the affected
   HD, 4K, MP3, or FLAC format.
+- Bell and timer badges retain their yellow and purple semantic colors on a
+  translucent surface. When no quality badge is present and the existing
+  no-request/no-media visibility rule permits Blocklist, its icon occupies the
+  empty first-row right slot instead of a third poster row.
+
+### Detail playback quality selection
+
+> “the default quality selection will be hd/mp3 for all pages unless only the 4k/flac is available ... only the quality selected will be made into the playlist.”
+
+- Status: Implemented in source with focused root-selection and playlist
+  translation coverage. A fresh build and rendered Movie, Series, and Music
+  verification remain pending under John's no-build gate.
+- Movie, Series, and Music details place a `Select Quality` control at the
+  bottom right of the third compact details group. Movie and Series offer HD
+  and permitted 4K; Music offers MP3 and FLAC.
+- HD or MP3 is the default whenever that lower quality is available or neither
+  quality is available. The higher quality becomes the default only when 4K or
+  FLAC is available and its lower-quality counterpart is not.
+- Track and episode availability, selection, Play on Server, Play on Device,
+  and the replacement playlist all follow the exact selected catalog. Legacy
+  audio roots remain usable only when no exact MP3 or FLAC root has ever been
+  recorded; an ambiguous root cannot substitute for a missing known variant.
+- Music no longer repeats MP3, FLAC, and Available badges beneath the title.
+  Its detail groups use equal thirds after the poster, the standalone Album
+  heading card is removed, and the single selector in the left track-card
+  heading selects every playable track across both cards.
 
 ### Media-detail disclosure spacing and subcard contrast
 

@@ -117,13 +117,13 @@ const StatusBadgeMini = memo(
 
     if (shrink && quality) {
       const tone = inProgress
-        ? 'border-indigo-400/80 bg-indigo-700/70 text-indigo-50'
+        ? 'border-indigo-400/80 bg-indigo-700/35 text-indigo-50'
         : status === MediaStatus.AVAILABLE ||
             status === MediaStatus.PARTIALLY_AVAILABLE
           ? 'border-green-500/80 bg-green-700/70 text-green-50'
           : status === MediaStatus.PENDING
-            ? 'border-yellow-400/80 bg-yellow-700/70 text-yellow-50'
-            : 'border-indigo-400/80 bg-indigo-700/70 text-indigo-50';
+            ? 'border-yellow-400/80 bg-yellow-700/35 text-yellow-50'
+            : 'border-indigo-400/80 bg-indigo-700/35 text-indigo-50';
       const qualityBadge = (
         <div
           className={`inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] leading-none font-semibold shadow-md backdrop-blur ${tone}`}
