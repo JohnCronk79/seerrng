@@ -290,8 +290,11 @@ asks for the work to start.
 
 - Status: Implemented in source with current-batch contract coverage. A fresh
   build and rendered review remain pending under John's no-build gate.
-- Discover title posters retain the existing 2:3 ratio while increasing to 160
-  pixels on smaller screens and 192 pixels at the desktop breakpoint.
+- Discover title posters retain the existing 2:3 ratio while increasing to 192
+  pixels on smaller screens and 224 pixels at the desktop breakpoint.
+- The poster shelf reserves 320 pixels on smaller screens and 360 pixels at the
+  desktop breakpoint, with 12 pixels of vertical padding, so the complete card
+  and border remain visible during the five-percent hover expansion.
 - The larger width is scoped to Discover and includes loading placeholders, so
   library grids and detail-page recommendation shelves do not change size.
 

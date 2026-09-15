@@ -718,6 +718,11 @@ const validateCurrentBatchContract = (files) => {
     'Discover poster cards must retain their wider responsive sizing'
   );
   requireText(
+    globals,
+    '.discover-home .slider-track:not(.slider-track-compact)',
+    'Discover poster shelves must retain enough height for the complete card border'
+  );
+  requireText(
     'server/routes/request.test.ts',
     'allows simultaneous active music requests for different Lidarr destinations',
     'MP3 and FLAC must retain independent active-request regression coverage'
@@ -3039,7 +3044,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     slider,
-    "compact ? 'min-h-[5.5rem]'",
+    "'slider-track-compact min-h-[5.5rem]'",
     'compact sliders must not reserve poster height'
   );
 

@@ -704,12 +704,22 @@
   }
 
   .discover-home .title-card-shell {
-    width: 10rem;
+    width: 12rem;
+  }
+
+  .discover-home .slider-track:not(.slider-track-compact) {
+    min-height: 20rem;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
   }
 
   @media (min-width: 768px) {
     .discover-home .title-card-shell {
-      width: 12rem;
+      width: 14rem;
+    }
+
+    .discover-home .slider-track:not(.slider-track-compact) {
+      min-height: 22.5rem;
     }
   }
 
