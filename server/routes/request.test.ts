@@ -1907,7 +1907,7 @@ describe('POST /request', () => {
     assert.equal(persistedMedia.status, MediaStatus.PROCESSING);
   });
 
-  it('uses the selected request owner permissions instead of the acting administrator permissions', async (t) => {
+  it("lets an administrator request any tier for another user while preserving that user's approval permissions", async (t) => {
     Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
       configurable: true,
       get: () => async () =>
@@ -1931,7 +1931,7 @@ describe('POST /request', () => {
       {
         mediaType: MediaType.MOVIE,
         mediaId: 553,
-        is4k: false,
+        is4k: true,
         userId: requestOwner.id,
       },
       adminUser
@@ -1940,7 +1940,8 @@ describe('POST /request', () => {
     assert.equal(mediaRequest.requestedBy.id, requestOwner.id);
     assert.equal(mediaRequest.status, MediaRequestStatus.PENDING);
     assert.equal(mediaRequest.modifiedBy == null, true);
-    assert.equal(mediaRequest.media.status, MediaStatus.PENDING);
+    assert.equal(mediaRequest.media.status, MediaStatus.UNKNOWN);
+    assert.equal(mediaRequest.media.status4k, MediaStatus.PENDING);
   });
 
   it('promotes matching pending Movie, Series, Music, and Book requests without replacing their requester or timeline', async (t) => {

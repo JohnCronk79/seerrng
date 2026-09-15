@@ -1,11 +1,25 @@
 import Tooltip from '@app/components/Common/Tooltip';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  ChevronDownIcon,
-  MapPinIcon as PinIcon,
-} from '@heroicons/react/24/outline';
-import { MapPinIcon as PinnedIcon } from '@heroicons/react/24/solid';
+import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import type { SVGProps } from 'react';
 import { useIntl } from 'react-intl';
+
+const PushPinIcon = ({
+  filled = false,
+  ...props
+}: SVGProps<SVGSVGElement> & { filled?: boolean }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill={filled ? 'currentColor' : 'none'}
+    stroke={filled ? 'none' : 'currentColor'}
+    strokeWidth={filled ? undefined : 1.8}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M16 9V4l1-1V2H7v1l1 1v5c0 1.66-1.34 3-3 3v2h6v7l1 1 1-1v-7h6v-2c-1.66 0-3-1.34-3-3Z" />
+  </svg>
+);
 
 const messages = defineMessages('components.MediaDetails.DetailDisclosure', {
   pin: 'Pin {label} open across detail pages',
@@ -43,11 +57,11 @@ const DetailDisclosureButton = ({
             aria-pressed={pinned}
             onClick={onPinClick}
           >
-            {pinned ? (
-              <PinnedIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            ) : (
-              <PinIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
+            <PushPinIcon
+              filled={pinned}
+              className="h-3.5 w-3.5 rotate-45"
+              aria-hidden="true"
+            />
           </button>
         </Tooltip>
       )}

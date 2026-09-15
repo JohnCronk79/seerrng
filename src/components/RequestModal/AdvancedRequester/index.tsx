@@ -14,7 +14,6 @@ import type {
   ServiceCommonServer,
   ServiceCommonServerWithDetails,
 } from '@server/interfaces/api/serviceInterfaces';
-import { hasPermission } from '@server/lib/permissions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useIntl } from 'react-intl';
@@ -26,11 +25,114 @@ type OptionType = {
   label: string;
 };
 
+type RequestListboxOption = {
+  value: number;
+  label: string;
+};
+
+type RequestListboxControlProps = {
+  id: string;
+  label: string;
+  value: number;
+  options: RequestListboxOption[];
+  onChange: (value: number) => void;
+  active?: boolean;
+  disabled?: boolean;
+  loadingLabel: string;
+};
+
 const areNumberArraysEqual = (a: number[], b: number[]) =>
   a.length === b.length && a.every((value, index) => value === b[index]);
 
 const formatServiceLabel = (value: string) =>
   value.replace(/\beBook\b/g, 'Ebook');
+
+const controlLabelClass = (active: boolean) =>
+  `inline-flex h-full flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
+    active ? 'bg-indigo-500/35 text-white' : ''
+  }`;
+
+const RequestListboxControl = ({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+  active = false,
+  disabled = false,
+  loadingLabel,
+}: RequestListboxControlProps) => {
+  const selectedLabel =
+    options.find((option) => option.value === value)?.label ?? loadingLabel;
+
+  return (
+    <Listbox
+      as="div"
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      className="request-form-control relative inline-flex h-8 flex-shrink-0 items-stretch rounded-md border transition-colors"
+    >
+      {({ open }) => (
+        <>
+          <Listbox.Label className={controlLabelClass(active)}>
+            {label}
+          </Listbox.Label>
+          <Listbox.Button
+            id={id}
+            className="inline-flex h-full min-w-36 items-center justify-between gap-2 rounded-r-[5px] bg-transparent px-2 py-0 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="truncate">{selectedLabel}</span>
+            <ChevronDownIcon
+              className="h-4 w-4 flex-shrink-0 text-gray-500"
+              aria-hidden="true"
+            />
+          </Listbox.Button>
+          <Transition
+            show={open}
+            enter="transition-opacity ease-in duration-150"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="transition-opacity ease-out duration-100"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <Listbox.Options
+              static
+              className="absolute top-full right-0 z-50 mt-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
+            >
+              {options.map((option) => (
+                <Listbox.Option key={option.value} value={option.value}>
+                  {({ selected, active: optionActive }) => (
+                    <div
+                      className={`relative cursor-default py-1.5 pr-3 pl-7 whitespace-nowrap select-none ${
+                        optionActive
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-gray-300'
+                      }`}
+                    >
+                      <span
+                        className={selected ? 'font-semibold' : 'font-normal'}
+                      >
+                        {option.label}
+                      </span>
+                      {selected && (
+                        <CheckIcon
+                          className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
+                  )}
+                </Listbox.Option>
+              ))}
+            </Listbox.Options>
+          </Transition>
+        </>
+      )}
+    </Listbox>
+  );
+};
 
 const messages = defineMessages('components.RequestModal.AdvancedRequester', {
   advancedoptions: 'Advanced Request',
@@ -218,38 +320,12 @@ const AdvancedRequester = ({
       ? '/api/v1/user?take=1000&sort=displayname'
       : null
   );
-  const filteredUserData = useMemo(
-    () =>
-      userData?.results.filter((user) =>
-        hasPermission(
-          selectedIs4k
-            ? [
-                Permission.REQUEST_4K,
-                type === 'movie'
-                  ? Permission.REQUEST_4K_MOVIE
-                  : Permission.REQUEST_4K_TV,
-              ]
-            : [
-                Permission.REQUEST,
-                type === 'movie'
-                  ? Permission.REQUEST_MOVIE
-                  : type === 'music'
-                    ? Permission.REQUEST_MUSIC
-                    : type === 'book'
-                      ? Permission.REQUEST_BOOK
-                      : Permission.REQUEST_TV,
-              ],
-          user.permissions,
-          { type: 'or' }
-        )
-      ),
-    [hasPermission, selectedIs4k, type, userData?.results]
-  );
+  const selectableUserData = userData?.results;
 
   useEffect(() => {
-    if (filteredUserData && !requestUser) {
+    if (selectableUserData && !requestUser) {
       const nextSelectedUser =
-        filteredUserData.find((u) => u.id === currentUser?.id) ?? null;
+        selectableUserData.find((u) => u.id === currentUser?.id) ?? null;
 
       if (nextSelectedUser?.id !== selectedUserId) {
         setIgnoreQuota(false);
@@ -257,7 +333,7 @@ const AdvancedRequester = ({
 
       setSelectedUser(nextSelectedUser);
     }
-  }, [filteredUserData]);
+  }, [selectableUserData]);
 
   useEffect(() => {
     let defaultServer = data?.find((server) => {
@@ -504,11 +580,6 @@ const AdvancedRequester = ({
       ? serverData.server.activeAnimeTags
       : serverData.server.activeTags
     : undefined;
-  const controlLabelClass = (active: boolean) =>
-    `inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-      active ? 'bg-indigo-500/35 text-white' : ''
-    }`;
-
   const canSelectRequestedBy =
     currentHasPermission([
       Permission.MANAGE_REQUESTS,
@@ -542,7 +613,7 @@ const AdvancedRequester = ({
                 </Listbox.Label>
                 <Listbox.Button className="inline-grid h-full max-w-[min(24rem,55vw)] grid-cols-[minmax(6rem,max-content)_auto] items-center gap-2 rounded-r-[5px] px-2 py-0 text-[11px] leading-none font-semibold text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset">
                   <span className="grid min-w-0">
-                    {(filteredUserData ?? []).map((candidate) => (
+                    {(selectableUserData ?? []).map((candidate) => (
                       <span
                         key={candidate.id}
                         aria-hidden="true"
@@ -573,7 +644,7 @@ const AdvancedRequester = ({
                     static
                     className="absolute right-0 bottom-full z-50 mb-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
                   >
-                    {(filteredUserData ?? []).map((candidate) => (
+                    {(selectableUserData ?? []).map((candidate) => (
                       <Listbox.Option key={candidate.id} value={candidate}>
                         {({ selected, active }) => (
                           <div
@@ -678,34 +749,21 @@ const AdvancedRequester = ({
           {!!data && selectedServer !== null && serviceOverridesEnabled && (
             <div className="mb-3 flex flex-wrap items-center gap-2">
               {serviceServers.length > 0 && (
-                <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-                  <span
-                    className={controlLabelClass(
-                      defaultService !== undefined &&
-                        selectedServer !== defaultService.id
-                    )}
-                  >
-                    {intl.formatMessage(messages.destinationserver)}
-                  </span>
-                  <select
-                    id="server"
-                    name="server"
-                    value={selectedServer}
-                    onChange={(e) => setSelectedServer(Number(e.target.value))}
-                    onBlur={(e) => setSelectedServer(Number(e.target.value))}
-                    aria-label={intl.formatMessage(messages.destinationserver)}
-                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
-                  >
-                    {serviceServers.map((server) => (
-                      <option
-                        key={`server-list-${server.id}`}
-                        value={server.id}
-                      >
-                        {formatServiceLabel(server.name)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <RequestListboxControl
+                  id="server"
+                  label={intl.formatMessage(messages.destinationserver)}
+                  value={selectedServer}
+                  options={serviceServers.map((server) => ({
+                    value: server.id,
+                    label: formatServiceLabel(server.name),
+                  }))}
+                  onChange={setSelectedServer}
+                  active={
+                    defaultService !== undefined &&
+                    selectedServer !== defaultService.id
+                  }
+                  loadingLabel={intl.formatMessage(globalMessages.loading)}
+                />
               )}
               {(type === 'music' || type === 'book') &&
                 (isValidating ||
@@ -762,49 +820,29 @@ const AdvancedRequester = ({
               {(isValidating ||
                 !serverData ||
                 serverData.profiles.length > 0) && (
-                <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-                  <span
-                    className={controlLabelClass(
-                      defaultProfileId !== undefined &&
-                        selectedProfile !== defaultProfileId
-                    )}
-                  >
-                    {intl.formatMessage(messages.qualityprofile)}
-                  </span>
-                  <select
-                    id="profile"
-                    name="profile"
-                    value={selectedProfile}
-                    onChange={(e) => setSelectedProfile(Number(e.target.value))}
-                    onBlur={(e) => setSelectedProfile(Number(e.target.value))}
-                    aria-label={intl.formatMessage(messages.qualityprofile)}
-                    className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
-                    disabled={isValidating || !serverData}
-                  >
-                    {(isValidating || !serverData) && (
-                      <option value="">
-                        {intl.formatMessage(globalMessages.loading)}
-                      </option>
-                    )}
-                    {!isValidating &&
-                      serverData &&
-                      serverData.profiles
-                        .toSorted((a, b) =>
-                          a.name.localeCompare(b.name, intl.locale, {
-                            numeric: true,
-                            sensitivity: 'base',
-                          })
-                        )
-                        .map((profile) => (
-                          <option
-                            key={`profile-list${profile.id}`}
-                            value={profile.id}
-                          >
-                            {formatServiceLabel(profile.name)}
-                          </option>
-                        ))}
-                  </select>
-                </label>
+                <RequestListboxControl
+                  id="profile"
+                  label={intl.formatMessage(messages.qualityprofile)}
+                  value={selectedProfile}
+                  options={(serverData?.profiles ?? [])
+                    .toSorted((a, b) =>
+                      a.name.localeCompare(b.name, intl.locale, {
+                        numeric: true,
+                        sensitivity: 'base',
+                      })
+                    )
+                    .map((profile) => ({
+                      value: profile.id,
+                      label: formatServiceLabel(profile.name),
+                    }))}
+                  onChange={setSelectedProfile}
+                  active={
+                    defaultProfileId !== undefined &&
+                    selectedProfile !== defaultProfileId
+                  }
+                  disabled={isValidating || !serverData}
+                  loadingLabel={intl.formatMessage(globalMessages.loading)}
+                />
               )}
               {!rootFolderTable &&
                 (isValidating ||

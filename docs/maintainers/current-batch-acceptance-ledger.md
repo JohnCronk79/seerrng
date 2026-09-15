@@ -168,12 +168,14 @@ asks for the work to start.
 > “feature: add a pin to the cast crew and tags button on the media details page.”
 
 - Status: Implemented in source with database, API, optimistic-client,
-  accessibility, and focused contract coverage. The test database preparation
-  and fresh production build passed; rendered desktop/narrow verification
-  remains pending.
+  accessibility, and focused contract coverage. The earlier production build
+  passed before the pushpin refinement; that icon change remains source-only
+  until the next explicitly requested laptop build.
 - Cast, Crew, and Subject Tags each have an independent pin segment to the left
-  of the disclosure label. Selected pins use a solid icon and `aria-pressed`;
-  unselected pins use an outline icon and an explanatory tooltip.
+  of the disclosure label. The control uses a conventional angled menu
+  pushpin, not a map-location pin. Selected pins use a solid icon and
+  `aria-pressed`; unselected pins use an outline icon and an explanatory
+  tooltip.
 - A pinned disclosure defaults open across Movie, Series, and Collection
   details. Subject Tags also carries into Music details. Users may temporarily
   collapse a pinned section during the current page visit; it opens again on
@@ -189,17 +191,25 @@ asks for the work to start.
 > “set it so the advanced options are always visible ... make the advanced options card scrollable if and when the number of root folders are more than 5 items long ... use our site background here ... use the same style as the destination dropdown button ... make the horizontal lines and the divider lines the same dark blue.”
 
 - Status: Implemented in source and protected by the focused current-batch
-  contract. The fresh production build passed; rendered desktop/narrow
-  verification remains pending.
+  contract. The earlier production build passed before these latest requester,
+  dropdown, and divider refinements; they remain source-only until the next
+  explicitly requested laptop build.
 - Fresh Movie, Series, Music, and Book request forms open Advanced Options by
   default; the older Collection, bulk, and edit-request presentation keeps its
   Advanced Options content open.
 - Root-folder data rows scroll only when more than five exist, with the table
-  heading left visible. Request-card rules and details dividers match the
-  `gray-900/70` Destination Server value background.
+  heading left visible. Request-card rules and details dividers are two pixels
+  wide and match the `gray-900/70` Destination Server value background.
 - Advanced Options, Requested By, Cast, Crew, and Subject Tags controls share
   the darker Destination Server control treatment while retaining their compact
   sizes and behavior.
+- Destination Server and Quality Profile use the same translucent blue
+  Listbox treatment, bright hover state, and selected-option checkmark as
+  Requested By. Their value segments stay transparent so the shared surface is
+  not made artificially opaque by stacked backgrounds.
+- Request managers see every Seerr account in Requested By and may create a
+  request for an account that lacks that tier's self-request permission.
+  Approval and quota behavior still follow the selected account.
 - Full-size request modal surfaces use the site background gradient. Inner
   artwork-backed request cards preserve their artwork and readability layers.
 

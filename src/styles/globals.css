@@ -561,9 +561,21 @@
     border-color: rgb(var(--color-gray-900) / 0.7);
   }
 
+  .request-divider-dark.border-t {
+    border-top-width: 2px !important;
+  }
+
+  .request-divider-dark.border-b {
+    border-bottom-width: 2px !important;
+  }
+
   .request-divider-dark::before,
   .request-divider-fill-dark {
     background-color: rgb(var(--color-gray-900) / 0.7);
+  }
+
+  .request-divider-dark::before {
+    width: 2px !important;
   }
 
   .refreshed-artwork-scrim {

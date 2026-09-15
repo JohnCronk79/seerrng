@@ -940,6 +940,16 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
+    '.request-divider-dark.border-t {\n    border-top-width: 2px !important;',
+    'request horizontal dividers must remain two pixels wide'
+  );
+  requireText(
+    globals,
+    '.request-divider-dark::before {\n    width: 2px !important;',
+    'request vertical dividers must remain two pixels wide'
+  );
+  requireText(
+    globals,
     '.request-modal-site-surface {',
     'full-size request surfaces must expose the shared site-gradient treatment'
   );
@@ -1211,6 +1221,21 @@ const validateCurrentBatchContract = (files) => {
     'detail disclosures must use the shared segmented control surface'
   );
   requireText(
+    disclosure,
+    'const PushPinIcon =',
+    'detail disclosure pins must use the conventional pushpin icon'
+  );
+  requireText(
+    disclosure,
+    "fill={filled ? 'currentColor' : 'none'}",
+    'the unpinned pushpin interior must remain transparent'
+  );
+  rejectText(
+    disclosure,
+    'MapPinIcon',
+    'detail disclosure pins must not regress to map-location icons'
+  );
+  requireText(
     globals,
     '.detail-disclosure-control {\n    @apply inline-flex h-[22px] items-stretch overflow-hidden rounded-md border border-gray-600 bg-gray-900/70',
     'Cast, Crew, and Subject Tags must match the Destination Server dropdown surface'
@@ -1365,6 +1390,31 @@ const validateCurrentBatchContract = (files) => {
     advancedRequester,
     'className="request-form-control relative inline-flex h-[22px]',
     'Requested By must use the dark Destination Server control treatment'
+  );
+  requireText(
+    advancedRequester,
+    'const selectableUserData = userData?.results;',
+    'request managers must be able to select every Seerr user'
+  );
+  requireText(
+    advancedRequester,
+    'const RequestListboxControl =',
+    'Destination Server and Quality Profile must share the Requested By listbox treatment'
+  );
+  requireText(
+    advancedRequester,
+    'rounded-r-[5px] bg-transparent',
+    'request listbox value buttons must not stack an opaque surface over the shared translucent control'
+  );
+  requireText(
+    advancedRequester,
+    '<CheckIcon',
+    'request listbox menus must mark their selected option with a check icon'
+  );
+  requireText(
+    'server/entity/MediaRequest.ts',
+    'const isManagedRequestForAnotherUser =',
+    'request managers must be able to submit a configured tier on behalf of any selected user'
   );
   for (const fileName of [
     'src/components/RequestModal/MovieRequestModal.tsx',
