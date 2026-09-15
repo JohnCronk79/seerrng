@@ -20,7 +20,7 @@ const ExpandableCreditList = ({
   emptyLabel,
 }: ExpandableCreditListProps) => (
   <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-    <h2 className="mb-2 text-xs font-semibold text-gray-200">{title}</h2>
+    <h2 className="media-inset-heading mb-2">{title}</h2>
     {credits.length === 0 ? (
       <p className="refreshed-detail-text-muted text-xs">{emptyLabel}</p>
     ) : (

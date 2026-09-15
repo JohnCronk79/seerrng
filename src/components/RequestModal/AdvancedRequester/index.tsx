@@ -25,17 +25,19 @@ type OptionType = {
   label: string;
 };
 
-type RequestListboxOption = {
-  value: number;
+type RequestListboxValue = string | number;
+
+type RequestListboxOption<T extends RequestListboxValue> = {
+  value: T;
   label: string;
 };
 
-type RequestListboxControlProps = {
+type RequestListboxControlProps<T extends RequestListboxValue> = {
   id: string;
   label: string;
-  value: number;
-  options: RequestListboxOption[];
-  onChange: (value: number) => void;
+  value: T;
+  options: RequestListboxOption<T>[];
+  onChange: (value: T) => void;
   active?: boolean;
   disabled?: boolean;
   loadingLabel: string;
@@ -48,11 +50,9 @@ const formatServiceLabel = (value: string) =>
   value.replace(/\beBook\b/g, 'Ebook');
 
 const controlLabelClass = (active: boolean) =>
-  `inline-flex h-full flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-    active ? 'bg-indigo-500/35 text-white' : ''
-  }`;
+  `request-listbox-label ${active ? 'request-listbox-label-active' : ''}`;
 
-const RequestListboxControl = ({
+const RequestListboxControl = <T extends RequestListboxValue>({
   id,
   label,
   value,
@@ -61,7 +61,7 @@ const RequestListboxControl = ({
   active = false,
   disabled = false,
   loadingLabel,
-}: RequestListboxControlProps) => {
+}: RequestListboxControlProps<T>) => {
   const selectedLabel =
     options.find((option) => option.value === value)?.label ?? loadingLabel;
 
@@ -71,20 +71,17 @@ const RequestListboxControl = ({
       value={value}
       onChange={onChange}
       disabled={disabled}
-      className="request-form-control relative inline-flex h-8 flex-shrink-0 items-stretch rounded-md border transition-colors"
+      className="request-listbox-control"
     >
       {({ open }) => (
         <>
           <Listbox.Label className={controlLabelClass(active)}>
             {label}
           </Listbox.Label>
-          <Listbox.Button
-            id={id}
-            className="inline-flex h-full min-w-36 items-center justify-between gap-2 rounded-r-[5px] bg-transparent px-2 py-0 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <Listbox.Button id={id} className="request-listbox-button">
             <span className="truncate">{selectedLabel}</span>
             <ChevronDownIcon
-              className="h-4 w-4 flex-shrink-0 text-gray-500"
+              className="request-listbox-chevron"
               aria-hidden="true"
             />
           </Listbox.Button>
@@ -97,18 +94,13 @@ const RequestListboxControl = ({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <Listbox.Options
-              static
-              className="absolute top-full right-0 z-50 mt-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
-            >
+            <Listbox.Options static className="request-listbox-menu">
               {options.map((option) => (
                 <Listbox.Option key={option.value} value={option.value}>
                   {({ selected, active: optionActive }) => (
                     <div
-                      className={`relative cursor-default py-1.5 pr-3 pl-7 whitespace-nowrap select-none ${
-                        optionActive
-                          ? 'bg-indigo-600 text-white'
-                          : 'text-gray-300'
+                      className={`request-listbox-option ${
+                        optionActive ? 'request-listbox-option-active' : ''
                       }`}
                     >
                       <span
@@ -118,7 +110,7 @@ const RequestListboxControl = ({
                       </span>
                       {selected && (
                         <CheckIcon
-                          className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2"
+                          className="request-listbox-check"
                           aria-hidden="true"
                         />
                       )}
@@ -596,7 +588,7 @@ const AdvancedRequester = ({
               setIgnoreQuota(false);
               setSelectedUser(value);
             }}
-            className="request-form-control relative inline-flex h-[22px] max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border"
+            className="request-form-control compact-control relative inline-flex max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border"
           >
             {({ open }) => (
               <>
@@ -848,45 +840,25 @@ const AdvancedRequester = ({
                 (isValidating ||
                   !serverData ||
                   serverData.rootFolders.length > 1) && (
-                  <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-                    <span
-                      className={controlLabelClass(
-                        defaultFolderPath !== undefined &&
-                          selectedFolder !== defaultFolderPath
-                      )}
-                    >
-                      {intl.formatMessage(messages.rootfolder)}
-                    </span>
-                    <select
-                      id="folder"
-                      name="folder"
-                      value={selectedFolder}
-                      onChange={(e) => setSelectedFolder(e.target.value)}
-                      onBlur={(e) => setSelectedFolder(e.target.value)}
-                      aria-label={intl.formatMessage(messages.rootfolder)}
-                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
-                      disabled={isValidating || !serverData}
-                    >
-                      {(isValidating || !serverData) && (
-                        <option value="">
-                          {intl.formatMessage(globalMessages.loading)}
-                        </option>
-                      )}
-                      {!isValidating &&
-                        serverData &&
-                        serverData.rootFolders.map((folder) => (
-                          <option
-                            key={`folder-list${folder.id}`}
-                            value={folder.path}
-                          >
-                            {intl.formatMessage(messages.folder, {
-                              path: folder.path,
-                              space: formatBytes(folder.freeSpace ?? 0),
-                            })}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                  <RequestListboxControl<string>
+                    id="folder"
+                    label={intl.formatMessage(messages.rootfolder)}
+                    value={selectedFolder}
+                    options={(serverData?.rootFolders ?? []).map((folder) => ({
+                      value: folder.path ?? '',
+                      label: intl.formatMessage(messages.folder, {
+                        path: folder.path,
+                        space: formatBytes(folder.freeSpace ?? 0),
+                      }),
+                    }))}
+                    onChange={setSelectedFolder}
+                    active={
+                      defaultFolderPath !== undefined &&
+                      selectedFolder !== defaultFolderPath
+                    }
+                    disabled={isValidating || !serverData}
+                    loadingLabel={intl.formatMessage(globalMessages.loading)}
+                  />
                 )}
               {type === 'tv' &&
                 (isValidating ||

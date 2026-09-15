@@ -91,6 +91,7 @@ const CollectionAssociationsButton = ({ parts }: { parts: MovieResult[] }) => {
                 <Link
                   key={`${edge.node.mediaType}-${edge.node.id}`}
                   href={getAssociationHref(edge)}
+                  onClick={() => setShow(false)}
                   className="refreshed-inset-surface rounded-lg border border-gray-700 px-3 py-2 transition hover:border-cyan-400 hover:text-white"
                 >
                   <span className="block truncate font-semibold">

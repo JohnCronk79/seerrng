@@ -81,7 +81,7 @@ const IssueAffectedEpisodes = ({ issue, tvId }: IssueAffectedEpisodesProps) => {
       <h4 className="mb-2 text-xs font-semibold text-gray-200">
         Affected Episodes
       </h4>
-      <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-x-3 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
+      <div className="request-divider-dark grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-x-3 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
         <span>Season</span>
         <span>Episode</span>
         <span>Title</span>

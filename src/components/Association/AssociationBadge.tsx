@@ -97,7 +97,7 @@ const AssociationBadge = ({
             onClick={toggleAssociations}
           >
             <MeshNetworkIcon className="h-4 w-4" aria-hidden="true" />
-            <span className="ml-1.5">{associationLabel}</span>
+            <span>{associationLabel}</span>
           </Button>
         ) : (
           <button
@@ -119,19 +119,24 @@ const AssociationBadge = ({
         <Modal
           title={associationLabel}
           onCancel={() => setIsOpen(false)}
-          onOk={() =>
+          onOk={() => {
+            setIsOpen(false);
             void router.push(
               `/associations/${associationType}/${encodeURIComponent(String(id))}`
-            )
-          }
+            );
+          }}
           okText={intl.formatMessage(messages.browseMore)}
           cancelButtonType="danger"
           okButtonType="success"
-          actionButtonSize="sm"
-          dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"
+          actionButtonSize="standard"
+          dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-4xl"
         >
           <div data-testid="association-popover">
-            <AssociationPopover mediaType={associationType} id={id} />
+            <AssociationPopover
+              mediaType={associationType}
+              id={id}
+              onSelect={() => setIsOpen(false)}
+            />
           </div>
         </Modal>
       </Transition>

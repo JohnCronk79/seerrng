@@ -3,6 +3,7 @@ import { UserType } from '@server/constants/user';
 import type {
   CardTextVisibility,
   UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import type { PermissionCheckOptions } from '@server/lib/permissions';
 import { Permission, hasPermission } from '@server/lib/permissions';
@@ -52,6 +53,7 @@ export interface UserSettings {
   detailDisclosureCrewPinned?: boolean;
   detailDisclosureArtistsPinned?: boolean;
   detailDisclosureSubjectTagsPinned?: boolean;
+  detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
 }
 
 interface UserHookResponse {

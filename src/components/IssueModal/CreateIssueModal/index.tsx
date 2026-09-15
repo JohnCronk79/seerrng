@@ -274,7 +274,7 @@ const CreateIssueModal = ({
             loading={!!detailUrl && !data && !error}
             backdrop={resolvedBackdrop}
             backdropFull
-            dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
+            dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"
           >
             {data && (
               <IssueMediaSummary
@@ -385,25 +385,29 @@ const CreateIssueModal = ({
                 onClick={onCancel}
                 data-testid="modal-cancel-button"
                 buttonType="danger"
-                buttonSize="sm"
+                buttonSize="standard"
               >
-                <XMarkIcon className="h-4 w-4" aria-hidden="true" />
-                {intl.formatMessage(globalMessages.cancel)}
+                <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
+                  <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                  <span>{intl.formatMessage(globalMessages.cancel)}</span>
+                </span>
               </Button>
               <Button
                 type="button"
                 onClick={() => handleSubmit()}
                 data-testid="modal-ok-button"
                 buttonType="success"
-                buttonSize="sm"
+                buttonSize="standard"
                 disabled={
                   isSubmitting ||
                   ((mediaType === 'movie' || mediaType === 'tv') &&
                     !hasAvailableVideoQuality)
                 }
               >
-                <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
-                {intl.formatMessage(messages.submitissue)}
+                <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
+                  <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
+                  <span>{intl.formatMessage(messages.submitissue)}</span>
+                </span>
               </Button>
             </div>
           </Modal>

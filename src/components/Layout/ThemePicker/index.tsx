@@ -74,6 +74,7 @@ const ThemePicker = () => {
                   {themePalette.swatches.map((swatch) => (
                     <span
                       key={`${themePalette.id}-${swatch}`}
+                      data-theme-swatch
                       className="h-4 w-4 rounded-full border border-gray-950/30"
                       style={{ backgroundColor: swatch }}
                     />

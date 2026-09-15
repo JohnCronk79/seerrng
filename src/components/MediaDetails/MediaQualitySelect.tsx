@@ -14,6 +14,7 @@ interface MediaQualitySelectProps<Quality extends string> {
   options: { label: string; value: Quality }[];
   onChange: (quality: Quality) => void;
   className?: string;
+  label?: string;
 }
 
 const MediaQualitySelect = <Quality extends string>({
@@ -21,9 +22,10 @@ const MediaQualitySelect = <Quality extends string>({
   options,
   onChange,
   className = '',
+  label: labelOverride,
 }: MediaQualitySelectProps<Quality>) => {
   const intl = useIntl();
-  const label = intl.formatMessage(messages.selectQuality);
+  const label = labelOverride ?? intl.formatMessage(messages.selectQuality);
   const selected =
     options.find((option) => option.value === value) ?? options[0];
 
@@ -35,15 +37,15 @@ const MediaQualitySelect = <Quality extends string>({
       <div className={`relative w-max max-w-full ${className}`}>
         <Listbox.Button
           aria-label={`${label}: ${selected?.label ?? ''}`}
-          className="app-button app-button-detail-request button-sm group min-w-0 gap-2 px-2"
+          className="app-button app-button-detail-request button-standard media-quality-select-control group min-w-0"
         >
           <AdjustmentsHorizontalIcon className="flex-none" aria-hidden="true" />
           <span className="truncate">{label}</span>
-          <span className="border-l border-green-500/50 pl-2 font-semibold text-green-100">
+          <span className="media-quality-select-value font-semibold">
             {selected?.label}
           </span>
           <ChevronDownIcon
-            className="flex-none text-green-300 transition group-data-open:rotate-180"
+            className="media-quality-select-chevron"
             aria-hidden="true"
           />
         </Listbox.Button>
@@ -53,14 +55,14 @@ const MediaQualitySelect = <Quality extends string>({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="absolute top-full right-0 z-50 mt-1 min-w-full overflow-hidden rounded-md border border-green-500/90 bg-gray-950/95 py-1 text-xs shadow-xl backdrop-blur focus:outline-none">
+          <Listbox.Options className="media-quality-select-menu">
             {options.map((option) => (
               <Listbox.Option
                 key={option.value}
                 value={option}
                 className={({ active }) =>
-                  `relative cursor-default py-1.5 pr-3 pl-8 select-none ${
-                    active ? 'bg-green-900/70 text-white' : 'text-green-200'
+                  `media-quality-select-option ${
+                    active ? 'media-quality-select-option-active' : ''
                   }`
                 }
               >
@@ -68,11 +70,11 @@ const MediaQualitySelect = <Quality extends string>({
                   <>
                     {optionSelected && (
                       <CheckIcon
-                        className="absolute top-1.5 left-2 h-4 w-4 text-green-300"
+                        className="media-quality-select-check"
                         aria-hidden="true"
                       />
                     )}
-                    <span className="block truncate font-medium">
+                    <span className="media-quality-select-option-label">
                       {option.label}
                     </span>
                   </>

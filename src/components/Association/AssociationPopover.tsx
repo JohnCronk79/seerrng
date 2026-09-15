@@ -1,14 +1,9 @@
-import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
-import type {
-  AssociationEdge,
-  AssociationMediaType,
-} from '@app/hooks/useAssociations';
+import type { AssociationMediaType } from '@app/hooks/useAssociations';
 import useAssociations from '@app/hooks/useAssociations';
 import defineMessages from '@app/utils/defineMessages';
-import Link from 'next/link';
 import { useIntl } from 'react-intl';
-import { nodeHref, nodeImage, nodeImageType, nodeTitle } from './helpers';
+import AssociationDetailCard from './AssociationDetailCard';
 
 const messages = defineMessages('components.Association', {
   similar: 'More like this',
@@ -21,39 +16,14 @@ const messages = defineMessages('components.Association', {
 interface AssociationPopoverProps {
   mediaType: AssociationMediaType;
   id: string | number;
+  onSelect?: () => void;
 }
 
-const EdgeRow = ({ edge }: { edge: AssociationEdge }) => {
-  const image = nodeImage(edge.node);
-  return (
-    <Link
-      href={nodeHref(edge.node)}
-      className="refreshed-inset-surface grid min-h-[80px] grid-cols-[44px_minmax(0,1fr)] items-center gap-3 rounded-lg border border-gray-700 p-2 transition hover:border-cyan-400 hover:text-white"
-    >
-      <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded bg-gray-800 ring-1 ring-gray-600">
-        {image && (
-          <CachedImage
-            type={nodeImageType(edge.node)}
-            src={image}
-            alt=""
-            fill
-            style={{ objectFit: 'cover' }}
-          />
-        )}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-white">
-          {nodeTitle(edge.node)}
-        </div>
-        <div className="refreshed-detail-text-muted mt-1 line-clamp-2 text-xs">
-          {edge.reason}
-        </div>
-      </div>
-    </Link>
-  );
-};
-
-const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
+const AssociationPopover = ({
+  mediaType,
+  id,
+  onSelect,
+}: AssociationPopoverProps) => {
   const intl = useIntl();
   const { edges, isLoading, isError } = useAssociations(mediaType, id, {
     includeWeak: true,
@@ -106,11 +76,12 @@ const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
           <h2 className="mb-2 text-xs font-semibold tracking-wider text-gray-200 uppercase">
             {similarLabel}
           </h2>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2">
             {sameMedium.map((edge) => (
-              <EdgeRow
+              <AssociationDetailCard
                 key={`${edge.node.mediaType}:${edge.node.id}`}
                 edge={edge}
+                onSelect={onSelect}
               />
             ))}
           </div>
@@ -122,11 +93,12 @@ const AssociationPopover = ({ mediaType, id }: AssociationPopoverProps) => {
           <h2 className="mb-2 text-xs font-semibold tracking-wider text-gray-200 uppercase">
             {intl.formatMessage(messages.alsoconnected)}
           </h2>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2">
             {connected.map((edge) => (
-              <EdgeRow
+              <AssociationDetailCard
                 key={`${edge.node.mediaType}:${edge.node.id}`}
                 edge={edge}
+                onSelect={onSelect}
               />
             ))}
           </div>

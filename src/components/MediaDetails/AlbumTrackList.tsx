@@ -40,7 +40,7 @@ const AlbumTrackList = ({
   const intl = useIntl();
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const selection = new Set(selectedItemIds);
-  const playableTracks = catalog?.groups[0]?.items ?? [];
+  const playableTracks = catalog?.groups.flatMap((group) => group.items) ?? [];
   const availableRecordings = availableRecordingIds
     ? new Set(availableRecordingIds.map((id) => id.toLowerCase()))
     : undefined;
@@ -51,10 +51,12 @@ const AlbumTrackList = ({
       ? availableRecordings.has(track.recordingMbid.trim().toLowerCase())
       : !!playableItem;
 
-    return { available, playableItem, position, track };
+    const selectionId = playableItem?.id || track.recordingMbid.trim();
+
+    return { available, playableItem, position, selectionId, track };
   });
-  const selectableItems = trackRows.flatMap(({ available, playableItem }) =>
-    available && playableItem ? [playableItem] : []
+  const selectableItems = trackRows.flatMap(({ available, selectionId }) =>
+    available && selectionId ? [{ id: selectionId }] : []
   );
   const allSelected =
     selectableItems.length > 0 &&
@@ -166,7 +168,7 @@ const AlbumTrackList = ({
                 key={`track-column-${columnIndex}`}
                 className="refreshed-inset-surface rounded-lg border border-gray-700 p-2"
               >
-                <div className="request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
+                <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2">
                   {columnIndex === 0 ? (
                     <SelectionCircle
                       disabled={selectableItems.length === 0}
@@ -191,10 +193,10 @@ const AlbumTrackList = ({
                 <div className="space-y-0.5 pt-1">
                   {columnTracks.map((track, trackIndex) => {
                     const row = trackRows[tracks.indexOf(track)];
-                    const { available, playableItem, position } = row;
-                    const selectableItem = available ? playableItem : undefined;
-                    const selected = selectableItem
-                      ? selection.has(selectableItem.id)
+                    const { available, position, selectionId } = row;
+                    const selectableId = available ? selectionId : undefined;
+                    const selected = selectableId
+                      ? selection.has(selectableId)
                       : false;
                     return (
                       <div
@@ -202,9 +204,9 @@ const AlbumTrackList = ({
                         className="grid min-h-[24px] grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 px-1"
                       >
                         <SelectionCircle
-                          disabled={!selectableItem}
+                          disabled={!selectableId}
                           onClick={() =>
-                            selectableItem && toggleTrack(selectableItem.id)
+                            selectableId && toggleTrack(selectableId)
                           }
                           selected={selected}
                           label={intl.formatMessage(messages.selection)}

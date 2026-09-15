@@ -37,7 +37,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   requests: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
-  users: 'Users',
+  users: 'User List',
   settings: 'Settings',
 });
 

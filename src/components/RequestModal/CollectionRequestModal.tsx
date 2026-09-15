@@ -2,8 +2,6 @@ import Alert from '@app/components/Common/Alert';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import SelectionCircle from '@app/components/Common/SelectionCircle';
-import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
-import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import useToasts from '@app/hooks/useToasts';
@@ -65,8 +63,6 @@ const CollectionRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
-  const [requestOverrides, setRequestOverrides] =
-    useState<RequestOverrides | null>(null);
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
   const mountedRef = useRef(true);
   const submissionActiveRef = useRef(false);
@@ -81,10 +77,7 @@ const CollectionRequestModal = ({
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const { data: quota } = useSWR<QuotaResponse>(
-    user &&
-      (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
-      ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
-      : null
+    user ? `/api/v1/user/${user.id}/quota` : null
   );
 
   const currentlyRemaining =
@@ -185,17 +178,6 @@ const CollectionRequestModal = ({
     setIsUpdating(true);
 
     try {
-      let overrideParams = {};
-      if (requestOverrides) {
-        overrideParams = {
-          serverId: requestOverrides.server,
-          profileId: requestOverrides.profile,
-          rootFolder: requestOverrides.folder,
-          userId: requestOverrides.user?.id,
-          tags: requestOverrides.tags,
-        };
-      }
-
       const parts =
         data?.parts.filter((part) => selectedParts.includes(part.id)) ?? [];
       const outcomes = await mapWithConcurrency(
@@ -207,7 +189,6 @@ const CollectionRequestModal = ({
               mediaId: part.id,
               mediaType: 'movie',
               is4k,
-              ...overrideParams,
             });
             return { id: part.id, succeeded: true } as const;
           } catch {
@@ -301,7 +282,6 @@ const CollectionRequestModal = ({
       }
     }
   }, [
-    requestOverrides,
     data?.parts,
     data?.name,
     onComplete,
@@ -362,7 +342,8 @@ const CollectionRequestModal = ({
               )
       }
       okDisabled={selectedParts.length === 0 || isUpdating}
-      okButtonType={'primary'}
+      cancelButtonType="danger"
+      okButtonType="success"
       dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
       {hasAutoApprove && !quota?.movie.restricted && (
@@ -378,11 +359,6 @@ const CollectionRequestModal = ({
           mediaType="movie"
           quota={quota?.movie}
           remaining={currentlyRemaining}
-          userOverride={
-            requestOverrides?.user && requestOverrides.user.id !== user?.id
-              ? requestOverrides?.user?.id
-              : undefined
-          }
         />
       )}
       <RequestMediaCard
@@ -506,16 +482,6 @@ const CollectionRequestModal = ({
           </div>
         </section>
       </RequestMediaCard>
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="movie"
-          is4k={is4k}
-          onChange={(overrides) => {
-            setRequestOverrides(overrides);
-          }}
-        />
-      )}
     </Modal>
   );
 };

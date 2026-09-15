@@ -110,7 +110,7 @@ const PlaylistImportModal = ({
         loading={isResolving}
         cancelButtonType="danger"
         okButtonType="success"
-        actionButtonSize="sm"
+        actionButtonSize="standard"
         dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"
       >
         <p className="refreshed-detail-text">

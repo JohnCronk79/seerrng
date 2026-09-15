@@ -15,7 +15,9 @@ test('SQLite detail disclosure pins default to unpinned and migrate reversibly',
     await queryRunner.query(
       `CREATE TABLE "user_settings" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "userId" integer)`
     );
-    await queryRunner.query(`INSERT INTO "user_settings" ("userId") VALUES (1)`);
+    await queryRunner.query(
+      `INSERT INTO "user_settings" ("userId") VALUES (1)`
+    );
 
     await migration.up(queryRunner);
     assert.deepStrictEqual(

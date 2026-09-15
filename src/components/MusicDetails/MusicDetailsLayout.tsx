@@ -47,6 +47,7 @@ const messages = defineMessages('components.MusicDetails.Layout', {
   trackArtist: 'Track Artist',
   musicBrainzRating: 'MusicBrainz rating: {score} from {votes} votes',
   lidarrRating: 'Lidarr rating: {score} from {votes} votes',
+  quality: 'Quality',
 });
 
 interface MusicDetailsLayoutProps {
@@ -96,7 +97,7 @@ const MusicDetailsLayout = ({
   additionalContent,
 }: MusicDetailsLayoutProps) => {
   const intl = useIntl();
-  const { pins, togglePinned } = useDetailDisclosurePins();
+  const { pins, togglePinned } = useDetailDisclosurePins('music');
   const [showArtists, setShowArtists] = useState(false);
   const [showTags, setShowTags] = useState(false);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
@@ -304,7 +305,7 @@ const MusicDetailsLayout = ({
                     </dd>
                   </dl>
 
-                  <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4">
+                  <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
                     <dt className="font-medium text-gray-100">
                       {intl.formatMessage(messages.artist)}:
                     </dt>
@@ -353,7 +354,7 @@ const MusicDetailsLayout = ({
                   </dl>
                 </div>
 
-                <div className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 flex min-w-0 flex-col border-t pt-2 text-xs leading-4">
+                <div className="media-detail-column-divider flex min-w-0 flex-col text-xs leading-4">
                   <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
                     {qualityAvailability.map(({ quality, available }) => (
                       <div className="contents" key={quality}>
@@ -374,15 +375,6 @@ const MusicDetailsLayout = ({
                       </div>
                     ))}
                   </dl>
-                  <MediaQualitySelect
-                    value={selectedQuality}
-                    options={[
-                      { label: 'MP3', value: 'mp3' },
-                      { label: 'FLAC', value: 'flac' },
-                    ]}
-                    onChange={setSelectedQuality}
-                    className="card:mt-auto mt-2 self-end"
-                  />
                 </div>
               </div>
             </div>
@@ -402,6 +394,15 @@ const MusicDetailsLayout = ({
               className="media-rating-row"
               data-testid="music-playback-rating-row"
             >
+              <MediaQualitySelect
+                value={selectedQuality}
+                options={[
+                  { label: 'MP3', value: 'mp3' },
+                  { label: 'FLAC', value: 'flac' },
+                ]}
+                onChange={setSelectedQuality}
+                label={intl.formatMessage(messages.quality)}
+              />
               {playbackActions?.(
                 effectivePlaybackItemIds,
                 selectedQuality === 'flac'
@@ -484,7 +485,7 @@ const MusicDetailsLayout = ({
 
           {showArtists && (
             <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-              <h2 className="mb-2 text-xs font-semibold text-gray-200">
+              <h2 className="media-inset-heading mb-2">
                 {intl.formatMessage(messages.fullArtistList)}
               </h2>
               {artists.length === 0 ? (
@@ -534,7 +535,7 @@ const MusicDetailsLayout = ({
 
           {showTags && (
             <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-              <h2 className="mb-2 text-xs font-semibold text-gray-200">
+              <h2 className="media-inset-heading mb-2">
                 {intl.formatMessage(messages.subjectTags)}
               </h2>
               {tags.length === 0 ? (
@@ -547,7 +548,7 @@ const MusicDetailsLayout = ({
                     <Link
                       key={tag.name}
                       href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
+                      className={`compact-control inline-flex items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                         subjectTagTones[index % subjectTagTones.length]
                       }`}
                     >
@@ -560,7 +561,7 @@ const MusicDetailsLayout = ({
           )}
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="mb-3 text-xs font-semibold text-gray-200">
+            <h2 className="media-inset-heading mb-3">
               {intl.formatMessage(messages.albumDetails)}
             </h2>
             <div className="card:grid-cols-3 grid grid-cols-1">
@@ -592,7 +593,7 @@ const MusicDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
+              <dl className="media-detail-column-divider card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.albumType)}:
                 </dt>
@@ -615,7 +616,7 @@ const MusicDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
+              <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.artist)}:
                 </dt>

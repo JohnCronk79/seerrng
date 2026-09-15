@@ -11,8 +11,6 @@ import IssueMediaSummary, {
   type IssueMediaDetails,
 } from '@app/components/IssueDetails/IssueMediaSummary';
 import { issueOptions } from '@app/components/IssueModal/constants';
-import useDeepLinks from '@app/hooks/useDeepLinks';
-import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -28,13 +26,11 @@ import {
   ArrowPathIcon,
   ChatBubbleOvalLeftEllipsisIcon,
   CheckCircleIcon,
-  PlayIcon,
   ServerIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { IssueStatus, MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
 import { MediaType } from '@server/constants/media';
-import { MediaServerType } from '@server/constants/server';
 import type Issue from '@server/entity/Issue';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
@@ -54,7 +50,6 @@ const messages = defineMessages('components.IssueDetails', {
   closeissue: 'Close Issue',
   reopenissue: 'Reopen Issue',
   addcomment: 'Add Comment',
-  playonserver: 'Play on {mediaServerName}',
   openinarr: 'Open in {arr}',
   openBookInBookshelf: 'Open Book in Bookshelf',
   openAudiobookInBookshelf: 'Open Audiobook in Bookshelf',
@@ -69,7 +64,6 @@ const messages = defineMessages('components.IssueDetails', {
 const IssueDetails = () => {
   const router = useRouter();
   const intl = useIntl();
-  const settings = useSettings();
   const { addToast } = useToasts();
   const { user: currentUser, hasPermission } = useUser();
   const issueId =
@@ -97,13 +91,6 @@ const IssueDetails = () => {
             ? `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}`
             : null;
   const { data, error } = useSWR<IssueMediaDetails>(detailUrl);
-  const { mediaUrl, mediaUrl4k } = useDeepLinks({
-    mediaUrl: data?.mediaInfo?.mediaUrl,
-    mediaUrl4k: data?.mediaInfo?.mediaUrl4k,
-    iOSPlexUrl: data?.mediaInfo?.iOSPlexUrl,
-    iOSPlexUrl4k: data?.mediaInfo?.iOSPlexUrl4k,
-  });
-
   if (issueData && !detailUrl) {
     return <ErrorPage statusCode={404} />;
   }
@@ -142,9 +129,6 @@ const IssueDetails = () => {
       : data.backdropPath
         ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
         : undefined;
-  const selectedMediaUrl = getSafeHref(
-    issueData.is4k ? (mediaUrl4k ?? mediaUrl) : (mediaUrl ?? mediaUrl4k)
-  );
   const selectedServiceUrl = getSafeHref(
     issueData.is4k
       ? (issueData.media.serviceUrl4k ?? issueData.media.serviceUrl)
@@ -172,12 +156,6 @@ const IssueDetails = () => {
         : issueData.media.mediaType === MediaType.MUSIC
           ? 'Lidarr'
           : 'Bookshelf';
-  const mediaServerName =
-    settings.currentSettings.mediaServerType === MediaServerType.EMBY
-      ? 'Emby'
-      : settings.currentSettings.mediaServerType === MediaServerType.PLEX
-        ? 'Plex'
-        : 'Jellyfin';
   const updateIssueStatus = async (status: 'open' | 'resolved') => {
     try {
       await axios.post(`/api/v1/issue/${issueData.id}/${status}`);
@@ -382,25 +360,10 @@ const IssueDetails = () => {
                               !isValid || isSubmitting || !values.message
                             }
                             buttonType="warning"
-                            buttonSize="default"
+                            buttonSize="sm"
                           >
                             <ChatBubbleOvalLeftEllipsisIcon />
                             {intl.formatMessage(messages.addcomment)}
-                          </Button>
-                        )}
-                        {selectedMediaUrl && (
-                          <Button
-                            as="a"
-                            href={selectedMediaUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            buttonType="primary"
-                            buttonSize="default"
-                          >
-                            <PlayIcon />
-                            {intl.formatMessage(messages.playonserver, {
-                              mediaServerName,
-                            })}
                           </Button>
                         )}
                         {!isBook &&
@@ -412,7 +375,7 @@ const IssueDetails = () => {
                               target="_blank"
                               rel="noreferrer"
                               buttonType="primary"
-                              buttonSize="default"
+                              buttonSize="sm"
                             >
                               <ServerIcon />
                               {intl.formatMessage(messages.openinarr, {
@@ -430,7 +393,7 @@ const IssueDetails = () => {
                               target="_blank"
                               rel="noreferrer"
                               buttonType="primary"
-                              buttonSize="default"
+                              buttonSize="sm"
                             >
                               <ServerIcon />
                               {link.label}
@@ -442,7 +405,7 @@ const IssueDetails = () => {
                         type="button"
                         onClick={leaveIssue}
                         buttonType="danger"
-                        buttonSize="default"
+                        buttonSize="sm"
                       >
                         <XMarkIcon />
                         {intl.formatMessage(globalMessages.cancel)}
@@ -458,7 +421,7 @@ const IssueDetails = () => {
                             )
                           }
                           buttonType="success"
-                          buttonSize="default"
+                          buttonSize="sm"
                         >
                           {issueData.status === IssueStatus.OPEN ? (
                             <CheckCircleIcon />

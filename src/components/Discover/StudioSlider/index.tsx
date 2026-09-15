@@ -7,24 +7,27 @@ const messages = defineMessages('components.Discover.StudioSlider', {
   studios: 'Studios',
 });
 
-interface Studio {
+export interface Studio {
   name: string;
   image: string;
   url: string;
+  logoTone?: 'color' | 'white';
 }
 
-const studios: Studio[] = [
+export const studios: Studio[] = [
   {
     name: 'Disney',
     image:
       'https://image.tmdb.org/t/p/original/wdrCwmRnLFJhEoH8GSfymY85KHT.png',
     url: '/discover/movies/studio/2',
+    logoTone: 'white',
   },
   {
     name: '20th Century Studios',
     image:
       'https://image.tmdb.org/t/p/original/h0rjX5vjW5r8yEnUBStFarjcLT4.png',
     url: '/discover/movies/studio/127928',
+    logoTone: 'white',
   },
   {
     name: 'Sony Pictures',
@@ -36,6 +39,7 @@ const studios: Studio[] = [
     image:
       'https://image.tmdb.org/t/p/original/ky0xOc5OrhzkZ1N6KyUxacfQsCk.png',
     url: '/discover/movies/studio/174',
+    logoTone: 'white',
   },
   {
     name: 'Universal',
@@ -48,12 +52,14 @@ const studios: Studio[] = [
     image:
       'https://image.tmdb.org/t/p/original/fycMZt242LVjagMByZOLUGbCvv3.png',
     url: '/discover/movies/studio/4',
+    logoTone: 'white',
   },
   {
     name: 'Pixar',
     image:
       'https://image.tmdb.org/t/p/original/1TjvGVDMYsj6JBxOAkUHpPEwLf7.png',
     url: '/discover/movies/studio/3',
+    logoTone: 'white',
   },
   {
     name: 'Dreamworks',
@@ -69,8 +75,7 @@ const studios: Studio[] = [
   },
   {
     name: 'DC',
-    image:
-      'https://image.tmdb.org/t/p/original/2Tc1P3Ac8M479naPp1kYT3izLS5.png',
+    image: '/images/company-logos/dc-studios.png',
     url: '/discover/movies/studio/9993',
   },
   {
@@ -78,6 +83,7 @@ const studios: Studio[] = [
     image:
       'https://image.tmdb.org/t/p/original/1ZXsGaFPgrgS6ZZGS37AqD5uU12.png',
     url: '/discover/movies/studio/41077',
+    logoTone: 'white',
   },
 ];
 
@@ -101,6 +107,7 @@ const StudioSlider = () => {
             name={studio.name}
             image={studio.image}
             url={studio.url}
+            logoTone={studio.logoTone}
           />
         ))}
         placeholder={<CompanyCardPlaceholder />}

@@ -14,12 +14,18 @@ export interface UserSettingsCardTextResponse {
 
 export type DetailDisclosurePin = 'cast' | 'crew' | 'artists' | 'subjectTags';
 
+export type DetailDisclosureMediaType = 'movie' | 'tv' | 'music' | 'book';
+
 export interface UserSettingsDetailDisclosureResponse {
   cast?: boolean;
   crew?: boolean;
   artists?: boolean;
   subjectTags?: boolean;
 }
+
+export type UserSettingsDetailDisclosuresByMedia = Partial<
+  Record<DetailDisclosureMediaType, UserSettingsDetailDisclosureResponse>
+>;
 
 export interface UserSettingsGeneralResponse {
   username?: string;

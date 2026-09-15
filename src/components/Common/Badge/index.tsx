@@ -15,7 +15,7 @@ const Badge = (
   ref?: React.Ref<HTMLElement>
 ) => {
   const badgeStyle = [
-    'px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap',
+    'compact-control inline-flex items-center px-2 text-xs leading-none font-semibold rounded-full whitespace-nowrap',
   ];
 
   if (href) {

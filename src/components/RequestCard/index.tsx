@@ -221,11 +221,14 @@ const RequestCardPlaceholder = ({ compact }: RequestCardPlaceholderProps) => {
   return (
     <div
       className={`relative w-72 animate-pulse rounded-xl bg-gray-700 p-4 sm:w-96 ${
-        compact ? 'min-h-[9.5rem] sm:min-h-[12.5rem]' : 'min-h-[17rem]'
+        compact ? 'h-[9.5rem]' : 'min-h-[17rem]'
       }`}
     >
-      <div className="w-20 sm:w-28">
-        <div className="w-full" style={{ paddingBottom: '150%' }} />
+      <div className={compact ? 'h-full w-20 sm:w-28' : 'w-20 sm:w-28'}>
+        <div
+          className={compact ? 'h-full w-full' : 'w-full'}
+          style={compact ? undefined : { paddingBottom: '150%' }}
+        />
       </div>
     </div>
   );
@@ -515,7 +518,7 @@ const RequestCard = ({
   if (!title && !error) {
     return (
       <div ref={ref}>
-        <RequestCardPlaceholder />
+        <RequestCardPlaceholder compact={compact} />
       </div>
     );
   }
@@ -568,7 +571,7 @@ const RequestCard = ({
       )}
       <div
         className={`relative flex w-72 overflow-hidden rounded-xl bg-gray-800 bg-cover bg-center p-4 text-gray-400 shadow ring-1 ring-gray-700 sm:w-96 ${
-          compact ? 'min-h-[9.5rem] sm:min-h-[12.5rem]' : 'min-h-[17rem]'
+          compact ? 'min-h-0' : 'min-h-[17rem]'
         }`}
         data-testid="request-card"
       >
@@ -578,16 +581,10 @@ const RequestCard = ({
               type="tmdb"
               alt=""
               src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              className="object-cover"
               fill
             />
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundImage:
-                  'linear-gradient(135deg, rgba(17, 24, 39, 0.47) 0%, rgba(17, 24, 39, 1) 75%)',
-              }}
-            />
+            <div className="request-card-artwork-gradient" />
           </div>
         )}
         <div

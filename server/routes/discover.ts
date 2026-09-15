@@ -508,6 +508,8 @@ const getLocalAvailableMusic = async ({
   );
   const settings = getSettings();
   const requestedQuality = availability.toLocaleUpperCase();
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
 
   const matches = media
     .map((item) => {
@@ -563,21 +565,22 @@ const getLocalAvailableMusic = async ({
         (!releaseDateLte || releaseDate <= releaseDateLte)
     )
     .sort((left, right) => {
-      if (sortByValue.startsWith('release_date')) {
+      if (sortByBase === 'release_date') {
         const comparison = left.releaseDate.localeCompare(right.releaseDate);
-        return sortByValue === 'release_date.asc' ? comparison : -comparison;
+        return sortAscending ? comparison : -comparison;
       }
 
       const leftAdded =
         left.item.mediaAddedAt?.getTime() ?? left.item.updatedAt.getTime();
       const rightAdded =
         right.item.mediaAddedAt?.getTime() ?? right.item.updatedAt.getTime();
-      return (
+      const comparison =
         rightAdded - leftAdded ||
         (left.searchMetadata?.title ?? '').localeCompare(
           right.searchMetadata?.title ?? ''
-        )
-      );
+        );
+
+      return sortAscending ? -comparison : comparison;
     });
 
   const offset = (page - 1) * itemsPerPage;
@@ -827,16 +830,22 @@ const rotateItems = <T>(items: T[], offset: number): T[] => [
 
 const musicSortOptions = new Set([
   'ranked',
+  'ranked.asc',
   'popular.week',
+  'popular.week.asc',
   'popular.month',
+  'popular.month.asc',
   'popular.year',
+  'popular.year.asc',
   'listen_count.desc',
+  'listen_count.asc',
   'release_date.desc',
   'release_date.asc',
 ]);
 
 const bookSortOptions = new Set([
   'ranked',
+  'ranked.asc',
   'newest',
   'oldest',
   'random',
@@ -844,6 +853,7 @@ const bookSortOptions = new Set([
   'rating.desc',
   'rating.asc',
   'editions',
+  'editions.asc',
 ]);
 
 const tmdbSortOptions = new Set<string>(SortOptionsIterable);
@@ -1210,14 +1220,25 @@ const getLocalAvailableVideoDiscoverResponse = async ({
   user?: User;
 }) => {
   if (mediaType === MediaType.MOVIE) {
-    const liveResponse = await getLiveAvailableMovieDiscoverResponse({
-      quality,
-      page,
-      query,
-      user,
-    });
-    if (liveResponse) {
-      return liveResponse;
+    try {
+      const liveResponse = await getLiveAvailableMovieDiscoverResponse({
+        quality,
+        page,
+        query,
+        user,
+      });
+      if (liveResponse) {
+        return liveResponse;
+      }
+    } catch (e) {
+      logger.warn(
+        'Unable to retrieve live Radarr availability; using indexed movie availability',
+        {
+          label: 'API',
+          quality,
+          errorMessage: e.message,
+        }
+      );
     }
   }
 
@@ -2510,7 +2531,8 @@ discoverRoutes.get('/music', async (req, res) => {
   const days = parsePositiveInt(req.query.days, 14, 365);
   const hasCustomDays = typeof req.query.days === 'string';
   const sortByValue = getValidatedSort(req.query.sortBy, musicSortOptions);
-  const sortAscending = sortByValue === 'release_date.asc';
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
   const parsedGenre = parseOptionalDiscoverString(
     req.query.genre,
     'Genre',
@@ -2648,8 +2670,20 @@ discoverRoutes.get('/music', async (req, res) => {
           (!releaseDateLte || releaseDate <= releaseDateLte)
         );
       });
-      const albums = dedupeMusicAlbums(
-        filteredAlbums.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+      const sortedAlbums = dedupeMusicAlbums(filteredAlbums).sort((a, b) => {
+        if (sortByBase === 'release_date') {
+          const comparison = (a['first-release-date'] ?? '').localeCompare(
+            b['first-release-date'] ?? ''
+          );
+          return sortAscending ? comparison : -comparison;
+        }
+
+        const comparison = scoreMusicAlbum(b) - scoreMusicAlbum(a);
+        return sortAscending ? -comparison : comparison;
+      });
+      const albums = sortedAlbums.slice(
+        providerWindow.sliceStart,
+        providerWindow.sliceEnd
       );
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
@@ -2680,12 +2714,13 @@ discoverRoutes.get('/music', async (req, res) => {
           offset: providerWindow.offset,
         });
       const sortedAlbums = dedupeMusicAlbums(releaseGroups).sort((a, b) => {
-        if (sortByValue === 'ranked') {
+        if (sortByBase === 'ranked') {
           return scoreMusicAlbum(b) - scoreMusicAlbum(a);
         }
 
-        if (sortByValue === 'listen_count.desc') {
-          return (b.score ?? 0) - (a.score ?? 0);
+        if (sortByBase === 'listen_count' || sortByBase.startsWith('popular')) {
+          const comparison = (b.score ?? 0) - (a.score ?? 0);
+          return sortAscending ? -comparison : comparison;
         }
 
         const left = a['first-release-date'] ?? '';
@@ -2695,20 +2730,24 @@ discoverRoutes.get('/music', async (req, res) => {
           : right.localeCompare(left);
       });
       const albums =
-        sortByValue === 'ranked'
-          ? diversifyMusicAlbumsByArtist(
-              shuffleRankedWindow(
-                rankByQualityScore(
-                  sortedAlbums,
-                  scoreMusicAlbum,
-                  0.08,
-                  4,
+        sortByBase === 'ranked'
+          ? (() => {
+              const rankedAlbums = diversifyMusicAlbumsByArtist(
+                shuffleRankedWindow(
+                  rankByQualityScore(
+                    sortedAlbums,
+                    scoreMusicAlbum,
+                    0.08,
+                    4,
+                    shuffleSeed
+                  ),
                   shuffleSeed
                 ),
-                shuffleSeed
-              ),
-              providerWindow.sliceEnd
-            ).slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+                providerWindow.sliceEnd
+              ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+
+              return sortAscending ? rankedAlbums.reverse() : rankedAlbums;
+            })()
           : sortedAlbums.slice(
               providerWindow.sliceStart,
               providerWindow.sliceEnd
@@ -2731,24 +2770,30 @@ discoverRoutes.get('/music', async (req, res) => {
     const providerWindow = getProviderWindow(page, itemsPerPage);
     const hasReleaseDateFilter = Boolean(releaseDateGte || releaseDateLte);
 
-    if (!genreFilter.length && sortByValue.startsWith('popular')) {
+    if (
+      !genreFilter.length &&
+      (sortByBase.startsWith('popular') || sortByBase === 'listen_count')
+    ) {
       const range =
-        sortByValue === 'popular.week'
-          ? 'week'
-          : sortByValue === 'popular.year'
-            ? 'year'
-            : 'month';
+        sortByBase === 'listen_count'
+          ? 'all_time'
+          : sortByBase === 'popular.week'
+            ? 'week'
+            : sortByBase === 'popular.year'
+              ? 'year'
+              : 'month';
       const topAlbums = await listenBrainz.getTopAlbums({
         range,
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
-      const albums = diversifyMusicAlbumsByArtist(
+      const chartAlbums = diversifyMusicAlbumsByArtist(
         dedupeMusicAlbums(
           topAlbums.payload.release_groups.map(mapTopAlbumRelease)
         ),
         providerWindow.sliceEnd
       ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+      const albums = sortAscending ? chartAlbums.reverse() : chartAlbums;
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
@@ -2768,7 +2813,7 @@ discoverRoutes.get('/music', async (req, res) => {
     }
 
     if (
-      sortByValue === 'ranked' &&
+      sortByBase === 'ranked' &&
       !releaseTypeFilter.length &&
       !hasReleaseDateFilter &&
       !hasCustomDays
@@ -2865,7 +2910,7 @@ discoverRoutes.get('/music', async (req, res) => {
             );
           });
 
-        const fallbackAlbums = diversifyMusicAlbumsByArtist(
+        const rankedFallbackAlbums = diversifyMusicAlbumsByArtist(
           shuffleRankedWindow(
             rankByQualityScore(
               [...fallbackAlbumsById.values()].sort(
@@ -2880,6 +2925,9 @@ discoverRoutes.get('/music', async (req, res) => {
           ),
           providerWindow.sliceEnd
         ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+        const fallbackAlbums = sortAscending
+          ? rankedFallbackAlbums.reverse()
+          : rankedFallbackAlbums;
 
         if (!fallbackAlbums.length) {
           return res.status(200).json(emptyDiscoverResponse(page));
@@ -2944,7 +2992,7 @@ discoverRoutes.get('/music', async (req, res) => {
         );
       });
 
-      const albums = diversifyMusicAlbumsByArtist(
+      const rankedAlbums = diversifyMusicAlbumsByArtist(
         shuffleRankedWindow(
           rankByQualityScore(
             [...albumsById.values()].sort(
@@ -2959,6 +3007,7 @@ discoverRoutes.get('/music', async (req, res) => {
         ),
         providerWindow.sliceEnd
       ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+      const albums = sortAscending ? rankedAlbums.reverse() : rankedAlbums;
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
@@ -2979,6 +3028,7 @@ discoverRoutes.get('/music', async (req, res) => {
       freshReleases = await listenBrainz.getFreshReleases({
         days,
         sort: 'release_date',
+        order: sortByBase === 'release_date' && !sortAscending ? 'desc' : 'asc',
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
@@ -2996,6 +3046,7 @@ discoverRoutes.get('/music', async (req, res) => {
       freshReleases = await listenBrainz.getFreshReleases({
         days: 7,
         sort: 'release_date',
+        order: sortByBase === 'release_date' && !sortAscending ? 'desc' : 'asc',
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
@@ -3011,12 +3062,14 @@ discoverRoutes.get('/music', async (req, res) => {
             )
         )
     ).sort((a, b) => {
-      if (sortByValue === 'ranked') {
-        return scoreMusicRelease(b) - scoreMusicRelease(a);
+      if (sortByBase === 'ranked') {
+        const comparison = scoreMusicRelease(b) - scoreMusicRelease(a);
+        return sortAscending ? -comparison : comparison;
       }
 
-      if (sortByValue === 'listen_count.desc') {
-        return (b.listen_count ?? 0) - (a.listen_count ?? 0);
+      if (sortByBase === 'listen_count' || sortByBase.startsWith('popular')) {
+        const comparison = (b.listen_count ?? 0) - (a.listen_count ?? 0);
+        return sortAscending ? -comparison : comparison;
       }
 
       const left = a.release_date ?? '';
@@ -3026,31 +3079,35 @@ discoverRoutes.get('/music', async (req, res) => {
         : right.localeCompare(left);
     });
     const releases =
-      sortByValue === 'ranked'
-        ? diversifyMusicAlbumsByArtist(
-            shuffleRankedWindow(
-              rankByQualityScore(
-                sortedReleases.map(mapFreshReleaseAlbum),
-                scoreMusicAlbum,
-                0.08,
-                4,
+      sortByBase === 'ranked'
+        ? (() => {
+            const rankedReleases = diversifyMusicAlbumsByArtist(
+              shuffleRankedWindow(
+                rankByQualityScore(
+                  sortedReleases.map(mapFreshReleaseAlbum),
+                  scoreMusicAlbum,
+                  0.08,
+                  4,
+                  shuffleSeed
+                ),
                 shuffleSeed
               ),
-              shuffleSeed
-            ),
-            providerWindow.sliceEnd
-          )
-            .slice(providerWindow.sliceStart, providerWindow.sliceEnd)
-            .map((album) => {
-              const release = sortedReleases.find(
-                (sortedRelease) =>
-                  getMusicBrainzIdKey(sortedRelease.release_group_mbid) ===
-                  getMusicBrainzIdKey(album.id)
-              );
+              providerWindow.sliceEnd
+            )
+              .slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+              .map((album) => {
+                const release = sortedReleases.find(
+                  (sortedRelease) =>
+                    getMusicBrainzIdKey(sortedRelease.release_group_mbid) ===
+                    getMusicBrainzIdKey(album.id)
+                );
 
-              return release;
-            })
-            .filter((release): release is LbRelease => !!release)
+                return release;
+              })
+              .filter((release): release is LbRelease => !!release);
+
+            return sortAscending ? rankedReleases.reverse() : rankedReleases;
+          })()
         : sortedReleases.slice(
             providerWindow.sliceStart,
             providerWindow.sliceEnd
@@ -3065,7 +3122,7 @@ discoverRoutes.get('/music', async (req, res) => {
         {
           ...mapFreshReleaseAlbum(release),
           score:
-            sortByValue === 'ranked'
+            sortByBase === 'ranked'
               ? scoreMusicRelease(release)
               : (release.listen_count ?? 0),
         },
@@ -3209,6 +3266,8 @@ discoverRoutes.get('/books', async (req, res) => {
   const shuffleSeed = parsedShuffleSeed.value;
   const hasSearchQuery = !!searchQuery;
   const sortByValue = requestedSortBy ?? (hasSearchQuery ? 'newest' : 'ranked');
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
   const bookDiscoveryContext = {
     format:
       parsedFormat.value === 'audiobook'
@@ -3258,7 +3317,7 @@ discoverRoutes.get('/books', async (req, res) => {
 
   try {
     const openLibrarySort =
-      sortByValue === 'ranked' && !hasSearchQuery && !hasSubjectFilter
+      sortByBase === 'ranked' && !hasSearchQuery && !hasSubjectFilter
         ? 'random'
         : sortByValue === 'newest'
           ? 'new'
@@ -3266,11 +3325,9 @@ discoverRoutes.get('/books', async (req, res) => {
             ? 'old'
             : sortByValue === 'random'
               ? 'random'
-              : sortByValue === 'rating' ||
-                  sortByValue === 'rating.desc' ||
-                  sortByValue === 'rating.asc'
+              : sortByBase === 'rating'
                 ? 'rating'
-                : sortByValue === 'editions'
+                : sortByBase === 'editions'
                   ? 'editions'
                   : undefined;
     const books = await settlePromisesWithin(
@@ -3328,8 +3385,8 @@ discoverRoutes.get('/books', async (req, res) => {
 
       return true;
     });
-    const sortedDocs =
-      sortByValue === 'ranked' && !hasSearchQuery
+    const rankedDocs =
+      sortByBase === 'ranked' && !hasSearchQuery
         ? shuffleRankedWindow(
             rankByQualityScore(
               [...dedupedDocs].sort(
@@ -3342,13 +3399,22 @@ discoverRoutes.get('/books', async (req, res) => {
             ),
             shuffleSeed
           )
-        : sortByValue === 'rating.asc'
-          ? [...dedupedDocs].sort(
-              (a, b) =>
-                (a.ratings_average ?? Number.POSITIVE_INFINITY) -
-                (b.ratings_average ?? Number.POSITIVE_INFINITY)
-            )
-          : dedupedDocs;
+        : undefined;
+    const sortedDocs = rankedDocs
+      ? sortAscending
+        ? [...rankedDocs].reverse()
+        : rankedDocs
+      : sortByValue === 'rating.asc'
+        ? [...dedupedDocs].sort(
+            (a, b) =>
+              (a.ratings_average ?? Number.POSITIVE_INFINITY) -
+              (b.ratings_average ?? Number.POSITIVE_INFINITY)
+          )
+        : sortByBase === 'editions' && sortAscending
+          ? [...dedupedDocs].reverse()
+          : sortByBase === 'random'
+            ? shuffleRankedWindow(dedupedDocs, shuffleSeed, dedupedDocs.length)
+            : dedupedDocs;
     const pagedDocs = providerWindow
       ? sortedDocs.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
       : sortedDocs;

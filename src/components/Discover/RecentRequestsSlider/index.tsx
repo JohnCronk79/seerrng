@@ -69,6 +69,7 @@ const RecentRequestsSlider = () => {
         )}
 
       <Slider
+        compact
         sliderKey="requests"
         isLoading={isLoading}
         isEmpty={!!requests && requests.results.length === 0 && !requestError}

@@ -411,9 +411,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
           buttonSize="sm"
         >
           <FilmIcon />
-          <span className="ml-1.5">
-            {intl.formatMessage(messages.watchtrailer)}
-          </span>
+          <span>{intl.formatMessage(messages.watchtrailer)}</span>
         </Button>
       )}
       <AssociationBadge mediaType="movie" id={data.id} variant="button" />

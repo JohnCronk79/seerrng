@@ -6909,6 +6909,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DetailDisclosurePinSettings'
+  /user/{userId}/settings/detail-disclosures/{mediaType}:
+    get:
+      summary: Get pinned detail disclosure settings for one media category
+      description: Returns persistent disclosure pins scoped independently to Movie, Series, Music, or Book details. Requires `MANAGE_USERS` permission if viewing another user.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+        - in: path
+          name: mediaType
+          required: true
+          schema:
+            type: string
+            enum: [movie, tv, music, book]
+      responses:
+        '200':
+          description: Category-scoped detail disclosure settings returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailDisclosurePinSettings'
+    post:
+      summary: Update pinned detail disclosure settings for one media category
+      description: Updates persistent disclosure pins without changing the pin state of another media category. Requires `MANAGE_USERS` permission if editing another user.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+        - in: path
+          name: mediaType
+          required: true
+          schema:
+            type: string
+            enum: [movie, tv, music, book]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetailDisclosurePinSettings'
+      responses:
+        '200':
+          description: Updated category-scoped detail disclosure settings returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailDisclosurePinSettings'
   /user/{userId}/settings/password:
     get:
       summary: Get password page informatiom
@@ -8276,10 +8331,15 @@ paths:
             type: string
             enum:
               - ranked
+              - ranked.asc
               - popular.week
+              - popular.week.asc
               - popular.month
+              - popular.month.asc
               - popular.year
+              - popular.year.asc
               - listen_count.desc
+              - listen_count.asc
               - release_date.desc
               - release_date.asc
             default: ranked
@@ -8379,6 +8439,7 @@ paths:
             type: string
             enum:
               - ranked
+              - ranked.asc
               - newest
               - oldest
               - random
@@ -8386,6 +8447,7 @@ paths:
               - rating.asc
               - rating.desc
               - editions
+              - editions.asc
             default: ranked
         - in: query
           name: firstPublishYear

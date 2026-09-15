@@ -63,6 +63,7 @@ const messages = defineMessages('components.TvDetails.Layout', {
   rtCriticsScore: 'Rotten Tomatoes Tomatometer',
   rtAudienceScore: 'Rotten Tomatoes Audience Score',
   tmdbUserScore: 'TMDB User Score',
+  quality: 'Quality',
 });
 
 interface SeriesDetailsLayoutProps {
@@ -122,7 +123,7 @@ const SeriesDetailsLayout = ({
 }: SeriesDetailsLayoutProps) => {
   const intl = useIntl();
   const { locale } = useLocale();
-  const { pins, togglePinned } = useDetailDisclosurePins();
+  const { pins, togglePinned } = useDetailDisclosurePins('tv');
   const [showCast, setShowCast] = useState(false);
   const [showCrew, setShowCrew] = useState(false);
   const [showTags, setShowTags] = useState(false);
@@ -279,7 +280,7 @@ const SeriesDetailsLayout = ({
 
               <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
                 <div className="card:col-span-2 card:pr-3 min-w-0">
-                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
                     <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
@@ -309,8 +310,7 @@ const SeriesDetailsLayout = ({
                           })
                         : unavailable}
                     </dd>
-                    <div className="request-divider-fill-dark card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden" />
-                    <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
+                    <div className="media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.creator)}:
                       </dt>
@@ -356,7 +356,7 @@ const SeriesDetailsLayout = ({
                       {intl.formatMessage(messages.genres)}:
                     </dt>
                     <dd
-                      className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
+                      className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
                       data-testid="media-details-genres"
                     >
                       {data.genres.length > 0
@@ -376,7 +376,7 @@ const SeriesDetailsLayout = ({
                   </dl>
                 </div>
 
-                <div className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 flex min-w-0 flex-col border-t pt-2 text-xs leading-4">
+                <div className="media-detail-column-divider flex min-w-0 flex-col text-xs leading-4">
                   <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
                     <dt className="font-medium text-gray-100">
                       {intl.formatMessage(messages.hd)}:
@@ -405,17 +405,6 @@ const SeriesDetailsLayout = ({
                       </>
                     )}
                   </dl>
-                  <MediaQualitySelect
-                    value={selectedQuality}
-                    options={[
-                      { label: 'HD', value: 'hd' },
-                      ...(show4kAvailability
-                        ? ([{ label: '4K', value: '4k' }] as const)
-                        : []),
-                    ]}
-                    onChange={setSelectedQuality}
-                    className="card:mt-auto mt-2 self-end"
-                  />
                 </div>
               </div>
             </div>
@@ -434,6 +423,17 @@ const SeriesDetailsLayout = ({
             ratingData?.audienceScore !== undefined ||
             data.voteCount > 0) && (
             <div className="media-rating-row">
+              <MediaQualitySelect
+                value={selectedQuality}
+                options={[
+                  { label: 'HD', value: 'hd' },
+                  ...(show4kAvailability
+                    ? ([{ label: '4K', value: '4k' }] as const)
+                    : []),
+                ]}
+                onChange={setSelectedQuality}
+                label={intl.formatMessage(messages.quality)}
+              />
               {playbackActions?.(
                 effectivePlaybackItemIds,
                 selectedQuality === '4k'
@@ -513,7 +513,7 @@ const SeriesDetailsLayout = ({
           </div>
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="text-xs font-semibold text-gray-200">
+            <h2 className="media-inset-heading">
               {intl.formatMessage(messages.overview)}
             </h2>
             {data.tagline && (
@@ -533,7 +533,7 @@ const SeriesDetailsLayout = ({
                     key={`featured-crew-${groupIndex}`}
                     className={`grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4 ${
                       groupIndex > 0
-                        ? 'card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 border-t border-gray-600 pt-2'
+                        ? `media-detail-column-divider ${groupIndex === 1 ? 'card:pr-3' : ''}`
                         : 'card:pr-3'
                     }`}
                   >
@@ -601,7 +601,7 @@ const SeriesDetailsLayout = ({
           )}
           {showTags && (
             <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-              <h2 className="mb-2 text-xs font-semibold text-gray-200">
+              <h2 className="media-inset-heading mb-2">
                 {intl.formatMessage(messages.subjectTags)}
               </h2>
               {data.keywords.length === 0 ? (
@@ -614,7 +614,7 @@ const SeriesDetailsLayout = ({
                     <Link
                       key={keyword.id}
                       href={`/discover/tv/keyword?keywords=${keyword.id}`}
-                      className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
+                      className={`compact-control inline-flex items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                         subjectTagTones[keyword.id % subjectTagTones.length]
                       }`}
                     >
@@ -627,7 +627,7 @@ const SeriesDetailsLayout = ({
           )}
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="mb-3 text-xs font-semibold text-gray-200">
+            <h2 className="media-inset-heading mb-3">
               {intl.formatMessage(messages.seriesDetails)}
             </h2>
             <div className="card:grid-cols-3 grid grid-cols-1">
@@ -656,7 +656,7 @@ const SeriesDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="card:relative card:mt-0 card:border-t-0 card:px-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
+              <dl className="media-detail-column-divider card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.seriesType)}:
                 </dt>
@@ -705,7 +705,7 @@ const SeriesDetailsLayout = ({
                 </dd>
               </dl>
 
-              <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 border-t border-gray-600 pt-2 text-xs leading-4">
+              <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.networks)}:
                 </dt>

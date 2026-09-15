@@ -63,7 +63,7 @@ const PlaybackTrackList = ({
 
   return (
     <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700 p-2">
-      <div className="request-divider-dark grid grid-cols-[2rem_3rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
+      <div className="media-inset-table-heading media-scroll-grid-header request-divider-dark grid grid-cols-[2rem_3rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b pb-2 pl-1">
         <SelectionCircle
           onClick={toggleAll}
           selected={allSelected}

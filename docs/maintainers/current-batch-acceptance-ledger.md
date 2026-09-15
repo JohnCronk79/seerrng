@@ -15,6 +15,167 @@ asks for the work to start.
 
 ## New v3.21.2 corrections
 
+### Settings page shared-control correction
+
+> “you didn't use our selector circle and all buttons and text input fields are
+> the wrong size ... the save changes button should just say 'save' ... the
+> settings menu buttons at the very top should only be as wide as the content
+> inside the button ... move the search settings box ... on the bottom row”
+
+- Status at 2026-09-15 05:09 MDT: Implemented and statically verified in source
+  after the latest laptop build. A replacement build remains intentionally
+  pending until John explicitly requests it.
+- Standard application action buttons now use the authoritative 30-pixel,
+  12-pixel-text geometry by default. Compact filter controls and Settings text
+  fields retain their distinct 20-pixel, 12-pixel-text geometry. Settings
+  labels, navigation/filter buttons, action labels, and fields now match the
+  same 12-pixel control-text standard. Settings body copy matches the Overview
+  body at 14 pixels, regular weight, a 20-pixel line height, and the shared
+  muted detail color. Descriptions use natural left alignment, and setting rows
+  stay within one body-text line of separation.
+- Settings subcard headings now match Overview card headings at 14 pixels,
+  semibold weight, a 20-pixel line height, and white text. The main
+  Settings page title is unchanged.
+  Multiple setting badges stay together in one non-overlapping row.
+- Every badge, disclosure, request-form micro-action, and other control that used
+  the former 22-pixel geometry now consumes the shared 20-pixel
+  `compact-control` height. Text sizes remain unchanged, and page-local
+  `h-[22px]` copies are prohibited repository-wide.
+- Settings text fields, dropdowns, React Select controls, attached actions, and
+  Search Settings now use that same shared 20-pixel height instead of the former
+  32-pixel field height. Native Settings checkboxes are replaced by the actual
+  shared 16-pixel `SelectionCircle` component rather than restyled boxes.
+- Settings boolean fields use the shared 16-pixel green selector-circle
+  treatment instead of white square checkboxes. The rule is owned by the shared
+  stylesheet rather than repeated in each Settings form.
+- Settings route buttons remain content-width, fully justify across each
+  naturally wrapping row, and remain visible as buttons at narrow widths.
+  Search Settings occupies a separate shared 20-pixel compact-control row beneath
+  them, with the same 20-pixel gap before the main card that media pages use
+  between their Sort By controls and poster results.
+- The final action is labeled `Save`, remains disabled with the shared dark-green
+  treatment until a field changes, and then uses the normal enabled green
+  treatment. Cancel uses the shared translucent red danger treatment.
+- Server and override-rule Edit and Delete controls no longer occupy full-width
+  split card footers. They use the shared content-width, right-justified action
+  row; Delete uses the shared danger treatment.
+- Shared Settings tables and lists now own their typography, row geometry, and
+  divider styling through the common stylesheet. Jobs & Cache consumes the
+  shared data-table treatment and a right-justified five-pixel action-row gap;
+  About consumes compact list rows and restores the five-pixel gap between
+  cards.
+- Warning cards use the shared bright-orange surface and vertically center the
+  icon with their content. Metadata Providers now contains two structurally
+  complete standard inset cards rather than relying on legacy sibling styling.
+- General no longer reports a false initial edit: programmatic initialization
+  cannot enable Save, while trusted field changes and shared selection-circle
+  changes still do.
+- Plex Libraries is one complete standard subcard. Library rows use the shared
+  inset background, compact padding, five-pixel spacing, and actual shared
+  selection circles. The standard Sync Libraries action is joined by icon-based
+  Select All and Select None actions using the existing library update path.
+- The Users table now uses compact semantic column widths from the shared
+  stylesheet. It fits an ordinary card without a horizontal scrollbar and keeps
+  its narrower-window scrollbar fallback at a 44-rem table minimum.
+- Movie Details moves the existing HD/4K quality menu into the playback row,
+  immediately before Play on Plex, and shortens only its visible label from
+  `Select Quality` to `Quality`. The menu behavior and selected quality remain
+  unchanged, while the grouped controls are protected from internal wrapping.
+- Watch Trailer and Associations now rely on the shared button icon gap alone;
+  their labels no longer add a second local margin that made them look wider
+  than Request.
+- Media inset-card headings now use one shared larger white heading treatment,
+  while inset-table column headings use one shared compact white treatment.
+- Movie and Series Recommendations and Similar linked pages now consume the same
+  shared filter and sort component as their corresponding discovery page and
+  apply those selections to the displayed related results.
+- Discover now presents a Media Filters row before its shelves with Movies,
+  Series, Music, Books, and Audiobooks links. Each destination retains the
+  filters and sorts belonging to that media type.
+- Discovery filter buttons, segmented quality filters, text fields, and compact
+  dropdowns now resolve through the shared 20-pixel height; the former taller
+  Content Rating row and equivalent filters on other media pages are removed.
+- Series Details exposes the same Cast, Crew, and Subject Tags pushpins as Movie
+  Details. Persistent disclosure pins are now stored independently for Movie,
+  Series, Music, and Book so one category cannot open another category's panel.
+- Every non-filter and non-sort button now inherits the ratings-style black
+  text and icon shadow from the stylesheet in normal, hover, active, focus, and
+  disabled states. Filter and sort controls remain explicitly shadow-free.
+- Status at 2026-09-15 06:39 MDT: the forced Movie, Series, and Music filter
+  row break now uses the shared five-pixel row gap instead of a blank flex row
+  that doubled the spacing. The compact searchable Studio dropdown now keeps
+  its value, input caret, and arrow inside the standard 20-pixel control and
+  removes the oversized legacy divider. This correction is verified in source;
+  a replacement build remains pending John's explicit instruction.
+- Status at 2026-09-15 06:53 MDT: Trending now retains the shared Movies,
+  Series, Music, Books, and Audiobooks media-filter row and swaps in each media
+  type's complete filters and sort controls. The shared action-button aliases
+  now all resolve through one 30-pixel height, 12-pixel text, 16-pixel icon, and
+  six-pixel icon-gap token. This corrects oversized ordinary action buttons
+  centrally while keeping the 20-pixel filter, sort, disclosure, and quality
+  controls distinct. Source verification passes; no replacement build has been
+  started.
+- Playback and ratings rows on Movie, Series, Music, Book, and Collection
+  details are now fully justified across their complete width without a forced
+  horizontal row gap or nested playback-button group. Rating images and values
+  use the shared five-pixel internal gap instead of eight pixels, preserving
+  enough width for the complete desktop row before responsive wrapping begins.
+- Request Series now reuses the Report Issue main-card shell. The bordered main
+  card owns the backdrop artwork and shared readability layers; the summary,
+  season/episode selector, advanced settings, and 30-pixel actions no longer
+  sit inside a nested artwork card. Vertical overflow is owned by the complete
+  modal viewport instead of a scrollbar attached to the main card.
+- Status at 2026-09-15 07:27 MDT: Issues now swaps in Movie, Series, Music, or
+  Book-specific filters when its media selection changes, and applies those
+  selections before issue counts and pagination. Issue filter fields retain the
+  shared 20-pixel geometry. The Settings shell now enforces the standard
+  20-pixel Search Settings-to-main-card gap, top-aligns setting names, keeps all
+  native and composite fields on the shared dark surface, removes blank spacing
+  between Default Permissions options, and suppresses the legacy margins that
+  split heading/body pairs across Users, Plex, Jellyfin, Services, Network, and
+  Jobs & Cache. Type checking, the focused contract suite, its 25 validator
+  tests, and the 275-component shared-style scan pass. These changes remain
+  unbuilt and unpushed pending the requested build and nightly cleanup gates.
+- Status at 2026-09-15 07:37 MDT: Services now uses one shared compact inset-card
+  layout across Radarr, Sonarr, Lidarr, Bookshelf, and Override Conditions. Logos
+  sit left of detail-card-size titles, badges sit beneath titles, Address and
+  Active Profile use aligned 12-pixel detail columns, Edit is yellow, Delete is
+  red, and Add actions are green; all actions use the 30-pixel standard. Logs
+  now uses compact shared search/filter icons, standard transparent table
+  headings, and top-left Timestamp, Severity, and Label cells. Jobs & Cache uses
+  a 47-rem narrow-fallback table with compact content/action columns, while the
+  Users table gives Requests and username/email more room and removes dead space
+  from Role, Joined, and Actions. The HTTP-login acknowledgement is the explicit
+  yellow warning-card exception with 14-pixel semibold white text. About values
+  are ordinary text, and Settings Cancel now targets the real root Discover
+  route instead of the nonexistent `/discover` path. Type checking and the
+  275-component shared-style scan pass. Status at 2026-09-15 07:43 MDT: the
+  synchronized translation catalog, all 92 generated pages, optimized client
+  bundle, and server build completed successfully. The release candidate remains
+  local and unpushed for nightly cleanup and final rendered review.
+- The style standard, focused current-batch contract, and rendered Manage-action
+  expectations now protect the corrected size ownership and Settings layout.
+- Final status at 2026-09-15 08:42 MDT: the stale generated client output was
+  identified and moved aside before a second clean production build. The
+  emitted CSS now contains the 30-pixel action token, exact 20-pixel Settings
+  native and React Select control bounds, full-card Settings help text, and
+  transparent shared table headings; the emitted Settings bundle contains the
+  corrected root `/` Cancel destination and no `/discover` destination. A new
+  rendered acceptance suite first exposed and then verified the remaining
+  React Select height and Users Settings heading/body card-continuity fixes.
+  Its seven desktop checks pass, including Settings controls and navigation,
+  Users table fit and action sizes, and complete cards on Users, Plex,
+  Services, Network, and Jobs & Cache. A broader media/discovery browser pass
+  also exposed a deep-linked global-search hydration race that could drop the
+  search phrase when switching to Audiobooks; the route-ready guard now keeps
+  the phrase, media type, format, and request link together. The two rendered
+  suites pass all 30 checks. The 418-file current-batch contract,
+  275-component style scan, all 25 contract-validator tests, all 8 shared-style
+  validator tests, 19 search-routing tests, formatting check, diff check,
+  optimized client build, all 92
+  generated pages, and server build pass. This replacement `.next` output is
+  the current local build and remains unpushed for John's review and publish.
+
 ### Poster overlay alignment
 
 > “task: fix the poster display so media type badget, association button and availability are aligned”
@@ -247,7 +408,7 @@ asks for the work to start.
   Advanced Options content open.
 - Root-folder data rows scroll only when more than five exist, with the table
   heading left visible. Request-card rules and details dividers are two pixels
-  wide and match the `gray-900/70` Destination Server value background.
+  wide and use the shared blue control-border color at 72-percent opacity.
 - Advanced Options, Requested By, Cast, Crew, and Subject Tags controls share
   the darker Destination Server control treatment while retaining their compact
   sizes and behavior.
@@ -303,14 +464,25 @@ asks for the work to start.
 
 - Status: Implemented in source with current-batch contract coverage. A fresh
   build and rendered review remain pending under John's no-build gate.
-- The item Associations popup now uses the translucent Collection-style main
-  card and its results use bordered inset cards in a responsive two-column
-  layout.
+- The item Associations popup now uses the site background inside its
+  readable-width main card. Its results use bordered compact media-detail
+  cards with exactly one full-width result card per row.
+- Every result card reuses the complete Issue-card artwork block: the title's
+  own backdrop or applicable album, artist, or book artwork, the shared scrim
+  and gradient, the standard poster geometry, linked title, detail groups, and
+  dividers.
 - The top-right close X is removed. A red Cancel action and green Browse More
   action appear at the bottom, with Browse More on the right.
-- Browse More opens a full Associations explorer that reuses Discover's poster,
-  shelf, heading, and spacing treatment instead of presenting a separate
-  oversized visual system.
+- Movie and Series result cards show HD and 4K availability in the right
+  column; Music result cards show MP3 and FLAC. One blank row separates those
+  values from relationship text that can wrap across two lines. Association
+  detail cards do not repeat a separate Status heading or value.
+- Selecting a result poster or title closes the item Associations popup as
+  navigation begins. Collection association links follow the same rule so a
+  dialog cannot persist over the newly selected title.
+- Browse More opens a full Associations explorer that reuses the same detail
+  cards in the same one-card-per-row layout, headings, and spacing instead of
+  presenting a separate oversized visual system.
 
 ### Detail rating shadows and divider standard
 
@@ -320,6 +492,13 @@ asks for the work to start.
   build and rendered review remain pending under John's no-build gate.
 - Rating icons, wordmarks, and values use a subtle black shadow for readability
   without adding a containing box.
+- The visible space between the playback/rating contents and the primary action
+  buttons is exactly the shared five-pixel card gap. The rating row may add the
+  five-pixel lead-in above its contents, but it must not add bottom padding that
+  stacks with the primary row margin.
+- The Cast, Crew, and Subject Tags disclosure controls are the separate standard
+  secondary small size at 20 CSS pixels high. They retain the same five-pixel
+  vertical card gap and must not be substituted for the 30-pixel action size.
 - The two desktop vertical dividers in compact media details are exactly two
   pixels wide and use the shared dark-blue divider color. Mobile-only horizontal
   separators are suppressed when the desktop three-group layout is active.
@@ -336,7 +515,7 @@ asks for the work to start.
   media summary, season and episode selectors, and description rendered as the
   same darker inset subcards used by Collection Details.
 - Cancel and Submit Issue use the shared red and green buttons at the standard
-  32-pixel action height. Shared modal actions now default to that same size so
+  30-pixel action height. Shared modal actions now default to that same size so
   Continue and equivalent confirmation actions do not drift smaller or larger.
 
 ### Issue Details action row
@@ -345,11 +524,17 @@ asks for the work to start.
 
 - Status: Implemented in source with current-batch contract coverage. A fresh
   build and rendered review remain pending under John's no-build gate.
-- Add Comment anchors the far-left edge of the action row before any media or
-  automation-service links. Cancel and Close Issue or Reopen Issue remain
+- Add Comment anchors the far-left edge of the action row before any eligible
+  automation-service links. Issue Details does not show a Play on Plex,
+  Jellyfin, or Emby action. Cancel and Close Issue or Reopen Issue remain
   adjacent at the right edge, with Cancel immediately to the left.
+- Add Comment, service, Cancel, and Close or Reopen actions all resolve through
+  the shared translucent semantic button variants at the standard 30-pixel
+  size. The
+  validator explicitly rejects playback controls on this page and verifies the
+  warning, danger, and success variants.
 - The old Exit label and bespoke 22-pixel controls are removed. Every action in
-  this row now uses the shared standard button component and default size.
+  this row now uses the shared button component and central action-size token.
 
 ### Request Status History action
 
@@ -380,16 +565,16 @@ asks for the work to start.
 
 - Status: Implemented in source with current-batch contract coverage. A fresh
   build and rendered review remain pending under John's no-build gate.
-- Title visibility uses the standard small default/selected button treatment,
+- Title visibility uses the standard default/selected action-button treatment,
   Refresh is orange, and Previous and Next are green. All remain the standard
-  32-pixel control size.
-- Discover filter and sort controls retain the shared 32-pixel filter geometry.
-  Selected React Select values now force the shared dark translucent surface,
-  removing the legacy white Genre pill across Movie and Series filter links.
-- Studio and Network buttons use TMDB's original-resolution PNG logo assets
-  without the old duotone conversion. Their linked pages show the named Studio
-  or Network title at top left, the same original logo centered above the
-  filters, and the complete Movie or Series filter and sort toolset.
+  30-pixel action size.
+- Discover filter and sort controls retain the shared 20-pixel compact geometry.
+  Searchable React Select controls match the Runtime dropdown's vertical
+  alignment, dark menu, indigo highlight, and selected check mark. Selected
+  values force the shared dark translucent surface instead of a white pill.
+- Studio and Network buttons prefer original-resolution color PNG assets.
+  Black-only source marks are rendered in white, while available color marks
+  remain in color. Their linked pages repeat the same curated logo treatment.
 
 ### Discover Recent Requests cleanup
 
@@ -406,6 +591,8 @@ asks for the work to start.
 - Recent Request cards reduce their reserved height from 272 pixels to the
   artwork-and-content height. Poster frames are anchored to their artwork:
   square for Music and 2:3 for Movie, Series, and Book artwork.
+- The slider and both placeholder paths receive the compact geometry, so the
+  shelf and its loading cards contract to the same content-sized row.
 - This is a bounded cleanup pass. Broader visual changes to the Recent Requests
   row are deliberately reserved for John's next build review.
 
@@ -447,6 +634,9 @@ asks for the work to start.
   episode lists extend through their right padding so row availability icons
   align with the header availability icon while the scrollbar remains at the
   card edge.
+- A fully available season uses the bright-green check. A season with only
+  some episodes available uses the same dark emerald treatment as a partial
+  selection circle; a season with none available keeps the red X.
 
 ### Manage media Collection-style card
 
@@ -457,13 +647,34 @@ asks for the work to start.
 - Manage Movie, Manage Series, and Manage Music now open as the same centered,
   artwork-backed outer card used by Report an Issue rather than as a narrow
   right-hand slide-over.
+- The redundant Manage heading and loose title are removed. When an open issue
+  exists, the top of the manager uses the exact full Issue list card with its
+  artwork, details, status, and View Issue action. The generic media summary
+  and simplified Open Issues subcard are suppressed so the title information
+  is not duplicated. When no viewable open issue exists, one embedded summary
+  remains to identify the managed item.
 - Downloads, open issues, requests, blocklist, linked media services, playback
   statistics, quality-specific media, and advanced controls retain their
   existing behavior and render as darker inset subcards with the shared
   five-pixel spacing rhythm.
+- Standalone Media and 4K Media cards are removed. Their service, Tautulli,
+  remove-from-service, and warning content now lives inside the single
+  Advanced card with availability and Clear Data controls.
 - The shared Book manager inherits the same layout because it uses the Music
-  management component. A standard red Cancel action replaces the slide-over
-  close control.
+  management component. Open Issues uses compact rows and a standard eye
+  control. Every management action uses the explicit `standard` Button size
+  token: 30-pixel height, 12-pixel text, 16-pixel icons, six-pixel icon gap,
+  and content width. The shared component default resolves to this same
+  standard. A standard translucent red Cancel action sits at the bottom right,
+  five pixels below the final card.
+- Rendered Cypress coverage measures every Advanced and Cancel action in the
+  Book and Music managers. The current-batch contract also requires the same
+  explicit token on all Movie and Series manager actions, so a source-only
+  check cannot accidentally redefine the larger default as compliant again.
+- Shared indigo, yellow, red, and green buttons now use the standard
+  translucent dark-tint treatment site-wide rather than solid idle
+  backgrounds. The contract checks the central variants so every page using
+  the shared Button component receives the same treatment.
 
 ### Discover poster sizing
 

@@ -1,6 +1,7 @@
 import type {
   CardTextVisibility,
   NotificationAgentTypes,
+  UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Notification, hasNotificationType } from '@server/lib/notifications';
 import { NotificationAgentKey } from '@server/lib/settings';
@@ -208,6 +209,9 @@ export class UserSettings {
   @Column({ default: false })
   public detailDisclosureSubjectTagsPinned: boolean;
 
+  @Column({ type: 'simple-json', nullable: true })
+  public detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
+
   @Column({
     type: 'text',
     nullable: true,
@@ -253,6 +257,7 @@ export class UserSettings {
       detailDisclosureCrewPinned: this.detailDisclosureCrewPinned,
       detailDisclosureArtistsPinned: this.detailDisclosureArtistsPinned,
       detailDisclosureSubjectTagsPinned: this.detailDisclosureSubjectTagsPinned,
+      detailDisclosurePins: this.detailDisclosurePins,
     };
   }
 

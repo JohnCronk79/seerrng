@@ -1,8 +1,6 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddDetailDisclosurePins1785000000000
-  implements MigrationInterface
-{
+export class AddDetailDisclosurePins1785000000000 implements MigrationInterface {
   name = 'AddDetailDisclosurePins1785000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

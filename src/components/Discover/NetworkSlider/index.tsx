@@ -11,6 +11,7 @@ interface Network {
   name: string;
   image: string;
   url: string;
+  logoTone?: 'color' | 'white';
 }
 
 export const tvNetworks: Network[] = [
@@ -25,6 +26,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/gJ8VX6JSu3ciXHuC2dDGAo2lvwM.png',
     url: '/discover/tv/network/2739',
+    logoTone: 'white',
   },
   {
     name: 'Prime Video',
@@ -37,6 +39,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/4KAy34EHvRM25Ih8wb82AuGU7zJ.png',
     url: '/discover/tv/network/2552',
+    logoTone: 'white',
   },
   {
     name: 'Hulu',
@@ -49,6 +52,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/tuomPhY2UtuPTqqFnKMVHvSb724.png',
     url: '/discover/tv/network/49',
+    logoTone: 'white',
   },
   {
     name: 'Discovery+',
@@ -61,12 +65,14 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/ndAvF4JLsliGreX87jAc9GdjmJY.png',
     url: '/discover/tv/network/2',
+    logoTone: 'white',
   },
   {
     name: 'FOX',
     image:
       'https://image.tmdb.org/t/p/original/1DSpHrWyOORkL9N2QHX7Adt31mQ.png',
     url: '/discover/tv/network/19',
+    logoTone: 'white',
   },
   {
     name: 'Cinemax',
@@ -79,6 +85,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/pmvRmATOCaDykE6JrVoeYxlFHw3.png',
     url: '/discover/tv/network/174',
+    logoTone: 'white',
   },
   {
     name: 'Showtime',
@@ -91,6 +98,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/8GJjw3HHsAJYwIWKIPBPfqMxlEa.png',
     url: '/discover/tv/network/318',
+    logoTone: 'white',
   },
   {
     name: 'The CW',
@@ -108,6 +116,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/nm8d7P7MJNiBLdgIzUK0gkuEA4r.png',
     url: '/discover/tv/network/16',
+    logoTone: 'white',
   },
   {
     name: 'Paramount+',
@@ -119,18 +128,21 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/mVn7xESaTNmjBUyUtGNvDQd3CT1.png',
     url: '/discover/tv/network/4',
+    logoTone: 'white',
   },
   {
     name: 'Cartoon Network',
     image:
       'https://image.tmdb.org/t/p/original/c5OC6oVCg6QP4eqzW6XIq17CQjI.png',
     url: '/discover/tv/network/56',
+    logoTone: 'white',
   },
   {
     name: 'Adult Swim',
     image:
       'https://image.tmdb.org/t/p/original/9AKyspxVzywuaMuZ1Bvilu8sXly.png',
     url: '/discover/tv/network/80',
+    logoTone: 'white',
   },
   {
     name: 'Nickelodeon',
@@ -143,6 +155,7 @@ export const tvNetworks: Network[] = [
     image:
       'https://image.tmdb.org/t/p/original/gIAcGTjKKr0KOHL5s4O36roJ8p7.png',
     url: '/discover/tv/network/3353',
+    logoTone: 'white',
   },
 ];
 
@@ -166,6 +179,7 @@ const NetworkSlider = () => {
             name={network.name}
             image={network.image}
             url={network.url}
+            logoTone={network.logoTone}
           />
         ))}
         placeholder={<CompanyCardPlaceholder />}

@@ -1,5 +1,6 @@
 import { useUser, type UserSettings } from '@app/hooks/useUser';
 import type {
+  DetailDisclosureMediaType,
   DetailDisclosurePin,
   UserSettingsDetailDisclosureResponse,
 } from '@server/interfaces/api/userSettingsInterfaces';
@@ -18,33 +19,48 @@ const defaultPins: DetailDisclosurePins = {
   subjectTags: false,
 };
 
-const fromUserSettings = (settings?: UserSettings): DetailDisclosurePins => ({
-  cast: settings?.detailDisclosureCastPinned === true,
-  crew: settings?.detailDisclosureCrewPinned === true,
-  artists: settings?.detailDisclosureArtistsPinned === true,
-  subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
-});
+const fromUserSettings = (
+  settings: UserSettings | undefined,
+  mediaType: DetailDisclosureMediaType
+): DetailDisclosurePins => {
+  const legacyPins: DetailDisclosurePins = {
+    cast:
+      mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
+    crew:
+      mediaType === 'movie' && settings?.detailDisclosureCrewPinned === true,
+    artists:
+      mediaType === 'music' && settings?.detailDisclosureArtistsPinned === true,
+    subjectTags:
+      mediaType === 'movie' &&
+      settings?.detailDisclosureSubjectTagsPinned === true,
+  };
 
-const useDetailDisclosurePins = () => {
+  return {
+    ...legacyPins,
+    ...settings?.detailDisclosurePins?.[mediaType],
+  };
+};
+
+const useDetailDisclosurePins = (mediaType: DetailDisclosureMediaType) => {
   const { user, revalidate: revalidateUser } = useUser();
-  const userKey = user?.id ? String(user.id) : 'anonymous';
+  const userKey = `${user?.id ? String(user.id) : 'anonymous'}:${mediaType}`;
   const endpoint = user?.id
-    ? `/api/v1/user/${user.id}/settings/detail-disclosures`
+    ? `/api/v1/user/${user.id}/settings/detail-disclosures/${mediaType}`
     : null;
   const { data, mutate } = useSWR<UserSettingsDetailDisclosureResponse>(
     endpoint,
     {
-      fallbackData: fromUserSettings(user?.settings),
+      fallbackData: fromUserSettings(user?.settings, mediaType),
       revalidateOnFocus: false,
     }
   );
   const pins = useMemo<DetailDisclosurePins>(
     () => ({
       ...defaultPins,
-      ...fromUserSettings(user?.settings),
+      ...fromUserSettings(user?.settings, mediaType),
       ...data,
     }),
-    [data, user?.settings]
+    [data, mediaType, user?.settings]
   );
   const mutationState = useRef(new DetailDisclosurePinsMutationState());
   mutationState.current.synchronize(userKey, pins);

@@ -128,7 +128,7 @@ const CollectionPartRatings = ({ part }: { part: MovieResult }) => {
   return (
     <dl
       ref={ref}
-      className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-[11px] leading-4"
+      className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-[11px] leading-4"
     >
       {ratingRows.map((rating) => {
         const safeHref = rating.href ? getSafeHref(rating.href) : undefined;
@@ -420,15 +420,13 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
           </div>
 
           <div className="media-rating-row">
-            <div className="flex flex-wrap items-center gap-2">
-              <MediaServerPlayButton
-                collectionMediaIds={effectivePlaybackMediaIds}
-                disabled={availableMediaIds.length === 0}
-              />
-              <CollectionPlayOnDeviceButton
-                mediaIds={effectivePlaybackMediaIds}
-              />
-            </div>
+            <MediaServerPlayButton
+              collectionMediaIds={effectivePlaybackMediaIds}
+              disabled={availableMediaIds.length === 0}
+            />
+            <CollectionPlayOnDeviceButton
+              mediaIds={effectivePlaybackMediaIds}
+            />
             {collectionScore && (
               <Link
                 href={`https://www.themoviedb.org/collection/${data.id}`}
@@ -456,7 +454,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
               >
                 <Button
                   buttonType="blocklist"
-                  buttonSize="sm"
+                  buttonSize="standard"
                   disabled={isCollectionBlocklisted}
                   disabledReason={intl.formatMessage(
                     globalMessages.alreadyBlocklisted
@@ -473,7 +471,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
           </div>
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="text-xs font-semibold text-gray-200">
+            <h2 className="media-inset-heading">
               {intl.formatMessage(messages.overview)}
             </h2>
             <p className="refreshed-detail-text-muted mt-4 text-sm leading-5">
@@ -485,7 +483,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
           <CollectionMetadataDisclosures parts={data.parts} />
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="text-xs font-semibold text-gray-200">
+            <h2 className="media-inset-heading">
               {intl.formatMessage(messages.collection)}
             </h2>
             <div className="scrollable-card mt-2 -mr-3 max-h-[312px] space-y-2 overflow-y-auto pr-3">
@@ -551,7 +549,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                       </div>
                       <div className="card:grid-cols-3 mt-1 grid min-w-0 grid-cols-1 items-stretch">
                         <div className="card:col-span-2 card:pr-3 min-w-0">
-                          <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                          <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
                             <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                               {intl.formatMessage(messages.availability)}:
                             </dt>
@@ -572,8 +570,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                             <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                               {part.releaseDate || '—'}
                             </dd>
-                            <div className="request-divider-fill-dark card:col-start-5 card:row-span-2 card:row-start-1 card:block hidden" />
-                            <div className="card:col-start-7 card:row-span-2 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 border-t border-gray-600 pt-2">
+                            <div className="media-detail-column-divider card:col-start-5 card:row-span-2 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                               <dt className="font-medium text-gray-100">
                                 {intl.formatMessage(messages.genres)}:
                               </dt>

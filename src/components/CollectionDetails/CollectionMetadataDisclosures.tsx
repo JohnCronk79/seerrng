@@ -35,7 +35,7 @@ const tones = [
 
 const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
   const intl = useIntl();
-  const { pins, togglePinned } = useDetailDisclosurePins();
+  const { pins, togglePinned } = useDetailDisclosurePins('movie');
   const [open, setOpen] = useState<Set<DetailDisclosurePin>>(() => new Set());
   const [loading, setLoading] = useState(false);
   const [details, setDetails] = useState<MovieDetails[]>();
@@ -175,7 +175,7 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
       )}
       {open.has('subjectTags') && !loading && (
         <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-          <h2 className="mb-2 text-xs font-semibold text-gray-200">
+          <h2 className="media-inset-heading mb-2">
             {intl.formatMessage(messages.subjectTags)}
           </h2>
           {keywords.size === 0 ? (
@@ -188,7 +188,7 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
                 <Link
                   key={id}
                   href={`/discover/movies/keyword?keywords=${id}`}
-                  className={`inline-flex h-[22px] items-center rounded-full border px-2 text-[11px] font-medium transition ${tones[index % tones.length]}`}
+                  className={`compact-control inline-flex items-center rounded-full border px-2 text-[11px] font-medium transition ${tones[index % tones.length]}`}
                 >
                   {name}
                 </Link>
