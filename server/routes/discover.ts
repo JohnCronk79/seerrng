@@ -11,6 +11,7 @@ import MusicBrainz from '@server/api/musicbrainz';
 import type { MbAlbumResult } from '@server/api/musicbrainz/interfaces';
 import type { OpenLibrarySearchDoc } from '@server/api/openlibrary';
 import OpenLibraryAPI from '@server/api/openlibrary';
+import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SortOptions } from '@server/api/themoviedb';
 import TheMovieDb, { SortOptionsIterable } from '@server/api/themoviedb';
 import type {
@@ -36,6 +37,7 @@ import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { extractImageCacheUrls } from '@server/lib/imageCacheUrls';
 import { enqueueImageCacheWarm } from '@server/lib/imageCacheWarmer';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
@@ -43,6 +45,8 @@ import {
   getAvailableMusicQualities,
   getMusicQualityStatuses,
 } from '@server/lib/musicQualityAvailability';
+import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
+import type { RadarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import {
   clampNumber,
@@ -979,6 +983,219 @@ const parseLocalRuntime = (runtime?: string | null): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+type LiveRadarrMovie = {
+  movie: RadarrMovie;
+  server: RadarrSettings;
+};
+
+type LiveRadarrMovieAvailability = {
+  hd: Map<number, LiveRadarrMovie>;
+  isHdAuthoritative: boolean;
+  is4k: Map<number, LiveRadarrMovie>;
+  is4kAuthoritative: boolean;
+};
+
+const getLiveRadarrMovieAvailability =
+  async (): Promise<LiveRadarrMovieAvailability> => {
+    const servers = getExternalRuntimeConfig().radarr.filter(
+      (server) => server.syncEnabled
+    );
+    const hdServers = servers.filter((server) => !server.is4k);
+    const servers4k = servers.filter((server) => server.is4k);
+    const result: LiveRadarrMovieAvailability = {
+      hd: new Map(),
+      isHdAuthoritative: hdServers.length > 0,
+      is4k: new Map(),
+      is4kAuthoritative: servers4k.length > 0,
+    };
+
+    await Promise.all(
+      servers.map(async (server) => {
+        const movies = await runWithServarrServiceSnapshot(
+          'radarr',
+          server,
+          async (current) =>
+            new RadarrAPI({
+              apiKey: current.apiKey,
+              url: RadarrAPI.buildUrl(current, '/api/v3'),
+            }).getMovies()
+        );
+        const destination = server.is4k ? result.is4k : result.hd;
+
+        for (const movie of movies) {
+          if (movie.hasFile && !destination.has(movie.tmdbId)) {
+            destination.set(movie.tmdbId, { movie, server });
+          }
+        }
+      })
+    );
+
+    return result;
+  };
+
+const clearStaleAvailableStatus = (
+  status: MediaStatus | undefined
+): MediaStatus =>
+  status === MediaStatus.AVAILABLE || status === MediaStatus.PARTIALLY_AVAILABLE
+    ? MediaStatus.UNKNOWN
+    : (status ?? MediaStatus.UNKNOWN);
+
+const getLiveAvailableMovieDiscoverResponse = async ({
+  quality,
+  page,
+  query,
+  user,
+}: {
+  quality: 'hd' | '4k';
+  page: number;
+  query: FilterOptions;
+  user?: User;
+}) => {
+  const availability = await getLiveRadarrMovieAvailability();
+  const isRequestedQualityAuthoritative =
+    quality === '4k'
+      ? availability.is4kAuthoritative
+      : availability.isHdAuthoritative;
+
+  if (!isRequestedQualityAuthoritative) {
+    return undefined;
+  }
+
+  const requestedMovies =
+    quality === '4k' ? availability.is4k : availability.hd;
+  const requestedGenreIds = splitNumericFilter(query.genre);
+
+  const movies = [...requestedMovies.values()]
+    .map(({ movie, server }) => {
+      const genreIds = getLocalVideoGenreIds(
+        MediaType.MOVIE,
+        movie.genres ?? []
+      );
+      const releaseDate = movie.year ? String(movie.year) : '';
+      const runtime = movie.runtime;
+
+      return {
+        movie,
+        server,
+        genreIds,
+        releaseDate,
+        runtime,
+      };
+    })
+    .filter(
+      ({ movie, genreIds, releaseDate, runtime }) =>
+        (!query.search ||
+          matchesAllSearchTerms(
+            [movie.title, movie.originalTitle, movie.overview],
+            query.search
+          )) &&
+        (!requestedGenreIds.length ||
+          requestedGenreIds.every((genreId) => genreIds.includes(genreId))) &&
+        (!query.primaryReleaseDateGte ||
+          releaseDate >= query.primaryReleaseDateGte) &&
+        (!query.primaryReleaseDateLte ||
+          releaseDate <= query.primaryReleaseDateLte) &&
+        (!query.withRuntimeGte ||
+          (runtime ?? 0) >= Number(query.withRuntimeGte)) &&
+        (!query.withRuntimeLte ||
+          (runtime ?? Number.POSITIVE_INFINITY) <= Number(query.withRuntimeLte))
+    )
+    .sort((left, right) => {
+      const sortOption = getValidatedTmdbSort(query.sortBy);
+      const ascending = sortOption.endsWith('.asc');
+      const direction = ascending ? 1 : -1;
+
+      if (
+        sortOption.startsWith('release_date') ||
+        sortOption.startsWith('primary_release_date')
+      ) {
+        return left.releaseDate.localeCompare(right.releaseDate) * direction;
+      }
+      if (sortOption.startsWith('original_title')) {
+        return (
+          (left.movie.originalTitle || left.movie.title).localeCompare(
+            right.movie.originalTitle || right.movie.title
+          ) * direction
+        );
+      }
+      if (sortOption.startsWith('vote_average')) {
+        return (
+          ((left.movie.ratings?.value ?? 0) -
+            (right.movie.ratings?.value ?? 0)) *
+          direction
+        );
+      }
+
+      return left.movie.title.localeCompare(right.movie.title);
+    });
+
+  const itemsPerPage = 20;
+  const pageStart = (page - 1) * itemsPerPage;
+  const pageItems = movies.slice(pageStart, pageStart + itemsPerPage);
+  const pageTmdbIds = pageItems.map(({ movie }) => movie.tmdbId);
+  const persistedMedia = pageTmdbIds.length
+    ? await getRepository(Media).find({
+        where: { mediaType: MediaType.MOVIE, tmdbId: In(pageTmdbIds) },
+      })
+    : [];
+  await hydrateMediaSummaryRelations(persistedMedia, user);
+  const mediaByTmdbId = new Map(
+    persistedMedia.map((media) => [media.tmdbId, media])
+  );
+
+  return {
+    page,
+    totalPages: Math.max(1, Math.ceil(movies.length / itemsPerPage)),
+    totalResults: movies.length,
+    results: pageItems.map(({ movie, server, genreIds, releaseDate }) => {
+      const persisted = mediaByTmdbId.get(movie.tmdbId);
+      const hdMovie = availability.hd.get(movie.tmdbId);
+      const movie4k = availability.is4k.get(movie.tmdbId);
+      const media = new Media({
+        ...persisted,
+        mediaType: MediaType.MOVIE,
+        tmdbId: movie.tmdbId,
+        status: availability.isHdAuthoritative
+          ? hdMovie
+            ? MediaStatus.AVAILABLE
+            : clearStaleAvailableStatus(persisted?.status)
+          : (persisted?.status ?? MediaStatus.UNKNOWN),
+        status4k: availability.is4kAuthoritative
+          ? movie4k
+            ? MediaStatus.AVAILABLE
+            : clearStaleAvailableStatus(persisted?.status4k)
+          : (persisted?.status4k ?? MediaStatus.UNKNOWN),
+        serviceId: hdMovie?.server.id ?? persisted?.serviceId,
+        externalServiceId: hdMovie?.movie.id ?? persisted?.externalServiceId,
+        serviceId4k: movie4k?.server.id ?? persisted?.serviceId4k,
+        externalServiceId4k:
+          movie4k?.movie.id ?? persisted?.externalServiceId4k,
+      });
+
+      return mapMovieResult(
+        {
+          id: movie.tmdbId,
+          media_type: 'movie',
+          title: movie.title,
+          original_title: movie.originalTitle || movie.title,
+          release_date: releaseDate,
+          adult: false,
+          video: false,
+          popularity: 0,
+          poster_path: `/api/v1/movie/${movie.tmdbId}/cover?serviceId=${server.id}&externalServiceId=${movie.id}&is4k=${server.is4k}`,
+          backdrop_path: undefined,
+          vote_count: movie.ratings?.votes ?? 0,
+          vote_average: movie.ratings?.value ?? 0,
+          genre_ids: genreIds,
+          overview: movie.overview ?? '',
+          original_language: '',
+        },
+        media
+      );
+    }),
+  };
+};
+
 const getLocalAvailableVideoDiscoverResponse = async ({
   mediaType,
   quality,
@@ -992,6 +1209,18 @@ const getLocalAvailableVideoDiscoverResponse = async ({
   query: FilterOptions;
   user?: User;
 }) => {
+  if (mediaType === MediaType.MOVIE) {
+    const liveResponse = await getLiveAvailableMovieDiscoverResponse({
+      quality,
+      page,
+      query,
+      user,
+    });
+    if (liveResponse) {
+      return liveResponse;
+    }
+  }
+
   const statusField = quality === '4k' ? 'status4k' : 'status';
   const mediaItems = await getRepository(Media)
     .createQueryBuilder('media')

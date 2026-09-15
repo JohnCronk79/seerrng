@@ -7,6 +7,7 @@ import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexTvAPI from '@server/api/plextv';
+import RadarrAPI from '@server/api/servarr/radarr';
 import TheMovieDb from '@server/api/themoviedb';
 import {
   MediaRequestStatus,
@@ -23,7 +24,7 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
-import { getSettings } from '@server/lib/settings';
+import { getSettings, type RadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
@@ -81,6 +82,28 @@ afterEach(() => {
 });
 
 setupTestDb();
+
+const createRadarrSettings = (id: number, is4k: boolean): RadarrSettings => ({
+  id,
+  name: is4k ? 'Radarr-4K' : 'Radarr-HD',
+  hostname: 'radarr.test',
+  port: is4k ? 7879 : 7878,
+  apiKey: 'radarr-key',
+  useSsl: false,
+  baseUrl: '',
+  activeProfileId: 1,
+  activeProfileName: is4k ? 'Ultra-HD 4K' : 'HD-1080p',
+  activeDirectory: is4k ? '/movies/4k' : '/movies/hd',
+  tags: [],
+  is4k,
+  isDefault: true,
+  externalUrl: '',
+  syncEnabled: true,
+  preventSearch: false,
+  tagRequests: false,
+  overrideRule: [],
+  minimumAvailability: 'released',
+});
 
 describe('genre slider provider bounds', () => {
   it('bounds external music and book discovery fan-out', () => {
@@ -191,6 +214,109 @@ describe('GET /discover/movies', () => {
       (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
       0
     );
+  });
+
+  it('uses current Radarr file state and metadata for quality availability', async (t) => {
+    const settings = getSettings();
+    const priorRadarr = settings.radarr;
+    settings.radarr = [createRadarrSettings(41, true)];
+    await getRepository(Media).save([
+      new Media({
+        tmdbId: 710001,
+        mediaType: MediaType.MOVIE,
+        status4k: MediaStatus.AVAILABLE,
+      }),
+      new Media({
+        tmdbId: 710002,
+        mediaType: MediaType.MOVIE,
+        status4k: MediaStatus.UNKNOWN,
+      }),
+    ]);
+    const liveMovies = [
+      {
+        id: 81,
+        title: 'Monitored Without File',
+        originalTitle: 'Monitored Without File',
+        year: 2025,
+        overview: '',
+        studio: '',
+        runtime: 90,
+        certification: '',
+        genres: [],
+        ratings: { votes: 0, value: 0 },
+        isAvailable: false,
+        monitored: true,
+        tmdbId: 710001,
+        imdbId: '',
+        titleSlug: 'monitored-without-file',
+        folderName: 'Monitored Without File',
+        path: '/movies/4k/Monitored Without File',
+        profileId: 1,
+        qualityProfileId: 1,
+        added: '2026-01-01',
+        hasFile: false,
+        tags: [],
+      },
+      {
+        id: 82,
+        title: 'Current 4K File',
+        originalTitle: 'Current 4K File',
+        year: 2026,
+        overview: 'Available from Radarr.',
+        studio: 'Test Studio',
+        runtime: 101,
+        certification: '',
+        genres: ['Adventure'],
+        ratings: { votes: 12, value: 7.5 },
+        isAvailable: true,
+        monitored: true,
+        tmdbId: 710002,
+        imdbId: 'tt710002',
+        titleSlug: 'current-4k-file',
+        folderName: 'Current 4K File',
+        path: '/movies/4k/Current 4K File',
+        profileId: 1,
+        qualityProfileId: 1,
+        added: '2026-01-02',
+        hasFile: true,
+        tags: [],
+      },
+    ];
+    Object.defineProperty(RadarrAPI.prototype, 'getMovies', {
+      configurable: true,
+      get: () => async () => liveMovies,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (RadarrAPI.prototype as Partial<RadarrAPI>).getMovies;
+    });
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for Radarr availability');
+    });
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/discover/movies?availability=4k');
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.totalResults, 1);
+      assert.strictEqual(res.body.results[0].id, 710002);
+      assert.strictEqual(res.body.results[0].title, 'Current 4K File');
+      assert.match(
+        res.body.results[0].posterPath,
+        /serviceId=41&externalServiceId=82&is4k=true/
+      );
+      assert.strictEqual(
+        res.body.results[0].mediaInfo.status4k,
+        MediaStatus.AVAILABLE
+      );
+      assert.strictEqual(
+        (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
+        0
+      );
+    } finally {
+      settings.radarr = priorRadarr;
+    }
   });
 
   it('rejects malformed movie genre IDs before provider lookup', async () => {

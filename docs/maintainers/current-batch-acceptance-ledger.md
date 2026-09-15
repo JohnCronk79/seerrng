@@ -110,6 +110,16 @@ asks for the work to start.
 - Clear Filters restores each page's native default sort as well as its other
   filters across Movies, Series, Music, Books, Search, Requests, Blocklist, and
   Issues.
+- Movie HD and 4K availability filters use the current cached Radarr library
+  state when the matching synchronized service is configured. Only movies with
+  an actual Radarr file are returned; monitored entries without files and stale
+  copied-database availability are excluded. Cards use Radarr title metadata
+  and the authenticated Radarr cover proxy instead of blank TMDB-ID fallbacks.
+- The live Movie filter loads persisted Seerr relationships only for the 20
+  visible results after filtering, sorting, and pagination, keeping the full HD
+  library lookup bounded. Focused route and cover-proxy tests protect this
+  behavior. A fresh build and rendered verification remain pending under
+  John's no-build gate.
 
 ## Keith-requested feature
 

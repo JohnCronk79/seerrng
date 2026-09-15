@@ -2586,6 +2586,41 @@ const validateCurrentBatchContract = (files) => {
     'Music discovery must expose separately persisted Lidarr qualities'
   );
   requireText(
+    'server/routes/discover.ts',
+    'getLiveRadarrMovieAvailability',
+    'Movie quality filters must consult current synchronized Radarr libraries'
+  );
+  requireText(
+    'server/routes/discover.ts',
+    'if (movie.hasFile && !destination.has(movie.tmdbId))',
+    'Movie quality filters must exclude monitored Radarr entries without files'
+  );
+  requireText(
+    'server/routes/discover.ts',
+    'const pageTmdbIds = pageItems.map(({ movie }) => movie.tmdbId);',
+    'Live Movie filtering must hydrate persisted relationships only after pagination'
+  );
+  requireText(
+    'server/routes/discover.ts',
+    'cover?serviceId=${server.id}&externalServiceId=${movie.id}&is4k=${server.is4k}',
+    'Live Radarr Movie cards must use the authenticated service-specific cover proxy'
+  );
+  requireText(
+    'server/routes/discover.test.ts',
+    'uses current Radarr file state and metadata for quality availability',
+    'Live Radarr Movie availability must retain focused route coverage'
+  );
+  requireText(
+    'server/routes/movie.test.ts',
+    'serves a live Radarr discovery cover without persisted service links',
+    'Live Radarr Movie posters must retain focused cover-proxy coverage'
+  );
+  requireText(
+    'server/routes/movie.ts',
+    'candidate.id === explicitServiceId && Boolean(candidate.is4k) === is4k',
+    'Live Radarr Movie covers must validate the requested configured service and quality'
+  );
+  requireText(
     'server/routes/discover.test.ts',
     'exposes every scanned Lidarr quality for discovery filtering',
     'Music discovery quality metadata must have route coverage'

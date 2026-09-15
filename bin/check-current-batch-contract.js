@@ -132,6 +132,8 @@ const fileNames = [
   'server/routes/media.test.ts',
   'server/routes/discover.test.ts',
   'server/routes/discover.ts',
+  'server/routes/movie.test.ts',
+  'server/routes/movie.ts',
   'server/models/Search.ts',
   'server/routes/search.ts',
   'server/routes/search.test.ts',
