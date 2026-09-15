@@ -271,6 +271,19 @@ asks for the work to start.
 - Request errors show the server's safe returned explanation when available
   instead of always replacing it with the generic submission message.
 
+### Playlist import card styling
+
+> “on the music page when you click the import playlist button ... convert this to a card, use the site background, and apply our style to the card.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- The playlist import dialog is a rounded, bordered site-background card with
+  the standard shadow and refreshed text colors.
+- The playlist URL field uses the translucent request-control styling instead
+  of the browser's solid white URL-input default.
+- Spotify actions use shared buttons, while the Spotify and YouTube guidance
+  uses the shared darker inset-card surface and divider treatment.
+
 ## Firefox detail-card artwork resize stability
 
 > “when the cast and crew cards are opened ... when he collapses the cards and reopens them his browser keeps zooming the background image ... he uses Firefox.”

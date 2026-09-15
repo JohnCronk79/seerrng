@@ -698,6 +698,16 @@ const validateCurrentBatchContract = (files) => {
     'zero-valued Lidarr service IDs must remain valid explicit music destinations'
   );
   requireText(
+    'src/components/RequestModal/PlaylistImportModal.tsx',
+    'dialogClass="request-modal-site-surface refreshed-detail-text rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:max-w-3xl"',
+    'playlist import must use the shared site-background card surface'
+  );
+  requireText(
+    'src/components/RequestModal/PlaylistImportModal.tsx',
+    'className="request-form-control mt-2 block h-10 w-full',
+    'playlist URL input must use the shared request control styling'
+  );
+  requireText(
     'server/routes/request.test.ts',
     'allows simultaneous active music requests for different Lidarr destinations',
     'MP3 and FLAC must retain independent active-request regression coverage'
