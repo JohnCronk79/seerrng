@@ -117,6 +117,7 @@ const fileNames = [
   'src/components/IssueList/IssueItem/issueAffectedSummary.test.ts',
   'cypress/e2e/movie-details.cy.ts',
   'cypress/e2e/tv-details.cy.ts',
+  'server/routes/request.ts',
   'server/routes/request.test.ts',
   'server/routes/user.test.ts',
   'server/routes/user/usersettings.ts',

@@ -1202,17 +1202,36 @@ describe('GET /request', () => {
   });
 
   it('accepts the recent requests slider query', async () => {
+    const deletedRequest = await seedRequest(
+      MediaRequestStatus.COMPLETED,
+      undefined,
+      987654
+    );
+    deletedRequest.media.status = MediaStatus.DELETED;
+    await getRepository(Media).save(deletedRequest.media);
+
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const res = await agent.get('/request').query({
-      filter: 'all',
+      filter: 'recent',
       take: 10,
-      sort: 'modified',
+      sort: 'added',
       sortDirection: 'desc',
       skip: 0,
     });
 
     assert.strictEqual(res.status, 200);
     assert.ok(Array.isArray(res.body.results));
+    assert.ok(
+      !res.body.results.some(
+        (item: { id: number }) => item.id === deletedRequest.id
+      )
+    );
+    assert.ok(
+      res.body.results.every(
+        (item: { is4k: boolean; media: Media }) =>
+          item.media[item.is4k ? 'status4k' : 'status'] !== MediaStatus.DELETED
+      )
+    );
   });
 
   it('rejects malformed request list query filters', async () => {

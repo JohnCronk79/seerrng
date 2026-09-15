@@ -3489,6 +3489,36 @@ const validateCurrentBatchContract = (files) => {
     "'slider-track-compact min-h-[5.5rem]'",
     'compact sliders must not reserve poster height'
   );
+  requireText(
+    'src/components/Discover/RecentRequestsSlider/index.tsx',
+    'filter=recent&take=10&sort=added&skip=0',
+    'Discover Recent Requests must use the non-deleted recent filter'
+  );
+  requireOrder(
+    'src/components/Discover/RecentRequestsSlider/index.tsx',
+    ['<RequestCard', 'compact', 'showApprovalActions={false}'],
+    'Discover Recent Requests must use compact cards without approval actions'
+  );
+  requireText(
+    'src/components/RequestCard/index.tsx',
+    'showApprovalActions &&',
+    'Request cards must retain a caller-controlled approval-action boundary'
+  );
+  requireText(
+    'src/components/RequestCard/index.tsx',
+    "isMusic(title) ? 'aspect-square' : 'aspect-[2/3]'",
+    'Request poster frames must match square Music and portrait media artwork'
+  );
+  requireText(
+    'server/routes/request.ts',
+    "case 'recent':",
+    'the request route must provide the non-deleted Discover shelf filter'
+  );
+  requireText(
+    'server/routes/request.test.ts',
+    'accepts the recent requests slider query',
+    'the non-deleted recent request filter must retain route coverage'
+  );
 
   const evidence = [
     [

@@ -9186,6 +9186,7 @@ paths:
             enum:
               [
                 all,
+                recent,
                 approved,
                 available,
                 pending,

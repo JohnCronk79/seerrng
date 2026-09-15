@@ -391,6 +391,24 @@ asks for the work to start.
   or Network title at top left, the same original logo centered above the
   filters, and the complete Movie or Series filter and sort toolset.
 
+### Discover Recent Requests cleanup
+
+> “under the recent requests heading ... do not show requests that have been deleted ... approve and decline buttons should be removed ... fix [the poster border] ... tighten up the card.”
+
+- Status: Implemented in source with route and current-batch contract coverage.
+  A fresh build and the broader Recent Requests row review remain pending under
+  John's no-build gate.
+- The Discover shelf uses its own recent-request filter, which excludes media
+  in the deleted state. A request removed after a cached Discover snapshot was
+  saved also disappears when its detail lookup returns not found.
+- Approve and Decline remain available in the request-management workflow but
+  are not rendered on the Discover shelf.
+- Recent Request cards reduce their reserved height from 272 pixels to the
+  artwork-and-content height. Poster frames are anchored to their artwork:
+  square for Music and 2:3 for Movie, Series, and Book artwork.
+- This is a bounded cleanup pass. Broader visual changes to the Recent Requests
+  row are deliberately reserved for John's next build review.
+
 ### Manage media Collection-style card
 
 > “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”
