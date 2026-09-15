@@ -197,15 +197,8 @@ const BookDetailsLayout = ({
                         ? intl.formatNumber(data.numberOfPages)
                         : unavailable}
                     </dd>
-                    <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
-                      {intl.formatMessage(messages.publisher)}:
-                    </dt>
-                    <dd className="card:col-start-3 card:row-start-4 m-0 truncate">
-                      {data.publisher || unavailable}
-                    </dd>
-
-                    <div className="request-divider-fill-dark card:col-start-5 card:row-span-4 card:row-start-1 card:block hidden" />
-                    <div className="card:col-span-1 card:col-start-7 card:row-span-4 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
+                    <div className="request-divider-fill-dark card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden" />
+                    <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.author)}:
                       </dt>
@@ -241,11 +234,11 @@ const BookDetailsLayout = ({
                       </dd>
                     </div>
 
-                    <dt className="card:col-start-1 card:row-start-5 mt-0.5 font-medium text-gray-100">
+                    <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
                       {intl.formatMessage(messages.genres)}:
                     </dt>
                     <dd
-                      className="card:col-span-5 card:col-start-3 card:row-start-5 m-0 mt-0.5 min-w-0 break-words"
+                      className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
                       data-testid="media-details-genres"
                     >
                       {genres.length > 0
@@ -296,7 +289,7 @@ const BookDetailsLayout = ({
             </div>
           </div>
 
-          {playbackCatalog && (
+          {playbackCatalog && availablePlaybackItemIds.length > 0 && (
             <PlaybackTrackList
               catalog={playbackCatalog}
               selectedItemIds={selectedPlaybackItemIds}

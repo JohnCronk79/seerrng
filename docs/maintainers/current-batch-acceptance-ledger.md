@@ -409,6 +409,20 @@ asks for the work to start.
 - This is a bounded cleanup pass. Broader visual changes to the Recent Requests
   row are deliberately reserved for John's next build review.
 
+### Book Details summary rhythm
+
+> “the top portion ... which contains the details table does not look right ... fix this to match the other details pages ... get rid of the no playable tracks text.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- The Book summary now follows the same three primary metadata rows plus one
+  Genres row used by the other detail headers. Publisher remains available in
+  the lower Book Details card instead of duplicating a fifth summary row.
+- An empty audiobook playback catalog no longer prints a standalone
+  `No playable tracks are available` message. The disabled playback controls
+  remain visible, and the selector still appears when playable audiobook tracks
+  exist.
+
 ### Manage media Collection-style card
 
 > “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”

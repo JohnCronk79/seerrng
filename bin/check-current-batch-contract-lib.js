@@ -2225,6 +2225,26 @@ const validateCurrentBatchContract = (files) => {
     'book overview links must pass through the shared safe URL transform'
   );
   requireText(
+    bookLayout,
+    'card:row-span-3 card:row-start-1',
+    'Book Details must keep its top metadata groups to the shared three-row height'
+  );
+  requireText(
+    bookLayout,
+    'card:row-start-4',
+    'Book Details Genres must occupy the shared fourth summary row'
+  );
+  rejectText(
+    bookLayout,
+    'card:row-start-5',
+    'Book Details must not restore the oversized fifth summary row'
+  );
+  requireText(
+    bookLayout,
+    'playbackCatalog && availablePlaybackItemIds.length > 0 &&',
+    'Book Details must hide the empty playable-track message while retaining populated selectors'
+  );
+  requireText(
     'src/utils/bookMarkdown.test.ts',
     'removes stray emphasis text after an https Markdown link',
     'the observed malformed provider link must have regression coverage'
