@@ -5,4 +5,4 @@ area: settings
 action: none
 breaking: false
 ---
-Settings now use a consistent card layout, compact page navigation, shared actions, and an unsaved-change warning that prevents accidental loss when navigating back.
+Settings now use a consistent card layout, compact page navigation, shared actions, ordinary About-page values, and an unsaved-change warning that prevents accidental loss when navigating back.

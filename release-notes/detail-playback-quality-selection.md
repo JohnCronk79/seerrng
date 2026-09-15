@@ -1,1 +1,8 @@
-Movie, Series, and Music details now let you select the exact playback quality from a clearly marked green control anchored to the bottom-right of the availability table. HD and MP3 remain the default unless only 4K or FLAC is available, and playlists contain only the chosen quality. Music track rows now show the selected Lidarr instance's actual recording-file availability, and its Genres value uses both metadata columns. Detail ratings have a subtle readability shadow, compact metadata dividers use matching two-pixel dark-blue rules without a stray desktop horizontal line, and track or episode table headings use the same two-pixel rule. Shared media, format, and status badges now match the buttons' translucent resting and hover levels, while the eligible Blocklist action sits in the top poster status row.
+---
+category: added
+audience: users
+area: media-details
+action: none
+breaking: false
+---
+Movie, Series, and Music details now offer an exact playback-quality selector, use the chosen quality for playlists, and show track availability from the selected Lidarr service.

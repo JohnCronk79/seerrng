@@ -1,6 +1,8 @@
-# Book Details summary spacing
-
-- Matches the Book summary table to the compact four-row rhythm used by the
-  other media detail pages while retaining Publisher in Book Details.
-- Hides the empty playable-track message but continues to show an audiobook
-  selector when playable tracks exist.
+---
+category: changed
+audience: users
+area: media-details
+action: none
+breaking: false
+---
+Book details now use the compact summary-table spacing shared by other media, while audiobook controls appear only when playable tracks exist.

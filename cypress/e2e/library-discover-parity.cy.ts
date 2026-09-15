@@ -792,23 +792,40 @@ describe('Books and Music discover parity', () => {
     );
     cy.contains('label', 'API Key')
       .scrollIntoView()
-      .contains('Find it in Lidarr')
+      .closest('.form-row')
+      .contains('.settings-form-row-description', 'Find it in Lidarr')
       .should('be.visible');
     cy.contains('label', 'URL Base')
       .scrollIntoView()
-      .contains('If you set a URL Base in Lidarr')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'If you set a URL Base in Lidarr'
+      )
       .should('be.visible');
     cy.contains('label', 'External URL')
       .scrollIntoView()
-      .contains('For clickable links on media pages')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'For clickable links on media pages'
+      )
       .should('be.visible');
     cy.contains('label', 'Enable Scan')
       .scrollIntoView()
-      .contains('Scan Lidarr for existing media')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'Scan Lidarr for existing media'
+      )
       .should('be.visible');
     cy.contains('label', 'Enable Automatic Search')
       .scrollIntoView()
-      .contains('Automatically trigger a search in Lidarr')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'Automatically trigger a search in Lidarr'
+      )
       .should('be.visible');
     cy.get('select[name=activeMetadataProfileId]')
       .scrollIntoView()

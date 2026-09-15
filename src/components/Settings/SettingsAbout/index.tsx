@@ -155,11 +155,11 @@ const SettingsAbout = () => {
           <List.Item title={intl.formatMessage(messages.appDataPath)}>
             <span className="settings-plain-value">{data.appDataPath}</span>
           </List.Item>
-          {data.tz && (
-            <List.Item title={intl.formatMessage(messages.timezone)}>
-              <span className="settings-plain-value">{data.tz}</span>
-            </List.Item>
-          )}
+          <List.Item title={intl.formatMessage(messages.timezone)}>
+            <span className="settings-plain-value">
+              {data.tz || 'Not available'}
+            </span>
+          </List.Item>
         </List>
       </div>
       <div className="section">

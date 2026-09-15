@@ -1006,10 +1006,25 @@ userSettingsRoutes.post<
             user.settings,
             mediaType
           );
-          user.settings.detailDisclosurePins = {
+          const nextPins = {
             ...user.settings.detailDisclosurePins,
-            [mediaType]: { ...currentPins, ...parsedBody.value },
           };
+          const updatedPins = { ...currentPins, ...parsedBody.value };
+          switch (mediaType) {
+            case 'movie':
+              nextPins.movie = updatedPins;
+              break;
+            case 'tv':
+              nextPins.tv = updatedPins;
+              break;
+            case 'music':
+              nextPins.music = updatedPins;
+              break;
+            case 'book':
+              nextPins.book = updatedPins;
+              break;
+          }
+          user.settings.detailDisclosurePins = nextPins;
 
           const savedUser = await userRepository.save(user);
           return res

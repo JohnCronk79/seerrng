@@ -2670,7 +2670,9 @@ discoverRoutes.get('/music', async (req, res) => {
           (!releaseDateLte || releaseDate <= releaseDateLte)
         );
       });
-      const sortedAlbums = dedupeMusicAlbums(filteredAlbums).sort((a, b) => {
+      const albums = dedupeMusicAlbums(
+        filteredAlbums.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+      ).sort((a, b) => {
         if (sortByBase === 'release_date') {
           const comparison = (a['first-release-date'] ?? '').localeCompare(
             b['first-release-date'] ?? ''
@@ -2681,10 +2683,6 @@ discoverRoutes.get('/music', async (req, res) => {
         const comparison = scoreMusicAlbum(b) - scoreMusicAlbum(a);
         return sortAscending ? -comparison : comparison;
       });
-      const albums = sortedAlbums.slice(
-        providerWindow.sliceStart,
-        providerWindow.sliceEnd
-      );
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user

@@ -1,1 +1,8 @@
-Media requests no longer leave a poster blocked behind a stale loading overlay. Poster links remain interactive while request work continues in the background, and MP3 and FLAC requests can remain active independently, including configurations whose selected Lidarr service has ID 0. Music request failures now show the server's returned explanation when one is available.
+---
+category: fixed
+audience: users, operators
+area: requests
+action: none
+breaking: false
+---
+Media request posters remain usable while background requests run, MP3 and FLAC requests track their progress independently, and music request failures show the server's explanation.

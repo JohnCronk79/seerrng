@@ -108,7 +108,7 @@ const validateRefreshedUiStyleBoundaries = (files) => {
       errors.push(...validateGlobalStylesheet(fileName, source));
       continue;
     }
-    if (!isScopedFile(fileName, source)) continue;
+    if (!isScopedFile(fileName)) continue;
     scopedFileCount += 1;
 
     const sourceFile = ts.createSourceFile(

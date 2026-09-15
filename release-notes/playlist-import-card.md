@@ -1,1 +1,8 @@
-The Music playlist importer now uses SeerrNG's centered, readable-width site-background card design with page spacing on every side. Its red Cancel, green Preview Matches, cyan Spotify connection action, playlist URL field, guidance panel, borders, spacing, and text all follow the refreshed site styling.
+---
+category: changed
+audience: users
+area: music
+action: none
+breaking: false
+---
+The Music playlist importer now uses the shared centered card layout, field styling, guidance panel, and standard colors for Cancel, Preview Matches, and Spotify actions.

@@ -1,1 +1,8 @@
-Discover title posters are now larger while preserving their 2:3 ratio, giving media-type and quality badges enough room to display their complete labels. Poster shelves also reserve the full card height so the bottom border is no longer clipped.
+---
+category: fixed
+audience: users
+area: discovery
+action: none
+breaking: false
+---
+Discover title posters are larger while preserving their 2:3 ratio, leaving room for complete badge labels and preventing the poster shelf's bottom border from being clipped.
