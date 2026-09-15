@@ -93,10 +93,15 @@ asks for the work to start.
   and the replacement playlist all follow the exact selected catalog. Legacy
   audio roots remain usable only when no exact MP3 or FLAC root has ever been
   recorded; an ambiguous root cannot substitute for a missing known variant.
+- Music track rows use each selected Lidarr instance's recording-level file
+  state, so a missing MP3 or FLAC track receives a red X while the files that
+  instance actually has receive green checks. When Lidarr track data is
+  unavailable, the media-server playback catalog remains the fallback.
 - Music no longer repeats MP3, FLAC, and Available badges beneath the title.
-  Its detail groups use equal thirds after the poster, the standalone Album
-  heading card is removed, and the single selector in the left track-card
-  heading selects every playable track across both cards.
+  Its detail groups use equal thirds after the poster, its Genres value spans
+  both metadata columns, the standalone Album heading card is removed, and the
+  single selector in the left track-card heading selects every playable track
+  across both cards.
 
 ### Media-detail disclosure spacing and subcard contrast
 
@@ -203,7 +208,7 @@ asks for the work to start.
 - Preserve the existing Rotten Tomatoes critic, Rotten Tomatoes audience, and
   TMDB ratings until the separate IMDb integration is designed and verified.
 
-## Pinned Cast, Crew, and Tags disclosures
+## Pinned Cast, Crew, Artists, and Tags disclosures
 
 > “feature: add a pin to the cast crew and tags button on the media details page.”
 
@@ -211,16 +216,19 @@ asks for the work to start.
   accessibility, and focused contract coverage. The earlier production build
   passed before the pushpin refinement; that icon change remains source-only
   until the next explicitly requested laptop build.
-- Cast, Crew, and Subject Tags each have an independent pin segment to the left
-  of the disclosure label. The control uses a conventional angled menu
-  pushpin, not a map-location pin. Selected pins use a solid icon and
-  `aria-pressed`; unselected pins use an outline icon and an explanatory
-  tooltip.
+- Cast, Crew, View Artists, and Subject Tags each have an independent pin
+  segment to the left of the disclosure label where that content exists. The
+  control uses a conventional angled menu pushpin, not a map-location pin.
+  Selected pins use a solid icon and `aria-pressed`; unselected pins use an
+  outline icon and an explanatory tooltip.
 - A pinned disclosure defaults open across Movie, Series, and Collection
-  details. Subject Tags also carries into Music details. Users may temporarily
-  collapse a pinned section during the current page visit; it opens again on
-  the next applicable page.
-- Persist all three preferences on the existing per-user settings record and
+  details. View Artists and Subject Tags carry into Music details, while the
+  shared Subject Tags preference also controls the equivalent Genres
+  disclosure on Book details. Selecting a pin opens its card immediately;
+  clearing the pin collapses it immediately.
+  The main button body can still open or close an unpinned card for the current
+  page visit.
+- Persist all four preferences on the existing per-user settings record and
   expose them through the authenticated `/settings/detail-disclosures`
   endpoint. The settings survive navigation, devices, and later logins.
 - Preserve existing disclosure content, ordering, visibility, responsive
@@ -279,12 +287,74 @@ asks for the work to start.
 
 - Status: Implemented in source with current-batch contract coverage. A fresh
   build and rendered review remain pending under John's no-build gate.
-- The playlist import dialog is a rounded, bordered site-background card with
-  the standard shadow and refreshed text colors.
+- The playlist import dialog is a centered, readable-width rounded and bordered
+  site-background card with visible page spacing on every side, the standard
+  shadow, and refreshed text colors.
 - The playlist URL field uses the translucent request-control styling instead
   of the browser's solid white URL-input default.
-- Spotify actions use shared buttons, while the Spotify and YouTube guidance
-  uses the shared darker inset-card surface and divider treatment.
+- Cancel uses the red action style, Preview Matches uses the green action
+  style, and Connect or Reconnect Spotify uses the cyan Associations style.
+  Spotify and YouTube guidance uses the shared darker inset-card surface and
+  divider treatment.
+
+### Associations dialog styling
+
+> “make the same layout and style as we used for the collection card ... get rid of the close X ... red Cancel ... green Browse More...”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- The item Associations popup now uses the translucent Collection-style main
+  card and its results use bordered inset cards in a responsive two-column
+  layout.
+- The top-right close X is removed. A red Cancel action and green Browse More
+  action appear at the bottom, with Browse More on the right.
+- Browse More opens a full Associations explorer that reuses Discover's poster,
+  shelf, heading, and spacing treatment instead of presenting a separate
+  oversized visual system.
+
+### Detail rating shadows and divider standard
+
+> “try a subtle black shadow behind the ratings icons and value ... both vertical dividers should be the same 2 pixels wide ... only the horizontal lines used in the track/episode tables should also be 2 pixels wide and the darker blue color.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Rating icons, wordmarks, and values use a subtle black shadow for readability
+  without adding a containing box.
+- The two desktop vertical dividers in compact media details are exactly two
+  pixels wide and use the shared dark-blue divider color. Mobile-only horizontal
+  separators are suppressed when the desktop three-group layout is active.
+- Track, chapter, season, and episode table header rules are two pixels wide and
+  use that same shared dark-blue divider color.
+
+### Report an Issue Collection-style card
+
+> “the report an issue page should be formatted exactly like the collections details page ... all red and green cancel and (submit, continue etc.) buttons should follow this same size.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Report an Issue uses one large, clipped, artwork-backed outer card with the
+  media summary, season and episode selectors, and description rendered as the
+  same darker inset subcards used by Collection Details.
+- Cancel and Submit Issue use the shared red and green buttons at the standard
+  32-pixel action height. Shared modal actions now default to that same size so
+  Continue and equivalent confirmation actions do not drift smaller or larger.
+
+### Manage media Collection-style card
+
+> “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Manage Movie, Manage Series, and Manage Music now open as the same centered,
+  artwork-backed outer card used by Report an Issue rather than as a narrow
+  right-hand slide-over.
+- Downloads, open issues, requests, blocklist, linked media services, playback
+  statistics, quality-specific media, and advanced controls retain their
+  existing behavior and render as darker inset subcards with the shared
+  five-pixel spacing rhythm.
+- The shared Book manager inherits the same layout because it uses the Music
+  management component. A standard red Cancel action replaces the slide-over
+  close control.
 
 ### Discover poster sizing
 

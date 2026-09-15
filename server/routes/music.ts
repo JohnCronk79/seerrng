@@ -26,6 +26,7 @@ import {
   getAvailableMusicServices,
   getMusicQualityStatuses,
 } from '@server/lib/musicQualityAvailability';
+import { getMusicTrackAvailability } from '@server/lib/musicTrackAvailability';
 import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import logger from '@server/logger';
 import {
@@ -492,6 +493,11 @@ musicRoutes.get('/:id', async (req, res, next) => {
         : resolvedMetadataArtist;
 
     const mappedDetails = mapMusicDetails(albumDetails, media, onUserWatchlist);
+    const lidarrServices = getExternalRuntimeConfig().lidarr;
+    const trackAvailabilityPromise = getMusicTrackAvailability(
+      mbId,
+      lidarrServices
+    );
     const destinationRequests = media?.id
       ? await getRepository(MediaRequest)
           .createQueryBuilder('request')
@@ -503,8 +509,9 @@ musicRoutes.get('/:id', async (req, res, next) => {
     const availableServices = getAvailableMusicServices(
       media,
       destinationRequests,
-      getExternalRuntimeConfig().lidarr
+      lidarrServices
     );
+    const trackAvailability = await trackAvailabilityPromise;
     const finalTrackArtistMetadata =
       updatedArtistMetadata || resolvedTrackArtistMetadata;
 
@@ -545,6 +552,7 @@ musicRoutes.get('/:id', async (req, res, next) => {
             ? Number(updatedMetadataArtist.tmdbPersonId)
             : null,
           availableServices,
+          trackAvailability,
           tracks: mappedDetails.tracks.map((track) => ({
             ...track,
             artists: track.artists.map((artist) => {

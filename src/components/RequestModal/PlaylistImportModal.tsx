@@ -108,8 +108,10 @@ const PlaylistImportModal = ({
         }
         okDisabled={!url.trim() || isResolving}
         loading={isResolving}
+        cancelButtonType="danger"
+        okButtonType="success"
         actionButtonSize="sm"
-        dialogClass="request-modal-site-surface refreshed-detail-text rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:max-w-3xl"
+        dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"
       >
         <p className="refreshed-detail-text">
           {intl.formatMessage(messages.description)}
@@ -144,7 +146,7 @@ const PlaylistImportModal = ({
             <Button
               as="a"
               href="/api/v1/playlist/spotify/connect"
-              buttonType="default"
+              buttonType="association"
               buttonSize="sm"
             >
               {intl.formatMessage(

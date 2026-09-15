@@ -134,10 +134,14 @@ const SeriesDetailsLayout = ({
       : 'hd'
   );
   useEffect(() => {
-    if (pins.cast) setShowCast(true);
-    if (pins.crew) setShowCrew(true);
-    if (pins.subjectTags) setShowTags(true);
-  }, [pins.cast, pins.crew, pins.subjectTags]);
+    setShowCast(pins.cast);
+  }, [pins.cast]);
+  useEffect(() => {
+    setShowCrew(pins.crew);
+  }, [pins.crew]);
+  useEffect(() => {
+    setShowTags(pins.subjectTags);
+  }, [pins.subjectTags]);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
     string[]
   >([]);
@@ -275,7 +279,7 @@ const SeriesDetailsLayout = ({
 
               <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
                 <div className="card:col-span-2 card:pr-3 min-w-0">
-                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
                     <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
@@ -305,7 +309,7 @@ const SeriesDetailsLayout = ({
                           })
                         : unavailable}
                     </dd>
-                    <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
+                    <div className="request-divider-fill-dark card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden" />
                     <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.creator)}:

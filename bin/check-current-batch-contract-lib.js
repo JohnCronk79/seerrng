@@ -104,7 +104,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     ledger,
-    '## Pinned Cast, Crew, and Tags disclosures',
+    '## Pinned Cast, Crew, Artists, and Tags disclosures',
     'must retain the pinned media-detail disclosure feature'
   );
   requireText(
@@ -600,6 +600,37 @@ const validateCurrentBatchContract = (files) => {
     "'app-button app-button-association h-6 w-6 rounded-full p-0",
     'the poster Associations action must reuse the shared association button style'
   );
+  for (const [token, description] of [
+    ['cancelButtonType="danger"', 'Associations must use a red Cancel action'],
+    [
+      'okButtonType="success"',
+      'Associations must use a green Browse More action',
+    ],
+    [
+      'okText={intl.formatMessage(messages.browseMore)}',
+      'Associations must expose the Browse More action',
+    ],
+    [
+      'sm:!max-w-2xl',
+      'Associations must use the readable-width Collection-style card',
+    ],
+  ]) {
+    requireText(
+      'src/components/Association/AssociationBadge.tsx',
+      token,
+      description
+    );
+  }
+  rejectText(
+    'src/components/Association/AssociationBadge.tsx',
+    'XMarkIcon',
+    'the Associations dialog must not retain a top-right close X'
+  );
+  requireText(
+    'src/components/Association/AssociationPopover.tsx',
+    'refreshed-inset-surface grid min-h-[80px]',
+    'association results must use the Collection-style inset card layout'
+  );
   requireText(
     'src/components/Common/StatusBadgeMini/index.tsx',
     'data-testid="poster-quality-status-badge"',
@@ -699,9 +730,29 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/RequestModal/PlaylistImportModal.tsx',
-    'dialogClass="request-modal-site-surface refreshed-detail-text rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:max-w-3xl"',
-    'playlist import must use the shared site-background card surface'
+    'dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"',
+    'playlist import must use a centered readable-width site-background card surface'
   );
+  for (const [token, description] of [
+    [
+      'cancelButtonType="danger"',
+      'playlist import must use a red Cancel action',
+    ],
+    [
+      'okButtonType="success"',
+      'playlist import must use a green Preview Matches action',
+    ],
+    [
+      'buttonType="association"',
+      'Connect Spotify must use the Associations button style',
+    ],
+  ]) {
+    requireText(
+      'src/components/RequestModal/PlaylistImportModal.tsx',
+      token,
+      description
+    );
+  }
   requireText(
     'src/components/RequestModal/PlaylistImportModal.tsx',
     'className="request-form-control mt-2 block h-10 w-full',
@@ -711,6 +762,11 @@ const validateCurrentBatchContract = (files) => {
     'src/components/Discover/index.tsx',
     '<div className="discover-home">',
     'Discover must scope its larger poster-card treatment to the home page'
+  );
+  requireText(
+    'src/components/Association/index.tsx',
+    '<div className="discover-home association-explorer">',
+    'the Associations list explorer must reuse Discover poster and shelf formatting'
   );
   requireText(
     globals,
@@ -751,6 +807,16 @@ const validateCurrentBatchContract = (files) => {
     globals,
     '.media-rating-wordmark {\n    @apply h-3.5 w-auto',
     'wide rating wordmarks must be optically normalized to the tomato image height'
+  );
+  requireText(
+    globals,
+    'filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.75));',
+    'rating icons and wordmarks must retain the subtle black readability shadow'
+  );
+  requireText(
+    globals,
+    'text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);',
+    'rating values must retain the subtle black readability shadow'
   );
   requireText(
     globals,
@@ -1041,6 +1107,38 @@ const validateCurrentBatchContract = (files) => {
     '.request-divider-dark::before {\n    width: 2px !important;',
     'request vertical dividers must remain two pixels wide'
   );
+  requireText(
+    globals,
+    '.request-divider-dark.card\\:border-t-0 {\n      border-top-width: 0 !important;',
+    'desktop detail groups must remove their mobile-only horizontal divider'
+  );
+  for (const fileName of [
+    'src/components/MovieDetails/MovieDetailsLayout.tsx',
+    'src/components/TvDetails/SeriesDetailsLayout.tsx',
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+  ]) {
+    requireText(
+      fileName,
+      '_2px_0.75rem_minmax(0,1fr)]',
+      'compact detail metadata groups must reserve a two-pixel first divider'
+    );
+    requireText(
+      fileName,
+      'request-divider-fill-dark card:col-start-5',
+      'compact detail metadata groups must use the standard dark first divider'
+    );
+  }
+  for (const fileName of [
+    'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
+    'src/components/MediaDetails/AlbumTrackList.tsx',
+    'src/components/MediaDetails/PlaybackTrackList.tsx',
+  ]) {
+    requireText(
+      fileName,
+      'request-divider-dark grid',
+      'track and episode table header rules must use the two-pixel dark divider standard'
+    );
+  }
   requireText(
     globals,
     '.request-modal-site-surface {',
@@ -1392,6 +1490,21 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   requireText(
+    'server/entity/UserSettings.ts',
+    'detailDisclosureArtistsPinned',
+    'user settings must persist the Artists disclosure pin'
+  );
+  requireText(
+    'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.ts',
+    'detailDisclosureArtistsPinned',
+    'SQLite migration must add the Artists disclosure pin'
+  );
+  requireText(
+    'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.ts',
+    'detailDisclosureArtistsPinned',
+    'PostgreSQL migration must add the Artists disclosure pin'
+  );
+  requireText(
     'seerr-api.yml',
     '/user/{userId}/settings/detail-disclosures:',
     'the public API contract must document persistent detail disclosure pins'
@@ -1425,8 +1538,57 @@ const validateCurrentBatchContract = (files) => {
   }
   requireText(
     'src/components/MusicDetails/MusicDetailsLayout.tsx',
+    "onPinClick={() => void togglePinned('artists')}",
+    'View Artists must expose its persistent pin'
+  );
+  for (const [fileName, collapseTokens] of [
+    [
+      'src/components/MovieDetails/MovieDetailsLayout.tsx',
+      [
+        'setShowCast(pins.cast)',
+        'setShowCrew(pins.crew)',
+        'setShowTags(pins.subjectTags)',
+      ],
+    ],
+    [
+      'src/components/TvDetails/SeriesDetailsLayout.tsx',
+      [
+        'setShowCast(pins.cast)',
+        'setShowCrew(pins.crew)',
+        'setShowTags(pins.subjectTags)',
+      ],
+    ],
+    [
+      'src/components/MusicDetails/MusicDetailsLayout.tsx',
+      ['setShowArtists(pins.artists)', 'setShowTags(pins.subjectTags)'],
+    ],
+    [
+      'src/components/BookDetails/BookDetailsLayout.tsx',
+      ['setShowGenres(pins.subjectTags)'],
+    ],
+  ]) {
+    for (const collapseToken of collapseTokens) {
+      requireText(
+        fileName,
+        collapseToken,
+        'pin state changes must open and close the matching disclosure'
+      );
+    }
+  }
+  requireText(
+    'src/components/CollectionDetails/CollectionMetadataDisclosures.tsx',
+    'else next.delete(section)',
+    'collection pin state changes must close the matching disclosure when unpinned'
+  );
+  requireText(
+    'src/components/MusicDetails/MusicDetailsLayout.tsx',
     "onPinClick={() => void togglePinned('subjectTags')}",
     'the Subject Tags pin must carry into Music details'
+  );
+  requireText(
+    'src/components/BookDetails/BookDetailsLayout.tsx',
+    "onPinClick={() => void togglePinned('subjectTags')}",
+    'the persisted subject pin must carry into Book genres'
   );
 
   const mediaDetailArtwork =
@@ -1614,7 +1776,7 @@ const validateCurrentBatchContract = (files) => {
     );
     requireText(
       fileName,
-      'card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)]',
+      'card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)]',
       'main detail cards must keep the first two detail groups in one shared table grid'
     );
     requireText(
@@ -1722,6 +1884,36 @@ const validateCurrentBatchContract = (files) => {
     musicLayout,
     '<AlbumTrackList',
     'music details must use the shared track selection layout'
+  );
+  requireText(
+    musicLayout,
+    'availableRecordingIds={data.trackAvailability?.[selectedQuality]}',
+    'music track rows must follow the selected Lidarr quality availability'
+  );
+  requireText(
+    musicLayout,
+    'card:col-span-2 mt-0.5 grid min-w-0',
+    'Music Genres must span both compact metadata columns'
+  );
+  requireText(
+    'src/components/MediaDetails/AlbumTrackList.tsx',
+    'availableRecordings.has(',
+    'music track availability icons must match recording IDs from the selected Lidarr instance'
+  );
+  requireText(
+    'server/routes/music.ts',
+    'getMusicTrackAvailability(',
+    'Music details must resolve recording-file availability from configured Lidarr qualities'
+  );
+  requireText(
+    'server/lib/musicTrackAvailability.ts',
+    '.filter((track) => track.hasFile)',
+    'Lidarr recording availability must include only tracks with files'
+  );
+  requireText(
+    'seerr-api.yml',
+    'trackAvailability:',
+    'the album details API contract must expose quality-specific track availability'
   );
   requireText(
     musicLayout,
@@ -2411,10 +2603,25 @@ const validateCurrentBatchContract = (files) => {
     'artwork={backdrop}',
     'caller-provided issue artwork must be passed into the summary card'
   );
-  rejectText(
+  requireText(
     createIssue,
-    'loading={!!detailUrl && !data && !error}\n            backdrop=',
-    'Report an Issue must not restore artwork on the outer modal'
+    'backdrop={resolvedBackdrop}',
+    'Report an Issue must place the media artwork on its outer card'
+  );
+  requireText(
+    createIssue,
+    'backdropFull',
+    'Report an Issue artwork must cover the full outer card'
+  );
+  requireText(
+    createIssue,
+    'dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"',
+    'Report an Issue must use the Collection-style main card with visible outer spacing'
+  );
+  requireText(
+    createIssue,
+    'embedded',
+    'Report an Issue media summary must render as an inset subcard'
   );
   rejectText(
     createIssue,
@@ -2435,6 +2642,67 @@ const validateCurrentBatchContract = (files) => {
     createIssue,
     'flex flex-wrap items-center justify-end gap-2',
     'issue form actions must remain right-aligned'
+  );
+  for (const token of [
+    'data-testid="modal-cancel-button"\n                buttonType="danger"\n                buttonSize="sm"',
+    'data-testid="modal-ok-button"\n                buttonType="success"\n                buttonSize="sm"',
+  ]) {
+    requireText(
+      createIssue,
+      token,
+      'Report an Issue confirmation actions must use the standard 32-pixel shared button'
+    );
+  }
+  rejectText(
+    createIssue,
+    'h-[22px]',
+    'Report an Issue actions must not use the undersized disclosure-button height'
+  );
+  requireText(
+    'src/components/Common/Modal/index.tsx',
+    "actionButtonSize = 'sm'",
+    'modal confirmation actions must default to the standard 32-pixel size site-wide'
+  );
+
+  for (const manageFile of [
+    'src/components/ManageSlideOver/index.tsx',
+    'src/components/ExternalMediaManageSlideOver/index.tsx',
+  ]) {
+    requireText(
+      manageFile,
+      '<Modal',
+      'media management must use the centered refreshed modal instead of the legacy slide-over'
+    );
+    rejectText(
+      manageFile,
+      '<SlideOver',
+      'media management must not restore the narrow right-hand slide-over'
+    );
+    requireText(
+      manageFile,
+      'backdropFull',
+      'media management artwork must cover its complete outer card'
+    );
+    requireText(
+      manageFile,
+      'dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"',
+      'media management must use the Report an Issue main-card layout'
+    );
+    requireText(
+      manageFile,
+      'cancelButtonType="danger"',
+      'media management must use the standard red Cancel action'
+    );
+    requireText(
+      manageFile,
+      'manage-media-card-sections space-y-[5px]',
+      'media management sections must use inset cards with the shared compact gap'
+    );
+  }
+  requireText(
+    globals,
+    '.manage-media-card-sections > div',
+    'media management sections must share one site-wide inset-card treatment'
   );
 
   const profile = 'src/components/UserProfile/ProfileHeader/index.tsx';
@@ -3181,6 +3449,26 @@ const validateCurrentBatchContract = (files) => {
       'server/migration/postgres/1785000000000-AddDetailDisclosurePins.test.ts',
       'migrate reversibly',
       'must test the PostgreSQL detail disclosure pin migration contract',
+    ],
+    [
+      'server/lib/musicTrackAvailability.test.ts',
+      'keeps selected MP3 and FLAC track availability independent',
+      'must test quality-specific Lidarr track availability',
+    ],
+    [
+      'server/api/servarr/lidarr.test.ts',
+      'returns only valid track availability fields',
+      'must test bounded Lidarr track response normalization',
+    ],
+    [
+      'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
+      'adds and removes the persistent Artists disclosure pin',
+      'must test the SQLite Artists pin migration',
+    ],
+    [
+      'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
+      'adds and removes the persistent Artists disclosure pin',
+      'must test the PostgreSQL Artists pin migration contract',
     ],
   ];
   for (const [fileName, text, reason] of evidence) {

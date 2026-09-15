@@ -142,7 +142,7 @@ const SeriesSeasonEpisodeBrowser = ({
   return (
     <div className="mt-[5px] grid min-w-0 gap-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
       <section className="refreshed-inset-surface min-w-[12rem] rounded-lg border border-gray-700 p-2">
-        <div className="grid grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 border-b border-gray-600 pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
+        <div className="request-divider-dark grid grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 border-b pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
           <SelectionCircle
             disabled={allPlayableItemIds.length === 0}
             onClick={() => toggleItems(allPlayableItemIds)}
@@ -217,7 +217,7 @@ const SeriesSeasonEpisodeBrowser = ({
       </section>
 
       <section className="refreshed-inset-surface min-w-0 rounded-lg border border-gray-700 p-2">
-        <div className="grid grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b border-gray-600 pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
+        <div className="request-divider-dark grid grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b pr-2 pb-2 pl-1 text-xs font-semibold text-gray-200">
           <SelectionCircle
             disabled={activeItemIds.length === 0}
             onClick={() => toggleItems(activeItemIds)}

@@ -5,6 +5,7 @@ import { DetailDisclosurePinsMutationState } from './detailDisclosurePinsMutatio
 const initialPins = {
   cast: false,
   crew: false,
+  artists: false,
   subjectTags: false,
 };
 
@@ -17,6 +18,7 @@ test('optimistically updates one detail disclosure pin without clearing others',
   assert.deepStrictEqual(mutation.next, {
     cast: true,
     crew: true,
+    artists: false,
     subjectTags: false,
   });
 });

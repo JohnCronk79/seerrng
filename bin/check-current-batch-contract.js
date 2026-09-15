@@ -129,6 +129,8 @@ const fileNames = [
   'server/lib/scanners/lidarr/lidarr.test.ts',
   'server/lib/musicQualityAvailability.ts',
   'server/lib/musicQualityAvailability.test.ts',
+  'server/lib/musicTrackAvailability.ts',
+  'server/lib/musicTrackAvailability.test.ts',
   'server/lib/scanners/readarr/readarr.test.ts',
   'server/routes/media.test.ts',
   'server/routes/discover.test.ts',
@@ -171,8 +173,13 @@ const fileNames = [
   'server/migration/sqlite/1785000000000-AddDetailDisclosurePins.test.ts',
   'server/migration/postgres/1785000000000-AddDetailDisclosurePins.ts',
   'server/migration/postgres/1785000000000-AddDetailDisclosurePins.test.ts',
+  'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.ts',
+  'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
+  'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.ts',
+  'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
   'server/routes/music.ts',
   'server/models/Music.ts',
+  'server/api/servarr/lidarr.test.ts',
   'server/api/servarr/lidarr.ts',
 ];
 

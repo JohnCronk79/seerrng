@@ -3,7 +3,8 @@ import type {
   UserSettingsDetailDisclosureResponse,
 } from '@server/interfaces/api/userSettingsInterfaces';
 
-export type DetailDisclosurePins = Required<UserSettingsDetailDisclosureResponse>;
+export type DetailDisclosurePins =
+  Required<UserSettingsDetailDisclosureResponse>;
 
 export interface DetailDisclosurePinsMutation {
   key: string;
@@ -18,6 +19,7 @@ export class DetailDisclosurePinsMutationState {
   private value: DetailDisclosurePins = {
     cast: false,
     crew: false,
+    artists: false,
     subjectTags: false,
   };
 

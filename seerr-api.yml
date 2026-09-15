@@ -282,6 +282,9 @@ components:
         crew:
           type: boolean
           example: false
+        artists:
+          type: boolean
+          example: false
         subjectTags:
           type: boolean
           example: false
@@ -1012,6 +1015,20 @@ components:
               quality:
                 type: string
                 example: FLAC
+        trackAvailability:
+          type: object
+          description: Recording MusicBrainz IDs with files in each configured Lidarr quality.
+          properties:
+            mp3:
+              type: array
+              items:
+                type: string
+                format: uuid
+            flac:
+              type: array
+              items:
+                type: string
+                format: uuid
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
     ArtistResult:
@@ -6852,7 +6869,7 @@ paths:
   /user/{userId}/settings/detail-disclosures:
     get:
       summary: Get pinned detail disclosure settings for a user
-      description: Returns persistent Cast, Crew, and Subject Tags pin preferences for a specific user. Requires `MANAGE_USERS` permission if viewing another user.
+      description: Returns persistent Cast, Crew, Artists, and Subject Tags pin preferences for a specific user. Requires `MANAGE_USERS` permission if viewing another user.
       tags:
         - users
       parameters:

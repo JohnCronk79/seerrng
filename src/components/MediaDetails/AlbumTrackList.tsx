@@ -24,6 +24,7 @@ interface AlbumTrackListProps {
   tracks: MusicDetails['tracks'];
   twoColumnsOnly?: boolean;
   catalog?: PlaybackCatalogResponse;
+  availableRecordingIds?: string[];
   selectedItemIds?: string[];
   onSelectionChange?: (itemIds: string[]) => void;
 }
@@ -32,6 +33,7 @@ const AlbumTrackList = ({
   tracks,
   twoColumnsOnly = false,
   catalog,
+  availableRecordingIds,
   selectedItemIds = [],
   onSelectionChange,
 }: AlbumTrackListProps) => {
@@ -39,22 +41,37 @@ const AlbumTrackList = ({
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const selection = new Set(selectedItemIds);
   const playableTracks = catalog?.groups[0]?.items ?? [];
+  const availableRecordings = availableRecordingIds
+    ? new Set(availableRecordingIds.map((id) => id.toLowerCase()))
+    : undefined;
+  const trackRows = tracks.map((track, index) => {
+    const position = track.position || index + 1;
+    const playableItem = playableTracks.find((item) => item.index === position);
+    const available = availableRecordings
+      ? availableRecordings.has(track.recordingMbid.trim().toLowerCase())
+      : !!playableItem;
+
+    return { available, playableItem, position, track };
+  });
+  const selectableItems = trackRows.flatMap(({ available, playableItem }) =>
+    available && playableItem ? [playableItem] : []
+  );
   const allSelected =
-    playableTracks.length > 0 &&
-    playableTracks.every((item) => selection.has(item.id));
+    selectableItems.length > 0 &&
+    selectableItems.every((item) => selection.has(item.id));
   const toggleAllTracks = () => {
-    if (!onSelectionChange || playableTracks.length === 0) {
+    if (!onSelectionChange || selectableItems.length === 0) {
       return;
     }
     onSelectionChange(
       allSelected
         ? selectedItemIds.filter(
-            (itemId) => !playableTracks.some((item) => item.id === itemId)
+            (itemId) => !selectableItems.some((item) => item.id === itemId)
           )
         : [
             ...new Set([
               ...selectedItemIds,
-              ...playableTracks.map((item) => item.id),
+              ...selectableItems.map((item) => item.id),
             ]),
           ]
     );
@@ -152,7 +169,7 @@ const AlbumTrackList = ({
                 <div className="request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
                   {columnIndex === 0 ? (
                     <SelectionCircle
-                      disabled={playableTracks.length === 0}
+                      disabled={selectableItems.length === 0}
                       onClick={toggleAllTracks}
                       selected={allSelected}
                       label={intl.formatMessage(messages.selection)}
@@ -173,13 +190,11 @@ const AlbumTrackList = ({
                 </div>
                 <div className="space-y-0.5 pt-1">
                   {columnTracks.map((track, trackIndex) => {
-                    const position =
-                      track.position || tracks.indexOf(track) + 1;
-                    const playableItem = playableTracks.find(
-                      (item) => item.index === position
-                    );
-                    const selected = playableItem
-                      ? selection.has(playableItem.id)
+                    const row = trackRows[tracks.indexOf(track)];
+                    const { available, playableItem, position } = row;
+                    const selectableItem = available ? playableItem : undefined;
+                    const selected = selectableItem
+                      ? selection.has(selectableItem.id)
                       : false;
                     return (
                       <div
@@ -187,9 +202,9 @@ const AlbumTrackList = ({
                         className="grid min-h-[24px] grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 px-1"
                       >
                         <SelectionCircle
-                          disabled={!playableItem}
+                          disabled={!selectableItem}
                           onClick={() =>
-                            playableItem && toggleTrack(playableItem.id)
+                            selectableItem && toggleTrack(selectableItem.id)
                           }
                           selected={selected}
                           label={intl.formatMessage(messages.selection)}
@@ -203,7 +218,7 @@ const AlbumTrackList = ({
                         <span className="refreshed-detail-text text-center text-xs">
                           {formatRuntime(track.length)}
                         </span>
-                        <AvailabilityIcon available={!!playableItem} />
+                        <AvailabilityIcon available={available} />
                       </div>
                     );
                   })}

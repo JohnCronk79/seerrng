@@ -203,6 +203,9 @@ export class UserSettings {
   public detailDisclosureCrewPinned: boolean;
 
   @Column({ default: false })
+  public detailDisclosureArtistsPinned: boolean;
+
+  @Column({ default: false })
   public detailDisclosureSubjectTagsPinned: boolean;
 
   @Column({
@@ -248,8 +251,8 @@ export class UserSettings {
       cardTextVisibilityBook: this.cardTextVisibilityBook,
       detailDisclosureCastPinned: this.detailDisclosureCastPinned,
       detailDisclosureCrewPinned: this.detailDisclosureCrewPinned,
-      detailDisclosureSubjectTagsPinned:
-        this.detailDisclosureSubjectTagsPinned,
+      detailDisclosureArtistsPinned: this.detailDisclosureArtistsPinned,
+      detailDisclosureSubjectTagsPinned: this.detailDisclosureSubjectTagsPinned,
     };
   }
 

@@ -50,6 +50,7 @@ export interface UserSettings {
   cardTextVisibility?: UserSettingsCardTextResponse;
   detailDisclosureCastPinned?: boolean;
   detailDisclosureCrewPinned?: boolean;
+  detailDisclosureArtistsPinned?: boolean;
   detailDisclosureSubjectTagsPinned?: boolean;
 }
 

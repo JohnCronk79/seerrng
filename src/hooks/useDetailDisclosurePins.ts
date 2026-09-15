@@ -14,12 +14,14 @@ import {
 const defaultPins: DetailDisclosurePins = {
   cast: false,
   crew: false,
+  artists: false,
   subjectTags: false,
 };
 
 const fromUserSettings = (settings?: UserSettings): DetailDisclosurePins => ({
   cast: settings?.detailDisclosureCastPinned === true,
   crew: settings?.detailDisclosureCrewPinned === true,
+  artists: settings?.detailDisclosureArtistsPinned === true,
   subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
 });
 

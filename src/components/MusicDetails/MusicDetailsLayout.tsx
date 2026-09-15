@@ -135,7 +135,10 @@ const MusicDetailsLayout = ({
     selectedQuality === 'flac' ? flacPlaybackCatalog : mp3PlaybackCatalog;
   const safeRatingUrl = getSafeHref(ratingData?.rating?.url);
   useEffect(() => {
-    if (pins.subjectTags) setShowTags(true);
+    setShowArtists(pins.artists);
+  }, [pins.artists]);
+  useEffect(() => {
+    setShowTags(pins.subjectTags);
   }, [pins.subjectTags]);
   useEffect(() => {
     const allowedIds = new Set(
@@ -279,71 +282,76 @@ const MusicDetailsLayout = ({
               </h1>
 
               <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
-                <dl className="card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.mediaAndFormat)}:
-                  </dt>
-                  <dd className="m-0 truncate">{mediaAndFormat}</dd>
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.releaseDate)}:
-                  </dt>
-                  <dd className="m-0 truncate">{formattedReleaseDate}</dd>
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.runtime)}:
-                  </dt>
-                  <dd className="m-0 truncate">
-                    {runtimeMinutes > 0
-                      ? intl.formatMessage(messages.minutes, {
-                          minutes: runtimeMinutes,
-                        })
-                      : unavailable}
-                  </dd>
-                  <dt className="mt-0.5 font-medium text-gray-100">
-                    {intl.formatMessage(messages.genres)}:
-                  </dt>
-                  <dd
-                    className="m-0 mt-0.5 min-w-0 break-words"
-                    data-testid="media-details-genres"
-                  >
-                    {tags.length > 0
-                      ? tags.slice(0, 4).map((tag, index) => (
-                          <span key={tag.name}>
-                            {index > 0 && ', '}
-                            <Link
-                              href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
-                              className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                            >
-                              {tag.name}
-                            </Link>
-                          </span>
-                        ))
-                      : unavailable}
-                  </dd>
-                </dl>
+                <div className="card:col-span-2 card:grid card:grid-cols-2 card:pr-3 min-w-0">
+                  <dl className="card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.mediaAndFormat)}:
+                    </dt>
+                    <dd className="m-0 truncate">{mediaAndFormat}</dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.releaseDate)}:
+                    </dt>
+                    <dd className="m-0 truncate">{formattedReleaseDate}</dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.runtime)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      {runtimeMinutes > 0
+                        ? intl.formatMessage(messages.minutes, {
+                            minutes: runtimeMinutes,
+                          })
+                        : unavailable}
+                    </dd>
+                  </dl>
 
-                <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4">
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.artist)}:
-                  </dt>
-                  <dd className="m-0 truncate">
-                    <Link
-                      href={`/artist/${artistId}`}
-                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                  <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.artist)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      <Link
+                        href={`/artist/${artistId}`}
+                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                      >
+                        {data.artist.name || unavailable}
+                      </Link>
+                    </dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.albumType)}:
+                    </dt>
+                    <dd className="m-0 truncate">{data.type || unavailable}</dd>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.trackCount)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      {intl.formatNumber(data.tracks.length)}
+                    </dd>
+                  </dl>
+
+                  <dl className="card:col-span-2 mt-0.5 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs leading-4">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.genres)}:
+                    </dt>
+                    <dd
+                      className="m-0 min-w-0 break-words"
+                      data-testid="media-details-genres"
                     >
-                      {data.artist.name || unavailable}
-                    </Link>
-                  </dd>
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.albumType)}:
-                  </dt>
-                  <dd className="m-0 truncate">{data.type || unavailable}</dd>
-                  <dt className="font-medium text-gray-100">
-                    {intl.formatMessage(messages.trackCount)}:
-                  </dt>
-                  <dd className="m-0 truncate">
-                    {intl.formatNumber(data.tracks.length)}
-                  </dd>
-                </dl>
+                      {tags.length > 0
+                        ? tags.slice(0, 4).map((tag, index) => (
+                            <span key={tag.name}>
+                              {index > 0 && ', '}
+                              <Link
+                                href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                              >
+                                {tag.name}
+                              </Link>
+                            </span>
+                          ))
+                        : unavailable}
+                    </dd>
+                  </dl>
+                </div>
 
                 <div className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 flex min-w-0 flex-col border-t pt-2 text-xs leading-4">
                   <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
@@ -384,6 +392,7 @@ const MusicDetailsLayout = ({
             tracks={data.tracks}
             twoColumnsOnly
             catalog={playbackCatalog}
+            availableRecordingIds={data.trackAvailability?.[selectedQuality]}
             selectedItemIds={selectedPlaybackItemIds}
             onSelectionChange={setSelectedPlaybackItemIds}
           />
@@ -461,6 +470,8 @@ const MusicDetailsLayout = ({
               label={intl.formatMessage(messages.viewArtists)}
               open={showArtists}
               onClick={() => setShowArtists((open) => !open)}
+              pinned={pins.artists}
+              onPinClick={() => void togglePinned('artists')}
             />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.subjectTags)}

@@ -37,6 +37,7 @@ interface ModalProps {
   backgroundClickable?: boolean;
   loading?: boolean;
   backdrop?: string;
+  backdropFull?: boolean;
   children?: React.ReactNode;
   dialogClass?: string;
   hideActions?: boolean;
@@ -70,6 +71,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       loading = false,
       onTertiary,
       backdrop,
+      backdropFull = false,
       dialogClass,
       hideActions = false,
       alignTop = false,
@@ -78,7 +80,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       secondaryButtonProps,
       tertiaryButtonProps,
       actionsClass = '',
-      actionButtonSize = 'default',
+      actionButtonSize = 'sm',
     },
     parentRef
   ) => {
@@ -139,7 +141,13 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
           ref={modalRef}
         >
           {backdrop && (
-            <div className="absolute top-0 right-0 left-0 z-0 h-64 max-h-full w-full">
+            <div
+              className={
+                backdropFull
+                  ? 'pointer-events-none absolute inset-0 z-0 overflow-hidden'
+                  : 'absolute top-0 right-0 left-0 z-0 h-64 max-h-full w-full'
+              }
+            >
               <CachedImage
                 type="tmdb"
                 alt=""
@@ -148,7 +156,14 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                 fill
                 priority
               />
-              <div className="absolute inset-0 bg-gray-800/75" />
+              {backdropFull ? (
+                <>
+                  <div className="refreshed-artwork-scrim" />
+                  <div className="refreshed-artwork-gradient" />
+                </>
+              ) : (
+                <div className="absolute inset-0 bg-gray-800/75" />
+              )}
             </div>
           )}
           <div className="relative -mx-4 overflow-x-hidden px-4 pt-0.5 sm:flex sm:items-center">

@@ -1,7 +1,7 @@
 import BlocklistBlock from '@app/components/BlocklistBlock';
 import Button from '@app/components/Common/Button';
 import ConfirmButton from '@app/components/Common/ConfirmButton';
-import SlideOver from '@app/components/Common/SlideOver';
+import Modal from '@app/components/Common/Modal';
 import DownloadBlock from '@app/components/DownloadBlock';
 import IssueBlock from '@app/components/IssueBlock';
 import RequestBlock from '@app/components/RequestBlock';
@@ -14,6 +14,7 @@ import {
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import { getSafeHref } from '@app/utils/safeUrl';
+import { Transition } from '@headlessui/react';
 import {
   CheckCircleIcon,
   DocumentMinusIcon,
@@ -29,6 +30,7 @@ import {
 import type { BookDetails } from '@server/models/Book';
 import type { MusicDetails } from '@server/models/Music';
 import axios from 'axios';
+import { Fragment } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.ExternalMediaManageSlideOver', {
@@ -104,6 +106,10 @@ const ExternalMediaManageSlideOver = ({
   const mediaTitleLabel = intl.formatMessage(
     mediaType === MediaType.MUSIC ? messages.musicTitle : messages.bookTitle
   );
+  const manageBackdrop =
+    mediaType === MediaType.MUSIC
+      ? ((data as MusicDetails).artistBackdrop ?? data.posterPath)
+      : data.posterPath;
   const serviceLinks = (
     [
       mediaInfo?.serviceUrl
@@ -187,77 +193,103 @@ const ExternalMediaManageSlideOver = ({
   };
 
   return (
-    <SlideOver
-      show={show}
-      title={intl.formatMessage(messages.manageModalTitle, {
-        mediaType: mediaTitleLabel,
-      })}
-      onClose={onClose}
-      subText={data.title}
-    >
-      <div className="space-y-6">
-        {(downloads.length > 0 || audiobookDownloads.length > 0) && (
-          <div>
-            <h3 className="mb-2 text-xl font-bold">
-              {intl.formatMessage(messages.downloadstatus)}
-            </h3>
-            <div className="overflow-hidden rounded-md border border-gray-700 shadow">
-              <SelectableDownloadList
-                items={[
-                  ...downloads.map((status, index) => {
-                    return {
-                      id: `standard-${status.downloadId ?? status.externalId ?? index}`,
-                      content: (
-                        <DownloadBlock
-                          downloadItem={{
-                            ...status,
-                            title: status.title,
-                          }}
-                          title={data.title}
-                          bookFormat={
-                            mediaType === MediaType.BOOK ? 'ebook' : undefined
-                          }
-                        />
-                      ),
-                    };
-                  }),
-                  ...audiobookDownloads.map((status, index) => {
-                    return {
-                      id: `audiobook-${status.downloadId ?? status.externalId ?? index}`,
-                      content: (
-                        <DownloadBlock
-                          downloadItem={{
-                            ...status,
-                            title: status.title,
-                          }}
-                          title={data.title}
-                          bookFormat="audiobook"
-                        />
-                      ),
-                    };
-                  }),
-                ]}
-              />
-            </div>
-          </div>
-        )}
-
-        {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
-          type: 'or',
-        }) &&
-          openIssues.length > 0 && (
+    <Transition appear show={Boolean(show)} as={Fragment}>
+      <Modal
+        title={intl.formatMessage(messages.manageModalTitle, {
+          mediaType: mediaTitleLabel,
+        })}
+        subTitle={data.title}
+        onCancel={onClose}
+        cancelButtonType="danger"
+        actionButtonSize="sm"
+        actionsClass="!justify-end"
+        backdrop={manageBackdrop}
+        backdropFull
+        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
+      >
+        <div className="manage-media-card-sections space-y-[5px]">
+          {(downloads.length > 0 || audiobookDownloads.length > 0) && (
             <div>
               <h3 className="mb-2 text-xl font-bold">
-                {intl.formatMessage(messages.manageModalIssues)}
+                {intl.formatMessage(messages.downloadstatus)}
+              </h3>
+              <div className="overflow-hidden rounded-md border border-gray-700 shadow">
+                <SelectableDownloadList
+                  items={[
+                    ...downloads.map((status, index) => {
+                      return {
+                        id: `standard-${status.downloadId ?? status.externalId ?? index}`,
+                        content: (
+                          <DownloadBlock
+                            downloadItem={{
+                              ...status,
+                              title: status.title,
+                            }}
+                            title={data.title}
+                            bookFormat={
+                              mediaType === MediaType.BOOK ? 'ebook' : undefined
+                            }
+                          />
+                        ),
+                      };
+                    }),
+                    ...audiobookDownloads.map((status, index) => {
+                      return {
+                        id: `audiobook-${status.downloadId ?? status.externalId ?? index}`,
+                        content: (
+                          <DownloadBlock
+                            downloadItem={{
+                              ...status,
+                              title: status.title,
+                            }}
+                            title={data.title}
+                            bookFormat="audiobook"
+                          />
+                        ),
+                      };
+                    }),
+                  ]}
+                />
+              </div>
+            </div>
+          )}
+
+          {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
+            type: 'or',
+          }) &&
+            openIssues.length > 0 && (
+              <div>
+                <h3 className="mb-2 text-xl font-bold">
+                  {intl.formatMessage(messages.manageModalIssues)}
+                </h3>
+                <div className="overflow-hidden rounded-md border border-gray-700 shadow">
+                  <ul>
+                    {openIssues.map((issue) => (
+                      <li
+                        key={`external-manage-issue-${issue.id}`}
+                        className="border-b border-gray-700 last:border-b-0"
+                      >
+                        <IssueBlock issue={issue} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+          {requests.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xl font-bold">
+                {intl.formatMessage(messages.manageModalRequests)}
               </h3>
               <div className="overflow-hidden rounded-md border border-gray-700 shadow">
                 <ul>
-                  {openIssues.map((issue) => (
+                  {requests.map((request) => (
                     <li
-                      key={`external-manage-issue-${issue.id}`}
+                      key={`external-manage-request-${request.id}`}
                       className="border-b border-gray-700 last:border-b-0"
                     >
-                      <IssueBlock issue={issue} />
+                      <RequestBlock request={request} onUpdate={revalidate} />
                     </li>
                   ))}
                 </ul>
@@ -265,162 +297,151 @@ const ExternalMediaManageSlideOver = ({
             </div>
           )}
 
-        {requests.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xl font-bold">
-              {intl.formatMessage(messages.manageModalRequests)}
-            </h3>
-            <div className="overflow-hidden rounded-md border border-gray-700 shadow">
-              <ul>
-                {requests.map((request) => (
-                  <li
-                    key={`external-manage-request-${request.id}`}
-                    className="border-b border-gray-700 last:border-b-0"
-                  >
-                    <RequestBlock request={request} onUpdate={revalidate} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {mediaInfo?.status === MediaStatus.BLOCKLISTED && (
-          <div>
-            <h3 className="mb-2 text-xl font-bold">
-              {intl.formatMessage(globalMessages.blocklist)}
-            </h3>
-            <div className="overflow-hidden rounded-md border border-gray-700 shadow">
-              <BlocklistBlock
-                externalId={externalId}
-                mediaType={mediaType}
-                onUpdate={revalidate}
-                onDelete={onClose}
-              />
-            </div>
-          </div>
-        )}
-
-        {hasPermission(Permission.ADMIN) && serviceLinks.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xl font-bold">
-              {intl.formatMessage(messages.manageModalMedia)}
-            </h3>
-            <div className="space-y-2">
-              {serviceLinks.map((link) => (
-                <a
-                  key={`external-service-link-${link.key}`}
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block"
-                >
-                  <Button buttonType="ghost" className="w-full">
-                    <ServerIcon />
-                    <span>
-                      {link.format
-                        ? intl.formatMessage(messages.openarrFormat, {
-                            arr: arrName,
-                            format: link.formatLabel,
-                          })
-                        : intl.formatMessage(messages.openarr, {
-                            arr: arrName,
-                          })}
-                    </span>
-                  </Button>
-                </a>
-              ))}
-              {mediaType === MediaType.BOOK &&
-                serviceLinks.map((link) => (
-                  <div key={`external-remove-${link.key}`}>
-                    <ConfirmButton
-                      onClick={() => deleteMediaFile(link.format)}
-                      confirmText={intl.formatMessage(
-                        globalMessages.areyousure
-                      )}
-                      className="w-full"
-                    >
-                      <TrashIcon />
-                      <span>
-                        {intl.formatMessage(messages.removearrFormat, {
-                          arr: arrName,
-                          format: link.formatLabel,
-                        })}
-                      </span>
-                    </ConfirmButton>
-                  </div>
-                ))}
-              <div>
-                <ConfirmButton
-                  onClick={() =>
-                    deleteMediaFile(
-                      mediaType === MediaType.BOOK ? 'both' : undefined
-                    )
-                  }
-                  confirmText={intl.formatMessage(globalMessages.areyousure)}
-                  className="w-full"
-                >
-                  <TrashIcon />
-                  <span>
-                    {intl.formatMessage(
-                      mediaType === MediaType.BOOK && serviceLinks.length > 1
-                        ? messages.removearrAll
-                        : messages.removearr,
-                      { arr: arrName }
-                    )}
-                  </span>
-                </ConfirmButton>
-                <div className="mt-1 text-xs text-gray-400">
-                  {intl.formatMessage(messages.manageModalRemoveMediaWarning, {
-                    mediaType: mediaLabel,
-                    arr: arrName,
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {hasPermission(Permission.ADMIN) &&
-          mediaInfo &&
-          mediaInfo.status !== MediaStatus.BLOCKLISTED && (
+          {mediaInfo?.status === MediaStatus.BLOCKLISTED && (
             <div>
               <h3 className="mb-2 text-xl font-bold">
-                {intl.formatMessage(messages.manageModalAdvanced)}
+                {intl.formatMessage(globalMessages.blocklist)}
+              </h3>
+              <div className="overflow-hidden rounded-md border border-gray-700 shadow">
+                <BlocklistBlock
+                  externalId={externalId}
+                  mediaType={mediaType}
+                  onUpdate={revalidate}
+                  onDelete={onClose}
+                />
+              </div>
+            </div>
+          )}
+
+          {hasPermission(Permission.ADMIN) && serviceLinks.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xl font-bold">
+                {intl.formatMessage(messages.manageModalMedia)}
               </h3>
               <div className="space-y-2">
-                {mediaInfo.status !== MediaStatus.AVAILABLE && (
-                  <Button
-                    onClick={markAvailable}
-                    className="w-full"
-                    buttonType="success"
+                {serviceLinks.map((link) => (
+                  <a
+                    key={`external-service-link-${link.key}`}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block"
                   >
-                    <CheckCircleIcon />
-                    <span>{intl.formatMessage(messages.markavailable)}</span>
-                  </Button>
-                )}
+                    <Button buttonType="ghost" className="w-full">
+                      <ServerIcon />
+                      <span>
+                        {link.format
+                          ? intl.formatMessage(messages.openarrFormat, {
+                              arr: arrName,
+                              format: link.formatLabel,
+                            })
+                          : intl.formatMessage(messages.openarr, {
+                              arr: arrName,
+                            })}
+                      </span>
+                    </Button>
+                  </a>
+                ))}
+                {mediaType === MediaType.BOOK &&
+                  serviceLinks.map((link) => (
+                    <div key={`external-remove-${link.key}`}>
+                      <ConfirmButton
+                        onClick={() => deleteMediaFile(link.format)}
+                        confirmText={intl.formatMessage(
+                          globalMessages.areyousure
+                        )}
+                        className="w-full"
+                      >
+                        <TrashIcon />
+                        <span>
+                          {intl.formatMessage(messages.removearrFormat, {
+                            arr: arrName,
+                            format: link.formatLabel,
+                          })}
+                        </span>
+                      </ConfirmButton>
+                    </div>
+                  ))}
                 <div>
                   <ConfirmButton
-                    onClick={deleteMedia}
+                    onClick={() =>
+                      deleteMediaFile(
+                        mediaType === MediaType.BOOK ? 'both' : undefined
+                      )
+                    }
                     confirmText={intl.formatMessage(globalMessages.areyousure)}
                     className="w-full"
                   >
-                    <DocumentMinusIcon />
+                    <TrashIcon />
                     <span>
-                      {intl.formatMessage(messages.manageModalClearMedia)}
+                      {intl.formatMessage(
+                        mediaType === MediaType.BOOK && serviceLinks.length > 1
+                          ? messages.removearrAll
+                          : messages.removearr,
+                        { arr: arrName }
+                      )}
                     </span>
                   </ConfirmButton>
-                  <div className="mt-2 text-xs text-gray-400">
-                    {intl.formatMessage(messages.manageModalClearMediaWarning, {
-                      mediaType: mediaLabel,
-                    })}
+                  <div className="mt-1 text-xs text-gray-400">
+                    {intl.formatMessage(
+                      messages.manageModalRemoveMediaWarning,
+                      {
+                        mediaType: mediaLabel,
+                        arr: arrName,
+                      }
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           )}
-      </div>
-    </SlideOver>
+
+          {hasPermission(Permission.ADMIN) &&
+            mediaInfo &&
+            mediaInfo.status !== MediaStatus.BLOCKLISTED && (
+              <div>
+                <h3 className="mb-2 text-xl font-bold">
+                  {intl.formatMessage(messages.manageModalAdvanced)}
+                </h3>
+                <div className="space-y-2">
+                  {mediaInfo.status !== MediaStatus.AVAILABLE && (
+                    <Button
+                      onClick={markAvailable}
+                      className="w-full"
+                      buttonType="success"
+                    >
+                      <CheckCircleIcon />
+                      <span>{intl.formatMessage(messages.markavailable)}</span>
+                    </Button>
+                  )}
+                  <div>
+                    <ConfirmButton
+                      onClick={deleteMedia}
+                      confirmText={intl.formatMessage(
+                        globalMessages.areyousure
+                      )}
+                      className="w-full"
+                    >
+                      <DocumentMinusIcon />
+                      <span>
+                        {intl.formatMessage(messages.manageModalClearMedia)}
+                      </span>
+                    </ConfirmButton>
+                    <div className="mt-2 text-xs text-gray-400">
+                      {intl.formatMessage(
+                        messages.manageModalClearMediaWarning,
+                        {
+                          mediaType: mediaLabel,
+                        }
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+        </div>
+      </Modal>
+    </Transition>
   );
 };
 

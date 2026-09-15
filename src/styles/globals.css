@@ -532,6 +532,12 @@
     color: rgb(var(--theme-control-text) / 0.86);
   }
 
+  .manage-media-card-sections > div {
+    @apply rounded-lg border border-gray-700 p-3;
+    background-color: rgb(var(--theme-control-surface) / 0.42);
+    color: rgb(var(--theme-control-text) / 0.86);
+  }
+
   .request-modal-site-surface {
     background:
       radial-gradient(
@@ -576,6 +582,12 @@
 
   .request-divider-dark::before {
     width: 2px !important;
+  }
+
+  @media (min-width: 720px) {
+    .request-divider-dark.card\:border-t-0 {
+      border-top-width: 0 !important;
+    }
   }
 
   .refreshed-artwork-scrim {
@@ -1093,6 +1105,7 @@
 
   .media-rating-icon {
     @apply h-5 w-5 flex-none;
+    filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.75));
   }
 
   .media-rating-icon-audience {
@@ -1101,10 +1114,12 @@
 
   .media-rating-wordmark {
     @apply h-3.5 w-auto flex-none;
+    filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.75));
   }
 
   .media-rating-value {
     @apply inline-flex h-5 items-center leading-none;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
   }
 
   .selection-circle {

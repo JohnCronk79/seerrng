@@ -2433,12 +2433,13 @@ describe('User route input validation', () => {
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const firstSave = await agent
       .post('/user/1/settings/detail-disclosures')
-      .send({ cast: true, subjectTags: true });
+      .send({ cast: true, artists: true, subjectTags: true });
 
     assert.strictEqual(firstSave.status, 200);
     assert.deepStrictEqual(firstSave.body, {
       cast: true,
       crew: false,
+      artists: true,
       subjectTags: true,
     });
 
@@ -2449,6 +2450,7 @@ describe('User route input validation', () => {
     assert.deepStrictEqual(secondSave.body, {
       cast: false,
       crew: true,
+      artists: true,
       subjectTags: true,
     });
 
@@ -2461,10 +2463,8 @@ describe('User route input validation', () => {
     });
     assert.strictEqual(user.settings?.detailDisclosureCastPinned, false);
     assert.strictEqual(user.settings?.detailDisclosureCrewPinned, true);
-    assert.strictEqual(
-      user.settings?.detailDisclosureSubjectTagsPinned,
-      true
-    );
+    assert.strictEqual(user.settings?.detailDisclosureArtistsPinned, true);
+    assert.strictEqual(user.settings?.detailDisclosureSubjectTagsPinned, true);
   });
 
   it('saves card text visibility through main user settings without clearing other media types', async () => {

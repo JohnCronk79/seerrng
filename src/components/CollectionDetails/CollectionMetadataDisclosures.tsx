@@ -11,7 +11,7 @@ import type { MovieDetails } from '@server/models/Movie';
 import type { MovieResult } from '@server/models/Search';
 import axios from 'axios';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.CollectionDetails.Metadata', {
@@ -36,11 +36,11 @@ const tones = [
 const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
   const intl = useIntl();
   const { pins, togglePinned } = useDetailDisclosurePins();
-  const [open, setOpen] = useState<Set<DetailDisclosurePin>>(
-    () => new Set()
-  );
+  const [open, setOpen] = useState<Set<DetailDisclosurePin>>(() => new Set());
   const [loading, setLoading] = useState(false);
   const [details, setDetails] = useState<MovieDetails[]>();
+  const previousPins = useRef<typeof pins | undefined>(undefined);
+  const { cast: castPinned, crew: crewPinned, subjectTags: tagsPinned } = pins;
 
   const loadDetails = useCallback(async () => {
     if (details || loading) return;
@@ -70,18 +70,34 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
   };
 
   useEffect(() => {
-    const pinnedSections = (
-      ['cast', 'crew', 'subjectTags'] as DetailDisclosurePin[]
-    ).filter((section) => pins[section]);
-    if (pinnedSections.length === 0) return;
+    const supportedSections = [
+      'cast',
+      'crew',
+      'subjectTags',
+    ] as const satisfies readonly DetailDisclosurePin[];
+    const currentPins = {
+      cast: castPinned,
+      crew: crewPinned,
+      subjectTags: tagsPinned,
+    };
+    const changedSections = supportedSections.filter(
+      (section) => previousPins.current?.[section] !== currentPins[section]
+    );
+    previousPins.current = { ...pins, ...currentPins };
+    if (changedSections.length === 0) return;
 
     setOpen((current) => {
       const next = new Set(current);
-      pinnedSections.forEach((section) => next.add(section));
-      return next.size === current.size ? current : next;
+      changedSections.forEach((section) => {
+        if (currentPins[section]) next.add(section);
+        else next.delete(section);
+      });
+      return next;
     });
-    void loadDetails();
-  }, [loadDetails, pins.cast, pins.crew, pins.subjectTags]);
+    if (changedSections.some((section) => currentPins[section])) {
+      void loadDetails();
+    }
+  }, [castPinned, crewPinned, loadDetails, pins, tagsPinned]);
   const uniqueCredits = (type: 'cast' | 'crew'): ExpandableCredit[] => {
     const unique = new Map<number, ExpandableCredit>();
     details?.forEach((movie) => {

@@ -1,1 +1,1 @@
-The Music playlist importer now uses SeerrNG's site-background card design. Its playlist URL field, Spotify actions, guidance panel, borders, spacing, buttons, and text all follow the refreshed site styling.
+The Music playlist importer now uses SeerrNG's centered, readable-width site-background card design with page spacing on every side. Its red Cancel, green Preview Matches, cyan Spotify connection action, playlist URL field, guidance panel, borders, spacing, and text all follow the refreshed site styling.

@@ -12,11 +12,12 @@ export interface UserSettingsCardTextResponse {
   book?: CardTextVisibility;
 }
 
-export type DetailDisclosurePin = 'cast' | 'crew' | 'subjectTags';
+export type DetailDisclosurePin = 'cast' | 'crew' | 'artists' | 'subjectTags';
 
 export interface UserSettingsDetailDisclosureResponse {
   cast?: boolean;
   crew?: boolean;
+  artists?: boolean;
   subjectTags?: boolean;
 }
 

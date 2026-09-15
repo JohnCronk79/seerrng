@@ -202,6 +202,7 @@ const serializeDetailDisclosurePins = (
 ): UserSettingsDetailDisclosureResponse => ({
   cast: settings?.detailDisclosureCastPinned === true,
   crew: settings?.detailDisclosureCrewPinned === true,
+  artists: settings?.detailDisclosureArtistsPinned === true,
   subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
 });
 
@@ -215,7 +216,7 @@ const parseDetailDisclosurePinsBody = (
   }
 
   const value: UserSettingsDetailDisclosureResponse = {};
-  for (const key of ['cast', 'crew', 'subjectTags'] as const) {
+  for (const key of ['cast', 'crew', 'artists', 'subjectTags'] as const) {
     if (!hasOwn(parsedBody.value, key)) {
       continue;
     }
@@ -1028,76 +1029,75 @@ userSettingsRoutes.post<
   { id: string },
   UserSettingsDetailDisclosureResponse,
   UserSettingsDetailDisclosureResponse
->(
-  '/detail-disclosures',
-  isOwnProfileOrAdmin(),
-  async (req, res, next) => {
-    const userRepository = getRepository(User);
-    const parsedBody = parseDetailDisclosurePinsBody(req.body);
+>('/detail-disclosures', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseDetailDisclosurePinsBody(req.body);
 
-    if ('error' in parsedBody) {
-      return next({ status: 400, message: parsedBody.error });
-    }
-
-    try {
-      const userId = parseUserSettingsRouteId(req.params.id);
-      if (!userId) {
-        return next({ status: 404, message: 'User not found.' });
-      }
-
-      return await runUserSecurityMutationWithActor(
-        req.user!.id,
-        userId,
-        Permission.MANAGE_USERS,
-        async (actor) => {
-          const user = await userRepository.findOne({
-            where: { id: userId },
-          });
-
-          if (!user) {
-            return next({ status: 404, message: 'User not found.' });
-          }
-
-          if (!canModifyUser(user, actor)) {
-            return next({
-              status: 403,
-              message:
-                "You do not have permission to modify this user's settings.",
-            });
-          }
-
-          if (!user.settings) {
-            user.settings = new UserSettings({ user });
-          }
-
-          const body = parsedBody.value;
-          if (body.cast !== undefined) {
-            user.settings.detailDisclosureCastPinned = body.cast;
-          }
-          if (body.crew !== undefined) {
-            user.settings.detailDisclosureCrewPinned = body.crew;
-          }
-          if (body.subjectTags !== undefined) {
-            user.settings.detailDisclosureSubjectTagsPinned = body.subjectTags;
-          }
-
-          const savedUser = await userRepository.save(user);
-          return res
-            .status(200)
-            .json(serializeDetailDisclosurePins(savedUser.settings));
-        }
-      );
-    } catch (e) {
-      if (e instanceof UserMutationActorUnauthorizedError) {
-        return next({
-          status: 403,
-          message: "You do not have permission to modify this user's settings.",
-        });
-      }
-      next({ status: 500, message: e.message });
-    }
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
   }
-);
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    return await runUserSecurityMutationWithActor(
+      req.user!.id,
+      userId,
+      Permission.MANAGE_USERS,
+      async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUser(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's settings.",
+          });
+        }
+
+        if (!user.settings) {
+          user.settings = new UserSettings({ user });
+        }
+
+        const body = parsedBody.value;
+        if (body.cast !== undefined) {
+          user.settings.detailDisclosureCastPinned = body.cast;
+        }
+        if (body.crew !== undefined) {
+          user.settings.detailDisclosureCrewPinned = body.crew;
+        }
+        if (body.artists !== undefined) {
+          user.settings.detailDisclosureArtistsPinned = body.artists;
+        }
+        if (body.subjectTags !== undefined) {
+          user.settings.detailDisclosureSubjectTagsPinned = body.subjectTags;
+        }
+
+        const savedUser = await userRepository.save(user);
+        return res
+          .status(200)
+          .json(serializeDetailDisclosurePins(savedUser.settings));
+      }
+    );
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    next({ status: 500, message: e.message });
+  }
+});
 
 userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
   '/password',

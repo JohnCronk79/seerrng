@@ -3,6 +3,7 @@ import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import PlaybackTrackList from '@app/components/MediaDetails/PlaybackTrackList';
+import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import { normalizeBookOverviewMarkdown } from '@app/utils/bookMarkdown';
@@ -72,11 +73,15 @@ const BookDetailsLayout = ({
   additionalContent,
 }: BookDetailsLayoutProps) => {
   const intl = useIntl();
+  const { pins, togglePinned } = useDetailDisclosurePins();
   const [showGenres, setShowGenres] = useState(false);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
     string[]
   >([]);
   const { data: playbackCatalog } = usePlaybackCatalog(data.mediaInfo?.id);
+  useEffect(() => {
+    setShowGenres(pins.subjectTags);
+  }, [pins.subjectTags]);
   useEffect(() => {
     const allowedIds = new Set(
       playbackCatalog?.groups.flatMap((group) =>
@@ -171,7 +176,7 @@ const BookDetailsLayout = ({
 
               <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
                 <div className="card:col-span-2 card:pr-3 min-w-0">
-                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_2px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
                     <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
@@ -199,7 +204,7 @@ const BookDetailsLayout = ({
                       {data.publisher || unavailable}
                     </dd>
 
-                    <div className="card:col-start-5 card:row-span-4 card:row-start-1 card:block hidden bg-gray-600" />
+                    <div className="request-divider-fill-dark card:col-start-5 card:row-span-4 card:row-start-1 card:block hidden" />
                     <div className="card:col-span-1 card:col-start-7 card:row-span-4 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.author)}:
@@ -260,7 +265,7 @@ const BookDetailsLayout = ({
                   </dl>
                 </div>
 
-                <dl className="card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4">
+                <dl className="request-divider-dark card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-0 card:before:left-0 card:before:top-0 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t pt-2 text-xs leading-4">
                   {formatCoverage.map((coverage) => (
                     <div className="contents" key={coverage.format}>
                       <dt className="font-medium text-gray-100">
@@ -342,6 +347,8 @@ const BookDetailsLayout = ({
               label={intl.formatMessage(messages.genres)}
               open={showGenres}
               onClick={() => setShowGenres((open) => !open)}
+              pinned={pins.subjectTags}
+              onPinClick={() => void togglePinned('subjectTags')}
             />
           </div>
 
