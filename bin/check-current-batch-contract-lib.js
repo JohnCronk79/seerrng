@@ -1639,6 +1639,29 @@ const validateCurrentBatchContract = (files) => {
     );
   }
 
+  const mediaQualitySelect =
+    'src/components/MediaDetails/MediaQualitySelect.tsx';
+  requireText(
+    mediaQualitySelect,
+    '<AdjustmentsHorizontalIcon',
+    'detail quality selection must expose a recognizable selection icon'
+  );
+  requireText(
+    mediaQualitySelect,
+    'app-button app-button-detail-request button-sm',
+    'detail quality selection must use the shared translucent Request button treatment'
+  );
+  requireText(
+    mediaQualitySelect,
+    'absolute top-full right-0',
+    'detail quality options must stay aligned to the bottom-right control'
+  );
+  requireText(
+    mediaQualitySelect,
+    '<CheckIcon',
+    'detail quality options must visibly mark the current selection'
+  );
+
   const musicLayout = 'src/components/MusicDetails/MusicDetailsLayout.tsx';
   for (const [token, description] of [
     [
@@ -1717,6 +1740,11 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     musicLayout,
+    'className="card:mt-auto mt-2 self-end"',
+    'Music details must anchor quality selection to the third detail group bottom-right'
+  );
+  requireText(
+    musicLayout,
     "? 'flac'\n      : 'mp3'",
     'Music details must default to MP3 unless FLAC is the only available quality'
   );
@@ -1770,6 +1798,11 @@ const validateCurrentBatchContract = (files) => {
       detailLayout,
       '<MediaQualitySelect',
       'Movie and Series details must expose the HD and 4K quality selector'
+    );
+    requireText(
+      detailLayout,
+      'className="card:mt-auto mt-2 self-end"',
+      'Movie and Series details must anchor quality selection to the third detail group bottom-right'
     );
     requireText(
       detailLayout,

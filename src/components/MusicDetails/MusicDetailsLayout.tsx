@@ -373,7 +373,7 @@ const MusicDetailsLayout = ({
                       { label: 'FLAC', value: 'flac' },
                     ]}
                     onChange={setSelectedQuality}
-                    className="mt-2 self-end"
+                    className="card:mt-auto mt-2 self-end"
                   />
                 </div>
               </div>

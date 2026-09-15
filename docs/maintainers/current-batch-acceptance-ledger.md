@@ -81,9 +81,11 @@ asks for the work to start.
 - Status: Implemented in source with focused root-selection and playlist
   translation coverage. A fresh build and rendered Movie, Series, and Music
   verification remain pending under John's no-build gate.
-- Movie, Series, and Music details place a `Select Quality` control at the
-  bottom right of the third compact details group. Movie and Series offer HD
-  and permitted 4K; Music offers MP3 and FLAC.
+- Movie, Series, and Music details anchor a `Select Quality` control to the
+  true bottom right of the third compact details group. It uses the translucent
+  green Detail Request button treatment with a leading adjustments icon, the
+  selected quality, and a trailing chevron. Movie and Series offer HD and
+  permitted 4K; Music offers MP3 and FLAC.
 - HD or MP3 is the default whenever that lower quality is available or neither
   quality is available. The higher quality becomes the default only when 4K or
   FLAC is available and its lower-quality counterpart is not.
