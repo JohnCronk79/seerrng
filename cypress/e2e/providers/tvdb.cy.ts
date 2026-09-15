@@ -10,10 +10,10 @@ describe('TVDB Integration', () => {
 
   const SELECTORS = {
     sidebarToggle: '[data-testid=sidebar-toggle]',
-    sidebarSettings: '[data-testid=sidebar-menu-settings]',
-    settingsNavDesktop: 'nav[data-testid="settings-nav-desktop"]',
-    metadataTestButton: 'button[type="button"]:contains("Test")',
-    metadataSaveButton: '[data-testid="metadata-save-button"]',
+    sidebarSettingsMobile: '[data-testid=sidebar-menu-settings-mobile]',
+    settingsNav: 'nav[aria-label="Tabs"]',
+    metadataTestButton: '[data-testid="metadata-test-button"]',
+    metadataSaveButton: '[data-testid="settings-save-button"]',
     tmdbStatus: '[data-testid="tmdb-status"]',
     tvdbStatus: '[data-testid="tvdb-status"]',
     tvMetadataProviderSelector: '[data-testid="tv-metadata-provider-selector"]',
@@ -31,9 +31,9 @@ describe('TVDB Integration', () => {
   const navigateToMetadataSettings = () => {
     cy.visit(ROUTES.home);
     cy.get(SELECTORS.sidebarToggle).click();
-    cy.get(SELECTORS.sidebarSettings).click();
+    cy.get(SELECTORS.sidebarSettingsMobile).click();
     cy.get(
-      `${SELECTORS.settingsNavDesktop} a[href="${ROUTES.metadataSettings}"]`
+      `${SELECTORS.settingsNav} a[href="${ROUTES.metadataSettings}"]`
     ).click();
   };
 
@@ -41,7 +41,10 @@ describe('TVDB Integration', () => {
     cy.intercept('POST', '/api/v1/settings/metadatas/test').as(
       'testConnection'
     );
-    cy.get(SELECTORS.metadataTestButton).click();
+    cy.get(SELECTORS.metadataTestButton)
+      .scrollIntoView()
+      .should('be.visible')
+      .click();
     return cy.wait('@testConnection');
   };
 

@@ -22,6 +22,11 @@ import type { User } from '@app/hooks/useUser';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
+import {
+  isStoredOption,
+  readLocalStoredRecord,
+  writeLocalStoredRecord,
+} from '@app/utils/localStorage';
 import { Transition } from '@headlessui/react';
 import {
   BarsArrowDownIcon,
@@ -38,7 +43,7 @@ import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 import validator from 'validator';
@@ -111,6 +116,14 @@ const messages = defineMessages('components.UserList', {
 
 type Sort = 'created' | 'requests' | 'displayname' | 'usertype' | 'role';
 type SortDirection = 'asc' | 'desc';
+const USER_SORT_OPTIONS: readonly Sort[] = [
+  'created',
+  'requests',
+  'displayname',
+  'usertype',
+  'role',
+];
+const SORT_DIRECTION_OPTIONS: readonly SortDirection[] = ['asc', 'desc'];
 
 type ClientUserResultsResponse = PaginatedResponse & {
   results: User[];
@@ -127,6 +140,7 @@ const UserList = () => {
     useDebouncedState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [filterSettingsHydrated, setFilterSettingsHydrated] = useState(false);
 
   const defaultSortDirection = (sortKey: Sort): SortDirection =>
     sortKey === 'requests' ? 'desc' : 'asc';
@@ -134,6 +148,30 @@ const UserList = () => {
   const [sortDirection, setSortDirection] = useState<SortDirection>(() =>
     defaultSortDirection('created')
   );
+
+  useEffect(() => {
+    const filterSettings = readLocalStoredRecord('ul-filter-settings');
+    if (filterSettings) {
+      if (isStoredOption(filterSettings.currentSort, USER_SORT_OPTIONS)) {
+        setCurrentSort(filterSettings.currentSort);
+      }
+      if (
+        isStoredOption(filterSettings.sortDirection, SORT_DIRECTION_OPTIONS)
+      ) {
+        setSortDirection(filterSettings.sortDirection);
+      }
+    }
+    setFilterSettingsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (filterSettingsHydrated) {
+      writeLocalStoredRecord('ul-filter-settings', {
+        currentSort,
+        sortDirection,
+      });
+    }
+  }, [currentSort, filterSettingsHydrated, sortDirection]);
 
   const {
     data,

@@ -192,6 +192,7 @@ describe('Discover', () => {
         },
       ],
     }).as('getRequests');
+    cy.intercept('GET', '/api/v1/request/582', { statusCode: 500 });
 
     cy.visit('/');
     cy.wait('@getRequests');
@@ -293,6 +294,8 @@ describe('Discover', () => {
         readarr: [],
       },
     }).as('getRequests');
+    cy.intercept('GET', '/api/v1/request/701', { statusCode: 500 });
+    cy.intercept('GET', '/api/v1/request/702', { statusCode: 500 });
     cy.intercept('GET', '/api/v1/book/OLCARDFAILEDW', {
       id: 'OLCARDFAILEDW',
       mediaType: 'book',

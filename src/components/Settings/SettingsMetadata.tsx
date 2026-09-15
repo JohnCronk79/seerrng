@@ -5,6 +5,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import MetadataSelector, {
   MetadataProviderType,
 } from '@app/components/MetadataSelector';
+import { notifySettingsUserChange } from '@app/components/Settings/settingsEvents';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
@@ -355,9 +356,10 @@ const SettingsMetadata = () => {
                         <MetadataSelector
                           testId="tv-metadata-provider-selector"
                           value={values.metadata.tv}
-                          onChange={(value) =>
-                            setFieldValue('metadata.tv', value)
-                          }
+                          onChange={(value) => {
+                            void setFieldValue('metadata.tv', value);
+                            notifySettingsUserChange();
+                          }}
                           isDisabled={isSubmitting}
                         />
                       </div>
@@ -376,9 +378,10 @@ const SettingsMetadata = () => {
                         <MetadataSelector
                           testId="anime-metadata-provider-selector"
                           value={values.metadata.anime}
-                          onChange={(value) =>
-                            setFieldValue('metadata.anime', value)
-                          }
+                          onChange={(value) => {
+                            void setFieldValue('metadata.anime', value);
+                            notifySettingsUserChange();
+                          }}
                           isDisabled={isSubmitting}
                         />
                       </div>
@@ -388,6 +391,7 @@ const SettingsMetadata = () => {
                       <div className="flex justify-end">
                         <span className="ml-3 inline-flex rounded-md shadow-sm">
                           <Button
+                            data-testid="metadata-test-button"
                             buttonType="warning"
                             type="button"
                             disabled={isSubmitting || !isValid}

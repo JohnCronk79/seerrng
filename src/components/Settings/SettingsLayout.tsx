@@ -316,6 +316,7 @@ const SettingsLayout = ({ children }: SettingsLayoutProps) => {
           )}
           {hasSaveActions && (
             <Button
+              data-testid="settings-save-button"
               buttonType="success"
               buttonSize="standard"
               disabled={!hasUnsavedChanges}

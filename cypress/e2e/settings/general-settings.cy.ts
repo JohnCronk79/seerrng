@@ -13,9 +13,9 @@ describe('General Settings', () => {
     cy.visit('/');
 
     cy.get('[data-testid=sidebar-toggle]').click();
-    cy.get('[data-testid=sidebar-menu-settings]').click();
+    cy.get('[data-testid=sidebar-menu-settings-mobile]').click();
 
-    cy.get('.heading').should('contain', 'General Settings');
+    cy.contains('h3', 'General Settings').should('be.visible');
   });
 
   it('modifies setting that requires restart', () => {

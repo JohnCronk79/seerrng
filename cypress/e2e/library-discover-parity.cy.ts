@@ -843,23 +843,43 @@ describe('Books and Music discover parity', () => {
     cy.get('select[name=serviceType]').should('be.visible');
     cy.contains('label', 'API Key')
       .scrollIntoView()
-      .contains('Find it in Bookshelf or Readarr')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'Find it in Bookshelf or Readarr'
+      )
       .should('be.visible');
     cy.contains('label', 'URL Base')
       .scrollIntoView()
-      .contains('If you set a URL Base in Bookshelf, Chaptarr, or Readarr')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'If you set a URL Base in Bookshelf, Chaptarr, or Readarr'
+      )
       .should('be.visible');
     cy.contains('label', 'External URL')
       .scrollIntoView()
-      .contains('For clickable links on media pages')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'For clickable links on media pages'
+      )
       .should('be.visible');
     cy.contains('label', 'Enable Scan')
       .scrollIntoView()
-      .contains('Scan Bookshelf for existing books')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'Scan Bookshelf for existing books'
+      )
       .should('be.visible');
     cy.contains('label', 'Enable Automatic Search')
       .scrollIntoView()
-      .contains('Automatically trigger a search in Bookshelf')
+      .closest('.form-row')
+      .contains(
+        '.settings-form-row-description',
+        'Automatically trigger a search in Bookshelf'
+      )
       .should('be.visible');
     cy.get('select[name=activeMetadataProfileId]')
       .scrollIntoView()

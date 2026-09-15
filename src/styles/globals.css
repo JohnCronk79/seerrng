@@ -1840,6 +1840,11 @@
   }
 
   .settings-page-has-actions .actions {
+    @apply mt-[5px] border-0 pt-0;
+  }
+
+  .settings-page-has-actions .actions button[type='submit'],
+  .settings-page-has-actions .actions:not(:has(button:not([type='submit']))) {
     @apply hidden;
   }
 
