@@ -339,6 +339,28 @@ asks for the work to start.
   32-pixel action height. Shared modal actions now default to that same size so
   Continue and equivalent confirmation actions do not drift smaller or larger.
 
+### Issue Details action row
+
+> “change the exit button to a cancel button just to the left of the close issue button ... move the add comment button to the far left ... use our standard buttons.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- Add Comment anchors the far-left edge of the action row before any media or
+  automation-service links. Cancel and Close Issue or Reopen Issue remain
+  adjacent at the right edge, with Cancel immediately to the left.
+- The old Exit label and bespoke 22-pixel controls are removed. Every action in
+  this row now uses the shared standard button component and default size.
+
+### Request Status History action
+
+> “the history button is not using the correct styling, and make the button green.”
+
+- Status: Implemented in source with current-batch contract coverage. A fresh
+  build and rendered review remain pending under John's no-build gate.
+- History and Hide History use the same compact rounded button geometry as the
+  neighboring request actions, with a translucent green surface, border, and
+  text plus the standard brighter hover treatment.
+
 ### Manage media Collection-style card
 
 > “the manage series, movie, music buttons open a card on the side of the page ... use the create issue page as a guideline to reformat this card.”

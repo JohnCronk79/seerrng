@@ -2483,8 +2483,37 @@ const validateCurrentBatchContract = (files) => {
   const issueDetails = 'src/components/IssueDetails/index.tsx';
   requireOrder(
     issueDetails,
-    ['onClick={leaveIssue}', 'messages.exit', 'messages.closeissue'],
-    'Exit and Close Issue must retain their swapped placement'
+    [
+      '{intl.formatMessage(messages.addcomment)}',
+      'onClick={leaveIssue}',
+      '? messages.closeissue',
+    ],
+    'Issue actions must place Add Comment first, followed by Cancel immediately before Close or Reopen Issue'
+  );
+  requireText(
+    issueDetails,
+    '{intl.formatMessage(globalMessages.cancel)}',
+    'Issue Details must label its exit action Cancel'
+  );
+  rejectText(
+    issueDetails,
+    'messages.exit',
+    'Issue Details must not restore the old Exit label'
+  );
+  rejectText(
+    issueDetails,
+    'h-[22px]',
+    'Issue Details actions must not use the smaller disclosure-button size'
+  );
+  requireText(
+    issueDetails,
+    'buttonSize="default"',
+    'Issue Details actions must use the standard shared button size'
+  );
+  requireText(
+    'src/components/RequestStatus/index.tsx',
+    'border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px]',
+    'Request Status History must use the compact translucent green action treatment'
   );
   requireText(
     issueDetails,

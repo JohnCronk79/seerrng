@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
@@ -14,6 +15,7 @@ import useDeepLinks from '@app/hooks/useDeepLinks';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
+import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import {
   encodeApiPathSegment,
@@ -23,12 +25,12 @@ import {
 import defineMessages from '@app/utils/defineMessages';
 import { getSafeHref } from '@app/utils/safeUrl';
 import {
-  ArrowLeftIcon,
   ArrowPathIcon,
   ChatBubbleOvalLeftEllipsisIcon,
   CheckCircleIcon,
   PlayIcon,
   ServerIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { IssueStatus, MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
 import { MediaType } from '@server/constants/media';
@@ -52,7 +54,6 @@ const messages = defineMessages('components.IssueDetails', {
   closeissue: 'Close Issue',
   reopenissue: 'Reopen Issue',
   addcomment: 'Add Comment',
-  exit: 'Exit',
   playonserver: 'Play on {mediaServerName}',
   openinarr: 'Open in {arr}',
   openBookInBookshelf: 'Open Book in Bookshelf',
@@ -177,9 +178,6 @@ const IssueDetails = () => {
       : settings.currentSettings.mediaServerType === MediaServerType.PLEX
         ? 'Plex'
         : 'Jellyfin';
-  const actionButton =
-    'inline-flex h-[22px] items-center gap-1 rounded-md border px-2 text-[11px] font-semibold leading-none transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-40';
-
   const updateIssueStatus = async (status: 'open' | 'resolved') => {
     try {
       await axios.post(`/api/v1/issue/${issueData.id}/${status}`);
@@ -376,71 +374,81 @@ const IssueDetails = () => {
 
                     <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
                       <div className="mr-auto flex flex-wrap gap-2">
+                        {canComment && (
+                          <Button
+                            type="button"
+                            onClick={() => handleSubmit()}
+                            disabled={
+                              !isValid || isSubmitting || !values.message
+                            }
+                            buttonType="warning"
+                            buttonSize="default"
+                          >
+                            <ChatBubbleOvalLeftEllipsisIcon />
+                            {intl.formatMessage(messages.addcomment)}
+                          </Button>
+                        )}
                         {selectedMediaUrl && (
-                          <a
+                          <Button
+                            as="a"
                             href={selectedMediaUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                            buttonType="primary"
+                            buttonSize="default"
                           >
-                            <PlayIcon className="h-3.5 w-3.5" />
+                            <PlayIcon />
                             {intl.formatMessage(messages.playonserver, {
                               mediaServerName,
                             })}
-                          </a>
+                          </Button>
                         )}
                         {!isBook &&
                           selectedServiceUrl &&
                           hasPermission(Permission.ADMIN) && (
-                            <a
+                            <Button
+                              as="a"
                               href={selectedServiceUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                              buttonType="primary"
+                              buttonSize="default"
                             >
-                              <ServerIcon className="h-3.5 w-3.5" />
+                              <ServerIcon />
                               {intl.formatMessage(messages.openinarr, {
                                 arr: arrName,
                               })}
-                            </a>
+                            </Button>
                           )}
                         {isBook &&
                           hasPermission(Permission.ADMIN) &&
                           bookServiceLinks.map((link) => (
-                            <a
+                            <Button
+                              as="a"
                               key={link.label}
                               href={link.url}
                               target="_blank"
                               rel="noreferrer"
-                              className={`${actionButton} border-indigo-500/80 bg-indigo-700/35 text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:ring-indigo-400`}
+                              buttonType="primary"
+                              buttonSize="default"
                             >
-                              <ServerIcon className="h-3.5 w-3.5" />
+                              <ServerIcon />
                               {link.label}
-                            </a>
+                            </Button>
                           ))}
                       </div>
 
-                      <button
+                      <Button
                         type="button"
                         onClick={leaveIssue}
-                        className={`${actionButton} border-red-600/80 bg-red-800/25 text-red-200 hover:border-red-500 hover:text-white focus:ring-red-500`}
+                        buttonType="danger"
+                        buttonSize="default"
                       >
-                        <ArrowLeftIcon className="h-3.5 w-3.5" />
-                        {intl.formatMessage(messages.exit)}
-                      </button>
+                        <XMarkIcon />
+                        {intl.formatMessage(globalMessages.cancel)}
+                      </Button>
                       {canComment && (
-                        <button
-                          type="button"
-                          onClick={() => handleSubmit()}
-                          disabled={!isValid || isSubmitting || !values.message}
-                          className={`${actionButton} border-yellow-500/80 bg-yellow-700/30 text-yellow-100 hover:border-yellow-300 hover:bg-yellow-600/50 hover:text-white focus:ring-yellow-400`}
-                        >
-                          <ChatBubbleOvalLeftEllipsisIcon className="h-3.5 w-3.5" />
-                          {intl.formatMessage(messages.addcomment)}
-                        </button>
-                      )}
-                      {canComment && (
-                        <button
+                        <Button
                           type="button"
                           onClick={() =>
                             void updateIssueStatus(
@@ -449,19 +457,20 @@ const IssueDetails = () => {
                                 : 'open'
                             )
                           }
-                          className={`${actionButton} border-emerald-600/80 bg-emerald-800/25 text-emerald-200 hover:border-emerald-500 hover:text-white focus:ring-emerald-500`}
+                          buttonType="success"
+                          buttonSize="default"
                         >
                           {issueData.status === IssueStatus.OPEN ? (
-                            <CheckCircleIcon className="h-3.5 w-3.5" />
+                            <CheckCircleIcon />
                           ) : (
-                            <ArrowPathIcon className="h-3.5 w-3.5" />
+                            <ArrowPathIcon />
                           )}
                           {intl.formatMessage(
                             issueData.status === IssueStatus.OPEN
                               ? messages.closeissue
                               : messages.reopenissue
                           )}
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </Form>
