@@ -629,6 +629,35 @@ const validateCurrentBatchContract = (files) => {
     'bg-yellow-700/35',
     'pending bell badges must preserve the translucent poster surface'
   );
+  requireText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'bg-green-700/35',
+    'available quality badges must use the same resting transparency as buttons'
+  );
+  rejectText(
+    'src/components/Common/StatusBadgeMini/index.tsx',
+    'bg-green-700/70',
+    'poster availability badges must not restore the former opaque surface'
+  );
+  for (const [fileName, token, description] of [
+    [
+      'src/components/Common/MediaTypeBadge/index.tsx',
+      'bg-blue-700/35',
+      'media-type badges must use the shared button resting transparency',
+    ],
+    [
+      'src/components/Common/BookFormatBadge/index.tsx',
+      'bg-amber-700/35',
+      'book-format badges must use the shared button resting transparency',
+    ],
+    [
+      'src/components/Common/Badge/index.tsx',
+      'bg-indigo-500/35',
+      'shared badges must use the shared button resting transparency',
+    ],
+  ]) {
+    requireText(fileName, token, description);
+  }
   requireOrder(
     'src/components/Common/StatusBadgeMini/index.tsx',
     [

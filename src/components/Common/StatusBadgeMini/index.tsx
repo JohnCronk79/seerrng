@@ -47,35 +47,35 @@ const StatusBadgeMini = memo(
     switch (status) {
       case MediaStatus.PROCESSING:
         badgeStyle.push(
-          'bg-indigo-500/80 border-indigo-400 ring-indigo-400 text-indigo-100'
+          'bg-indigo-500/35 border-indigo-400 ring-indigo-400 text-indigo-100'
         );
         indicatorIcon = <ClockIcon />;
         break;
       case MediaStatus.AVAILABLE:
         badgeStyle.push(
-          'bg-green-500/80 border-green-400 ring-green-400 text-green-100'
+          'bg-green-500/35 border-green-400 ring-green-400 text-green-100'
         );
         indicatorIcon = <CheckCircleIcon />;
         break;
       case MediaStatus.PENDING:
         badgeStyle.push(
-          'bg-yellow-500/80 border-yellow-400 ring-yellow-400 text-yellow-100'
+          'bg-yellow-500/35 border-yellow-400 ring-yellow-400 text-yellow-100'
         );
         indicatorIcon = <BellIcon />;
         break;
       case MediaStatus.BLOCKLISTED:
-        badgeStyle.push('bg-red-500/80 border-white ring-white text-white');
+        badgeStyle.push('bg-red-500/35 border-white ring-white text-white');
         indicatorIcon = <EyeSlashIcon />;
         break;
       case MediaStatus.PARTIALLY_AVAILABLE:
         badgeStyle.push(
-          'bg-green-500/80 border-green-400 ring-green-400 text-green-100'
+          'bg-green-500/35 border-green-400 ring-green-400 text-green-100'
         );
         indicatorIcon = <MinusSmallIcon />;
         break;
       case MediaStatus.DELETED:
         badgeStyle.push(
-          'bg-red-500/80 border-red-400 ring-red-400 text-red-100'
+          'bg-red-500/35 border-red-400 ring-red-400 text-red-100'
         );
         indicatorIcon = <TrashIcon />;
         break;
@@ -120,7 +120,7 @@ const StatusBadgeMini = memo(
         ? 'border-indigo-400/80 bg-indigo-700/35 text-indigo-50'
         : status === MediaStatus.AVAILABLE ||
             status === MediaStatus.PARTIALLY_AVAILABLE
-          ? 'border-green-500/80 bg-green-700/70 text-green-50'
+          ? 'border-green-500/80 bg-green-700/35 text-green-50'
           : status === MediaStatus.PENDING
             ? 'border-yellow-400/80 bg-yellow-700/35 text-yellow-50'
             : 'border-indigo-400/80 bg-indigo-700/35 text-indigo-50';

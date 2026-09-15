@@ -67,10 +67,12 @@ asks for the work to start.
 - The bell tooltip identifies the state as pending approval, while the timer
   tooltip identifies it as approved and processing. Both include the affected
   HD, 4K, MP3, or FLAC format.
-- Bell and timer badges retain their yellow and purple semantic colors on a
-  translucent surface. When no quality badge is present and the existing
-  no-request/no-media visibility rule permits Blocklist, its icon occupies the
-  empty first-row right slot instead of a third poster row.
+- Media-type, format, availability, bell, and timer badges retain their
+  established semantic colors while sharing the buttons' 35-percent resting
+  background opacity. Interactive linked badges use the matching 55-percent
+  hover opacity instead of becoming solid. When no quality badge is present and
+  the existing no-request/no-media visibility rule permits Blocklist, its icon
+  occupies the empty first-row right slot instead of a third poster row.
 
 ### Detail playback quality selection
 
