@@ -6,6 +6,7 @@ import {
 } from '@server/lib/databaseConfig';
 import { secureSqliteDatabaseFiles } from '@server/lib/sqliteFileSecurity';
 import fs from 'fs';
+import 'reflect-metadata';
 import type { TlsOptions } from 'tls';
 import type { DataSourceOptions, EntityTarget, Repository } from 'typeorm';
 import { DataSource } from 'typeorm';
@@ -94,7 +95,12 @@ const testConfig: DataSourceOptions = {
   dropSchema: false,
   logging: boolFromEnv('DB_LOG_QUERIES'),
   entities: getRuntimeFiles('server/entity', 'ts'),
-  migrations: getMigrationFiles('server/migration/sqlite', 'ts'),
+  // Vitest transforms entity modules in-process. Loading every migration via
+  // TypeORM's CommonJS loader bypasses that transform and fails on TypeScript
+  // syntax, while migration tests import the classes they exercise directly.
+  migrations: process.env.VITEST
+    ? []
+    : getMigrationFiles('server/migration/sqlite', 'ts'),
   subscribers: getRuntimeFiles('server/subscriber', 'ts'),
 };
 
