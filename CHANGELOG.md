@@ -79,6 +79,89 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.22.0](https://github.com/snapetech/seerrng/compare/v3.21.4..v3.22.0) - 2026-09-17
+
+### User-facing changes
+
+#### Added
+
+- **Media Details:** Movie, Series, and Music details now offer an exact playback-quality selector, use the chosen quality for playlists, and show track availability from the selected Lidarr service.
+- **Media Details:** Cast, Crew, View Artists, and Subject Tags can now be pinned open per user across supported detail pages and future logins. Selecting a pin opens its card, while clearing it collapses the card without preventing ordinary per-page use of the main disclosure button. Disclosure spacing and secondary-card contrast are also more consistent.
+
+#### Changed
+
+- **Media Details:** The media Associations dialog now uses the site background and presents recommendations as compact details cards. Movie and Series cards show HD and 4K availability; Music cards show MP3 and FLAC, followed by wrapped relationship text. Translucent red Cancel and green Browse More actions replace the top-right close icon, and Browse More reuses the same cards in the full explorer.
+- **Media Details:** Book details now use the compact summary-table spacing shared by other media, while audiobook controls appear only when playable tracks exist.
+- **Poster Cards:** Poster status tooltips now explain that the yellow bell means pending approval and the purple timer means approved and processing.
+- **Collections:** Collection cards now provide clickable artwork, compact metadata and ratings, clearly linked text, consistent scrollbars, and aligned Series availability headings.
+- **Issues:** Issue Details now uses the standard action row and colors, places Add Comment on the left and Cancel beside Close or Reopen, and keeps playback actions on media-detail pages.
+- **Media Management:** Manage Media now uses a centered artwork-backed card with inset sections, shared spacing and borders, and the standard red Cancel action across Movies, Series, Music, and Books.
+- **Music:** The Music playlist importer now uses the shared centered card layout, field styling, guidance panel, and standard colors for Cancel, Preview Matches, and Spotify actions.
+- **Request Forms:** Request managers can now select any Seerr user, and Destination Server and Quality Profile share the translucent Requested By menu, hover, and checkmark styling. Request-form dividers are also easier to see at two pixels wide.
+- **Issues:** Report an Issue now uses one artwork-backed Collection-style card with darker inset media, selection, and description sections. Cancel, Submit Issue, Continue, and equivalent modal actions use the standard 32-pixel shared button size.
+- **Request Forms:** Request forms now open Advanced Options by default, scroll root-folder lists after five rows, use darker controls and dividers, and place full-size request panels on the site background while preserving artwork-backed cards.
+- **Discovery:** Edit and delete request dialogs now use shared artwork-backed cards and actions, while Discover pages use consistent navigation, dropdowns, filters, headings, and TMDB artwork.
+- **Settings:** Settings now use a consistent card layout, compact page navigation, shared actions, ordinary About-page values, and an unsaved-change warning that prevents accidental loss when navigating back.
+
+#### Fixed
+
+- **Requests:** Media request posters remain usable while background requests run, MP3 and FLAC requests track their progress independently, and music request failures show the server's explanation.
+- **Navigation:** The desktop and mobile menus now show Audiobooks once and no longer include the redundant Request Status shortcut. Both pages remain available through their existing routes.
+- **Discovery:** Discover and media-detail pages now use compact request cards, consistent dropdowns and actions, clearer availability and ratings, quality-aware Association cards, and the standard artwork-backed Manage Media layout.
+- **Discovery:** Discover title posters are larger while preserving their 2:3 ratio, leaving room for complete badge labels and preventing the poster shelf's bottom border from being clipped.
+- **Discovery:** Recent Requests no longer shows deleted requests or stale cached cards, and now uses compact cards with artwork-matched borders while keeping approval actions in request management.
+- **Media Details:** Firefox no longer progressively zooms detail-card artwork when Cast, Crew, or Subject Tags are repeatedly opened and closed. Artwork still expands to cover the complete card.
+- **Discovery And Filtering:** Movie HD and 4K filters now use current Radarr file state and Radarr-backed titles and posters, excluding monitored entries without files and stale blank database cards.
+- **Poster Cards:** The Associations icon on poster cards now uses the same aqua border, dark surface, and interaction colors as the full Associations button, and occupies its own second row at the left edge of the poster.
+- **Poster Cards:** Poster quality states now use compact rounded badges in fixed rows: HD and MP3 stay on the first row, while 4K and FLAC stay on the second. Available formats are green, pending approval uses a bell, and processing uses a timer.
+- **Media Details:** Cast, Crew, and Subject Tags now use the familiar angled pushpin icon instead of a map-location pin, with outlined and solid states for unpinned and pinned.
+- **Discovery And Filtering:** Compact discovery selectors retain the site's dark styling, and Clear Filters now restores each page's default sort order as well as its filter values.
+- **Navigation:** The main Requests link is present in desktop and mobile navigation while the separate Request Status link and duplicate Audiobooks link remain removed.
+
+#### Security
+
+- **Monitoring:** The authenticated Prometheus metrics endpoint now limits requests per client, reducing the risk that repeated scrapes or unauthorized traffic can consume SeerrNG resources.
+
+### 🚀 Features
+- *(details)* Align collection cards and scroll regions - ([7e2292b](https://github.com/snapetech/seerrng/commit/7e2292bcc7485762685183c0ad674667a8b59608))
+- *(requests)* Refine requester controls and detail pins - ([e7d01b0](https://github.com/snapetech/seerrng/commit/e7d01b01e8f85f543b3b017d101b1ee2cad1b4ca))
+- *(ui)* Complete shared interface refresh - ([bdd2782](https://github.com/snapetech/seerrng/commit/bdd2782f0e8aad7f0f50d3826fc8a89feb0d0969))
+- *(ui)* Standardize request and discover surfaces - ([d849416](https://github.com/snapetech/seerrng/commit/d849416b4ac44b551286cf0d98ff9b1d1a48db67))
+- *(ui)* Refine media detail and management cards - ([3054465](https://github.com/snapetech/seerrng/commit/30544657dd364db3ef8ccdec2f5be3e7c506184a))
+- Select exact detail playback quality - ([bc88673](https://github.com/snapetech/seerrng/commit/bc88673a2f8104b54219234b99c609746f61ad3d))
+- Clarify poster status tooltips - ([87878c8](https://github.com/snapetech/seerrng/commit/87878c8b6f740cc2580283ee0bd49303ae10a654))
+- Align poster format status badges - ([44cf919](https://github.com/snapetech/seerrng/commit/44cf91945e4e536c171c765e51d59248f82a956a))
+- Persist detail pins and refine request cards - ([e17d8b9](https://github.com/snapetech/seerrng/commit/e17d8b9af8fc1a13eb5726223893559048a00d78))
+
+### 🐛 Bug Fixes
+- *(books)* Compact detail summary - ([8fd02ae](https://github.com/snapetech/seerrng/commit/8fd02ae4bdf7c9745eaf2250a0f3c28ee47a62a5))
+- *(ci)* Restore current settings and discovery flows - ([862e108](https://github.com/snapetech/seerrng/commit/862e1084ace08bcf8cff527d2de6e512f499834e))
+- *(ci)* Align checks with refreshed UI - ([223238b](https://github.com/snapetech/seerrng/commit/223238b540f9e4f8f6269f6e846839ee2fa98223))
+- *(discover)* Clean up recent request cards - ([ff278be](https://github.com/snapetech/seerrng/commit/ff278be6e87e7fb42145a293f0d52e493c2e7d01))
+- *(discovery)* Use live Radarr movie availability - ([db141bd](https://github.com/snapetech/seerrng/commit/db141bdbc6c44a6592fd4c31c81d66eb7a34544e))
+- *(security)* Rate limit authenticated metrics endpoint - ([9565c12](https://github.com/snapetech/seerrng/commit/9565c123d1007a6575a7805bad97a2908fc000c6))
+- *(ui)* Align issue and history actions - ([d230a2b](https://github.com/snapetech/seerrng/commit/d230a2bd01a481609b34a4dde4d58ab03dd0785f))
+- *(ui)* Refine detail quality selector - ([d23bfef](https://github.com/snapetech/seerrng/commit/d23bfefaadd28e54e6df0e2dab2429d4909e4a0d))
+- Expand discover poster shelves - ([05ab759](https://github.com/snapetech/seerrng/commit/05ab7591c28221eb4262a7f5ccf0d1d9697846e4))
+- Keep quality requests nonblocking - ([f06474e](https://github.com/snapetech/seerrng/commit/f06474e2975e9b3b61a43b92eb5cfa1cc137134b))
+- Restore filters and requests navigation - ([d436d7a](https://github.com/snapetech/seerrng/commit/d436d7a848f95e3f01600fd11f9e8a22dcae7dd4))
+- Stabilize detail artwork in Firefox - ([7c883d7](https://github.com/snapetech/seerrng/commit/7c883d749f35a9e93e81ccf7770687427a5d8843))
+
+### 📖 Documentation
+- Capture pinned media-details disclosures - ([905058e](https://github.com/snapetech/seerrng/commit/905058e5b6ac53614a0121c0e50ad28fd85e8a2c))
+- Capture current SeerrNG correction tasks - ([2316f89](https://github.com/snapetech/seerrng/commit/2316f89f38851145ac7958dd80ecc5572afbd7d7))
+- Reduce SeerrNG ledger to outstanding work - ([eb206c3](https://github.com/snapetech/seerrng/commit/eb206c30d046a503c4f151a95147e2903f6bf946))
+
+### 🎨 Styling
+- Widen discover poster cards - ([2add97f](https://github.com/snapetech/seerrng/commit/2add97fa1c876b123df513c78d573f60c3b8557f))
+- Refresh playlist import card - ([0b13cf1](https://github.com/snapetech/seerrng/commit/0b13cf18f2ae13334e72d128130114ad9712d8f9))
+- Align badge transparency with buttons - ([6b7b32d](https://github.com/snapetech/seerrng/commit/6b7b32d718a728fb7cb89dd7bcd8e33207ff9a65))
+
+### ⚙️ Miscellaneous Tasks
+- Refresh English message catalog - ([d2e9613](https://github.com/snapetech/seerrng/commit/d2e9613758e390ff6dd515c09f1fd3ff99960e88))
+
 ## [3.21.4](https://github.com/snapetech/seerrng/compare/v3.21.3..v3.21.4) - 2026-09-17
 
 ### User-facing changes
