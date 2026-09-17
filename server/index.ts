@@ -11,6 +11,7 @@ import { startJobs, stopJobs } from '@server/job/schedule';
 import { runWithConfigurationAdmission } from '@server/lib/configurationAdmission';
 import { loadExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import {
+  METRICS_RATE_LIMIT,
   metricsAuthMiddleware,
   metricsHandler,
   metricsMiddleware,
@@ -322,7 +323,17 @@ Promise.resolve()
       );
       server.use(metricsMiddleware);
       if (isTruthyEnv(process.env.METRICS_ENABLED)) {
-        server.get('/metrics', metricsAuthMiddleware, metricsHandler);
+        server.get(
+          '/metrics',
+          rateLimit({
+            ...METRICS_RATE_LIMIT,
+            standardHeaders: true,
+            legacyHeaders: false,
+            keyGenerator: getRateLimitKey,
+          }),
+          metricsAuthMiddleware,
+          metricsHandler
+        );
       }
       if (settings.network.csrfProtection) {
         server.use(csrfProtection());

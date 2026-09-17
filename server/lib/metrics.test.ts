@@ -1,8 +1,10 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import request from 'supertest';
 import {
+  METRICS_RATE_LIMIT,
   isMetricsAuthorizationValid,
   metricsAuthMiddleware,
   metricsHandler,
@@ -49,7 +51,12 @@ describe('metrics authentication', () => {
     delete process.env.METRICS_AUTH_TOKEN;
     const app = express();
     app.use(metricsMiddleware);
-    app.get('/metrics', metricsAuthMiddleware, metricsHandler);
+    app.get(
+      '/metrics',
+      rateLimit(METRICS_RATE_LIMIT),
+      metricsAuthMiddleware,
+      metricsHandler
+    );
 
     try {
       const unauthorized = await request(app).get('/metrics');

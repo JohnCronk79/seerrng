@@ -8,6 +8,11 @@ import {
 import { safeStringEqual } from '@server/utils/security';
 import type { NextFunction, Request, Response } from 'express';
 
+export const METRICS_RATE_LIMIT = {
+  windowMs: 60 * 1000,
+  limit: 120,
+} as const;
+
 export const metricsRegistry = new Registry();
 
 collectDefaultMetrics({ register: metricsRegistry });
