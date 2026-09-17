@@ -67,6 +67,11 @@ test('release package channels wait for the reusable release asset build', () =>
     discordStep.run,
     /DISCORD_RELEASE_WEBHOOK is required to complete a release/u
   );
+  assert.match(
+    discordStep.run,
+    /curl --fail --silent --show-error/u,
+    'Discord delivery must fail the release when the webhook returns HTTP error'
+  );
 });
 
 test('release asset publication can download artifacts from the same run', () => {

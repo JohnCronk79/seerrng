@@ -753,7 +753,8 @@ jobs:
               }]
             }' > payload.json
 
-          curl -sS -H "Content-Type: application/json" \
+          curl --fail --silent --show-error \
+            -H "Content-Type: application/json" \
             -X POST \
             --data @payload.json \
             "$DISCORD_WEBHOOK"
