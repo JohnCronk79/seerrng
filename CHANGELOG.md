@@ -75,6 +75,33 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.21.3](https://github.com/snapetech/seerrng/compare/v3.21.2..v3.21.3) - 2026-09-17
+
+### User-facing changes
+
+#### Added
+
+- **Monitoring:** Seerr now exposes request, active-request, cache-hit, and external-API counters in Prometheus format when metrics are enabled; an importable Grafana dashboard is included and the endpoint requires a bearer token.
+  - **Action required:** Set `METRICS_ENABLED=true` and a long random `METRICS_AUTH_TOKEN` to expose `/metrics`.
+
+#### Fixed
+
+- **Blocklist:** Blocklisted media now remains linked to its blocklist entry, so automatic cleanup removes placeholder media correctly and does not leave orphaned records.
+- **Library Scans:** TV library scans now pass the resolved TMDB identifier to TVDB enrichment, so TVDB-only configurations retain complete series metadata.
+- **Search:** Search results enrich movie and TV credits faster while handling temporary TMDB rate limits without failing the rest of the search response.
+
+### 🐛 Bug Fixes
+- Harden metadata, search, blocklist, and metrics - ([1eeae0f](https://github.com/snapetech/seerrng/commit/1eeae0f39660b41e4f2f65970468569208c5eb68))
+
+### 🧪 Testing
+- Run the complete suite through Vitest - ([15f4ec3](https://github.com/snapetech/seerrng/commit/15f4ec3f00f215645c1e6d276ed8cc237ab7c682))
+
+### ⚙️ Miscellaneous Tasks
+- Enforce bundle and release quality gates - ([2dce2d5](https://github.com/snapetech/seerrng/commit/2dce2d5927fa6a46b5b48f5a401ca3201aaf1f8f))
+- Align runtime and test tooling dependencies - ([fd1fac2](https://github.com/snapetech/seerrng/commit/fd1fac2034de56c435ddb4a4d74819aebab2b59d))
+
 ## [3.21.2](https://github.com/snapetech/seerrng/compare/v3.21.1..v3.21.2) - 2026-09-14
 
 ### User-facing changes
