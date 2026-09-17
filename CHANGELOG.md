@@ -77,6 +77,19 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.21.4](https://github.com/snapetech/seerrng/compare/v3.21.3..v3.21.4) - 2026-09-17
+
+### User-facing changes
+
+#### Changed
+
+- **Release Pipeline:** Release automation now reports a failed Discord webhook response instead of marking the announcement successful, so operators can detect incomplete release communication.
+
+### 🐛 Bug Fixes
+- *(release)* Fail closed on Discord webhook errors - ([0bd6dcd](https://github.com/snapetech/seerrng/commit/0bd6dcd6d6013e780e071789f4df8adf1a14bac2))
+
 ## [3.21.3](https://github.com/snapetech/seerrng/compare/v3.21.2..v3.21.3) - 2026-09-17
 
 ### User-facing changes
