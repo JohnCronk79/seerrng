@@ -145,6 +145,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Bundle budget
+        run: pnpm bundle:check
+
   unit-test:
     name: Unit Tests
     timeout-minutes: 75
@@ -183,7 +186,7 @@ jobs:
       - name: Run tests
         env:
           CI: true
-        run: pnpm test
+        run: pnpm test:ci
 
       - name: Publish test report
         uses: mikepenz/action-junit-report@a9170d5795813c01ab4901ffb045b52bab4ab09d # v6.5.0

@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -99,4 +100,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Keep the analyzer development-only. Production images and release assets
+// install only `dependencies` but still load this config at runtime.
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? createRequire(import.meta.url)('@next/bundle-analyzer')({
+        enabled: true,
+      })
+    : (config: NextConfig) => config;
+
+export default withBundleAnalyzer(nextConfig);
