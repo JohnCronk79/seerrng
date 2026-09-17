@@ -1,3 +1,4 @@
+import { recordCacheHit, recordExternalApiCall } from '@server/lib/metrics';
 import logger from '@server/logger';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import { proxyRequestInterceptor } from '@server/utils/customProxyAgent';
@@ -374,6 +375,7 @@ class ExternalAPI {
     data?: unknown,
     config?: AxiosRequestConfig
   ): Promise<AxiosResponse<T>> {
+    recordExternalApiCall(method);
     const normalizedEndpoint = normalizeExternalApiRequestTarget(
       endpoint,
       config?.baseURL ?? this.baseUrl,
@@ -429,6 +431,7 @@ class ExternalAPI {
       const cachedItem = this.cache?.get<T>(cacheKey);
       if (cachedItem !== undefined) {
         if (!isUsableResponse || isUsableResponse(cachedItem)) {
+          recordCacheHit('external-api');
           return cachedItem;
         }
         this.cache?.del(cacheKey);
@@ -473,6 +476,7 @@ class ExternalAPI {
     if (cacheable) {
       const cachedItem = this.cache?.get<T>(cacheKey);
       if (cachedItem !== undefined) {
+        recordCacheHit('external-api');
         return cachedItem;
       }
     }
@@ -498,6 +502,7 @@ class ExternalAPI {
     const cachedItem = ttl === 0 ? undefined : this.cache?.get<T>(cacheKey);
 
     if (cachedItem !== undefined) {
+      recordCacheHit('external-api');
       const keyTtl = this.cache?.getTtl(cacheKey) ?? 0;
 
       // If the item has passed our rolling check, fetch again in background

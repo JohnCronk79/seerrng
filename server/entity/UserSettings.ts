@@ -184,16 +184,16 @@ export class UserSettings {
   @Column({ nullable: true })
   public watchlistSyncBooks?: boolean;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityMovie?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityTv?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityAlbum?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityBook?: CardTextVisibility;
 
   @Column({

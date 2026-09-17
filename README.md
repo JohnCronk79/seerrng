@@ -358,6 +358,9 @@ Common runtime variables:
 | `CONFIG_DIRECTORY` | Alternate config directory for non-container installs. |
 | `TMDB_API_KEY` | TMDB v3 API key. |
 | `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token. |
+| `SEARCH_CREDIT_CONCURRENCY` | Maximum concurrent TMDB credit lookups per server process during movie/TV searches; defaults to `10` and is capped at `40`. |
+| `METRICS_ENABLED` | Enables the Prometheus `/metrics` endpoint when set to `true`. |
+| `METRICS_AUTH_TOKEN` | Long random bearer token required by `/metrics` when metrics are enabled. |
 | `OIDC_ALLOW_PRIVATE_ADDRESSES` | Allows server-side OIDC requests to private network addresses. Required only for an intentionally internal identity provider. |
 | `OIDC_ALLOW_INSECURE` | Allows non-HTTPS OIDC provider requests. |
 | `SEERR_EXTERNAL_READ_ONLY` | Blocks mutating requests to external automation APIs when enabled. Useful for test/lab environments. Production refuses to start with this enabled unless explicitly allowed. |

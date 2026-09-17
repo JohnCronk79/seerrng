@@ -28,9 +28,11 @@ import { mapOpenLibrarySearchDoc } from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import {
+  BoundedTaskQueue,
   mapWithConcurrency,
   settlePromisesWithin,
 } from '@server/utils/concurrency';
+import { getHttpErrorDetails, hasHttpStatus } from '@server/utils/httpError';
 import { parsePositiveInt } from '@server/utils/pagination';
 import {
   matchesAllSearchTerms,
@@ -56,7 +58,15 @@ export const SEARCH_RATE_LIMIT = {
 export const MAX_SEARCH_RESULTS_PER_PROVIDER = 20;
 export const MAX_COMBINED_SEARCH_RESULTS = 100;
 export const SEARCH_PROVIDER_TIMEOUT_MS = 5_000;
-export const SEARCH_CREDIT_LOOKUP_CONCURRENCY = 4;
+export const SEARCH_CREDIT_LOOKUP_CONCURRENCY = parsePositiveInt(
+  process.env.SEARCH_CREDIT_CONCURRENCY,
+  10,
+  40
+);
+const searchCreditLookupQueue = new BoundedTaskQueue(
+  SEARCH_CREDIT_LOOKUP_CONCURRENCY,
+  MAX_COMBINED_SEARCH_RESULTS
+);
 const searchRateLimit = rateLimit({
   ...SEARCH_RATE_LIMIT,
   standardHeaders: true,
@@ -746,13 +756,24 @@ searchRoutes.get('/', async (req, res, next) => {
               }
 
               try {
-                const details =
+                const details = await searchCreditLookupQueue.run(async () =>
                   result.mediaType === 'movie'
                     ? await tmdb.getMovie({ movieId: result.id, language })
-                    : await tmdb.getTvShow({ tvId: result.id, language });
+                    : await tmdb.getTvShow({ tvId: result.id, language })
+                );
 
                 return { ...result, ...extractSearchCrew(details) };
-              } catch {
+              } catch (error) {
+                if (hasHttpStatus(error, 429)) {
+                  logger.warn(
+                    'TMDB rate limit reached during search credit enrichment; returning results without credits.',
+                    {
+                      label: 'Search',
+                      mediaId: result.id,
+                      ...getHttpErrorDetails(error),
+                    }
+                  );
+                }
                 return result;
               }
             }

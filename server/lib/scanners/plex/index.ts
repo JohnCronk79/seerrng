@@ -1,5 +1,8 @@
 import animeList from '@server/api/animelist';
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexAPI, {
@@ -7,7 +10,6 @@ import PlexAPI, {
   type PlexLibraryItem,
   type PlexMetadata,
 } from '@server/api/plexapi';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
@@ -425,9 +427,9 @@ export class PlexScanner
       ? await getMetadataProvider('anime')
       : await getMetadataProvider('tv');
 
-    if (!(metadataProvider instanceof TheMovieDb)) {
+    if (!isTheMovieDbProvider(metadataProvider)) {
       tvShow = await metadataProvider.getTvShow({
-        tvId: Number(tmdbId),
+        tvId: Number(tvShow.id),
       });
     }
 

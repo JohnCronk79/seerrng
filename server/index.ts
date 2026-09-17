@@ -10,6 +10,11 @@ import { initI18n } from '@server/i18n';
 import { startJobs, stopJobs } from '@server/job/schedule';
 import { runWithConfigurationAdmission } from '@server/lib/configurationAdmission';
 import { loadExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import {
+  metricsAuthMiddleware,
+  metricsHandler,
+  metricsMiddleware,
+} from '@server/lib/metrics';
 import notificationManager from '@server/lib/notifications';
 import DiscordAgent from '@server/lib/notifications/agents/discord';
 import EmailAgent from '@server/lib/notifications/agents/email';
@@ -315,6 +320,10 @@ Promise.resolve()
           parameterLimit: API_URLENCODED_PARAMETER_LIMIT,
         })
       );
+      server.use(metricsMiddleware);
+      if (isTruthyEnv(process.env.METRICS_ENABLED)) {
+        server.get('/metrics', metricsAuthMiddleware, metricsHandler);
+      }
       if (settings.network.csrfProtection) {
         server.use(csrfProtection());
         server.use(csrfTokenCookie(requestUsesSecureTransport));

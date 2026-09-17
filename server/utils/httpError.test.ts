@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   getHttpErrorDetails,
+  getRetryAfterMs,
   hasHttpStatus,
   isTransientHttpError,
   withTransientHttpRetry,
@@ -62,6 +63,27 @@ describe('HTTP error utilities', () => {
       status: 503,
     });
     assert.equal(isTransientHttpError(error), true);
+  });
+
+  it('recognizes transient Axios errors wrapped by a provider', () => {
+    const error = new axios.AxiosError(
+      'rate limited',
+      undefined,
+      undefined,
+      undefined,
+      {
+        status: 429,
+        statusText: 'Too Many Requests',
+        headers: { 'retry-after': '1.5' },
+        config: { headers: {} } as never,
+        data: undefined,
+      }
+    );
+    const wrapped = new Error('provider request failed', { cause: error });
+
+    assert.equal(isTransientHttpError(wrapped), true);
+    assert.equal(getHttpErrorDetails(wrapped).status, 429);
+    assert.equal(getRetryAfterMs(wrapped), 1500);
   });
 
   it('does not retry permanent client errors', async () => {

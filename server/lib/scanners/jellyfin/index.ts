@@ -4,9 +4,11 @@ import type {
   JellyfinLibraryItemExtended,
 } from '@server/api/jellyfin';
 import JellyfinAPI from '@server/api/jellyfin';
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
 import MusicBrainz from '@server/api/musicbrainz';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
@@ -236,9 +238,9 @@ export class JellyfinScanner
       ? await getMetadataProvider('anime')
       : await getMetadataProvider('tv');
 
-    if (!(metadataProvider instanceof TheMovieDb)) {
+    if (!isTheMovieDbProvider(metadataProvider)) {
       tvShow = await metadataProvider.getTvShow({
-        tvId: Number(tmdbId),
+        tvId: Number(tvShow.id),
       });
     }
 

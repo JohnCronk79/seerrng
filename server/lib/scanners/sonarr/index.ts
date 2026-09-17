@@ -1,7 +1,9 @@
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
 import type { SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
@@ -194,7 +196,7 @@ class SonarrScanner
         ? await getMetadataProvider('anime')
         : await getMetadataProvider('tv');
 
-      if (!(metadataProvider instanceof TheMovieDb)) {
+      if (!isTheMovieDbProvider(metadataProvider)) {
         tvShow = await metadataProvider.getTvShow({ tvId: tmdbId });
       }
       const settings = getExternalRuntimeConfig();

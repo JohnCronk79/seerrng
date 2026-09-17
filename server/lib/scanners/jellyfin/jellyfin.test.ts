@@ -5,19 +5,24 @@ import type {
 } from '@server/api/jellyfin';
 import JellyfinAPI from '@server/api/jellyfin';
 import MusicBrainz from '@server/api/musicbrainz';
+import type { TvShowProvider } from '@server/api/provider';
 import TheMovieDb from '@server/api/themoviedb';
 import type {
   TmdbTvDetails,
   TmdbTvSeasonResult,
 } from '@server/api/themoviedb/interfaces';
+import Tvdb from '@server/api/tvdb';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import type { Library } from '@server/lib/settings';
-import { getSettings } from '@server/lib/settings';
+import {
+  getSettings,
+  MetadataProviderType,
+  type Library,
+} from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -127,6 +132,18 @@ Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
 import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 
 setupTestDb();
+
+// BaseScanner constructs its TMDB client during module evaluation, before the
+// prototype getter above is installed. Override that retained instance too so
+// the fixture remains deterministic under both Node and Vitest loaders.
+Object.defineProperty((jellyfinFullScanner as any).tmdb, 'getTvShow', {
+  get() {
+    return async (args: { tvId: number; language?: string }) =>
+      getTvShowImpl(args);
+  },
+  set() {},
+  configurable: true,
+});
 
 // --- Helpers ---
 
@@ -258,6 +275,10 @@ function configureJellyfinWithLibrary(
     apiKey: 'test-api-key',
     libraries,
   };
+  settings.metadataSettings = {
+    ...settings.metadataSettings,
+    tv: MetadataProviderType.TMDB,
+  };
 }
 
 describe('Jellyfin Scanner', () => {
@@ -274,6 +295,43 @@ describe('Jellyfin Scanner', () => {
       jellyfinUserId: 'admin-user-id',
       jellyfinDeviceId: 'admin-device-id',
     });
+  });
+
+  it('passes the resolved TMDB id to a TVDB-only provider', async () => {
+    const resolvedTmdbId = 987;
+    const requestedIds: number[] = [];
+    const tvdbProvider: TvShowProvider = {
+      getTvShow: async ({ tvId }) => {
+        requestedIds.push(tvId);
+        return fakeTmdbShow(resolvedTmdbId);
+      },
+      getTvSeason: async () => {
+        throw new Error('not used');
+      },
+      getShowByTvdbId: async () => {
+        throw new Error('not used');
+      },
+    };
+    const originalGetInstance = Tvdb.getInstance;
+
+    configureJellyfinWithLibrary();
+    getTvShowImpl = async () => fakeTmdbShow(resolvedTmdbId);
+    getSettings().metadataSettings.tv = MetadataProviderType.TVDB;
+    Object.defineProperty(Tvdb, 'getInstance', {
+      value: async () => tvdbProvider,
+      configurable: true,
+    });
+
+    try {
+      await (jellyfinFullScanner as any).getTvShow({ tmdbId: 123 });
+    } finally {
+      Object.defineProperty(Tvdb, 'getInstance', {
+        value: originalGetInstance,
+        configurable: true,
+      });
+    }
+
+    assert.deepStrictEqual(requestedIds, [resolvedTmdbId]);
   });
 
   it('marks Jellyfin music albums available using their release-group ID', async () => {
