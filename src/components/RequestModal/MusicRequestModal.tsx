@@ -383,6 +383,14 @@ const MusicRequestModal = ({
               : cancelRequest()
         }
         okDisabled={isUpdating || serviceUnavailable}
+        okButtonProps={{
+          buttonIcon:
+            !hasPermission(Permission.MANAGE_REQUESTS) &&
+            !hasPermission(Permission.REQUEST_ADVANCED)
+              ? 'cancel'
+              : undefined,
+        }}
+        secondaryButtonProps={{ buttonIcon: 'cancel' }}
         okText={
           hasPermission(Permission.MANAGE_REQUESTS)
             ? intl.formatMessage(messages.approve)
@@ -502,8 +510,8 @@ const MusicRequestModal = ({
         artwork={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
         artworkType="music"
       >
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+        <div className="refreshed-inset-surface detail-summary-card grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
             <CachedImage
               type="music"
               src={data?.posterPath || '/images/seerr_poster_not_found.png'}
@@ -515,14 +523,14 @@ const MusicRequestModal = ({
           </div>
 
           <div className="flex min-w-0 flex-col">
-            <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
+            <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
               {data?.title}
               {releaseYear ? ` (${releaseYear})` : ''}
             </h3>
 
-            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
-              <div className="card:col-span-2 card:pr-3 min-w-0">
-                <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows detail-paired-columns grid min-w-0 content-start text-xs text-gray-400">
                   <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
@@ -544,7 +552,7 @@ const MusicRequestModal = ({
                       : notAvailable}
                   </dd>
 
-                  <div className="media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                     <dt className="font-medium text-gray-100">
                       {intl.formatMessage(messages.artist)}:
                     </dt>
@@ -567,16 +575,16 @@ const MusicRequestModal = ({
                     </dd>
                   </div>
 
-                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
+                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
-                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
+                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                     {genres || notAvailable}
                   </dd>
                 </dl>
               </div>
 
-              <dl className="media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400">
+              <dl className="media-detail-rows media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs text-gray-400">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>
@@ -670,7 +678,7 @@ const MusicRequestModal = ({
               quota?.music?.restricted ||
               serviceUnavailable
             }
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+            className="compact-control request-submit-control"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {requestButtonLabel}

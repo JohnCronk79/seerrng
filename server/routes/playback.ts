@@ -7,6 +7,7 @@ import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { resolveCollectionQualityCatalog } from '@server/lib/collectionPlaybackQuality';
 import { Permission } from '@server/lib/permissions';
 import { getPlaybackMediaRootId } from '@server/lib/playbackMediaRoot';
 import {
@@ -430,26 +431,19 @@ const resolvePlaylistItemIds = async (
 
 const createCollectionCatalog = async (
   media: Media,
-  user: User
+  user: User,
+  is4k: boolean
 ): Promise<PlaybackCatalogResponse> => {
-  const mediaServerType = getSettings().main.mediaServerType;
-  if (
-    mediaServerType !== MediaServerType.PLEX &&
-    canUsePlayback(user, MediaType.MOVIE, true)
-  ) {
-    const highQualityCatalog = await createCatalog(media, user, true);
-    if (highQualityCatalog.rootItem) {
-      return highQualityCatalog;
+  return (
+    (await resolveCollectionQualityCatalog(media, is4k, (quality) =>
+      createCatalog(media, user, quality)
+    )) ?? {
+      mediaId: media.id,
+      serverType: getSettings().main.mediaServerType,
+      is4k,
+      groups: [],
     }
-  }
-  const standardCatalog = await createCatalog(media, user, false);
-  if (
-    standardCatalog.rootItem ||
-    !canUsePlayback(user, MediaType.MOVIE, true)
-  ) {
-    return standardCatalog;
-  }
-  return createCatalog(media, user, true);
+  );
 };
 
 const replaceCurrentSelectionPlaylist = async (
@@ -805,7 +799,12 @@ playbackRoutes.post('/media/:mediaId/playlist', async (req, res, next) => {
 });
 
 playbackRoutes.post('/collection/play', async (req, res, next) => {
-  const body = req.body as { deviceId?: unknown; mediaIds?: unknown };
+  const body = req.body as {
+    deviceId?: unknown;
+    mediaIds?: unknown;
+    is4k?: unknown;
+  };
+  const is4k = body.is4k === true;
   const deviceId =
     typeof body.deviceId === 'string' ? body.deviceId.slice(0, 512) : '';
   const requestedMediaIds = Array.isArray(body.mediaIds)
@@ -825,7 +824,7 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
 
   try {
     const user = await loadPlaybackUser(req.user!.id);
-    if (!canUsePlayback(user, MediaType.MOVIE)) {
+    if (!canUsePlayback(user, MediaType.MOVIE, is4k)) {
       return res
         .status(403)
         .json({ status: 403, message: 'Playback is not permitted.' });
@@ -845,15 +844,15 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
       });
     }
     const catalogs = await mapWithConcurrency(uniqueMediaIds, 5, (mediaId) =>
-      createCollectionCatalog(mediaById.get(mediaId)!, user)
+      createCollectionCatalog(mediaById.get(mediaId)!, user, is4k)
     );
     const itemIds = catalogs.flatMap((catalog) =>
       catalog.rootItem ? [catalog.rootItem.id] : []
     );
-    if (itemIds.length !== uniqueMediaIds.length) {
+    if (itemIds.length === 0) {
       return res.status(400).json({
         status: 400,
-        message: 'Every selected collection item must be available.',
+        message: 'No selected collection items are available in this quality.',
       });
     }
 
@@ -928,7 +927,8 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
 });
 
 playbackRoutes.post('/collection/playlist', async (req, res, next) => {
-  const body = req.body as { mediaIds?: unknown };
+  const body = req.body as { mediaIds?: unknown; is4k?: unknown };
+  const is4k = body.is4k === true;
   const requestedMediaIds = Array.isArray(body.mediaIds)
     ? body.mediaIds
         .slice(0, MAX_PLAYBACK_ITEMS)
@@ -946,7 +946,7 @@ playbackRoutes.post('/collection/playlist', async (req, res, next) => {
 
   try {
     const user = await loadPlaybackUser(req.user!.id);
-    if (!canUsePlayback(user, MediaType.MOVIE)) {
+    if (!canUsePlayback(user, MediaType.MOVIE, is4k)) {
       return res
         .status(403)
         .json({ status: 403, message: 'Playback is not permitted.' });
@@ -966,15 +966,15 @@ playbackRoutes.post('/collection/playlist', async (req, res, next) => {
       });
     }
     const catalogs = await mapWithConcurrency(uniqueMediaIds, 5, (mediaId) =>
-      createCollectionCatalog(mediaById.get(mediaId)!, user)
+      createCollectionCatalog(mediaById.get(mediaId)!, user, is4k)
     );
     const itemIds = catalogs.flatMap((catalog) =>
       catalog.rootItem ? [catalog.rootItem.id] : []
     );
-    if (itemIds.length !== uniqueMediaIds.length) {
+    if (itemIds.length === 0) {
       return res.status(400).json({
         status: 400,
-        message: 'Every selected collection item must be available.',
+        message: 'No selected collection items are available in this quality.',
       });
     }
 

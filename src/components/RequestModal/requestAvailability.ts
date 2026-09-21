@@ -18,6 +18,20 @@ interface DestinationAvailabilityMedia {
   requests?: StoredRequestDestination[];
 }
 
+// Availability is quality-specific; a partial series must still allow its
+// missing episodes to be requested.
+export const isVideoQualityAvailable = (
+  media: DestinationAvailabilityMedia | null | undefined,
+  mediaType: 'movie' | 'tv',
+  is4k = false
+): boolean => {
+  const status = is4k ? media?.status4k : media?.status;
+  return (
+    status === MediaStatus.AVAILABLE ||
+    (mediaType === 'movie' && status === MediaStatus.PARTIALLY_AVAILABLE)
+  );
+};
+
 export const createRequestDestination = (
   serviceType: RequestDestination['serviceType'],
   format: RequestDestination['format'],

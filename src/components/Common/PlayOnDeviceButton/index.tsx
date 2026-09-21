@@ -12,6 +12,7 @@ import useSWR from 'swr';
 
 const messages = defineMessages('components.Common.PlayOnDeviceButton', {
   label: 'Play on Device',
+  help: 'Choose an active, authorized device and start playing the selected media on it.',
   emptySelection: 'No playable media is currently available.',
   noDevices: 'No active, authorized playback devices are available.',
   started: 'Playback started on {deviceName}.',
@@ -75,6 +76,7 @@ const PlayOnDeviceButton = ({
 
   return (
     <Dropdown
+      title={intl.formatMessage(messages.help)}
       buttonType="playback"
       buttonSize="sm"
       className={className}

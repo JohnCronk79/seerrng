@@ -68,7 +68,7 @@ const UserDropdown = () => {
         transition
         className="absolute right-0 z-50 mt-2 w-72 origin-top-right rounded-md shadow-lg transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0"
       >
-        <div className="divide-y divide-gray-700 rounded-md bg-gray-800/80 ring-1 ring-gray-700 backdrop-blur">
+        <div className="app-user-menu-surface divide-y divide-gray-700 rounded-md ring-1 ring-gray-700 backdrop-blur">
           <div className="flex flex-col space-y-4 px-4 py-4">
             <div className="flex items-center space-x-2">
               <CachedImage

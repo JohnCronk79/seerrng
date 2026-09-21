@@ -451,6 +451,7 @@ const SettingsServices = () => {
         <Modal
           okText={intl.formatMessage(globalMessages.delete)}
           okButtonType="danger"
+          okButtonProps={{ buttonIcon: 'delete' }}
           onOk={() => deleteServer()}
           onCancel={() =>
             setDeleteServerModal({

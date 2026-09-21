@@ -126,6 +126,7 @@ const AssociationBadge = ({
             );
           }}
           okText={intl.formatMessage(messages.browseMore)}
+          okButtonProps={{ buttonIcon: 'browse' }}
           cancelButtonType="danger"
           okButtonType="success"
           actionButtonSize="standard"

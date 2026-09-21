@@ -9,6 +9,7 @@ import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
 import MusicDetailsLayout from '@app/components/MusicDetails/MusicDetailsLayout';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
+import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -134,6 +135,17 @@ const MusicDetails = () => {
     setToggleWatchlist(!data?.onUserWatchlist);
   }, [data?.onUserWatchlist]);
 
+  const {
+    isBlocklisted,
+    checking: checkingBlocklist,
+    error: blocklistError,
+    setBlocklisted,
+  } = useTitleBlocklist(
+    normalizedRouteMusicId,
+    MediaType.MUSIC,
+    data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
+  );
+
   if (!data && !error) {
     return <LoadingSpinner />;
   }
@@ -214,7 +226,8 @@ const MusicDetails = () => {
       disabled:
         !service ||
         data.mediaInfo?.status === MediaStatus.BLOCKLISTED ||
-        (!canChooseAlternateTarget && (available || requested)),
+        !!available ||
+        (!canChooseAlternateTarget && requested),
       disabledReason: !service
         ? intl.formatMessage(
             format === 'mp3'
@@ -244,7 +257,7 @@ const MusicDetails = () => {
     !!data.mediaInfo?.id && data.mediaInfo.status === MediaStatus.AVAILABLE;
   const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
   const isBlocklistAvailable =
-    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
+    !isBlocklisted && !checkingBlocklist && !blocklistError;
   const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
   const isManageAvailable = Boolean(
     data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
@@ -267,6 +280,7 @@ const MusicDetails = () => {
         mediaType: MediaType.MUSIC,
         title: data.title,
       });
+      await setBlocklisted(true);
 
       addToast(
         <span>
@@ -358,6 +372,21 @@ const MusicDetails = () => {
     }
   };
 
+  const catalogActions = (
+    <>
+      {canRequest && artistId && (
+        <Button
+          buttonType="bulkRequest"
+          buttonSize="sm"
+          onClick={() => setShowBulkRequestModal(true)}
+        >
+          <ArrowDownTrayIcon />
+          <span>{intl.formatMessage(messages.requestdiscography)}</span>
+        </Button>
+      )}
+    </>
+  );
+
   const primaryActions = (
     <>
       {canUseBlocklist && (
@@ -401,13 +430,8 @@ const MusicDetails = () => {
             className="relative"
             aria-label={intl.formatMessage(messages.manage)}
           >
-            <CogIcon className="!mr-0" />
-            {openIssues.length > 0 && (
-              <>
-                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-600" />
-                <span className="absolute -top-1 -right-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-              </>
-            )}
+            <CogIcon />
+            <span>{intl.formatMessage(globalMessages.manage)}</span>
           </Button>
         </Tooltip>
       )}
@@ -430,20 +454,11 @@ const MusicDetails = () => {
             aria-label={intl.formatMessage(messages.reportissue)}
           >
             <ExclamationTriangleIcon />
+            <span>{intl.formatMessage(globalMessages.reportIssue)}</span>
           </Button>
         </Tooltip>
       )}
       <AssociationBadge mediaType="album" id={albumId} variant="button" />
-      {canRequest && artistId && (
-        <Button
-          buttonType="bulkRequest"
-          buttonSize="sm"
-          onClick={() => setShowBulkRequestModal(true)}
-        >
-          <ArrowDownTrayIcon />
-          <span>{intl.formatMessage(messages.requestdiscography)}</span>
-        </Button>
-      )}
       {activeMusicRequest && (
         <Button
           buttonType="ghost"
@@ -501,7 +516,7 @@ const MusicDetails = () => {
     hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
       type: 'or',
     }) && openIssues.length > 0 ? (
-      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+      <section className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
         <h2 className="media-inset-heading px-3 py-2">
           {intl.formatMessage(messages.openissues)}
         </h2>
@@ -589,6 +604,7 @@ const MusicDetails = () => {
         data={data}
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        catalogActions={catalogActions}
         playbackActions={playbackActions}
         ratingData={ratingData}
         additionalContent={additionalContent}

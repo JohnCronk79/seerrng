@@ -3,6 +3,7 @@ import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import PlaybackTrackList from '@app/components/MediaDetails/PlaybackTrackList';
+import { subjectTagClassName } from '@app/components/MediaDetails/subjectTagStyle';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
@@ -37,7 +38,7 @@ const messages = defineMessages('components.BookDetails.Layout', {
   available: 'Available',
   requested: 'Requested',
   notRequested: 'Not Requested',
-  notAvailable: 'Not available',
+  notAvailable: 'Not Available',
 });
 
 export interface BookFormatCoverage {
@@ -51,29 +52,26 @@ interface BookDetailsLayoutProps {
   formatCoverage: BookFormatCoverage[];
   primaryActions: ReactNode;
   secondaryActions: ReactNode;
+  catalogActions?: ReactNode;
   playbackActions?: (itemIds: string[]) => ReactNode;
   additionalContent?: ReactNode;
 }
-
-const genreTones = [
-  'border-indigo-400/80 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/35',
-  'border-purple-400/80 bg-purple-500/20 text-purple-100 hover:bg-purple-500/35',
-  'border-emerald-400/80 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/35',
-  'border-amber-400/80 bg-amber-500/20 text-amber-100 hover:bg-amber-500/35',
-  'border-sky-400/80 bg-sky-500/20 text-sky-100 hover:bg-sky-500/35',
-  'border-rose-400/80 bg-rose-500/20 text-rose-100 hover:bg-rose-500/35',
-] as const;
 
 const BookDetailsLayout = ({
   data,
   formatCoverage,
   primaryActions,
   secondaryActions,
+  catalogActions,
   playbackActions,
   additionalContent,
 }: BookDetailsLayoutProps) => {
   const intl = useIntl();
   const { pins, togglePinned } = useDetailDisclosurePins('book');
+  const [showDetails, setShowDetails] = useState(false);
+  useEffect(() => {
+    setShowDetails(pins.details);
+  }, [pins.details, data.id]);
   const [showGenres, setShowGenres] = useState(false);
   const [selectedPlaybackItemIds, setSelectedPlaybackItemIds] = useState<
     string[]
@@ -149,7 +147,7 @@ const BookDetailsLayout = ({
         )}
 
         <div className="relative z-10">
-          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="refreshed-inset-surface detail-summary-card grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
             <div
               className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20"
               data-testid="media-details-poster"
@@ -167,16 +165,16 @@ const BookDetailsLayout = ({
 
             <div className="flex min-w-0 flex-col">
               <h1
-                className="text-lg leading-5 font-semibold text-white"
+                className="detail-summary-title text-lg leading-5 font-semibold text-white"
                 data-testid="media-title"
               >
                 {data.title}
                 {data.firstPublishYear ? ` (${data.firstPublishYear})` : ''}
               </h1>
 
-              <div className="card:grid-cols-3 mt-4 grid min-w-0 flex-1 grid-cols-1">
-                <div className="card:col-span-2 card:pr-3 min-w-0">
-                  <dl className="card:grid-cols-[max-content_0.75rem_6rem_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+              <div className="detail-card-heading-spacing detail-three-column-grid grid min-w-0 flex-1">
+                <div className="detail-paired-column-span min-w-0">
+                  <dl className="media-detail-rows detail-paired-columns grid min-w-0 content-start text-xs">
                     <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                       {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
@@ -197,7 +195,7 @@ const BookDetailsLayout = ({
                         ? intl.formatNumber(data.numberOfPages)
                         : unavailable}
                     </dd>
-                    <div className="media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                    <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                       <dt className="font-medium text-gray-100">
                         {intl.formatMessage(messages.author)}:
                       </dt>
@@ -233,11 +231,11 @@ const BookDetailsLayout = ({
                       </dd>
                     </div>
 
-                    <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
+                    <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                       {intl.formatMessage(messages.genres)}:
                     </dt>
                     <dd
-                      className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 mt-0.5 min-w-0 break-words"
+                      className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 min-w-0 break-words"
                       data-testid="media-details-genres"
                     >
                       {genres.length > 0
@@ -257,7 +255,7 @@ const BookDetailsLayout = ({
                   </dl>
                 </div>
 
-                <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+                <dl className="media-detail-rows media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                   {formatCoverage.map((coverage) => (
                     <div className="contents" key={coverage.format}>
                       <dt className="font-medium text-gray-100">
@@ -310,7 +308,7 @@ const BookDetailsLayout = ({
             {secondaryActions}
           </div>
 
-          <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+          <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
             <h2 className="media-inset-heading">
               {intl.formatMessage(messages.overview)}
             </h2>
@@ -334,7 +332,15 @@ const BookDetailsLayout = ({
             </div>
           </section>
 
-          <div className="mt-[5px] flex flex-wrap items-center gap-2">
+          <div className="media-detail-disclosure-row">
+            <DetailDisclosureButton
+              label={intl.formatMessage(messages.bookDetails)}
+              open={showDetails}
+              onClick={() => setShowDetails((open) => !open)}
+              pinned={pins.details}
+              onPinClick={() => void togglePinned('details')}
+              controls="book-additional-details"
+            />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.genres)}
               open={showGenres}
@@ -342,10 +348,11 @@ const BookDetailsLayout = ({
               pinned={pins.subjectTags}
               onPinClick={() => void togglePinned('subjectTags')}
             />
+            {catalogActions}
           </div>
 
           {showGenres && (
-            <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+            <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
               <h2 className="media-inset-heading mb-2">
                 {intl.formatMessage(messages.genres)}
               </h2>
@@ -359,9 +366,7 @@ const BookDetailsLayout = ({
                     <Link
                       key={genre}
                       href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
-                      className={`compact-control inline-flex items-center rounded-full border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
-                        genreTones[index % genreTones.length]
-                      }`}
+                      className={subjectTagClassName(index)}
                     >
                       {genre}
                     </Link>
@@ -371,109 +376,71 @@ const BookDetailsLayout = ({
             </section>
           )}
 
-          <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
-            <h2 className="media-inset-heading mb-3">
-              {intl.formatMessage(messages.bookDetails)}
-            </h2>
-            <div className="card:grid-cols-3 grid grid-cols-1">
-              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.firstPublished)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.firstPublishYear ?? unavailable}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.pages)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.numberOfPages
-                    ? intl.formatNumber(data.numberOfPages)
-                    : unavailable}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.editions)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.editionCount
-                    ? intl.formatNumber(data.editionCount)
-                    : unavailable}
-                </dd>
-              </dl>
-
-              <dl className="media-detail-column-divider card:pr-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.publisher)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.publisher || unavailable}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.author)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.author ? (
-                    authorId ? (
-                      <Link
-                        href={`/author/${authorId}`}
-                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                      >
-                        {data.author}
-                      </Link>
-                    ) : (
-                      data.author
-                    )
-                  ) : (
-                    unavailable
-                  )}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.edition)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {data.editionId || unavailable}
-                </dd>
-              </dl>
-
-              <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.openLibrary)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  <a
-                    href={`https://openlibrary.org/works/${workId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                  >
-                    {data.id}
-                  </a>
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.isbnCandidates)}:
-                </dt>
-                <dd className="m-0 min-w-0">
-                  {data.isbnCandidates?.length
-                    ? data.isbnCandidates.slice(0, 4).map((candidate) => (
-                        <span
-                          className="block truncate"
-                          key={`${candidate.editionId ?? candidate.isbn}-${candidate.isbn}`}
-                          title={[
-                            candidate.isbn,
-                            candidate.title,
-                            candidate.format,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        >
-                          {candidate.isbn}
-                        </span>
-                      ))
-                    : unavailable}
-                </dd>
-              </dl>
-            </div>
-          </section>
+          {showDetails && (
+            <section
+              id="book-additional-details"
+              className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3"
+            >
+              <h2 className="media-inset-heading detail-card-heading-after">
+                {intl.formatMessage(messages.bookDetails)}
+              </h2>
+              <div className="detail-three-column-grid grid">
+                <dl className="media-detail-rows grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.publisher)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {data.publisher || unavailable}
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.edition)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {data.editionId || unavailable}
+                  </dd>
+                </dl>
+                <dl className="media-detail-rows media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.openLibrary)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    <a
+                      href={`https://openlibrary.org/works/${workId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                    >
+                      {data.id}
+                    </a>
+                  </dd>
+                </dl>
+                <dl className="media-detail-rows media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.isbnCandidates)}:
+                  </dt>
+                  <dd className="m-0 min-w-0">
+                    {data.isbnCandidates?.length
+                      ? data.isbnCandidates.slice(0, 4).map((candidate) => (
+                          <span
+                            className="block truncate"
+                            key={`${candidate.editionId ?? candidate.isbn}-${candidate.isbn}`}
+                            title={[
+                              candidate.isbn,
+                              candidate.title,
+                              candidate.format,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          >
+                            {candidate.isbn}
+                          </span>
+                        ))
+                      : unavailable}
+                  </dd>
+                </dl>
+              </div>
+            </section>
+          )}
           {additionalContent}
         </div>
       </article>

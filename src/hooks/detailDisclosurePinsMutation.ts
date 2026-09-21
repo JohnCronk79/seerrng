@@ -17,6 +17,8 @@ export class DetailDisclosurePinsMutationState {
   private key = '';
   private revision = 0;
   private value: DetailDisclosurePins = {
+    details: false,
+    collection: false,
     cast: false,
     crew: false,
     artists: false,

@@ -163,11 +163,11 @@ const Layout = ({ children }: LayoutProps) => {
       <div className="relative mb-16 flex w-0 min-w-0 flex-1 flex-col lg:ml-64">
         <PullToRefresh />
         <div
-          className={`searchbar fixed top-0 right-0 left-0 z-10 flex flex-shrink-0 transition duration-300 ${
+          className={`searchbar fixed left-0 right-0 top-0 z-10 flex flex-shrink-0 transition duration-300 ${
             isScrolled ? 'app-searchbar-scrolled' : 'bg-transparent'
           } lg:left-64`}
         >
-          <div className="flex flex-1 items-center justify-between px-4 md:pr-4 md:pl-4">
+          <div className="flex flex-1 items-center justify-between px-4 md:pl-4 md:pr-4">
             <button
               className={`mr-2 hidden text-white sm:block ${
                 isScrolled ? 'opacity-90' : 'opacity-70'
@@ -183,6 +183,7 @@ const Layout = ({ children }: LayoutProps) => {
                 isScrolled ? 'opacity-90' : 'opacity-70'
               } pwa-only transition duration-300 hover:text-white focus:text-white focus:outline-none`}
               onClick={() => router.back()}
+              aria-label="Go back to the previous page"
             >
               <ArrowLeftIcon className="w-7" />
             </button>

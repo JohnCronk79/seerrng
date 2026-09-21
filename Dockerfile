@@ -72,6 +72,8 @@ RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_
 
 COPY . .
 
+RUN pnpm test:node src/context/ThemeContext.test.ts && pnpm ui-style:check
+
 # The repository-wide current-batch contract is validated before the image build.
 # Its inputs intentionally include files excluded from the secure Docker context,
 # so run the in-context i18n check and the two application compilers directly.

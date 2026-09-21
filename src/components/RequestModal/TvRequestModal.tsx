@@ -12,6 +12,7 @@ import {
   createRequestDestination,
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
+  isVideoQualityAvailable,
 } from '@app/components/RequestModal/requestAvailability';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -162,7 +163,8 @@ const TvRequestModal = ({
   );
   const selectedDestinationAvailable =
     !editRequest &&
-    isRequestDestinationAvailable(data?.mediaInfo, selectedDestination);
+    (isVideoQualityAvailable(data?.mediaInfo, 'tv', effectiveIs4k) ||
+      isRequestDestinationAvailable(data?.mediaInfo, selectedDestination));
   const selectedDestinationRequested =
     !editRequest &&
     isRequestDestinationRequested(
@@ -520,6 +522,10 @@ const TvRequestModal = ({
             : messages.requestseriestitle
       )}
       okText={requestButtonLabel}
+      okButtonProps={{
+        buttonIcon:
+          editRequest && selectedSeasons.length === 0 ? 'cancel' : undefined,
+      }}
       okDisabled={requestDisabled}
       okButtonType={
         editRequest
@@ -549,7 +555,7 @@ const TvRequestModal = ({
       dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"
     >
       {editRequest && (
-        <div className="refreshed-inset-surface mb-[5px] rounded-lg border border-gray-700 p-3">
+        <div className="refreshed-inset-surface card-spacing-after rounded-lg border border-gray-700 p-3">
           {isOwner
             ? intl.formatMessage(messages.pendingapproval)
             : intl.formatMessage(messages.requestfrom, {
@@ -582,7 +588,7 @@ const TvRequestModal = ({
       )}
       <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
         <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
             <CachedImage
               type="tmdb"
               src={
@@ -597,14 +603,14 @@ const TvRequestModal = ({
           </div>
 
           <div className="flex min-w-0 flex-col">
-            <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
+            <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
               {data?.name}
               {releaseYear ? ` (${releaseYear})` : ''}
             </h3>
 
-            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
-              <div className="card:col-span-2 card:pr-3 min-w-0">
-                <dl className="refreshed-detail-text-muted card:grid-cols-[max-content_0.75rem_6rem_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows refreshed-detail-text-muted detail-paired-columns grid min-w-0 content-start text-xs">
                   <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
@@ -625,7 +631,7 @@ const TvRequestModal = ({
                       ? `${intl.formatNumber(runtime)} minutes`
                       : notAvailable}
                   </dd>
-                  <div className="media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5">
+                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                     {featuredCrew.map((person) => (
                       <div
                         className="contents"
@@ -642,10 +648,10 @@ const TvRequestModal = ({
                     </dt>
                     <dd className="m-0 truncate">{network}</dd>
                   </div>
-                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
+                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
-                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
+                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                     {data?.genres?.length
                       ? data.genres
                           .slice(0, 3)
@@ -655,7 +661,7 @@ const TvRequestModal = ({
                   </dd>
                 </dl>
               </div>
-              <dl className="refreshed-detail-text-muted media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+              <dl className="media-detail-rows refreshed-detail-text-muted media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>
@@ -788,10 +794,15 @@ const TvRequestModal = ({
           disabled={requestDisabled}
           onClick={() => void submitAction()}
           data-testid="modal-ok-button"
+          className="request-submit-control"
           buttonType="success"
           buttonSize="standard"
         >
-          <ArrowDownTrayIcon aria-hidden="true" />
+          {editRequest && selectedSeasons.length === 0 ? (
+            <XMarkIcon aria-hidden="true" />
+          ) : (
+            <ArrowDownTrayIcon aria-hidden="true" />
+          )}
           {requestButtonLabel}
         </Button>
       </div>

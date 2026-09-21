@@ -9,7 +9,6 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaTypeBadge, {
   type MediaTypeBadgeType,
 } from '@app/components/Common/MediaTypeBadge';
-import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
@@ -34,7 +33,6 @@ import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { Transition } from '@headlessui/react';
 import {
-  ArchiveBoxXMarkIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   CheckIcon,
@@ -48,7 +46,6 @@ import {
   NoSymbolIcon,
   PencilIcon,
   ServerIcon,
-  TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
@@ -75,6 +72,14 @@ import {
   resolveRequestStatusUserSelection,
   type RequestStatusUserSelection,
 } from './requestStatusQuery';
+
+import {
+  deleteLibraryMedia,
+  deleteRequestStatus,
+  RequestActionButton,
+  RequestActionConfirmation,
+  requestActionMessageText,
+} from './destructiveActions';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -200,23 +205,7 @@ const messages = defineMessages('components.RequestStatus', {
   modifyFailed: 'Unable to update this request.',
   retryFailed: 'Unable to retry this request.',
   retrySuccess: 'Request queued for another attempt.',
-  delete: 'Delete',
-  deleting: 'Deleting…',
-  deleteTooltip: 'Delete this request and its status history.',
-  deleteTitle: 'Delete request status entry?',
-  deleteDescription:
-    'Seerr will cancel any active work it can identify, clean up temporary request records, and permanently remove this entry and its history.',
-  deleteFailed: 'Unable to delete this request entry.',
-  deleteSuccess: 'Request entry deleted.',
-  remove: 'Delete From Library',
-  removing: 'Deleting…',
-  removeTooltip: 'The media and the library entry will both be deleted.',
-  removeUnavailableTooltip: 'No linked library item is available to delete.',
-  removeTitle: 'Delete item from {service}?',
-  removeDescription:
-    'Delete {title} and its media files from {service}. Seerr will preserve an author or artist that still has other books or albums.',
-  removeFailed: 'Unable to delete this item from its library service.',
-  removeSuccess: 'Item deleted from its library service.',
+  ...requestActionMessageText,
   loading: 'Loading request status',
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
@@ -1118,7 +1107,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.approveTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
+              className="compact-control border-emerald-600/80 bg-emerald-800/25 inline-flex items-center gap-1 rounded-md border px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('approve')}
             >
@@ -1129,7 +1118,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.declineTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
+              className="compact-control border-red-600/80 bg-red-800/25 inline-flex items-center gap-1 rounded-md border px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('decline')}
             >
@@ -1140,7 +1129,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.editTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
+              className="compact-control border-amber-600/80 bg-amber-800/25 inline-flex items-center gap-1 rounded-md border px-2 text-[11px] font-semibold leading-none text-amber-200 transition hover:border-amber-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-40"
               disabled={isModifying}
               onClick={() => setShowEditModal(true)}
             >
@@ -1153,7 +1142,7 @@ const RequestStatusCard = ({
       <Tooltip content={intl.formatMessage(messages.retryTooltip)}>
         <button
           type="button"
-          className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="compact-control border-amber-600/80 bg-amber-800/25 inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 text-[11px] font-semibold leading-none text-amber-300 transition hover:border-amber-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canRetry || isRetrying || isDeleting || isRemoving}
           onClick={() => void onRetry(item.request.id)}
         >
@@ -1162,46 +1151,27 @@ const RequestStatusCard = ({
         </button>
       </Tooltip>
       {canShowDelete && (
-        <Tooltip content={intl.formatMessage(messages.deleteTooltip)}>
-          <button
-            type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={isDeleting || isRetrying || isRemoving}
-            onClick={() => onDelete(item.request.id)}
-          >
-            <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            {intl.formatMessage(
-              isDeleting ? messages.deleting : messages.delete
-            )}
-          </button>
-        </Tooltip>
+        <RequestActionButton
+          action="delete"
+          busy={isDeleting}
+          disabled={isDeleting || isRetrying || isRemoving}
+          onClick={() => onDelete(item.request.id)}
+        />
       )}
       {canShowRemove && (
-        <Tooltip
-          content={intl.formatMessage(
-            canRemove
-              ? messages.removeTooltip
-              : messages.removeUnavailableTooltip
-          )}
-        >
-          <button
-            type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-rose-400 bg-rose-500/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-rose-100 transition hover:border-rose-200 hover:bg-rose-500/45 hover:text-white focus:ring-2 focus:ring-rose-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!canRemove || isRemoving || isRetrying || isDeleting}
-            onClick={() =>
-              onRemove(
-                item.request.id,
-                displayTitle,
-                getDisplayServiceName(current.service) ?? 'library service'
-              )
-            }
-          >
-            <ArchiveBoxXMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            {intl.formatMessage(
-              isRemoving ? messages.removing : messages.remove
-            )}
-          </button>
-        </Tooltip>
+        <RequestActionButton
+          action="remove"
+          busy={isRemoving}
+          unavailable={!canRemove}
+          disabled={!canRemove || isRemoving || isRetrying || isDeleting}
+          onClick={() =>
+            onRemove(
+              item.request.id,
+              displayTitle,
+              getDisplayServiceName(current.service) ?? 'library service'
+            )
+          }
+        />
       )}
     </div>
   );
@@ -1250,13 +1220,13 @@ const RequestStatusCard = ({
             <div className="refreshed-artwork-gradient" />
           </div>
         )}
-        <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+        <div className="refreshed-inset-surface detail-summary-card relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
           <div className="min-w-0 self-start">
             {detailHref ? (
               <Link
                 href={detailHref}
                 aria-label={displayTitle}
-                className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none motion-reduce:transition-none sm:h-[120px] sm:w-20"
+                className="detail-card-poster relative block overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 motion-reduce:transition-none"
               >
                 <CachedImage
                   src={poster.src}
@@ -1266,12 +1236,12 @@ const RequestStatusCard = ({
                   sizes="(min-width: 640px) 80px, 64px"
                   className="object-cover"
                 />
-                <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+                <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
                   {posterBadge}
                 </span>
               </Link>
             ) : (
-              <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+              <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
                 <CachedImage
                   src={poster.src}
                   type={poster.type}
@@ -1280,7 +1250,7 @@ const RequestStatusCard = ({
                   sizes="(min-width: 640px) 80px, 64px"
                   className="object-cover"
                 />
-                <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+                <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
                   {posterBadge}
                 </span>
               </div>
@@ -1291,41 +1261,39 @@ const RequestStatusCard = ({
             {detailHref ? (
               <Link
                 href={detailHref}
-                className="-mt-0.5 block truncate text-lg leading-5 font-semibold text-white hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                className="detail-summary-title block truncate text-lg font-semibold leading-5 text-white hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
               >
                 {displayTitle}
               </Link>
             ) : (
-              <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
+              <h3 className="detail-summary-title truncate text-lg font-semibold leading-5 text-white">
                 {displayTitle}
               </h3>
             )}
 
-            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
-              <div className="card:col-span-2 card:pr-3 min-w-0">
-                <dl className="refreshed-detail-text card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
-                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows refreshed-detail-text detail-paired-columns grid min-w-0 content-start text-xs">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
-                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
                     {getMediaBadge(intl, item)} · {getMediaFormat(intl, item)}
                   </dd>
-                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
                     {getReleaseDateLabel(intl, item)}:
                   </dt>
-                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
                     {displayReleaseDate}
                   </dd>
-                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
                     {getRuntimeLabel(intl, item)}:
                   </dt>
-                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
+                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
                     {getRuntimeOrPages(intl, details, item)}
                   </dd>
 
-                  <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
-
-                  <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
+                  <div className="media-detail-rows media-detail-column-divider col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1">
                     {[...featuredCredits, ...secondaryDetails].map(
                       (credit, index) => (
                         <div
@@ -1339,7 +1307,7 @@ const RequestStatusCard = ({
                             {credit.href ? (
                               <Link
                                 href={credit.href}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
                               >
                                 {credit.name}
                               </Link>
@@ -1352,17 +1320,17 @@ const RequestStatusCard = ({
                     )}
                   </div>
 
-                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
                   {genres.length > 0 ? (
-                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
+                    <dd className="m-0 line-clamp-2 min-w-0 break-words card:col-span-3 card:col-start-3 card:row-start-4">
                       {genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
                           <Link
                             href={genre.href}
-                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
                           >
                             {genre.name}
                           </Link>
@@ -1370,21 +1338,21 @@ const RequestStatusCard = ({
                       ))}
                     </dd>
                   ) : (
-                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5">
+                    <dd className="m-0 card:col-span-3 card:col-start-3 card:row-start-4">
                       {notAvailable}
                     </dd>
                   )}
                 </dl>
               </div>
 
-              <dl className="refreshed-detail-text media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+              <dl className="media-detail-rows refreshed-detail-text media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.requestedByLabel)}:
                 </dt>
                 <dd className="m-0 truncate">
                   <Link
                     href={`/users/${item.request.requestedBy.id}`}
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
                   >
                     {item.request.requestedBy.displayName}
                   </Link>
@@ -1418,12 +1386,12 @@ const RequestStatusCard = ({
           </div>
         </div>
 
-        <div className="refreshed-inset-surface relative z-10 mt-[5px] rounded-lg border border-gray-700 py-[5px]">
+        <div className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 py-[5px]">
           {timelineHasOverflow && (
             <button
               type="button"
               onClick={() => scrollTimeline(-1)}
-              className="app-button app-button-default absolute top-1/2 left-1 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
+              className="app-button app-button-default absolute left-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressLeft)}
             >
               <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
@@ -1451,7 +1419,7 @@ const RequestStatusCard = ({
                   >
                     {index < timelineStages.length - 1 && (
                       <span
-                        className={`absolute top-[6px] right-[-50%] left-1/2 h-0.5 ${
+                        className={`absolute left-1/2 right-[-50%] top-[6px] h-0.5 ${
                           !terminalWithoutProgress && index < activeIndex
                             ? 'bg-emerald-400'
                             : 'bg-gray-700'
@@ -1475,7 +1443,7 @@ const RequestStatusCard = ({
                       ) : null}
                     </span>
                     <span
-                      className={`mt-1 text-[11px] leading-4 whitespace-nowrap ${
+                      className={`mt-1 whitespace-nowrap text-[11px] leading-4 ${
                         isCurrent
                           ? 'font-semibold text-white'
                           : 'refreshed-detail-text-muted'
@@ -1492,7 +1460,7 @@ const RequestStatusCard = ({
             <button
               type="button"
               onClick={() => scrollTimeline(1)}
-              className="app-button app-button-default absolute top-1/2 right-1 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
+              className="app-button app-button-default absolute right-1 top-1/2 z-10 h-10 w-7 -translate-y-1/2 p-0 backdrop-blur-sm"
               aria-label={intl.formatMessage(messages.scrollProgressRight)}
             >
               <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
@@ -1501,7 +1469,7 @@ const RequestStatusCard = ({
         </div>
 
         {current.stage === 'downloading' && current.percent !== null && (
-          <div className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
+          <div className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-indigo-200">
               <span className="inline-flex items-center gap-2">
                 <span>
@@ -1575,7 +1543,7 @@ const RequestStatusCard = ({
           {actionControls}
           <button
             type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-800/45 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="compact-control border-emerald-600/80 bg-emerald-800/25 hover:bg-emerald-800/45 inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
             aria-expanded={isHistoryOpen}
             onClick={() => onToggleHistory(item.request.id)}
           >
@@ -1591,7 +1559,7 @@ const RequestStatusCard = ({
         </div>
 
         {isHistoryOpen && (
-          <section className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
+          <section className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 p-3">
             <h4 className="mb-2 text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.history)}
             </h4>
@@ -1924,7 +1892,7 @@ const RequestStatus = () => {
     const requestId = deleteRequestId;
     setDeletingRequestId(requestId);
     try {
-      await axios.delete(`/api/v1/request/${requestId}/status`);
+      await deleteRequestStatus(requestId);
       addToast(intl.formatMessage(messages.deleteSuccess), {
         appearance: 'success',
         autoDismiss: true,
@@ -1989,16 +1957,7 @@ const RequestStatus = () => {
     const selection = removeSelection;
     setRemovingRequestId(selection.requestId);
     try {
-      const params = new URLSearchParams({
-        is4k: String(selection.is4k),
-      });
-      if (selection.format) {
-        params.set('format', selection.format);
-      }
-
-      await axios.delete(
-        `/api/v1/media/${selection.mediaId}/file?${params.toString()}`
-      );
+      await deleteLibraryMedia(selection);
       addToast(intl.formatMessage(messages.removeSuccess), {
         appearance: 'success',
         autoDismiss: true,
@@ -2037,14 +1996,14 @@ const RequestStatus = () => {
       <>
         <PageTitle title={intl.formatMessage(messages.title)} />
         <div
-          className="mt-8 flex flex-col items-start gap-4 rounded-xl border border-red-500/50 bg-red-500/10 p-6 text-red-100 sm:flex-row sm:items-center sm:justify-between"
+          className="border-red-500/50 bg-red-500/10 mt-8 flex flex-col items-start gap-4 rounded-xl border p-6 text-red-100 sm:flex-row sm:items-center sm:justify-between"
           role="alert"
         >
           <div>
             <p className="font-medium">
               {intl.formatMessage(messages.loadError)}
             </p>
-            <p className="mt-1 text-sm text-red-100/80">
+            <p className="text-red-100/80 mt-1 text-sm">
               {intl.formatMessage(messages.loadErrorHint)}
             </p>
           </div>
@@ -2142,20 +2101,12 @@ const RequestStatus = () => {
           leaveTo="opacity-0"
           show
         >
-          <Modal
-            title={intl.formatMessage(messages.deleteTitle)}
-            okText={intl.formatMessage(messages.delete)}
-            okButtonType="danger"
-            loading={deletingRequestId !== null}
-            onOk={() => void deleteRequest()}
+          <RequestActionConfirmation
+            action="delete"
+            busy={deletingRequestId !== null}
+            onConfirm={() => void deleteRequest()}
             onCancel={() => setDeleteRequestId(null)}
-            actionButtonSize="standard"
-            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
-          >
-            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-              {intl.formatMessage(messages.deleteDescription)}
-            </p>
-          </Modal>
+          />
         </Transition>
       )}
       {removeSelection && (
@@ -2169,31 +2120,20 @@ const RequestStatus = () => {
           leaveTo="opacity-0"
           show
         >
-          <Modal
-            title={intl.formatMessage(messages.removeTitle, {
-              service: removeSelection.service,
-            })}
-            okText={intl.formatMessage(messages.remove)}
-            okButtonType="danger"
-            loading={removingRequestId !== null}
-            onOk={() => void removeRequestFromLibrary()}
+          <RequestActionConfirmation
+            action="remove"
+            title={removeSelection.title}
+            service={removeSelection.service}
+            busy={removingRequestId !== null}
+            onConfirm={() => void removeRequestFromLibrary()}
             onCancel={() => setRemoveSelection(null)}
-            actionButtonSize="standard"
-            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
-          >
-            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-              {intl.formatMessage(messages.removeDescription, {
-                title: removeSelection.title,
-                service: removeSelection.service,
-              })}
-            </p>
-          </Modal>
+          />
         </Transition>
       )}
       <PageTitle title={intl.formatMessage(messages.title)} />
       <div className="mt-8 flex items-center justify-between gap-4">
         <h2
-          className="min-w-0 flex-1 truncate text-2xl leading-7 font-bold text-gray-100 sm:overflow-visible sm:text-4xl sm:leading-9"
+          className="min-w-0 flex-1 truncate text-2xl font-bold leading-7 text-gray-100 sm:overflow-visible sm:text-4xl sm:leading-9"
           data-testid="page-header"
         >
           <span className="text-overseerr">
@@ -2213,7 +2153,7 @@ const RequestStatus = () => {
       </div>
       {error && (
         <div
-          className="mb-5 flex flex-col items-start gap-3 rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between"
+          className="border-amber-400/40 bg-amber-500/10 mb-5 flex flex-col items-start gap-3 rounded-lg border p-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between"
           role="status"
         >
           <span>{intl.formatMessage(messages.loadErrorHint)}</span>
@@ -2299,7 +2239,7 @@ const RequestStatus = () => {
               )}
             >
               <span>{intl.formatMessage(summary.label)}</span>
-              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] leading-none font-semibold text-gray-100">
+              <span className="rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
                 {summary.value}
               </span>
             </button>
@@ -2431,7 +2371,7 @@ const RequestStatus = () => {
         </div>
       </section>
 
-      <div className="space-y-4">
+      <div className="card-stack">
         {data.results.map((item) => (
           <RequestStatusCard
             key={item.request.id}

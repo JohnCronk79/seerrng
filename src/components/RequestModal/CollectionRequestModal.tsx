@@ -369,8 +369,8 @@ const CollectionRequestModal = ({
         }
         artworkType="tmdb"
       >
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+        <div className="refreshed-inset-surface detail-summary-card grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
             <CachedImage
               type="tmdb"
               src={
@@ -384,10 +384,10 @@ const CollectionRequestModal = ({
             />
           </div>
           <div className="min-w-0">
-            <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
+            <h3 className="detail-summary-title truncate text-lg font-semibold leading-5 text-white">
               {data?.name}
             </h3>
-            <p className="refreshed-detail-text mt-1 text-xs">
+            <p className="refreshed-detail-text detail-card-heading-spacing text-xs">
               {intl.formatMessage(messages.requestmovies, {
                 count: visibleParts.length,
               })}
@@ -395,7 +395,7 @@ const CollectionRequestModal = ({
           </div>
         </div>
 
-        <section className="refreshed-inset-surface mt-3 overflow-hidden rounded-lg border border-gray-700 p-2">
+        <section className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700 p-2">
           <div className="request-divider-dark grid grid-cols-[2rem_minmax(0,1fr)_8rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
             <SelectionCircle
               disabled={selectAllDisabled}
@@ -406,7 +406,7 @@ const CollectionRequestModal = ({
             <span>{intl.formatMessage(globalMessages.movie)}</span>
             <span>{intl.formatMessage(messages.status)}</span>
           </div>
-          <div className="scrollable-card -mr-3 max-h-[312px] space-y-1 overflow-y-auto pt-1 pr-3">
+          <div className="scrollable-card -mr-3 max-h-[312px] space-y-1 overflow-y-auto pr-3 pt-1">
             {visibleParts.map((part) => {
               const presentation = getCollectionPartRequestPresentation(
                 part,

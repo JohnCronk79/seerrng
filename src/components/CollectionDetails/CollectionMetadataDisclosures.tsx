@@ -3,6 +3,7 @@ import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosur
 import ExpandableCreditList, {
   type ExpandableCredit,
 } from '@app/components/MediaDetails/ExpandableCreditList';
+import { subjectTagClassName } from '@app/components/MediaDetails/subjectTagStyle';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import { mapWithConcurrency } from '@app/utils/concurrency';
 import defineMessages from '@app/utils/defineMessages';
@@ -24,14 +25,6 @@ const messages = defineMessages('components.CollectionDetails.Metadata', {
   noCrew: 'No crew information available',
   noTags: 'No subject tags available',
 });
-
-const tones = [
-  'border-indigo-400/80 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/35',
-  'border-purple-400/80 bg-purple-500/20 text-purple-100 hover:bg-purple-500/35',
-  'border-emerald-400/80 bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/35',
-  'border-amber-400/80 bg-amber-500/20 text-amber-100 hover:bg-amber-500/35',
-  'border-sky-400/80 bg-sky-500/20 text-sky-100 hover:bg-sky-500/35',
-] as const;
 
 const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
   const intl = useIntl();
@@ -155,7 +148,7 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
         />
       </div>
       {open.size > 0 && loading && (
-        <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-6">
+        <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-6">
           <LoadingSpinner />
         </section>
       )}
@@ -174,7 +167,7 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
         />
       )}
       {open.has('subjectTags') && !loading && (
-        <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+        <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
           <h2 className="media-inset-heading mb-2">
             {intl.formatMessage(messages.subjectTags)}
           </h2>
@@ -188,7 +181,7 @@ const CollectionMetadataDisclosures = ({ parts }: { parts: MovieResult[] }) => {
                 <Link
                   key={id}
                   href={`/discover/movies/keyword?keywords=${id}`}
-                  className={`compact-control inline-flex items-center rounded-full border px-2 text-[11px] font-medium transition ${tones[index % tones.length]}`}
+                  className={subjectTagClassName(index)}
                 >
                   {name}
                 </Link>

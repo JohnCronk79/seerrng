@@ -11,11 +11,26 @@ const ONE_DAY_STATIC_CACHE = `public, max-age=${ONE_DAY}, stale-while-revalidate
 const THIRTY_DAY_STATIC_CACHE = `public, max-age=${THIRTY_DAYS}, stale-while-revalidate=${THIRTY_DAYS}, stale-if-error=${ONE_DAY}`;
 
 const nextConfig: NextConfig = {
+  ...(process.env.NODE_ENV === 'development' &&
+  (process.env.WATCHPACK_POLLING === 'true' ||
+    process.env.SEERR_DEV_WEBPACK === 'true')
+    ? {
+        distDir: '.next-webpack-dev',
+        assetPrefix: '/__seerr_live_dev',
+      }
+    : {}),
+  ...(process.env.NODE_ENV === 'development' &&
+  process.env.SEERR_DEV_ALLOWED_ORIGIN
+    ? { allowedDevOrigins: [process.env.SEERR_DEV_ALLOWED_ORIGIN] }
+    : {}),
   outputFileTracingRoot: projectRoot,
   env: {
     commitTag: process.env.COMMIT_TAG || 'local',
   },
   async headers() {
+    if (process.env.NODE_ENV === 'development') {
+      return [];
+    }
     return [
       {
         source:

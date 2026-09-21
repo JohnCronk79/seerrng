@@ -11,6 +11,7 @@ import {
 import { BOOK_GENRES } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
 import { tvNetworks } from '@app/components/Discover/NetworkSlider';
 import { studios } from '@app/components/Discover/StudioSlider';
+import FocusedIssue from '@app/components/IssueList/FocusedIssue';
 import IssueItem from '@app/components/IssueList/IssueItem';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
@@ -87,6 +88,7 @@ type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 const IssueList = () => {
   const intl = useIntl();
   const router = useRouter();
+  const focusedIssueId = getPositiveQueryParamNumber(router.query.issue);
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('added');
   const [direction, setDirection] = useState<Direction>('desc');
@@ -237,6 +239,9 @@ const IssueList = () => {
           {intl.formatMessage(messages.issues)}
         </span>
       </h2>
+      {focusedIssueId && (
+        <FocusedIssue key={focusedIssueId} issueId={focusedIssueId} />
+      )}
       <section className="app-filter-section-gap mt-4">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
@@ -467,11 +472,13 @@ const IssueList = () => {
           })}
         </div>
       </section>
-      {data.results.map((issue) => (
-        <div className="py-2" key={`issue-item-${issue.id}`}>
-          <IssueItem issue={issue} />
-        </div>
-      ))}
+      <div className="card-stack card-spacing-before">
+        {data.results
+          .filter((issue) => issue.id !== focusedIssueId)
+          .map((issue) => (
+            <IssueItem key={`issue-item-${issue.id}`} issue={issue} />
+          ))}
+      </div>
       {data.results.length === 0 && (
         <div className="refreshed-card-surface flex min-h-16 w-full flex-col items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-white">
           <span className="refreshed-detail-text text-sm">

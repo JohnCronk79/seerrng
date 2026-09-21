@@ -224,6 +224,8 @@ const serializeScopedDetailDisclosurePins = (
   mediaType: DetailDisclosureMediaType
 ): UserSettingsDetailDisclosureResponse => {
   const legacyPins: UserSettingsDetailDisclosureResponse = {
+    details: false,
+    ...(mediaType === 'movie' ? { collection: false } : {}),
     cast:
       mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
     crew:
@@ -242,7 +244,9 @@ const serializeScopedDetailDisclosurePins = (
 };
 
 const parseDetailDisclosurePinsBody = (
-  body: unknown
+  body: unknown,
+  includeCollection = false,
+  includeDetails = false
 ): { value: UserSettingsDetailDisclosureResponse } | { error: string } => {
   const parsedBody = parseUserSettingsBodyObject(body);
 
@@ -251,7 +255,13 @@ const parseDetailDisclosurePinsBody = (
   }
 
   const value: UserSettingsDetailDisclosureResponse = {};
-  for (const key of ['cast', 'crew', 'artists', 'subjectTags'] as const) {
+  const keys = ['cast', 'crew', 'artists', 'subjectTags'] as const;
+  const allowedKeys: (keyof UserSettingsDetailDisclosureResponse)[] = [
+    ...keys,
+    ...(includeDetails ? (['details'] as const) : []),
+    ...(includeCollection ? (['collection'] as const) : []),
+  ];
+  for (const key of allowedKeys) {
     if (!hasOwn(parsedBody.value, key)) {
       continue;
     }
@@ -967,7 +977,11 @@ userSettingsRoutes.post<
   async (req, res, next) => {
     const userRepository = getRepository(User);
     const { mediaType } = req.params;
-    const parsedBody = parseDetailDisclosurePinsBody(req.body);
+    const parsedBody = parseDetailDisclosurePinsBody(
+      req.body,
+      mediaType === 'movie',
+      true
+    );
 
     if (!isDetailDisclosureMediaType(mediaType)) {
       return next({ status: 400, message: 'Invalid detail media type.' });

@@ -32,6 +32,7 @@ interface DetailDisclosureButtonProps {
   onClick: () => void;
   pinned?: boolean;
   onPinClick?: () => void;
+  controls?: string;
 }
 
 const DetailDisclosureButton = ({
@@ -40,6 +41,7 @@ const DetailDisclosureButton = ({
   onClick,
   pinned = false,
   onPinClick,
+  controls,
 }: DetailDisclosureButtonProps) => {
   const intl = useIntl();
   const pinLabel = intl.formatMessage(pinned ? messages.unpin : messages.pin, {
@@ -69,13 +71,11 @@ const DetailDisclosureButton = ({
         type="button"
         className="detail-disclosure-button"
         aria-expanded={open}
+        aria-controls={controls}
         onClick={onClick}
       >
         {label}
-        <ChevronDownIcon
-          className={`h-3.5 w-3.5 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
-          aria-hidden="true"
-        />
+        <ChevronDownIcon className="disclosure-chevron" aria-hidden="true" />
       </button>
     </span>
   );

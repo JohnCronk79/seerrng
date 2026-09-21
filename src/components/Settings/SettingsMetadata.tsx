@@ -277,7 +277,7 @@ const SettingsMetadata = () => {
           {intl.formatMessage(messages.metadataSettings)}
         </p>
         <div className="settings-group-content">
-          <div className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+          <div className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
             <h4 className="settings-group-heading">
               {intl.formatMessage(messages.providerStatus)}
             </h4>
@@ -307,7 +307,7 @@ const SettingsMetadata = () => {
             </div>
           </div>
 
-          <div className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+          <div className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
             <Formik
               initialValues={{ metadata: initialValues }}
               onSubmit={async (values) => {

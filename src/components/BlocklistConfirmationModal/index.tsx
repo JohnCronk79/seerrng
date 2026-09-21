@@ -48,7 +48,7 @@ const BlocklistConfirmationModal = ({
             : intl.formatMessage(globalMessages.blocklist)
         }
         okDisabled={isUpdating}
-        actionsClass="!justify-center gap-3"
+        actionsClass="!justify-center"
         actionButtonSize="standard"
       >
         <p className="text-center text-base font-bold text-white">

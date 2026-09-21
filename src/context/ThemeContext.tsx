@@ -15,7 +15,7 @@ import {
 
 export type ThemeMode = 'light' | 'dark';
 
-type ThemeChrome = 'classic';
+type ThemeChrome = 'classic' | 'blackout';
 
 export type ThemePalette = {
   id: string;
@@ -44,6 +44,15 @@ export const themePalettes: ThemePalette[] = [
     surface: 'slate',
     primary: 'blue',
     secondary: 'sky',
+  },
+  {
+    id: 'blackout',
+    name: 'Blackout',
+    swatches: ['#000000', '#1a3260', '#333333'],
+    surface: 'gray',
+    primary: 'indigo',
+    secondary: 'purple',
+    chrome: 'blackout',
   },
   {
     id: 'aurora',
@@ -614,6 +623,21 @@ const getThemeChromeTokens = (
   mode: ThemeMode,
   chrome?: ThemeChrome
 ): ThemeChromeTokens => {
+  if (chrome === 'blackout') {
+    return {
+      ...getThemeChromeTokens(
+        surfaceScale,
+        primaryScale,
+        secondaryScale,
+        mode,
+        'classic'
+      ),
+      searchbarScrolled: '0 0 0',
+      sidebarStart: '0 0 0',
+      sidebarEnd: '0 0 0',
+    };
+  }
+
   if (mode === 'dark' && chrome === 'classic') {
     return {
       pageBg: surfaceScale[9],
@@ -690,7 +714,8 @@ export const getThemeTokens = (mode: ThemeMode, palette: string) => {
   const primaryScale = themeScales[activePalette.primary];
   const secondaryScale = themeScales[activePalette.secondary];
   const surfaceScale =
-    mode === 'dark' && activePalette.chrome === 'classic'
+    mode === 'dark' &&
+    (activePalette.chrome === 'classic' || activePalette.chrome === 'blackout')
       ? themeScales.gray
       : createSurfaceScale(
           themeScales[activePalette.surface],

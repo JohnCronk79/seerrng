@@ -276,6 +276,14 @@ components:
     DetailDisclosurePinSettings:
       type: object
       properties:
+        details:
+          type: boolean
+          description: Keeps the additional details card open for the selected media type. Supported by the media-scoped endpoint.
+          example: false
+        collection:
+          type: boolean
+          description: Keeps movie collection panels open. Supported by the movie-scoped detail-disclosures endpoint.
+          example: false
         cast:
           type: boolean
           example: false
@@ -3383,6 +3391,10 @@ components:
     CollectionPlaybackCommand:
       type: object
       properties:
+        is4k:
+          type: boolean
+          default: false
+          description: Use only the selected quality (false for HD, true for 4K). Unavailable titles are skipped, never substituted with another quality.
         deviceId:
           type: string
           maxLength: 512
@@ -3397,6 +3409,10 @@ components:
     CollectionPlaylistCommand:
       type: object
       properties:
+        is4k:
+          type: boolean
+          default: false
+          description: Use only the selected quality (false for HD, true for 4K). Unavailable titles are skipped, never substituted with another quality.
         mediaIds:
           type: array
           minItems: 1
@@ -8669,6 +8685,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MusicResult'
+  /music/{musicId}/rating:
+    get:
+      summary: Get the album rating from MusicBrainz or Lidarr
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: musicId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Album rating returned, or an empty object when unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rating:
+                    type: object
+                    required: [score, votes, url, source]
+                    properties:
+                      score:
+                        type: number
+                        minimum: 0
+                        maximum: 10
+                      votes:
+                        type: integer
+                        minimum: 0
+                      url:
+                        type: string
+                      source:
+                        type: string
+                        enum: [musicbrainz, lidarr]
+        '404':
+          description: Album identifier not found
   /music/{musicId}/artist:
     get:
       summary: Get the primary artist for an album
@@ -10438,6 +10491,93 @@ paths:
       responses:
         '204':
           description: Succesfully removed media item
+  /media/{mediaId}/library:
+    parameters:
+      - in: path
+        name: mediaId
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Resolve all verified library copies
+      description: Read-only inventory across configured services. Requires MANAGE_REQUESTS. Returns a confirmation token bound to the exact media, targets and service configuration. No default-service guessing or deletion.
+      tags: [media]
+      responses:
+        '200':
+          description: Verified library copies and confirmation token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [targets, token]
+                properties:
+                  token:
+                    type: string
+                  targets:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        [
+                          key,
+                          serviceId,
+                          serviceType,
+                          externalId,
+                          service,
+                          quality,
+                          url,
+                        ]
+                      properties:
+                        key:
+                          type: string
+                        serviceId:
+                          type: integer
+                        serviceType:
+                          type: string
+                          enum: [radarr, sonarr, lidarr, readarr]
+                        externalId:
+                          type: integer
+                        service:
+                          type: string
+                        quality:
+                          type: string
+                        url:
+                          type: string
+        '403':
+          description: Not authorized
+        '404':
+          description: Media not found
+        '502':
+          description: Could not verify the complete library scope
+    delete:
+      summary: Delete all confirmed library copies
+      description: Requires MANAGE_REQUESTS. Revalidates the exact confirmation scope before deleting files and entries from every listed service. Stops on failure and preserves requests, issues, other titles, authors and artists.
+      tags: [media]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  pattern: '^[a-f0-9]{64}$'
+      responses:
+        '204':
+          description: All confirmed copies removed
+        '400':
+          description: Missing or invalid confirmation
+        '403':
+          description: No longer authorized
+        '404':
+          description: Media not found
+        '409':
+          description: Scope changed or deletion failed; review refreshed state
+        '502':
+          description: Could not verify services before deletion
   /media/{mediaId}/file:
     delete:
       summary: Delete media file
