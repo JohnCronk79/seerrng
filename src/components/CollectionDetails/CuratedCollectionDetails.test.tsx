@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   collection: {
     name: 'Test Collection',
     overview: 'Artist overview.',
+    backdropPath: '/artist-backdrop.jpg',
+    posterPath: 'https://assets.fanart.tv/fanart/artist.jpg',
     sourceUrl: 'https://musicbrainz.org',
     parts: [
       {
@@ -49,7 +51,9 @@ vi.mock('@app/hooks/useCuratedPosters', () => ({
 vi.mock('@app/components/Common/CachedImage', () => ({ default: () => null }));
 vi.mock('@app/components/Common/PageTitle', () => ({ default: () => null }));
 vi.mock('@app/components/MediaDetails/MediaDetailArtwork', () => ({
-  default: () => null,
+  default: ({ src, type }: { src: string; type: string }) => (
+    <div data-testid="artist-backdrop" data-src={src} data-type={type} />
+  ),
 }));
 vi.mock('@app/components/MediaDetails/MediaQualitySelect', () => ({
   default: () => null,
@@ -248,14 +252,22 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
           <CuratedCollectionDetails
             kind="music"
             id="discography-artist"
-            discographyArtist="Madonna"
+            discographyArtist=""
           />
         </IntlProvider>
       )
     );
-    expect(document.querySelector('h1')?.textContent).toBe(
-      'Madonna Discography'
-    );
+    expect(document.querySelector('h1')?.textContent).toBe('Test Discography');
+    expect(
+      document
+        .querySelector('article > [data-testid="artist-backdrop"]')
+        ?.getAttribute('data-src')
+    ).toBe(state.collection.posterPath);
+    expect(
+      document
+        .querySelector('[data-testid="artist-backdrop"]')
+        ?.getAttribute('data-type')
+    ).toBe('music');
     expect(
       document.querySelector('.collection-summary-size-value')?.textContent
     ).toBe('2');

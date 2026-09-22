@@ -169,7 +169,9 @@ export default function CuratedCollectionDetails({
     );
   const parts = data.parts;
   const displayName = isDiscography
-    ? intl.formatMessage(messages.discography, { artist: discographyArtist })
+    ? intl.formatMessage(messages.discography, {
+        artist: discographyArtist || data.name.replace(/ Collection$/, ''),
+      })
     : data.name;
   const playbackIds = curatedPlaybackIds(
     visibleParts,
@@ -226,12 +228,16 @@ export default function CuratedCollectionDetails({
   };
   return (
     <>
-      {!isDiscography && <PageTitle title={data.name} />}
+      <PageTitle title={displayName} />
       <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
-        {data.backdropPath && (
+        {(kind === 'music' ? data.posterPath : data.backdropPath) && (
           <MediaDetailArtwork
-            type="tmdb"
-            src={`https://image.tmdb.org/t/p/original${data.backdropPath}`}
+            type={kind === 'music' ? 'music' : 'tmdb'}
+            src={
+              kind === 'music'
+                ? data.posterPath!
+                : `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            }
           />
         )}
         <div className="card-stack relative z-10">

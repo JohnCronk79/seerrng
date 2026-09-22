@@ -8,7 +8,6 @@ import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
 import MusicDetailsLayout from '@app/components/MusicDetails/MusicDetailsLayout';
-import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
 import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
@@ -93,7 +92,6 @@ const MusicDetails = () => {
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [showBulkRequestModal, setShowBulkRequestModal] = useState(false);
   const [editRequest, setEditRequest] =
     useState<NonFunctionProperties<MediaRequest>>();
   const [showIssueModal, setShowIssueModal] = useState(false);
@@ -383,7 +381,9 @@ const MusicDetails = () => {
           buttonType="bulkRequest"
           buttonSize="sm"
           className="media-detail-catalog-action"
-          onClick={() => setShowBulkRequestModal(true)}
+          onClick={() =>
+            void router.push(`/collections/music/${artistId}?view=discography`)
+          }
         >
           <ArrowDownTrayIcon />
           <span>{intl.formatMessage(messages.requestdiscography)}</span>
@@ -593,16 +593,6 @@ const MusicDetails = () => {
             setShowRequestModal(false);
             revalidate();
           }}
-        />
-      )}
-      {showBulkRequestModal && data.artist.id && (
-        <BulkRequestModal
-          show={showBulkRequestModal}
-          mediaType="music"
-          artistId={artistId}
-          title={data.artist.name}
-          onCancel={() => setShowBulkRequestModal(false)}
-          onComplete={() => revalidate()}
         />
       )}
       <MusicDetailsLayout

@@ -675,11 +675,6 @@
     @apply justify-start;
   }
 
-  .discography-dialog {
-    width: calc(100% - 2rem) !important;
-    max-width: 64rem !important;
-  }
-
   .music-collection-action-row.discography-selection-row {
     margin-top: 0;
   }

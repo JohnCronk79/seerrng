@@ -13,9 +13,12 @@ export default function CollectionPage() {
     return <ErrorPage statusCode={404} />;
   return (
     <CuratedCollectionDetails
-      key={`${query.kind}:${query.id}`}
+      key={`${query.kind}:${query.id}:${query.view}`}
       kind={query.kind}
       id={query.id}
+      discographyArtist={
+        query.kind === 'music' && query.view === 'discography' ? '' : undefined
+      }
     />
   );
 }
