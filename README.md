@@ -111,6 +111,10 @@ services:
     restart: unless-stopped
 ```
 
+### Unraid
+
+Install SeerrNG from Community Applications with the [Unraid template](https://raw.githubusercontent.com/snapetech/seerrng/main/packaging/unraid/seerrng.xml). It uses the stable `latest` image, maps HTTP port `5055` and optional HTTPS port `5056`, and persists `/app/config`. The image runs as UID/GID `1000:1000`, so make the selected appdata directory writable by that user before the first start.
+
 ### Linux Packages
 
 This repo includes release workflows and packaging metadata for tarball, Debian, RPM, AppImage, Flatpak, Snap, AUR, PPA, and COPR style distribution. These packages install SeerrNG as a standalone service; Lidarr, Bookshelf, and other automation/media servers are optional external services configured inside SeerrNG. Use the GitHub releases for generated artifacts when available.

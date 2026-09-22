@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<CommunityApplications>
+  <Profile>SeerrNG is a self-hosted request and discovery application for personal media libraries. This repository provides the Unraid Community Applications template for movies, TV, music, ebooks, and audiobooks, with support for Plex, Jellyfin, Emby, Radarr, Sonarr, Lidarr, and Bookshelf or Readarr-compatible services.</Profile>
+  <Icon>https://raw.githubusercontent.com/snapetech/seerrng/main/public/android-chrome-512x512.png</Icon>
+  <WebPage>https://github.com/snapetech/seerrng</WebPage>
+  <Forum>https://github.com/snapetech/seerrng/issues</Forum>
+  <Discord>https://discord.gg/5PyXBfvS6T</Discord>
+  <DonateLink>https://ko-fi.com/snapetech</DonateLink>
+  <DonateText>Support SeerrNG development</DonateText>
+</CommunityApplications>

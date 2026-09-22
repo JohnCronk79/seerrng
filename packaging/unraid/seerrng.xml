@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>seerrng</Name>
+  <Repository>ghcr.io/snapetech/seerrng:latest</Repository>
+  <Registry>https://ghcr.io/snapetech/seerrng</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Icon>https://raw.githubusercontent.com/snapetech/seerrng/main/public/android-chrome-512x512.png</Icon>
+  <WebUI>http://[IP]:[PORT:5055]/</WebUI>
+  <Overview>SeerrNG is a self-hosted request and discovery application for movies, TV, music, ebooks, and audiobooks. It connects to Plex, Jellyfin, or Emby and automates approved requests through Radarr, Sonarr, Lidarr, and Bookshelf or Readarr-compatible services.</Overview>
+  <Description>SeerrNG extends the Seerr request workflow beyond movies and TV into music, ebooks, and audiobooks while retaining familiar request approvals, permissions, notifications, watchlists, quotas, and automation integrations. This template uses the latest stable GHCR image and persists the database, settings, logs, cache, and TLS material under /app/config. The image intentionally runs as the non-root node user with UID 1000 and GID 1000, so the mapped host directory must be writable by that UID and GID. Configure built-in HTTPS from Settings &gt; Network; the optional HTTPS listener is exposed on port 5056. Use a reverse proxy for public access rather than exposing the administration interface directly to the Internet.</Description>
+  <Support>https://github.com/snapetech/seerrng/issues</Support>
+  <Project>https://github.com/snapetech/seerrng</Project>
+  <TemplateURL>https://raw.githubusercontent.com/snapetech/seerrng/main/packaging/unraid/seerrng.xml</TemplateURL>
+  <ReadMe>https://github.com/snapetech/seerrng/blob/main/README.md</ReadMe>
+  <Category>MediaApp:Video Status:Stable</Category>
+  <ExtraSearchTerms>seerrng seerr jellyseerr overseerr plex jellyfin emby requests movies tv music books ebooks audiobooks radarr sonarr lidarr bookshelf readarr</ExtraSearchTerms>
+  <Changes>Initial Community Applications template for the stable SeerrNG release channel.</Changes>
+  <License>MIT License</License>
+  <Requires>Requires Docker, network access for metadata and external service integrations, and a persistent host directory for /app/config. Set the host directory ownership to UID 1000 and GID 1000 before the first start because the image does not run as root.</Requires>
+  <Screenshot>https://raw.githubusercontent.com/snapetech/seerrng/main/public/readme-discover-covers.jpg</Screenshot>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+
+  <Config Name="Web UI Port" Target="5055" Default="5055" Mode="tcp" Description="HTTP port for the SeerrNG web interface." Type="Port" Display="always" Required="true" Mask="false">5055</Config>
+  <Config Name="HTTPS Port" Target="5056" Default="5056" Mode="tcp" Description="HTTPS listener port when built-in TLS is enabled in Settings &gt; Network." Type="Port" Display="always" Required="true" Mask="false">5056</Config>
+  <Config Name="Appdata" Target="/app/config" Default="/mnt/user/appdata/seerrng" Mode="rw" Description="Persistent database, settings, logs, image cache, and TLS material. Make this host directory writable by UID 1000 and GID 1000." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/seerrng</Config>
+
+  <Config Name="TMDB API Key" Target="TMDB_API_KEY" Default="" Description="Optional TMDB v3 API key. Use this or a TMDB read access token during initial setup." Type="Variable" Display="always" Required="false" Mask="true" />
+  <Config Name="TMDB Read Access Token" Target="TMDB_READ_ACCESS_TOKEN" Default="" Description="Optional TMDB v4 read access token. Use this or a TMDB API key during initial setup." Type="Variable" Display="always" Required="false" Mask="true" />
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="info" Description="Application log level." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="Metrics Enabled" Target="METRICS_ENABLED" Default="false" Description="Set to true to enable the Prometheus /metrics endpoint." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Metrics Auth Token" Target="METRICS_AUTH_TOKEN" Default="" Description="Optional bearer token required by /metrics when metrics are enabled." Type="Variable" Display="advanced" Required="false" Mask="true" />
+
+  <Config Name="Require Public Setup Hosts" Target="SEERR_REQUIRE_PUBLIC_SETUP_HOSTS" Default="false" Description="Set to true to reject private or LAN Jellyfin and Emby hostnames during first-run setup." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Allow Private Notification URLs" Target="SEERR_ALLOW_PRIVATE_NOTIFICATION_URLS" Default="false" Description="Set to true only when notification receivers such as Discord, Slack, webhooks, ntfy, or Gotify are intentionally hosted on the LAN." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Allow Private Push Endpoints" Target="SEERR_ALLOW_PRIVATE_PUSH_ENDPOINTS" Default="false" Description="Set to true only when browser push subscription endpoints are intentionally private or internal." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="External Services Read Only" Target="SEERR_EXTERNAL_READ_ONLY" Default="false" Description="Set to true to block mutating requests to external automation services. Production also requires the explicit production override below." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Allow Production Read Only" Target="SEERR_ALLOW_PRODUCTION_EXTERNAL_READ_ONLY" Default="false" Description="Explicitly allows read-only external-service mode in production when SEERR_EXTERNAL_READ_ONLY is true." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Skip Database Migrations" Target="SEERR_SKIP_DB_MIGRATIONS" Default="false" Description="Set to true only when database migrations are run out of band." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>

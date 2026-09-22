@@ -15,6 +15,7 @@ const portableTests = [
   'scripts/release-notes.test.mjs',
   'scripts/release-workflow.test.mjs',
   'scripts/verify-container-manifest.test.mjs',
+  'packaging/unraid/unraid-template.test.mjs',
 ];
 
 const posixOnlyTests = [
