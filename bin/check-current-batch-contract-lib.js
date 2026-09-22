@@ -2878,8 +2878,8 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/CollectionDetails/index.tsx',
-    'scrollable-card card-stack mt-2 -mr-3',
-    'the Collection item scrollbar must meet the card right edge'
+    '<ThreeItemScroll label={data.name}>',
+    'movie collections must use the same labeled scrolling list as music and series collections'
   );
   requireCount(
     'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
@@ -3056,7 +3056,7 @@ const validateCurrentBatchContract = (files) => {
     '<CollectionPlayOnDeviceButton',
     'mediaIds={effectivePlaybackMediaIds}',
     '<CollectionMetadataDisclosures',
-    'max-h-[312px]',
+    '<ThreeItemScroll',
     '<MovieSummaryCard',
     'show4kAvailability={true}',
     'mediaInfo: part.mediaInfo',

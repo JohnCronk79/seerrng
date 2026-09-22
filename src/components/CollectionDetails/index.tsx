@@ -9,6 +9,7 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
 import SelectionCircle from '@app/components/Common/SelectionCircle';
+import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import Tooltip from '@app/components/Common/Tooltip';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
@@ -292,7 +293,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   ];
 
   return (
-    <div className="media-page">
+    <>
       <PageTitle title={data.name} />
       {requestModal && (
         <RequestModal
@@ -513,11 +514,8 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             }
           />
 
-          <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
-            <h2 className="media-inset-heading">
-              {intl.formatMessage(messages.collection)}
-            </h2>
-            <div className="scrollable-card card-stack mt-2 -mr-3 max-h-[312px] overflow-y-auto pr-3">
+          <div className="card-spacing-before">
+            <ThreeItemScroll label={data.name}>
               {orderedParts.map((part) => {
                 const member = memberById.get(part.id);
                 const details = member?.details;
@@ -563,11 +561,11 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                   />
                 );
               })}
-            </div>
-          </section>
+            </ThreeItemScroll>
+          </div>
         </div>
       </article>
-    </div>
+    </>
   );
 };
 
