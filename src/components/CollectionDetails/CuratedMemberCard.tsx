@@ -37,12 +37,14 @@ export default function CuratedMemberCard({
   selected,
   toggle,
   ratings,
+  selectionLabel,
 }: {
   part: CuratedCollectionMember;
   kind: 'tv' | 'music';
   selected: boolean;
   toggle: () => void;
   ratings?: ReactNode;
+  selectionLabel?: string;
 }) {
   const intl = useIntl();
   const card = useRef<HTMLElement>(null);
@@ -120,7 +122,10 @@ export default function CuratedMemberCard({
       <div className="relative z-10 flex min-w-0 flex-col">
         <h3 className="movie-summary-title">
           <SelectionCircle
-            label={intl.formatMessage(messages.selection, { title })}
+            label={
+              selectionLabel ??
+              intl.formatMessage(messages.selection, { title })
+            }
             selected={selected}
             onClick={toggle}
           />

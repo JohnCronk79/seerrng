@@ -37,6 +37,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 import BulkRequestItemCard from './BulkRequestItemCard';
+import DiscographyRequestModal from './DiscographyRequestModal';
 
 const messages = defineMessages('components.RequestModal.BulkRequestModal', {
   requestdiscography: 'Request Discography',
@@ -330,7 +331,7 @@ const getMusicIneligibleReason = (item: BulkItem): string | undefined => {
   return undefined;
 };
 
-const BulkRequestModal = ({
+const LegacyBulkRequestModal = ({
   show,
   mediaType,
   title,
@@ -992,5 +993,17 @@ const BulkRequestModal = ({
     </Transition>
   );
 };
+
+const BulkRequestModal = (props: BulkRequestModalProps) =>
+  props.mediaType === 'music' && props.artistId ? (
+    <DiscographyRequestModal
+      show={props.show}
+      artistId={props.artistId}
+      artistName={props.title}
+      onCancel={props.onCancel}
+    />
+  ) : (
+    <LegacyBulkRequestModal {...props} />
+  );
 
 export default BulkRequestModal;

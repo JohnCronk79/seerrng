@@ -242,6 +242,45 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
       ).value
     ).toBe('Album');
     expect(document.querySelector('[data-member="live"]')).toBeNull();
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en">
+          <CuratedCollectionDetails
+            kind="music"
+            id="discography-artist"
+            discographyArtist="Madonna"
+          />
+        </IntlProvider>
+      )
+    );
+    expect(document.querySelector('h1')?.textContent).toBe(
+      'Madonna Discography'
+    );
+    expect(
+      document.querySelector('.collection-summary-size-value')?.textContent
+    ).toBe('2');
+    expect(document.querySelector('.discography-ratings')).not.toBeNull();
+    expect(document.querySelector('[data-testid="play"]')).toBeNull();
+    expect(document.querySelector('[data-testid="device"]')).toBeNull();
+    expect(document.querySelector('[data-testid="add"]')).toBeNull();
+    expect(
+      document.querySelector('.music-collection-filter-row')
+    ).not.toBeNull();
+    expect(document.querySelector('[data-member="live"]')).toBeNull();
+    await click('Clear Filters');
+    expect(
+      [...document.querySelectorAll('[data-member]')].map((element) =>
+        element.getAttribute('data-member')
+      )
+    ).toEqual(['studio', 'live']);
+    await click('Clear Selection');
+    expect(
+      document.querySelectorAll('[data-member][aria-pressed="true"]')
+    ).toHaveLength(0);
+    await click('Select All');
+    expect(
+      document.querySelectorAll('[data-member][aria-pressed="true"]')
+    ).toHaveLength(2);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

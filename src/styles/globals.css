@@ -675,6 +675,23 @@
     @apply justify-start;
   }
 
+  .discography-dialog {
+    width: calc(100% - 2rem) !important;
+    max-width: 64rem !important;
+  }
+
+  .music-collection-action-row.discography-selection-row {
+    margin-top: 0;
+  }
+
+  .discography-ratings {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-inline-start: auto;
+    gap: var(--card-spacing);
+  }
+
   .music-collection-action-row .collection-server-actions {
     margin-inline-start: auto;
   }

@@ -271,6 +271,7 @@
   "components.Common.StatusBadgeMini.approvedProcessing": "{quality}: Approved and processing",
   "components.Common.StatusBadgeMini.pendingApproval": "{quality}: Pending approval",
   "components.CuratedCollection.allHelp": "Select every item for playback and initial collection creation.",
+  "components.CuratedCollection.discography": "{artist} Discography",
   "components.CuratedCollection.empty": "No collection members are listed by the provider.",
   "components.CuratedCollection.failed": "This collection could not be loaded. Try again.",
   "components.CuratedCollection.genres": "Genres",

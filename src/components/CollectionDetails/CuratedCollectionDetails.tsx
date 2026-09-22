@@ -70,6 +70,7 @@ const messages = defineMessages('components.CuratedCollection', {
   source: 'Collection Source',
   sourceHelp: 'Open the source catalogue in a new browser window.',
   empty: 'No collection members are listed by the provider.',
+  discography: '{artist} Discography',
   ratings:
     'Average of {count} rated albums out of {total}; missing ratings are excluded.',
 });
@@ -77,16 +78,23 @@ const messages = defineMessages('components.CuratedCollection', {
 export default function CuratedCollectionDetails({
   kind,
   id,
+  discographyArtist,
 }: {
   kind: 'tv' | 'music';
   id: string;
+  discographyArtist?: string;
 }) {
   const intl = useIntl();
   const endpoint = `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
   const { data, error, mutate } = useSWR<CuratedCollection>(
     id ? endpoint : null
   );
-  const availability = useCollectionAvailability(id, data, kind);
+  const isDiscography = discographyArtist !== undefined;
+  const availability = useCollectionAvailability(
+    isDiscography ? '' : id,
+    data,
+    kind
+  );
   const [selected, setSelected] = useState<string[]>([]);
   const [manual, setManual] = useState(false);
   const [filters, setFilters] = useState<MusicCollectionFilters>({
@@ -160,6 +168,9 @@ export default function CuratedCollectionDetails({
       <LoadingSpinner />
     );
   const parts = data.parts;
+  const displayName = isDiscography
+    ? intl.formatMessage(messages.discography, { artist: discographyArtist })
+    : data.name;
   const playbackIds = curatedPlaybackIds(
     visibleParts,
     shownSelection,
@@ -215,7 +226,7 @@ export default function CuratedCollectionDetails({
   };
   return (
     <>
-      <PageTitle title={data.name} />
+      {!isDiscography && <PageTitle title={data.name} />}
       <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {data.backdropPath && (
           <MediaDetailArtwork
@@ -241,7 +252,7 @@ export default function CuratedCollectionDetails({
               />
             </div>
             <div className="collection-summary-details">
-              <h1 className="collection-summary-title">{data.name}</h1>
+              <h1 className="collection-summary-title">{displayName}</h1>
               <dl className="collection-summary-table detail-card-heading-spacing">
                 <dt className="collection-summary-overview-label">
                   {intl.formatMessage(messages.overview)}:
@@ -269,72 +280,79 @@ export default function CuratedCollectionDetails({
               </dl>
             </div>
           </div>
-          <div className="media-rating-row">
-            <MediaQualitySelect
-              value={quality}
-              onChange={setQuality}
-              label={intl.formatMessage(messages.quality)}
-              autoSelectAvailable={false}
-              options={[
-                {
-                  label: kind === 'music' ? 'MP3' : 'HD',
-                  value: 'standard',
-                  disabled: !parts.some((part) =>
-                    memberHasQuality(part, kind, false)
-                  ),
-                },
-                {
-                  label: kind === 'music' ? 'FLAC' : '4K',
-                  value: 'high',
-                  disabled: !parts.some((part) =>
-                    memberHasQuality(part, kind, true)
-                  ),
-                },
-              ]}
-            />
-            <MediaServerPlayButton
-              collectionMediaIds={playbackIds}
-              defaultIs4k={quality === 'high'}
-              disabled={!playbackIds.length}
-              disabledReason={
-                !playbackIds.length
-                  ? intl.formatMessage(messages.noPlayback)
-                  : undefined
-              }
-            />
-            <CollectionPlayOnDeviceButton
-              mediaIds={playbackIds}
-              is4k={quality === 'high'}
-              disabledReason={
-                !playbackIds.length
-                  ? intl.formatMessage(messages.noPlayback)
-                  : undefined
-              }
-            />
-            {kind === 'tv' ? (
-              <CollectionRatings
-                ratings={averages}
-                total={parts.length}
-                loading={loadingMembers && !members.length}
+          {!isDiscography && (
+            <div className="media-rating-row">
+              <MediaQualitySelect
+                value={quality}
+                onChange={setQuality}
+                label={intl.formatMessage(messages.quality)}
+                autoSelectAvailable={false}
+                options={[
+                  {
+                    label: kind === 'music' ? 'MP3' : 'HD',
+                    value: 'standard',
+                    disabled: !parts.some((part) =>
+                      memberHasQuality(part, kind, false)
+                    ),
+                  },
+                  {
+                    label: kind === 'music' ? 'FLAC' : '4K',
+                    value: 'high',
+                    disabled: !parts.some((part) =>
+                      memberHasQuality(part, kind, true)
+                    ),
+                  },
+                ]}
               />
-            ) : (
-              <MusicRatings ratings={musicAverages} total={parts.length} />
-            )}
-          </div>
+              <MediaServerPlayButton
+                collectionMediaIds={playbackIds}
+                defaultIs4k={quality === 'high'}
+                disabled={!playbackIds.length}
+                disabledReason={
+                  !playbackIds.length
+                    ? intl.formatMessage(messages.noPlayback)
+                    : undefined
+                }
+              />
+              <CollectionPlayOnDeviceButton
+                mediaIds={playbackIds}
+                is4k={quality === 'high'}
+                disabledReason={
+                  !playbackIds.length
+                    ? intl.formatMessage(messages.noPlayback)
+                    : undefined
+                }
+              />
+              {kind === 'tv' ? (
+                <CollectionRatings
+                  ratings={averages}
+                  total={parts.length}
+                  loading={loadingMembers && !members.length}
+                />
+              ) : (
+                <MusicRatings ratings={musicAverages} total={parts.length} />
+              )}
+            </div>
+          )}
           <div
             className={[
               'media-detail-disclosure-row',
               'collection-detail-disclosure-row',
               kind === 'music' ? 'music-collection-action-row' : '',
+              isDiscography ? 'discography-selection-row' : '',
             ]
               .filter(Boolean)
               .join(' ')}
           >
             <Button
               buttonType={kind === 'music' ? 'association' : 'ghost'}
-              title={intl.formatMessage(
-                kind === 'music' ? messages.visibleHelp : messages.allHelp
-              )}
+              title={
+                isDiscography
+                  ? intl.formatMessage(messages.selectAll)
+                  : intl.formatMessage(
+                      kind === 'music' ? messages.visibleHelp : messages.allHelp
+                    )
+              }
               onClick={() => {
                 setManual(true);
                 setSelected(visibleParts.map((part) => part.id));
@@ -345,7 +363,9 @@ export default function CuratedCollectionDetails({
             </Button>
             <Button
               buttonType={kind === 'music' ? 'association' : 'ghost'}
-              title={intl.formatMessage(messages.noneHelp)}
+              title={intl.formatMessage(
+                isDiscography ? messages.selectNone : messages.noneHelp
+              )}
               onClick={() => {
                 setManual(true);
                 setSelected([]);
@@ -369,15 +389,21 @@ export default function CuratedCollectionDetails({
                 <span>{intl.formatMessage(messages.trailer)}</span>
               </Button>
             )}
-            <CollectionServerActions
-              id={id}
-              title={data.name}
-              endpoint={endpoint}
-              selectedIds={shownSelection}
-              availability={availability.data}
-              error={availability.error}
-              revalidate={availability.mutate}
-            />
+            {isDiscography ? (
+              <div className="discography-ratings">
+                <MusicRatings ratings={musicAverages} total={parts.length} />
+              </div>
+            ) : (
+              <CollectionServerActions
+                id={id}
+                title={data.name}
+                endpoint={endpoint}
+                selectedIds={shownSelection}
+                availability={availability.data}
+                error={availability.error}
+                revalidate={availability.mutate}
+              />
+            )}
           </div>
           {kind === 'music' && (
             <MusicCollectionFilterRow
@@ -394,7 +420,7 @@ export default function CuratedCollectionDetails({
           ) : !visibleParts.length ? (
             <p role="status">{intl.formatMessage(messages.noMatches)}</p>
           ) : (
-            <ThreeItemScroll label={data.name}>
+            <ThreeItemScroll label={displayName}>
               {visibleParts.map((part) => (
                 <CuratedMemberCard
                   key={part.id}
@@ -404,6 +430,7 @@ export default function CuratedCollectionDetails({
                   }}
                   kind={kind}
                   selected={shownSelection.includes(part.id)}
+                  selectionLabel={isDiscography ? part.title : undefined}
                   toggle={() => toggle(part.id)}
                   ratings={
                     kind === 'tv' ? (
@@ -427,14 +454,16 @@ export default function CuratedCollectionDetails({
               ))}
             </ThreeItemScroll>
           )}
-          <a
-            href={data.sourceUrl}
-            target="_blank"
-            rel="noreferrer"
-            title={intl.formatMessage(messages.sourceHelp)}
-          >
-            {intl.formatMessage(messages.source)}
-          </a>
+          {!isDiscography && (
+            <a
+              href={data.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={intl.formatMessage(messages.sourceHelp)}
+            >
+              {intl.formatMessage(messages.source)}
+            </a>
+          )}
         </div>
       </article>
     </>
