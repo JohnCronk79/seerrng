@@ -22,7 +22,7 @@ import {
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import {
-  EMPTY_MUSIC_COLLECTION_FILTERS,
+  DEFAULT_MUSIC_COLLECTION_FILTERS,
   filterMusicCollection,
   type MusicCollectionFilters,
 } from '@app/utils/musicCollectionFilters';
@@ -90,14 +90,14 @@ export default function CuratedCollectionDetails({
   const [selected, setSelected] = useState<string[]>([]);
   const [manual, setManual] = useState(false);
   const [filters, setFilters] = useState<MusicCollectionFilters>({
-    ...EMPTY_MUSIC_COLLECTION_FILTERS,
+    ...DEFAULT_MUSIC_COLLECTION_FILTERS,
   });
   const [quality, setQuality] = useState<'standard' | 'high'>('standard');
   useEffect(() => {
     setManual(false);
     setSelected([]);
     setQuality('standard');
-    setFilters({ ...EMPTY_MUSIC_COLLECTION_FILTERS });
+    setFilters({ ...DEFAULT_MUSIC_COLLECTION_FILTERS });
   }, [kind, id]);
   const ids = data?.parts.map((part) => part.id).join(',') ?? '';
   const visibleParts =

@@ -162,10 +162,18 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
         </IntlProvider>
       )
     );
-    expect(output('add')).toBe('studio,live');
+    expect(output('add')).toBe('studio');
+    expect(document.querySelector('[data-member="live"]')).toBeNull();
+    expect(
+      (
+        document.querySelector(
+          'select[aria-label="Release Type"]'
+        ) as HTMLSelectElement
+      ).value
+    ).toBe('Album');
     expect(
       document.querySelector('.music-collection-load-status')?.textContent
-    ).toBe('Selection 2/2');
+    ).toBe('Selection 1/2');
     expect(
       document.querySelectorAll(
         '.music-collection-action-row .app-button-association'
@@ -173,6 +181,9 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
     ).toHaveLength(2);
     const types = document.querySelector('select[aria-label="Release Type"]')!;
     expect(types.querySelectorAll('option')).toHaveLength(18);
+    await click('Clear Filters');
+    expect(document.querySelectorAll('[data-member]')).toHaveLength(2);
+    await click('Select All');
     await filter('Release Type', 'Live');
     expect(output('add')).toBe('live');
     await filter('Release Type', 'Compilation');
@@ -215,6 +226,22 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
     );
     expect(document.querySelector('.music-collection-filter-row')).toBeNull();
     expect(document.querySelector('.music-collection-action-row')).toBeNull();
+    expect(document.querySelectorAll('[data-member]')).toHaveLength(2);
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en">
+          <CuratedCollectionDetails kind="music" id="another-artist" />
+        </IntlProvider>
+      )
+    );
+    expect(
+      (
+        document.querySelector(
+          'select[aria-label="Release Type"]'
+        ) as HTMLSelectElement
+      ).value
+    ).toBe('Album');
+    expect(document.querySelector('[data-member="live"]')).toBeNull();
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

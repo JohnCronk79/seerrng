@@ -14,6 +14,10 @@ export const EMPTY_MUSIC_COLLECTION_FILTERS: MusicCollectionFilters = {
   genre: '',
   year: '',
 };
+export const DEFAULT_MUSIC_COLLECTION_FILTERS: MusicCollectionFilters = {
+  ...EMPTY_MUSIC_COLLECTION_FILTERS,
+  releaseType: 'Album',
+};
 
 function musicCollectionTypes(part: CuratedCollectionMember) {
   // The subtitle fallback keeps an already-open tab compatible during a dev reload.
