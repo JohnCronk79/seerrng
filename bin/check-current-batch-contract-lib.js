@@ -625,8 +625,8 @@ const validateCurrentBatchContract = (files) => {
   }
   requireText(
     globals,
-    '--action-control-height: 1.875rem;',
-    'all shared action-button aliases must resolve through the 30-pixel action token'
+    '--action-control-height: 1rem;',
+    'all shared action-button aliases must resolve through the approved 16-pixel action token'
   );
   requireText(
     globals,
@@ -928,17 +928,17 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
-    '.media-rating-icon {\n    @apply h-5 w-5',
+    '.media-rating-icon {\n    @apply flex-none;\n    width: var(--action-control-content-height);\n    height: var(--action-control-content-height);',
     'rating icons must share the tomato height'
   );
   requireText(
     globals,
-    '.media-rating-icon-audience {\n    @apply h-4 w-4',
+    '.media-rating-icon-audience {\n    width: var(--action-control-content-height);\n    height: var(--action-control-content-height);',
     'audience rating art must be optically normalized to the tomato image height'
   );
   requireText(
     globals,
-    '.media-rating-wordmark {\n    @apply h-3.5 w-auto',
+    '.media-rating-wordmark {\n    @apply w-auto flex-none;\n    height: var(--action-control-content-height);',
     'wide rating wordmarks must be optically normalized to the tomato image height'
   );
   requireText(
@@ -1496,7 +1496,7 @@ const validateCurrentBatchContract = (files) => {
     'src/components/RequestStatus/index.tsx',
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/IssueItem/index.tsx',
-    'src/components/IssueDetails/index.tsx',
+    'src/components/IssueDetails/IssueDiscussion.tsx',
   ]) {
     requireText(
       fileName,
@@ -2059,8 +2059,8 @@ const validateCurrentBatchContract = (files) => {
   requireCount(
     advancedRequester,
     '<RequestListboxControl',
-    3,
-    'Destination Server, Quality Profile, and Root Folder must all use the shared request listbox'
+    4,
+    'Destination Server, Metadata Profile, Quality Profile, and Root Folder must all use the shared request listbox'
   );
   requireText(
     advancedRequester,
@@ -2777,7 +2777,6 @@ const validateCurrentBatchContract = (files) => {
     'src/components/BookDetails/BookDetailsLayout.tsx',
     'src/components/CollectionDetails/index.tsx',
     'src/components/RequestModal/RequestMediaCard.tsx',
-    'src/components/IssueDetails/index.tsx',
     'src/components/RequestStatus/index.tsx',
   ]) {
     requireText(
@@ -3661,20 +3660,19 @@ const validateCurrentBatchContract = (files) => {
     );
   }
 
-  const issueDetails = 'src/components/IssueDetails/index.tsx';
+  const issueDetails = 'src/components/IssueDetails/IssueDiscussion.tsx';
   requireOrder(
     issueDetails,
     [
-      '{intl.formatMessage(messages.addcomment)}',
-      'onClick={leaveIssue}',
-      '? messages.closeissue',
+      '{intl.formatMessage(messages.addComment)}',
+      'onClick={() => void saveStatus()}',
     ],
-    'Issue actions must place Add Comment first, followed by Cancel immediately before Close or Reopen Issue'
+    'Inline issue actions must place Add Comment before Close or Reopen Issue'
   );
   requireText(
-    issueDetails,
-    '{intl.formatMessage(globalMessages.cancel)}',
-    'Issue Details must label its exit action Cancel'
+    'src/components/IssueList/FocusedIssue.tsx',
+    '<IssueItem key={issueId} issue={data} initiallyExpanded />',
+    'Focused issue routes must use the shared expanded issue card'
   );
   rejectText(
     issueDetails,
@@ -3689,8 +3687,8 @@ const validateCurrentBatchContract = (files) => {
   requireCount(
     issueDetails,
     'buttonSize="sm"',
-    5,
-    'every Issue Details action must use the shared 30-pixel action size'
+    2,
+    'both inline issue actions must use the shared small action size'
   );
   for (const [token, description] of [
     ['useDeepLinks', 'Issue Details must not restore media-server playback'],
@@ -3702,10 +3700,9 @@ const validateCurrentBatchContract = (files) => {
   }
   for (const [token, description] of [
     ['buttonType="warning"', 'Add Comment must use the shared warning action'],
-    ['buttonType="danger"', 'Cancel must use the shared danger action'],
     [
-      'buttonType="success"',
-      'Close or Reopen Issue must use the shared success action',
+      "buttonType={isOpen ? 'warning' : 'success'}",
+      'Close and Reopen Issue must preserve their warning and success treatments',
     ],
   ]) {
     requireText(issueDetails, token, description);
@@ -3742,38 +3739,38 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     issueDetails,
-    'messages.openBookInBookshelf',
-    'Book issues must retain the format-specific Book service action'
+    'hasPermission(Permission.MANAGE_ISSUES) || issue.createdBy.id === user?.id',
+    'Inline issue writes must remain restricted to managers and the creator'
   );
   requireText(
     issueDetails,
-    'messages.openAudiobookInBookshelf',
-    'Book issues must retain the format-specific Audiobook service action'
+    'if (!canComment || statusBusy) return;',
+    'Issue status writes must reject unauthorized and duplicate submissions'
+  );
+  requireText(
+    'src/components/IssueList/IssueItem/index.tsx',
+    'refreshed-card-surface issue-summary-card issue-summary-card-standalone',
+    'Standalone issue summaries must retain their shared artwork card'
+  );
+  requireText(
+    'src/components/IssueList/IssueItem/index.tsx',
+    'className="object-cover object-center"',
+    'Issue-card backdrop artwork must fill the shared surface'
+  );
+  requireText(
+    'src/components/IssueList/IssueItem/index.tsx',
+    '<IssueDiscussion issue={fullIssue} onUpdate={refreshDiscussion} />',
+    'Issue cards must embed the shared discussion rather than navigate to retired detail markup'
   );
   requireText(
     issueDetails,
-    '<article className="media-detail-card refreshed-card-surface relative overflow-hidden',
-    'Issue Details must contain every region in one artwork-backed outer card'
+    'skipHtml',
+    'Issue descriptions must not render raw HTML'
   );
   requireText(
     issueDetails,
-    'className="object-cover object-top"',
-    'Issue Details outer artwork must fill from the top edge'
-  );
-  requireText(
-    issueDetails,
-    '<IssueMediaSummary',
-    'Issue Details must retain the standard media summary'
-  );
-  requireText(
-    issueDetails,
-    'embedded',
-    'the Issue summary must render as an inset inside the outer artwork card'
-  );
-  requireText(
-    issueDetails,
-    'className="mt-[5px] max-h-32 w-full',
-    'Issue Details comment entry must sit directly beneath Comments without another wrapper card'
+    'className="issue-comment-input"',
+    'Inline issue comment entries must use the shared input style'
   );
   rejectText(
     issueDetails,
@@ -3782,8 +3779,8 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/IssueList/IssueItem/index.tsx',
-    'border-emerald-600/80',
-    'View Issue must be green'
+    'buttonType="success"',
+    'View Details must use the shared green action'
   );
   const issueList = 'src/components/IssueList/index.tsx';
   requireText(
@@ -4212,8 +4209,8 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     globals,
-    '--action-control-height: 1.875rem;',
-    'the shared standard-size token must resolve to exactly 30-pixel height'
+    '--action-control-height: 1rem;',
+    'the shared standard-size token must resolve to the approved 16-pixel height'
   );
   for (const token of [
     'expect(bounds.height).to.eq(30)',

@@ -469,7 +469,7 @@ test('reports request-card contrast and Advanced Options contract drift', () => 
     'detail columns must own their responsive divider border',
     'detail columns must resolve through the shared divider class',
     'root-folder scrolling must begin only after five rows',
-    'Destination Server, Quality Profile, and Root Folder must all use the shared request listbox',
+    'Destination Server, Metadata Profile, Quality Profile, and Root Folder must all use the shared request listbox',
     'Root Folder must use the shared request listbox with its selected path',
     'request listbox menus must mark their selected option with a check icon',
     'request dropdown color, geometry, and selection styling must live in shared global classes',
@@ -579,7 +579,7 @@ test('reports refreshed Manage, Issue action, availability, and Association card
         if (fileName.includes('ManageSlideOver')) {
           return 'className="w-full" buttonSize="sm" actionButtonSize="default" intl.formatMessage(messages.manageModalMedia)';
         }
-        if (fileName.endsWith('src/components/IssueDetails/index.tsx')) {
+        if (fileName.endsWith('src/components/IssueDetails/IssueDiscussion.tsx')) {
           return 'buttonSize="default"';
         }
         return '';
@@ -596,7 +596,7 @@ test('reports refreshed Manage, Issue action, availability, and Association card
     'media management must not retain a standalone Media card heading',
     'the management Cancel action must sit at bottom right with the standard five-pixel gap',
     'Report an Issue actions must preserve the standard icon-to-label gap',
-    'every Issue Details action must use the shared 30-pixel action size',
+    'both inline issue actions must use the shared small action size',
     'the ratings row must not add bottom spacing before the primary actions',
     'ratings and primary actions must retain exactly one standard five-pixel gap',
     'availability headings and status icons must share one centered cell style',
