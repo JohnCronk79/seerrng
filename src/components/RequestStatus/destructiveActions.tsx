@@ -86,7 +86,7 @@ export const RequestActionButton = ({
       <span className="inline-flex">
         <button
           type="button"
-          className={`compact-control request-destructive-action request-destructive-action-${action}`}
+          className={`compact-control request-destructive-action ${action === 'delete' ? 'request-destructive-action-delete' : 'request-destructive-action-remove'}`}
           disabled={disabled || busy}
           onClick={onClick}
         >

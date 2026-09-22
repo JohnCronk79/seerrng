@@ -227,7 +227,7 @@ export const CompactRatingSelect = ({
             anchor="bottom start"
             portal
             modal={false}
-            className="app-filter-select-menu app-filter-rating-menu app-filter-select-menu-floating"
+            className="app-filter-select-menu app-filter-select-menu-floating"
           >
             {options.map((option) => {
               const hasScore = option.score !== undefined;

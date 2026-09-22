@@ -143,7 +143,7 @@ const AssociationDetailCard = ({
 
   if (node.mediaType === 'movie') {
     return (
-      <article ref={ref} className="association-detail-card">
+      <article ref={ref} data-testid="association-detail-card">
         <MovieSummaryCard
           data={
             movie ?? {
@@ -184,7 +184,10 @@ const AssociationDetailCard = ({
   }
 
   return (
-    <article className="association-detail-card detail-summary-standalone refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20">
+    <article
+      data-testid="association-detail-card"
+      className="detail-summary-standalone refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20"
+    >
       {backdrop && (
         <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
           <CachedImage

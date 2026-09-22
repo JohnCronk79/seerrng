@@ -111,6 +111,7 @@ const fileNames = [
   'src/utils/availabilityQuality.test.ts',
   'src/utils/bookMarkdown.test.ts',
   'src/utils/collectionPlaybackSelection.ts',
+  'src/utils/collectionRatings.ts',
   'src/utils/collectionPlaybackSelection.test.ts',
   'src/utils/collectionRequestState.ts',
   'src/utils/collectionRequestState.test.ts',

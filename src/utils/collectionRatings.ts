@@ -27,6 +27,15 @@ export const getCollectionMemberRatings = (
   ratings?: RatingResponse
 ): CollectionRating[] => [
   {
+    source: 'tmdb',
+    value:
+      part.voteCount > 0 && valid(part.voteAverage, 10)
+        ? part.voteAverage * 10
+        : undefined,
+    count: 0,
+    href: `https://www.themoviedb.org/movie/${part.id}`,
+  },
+  {
     source: 'critics',
     value: valid(ratings?.rt?.criticsScore, 100)
       ? ratings.rt.criticsScore
@@ -49,15 +58,6 @@ export const getCollectionMemberRatings = (
       : undefined,
     count: 0,
     href: ratings?.imdb?.url,
-  },
-  {
-    source: 'tmdb',
-    value:
-      part.voteCount > 0 && valid(part.voteAverage, 10)
-        ? part.voteAverage * 10
-        : undefined,
-    count: 0,
-    href: `https://www.themoviedb.org/movie/${part.id}`,
   },
 ];
 

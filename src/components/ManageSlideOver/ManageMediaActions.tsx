@@ -325,7 +325,7 @@ const ManageMediaActions = ({
   };
 
   return (
-    <div className="manage-advanced-sections card-stack">
+    <div data-testid="manage-advanced-sections" className="card-stack">
       <section className="manage-advanced-section">
         <h4 className="manage-media-section-title">
           {intl.formatMessage(messages.services)}
@@ -402,7 +402,6 @@ const ManageMediaActions = ({
         <div className="manage-request-action-buttons">
           <Button
             buttonType="danger"
-            className="manage-blocklist-action"
             disabled={!canBlock || busy}
             title={intl.formatMessage(messages.blockDescription)}
             disabledReason={intl.formatMessage(
@@ -438,7 +437,6 @@ const ManageMediaActions = ({
             <span className="inline-flex">
               <Button
                 buttonType="danger"
-                className="manage-blocklist-action"
                 disabled={!canUnblock || busy}
                 disabledReason=""
                 onClick={() => setAction('unblock')}

@@ -115,7 +115,7 @@ test('library deletion shares red styling and disabled Manage issue actions keep
   );
   assert.match(
     read('./ManageMediaActions.tsx'),
-    /className="manage-advanced-sections card-stack"/
+    /data-testid="manage-advanced-sections" className="card-stack"/
   );
   const action = read('../RequestStatus/destructiveActions.tsx');
   assert.match(action, /remove: 'Delete From Library'/);

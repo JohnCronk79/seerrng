@@ -530,7 +530,7 @@ const MusicRequestModal = ({
 
             <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
               <div className="detail-paired-column-span min-w-0">
-                <dl className="media-detail-rows detail-paired-columns grid min-w-0 content-start text-xs text-gray-400">
+                <dl className="media-detail-rows detail-paired-columns refreshed-detail-text grid min-w-0 content-start text-xs">
                   <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
@@ -584,7 +584,7 @@ const MusicRequestModal = ({
                 </dl>
               </div>
 
-              <dl className="media-detail-rows media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs text-gray-400">
+              <dl className="media-detail-rows media-detail-column-divider refreshed-detail-text grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>

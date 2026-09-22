@@ -24,6 +24,11 @@ const member = (
   } as RatingResponse,
 });
 describe('collection averages', () => {
+  it('keeps member ratings in TMDB, critics, audience, IMDb order', () => {
+    expect(
+      getCollectionMemberRatings(part(1)).map((rating) => rating.source)
+    ).toEqual(['tmdb', 'critics', 'audience', 'imdb']);
+  });
   it('averages each title equally and each source separately, not by vote count', () => {
     const result = averageCollectionRatings(
       [part(1, 6, 1), part(2, 8, 1000)],
