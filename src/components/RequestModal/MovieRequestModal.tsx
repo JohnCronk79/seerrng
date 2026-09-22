@@ -44,8 +44,8 @@ const messages = defineMessages('components.RequestModal', {
   edit: 'Edit Request',
   approve: 'Approve Request',
   cancel: 'Cancel Request',
-  pendingrequest: 'Pending Movie Request',
-  pending4krequest: 'Pending 4K Movie Request',
+  pendingMovieRequest: 'Pending Movie Request',
+  pending4kMovieRequest: 'Pending 4K Movie Request',
   requestfrom: "{username}'s request is pending approval.",
   errorediting: 'Something went wrong while editing the request.',
   requestedited: 'Request for <strong>{title}</strong> edited successfully!',
@@ -62,7 +62,7 @@ const messages = defineMessages('components.RequestModal', {
   approval: 'Approval',
   requested: 'Requested',
   readyToRequest: 'Ready to Request',
-  notAvailable: 'Not available',
+  notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
 });
 
@@ -321,7 +321,7 @@ const MovieRequestModal = ({
         backgroundClickable
         onCancel={onCancel}
         title={intl.formatMessage(
-          is4k ? messages.pending4krequest : messages.pendingrequest
+          is4k ? messages.pending4kMovieRequest : messages.pendingMovieRequest
         )}
         subTitle={data?.title}
         onOk={() =>

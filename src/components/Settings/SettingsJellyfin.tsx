@@ -27,7 +27,6 @@ const messages = defineMessages('components.Settings', {
   jellyfinsettingsDescription:
     'Configure the settings for your {mediaServerName} server. {mediaServerName} scans your {mediaServerName} libraries to see what content is available.',
   timeout: 'Timeout',
-  save: 'Save Changes',
   saving: 'Saving…',
   jellyfinlibraries: '{mediaServerName} Libraries',
   jellyfinlibrariesDescription:
