@@ -675,16 +675,27 @@
     @apply justify-start;
   }
 
-  .music-collection-action-row.discography-selection-row {
-    margin-top: 0;
-  }
-
   .discography-ratings {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     margin-inline-start: auto;
+    justify-content: flex-end;
     gap: var(--card-spacing);
+  }
+
+  .discography-request-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    margin-inline-start: auto;
+    gap: var(--card-spacing);
+  }
+
+  .discography-request-feedback {
+    flex-basis: 100%;
+    text-align: end;
   }
 
   .music-collection-action-row .collection-server-actions {

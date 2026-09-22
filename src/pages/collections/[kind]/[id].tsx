@@ -19,6 +19,12 @@ export default function CollectionPage() {
       discographyArtist={
         query.kind === 'music' && query.view === 'discography' ? '' : undefined
       }
+      returnAlbumId={
+        typeof query.albumId === 'string' &&
+        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(query.albumId)
+          ? query.albumId
+          : undefined
+      }
     />
   );
 }

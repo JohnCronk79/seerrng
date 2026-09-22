@@ -62,6 +62,13 @@ vi.mock('@app/components/MediaDetails/MusicRatings', () => ({
   default: () => null,
 }));
 vi.mock('./CollectionRatings', () => ({ default: () => null }));
+vi.mock('./DiscographyRequestActions', () => ({
+  default: ({ items }: { items: { id: string }[] }) => (
+    <output data-testid="discography-request">
+      {items.map((item) => item.id).join(',')}
+    </output>
+  ),
+}));
 vi.mock('./CollectionOverview', () => ({ default: () => null }));
 vi.mock('./CuratedGenreLinks', () => ({ default: () => null }));
 vi.mock('./CollectionPlayOnDeviceButton', () => ({
@@ -272,6 +279,18 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
       document.querySelector('.collection-summary-size-value')?.textContent
     ).toBe('2');
     expect(document.querySelector('.discography-ratings')).not.toBeNull();
+    await click('Select All');
+    expect(output('discography-request')).toBe('studio');
+    expect(
+      document
+        .querySelector('.discography-ratings')
+        ?.nextElementSibling?.classList.contains('discography-selection-row')
+    ).toBe(true);
+    expect(
+      document
+        .querySelector('.discography-selection-row')
+        ?.nextElementSibling?.classList.contains('music-collection-filter-row')
+    ).toBe(true);
     expect(document.querySelector('[data-testid="play"]')).toBeNull();
     expect(document.querySelector('[data-testid="device"]')).toBeNull();
     expect(document.querySelector('[data-testid="add"]')).toBeNull();

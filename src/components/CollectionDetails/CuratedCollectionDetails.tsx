@@ -47,6 +47,7 @@ import CollectionRatings from './CollectionRatings';
 import CollectionServerActions from './CollectionServerActions';
 import CuratedGenreLinks from './CuratedGenreLinks';
 import CuratedMemberCard from './CuratedMemberCard';
+import DiscographyRequestActions from './DiscographyRequestActions';
 import MusicCollectionFilterRow from './MusicCollectionFilterRow';
 
 const messages = defineMessages('components.CuratedCollection', {
@@ -79,10 +80,12 @@ export default function CuratedCollectionDetails({
   kind,
   id,
   discographyArtist,
+  returnAlbumId,
 }: {
   kind: 'tv' | 'music';
   id: string;
   discographyArtist?: string;
+  returnAlbumId?: string;
 }) {
   const intl = useIntl();
   const endpoint = `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
@@ -340,6 +343,11 @@ export default function CuratedCollectionDetails({
               )}
             </div>
           )}
+          {isDiscography && (
+            <div className="discography-ratings">
+              <MusicRatings ratings={musicAverages} total={parts.length} />
+            </div>
+          )}
           <div
             className={[
               'media-detail-disclosure-row',
@@ -396,9 +404,14 @@ export default function CuratedCollectionDetails({
               </Button>
             )}
             {isDiscography ? (
-              <div className="discography-ratings">
-                <MusicRatings ratings={musicAverages} total={parts.length} />
-              </div>
+              <DiscographyRequestActions
+                items={visibleParts.filter((part) =>
+                  shownSelection.includes(part.id)
+                )}
+                returnHref={
+                  returnAlbumId ? `/music/${returnAlbumId}` : `/artist/${id}`
+                }
+              />
             ) : (
               <CollectionServerActions
                 id={id}

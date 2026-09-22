@@ -382,7 +382,9 @@ const MusicDetails = () => {
           buttonSize="sm"
           className="media-detail-catalog-action"
           onClick={() =>
-            void router.push(`/collections/music/${artistId}?view=discography`)
+            void router.push(
+              `/collections/music/${artistId}?view=discography&albumId=${albumId}`
+            )
           }
         >
           <ArrowDownTrayIcon />
