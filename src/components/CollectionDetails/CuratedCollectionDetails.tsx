@@ -8,6 +8,7 @@ import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork'
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import MusicRatings from '@app/components/MediaDetails/MusicRatings';
 import useCollectionAvailability from '@app/hooks/useCollectionAvailability';
+import useCuratedPosters from '@app/hooks/useCuratedPosters';
 import useCuratedRatings from '@app/hooks/useCuratedRatings';
 import {
   getCollectionMemberRatings,
@@ -125,10 +126,14 @@ export default function CuratedCollectionDetails({
       )
     );
   }, [visibleIds, manual]);
-  const { members, loading: loadingMembers } = useCuratedRatings(
-    kind,
-    id,
-    ids ? ids.split(',') : []
+  const {
+    members,
+    loading: loadingMembers,
+    complete: ratingsComplete,
+  } = useCuratedRatings(kind, id, ids ? ids.split(',') : []);
+  const { posters, complete: postersComplete } = useCuratedPosters(
+    kind === 'music' ? id : '',
+    kind === 'music' ? (data?.parts ?? []) : []
   );
   const first = data?.parts[0];
   const { data: firstShow } = useSWR<TvDetails>(
@@ -380,6 +385,9 @@ export default function CuratedCollectionDetails({
               parts={parts}
               filters={filters}
               onChange={changeFilters}
+              loading={!ratingsComplete || !postersComplete}
+              selectedCount={shownSelection.length}
+              totalCount={parts.length}
             />
           )}
           {!parts.length ? (
@@ -391,7 +399,10 @@ export default function CuratedCollectionDetails({
               {visibleParts.map((part) => (
                 <CuratedMemberCard
                   key={part.id}
-                  part={part}
+                  part={{
+                    ...part,
+                    posterPath: posters[part.id] ?? part.posterPath,
+                  }}
                   kind={kind}
                   selected={shownSelection.includes(part.id)}
                   toggle={() => toggle(part.id)}
@@ -407,6 +418,9 @@ export default function CuratedCollectionDetails({
                           members.find((member) => member.id === part.id)
                             ?.musicRatings
                         }
+                        albumId={part.id}
+                        albumTitle={part.title}
+                        artist={part.network}
                       />
                     )
                   }

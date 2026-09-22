@@ -9,7 +9,7 @@ import BookFormatTabs, {
 import {
   CompactRatingSelect,
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
   type RatingOption,
@@ -236,10 +236,9 @@ const DiscoverBooks = ({
           {intl.formatMessage(messages.filters)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
-            className={getFilterResetButtonClass(!hasActiveFilters)}
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
             onClick={() => {
               setSearch('');
               setParam({
@@ -251,9 +250,7 @@ const DiscoverBooks = ({
                 sortBy: undefined,
               });
             }}
-          >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           <CardTextVisibilityToggle mediaType="book" />
           <form
             className="discover-filter-control w-72 max-w-full flex-none"

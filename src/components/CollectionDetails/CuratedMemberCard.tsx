@@ -1,7 +1,6 @@
 import CachedImage from '@app/components/Common/CachedImage';
 import SelectionCircle from '@app/components/Common/SelectionCircle';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
-import useAlbumArtwork from '@app/hooks/useAlbumArtwork';
 import { memberHasQuality } from '@app/utils/curatedCollectionSelection';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
@@ -67,11 +66,6 @@ export default function CuratedMemberCard({
     kind === 'music' && visible ? `/api/v1/music/${suppliedPart.id}` : null,
     { revalidateOnFocus: false, dedupingInterval: 300000 }
   );
-  const artwork = useAlbumArtwork(
-    kind === 'music' ? suppliedPart.id : undefined,
-    details?.posterPath || suppliedPart.posterPath,
-    card
-  );
   const part = details
     ? {
         ...suppliedPart,
@@ -81,9 +75,9 @@ export default function CuratedMemberCard({
         genres:
           details.tags?.releaseGroup.map((tag) => tag.tag) ??
           suppliedPart.genres,
-        posterPath: artwork,
+        posterPath: suppliedPart.posterPath || details.posterPath,
       }
-    : { ...suppliedPart, posterPath: artwork };
+    : suppliedPart;
   const unavailable = intl.formatMessage(messages.unavailable);
   const href = `/${kind === 'music' ? 'music' : 'tv'}/${part.id}`;
   const qualities = kind === 'music' ? ['MP3', 'FLAC'] : ['HD', '4K'];

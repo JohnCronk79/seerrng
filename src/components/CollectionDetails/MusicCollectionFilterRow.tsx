@@ -1,6 +1,6 @@
 import {
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import MusicReleaseTypeSelect from '@app/components/Discover/FilterPanel/MusicReleaseTypeSelect';
 import defineMessages from '@app/utils/defineMessages';
@@ -9,6 +9,7 @@ import {
   musicCollectionFilterOptions,
   type MusicCollectionFilters,
 } from '@app/utils/musicCollectionFilters';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { CuratedCollectionMember } from '@server/models/CuratedCollection';
 import { useIntl } from 'react-intl';
 
@@ -19,15 +20,23 @@ const messages = defineMessages('components.MusicCollectionFilters', {
   any: 'Any',
   unknown: 'Unknown',
   label: 'Collection filters',
+  loading: 'Loading...',
+  selection: 'Selection {selected}/{total}',
 });
 export default function MusicCollectionFilterRow({
   parts,
   filters,
   onChange,
+  loading,
+  selectedCount,
+  totalCount,
 }: {
   parts: CuratedCollectionMember[];
   filters: MusicCollectionFilters;
   onChange: (filters: MusicCollectionFilters) => void;
+  loading: boolean;
+  selectedCount: number;
+  totalCount: number;
 }) {
   const intl = useIntl();
   const options = musicCollectionFilterOptions(parts);
@@ -39,14 +48,11 @@ export default function MusicCollectionFilterRow({
       role="group"
       aria-label={intl.formatMessage(messages.label)}
     >
-      <button
-        type="button"
-        className={getFilterResetButtonClass(inactive)}
-        aria-pressed={inactive}
+      <FilterResetButton
+        label={intl.formatMessage(messages.clear)}
+        selected={inactive}
         onClick={() => onChange({ ...EMPTY_MUSIC_COLLECTION_FILTERS })}
-      >
-        {intl.formatMessage(messages.clear)}
-      </button>
+      />
       <MusicReleaseTypeSelect
         value={filters.releaseType}
         onChange={(releaseType) => onChange({ ...filters, releaseType })}
@@ -74,6 +80,26 @@ export default function MusicCollectionFilterRow({
         ]}
         onChange={(year) => onChange({ ...filters, year })}
       />
+      <span
+        className="music-collection-load-status"
+        aria-live="polite"
+        aria-busy={loading}
+      >
+        {loading ? (
+          <>
+            {intl.formatMessage(messages.loading)}
+            <ArrowPathIcon
+              className="h-4 w-4 animate-spin"
+              aria-hidden="true"
+            />
+          </>
+        ) : (
+          intl.formatMessage(messages.selection, {
+            selected: selectedCount,
+            total: totalCount,
+          })
+        )}
+      </span>
     </div>
   );
 }

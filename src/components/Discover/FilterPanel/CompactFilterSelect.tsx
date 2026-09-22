@@ -1,5 +1,8 @@
 import { Listbox, Transition } from '@headlessui/react';
-import { StarIcon as OutlineStarIcon } from '@heroicons/react/24/outline';
+import {
+  NoSymbolIcon,
+  StarIcon as OutlineStarIcon,
+} from '@heroicons/react/24/outline';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -16,6 +19,28 @@ export const getFilterToggleButtonClass = (selected: boolean) =>
   `app-filter-button ${
     selected ? 'app-filter-button-active' : 'app-filter-button-idle'
   }`;
+
+export const FilterResetButton = ({
+  label,
+  selected = false,
+  onClick,
+  className = '',
+}: {
+  label: string;
+  selected?: boolean;
+  onClick: () => void;
+  className?: string;
+}) => (
+  <button
+    type="button"
+    aria-pressed={selected}
+    className={`${getFilterResetButtonClass(selected)} ${className}`.trim()}
+    onClick={onClick}
+  >
+    <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
+    {label}
+  </button>
+);
 
 export type CompactSelectOption = {
   label: string;

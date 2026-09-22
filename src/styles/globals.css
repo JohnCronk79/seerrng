@@ -667,13 +667,6 @@
     margin-inline-start: auto;
   }
 
-  .music-rating-source {
-    font-size: inherit;
-    line-height: inherit;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
   .collection-detail-disclosure-row {
     @apply justify-between;
   }
@@ -689,6 +682,11 @@
   .music-collection-filter-row {
     @apply flex flex-wrap items-center;
     gap: var(--card-spacing);
+  }
+
+  .music-collection-load-status {
+    @apply ml-auto inline-flex items-center gap-1.5 text-xs text-gray-300;
+    min-height: var(--compact-control-height);
   }
 
   .collection-server-actions {

@@ -12,7 +12,7 @@ import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
 import {
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
@@ -37,7 +37,6 @@ import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
   TagIcon,
 } from '@heroicons/react/24/outline';
 import type {
@@ -399,14 +398,10 @@ const Blocklist = () => {
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
             onClick={clearFilters}
-            className={getFilterResetButtonClass(false)}
-          >
-            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           {filterOptions.map((option) => (
             <button
               key={option.value}

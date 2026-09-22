@@ -69,6 +69,8 @@ interface Run {
   kind: 'tv' | 'music';
   controller: AbortController;
   results: Map<string, CuratedRating>;
+  pending: Set<string>;
+  inFlight: Set<string>;
   loading: boolean;
   retryDelay: number;
 }
@@ -83,7 +85,8 @@ export default function useCuratedRatings(
   collectionId: string,
   ids: string[]
 ) {
-  const scope = JSON.stringify([kind, collectionId, [...new Set(ids)]]);
+  const scope = JSON.stringify([kind, collectionId]);
+  const requestedIds = JSON.stringify([...new Set(ids)]);
   const active = useRef<Run | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>({
     scope: '',
@@ -91,8 +94,12 @@ export default function useCuratedRatings(
     loading: false,
   });
   const load = useCallback(async (run: Run, targets: string[]) => {
+    if (run.controller.signal.aborted) return;
+    targets.forEach((id) => {
+      if (!run.inFlight.has(id)) run.pending.add(id);
+    });
     // A synchronous lock also catches double clicks before React re-renders.
-    if (run.loading || run.controller.signal.aborted || !targets.length) return;
+    if (run.loading || !run.pending.size) return;
     run.loading = true;
     const publish = () => {
       if (!run.controller.signal.aborted && active.current === run) {
@@ -105,53 +112,65 @@ export default function useCuratedRatings(
     };
     publish();
     try {
-      await mapWithConcurrency(targets, 3, async (id) => {
-        if (run.controller.signal.aborted) return;
-        const member = await loadCuratedRating(
-          run.kind,
-          id,
-          run.controller.signal
-        );
-        if (run.controller.signal.aborted) return;
-        const previous = run.results.get(id);
-        if (member.failure && previous) {
-          member.musicRating ??= previous.musicRating;
-          member.musicRatings = [
-            ...new Map(
-              [
-                ...(previous.musicRatings ?? []),
-                ...(member.musicRatings ?? []),
-              ].map((rating) => [rating.source, rating])
-            ).values(),
-          ];
-        }
-        run.results.set(id, member);
-        publish();
-      });
+      while (run.pending.size && !run.controller.signal.aborted) {
+        const batch = [...run.pending].slice(0, 50);
+        batch.forEach((id) => run.pending.delete(id));
+        batch.forEach((id) => run.inFlight.add(id));
+        await mapWithConcurrency(batch, 3, async (id) => {
+          if (run.controller.signal.aborted) return;
+          const member = await loadCuratedRating(
+            run.kind,
+            id,
+            run.controller.signal
+          );
+          if (run.controller.signal.aborted) return;
+          const previous = run.results.get(id);
+          if (member.failure && previous) {
+            member.musicRating ??= previous.musicRating;
+            member.musicRatings = [
+              ...new Map(
+                [
+                  ...(previous.musicRatings ?? []),
+                  ...(member.musicRatings ?? []),
+                ].map((rating) => [rating.source, rating])
+              ).values(),
+            ];
+          }
+          run.results.set(id, member);
+          run.inFlight.delete(id);
+          publish();
+        });
+      }
     } finally {
       run.loading = false;
       publish();
     }
   }, []);
   useEffect(() => {
-    const [runKind, , runIds] = JSON.parse(scope) as [
-      'tv' | 'music',
-      string,
-      string[],
-    ];
+    const [runKind] = JSON.parse(scope) as ['tv' | 'music', string];
     const run: Run = {
       scope,
       kind: runKind,
       controller: new AbortController(),
       results: new Map(),
+      pending: new Set(),
+      inFlight: new Set(),
       loading: false,
       retryDelay: 30000,
     };
     active.current = run;
     setSnapshot({ scope, members: [], loading: false });
-    void load(run, runIds);
     return () => run.controller.abort();
-  }, [scope, load]);
+  }, [scope]);
+  useEffect(() => {
+    const run = active.current;
+    if (!run || run.scope !== scope) return;
+    const targets = (JSON.parse(requestedIds) as string[]).filter(
+      (id) =>
+        !run.results.has(id) && !run.pending.has(id) && !run.inFlight.has(id)
+    );
+    void load(run, targets);
+  }, [scope, requestedIds, load]);
   useEffect(() => {
     const run = active.current;
     if (
@@ -194,6 +213,11 @@ export default function useCuratedRatings(
   return {
     members: snapshot.scope === scope ? snapshot.members : [],
     loading: snapshot.scope === scope ? snapshot.loading : ids.length > 0,
+    complete:
+      snapshot.scope === scope &&
+      (JSON.parse(requestedIds) as string[]).every((id) =>
+        snapshot.members.some((member) => member.id === id)
+      ),
     retry,
   };
 }

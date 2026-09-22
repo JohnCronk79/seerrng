@@ -55,11 +55,9 @@ it('keeps successful provider values during partial retries and stops once every
     votes: 3,
     url: 'https://www.discogs.com/release/1',
   };
-  const get = vi
-    .spyOn(axios, 'get')
-    .mockResolvedValue({
-      data: { rating, ratings: [rating, audio], failedSources: ['discogs'] },
-    });
+  const get = vi.spyOn(axios, 'get').mockResolvedValue({
+    data: { rating, ratings: [rating, audio], failedSources: ['discogs'] },
+  });
   const e = environment();
   try {
     await act(async () =>
@@ -162,6 +160,34 @@ it('stops queued work and ignores old completions when the collection changes', 
     await e.close();
   }
   expect(calls[3].signal.aborted).toBe(true);
+});
+
+it('loads at most 50 collection ratings per batch and preserves completed results when ids change', async () => {
+  let finishLast: (value: unknown) => void = () => undefined;
+  const get = vi.spyOn(axios, 'get').mockImplementation((url) =>
+    String(url).includes('/album-49/')
+      ? new Promise((resolve) => {
+          finishLast = resolve;
+        })
+      : Promise.resolve({ data: { rating } })
+  );
+  const e = environment();
+  const ids = Array.from({ length: 51 }, (_, index) => `album-${index}`);
+  try {
+    await act(async () => e.root.render(<e.Probe id="batched" ids={ids} />));
+    expect(get).toHaveBeenCalledTimes(50);
+    expect(e.read().complete).toBe(false);
+    await act(async () => finishLast({ data: { rating } }));
+    expect(get).toHaveBeenCalledTimes(51);
+    expect(e.read().complete).toBe(true);
+    await act(async () =>
+      e.root.render(<e.Probe id="batched" ids={ids.slice(0, 10)} />)
+    );
+    await act(async () => e.root.render(<e.Probe id="batched" ids={ids} />));
+    expect(get).toHaveBeenCalledTimes(51);
+  } finally {
+    await e.close();
+  }
 });
 
 it('quietly retries failures with backoff while preserving successes, then stops after recovery', async () => {

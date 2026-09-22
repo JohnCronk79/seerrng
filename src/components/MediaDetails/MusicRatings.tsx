@@ -1,5 +1,7 @@
+import DiscogsLogo from '@app/assets/discogs.svg';
 import MusicBrainzLogo from '@app/assets/musicbrainz.svg';
 import LidarrLogo from '@app/assets/services/lidarr.svg';
+import TheAudioDBLogo from '@app/assets/theaudiodb.svg';
 import Tooltip from '@app/components/Common/Tooltip';
 import defineMessages from '@app/utils/defineMessages';
 import type { DisplayMusicRating } from '@app/utils/musicRatings';
@@ -23,9 +25,15 @@ const names = {
 export default function MusicRatings({
   ratings = [],
   total,
+  albumId,
+  albumTitle,
+  artist,
 }: {
   ratings?: DisplayMusicRating[];
   total?: number;
+  albumId?: string;
+  albumTitle?: string;
+  artist?: string;
 }) {
   const intl = useIntl();
   const sources = (
@@ -67,8 +75,10 @@ export default function MusicRatings({
               <MusicBrainzLogo className="media-rating-icon" aria-hidden />
             ) : source === 'lidarr' ? (
               <LidarrLogo className="media-rating-icon" aria-hidden />
+            ) : source === 'theaudiodb' ? (
+              <TheAudioDBLogo className="media-rating-wordmark" aria-hidden />
             ) : (
-              <span className="music-rating-source">{names[source]}</span>
+              <DiscogsLogo className="media-rating-wordmark" aria-hidden />
             )}
             <span className="media-rating-value">
               {rating
@@ -77,24 +87,31 @@ export default function MusicRatings({
             </span>
           </>
         );
-        const href = getSafeHref(rating?.url);
+        const search = [artist, albumTitle].filter(Boolean).join(' ');
+        const fallbackHref =
+          source === 'musicbrainz' &&
+          albumId &&
+          /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(albumId)
+            ? `https://musicbrainz.org/release-group/${albumId}`
+            : source === 'theaudiodb'
+              ? 'https://www.theaudiodb.com/browse.php'
+              : source === 'discogs' && search
+                ? `https://www.discogs.com/search/?q=${encodeURIComponent(search)}&type=all`
+                : source === 'discogs'
+                  ? 'https://www.discogs.com/'
+                  : 'https://musicbrainz.org/';
+        const href = getSafeHref(rating?.url) ?? fallbackHref;
         return (
           <Tooltip key={source} content={title}>
-            {href ? (
-              <a
-                className="media-rating-link"
-                aria-label={title}
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {content}
-              </a>
-            ) : (
-              <span className="media-rating-link" aria-label={title}>
-                {content}
-              </span>
-            )}
+            <a
+              className="media-rating-link"
+              aria-label={title}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {content}
+            </a>
           </Tooltip>
         );
       })}

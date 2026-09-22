@@ -9,7 +9,7 @@ import AvailabilityQualityControl, {
 } from '@app/components/Discover/AvailabilityQualityControl';
 import {
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
@@ -239,9 +239,9 @@ const DiscoverMusic = ({
           {intl.formatMessage(messages.filters)}
         </div>
         <div className="discover-filter-primary-row">
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
             onClick={() => {
               setSearch('');
               setParam({
@@ -256,10 +256,8 @@ const DiscoverMusic = ({
                 sortBy: undefined,
               });
             }}
-            className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
-          >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+            className="order-1"
+          />
           <CardTextVisibilityToggle mediaType="album" className="order-2" />
           <AvailabilityQualityControl
             mediaType="music"

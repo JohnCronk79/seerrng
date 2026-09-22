@@ -6,7 +6,7 @@ import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import {
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import { prepareFilterValues } from '@app/components/Discover/constants';
@@ -541,10 +541,9 @@ const Search = () => {
           className="flex flex-wrap items-center gap-2"
           aria-label={intl.formatMessage(messages.filter)}
         >
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
-            className={getFilterResetButtonClass(!hasActiveFilters)}
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
             onClick={() => {
               void router.replace(
                 {
@@ -555,9 +554,7 @@ const Search = () => {
                 { shallow: true, scroll: false }
               );
             }}
-          >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           <CardTextVisibilityToggle
             mediaType={['movie', 'tv', 'album', 'book']}
           />

@@ -5,6 +5,12 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import MusicRatings from './MusicRatings';
 
 vi.mock('@app/assets/musicbrainz.svg', () => ({ default: () => <svg /> }));
+vi.mock('@app/assets/theaudiodb.svg', () => ({
+  default: () => <svg data-logo="theaudiodb" />,
+}));
+vi.mock('@app/assets/discogs.svg', () => ({
+  default: () => <svg data-logo="discogs" />,
+}));
 vi.mock('@app/assets/services/lidarr.svg', () => ({ default: () => <svg /> }));
 vi.mock('@app/components/Common/Tooltip', () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -39,4 +45,27 @@ it('renders distinct scales and safe source links using the shared rating classe
   expect(html).toContain('master entry’s main release');
   expect(html).toContain('class="media-rating-value">4.5/5');
   expect(html).toContain('href="https://www.discogs.com/release/249504"');
+  expect(html).toContain('data-logo="theaudiodb"');
+  expect(html).toContain('data-logo="discogs"');
+  expect(html).toContain('href="https://www.theaudiodb.com/album/2109828"');
+});
+
+it('links unrated album badges to a known release or source search page', () => {
+  const albumId = '3bd76d40-7f0e-36b7-9348-91a33afee20e';
+  const html = renderToStaticMarkup(
+    <IntlProvider locale="en">
+      <MusicRatings
+        albumId={albumId}
+        albumTitle="Year Zero"
+        artist="Nine Inch Nails"
+      />
+    </IntlProvider>
+  );
+  expect(html).toContain(
+    `href="https://musicbrainz.org/release-group/${albumId}"`
+  );
+  expect(html).toContain('href="https://www.theaudiodb.com/browse.php"');
+  expect(html).toContain(
+    'href="https://www.discogs.com/search/?q=Nine%20Inch%20Nails%20Year%20Zero&amp;type=all"'
+  );
 });

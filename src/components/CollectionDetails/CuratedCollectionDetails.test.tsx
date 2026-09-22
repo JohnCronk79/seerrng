@@ -41,7 +41,10 @@ vi.mock('@app/hooks/useCollectionAvailability', () => ({
   default: () => ({}),
 }));
 vi.mock('@app/hooks/useCuratedRatings', () => ({
-  default: () => ({ members: [], loading: false }),
+  default: () => ({ members: [], loading: false, complete: true }),
+}));
+vi.mock('@app/hooks/useCuratedPosters', () => ({
+  default: () => ({ posters: {}, complete: true }),
 }));
 vi.mock('@app/components/Common/CachedImage', () => ({ default: () => null }));
 vi.mock('@app/components/Common/PageTitle', () => ({ default: () => null }));
@@ -95,7 +98,13 @@ vi.mock('./CuratedMemberCard', () => ({
   ),
 }));
 vi.mock('@app/components/Discover/FilterPanel/CompactFilterSelect', () => ({
-  getFilterResetButtonClass: () => 'app-filter-button',
+  FilterResetButton: ({
+    label,
+    onClick,
+  }: {
+    label: string;
+    onClick: () => void;
+  }) => <button onClick={onClick}>{label}</button>,
   CompactSelect: ({
     label,
     value,
@@ -154,6 +163,9 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
       )
     );
     expect(output('add')).toBe('studio,live');
+    expect(
+      document.querySelector('.music-collection-load-status')?.textContent
+    ).toBe('Selection 2/2');
     expect(
       document.querySelectorAll(
         '.music-collection-action-row .app-button-association'
