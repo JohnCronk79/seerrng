@@ -1,3 +1,4 @@
+import { Transition } from '@headlessui/react';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -10,13 +11,14 @@ vi.mock('@app/components/Common/Modal', () => ({
     onOk?: unknown;
     onCancel?: unknown;
   }) => (
-    <div
+    <Transition.Child
+      as="div"
       data-hidden-actions={String(props.hideActions)}
       data-submit={String(!!props.onOk)}
       data-dismiss={String(!!props.onCancel)}
     >
       {props.children}
-    </div>
+    </Transition.Child>
   ),
 }));
 vi.mock('@app/components/CollectionDetails/CuratedCollectionDetails', () => ({
