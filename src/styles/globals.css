@@ -1658,6 +1658,10 @@
     @apply pointer-events-none absolute inset-0 z-0 overflow-hidden;
   }
 
+  .movie-collection-card > .media-detail-artwork-layer {
+    opacity: 0.5;
+  }
+
   @supports (-moz-appearance: none) {
     .media-detail-artwork-layer {
       background-image: var(--media-detail-artwork-url);
