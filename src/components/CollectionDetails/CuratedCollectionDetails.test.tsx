@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
         releaseDate: '2000',
         genres: ['rock'],
         primaryType: 'Album',
-        secondaryTypes: ['Live'],
+        secondaryTypes: ['Live', 'Compilation'],
         mediaInfo: { id: 2, ratingKeyMp3: '2' },
       },
     ],
@@ -163,6 +163,8 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
     expect(types.querySelectorAll('option')).toHaveLength(18);
     await filter('Release Type', 'Live');
     expect(output('add')).toBe('live');
+    await filter('Release Type', 'Compilation');
+    expect(output('add')).toBe('live');
     expect(output('play')).toBe('2');
     expect(output('device')).toBe('2');
     expect(document.querySelector('[data-member="studio"]')).toBeNull();
@@ -179,6 +181,13 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
     await click('Clear Filters');
     expect(output('add')).toBe('');
     expect(document.querySelectorAll('[data-member]')).toHaveLength(2);
+    await click('Select All');
+    expect(output('add')).toBe('studio,live');
+    await filter('Release Type', 'Album');
+    expect(output('add')).toBe('studio');
+    expect(document.querySelector('[data-member="live"]')).toBeNull();
+    await click('Clear Filters');
+    expect(output('add')).toBe('studio');
     await click('Select All');
     expect(output('add')).toBe('studio,live');
     await filter('Release Year', '1998');

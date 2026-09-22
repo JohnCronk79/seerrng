@@ -5,6 +5,7 @@ import useAlbumArtwork from '@app/hooks/useAlbumArtwork';
 import { memberHasQuality } from '@app/utils/curatedCollectionSelection';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
+import { musicCollectionTypeLabel } from '@app/utils/musicCollectionFilters';
 import { MediaStatus } from '@server/constants/media';
 import type { CuratedCollectionMember } from '@server/models/CuratedCollection';
 import type { MusicDetails } from '@server/models/Music';
@@ -95,7 +96,7 @@ export default function CuratedMemberCard({
     ],
     [
       kind === 'music' ? messages.type : messages.network,
-      kind === 'music' ? part.subtitle : part.network,
+      kind === 'music' ? musicCollectionTypeLabel(part) : part.network,
     ],
   ] as const;
   return (

@@ -8,6 +8,7 @@ import {
   EMPTY_MUSIC_COLLECTION_FILTERS,
   filterMusicCollection,
   musicCollectionFilterOptions,
+  musicCollectionTypeLabel,
 } from './musicCollectionFilters';
 
 const parts = [
@@ -50,8 +51,14 @@ it('matches primary and secondary types, genres and years together', () => {
     filterMusicCollection(parts, {
       ...EMPTY_MUSIC_COLLECTION_FILTERS,
       releaseType: 'Album',
-    })
-  ).toHaveLength(3);
+    }).map((p) => p.id)
+  ).toEqual(['studio']);
+  expect(
+    filterMusicCollection(parts, {
+      ...EMPTY_MUSIC_COLLECTION_FILTERS,
+      releaseType: 'Compilation',
+    }).map((p) => p.id)
+  ).toEqual(['live']);
   expect(
     filterMusicCollection(parts, {
       releaseType: 'Compilation',
@@ -71,6 +78,11 @@ it('derives stable genre/year choices from the whole collection, not the display
   expect(options.genres.map((p) => p.value)).toEqual(['dance', 'pop', 'rock']);
   expect(options.years.map((p) => p.value)).toEqual(['2000', '1998']);
   expect(options.unknownYear).toBe(true);
+});
+it('shows Album only for plain albums and names secondary types without that base type', () => {
+  expect(musicCollectionTypeLabel(parts[0])).toBe('Album');
+  expect(musicCollectionTypeLabel(parts[1])).toBe('Live · Compilation');
+  expect(musicCollectionTypeLabel(parts[2])).toBe('Remix');
 });
 it('drops hidden selections and does not restore them when clearing filters', () => {
   const shown = filterMusicCollection(parts, {
@@ -93,17 +105,23 @@ it('drops hidden selections and does not restore them when clearing filters', ()
   ).toEqual(['live']);
 });
 it('supports cached collection data while structured types are being refreshed', () => {
+  const cached = {
+    ...parts[1],
+    primaryType: undefined,
+    secondaryTypes: undefined,
+    subtitle: 'Album · Live · Compilation',
+  };
   expect(
-    filterMusicCollection(
-      [
-        {
-          ...parts[1],
-          primaryType: undefined,
-          secondaryTypes: undefined,
-          subtitle: 'Album · Live · Compilation',
-        },
-      ],
-      { ...EMPTY_MUSIC_COLLECTION_FILTERS, releaseType: 'Live' }
-    )
+    filterMusicCollection([cached], {
+      ...EMPTY_MUSIC_COLLECTION_FILTERS,
+      releaseType: 'Live',
+    })
   ).toHaveLength(1);
+  expect(
+    filterMusicCollection([cached], {
+      ...EMPTY_MUSIC_COLLECTION_FILTERS,
+      releaseType: 'Album',
+    })
+  ).toEqual([]);
+  expect(musicCollectionTypeLabel(cached)).toBe('Live · Compilation');
 });

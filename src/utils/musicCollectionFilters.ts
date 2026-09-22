@@ -12,19 +12,34 @@ export const EMPTY_MUSIC_COLLECTION_FILTERS: MusicCollectionFilters = {
   year: '',
 };
 
+function musicCollectionTypes(part: CuratedCollectionMember) {
+  // The subtitle fallback keeps an already-open tab compatible during a dev reload.
+  const fallback = part.subtitle?.split(' · ') ?? [];
+  return {
+    primary: part.primaryType ?? fallback[0] ?? '',
+    secondary: part.secondaryTypes ?? fallback.slice(1),
+  };
+}
+
+export function musicCollectionTypeLabel(part: CuratedCollectionMember) {
+  const { primary, secondary } = musicCollectionTypes(part);
+  return (
+    primary.toLowerCase() === 'album' && secondary.length
+      ? secondary
+      : [primary, ...secondary]
+  ).join(' · ');
+}
+
 export function filterMusicCollection(
   parts: CuratedCollectionMember[],
   filters: MusicCollectionFilters
 ) {
   return parts.filter((part) => {
-    // The subtitle fallback keeps an already-open tab compatible during a dev reload.
-    const types = part.subtitle?.split(' · ') ?? [];
+    const { primary, secondary } = musicCollectionTypes(part);
     return (
-      matchesMusicReleaseType(
-        part.primaryType ?? types[0],
-        part.secondaryTypes ?? types.slice(1),
-        filters.releaseType
-      ) &&
+      matchesMusicReleaseType(primary, secondary, filters.releaseType) &&
+      (filters.releaseType.toLowerCase() !== 'album' ||
+        secondary.length === 0) &&
       (!filters.genre ||
         part.genres.some(
           (genre) => genre.toLowerCase() === filters.genre.toLowerCase()
