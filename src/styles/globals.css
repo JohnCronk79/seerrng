@@ -2275,6 +2275,11 @@
     min-height: calc(var(--action-control-height) + var(--card-spacing));
   }
 
+  .card-stack > .media-rating-row {
+    padding-top: 0;
+    min-height: var(--action-control-height);
+  }
+
   .media-rating-link {
     @apply inline-flex flex-none items-center gap-[5px] text-xs text-gray-300 hover:text-white;
     height: var(--action-control-height);
