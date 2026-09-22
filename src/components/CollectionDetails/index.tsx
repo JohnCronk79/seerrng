@@ -567,7 +567,6 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
           </section>
         </div>
       </article>
-      <div className="extra-bottom-space relative" />
     </div>
   );
 };
