@@ -103,7 +103,12 @@ export const CompactSelect = ({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="app-filter-select-menu">
+          <Listbox.Options
+            anchor="bottom start"
+            portal
+            modal={false}
+            className="app-filter-select-menu app-filter-select-menu-floating"
+          >
             {options.map((option) => (
               <Listbox.Option
                 key={option.value}
@@ -218,7 +223,12 @@ export const CompactRatingSelect = ({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <Listbox.Options className="app-filter-select-menu app-filter-rating-menu">
+          <Listbox.Options
+            anchor="bottom start"
+            portal
+            modal={false}
+            className="app-filter-select-menu app-filter-rating-menu app-filter-select-menu-floating"
+          >
             {options.map((option) => {
               const hasScore = option.score !== undefined;
 

@@ -2503,6 +2503,14 @@
     background-color: rgb(var(--theme-control-surface) / 0.98);
   }
 
+  .app-filter-select-menu-floating {
+    --anchor-gap: 4px;
+    --anchor-padding: 8px;
+    margin-top: 0;
+    min-width: var(--button-width);
+    max-width: min(20rem, calc(100vw - 16px));
+  }
+
   .app-filter-rating-menu {
     max-height: none;
     overflow: hidden;
