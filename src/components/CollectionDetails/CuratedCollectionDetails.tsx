@@ -230,8 +230,7 @@ export default function CuratedCollectionDetails({
                 type={kind === 'music' ? 'music' : 'tmdb'}
                 src={
                   (kind === 'music'
-                    ? (data.posterPath ??
-                      data.parts.find((part) => part.posterPath)?.posterPath)
+                    ? data.posterPath
                     : getTmdbPosterImageUrl(first?.posterPath)) ||
                   '/images/seerr_poster_not_found.png'
                 }

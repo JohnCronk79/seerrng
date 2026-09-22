@@ -1,5 +1,5 @@
+import { getArtistPoster } from '@server/api/artistArtwork';
 import { getArtistOverview } from '@server/api/artistOverview';
-import CoverArtArchive from '@server/api/coverartarchive';
 import MusicBrainz from '@server/api/musicbrainz';
 import TheMovieDb from '@server/api/themoviedb';
 import Tvdb from '@server/api/tvdb';
@@ -16,7 +16,10 @@ export const getCuratedCollection = async (
 ): Promise<CuratedCollection> => {
   if (kind === 'music') {
     const artist = await new MusicBrainz().getArtistAlbumCollection(id);
-    const biography = await getArtistOverview(id, artist.links);
+    const [biography, posterPath] = await Promise.all([
+      getArtistOverview(id, artist.links),
+      getArtistPoster(id),
+    ]);
     const cached = artist.albums.length
       ? await getRepository(MetadataAlbum).find({
           where: { mbAlbumId: In(artist.albums.map((album) => album.id)) },
@@ -28,24 +31,6 @@ export const getCuratedCollection = async (
         .filter((item) => item.caaUrl)
         .map((item) => [item.mbAlbumId, item.caaUrl as string])
     );
-    // A browse response does not guarantee that an album has artwork. Prefer
-    // verified cached covers and resolve a small, dated studio-album sample,
-    // rather than inventing URLs or blocking the page on hundreds of lookups.
-    const candidates = artist.albums.filter(
-      (album) =>
-        /^\d{4}/.test(album['first-release-date']) &&
-        !(album['secondary-types'] ?? []).length
-    );
-    const posterFromCache = artist.albums.find((album) => covers.has(album.id));
-    if (!posterFromCache) {
-      const resolved = await new CoverArtArchive().batchGetCoverArt(
-        (candidates.length ? candidates : artist.albums)
-          .slice(0, 3)
-          .map((album) => album.id)
-      );
-      for (const [albumId, cover] of Object.entries(resolved))
-        if (cover) covers.set(albumId, cover);
-    }
     return {
       id,
       kind,
@@ -53,9 +38,7 @@ export const getCuratedCollection = async (
       overview: biography?.text ?? `Albums credited to ${artist.name}.`,
       overviewSource: biography?.source,
       sourceUrl: `https://musicbrainz.org/artist/${id}`,
-      posterPath: artist.albums
-        .map((album) => covers.get(album.id))
-        .find(Boolean),
+      posterPath,
       parts: artist.albums.map((album) => ({
         id: album.id,
         title: album.title,

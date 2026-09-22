@@ -1,4 +1,5 @@
 import type { LbAlbumDetails } from '@server/api/listenbrainz/interfaces';
+import { formatMusicReleaseType } from '@server/constants/musicReleaseTypes';
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import type { AvailableMusicService } from '@server/lib/musicQualityAvailability';
@@ -141,7 +142,7 @@ export const mapMusicDetails = (
     title,
     titleSlug: title.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     mediaType: 'album',
-    type: album.type,
+    type: formatMusicReleaseType(album.type, album.secondaryTypes),
     releaseDate: releaseGroup?.date,
     artist: {
       id: primaryArtist?.artist_mbid

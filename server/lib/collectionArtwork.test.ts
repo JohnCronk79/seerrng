@@ -1,3 +1,4 @@
+import * as artwork from '@server/api/artistArtwork';
 import * as overview from '@server/api/artistOverview';
 import CoverArtArchive from '@server/api/coverartarchive';
 import MusicBrainz from '@server/api/musicbrainz';
@@ -8,6 +9,9 @@ import { getCuratedCollection } from './collectionCatalog';
 const artistId = '79239441-bfd5-4981-a70c-55c3f15c1287';
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.spyOn(artwork, 'getArtistPoster').mockResolvedValue(
+    'https://assets.fanart.tv/fanart/madonna.jpg'
+  );
   vi.spyOn(overview, 'getArtistOverview').mockResolvedValue(null);
   vi.spyOn(MusicBrainz.prototype, 'getArtistAlbumCollection').mockResolvedValue(
     {
@@ -29,7 +33,7 @@ beforeEach(() => {
     }
   );
 });
-it('uses verified cached artwork instead of assuming the first album has a cover', async () => {
+it('uses the artist portrait for the header and retains album covers on members', async () => {
   vi.spyOn(db, 'getRepository').mockReturnValue({
     find: vi
       .fn()
@@ -39,13 +43,14 @@ it('uses verified cached artwork instead of assuming the first album has a cover
   } as any);
   const fetch = vi.spyOn(CoverArtArchive.prototype, 'batchGetCoverArt');
   const data = await getCuratedCollection('music', artistId);
-  expect(data.posterPath).toBe('https://archive.org/cover.jpg');
+  expect(data.posterPath).toBe('https://assets.fanart.tv/fanart/madonna.jpg');
   expect(data.parts[0].posterPath).toBeUndefined();
-  expect(data.parts[1].posterPath).toBe(data.posterPath);
+  expect(data.parts[1].posterPath).toBe('https://archive.org/cover.jpg');
   expect(fetch).not.toHaveBeenCalled();
   expect(data.overview).toBe('Albums credited to Madonna.');
 });
-it('resolves only a bounded dated-album sample when no cached cover exists', async () => {
+it('does not fetch album covers or substitute an album when artist artwork is absent', async () => {
+  vi.mocked(artwork.getArtistPoster).mockResolvedValue(undefined);
   vi.spyOn(db, 'getRepository').mockReturnValue({
     find: vi.fn().mockResolvedValue([]),
   } as any);
@@ -53,6 +58,6 @@ it('resolves only a bounded dated-album sample when no cached cover exists', asy
     .spyOn(CoverArtArchive.prototype, 'batchGetCoverArt')
     .mockResolvedValue({ studio: 'https://archive.org/resolved.jpg' });
   const data = await getCuratedCollection('music', artistId);
-  expect(fetch).toHaveBeenCalledWith(['studio']);
-  expect(data.posterPath).toBe('https://archive.org/resolved.jpg');
+  expect(fetch).not.toHaveBeenCalled();
+  expect(data.posterPath).toBeUndefined();
 });

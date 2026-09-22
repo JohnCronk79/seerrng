@@ -210,16 +210,31 @@ const mapMusicBrainzReleaseGroupToListenBrainzAlbum = (
       },
     },
     type: album['primary-type'] ?? 'Album',
+    secondaryTypes: album['secondary-types'] ?? [],
   };
 };
 
-const getAlbumDetails = async (
+export const getAlbumDetails = async (
   mbId: string,
   listenbrainz: ListenBrainzAPI,
   musicbrainz: MusicBrainz
 ) => {
   try {
-    return await listenbrainz.getAlbum(mbId);
+    const details = await listenbrainz.getAlbum(mbId);
+    // ListenBrainz's type alone omits release-group secondary types.
+    // Keep the richer track data, but use the same taxonomy as collections.
+    const releaseGroup = await musicbrainz
+      .getReleaseGroupDetails({
+        releaseGroupId: mbId,
+      })
+      .catch(() => null);
+    return releaseGroup
+      ? {
+          ...details,
+          type: releaseGroup['primary-type'] ?? details.type,
+          secondaryTypes: releaseGroup['secondary-types'] ?? [],
+        }
+      : details;
   } catch (error) {
     logger.warn('ListenBrainz album details unavailable; using MusicBrainz', {
       label: 'Music API',

@@ -1,4 +1,7 @@
-import { matchesMusicReleaseType } from '@server/constants/musicReleaseTypes';
+import {
+  formatMusicReleaseType,
+  matchesMusicReleaseType,
+} from '@server/constants/musicReleaseTypes';
 import type { CuratedCollectionMember } from '@server/models/CuratedCollection';
 
 export type MusicCollectionFilters = {
@@ -23,11 +26,7 @@ function musicCollectionTypes(part: CuratedCollectionMember) {
 
 export function musicCollectionTypeLabel(part: CuratedCollectionMember) {
   const { primary, secondary } = musicCollectionTypes(part);
-  return (
-    primary.toLowerCase() === 'album' && secondary.length
-      ? secondary
-      : [primary, ...secondary]
-  ).join(' · ');
+  return formatMusicReleaseType(primary, secondary);
 }
 
 export function filterMusicCollection(

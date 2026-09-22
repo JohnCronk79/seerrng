@@ -26,6 +26,16 @@ export const MUSIC_RELEASE_TYPES = [
   ...MUSIC_SECONDARY_TYPES,
 ];
 export type MusicPrimaryType = (typeof MUSIC_PRIMARY_TYPES)[number];
+export const formatMusicReleaseType = (
+  primary: string,
+  secondary: readonly string[] = []
+) =>
+  (primary.toLowerCase() === 'album' && secondary.length
+    ? secondary
+    : [primary, ...secondary]
+  )
+    .filter(Boolean)
+    .join(' · ');
 export const musicReleaseTypeField = (value: string) =>
   MUSIC_SECONDARY_TYPES.some(
     (type) => type.toLowerCase() === value.toLowerCase()

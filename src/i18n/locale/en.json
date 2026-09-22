@@ -1306,7 +1306,7 @@
   "components.RequestModal.QuotaDisplay.season": "season",
   "components.RequestModal.QuotaDisplay.seasonlimit": "{limit, plural, one {season} other {seasons}}",
   "components.RequestModal.RequestFooterStatus.approvalRequired": "Approval Required",
-  "components.RequestModal.RequestFooterStatus.approvedAutomatically": "Approved Automatically",
+  "components.RequestModal.RequestFooterStatus.approvedAutomatically": "Automatically",
   "components.RequestModal.RequestFooterStatus.requested": "Requested",
   "components.RequestModal.SearchByNameModal.nomatches": "We were unable to find a match for this series.",
   "components.RequestModal.SearchByNameModal.notvdbiddescription": "We were unable to automatically match this series. Please select the correct match below.",
