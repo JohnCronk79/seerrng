@@ -2497,7 +2497,10 @@
   }
 
   .app-filter-select-menu {
-    @apply absolute top-full left-0 z-50 mt-1 max-h-60 w-max max-w-80 min-w-full overflow-auto rounded-md border py-1 text-xs shadow-xl focus:outline-none;
+    @apply absolute top-full left-0 z-50 mt-1 w-max max-w-80 min-w-full overflow-auto rounded-md border py-1 text-xs shadow-xl focus:outline-none;
+    --filter-option-height: 1.5rem;
+    --anchor-max-height: calc(8 * var(--filter-option-height) + 0.5rem + 2px);
+    max-height: var(--anchor-max-height);
     color: rgb(var(--theme-control-text));
     border-color: rgb(var(--theme-control-border) / 0.75);
     background-color: rgb(var(--theme-control-surface) / 0.98);
@@ -2511,13 +2514,10 @@
     max-width: min(20rem, calc(100vw - 16px));
   }
 
-  .app-filter-rating-menu {
-    max-height: none;
-    overflow: hidden;
-  }
-
   .app-filter-select-option {
     @apply relative cursor-default py-1 pr-2 pl-7 text-gray-300 select-none;
+    height: var(--filter-option-height);
+    line-height: 1rem;
   }
 
   .app-filter-rating-option {

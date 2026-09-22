@@ -11,6 +11,25 @@ const source = readFileSync(
 );
 const css = readFileSync(new URL('./globals.css', import.meta.url), 'utf8');
 
+test('filter and rating menus scroll after eight uniform rows', () => {
+  const menu = css.match(/\.app-filter-select-menu\s*\{([^}]+)\}/)?.[1];
+  const option = css.match(/\.app-filter-select-option\s*\{([^}]+)\}/)?.[1];
+  assert.ok(menu);
+  assert.ok(option);
+  assert.match(menu, /--filter-option-height: 1\.5rem/);
+  assert.match(
+    menu,
+    /--anchor-max-height: calc\(8 \* var\(--filter-option-height\) \+ 0\.5rem \+ 2px\)/
+  );
+  assert.match(menu, /max-height: var\(--anchor-max-height\)/);
+  assert.match(menu, /overflow-auto/);
+  assert.match(option, /height: var\(--filter-option-height\)/);
+  assert.doesNotMatch(
+    css,
+    /\.app-filter-rating-menu\s*\{[^}]*(?:max-height: none|overflow: hidden)/
+  );
+});
+
 test('both compact menus escape clipping through an anchored portal', () => {
   const menus = [...source.matchAll(/<Listbox.Options\b[\s\S]*?>/g)];
   assert.equal(menus.length, 2);
