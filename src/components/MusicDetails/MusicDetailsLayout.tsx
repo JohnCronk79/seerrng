@@ -1,13 +1,12 @@
-import MusicBrainzLogo from '@app/assets/musicbrainz.svg';
-import LidarrLogo from '@app/assets/services/lidarr.svg';
+import CollectionNavigation from '@app/components/CollectionDetails/CollectionNavigation';
 import CachedImage from '@app/components/Common/CachedImage';
 import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
-import Tooltip from '@app/components/Common/Tooltip';
 import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import MusicRatings from '@app/components/MediaDetails/MusicRatings';
 import { subjectTagClassName } from '@app/components/MediaDetails/subjectTagStyle';
 import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
@@ -15,7 +14,6 @@ import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
-import { getSafeHref } from '@app/utils/safeUrl';
 import type { MusicDetails, MusicRatingResponse } from '@server/models/Music';
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -30,12 +28,12 @@ const messages = defineMessages('components.MusicDetails.Layout', {
   albumType: 'Album Type',
   trackCount: 'Track Count',
   status: 'Status',
-  viewArtists: 'View Artists',
+  viewArtists: 'Artists',
   subjectTags: 'Subject Tags',
   fullArtistList: 'Full Artist List',
   noArtists: 'No artist information available',
   noTags: 'No subject tags available',
-  albumDetails: 'Album Details',
+  albumDetails: 'Details',
   artistType: 'Artist Type',
   origin: 'Origin',
   musicBrainz: 'MusicBrainz',
@@ -111,7 +109,6 @@ const MusicDetailsLayout = ({
   );
   const playbackCatalog =
     selectedQuality === 'flac' ? flacPlaybackCatalog : mp3PlaybackCatalog;
-  const safeRatingUrl = getSafeHref(ratingData?.rating?.url);
   useEffect(() => {
     setShowArtists(pins.artists);
   }, [pins.artists]);
@@ -368,7 +365,7 @@ const MusicDetailsLayout = ({
             onSelectionChange={setSelectedPlaybackItemIds}
           />
 
-          {(playbackActions || ratingData?.rating) && (
+          {(playbackActions || ratingData) && (
             <div
               className="media-rating-row"
               data-testid="music-playback-rating-row"
@@ -401,50 +398,12 @@ const MusicDetailsLayout = ({
                   is4k={selectedQuality === 'flac'}
                 />
               )}
-              {ratingData?.rating && safeRatingUrl && (
-                <Tooltip
-                  content={intl.formatMessage(
-                    ratingData.rating.source === 'lidarr'
-                      ? messages.lidarrRating
-                      : messages.musicBrainzRating,
-                    {
-                      score: intl.formatNumber(ratingData.rating.score, {
-                        maximumFractionDigits: 1,
-                      }),
-                      votes: intl.formatNumber(ratingData.rating.votes),
-                    }
-                  )}
-                >
-                  <a
-                    href={safeRatingUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="media-rating-link"
-                    aria-label={intl.formatMessage(
-                      ratingData.rating.source === 'lidarr'
-                        ? messages.lidarrRating
-                        : messages.musicBrainzRating,
-                      {
-                        score: intl.formatNumber(ratingData.rating.score, {
-                          maximumFractionDigits: 1,
-                        }),
-                        votes: intl.formatNumber(ratingData.rating.votes),
-                      }
-                    )}
-                  >
-                    {ratingData.rating.source === 'lidarr' ? (
-                      <LidarrLogo className="media-rating-icon" />
-                    ) : (
-                      <MusicBrainzLogo className="media-rating-icon" />
-                    )}
-                    <span className="media-rating-value">
-                      {intl.formatNumber(ratingData.rating.score, {
-                        maximumFractionDigits: 1,
-                      })}
-                    </span>
-                  </a>
-                </Tooltip>
-              )}
+              <MusicRatings
+                ratings={
+                  ratingData?.ratings ??
+                  (ratingData?.rating ? [ratingData.rating] : [])
+                }
+              />
             </div>
           )}
 
@@ -454,13 +413,10 @@ const MusicDetailsLayout = ({
           </div>
 
           <div className="media-detail-disclosure-row">
-            <DetailDisclosureButton
-              label={intl.formatMessage(messages.albumDetails)}
-              open={showDetails}
-              onClick={() => setShowDetails((open) => !open)}
-              pinned={pins.details}
-              onPinClick={() => void togglePinned('details')}
-              controls="music-additional-details"
+            <CollectionNavigation
+              kind="music"
+              id={data.artist.id}
+              artistName={data.artist.name}
             />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.viewArtists)}
@@ -475,6 +431,14 @@ const MusicDetailsLayout = ({
               onClick={() => setShowTags((open) => !open)}
               pinned={pins.subjectTags}
               onPinClick={() => void togglePinned('subjectTags')}
+            />
+            <DetailDisclosureButton
+              label={intl.formatMessage(messages.albumDetails)}
+              open={showDetails}
+              onClick={() => setShowDetails((open) => !open)}
+              pinned={pins.details}
+              onPinClick={() => void togglePinned('details')}
+              controls="music-additional-details"
             />
             {catalogActions}
           </div>

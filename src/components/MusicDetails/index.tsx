@@ -121,7 +121,11 @@ const MusicDetails = () => {
     normalizedRouteMusicId
       ? `/api/v1/music/${encodeApiPathSegment(normalizedRouteMusicId)}/rating`
       : null,
-    { shouldRetryOnError: false }
+    {
+      refreshInterval: (data) => (data?.failedSources?.length ? 60000 : 0),
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
   );
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
@@ -378,6 +382,7 @@ const MusicDetails = () => {
         <Button
           buttonType="bulkRequest"
           buttonSize="sm"
+          className="media-detail-catalog-action"
           onClick={() => setShowBulkRequestModal(true)}
         >
           <ArrowDownTrayIcon />

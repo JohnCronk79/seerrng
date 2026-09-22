@@ -42,6 +42,8 @@ type BaseProps<P> = {
   /** Explains a state-based disabled action in the shared styled tooltip. */
   disabledReason?: string;
   buttonIcon?: 'cancel' | 'browse' | 'delete';
+  /** Uses shared square geometry for an action with only an icon. */
+  iconOnly?: boolean;
   // Had to do declare this manually as typescript would assume e was of type any otherwise
   onClick?: (
     e: React.MouseEvent<P extends 'a' ? HTMLAnchorElement : HTMLButtonElement>
@@ -90,6 +92,7 @@ function Button<P extends ElementTypes = 'button'>(
     className,
     disabledReason,
     buttonIcon,
+    iconOnly = false,
     ...props
   }: ButtonProps<P>,
   ref?: React.Ref<Element<P>>
@@ -98,6 +101,7 @@ function Button<P extends ElementTypes = 'button'>(
     'app-button',
     buttonTypeStyles[buttonType],
     buttonSizeStyles[buttonSize],
+    iconOnly && 'app-button-icon-only',
     className
   );
 

@@ -36,16 +36,16 @@ const messages = defineMessages('components.MovieDetails.Layout', {
   ultraHd: '4K',
   overview: 'Overview',
   overviewUnavailable: 'Overview unavailable',
-  viewCast: 'View Cast',
-  viewCollection: 'View Collection',
-  viewCrew: 'View Crew',
+  viewCast: 'Cast',
+  viewCollection: 'Collection',
+  viewCrew: 'Crew',
   subjectTags: 'Subject Tags',
   fullCastList: 'Full Cast List',
   fullCrewList: 'Full Crew List',
   noCast: 'No cast information available',
   noCrew: 'No crew information available',
   noTags: 'No subject tags available',
-  movieDetails: 'Movie Details',
+  movieDetails: 'Details',
   status: 'Status',
   releaseDates: 'Release Dates',
   revenue: 'Revenue',
@@ -362,14 +362,6 @@ const MovieDetailsLayout = ({
           </section>
 
           <div className="media-detail-disclosure-row">
-            <DetailDisclosureButton
-              label={intl.formatMessage(messages.movieDetails)}
-              open={showDetails}
-              onClick={() => setShowDetails((open) => !open)}
-              pinned={pins.details}
-              onPinClick={() => void togglePinned('details')}
-              controls="movie-additional-details"
-            />
             {data.collection && (
               <DetailDisclosureButton
                 label={intl.formatMessage(messages.viewCollection)}
@@ -399,6 +391,14 @@ const MovieDetailsLayout = ({
               onClick={() => setShowTags((open) => !open)}
               pinned={pins.subjectTags}
               onPinClick={() => void togglePinned('subjectTags')}
+            />
+            <DetailDisclosureButton
+              label={intl.formatMessage(messages.movieDetails)}
+              open={showDetails}
+              onClick={() => setShowDetails((open) => !open)}
+              pinned={pins.details}
+              onPinClick={() => void togglePinned('details')}
+              controls="movie-additional-details"
             />
           </div>
 

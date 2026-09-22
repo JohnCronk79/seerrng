@@ -3,6 +3,7 @@ import RTAudRotten from '@app/assets/rt_aud_rotten.svg';
 import RTFresh from '@app/assets/rt_fresh.svg';
 import RTRotten from '@app/assets/rt_rotten.svg';
 import TmdbLogo from '@app/assets/tmdb_logo.svg';
+import CollectionNavigation from '@app/components/CollectionDetails/CollectionNavigation';
 import CachedImage from '@app/components/Common/CachedImage';
 import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import Tooltip from '@app/components/Common/Tooltip';
@@ -40,15 +41,15 @@ const messages = defineMessages('components.TvDetails.Layout', {
   ultraHd: '4K',
   overview: 'Overview',
   overviewUnavailable: 'Overview unavailable',
-  viewCast: 'View Cast',
-  viewCrew: 'View Crew',
+  viewCast: 'Cast',
+  viewCrew: 'Crew',
   subjectTags: 'Subject Tags',
   fullCastList: 'Full Cast List',
   fullCrewList: 'Full Crew List',
   noCast: 'No cast information available',
   noCrew: 'No crew information available',
   noTags: 'No subject tags available',
-  seriesDetails: 'Series Details',
+  seriesDetails: 'Details',
   status: 'Status',
   airDates: 'Air Dates',
   first: 'First',
@@ -568,14 +569,7 @@ const SeriesDetailsLayout = ({
           </section>
 
           <div className="media-detail-disclosure-row">
-            <DetailDisclosureButton
-              label={intl.formatMessage(messages.seriesDetails)}
-              open={showDetails}
-              onClick={() => setShowDetails((open) => !open)}
-              pinned={pins.details}
-              onPinClick={() => void togglePinned('details')}
-              controls="tv-additional-details"
-            />
+            <CollectionNavigation kind="tv" id={String(data.id)} />
             <DetailDisclosureButton
               label={intl.formatMessage(messages.viewCast)}
               open={showCast}
@@ -596,6 +590,14 @@ const SeriesDetailsLayout = ({
               onClick={() => setShowTags((open) => !open)}
               pinned={pins.subjectTags}
               onPinClick={() => void togglePinned('subjectTags')}
+            />
+            <DetailDisclosureButton
+              label={intl.formatMessage(messages.seriesDetails)}
+              open={showDetails}
+              onClick={() => setShowDetails((open) => !open)}
+              pinned={pins.details}
+              onPinClick={() => void togglePinned('details')}
+              controls="tv-additional-details"
             />
           </div>
 

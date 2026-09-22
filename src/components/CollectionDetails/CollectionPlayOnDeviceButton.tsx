@@ -12,7 +12,7 @@ import useSWR from 'swr';
 
 const messages = defineMessages('components.CollectionDetails.PlayOnDevice', {
   label: 'Play on Device',
-  emptySelection: 'No playable movies are currently available.',
+  emptySelection: 'No playable items are currently available.',
   noDevices: 'No active, authorized playback devices are available.',
   started: 'Playback started on {deviceName}.',
   failed: 'Playback could not be started on {deviceName}.',

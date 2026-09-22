@@ -663,12 +663,76 @@
     @apply flex flex-wrap items-center;
   }
 
+  .media-detail-disclosure-row > .media-detail-catalog-action {
+    margin-inline-start: auto;
+  }
+
+  .music-rating-source {
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .collection-detail-disclosure-row {
+    @apply justify-between;
+  }
+
+  .music-collection-action-row {
+    @apply justify-start;
+  }
+
+  .music-collection-action-row .collection-server-actions {
+    margin-inline-start: auto;
+  }
+
+  .music-collection-filter-row {
+    @apply flex flex-wrap items-center;
+    gap: var(--card-spacing);
+  }
+
+  .collection-server-actions {
+    @apply flex flex-none items-center;
+    gap: var(--card-spacing);
+  }
+
+  .collection-server-actions .app-button > span {
+    @apply gap-1.5;
+  }
+
   .media-detail-collection-card {
     margin-top: var(--card-spacing);
   }
 
   .collection-summary-header {
     @apply grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)];
+  }
+
+  .collection-navigation-panel {
+    flex-basis: 100%;
+    display: grid;
+    gap: var(--card-gap, 8px);
+    order: 1;
+  }
+
+  .discover-filter-control.music-artist-filter {
+    width: 20rem;
+    max-width: 100%;
+    flex: none;
+  }
+
+  .discover-filter-control.music-artist-filter .react-select-container {
+    flex: 1 1 0%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .discover-filter-control.music-artist-filter
+    .discover-compact-select
+    .react-select__menu {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
   }
 
   .movie-summary-card {
@@ -2325,6 +2389,29 @@
   .button-standard svg.playback-provider-icon {
     @apply m-0 w-auto max-w-12 flex-none;
     height: var(--action-control-content-height);
+  }
+
+  /* Icon-only actions must not inherit the text buttons' horizontal padding. */
+  .app-button.app-button-icon-only {
+    width: 1.5rem;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    min-height: 1.5rem;
+    max-height: 1.5rem;
+    padding: 0 !important;
+    flex-shrink: 0;
+  }
+
+  .app-button-icon-only > span {
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .app-button.app-button-icon-only svg {
+    width: var(--action-control-content-height);
+    height: var(--action-control-content-height);
+    margin: 0;
+    flex-shrink: 0;
   }
 
   /* Login retains its original roomy controls, independently of media actions. */

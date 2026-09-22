@@ -13,6 +13,7 @@ import Tooltip from '@app/components/Common/Tooltip';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import MovieSummaryCard from '@app/components/MediaDetails/MovieSummaryCard';
+import useCollectionAvailability from '@app/hooks/useCollectionAvailability';
 import useCollectionMemberDetails from '@app/hooks/useCollectionMemberDetails';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -48,6 +49,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 import CollectionRatings from './CollectionRatings';
+import CollectionServerActions from './CollectionServerActions';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -72,7 +74,7 @@ const messages = defineMessages('components.CollectionDetails', {
     'Every movie in this collection is already available or requested.',
   request4kUnavailable:
     'Every 4K movie in this collection is already available or requested.',
-  selection: 'Select this available movie for playback',
+  selection: 'Select this movie for playback and collection creation',
   quality: 'Quality',
   chooseQuality: 'Choose HD or 4K before starting playback.',
   noQualitySelection: 'No selected movies are available in this quality.',
@@ -142,6 +144,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   const { data: genres } = useSWR<{ id: number; name: string }[]>(
     '/api/v1/genres/movie'
   );
+  const availability = useCollectionAvailability(collectionId, data);
 
   const orderedParts = useMemo(
     () => orderCollectionPartsOldestFirst(data?.parts ?? []),
@@ -180,24 +183,23 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
     () => availableParts.map((part) => part.mediaInfo!.id),
     [availableParts]
   );
-  const effectivePlaybackMediaIds = availableMediaIds.filter(
-    (id) =>
-      (!hasManualPlaybackSelection || selectedMediaIds.includes(id)) &&
-      orderedParts.some(
-        (part) =>
-          part.mediaInfo?.id === id &&
-          collectionPartHasQuality(part, playbackQuality)
-      )
+  const effectivePlaybackMediaIds = availableMediaIds.filter((id) =>
+    orderedParts.some(
+      (part) =>
+        part.mediaInfo?.id === id &&
+        (!hasManualPlaybackSelection || selectedMediaIds.includes(part.id)) &&
+        collectionPartHasQuality(part, playbackQuality)
+    )
   );
   useEffect(() => {
     setSelectedMediaIds((current) =>
       reconcileCollectionPlaybackSelection(
         current,
-        availableMediaIds,
+        orderedParts.map((part) => part.id),
         hasManualPlaybackSelection
       )
     );
-  }, [availableMediaIds, hasManualPlaybackSelection]);
+  }, [orderedParts, hasManualPlaybackSelection]);
 
   if (!data && !error) return <LoadingSpinner />;
   if (!data) return <ErrorPage statusCode={404} />;
@@ -494,21 +496,31 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             <FormatRequestControl options={requestOptions} />
           </div>
 
-          <CollectionMetadataDisclosures parts={data.parts} />
+          <CollectionMetadataDisclosures
+            parts={data.parts}
+            actions={
+              availability.supported ? (
+                <CollectionServerActions
+                  key={collectionId}
+                  id={collectionId}
+                  title={data.name}
+                  availability={availability.data}
+                  error={availability.error}
+                  revalidate={availability.mutate}
+                  selectedIds={selectedMediaIds.map(String)}
+                />
+              ) : undefined
+            }
+          />
 
           <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
             <h2 className="media-inset-heading">
               {intl.formatMessage(messages.collection)}
             </h2>
-            <div className="scrollable-card card-stack -mr-3 mt-2 max-h-[312px] overflow-y-auto pr-3">
+            <div className="scrollable-card card-stack mt-2 -mr-3 max-h-[312px] overflow-y-auto pr-3">
               {orderedParts.map((part) => {
                 const member = memberById.get(part.id);
                 const details = member?.details;
-                const mediaId = part.mediaInfo?.id;
-                const available = playbackQuality
-                  ? collectionPartHasQuality(part, playbackQuality)
-                  : collectionPartHasQuality(part, 'hd') ||
-                    collectionPartHasQuality(part, '4k');
                 return (
                   <MovieSummaryCard
                     key={part.id}
@@ -534,13 +546,8 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                     href={`/movie/${part.id}`}
                     selection={
                       <SelectionCircle
-                        disabled={!available}
-                        onClick={() => mediaId && togglePart(mediaId)}
-                        selected={
-                          available &&
-                          !!mediaId &&
-                          selectedMediaIds.includes(mediaId)
-                        }
+                        onClick={() => togglePart(part.id)}
+                        selected={selectedMediaIds.includes(part.id)}
                         label={intl.formatMessage(messages.selection)}
                       />
                     }

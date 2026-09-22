@@ -72,13 +72,18 @@ export interface MusicDetails {
   trackAvailability?: MusicTrackAvailability;
 }
 
+export interface MusicRating {
+  score: number;
+  votes: number;
+  url: string;
+  source: 'musicbrainz' | 'lidarr' | 'theaudiodb' | 'discogs';
+  scale?: 5 | 10;
+  edition?: string;
+}
 export interface MusicRatingResponse {
-  rating?: {
-    score: number;
-    votes: number;
-    url: string;
-    source: 'musicbrainz' | 'lidarr';
-  };
+  rating?: MusicRating;
+  ratings?: MusicRating[];
+  failedSources?: MusicRating['source'][];
 }
 
 export const MAX_MUSIC_DETAIL_MEDIA = 50;

@@ -57,6 +57,7 @@ import authorRoutes from './author';
 import blocklistRoutes from './blocklist';
 import bookRoutes from './book';
 import collectionRoutes from './collection';
+import collectionCatalogRoutes from './collectionCatalog';
 import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
 import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
 import issueRoutes from './issue';
@@ -449,6 +450,12 @@ router.use(
   collectionRoutes
 );
 router.use('/service', isAuthenticated(), serviceRoutes);
+router.use(
+  '/collection-catalog',
+  isAuthenticated(),
+  externalMetadataRateLimit,
+  collectionCatalogRoutes
+);
 router.use('/issue', isAuthenticated(), issueRoutes);
 router.use('/issueComment', isAuthenticated(), issueCommentRoutes);
 router.post(

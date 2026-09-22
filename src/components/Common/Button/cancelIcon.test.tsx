@@ -21,6 +21,24 @@ it('does not add an icon to ordinary buttons', () => {
   expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain('<svg');
 });
 
+it('applies icon-only geometry without leaking the prop to buttons or links', () => {
+  for (const control of [
+    <Button iconOnly aria-label="Add to Blocklist">
+      <svg />
+    </Button>,
+    <Button as="a" href="/" iconOnly aria-label="Home">
+      <svg />
+    </Button>,
+  ]) {
+    const html = renderToStaticMarkup(control);
+    expect(html).toContain('app-button-icon-only');
+    expect(html).not.toContain('iconOnly');
+  }
+  expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain(
+    'app-button-icon-only'
+  );
+});
+
 it('renders one shared trash icon for destructive confirmations', () => {
   const html = renderToStaticMarkup(
     <Button buttonIcon="delete" buttonType="danger">

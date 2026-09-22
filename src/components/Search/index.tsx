@@ -27,11 +27,11 @@ import { useEffect, useMemo } from 'react';
 import { useIntl } from 'react-intl';
 import ContextualSearchFilters from './ContextualSearchFilters';
 import {
+  getMusicSearchParams,
   getSearchCategoryQuery,
   getSearchEndpoint,
   getSearchResultFilter,
   isSearchDataReady,
-  matchesSearchResultFilter,
   searchContextualFilterKeys,
 } from './searchFilters';
 import {
@@ -279,20 +279,28 @@ const Search = () => {
     const value = router.query[key];
     return typeof value === 'string' ? value : '';
   };
+  const resultFilter = getSearchResultFilter(router.query).trim();
+  const combinedQuery = [query, resultFilter].filter(Boolean).join(' ');
   const preparedVideoFilters = prepareFilterValues({
     ...router.query,
-    search: query || undefined,
+    search: combinedQuery || undefined,
   });
-  const resultFilter = getSearchResultFilter(router.query).trim();
-  const searchEndpoint = getSearchEndpoint(category.key, query);
+  const searchEndpoint = getSearchEndpoint(
+    category.key,
+    query,
+    searchContextualFilterKeys.some((key) => Boolean(router.query[key]))
+  );
   const searchOptions = useMemo(
     () => {
-      if (query) {
+      if (searchEndpoint === '/api/v1/search') {
         return {
-          query,
+          query: category.key === 'all' ? combinedQuery : query,
           ...(category.type ? { type: category.type } : {}),
           ...(preferredBookFormat ? { format: preferredBookFormat } : {}),
           ...(category.key === 'music' && resultFilter ? { resultFilter } : {}),
+          ...(category.key === 'music'
+            ? getMusicSearchParams(router.query)
+            : {}),
         };
       }
 
@@ -302,19 +310,21 @@ const Search = () => {
 
       if (category.key === 'music') {
         return {
-          query,
+          query: combinedQuery,
           days: '14',
           sortBy: 'ranked',
           genre: getRoutedString('genre'),
           releaseType: getRoutedString('releaseType'),
           primaryReleaseDateGte: getRoutedString('primaryReleaseDateGte'),
           primaryReleaseDateLte: getRoutedString('primaryReleaseDateLte'),
+          artist: getRoutedString('artist'),
+          artistId: getRoutedString('artistId'),
         };
       }
 
       if (category.key === 'book' || category.key === 'audiobook') {
         return {
-          query,
+          query: combinedQuery,
           subject: getRoutedString('subject'),
           firstPublishYear: getRoutedString('firstPublishYear'),
           language: getRoutedString('language'),
@@ -334,7 +344,7 @@ const Search = () => {
   const isSearchReady = isSearchDataReady({
     routerReady: router.isReady,
     category: category.key,
-    query,
+    query: combinedQuery,
   });
   const hasActiveFilters = Boolean(
     category.key !== 'all' ||
@@ -366,21 +376,8 @@ const Search = () => {
     return () => setSearchActivity(false);
   }, [isLoadingInitialData, isSearchReady, isValidating]);
   const visibleTitles = useMemo(
-    () =>
-      titles
-        .filter((title) => matchesCategory(title, category))
-        .filter((title) =>
-          matchesSearchResultFilter(
-            [
-              getResultTitle(title),
-              getResultAuthor(title),
-              getResultArtist(title),
-              title.mediaType === 'book' ? title.publisher : undefined,
-            ],
-            resultFilter
-          )
-        ),
-    [category, resultFilter, titles]
+    () => titles.filter((title) => matchesCategory(title, category)),
+    [category, titles]
   );
   const sortedTitles = useMemo(() => {
     const collator = new Intl.Collator(undefined, {
@@ -444,6 +441,7 @@ const Search = () => {
     isSearchReady &&
     !isLoadingInitialData &&
     !isLoadingMore &&
+    isReachingEnd &&
     sortedTitles.length === 0;
   const providerErrorMessage = (
     error as { response?: { data?: { message?: string } } } | undefined

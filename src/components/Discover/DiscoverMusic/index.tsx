@@ -14,6 +14,8 @@ import {
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import { musicSortOptions } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import MusicArtistFilter from '@app/components/Discover/FilterPanel/MusicArtistSelector';
+import MusicReleaseTypeSelect from '@app/components/Discover/FilterPanel/MusicReleaseTypeSelect';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
 import PlaylistImportModal from '@app/components/RequestModal/PlaylistImportModal';
 import useDebouncedState from '@app/hooks/useDebouncedState';
@@ -117,6 +119,8 @@ const DiscoverMusic = ({
   }, [query, setSearch]);
   const genre =
     typeof router.query.genre === 'string' ? router.query.genre : '';
+  const artist =
+    typeof router.query.artist === 'string' ? router.query.artist : '';
   const availability: AvailabilityQuality | undefined =
     router.query.availability === 'mp3' || router.query.availability === 'flac'
       ? router.query.availability
@@ -149,12 +153,15 @@ const DiscoverMusic = ({
       days: '14',
       sortBy,
       genre,
+      artist,
+      artistId:
+        typeof router.query.artistId === 'string' ? router.query.artistId : '',
       releaseType,
       primaryReleaseDateGte: releaseDateGte,
       primaryReleaseDateLte: releaseDateLte,
     },
     {
-      randomizeOrder: !query && sortBy === 'ranked',
+      randomizeOrder: !query && !artist && sortBy === 'ranked',
       availableQuality: availability,
       hideAvailable: !availability,
     }
@@ -200,14 +207,9 @@ const DiscoverMusic = ({
     { label: intl.formatMessage(messages.any), value: '' },
     ...genres.map((value) => ({ label: value, value: value.toLowerCase() })),
   ];
-  const releaseTypeOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    { label: intl.formatMessage(messages.album), value: 'Album' },
-    { label: intl.formatMessage(messages.ep), value: 'EP' },
-    { label: intl.formatMessage(messages.single), value: 'Single' },
-  ];
   const hasActiveFilters = Boolean(
     query ||
+    artist ||
     availability ||
     genre ||
     releaseType ||
@@ -244,6 +246,8 @@ const DiscoverMusic = ({
               setSearch('');
               setParam({
                 search: undefined,
+                artist: undefined,
+                artistId: undefined,
                 availability: undefined,
                 genre: undefined,
                 releaseType: undefined,
@@ -265,6 +269,7 @@ const DiscoverMusic = ({
           />
         </div>
         <div className="discover-filter-secondary-row">
+          <MusicArtistFilter className="order-5" />
           <form
             className="discover-filter-control order-5 w-72 flex-none"
             onSubmit={(e) => {
@@ -298,11 +303,9 @@ const DiscoverMusic = ({
             options={genreOptions}
             onChange={(value) => setParam({ genre: value || undefined })}
           />
-          <CompactSelect
+          <MusicReleaseTypeSelect
             className="order-7"
-            label={intl.formatMessage(messages.releaseType)}
             value={releaseType}
-            options={releaseTypeOptions}
             onChange={(value) => setParam({ releaseType: value || undefined })}
           />
           <CompactSelect

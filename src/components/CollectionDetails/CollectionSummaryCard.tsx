@@ -6,10 +6,13 @@ import {
   getTmdbPosterImageVariants,
 } from '@app/utils/imageCache';
 import type { Collection } from '@server/models/Collection';
+import type { CuratedCollection } from '@server/models/CuratedCollection';
 import type { MovieDetails } from '@server/models/Movie';
 import Link from 'next/link';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import CollectionOverview from './CollectionOverview';
+import CuratedGenreLinks from './CuratedGenreLinks';
 
 const messages = defineMessages('components.CollectionSummaryCard', {
   genres: 'Genres',
@@ -25,23 +28,39 @@ const messages = defineMessages('components.CollectionSummaryCard', {
 
 const CollectionSummaryCard = ({
   collection,
+  kind,
 }: {
-  collection: NonNullable<MovieDetails['collection']>;
+  collection:
+    | NonNullable<MovieDetails['collection']>
+    | { id: string | number; name: string; posterPath?: string };
+  kind?: 'tv' | 'music';
 }) => {
   const intl = useIntl();
-  const { data, error, mutate } = useSWR<Collection>(
-    `/api/v1/collection/${collection.id}`
+  const { data, error, mutate } = useSWR<Collection | CuratedCollection>(
+    kind
+      ? `/api/v1/collection-catalog/${kind}/${collection.id}`
+      : `/api/v1/collection/${collection.id}`
   );
   const {
     data: genres,
     error: genresError,
     mutate: refreshGenres,
-  } = useSWR<{ id: number; name: string }[]>('/api/v1/genres/movie');
+  } = useSWR<{ id: number; name: string }[]>(
+    kind ? null : '/api/v1/genres/movie'
+  );
+  const curated = data && 'kind' in data ? data : undefined;
+  const movie = data && !('kind' in data) ? data : undefined;
   const name = data?.name ?? collection.name;
-  const posterPath = data?.posterPath ?? collection.posterPath;
-  const href = `/collection/${collection.id}`;
+  const posterPath =
+    curated?.posterPath ??
+    curated?.parts.find((part) => part.posterPath)?.posterPath ??
+    movie?.posterPath ??
+    collection.posterPath;
+  const href = kind
+    ? `/collections/${kind}/${collection.id}`
+    : `/collection/${collection.id}`;
   const genreIds = [
-    ...new Set(data?.parts.flatMap((part) => part.genreIds ?? []) ?? []),
+    ...new Set(movie?.parts.flatMap((part) => part.genreIds ?? []) ?? []),
   ];
 
   return (
@@ -53,12 +72,18 @@ const CollectionSummaryCard = ({
           className="collection-summary-poster"
         >
           <CachedImage
-            type="tmdb"
+            type={kind === 'music' ? 'music' : 'tmdb'}
             src={
-              getTmdbPosterImageUrl(posterPath) ||
+              (kind === 'music'
+                ? posterPath
+                : getTmdbPosterImageUrl(posterPath)) ||
               '/images/seerr_poster_not_found.png'
             }
-            variants={getTmdbPosterImageVariants(posterPath)}
+            variants={
+              kind === 'music'
+                ? undefined
+                : getTmdbPosterImageVariants(posterPath)
+            }
             alt=""
             fill
             sizes="(min-width: 640px) 80px, 64px"
@@ -74,27 +99,42 @@ const CollectionSummaryCard = ({
               {intl.formatMessage(messages.overview)}:
             </dt>
             <dd className="collection-summary-overview-value">
-              {data
-                ? data.overview ||
-                  intl.formatMessage(messages.overviewUnavailable)
-                : '—'}
+              {curated?.overview ? (
+                <CollectionOverview
+                  text={curated.overview}
+                  source={curated.overviewSource}
+                />
+              ) : data ? (
+                data.overview ||
+                intl.formatMessage(messages.overviewUnavailable)
+              ) : (
+                '—'
+              )}
             </dd>
             <dt className="collection-summary-genres-label">
               {intl.formatMessage(messages.genres)}:
             </dt>
             <dd className="collection-summary-genres-value">
-              {genreIds.length > 0
-                ? genreIds.map((id, index) => (
-                    <span key={id}>
-                      {index > 0 && ', '}
-                      <Link href={`/discover/movies?genre=${id}`}>
-                        {genres?.find((genre) => genre.id === id)?.name ?? id}
-                      </Link>
-                    </span>
-                  ))
-                : data
-                  ? intl.formatMessage(messages.notAvailable)
-                  : '—'}
+              {curated ? (
+                <CuratedGenreLinks
+                  kind={curated.kind}
+                  parts={curated.parts}
+                  fallback={intl.formatMessage(messages.notAvailable)}
+                />
+              ) : genreIds.length > 0 ? (
+                genreIds.map((id, index) => (
+                  <span key={id}>
+                    {index > 0 && ', '}
+                    <Link href={`/discover/movies?genre=${id}`}>
+                      {genres?.find((genre) => genre.id === id)?.name ?? id}
+                    </Link>
+                  </span>
+                ))
+              ) : data ? (
+                intl.formatMessage(messages.notAvailable)
+              ) : (
+                '—'
+              )}
             </dd>
             <div className="collection-summary-size">
               <dt className="collection-summary-size-label">

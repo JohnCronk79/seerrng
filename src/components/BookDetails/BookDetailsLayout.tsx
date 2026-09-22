@@ -31,7 +31,7 @@ const messages = defineMessages('components.BookDetails.Layout', {
   overviewUnavailable: 'Overview unavailable',
   genres: 'Genres',
   noGenres: 'No Genres Available',
-  bookDetails: 'Book Details',
+  bookDetails: 'Details',
   openLibrary: 'Open Library',
   edition: 'Edition',
   isbnCandidates: 'ISBN Candidates',
@@ -334,19 +334,19 @@ const BookDetailsLayout = ({
 
           <div className="media-detail-disclosure-row">
             <DetailDisclosureButton
+              label={intl.formatMessage(messages.genres)}
+              open={showGenres}
+              onClick={() => setShowGenres((open) => !open)}
+              pinned={pins.subjectTags}
+              onPinClick={() => void togglePinned('subjectTags')}
+            />
+            <DetailDisclosureButton
               label={intl.formatMessage(messages.bookDetails)}
               open={showDetails}
               onClick={() => setShowDetails((open) => !open)}
               pinned={pins.details}
               onPinClick={() => void togglePinned('details')}
               controls="book-additional-details"
-            />
-            <DetailDisclosureButton
-              label={intl.formatMessage(messages.genres)}
-              open={showGenres}
-              onClick={() => setShowGenres((open) => !open)}
-              pinned={pins.subjectTags}
-              onPinClick={() => void togglePinned('subjectTags')}
             />
             {catalogActions}
           </div>

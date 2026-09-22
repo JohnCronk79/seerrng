@@ -129,7 +129,7 @@ const FilterPanel = ({
 
     routedSearchRef.current = nextSearch;
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? clearedFilters : {}),
+      page: undefined,
       [searchQueryKey]: nextSearch || undefined,
     });
   }, [batchUpdateQueryParams, debouncedSearchValue, searchQueryKey, variant]);
@@ -150,13 +150,13 @@ const FilterPanel = ({
   };
   const updateFilter = (key: string, value?: string) => {
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      page: undefined,
       [key]: value,
     });
   };
   const updateFilters = (values: Record<string, string | undefined>) => {
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      page: undefined,
       ...values,
     });
   };
@@ -425,7 +425,7 @@ const FilterPanel = ({
           onSubmit={(event) => {
             event.preventDefault();
             batchUpdateQueryParams({
-              ...(variant === 'discover' ? clearedFilters : {}),
+              page: undefined,
               [searchQueryKey]: searchValue.trim() || undefined,
             });
           }}

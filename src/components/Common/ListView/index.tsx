@@ -1,4 +1,5 @@
 import ArtistCard from '@app/components/ArtistCard';
+import Button from '@app/components/Common/Button';
 import PersonCard from '@app/components/PersonCard';
 import TitleCard from '@app/components/TitleCard';
 import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
@@ -9,6 +10,7 @@ import useWarmImageCache, {
   MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
 } from '@app/hooks/useWarmImageCache';
 import globalMessages from '@app/i18n/globalMessages';
+import defineMessages from '@app/utils/defineMessages';
 import {
   canRequestMissingBookFormat,
   isBookInProgress,
@@ -48,6 +50,10 @@ type ListViewProps = {
   emptyMessage?: React.ReactNode;
   emptyClassName?: string;
 };
+
+const messages = defineMessages('components.ListView', {
+  continueSearch: 'Continue Search',
+});
 
 const ListView = ({
   items,
@@ -293,6 +299,11 @@ const ListView = ({
 
   return (
     <>
+      {!hasRenderableItems && !isLoading && !isReachingEnd && (
+        <Button onClick={onScrollBottom}>
+          {intl.formatMessage(messages.continueSearch)}
+        </Button>
+      )}
       {effectiveIsEmpty && (
         <div
           className={twMerge(
