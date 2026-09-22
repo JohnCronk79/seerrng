@@ -79,3 +79,15 @@ test('Unraid repository profile has the required public metadata', async () => {
   assert.equal(profile.DonateLink, 'https://ko-fi.com/snapetech');
   assert.ok(profile.DonateText);
 });
+
+test('repository license keeps the canonical MIT header for feed detection', async () => {
+  const license = await fs.readFile(
+    path.join(repositoryRoot, 'LICENSE'),
+    'utf8'
+  );
+
+  assert.match(
+    license,
+    /^MIT License\n\nCopyright \(c\) 2020 sct\n\nPermission is hereby granted/u
+  );
+});
