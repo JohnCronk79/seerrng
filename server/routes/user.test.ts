@@ -2467,6 +2467,60 @@ describe('User route input validation', () => {
     assert.strictEqual(user.settings?.detailDisclosureSubjectTagsPinned, true);
   });
 
+  it('persists media filter pins per page and removes only the unpinned scope', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    assert.strictEqual(
+      (
+        await agent
+          .post('/user/1/settings/media-filter-pins/books')
+          .send({ value: 'ebook' })
+      ).status,
+      200
+    );
+    const saved = await agent
+      .post('/user/1/settings/media-filter-pins/search')
+      .send({ value: 'music' });
+    assert.strictEqual(saved.status, 200);
+    assert.deepStrictEqual(saved.body, { books: 'ebook', search: 'music' });
+    const user = await getRepository(User).findOneOrFail({ where: { id: 1 } });
+    assert.deepStrictEqual(user.settings?.mediaFilterPins, saved.body);
+    const removed = await agent
+      .post('/user/1/settings/media-filter-pins/books')
+      .send({ value: null });
+    assert.deepStrictEqual(removed.body, { search: 'music' });
+    assert.strictEqual(
+      (
+        await agent
+          .post('/user/1/settings/media-filter-pins/unknown')
+          .send({ value: 'book' })
+      ).status,
+      400
+    );
+    assert.strictEqual(
+      (
+        await agent
+          .post('/user/1/settings/media-filter-pins/books')
+          .send({ value: 'invalid' })
+      ).status,
+      400
+    );
+    assert.strictEqual(
+      (await agent.post('/user/1/settings/media-filter-pins/books').send({}))
+        .status,
+      400
+    );
+  });
+
+  it('does not let another account change media filter pins', async () => {
+    const otherUser = await loginAs('friend@seerr.dev', 'test1234');
+    const denied = await otherUser
+      .post('/user/1/settings/media-filter-pins/books')
+      .send({ value: 'ebook' });
+    assert.strictEqual(denied.status, 403);
+    const user = await getRepository(User).findOneOrFail({ where: { id: 1 } });
+    assert.ok(!user.settings?.mediaFilterPins?.books);
+  });
+
   it('persists detail disclosure pins independently per media category', async () => {
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const movieSave = await agent

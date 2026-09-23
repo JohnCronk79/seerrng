@@ -5,6 +5,29 @@ import type {
 
 export type CardTextVisibility = 'always' | 'hover';
 
+export const mediaFilterScopes = [
+  'books',
+  'trending',
+  'search',
+  'blocklist',
+  'issues',
+  'requests',
+] as const;
+export type MediaFilterScope = (typeof mediaFilterScopes)[number];
+export const mediaFilterValues = [
+  'all',
+  'movie',
+  'tv',
+  'music',
+  'book',
+  'ebook',
+  'audiobook',
+] as const;
+export type MediaFilterValue = (typeof mediaFilterValues)[number];
+export type UserMediaFilterPins = Partial<
+  Record<MediaFilterScope, MediaFilterValue>
+>;
+
 export interface UserSettingsCardTextResponse {
   movie?: CardTextVisibility;
   tv?: CardTextVisibility;

@@ -3133,6 +3133,36 @@ describe('GET /discover/music', () => {
 });
 
 describe('GET /discover/books', () => {
+  it('sends the author constraint to the provider together with the genre and keyword', async () => {
+    const searchBooks = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ query }) => {
+        assert.match(query, /author:"stephen"/);
+        assert.match(query, /author:"king"/);
+        assert.match(query, /subject:horror/);
+        assert.match(query, /title:"shining"/);
+        return { numFound: 0, start: 0, docs: [] };
+      }
+    );
+    const agent = await login();
+    const response = await agent
+      .get('/discover/books')
+      .query({ author: 'Stephen King', query: 'Shining', subject: 'horror' });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(searchBooks.mock.callCount(), 1);
+  });
+
+  it('rejects oversized author searches before provider lookup', async () => {
+    const searchBooks = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+    const agent = await login();
+    const response = await agent
+      .get('/discover/books')
+      .query({ author: 'x'.repeat(257) });
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(searchBooks.mock.callCount(), 0);
+  });
+
   it('keeps completed book subject results when another subject stalls', async () => {
     const result = await settlePromisesWithin(
       [

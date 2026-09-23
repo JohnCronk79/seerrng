@@ -69,6 +69,11 @@ it('confirms only the current selection, sends format-specific batches, and canc
   });
   try {
     await render();
+    expect(
+      [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Cancel'
+      )?.classList.contains('app-button-danger')
+    ).toBe(true);
     await click('MP3');
     expect(state.post).not.toHaveBeenCalled();
     await render(items.slice(0, 1));

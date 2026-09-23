@@ -19,6 +19,12 @@ import type {
   UserSettingsNotificationsResponse,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import {
+  mediaFilterScopes,
+  mediaFilterValues,
+  type MediaFilterScope,
+  type MediaFilterValue,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import {
   getAuthAccountAdmissionResource,
   runAuthAccountAdmission,
 } from '@server/lib/authAccountAdmission';
@@ -70,6 +76,52 @@ import { IsNull, Not, Raw, type FindOptionsWhere } from 'typeorm';
 import { canMakePermissionsChange, isUniqueConstraintError } from '.';
 
 const userSettingsRoutes = Router({ mergeParams: true });
+
+userSettingsRoutes.post<{ id: string; scope: string }>(
+  '/media-filter-pins/:scope',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const scope = req.params.scope as MediaFilterScope;
+    const value = req.body?.value;
+    if (
+      !mediaFilterScopes.includes(scope) ||
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'value') ||
+      (value !== null && !mediaFilterValues.includes(value))
+    ) {
+      return next({ status: 400, message: 'Invalid media filter pin.' });
+    }
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!canModifyUser(user, actor))
+            return next({ status: 403, message: 'Access denied.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          const pins = { ...user.settings.mediaFilterPins };
+          if (value === null) delete pins[scope];
+          else pins[scope] = value as MediaFilterValue;
+          user.settings.mediaFilterPins = pins;
+          await repository.save(user);
+          return res.status(200).json(pins);
+        }
+      );
+    } catch (error) {
+      next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save media filter pin.',
+      });
+    }
+  }
+);
 const MAX_USER_SETTINGS_ID_VALUE = 1_000_000_000;
 const MAX_LINKED_ACCOUNT_TOKEN_LENGTH = 4096;
 const MAX_LINKED_ACCOUNT_USERNAME_LENGTH = 512;

@@ -3228,6 +3228,10 @@ discoverRoutes.get('/books', async (req, res) => {
     req.query.query,
     'Query'
   );
+  const parsedAuthorQuery = parseOptionalDiscoverString(
+    req.query.author,
+    'Author'
+  );
   const parsedFirstPublishYear = parseOptionalDiscoverString(
     req.query.firstPublishYear,
     'First publish year',
@@ -3260,6 +3264,11 @@ discoverRoutes.get('/books', async (req, res) => {
       .status(400)
       .json({ status: 400, message: parsedSearchQuery.error });
   }
+  if ('error' in parsedAuthorQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedAuthorQuery.error });
+  }
   if ('error' in parsedFirstPublishYear) {
     return res
       .status(400)
@@ -3280,6 +3289,7 @@ discoverRoutes.get('/books', async (req, res) => {
   }
 
   const rawSearchQuery = parsedSearchQuery.value ?? '';
+  const authorQuery = parsedAuthorQuery.value ?? '';
   const legacySubjectQuery = rawSearchQuery
     .match(/^subject:(.+)$/i)?.[1]
     ?.trim();
@@ -3352,6 +3362,9 @@ discoverRoutes.get('/books', async (req, res) => {
   if (hasSearchQuery && hasSubjectFilter) {
     queryParts.push(`subject:${subjectQuery}`);
   }
+  if (authorQuery) {
+    queryParts.push(toFieldedBooleanAndQuery(authorQuery, ['author']));
+  }
   if (language) {
     queryParts.push(`language:${language}`);
   }
@@ -3374,7 +3387,10 @@ discoverRoutes.get('/books', async (req, res) => {
 
   try {
     const openLibrarySort =
-      sortByBase === 'ranked' && !hasSearchQuery && !hasSubjectFilter
+      sortByBase === 'ranked' &&
+      !hasSearchQuery &&
+      !hasSubjectFilter &&
+      !authorQuery
         ? 'random'
         : sortByValue === 'newest'
           ? 'new'

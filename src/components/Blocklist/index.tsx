@@ -16,7 +16,9 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
 import {
@@ -299,6 +301,12 @@ const Blocklist = () => {
   const [currentFilter, setCurrentFilter] = useState<Filter>(Filter.ALL);
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'blocklist',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book'],
+    restore: setMediaFilter,
+  });
   const [sort, setSort] = useState<'date' | 'title' | 'mediaType'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const router = useRouter();
@@ -375,6 +383,7 @@ const Blocklist = () => {
     setCurrentFilter(Filter.ALL);
     setTimeFrame('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setSearchFilter('');
     setSort('date');
     setSortDirection('desc');
@@ -440,6 +449,7 @@ const Blocklist = () => {
           {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -455,6 +465,7 @@ const Blocklist = () => {
               aria-pressed={mediaFilter === value}
               onClick={() => {
                 setMediaFilter(value);
+                mediaPin.remember(value);
                 resetPage();
               }}
               className={getFilterToggleButtonClass(mediaFilter === value)}

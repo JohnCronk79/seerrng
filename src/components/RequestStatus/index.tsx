@@ -18,7 +18,9 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
@@ -1832,6 +1834,7 @@ const RequestStatus = () => {
   };
 
   const updateMediaFilter = (nextMediaFilter: MediaFilter) => {
+    mediaPin.remember(nextMediaFilter);
     const options = getSortOptions(nextMediaFilter);
     const keepsSort = options.some((option) => option.value === sort);
     const nextSort = keepsSort ? sort : 'added';
@@ -1843,6 +1846,20 @@ const RequestStatus = () => {
       routeQuery({ nextMediaFilter, nextSort, nextSortDirection })
     );
   };
+
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'requests',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book', 'audiobook'],
+    ready: router.isReady,
+    explicit: Boolean(router.query.mediaType),
+    restore: (value) => {
+      void router.replace({
+        pathname: router.pathname,
+        query: { ...router.query, mediaType: value, page: undefined },
+      });
+    },
+  });
 
   const updateSort = (nextSort: RequestStatusSortField) => {
     const nextSortDirection =
@@ -2080,6 +2097,7 @@ const RequestStatus = () => {
     setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setSort('added');
     setSortDirection('desc');
     setTimeFrame('all');
@@ -2251,6 +2269,7 @@ const RequestStatus = () => {
           {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
+          <MediaFilterPin pin={mediaPin} />
           {mediaFilters.map((option) => (
             <button
               key={option.value}

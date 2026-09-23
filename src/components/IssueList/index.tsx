@@ -9,11 +9,13 @@ import {
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import { BOOK_GENRES } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import { tvNetworks } from '@app/components/Discover/NetworkSlider';
 import { studios } from '@app/components/Discover/StudioSlider';
 import FocusedIssue from '@app/components/IssueList/FocusedIssue';
 import IssueItem from '@app/components/IssueList/IssueItem';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import {
   getPositiveQueryParamNumber,
@@ -93,6 +95,12 @@ const IssueList = () => {
   const [direction, setDirection] = useState<Direction>('desc');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'issues',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book'],
+    restore: setMediaFilter,
+  });
   const [issueTypeFilter, setIssueTypeFilter] =
     useState<IssueTypeFilter>('all');
   const [releaseYearFilter, setReleaseYearFilter] = useState('any');
@@ -171,6 +179,7 @@ const IssueList = () => {
     setFilter('all');
     setTimeFrame('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setIssueTypeFilter('all');
     clearMediaSpecificFilters();
     setSearch('');
@@ -306,6 +315,7 @@ const IssueList = () => {
           {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -321,6 +331,7 @@ const IssueList = () => {
               aria-pressed={mediaFilter === value}
               onClick={() => {
                 setMediaFilter(value);
+                mediaPin.remember(value);
                 clearMediaSpecificFilters();
                 resetPage();
               }}

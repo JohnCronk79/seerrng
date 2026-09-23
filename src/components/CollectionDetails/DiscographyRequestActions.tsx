@@ -100,7 +100,7 @@ export default function DiscographyRequestActions({
   return (
     <div className="discography-request-actions">
       <Button
-        buttonType="ghost"
+        buttonType="danger"
         disabled={busy}
         onClick={() => void router.push(returnHref)}
       >

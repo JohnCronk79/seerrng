@@ -2,6 +2,7 @@ import { isAuthenticationError } from '@app/utils/auth';
 import { UserType } from '@server/constants/user';
 import type {
   CardTextVisibility,
+  UserMediaFilterPins,
   UserSettingsCardTextResponse,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
@@ -54,6 +55,7 @@ export interface UserSettings {
   detailDisclosureArtistsPinned?: boolean;
   detailDisclosureSubjectTagsPinned?: boolean;
   detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
+  mediaFilterPins?: UserMediaFilterPins;
 }
 
 interface UserHookResponse {

@@ -9,8 +9,10 @@ import {
   FilterResetButton,
   getFilterToggleButtonClass,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import { prepareFilterValues } from '@app/components/Discover/constants';
 import useDiscover from '@app/hooks/useDiscover';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
 import defineMessages from '@app/utils/defineMessages';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
@@ -263,6 +265,27 @@ const Search = () => {
   const query =
     typeof router.query.query === 'string' ? router.query.query.trim() : '';
   const category = getSearchCategory(router.query.type, router.query.format);
+  const mediaPin = useMediaFilterPin<SearchCategory['key']>({
+    scope: 'search',
+    selected: category.key,
+    values: searchCategories.map((item) => item.key),
+    ready: router.isReady,
+    explicit: Boolean(router.query.type || router.query.format),
+    restore: (value) => {
+      const target = searchCategories.find((item) => item.key === value)!;
+      void router.replace(
+        {
+          pathname: router.pathname,
+          query: getSearchCategoryQuery(router.query, {
+            type: target.type,
+            format: 'format' in target ? target.format : undefined,
+          }),
+        },
+        undefined,
+        { shallow: true, scroll: false }
+      );
+    },
+  });
   const preferredBookFormat =
     'format' in category ? (category.format as BookFormat) : undefined;
   const sortOptions = sortFieldsByCategory[category.key].map(
@@ -502,6 +525,7 @@ const Search = () => {
           className="flex flex-wrap items-center gap-2"
           aria-label={intl.formatMessage(messages.mediaFilters)}
         >
+          <MediaFilterPin pin={mediaPin} />
           {searchCategories.map((searchCategory) => {
             const isSelected = category.key === searchCategory.key;
 
@@ -512,6 +536,7 @@ const Search = () => {
                 className={getFilterToggleButtonClass(isSelected)}
                 aria-pressed={isSelected}
                 onClick={() => {
+                  mediaPin.remember(searchCategory.key);
                   const nextQuery = getSearchCategoryQuery(router.query, {
                     type: searchCategory.type,
                     format:
@@ -545,6 +570,7 @@ const Search = () => {
             label={intl.formatMessage(messages.clearFilters)}
             selected={!hasActiveFilters}
             onClick={() => {
+              mediaPin.remember('all');
               void router.replace(
                 {
                   pathname: router.pathname,

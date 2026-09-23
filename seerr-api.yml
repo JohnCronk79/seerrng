@@ -7001,6 +7001,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DetailDisclosurePinSettings'
+  /user/{userId}/settings/media-filter-pins/{scope}:
+    post:
+      summary: Remember or unpin a media filter selection for one page
+      tags: [users]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+        - in: path
+          name: scope
+          required: true
+          schema:
+            type: string
+            enum: [books, trending, search, blocklist, issues, requests]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  nullable: true
+                  enum: [all, movie, tv, music, book, ebook, audiobook, null]
+      responses:
+        '200':
+          description: Updated account media filter pins
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
   /user/{userId}/settings/password:
     get:
       summary: Get password page informatiom
@@ -8485,6 +8523,12 @@ paths:
             type: string
             example: subject:fiction
             default: subject:fiction
+        - in: query
+          name: author
+          schema:
+            type: string
+            maxLength: 256
+          description: Author terms sent to the book provider alongside the other search constraints.
         - in: query
           name: subject
           schema:
