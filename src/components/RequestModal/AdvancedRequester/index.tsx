@@ -884,11 +884,12 @@ const AdvancedRequester = ({
                         <button
                           type="button"
                           key={`folder-card-${folder.id}`}
+                          data-button-help="off"
                           onClick={() => setSelectedFolder(folder.path ?? '')}
-                          className={`col-span-2 grid grid-cols-subgrid rounded px-1 py-1 text-left transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
+                          className={`col-span-2 grid grid-cols-subgrid rounded border px-1 py-1 text-left transition focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
                             isSelected
-                              ? 'bg-indigo-500/20 text-indigo-200'
-                              : 'text-gray-300 hover:bg-gray-800/80 hover:text-white'
+                              ? 'border-indigo-400 bg-indigo-500/20 text-indigo-200'
+                              : 'border-transparent text-gray-300 hover:border-indigo-400 hover:bg-gray-800/80 hover:text-white'
                           }`}
                         >
                           <span className="truncate">{folder.path}</span>

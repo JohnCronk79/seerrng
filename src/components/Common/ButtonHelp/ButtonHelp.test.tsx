@@ -136,6 +136,13 @@ it('does not duplicate an existing tooltip or opt-out control', () => {
   expect(
     findHelpButton(button('<button data-button-help="off">Filter</button>'))
   ).toBeNull();
+  expect(
+    findHelpButton(
+      button(
+        '<button data-button-help="off">/media/movies/hd 55.25 TB</button>'
+      )
+    )
+  ).toBeNull();
 });
 it('shows standard help on disabled native buttons without clicking or adding a layout wrapper', async () => {
   const target = button(
