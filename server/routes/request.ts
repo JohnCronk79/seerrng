@@ -78,6 +78,7 @@ import {
 } from '@server/lib/userSecurityMutation';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
+import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import {
@@ -276,7 +277,9 @@ const normalizeBulkRequestText = (value?: string) =>
 
 const normalizeBulkRequestMediaId = (mediaType: MediaType, mediaId: string) => {
   if (mediaType === MediaType.BOOK) {
-    return normalizeOpenLibraryWorkId(mediaId).toLocaleLowerCase();
+    return parseBookshelfBookId(mediaId)
+      ? mediaId
+      : normalizeOpenLibraryWorkId(mediaId).toLocaleLowerCase();
   }
 
   return normalizeMusicBrainzId(mediaId);
@@ -693,11 +696,17 @@ const sanitizeMediaRequestBody = (
   }
 
   if (mediaType === MediaType.BOOK) {
+    const bookshelfBook =
+      typeof bodyObject.mediaId === 'string'
+        ? parseBookshelfBookId(bodyObject.mediaId)
+        : undefined;
     const bookIds = [
       {
         field: 'mediaId',
         value: bodyObject.mediaId,
-        normalize: normalizeOpenLibraryWorkId,
+        normalize: bookshelfBook
+          ? (value: string) => value
+          : normalizeOpenLibraryWorkId,
       },
       {
         field: 'editionId',
@@ -712,6 +721,10 @@ const sanitizeMediaRequestBody = (
     ];
     for (const { field, value, normalize } of bookIds) {
       if (
+        !(
+          bookshelfBook &&
+          (field === 'mediaId' || field === 'editionId' || field === 'authorId')
+        ) &&
         value !== undefined &&
         (typeof value !== 'string' ||
           !isValidOpenLibraryResourceId(normalize(value)))
@@ -942,6 +955,7 @@ const sanitizeBulkMediaRequestBody = (
     }
     if (
       body.mediaType === MediaType.BOOK &&
+      !parseBookshelfBookId(mediaId) &&
       !isValidOpenLibraryResourceId(normalizeOpenLibraryWorkId(mediaId))
     ) {
       return {
@@ -989,6 +1003,7 @@ const sanitizeBulkMediaRequestBody = (
     }
     if (
       body.mediaType === MediaType.BOOK &&
+      !parseBookshelfBookId(mediaId) &&
       ((editionId.value !== undefined &&
         !isValidOpenLibraryResourceId(
           normalizeOpenLibraryEditionId(editionId.value)

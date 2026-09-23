@@ -290,6 +290,53 @@ describe('ReadarrAPI.getBookCover', () => {
   });
 });
 
+describe('ReadarrAPI.getAuthorCover', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('uses provider-native author image paths and returns image bytes', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/base/api/v1',
+      apiKey: 'key',
+    });
+    mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'get',
+      async () => ({
+        id: 42,
+        foreignAuthorId: 'goodreads-author-42',
+        authorName: 'Test Author',
+        images: [
+          {
+            coverType: 'poster',
+            url: '/MediaCover/42/poster.jpg',
+            remoteUrl: 'https://covers.example/author.jpg',
+          },
+        ],
+      })
+    );
+    const axiosGetMock = mock.fn(async () => ({
+      data: Buffer.from('author-image'),
+      headers: { 'content-type': 'image/jpeg' },
+    }));
+    (
+      api as unknown as {
+        axios: { get: typeof axiosGetMock };
+      }
+    ).axios.get = axiosGetMock;
+
+    const result = await api.getAuthorCover(42);
+
+    assert.deepStrictEqual(result.imageBuffer, Buffer.from('author-image'));
+    assert.strictEqual(result.contentType, 'image/jpeg');
+    assert.strictEqual(
+      axiosGetMock.mock.calls[0].arguments[0],
+      'http://localhost:8787/base/MediaCover/42/poster.jpg'
+    );
+  });
+});
+
 describe('ReadarrAPI.lookupAuthor', () => {
   afterEach(() => {
     mock.restoreAll();

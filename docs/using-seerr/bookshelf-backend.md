@@ -6,11 +6,18 @@ sidebar_position: 21
 
 # Bookshelf Backend
 
-SeerrNG sends book requests to a Readarr-compatible Bookshelf API. New
-deployments should use the Hardcover metadata backend. Existing Readarr or
-softcover deployments should be backed up and inventoried before cutover because
-Goodreads/softcover foreign IDs are provider-specific and cannot be safely
-reused as Hardcover IDs.
+SeerrNG sends book requests through the Readarr-compatible Bookshelf API and
+preserves the metadata provider's native book, edition, and author IDs.
+Hardcover remains the default for new deployments. Existing Goodreads/softcover
+and other compatible metadata sources remain supported; moving
+between providers is optional. Provider IDs are source-specific, so migrating a
+library to another provider requires rebuilding its metadata records rather
+than changing only the metadata URL or container image.
+
+For the exact distinction between runtime metadata and migration-only
+recovery, plus Google Books, Library of Congress, Apify, caching, IDs, and
+future provider candidates, see [Bookshelf Metadata Sources and Migration
+Recovery](./bookshelf-metadata-sources.md).
 
 [Chaptarr](https://github.com/Chaptarr/chaptarr) is a supported Readarr-
 compatible alternative. SeerrNG sends the selected book format explicitly, so
@@ -56,21 +63,21 @@ Chaptarr metadata provider and retry the lookup from its UI.
 
 ### Readarr to Softcover to Hardcover Migration
 
-Make Hardcover the default Bookshelf backend for new installs. For existing
-Readarr or softcover users, provide an automatic in-place migration workflow
-whose final result keeps the same Seerr-facing service endpoints where possible,
-but rebuilds book metadata against Hardcover IDs instead of blindly reusing
-Goodreads or softcover IDs.
+Make Hardcover the default Bookshelf backend for new installs while keeping
+other compatible metadata sources first-class options. Migration to Hardcover
+is optional; existing Goodreads/softcover users can keep their current backend
+and SeerrNG service configuration.
 
 Core policy:
 
 - New install with no existing Readarr or Bookshelf config: create Hardcover
   ebook and audiobook instances.
-- Existing Readarr or softcover config: back up, inventory, migrate matched
-  books to Hardcover, then disable softcover after successful migration.
+- Existing Readarr or softcover config: retain the configured backend unless
+  the operator explicitly chooses to migrate.
 - Matching: strict automatic migration only; fuzzy matches go to an optional
   admin review report, not automatic cutover.
-- Softcover becomes a legacy or backup backend, not the default path.
+- Softcover remains a supported Goodreads-compatible backend; Hardcover remains
+  the default for new deployments.
 
 ### Installer and Compose
 
@@ -179,6 +186,17 @@ Applying the generated rebuild payload is opt-in. Set
 `APPLY_HARDCOVER_REBUILD=true` only after reviewing `matched-books.json`,
 `unmatched-books.json`, `ambiguous-books.json`, `rebuild-payload.json`, and
 `rebuild-blocked.json`.
+
+Migration recovery can also query Google Books and the Library of Congress
+catalog before creating an optional local shadow record. These lookups are
+cached in the migration directory and only promote a result into Hardcover
+when strict identity matching succeeds. An optional Apify Actor adapter can
+query Goodreads-compatible scrapers; configure
+`HARDCOVER_APIFY_GOODREADS_ACTOR` and `HARDCOVER_APIFY_TOKEN`, and adjust
+`HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` for the Actor's input schema. Actor
+availability and pricing depend on the selected Actor, and those calls are
+limited to a title/author query and at most one ISBN query. These are migration
+recovery sources, not additional live BookshelfNG runtime providers.
 Applied and failed adds are written to `applied-books.json` and
 `apply-failures.json`. After apply, the helper writes `validation-report.json`
 and marks `migration-report.json` as `validation_complete` or
@@ -320,10 +338,17 @@ and a foreign book ID, but no author object and no editions. SeerrNG refuses to
 add those raw records because Bookshelf/Readarr can reject them or create broken
 library entries.
 
-Bookshelf with Hardcover should be the default path for new installs. Bookshelf
-with `softcover` and `rreading-glasses` remains available as a legacy fallback
-for existing deployments and environments that still need Goodreads-compatible
-metadata.
+Hardcover is the default path for new installs. Bookshelf with `softcover` and
+`rreading-glasses` is also supported for Goodreads-compatible metadata, and
+other Readarr-compatible provider endpoints can be configured through the same
+service API. Goodreads no longer issues new public developer API keys, so
+Goodreads support here is mediated by the configured Bookshelf-compatible
+provider rather than a direct SeerrNG Goodreads client.
+Goodreads' own developer notice says it no longer issues new public API keys;
+the [Goodreads Developers notice](https://www.goodreads.com/group/show/8095-goodreads-developers)
+therefore makes a Bookshelf-compatible provider the practical way to retain
+Goodreads metadata support. SeerrNG uses provider-native author images returned
+by Bookshelf when Open Library has no author photo.
 
 ## Architecture
 

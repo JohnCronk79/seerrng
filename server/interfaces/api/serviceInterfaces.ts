@@ -19,6 +19,7 @@ export interface ServiceCommonServer {
   activeAnimeTags?: number[];
   serviceType?: 'ebook' | 'audiobook';
   provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
 }

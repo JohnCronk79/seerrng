@@ -292,7 +292,17 @@ The migration is layered:
 - pre-create missing authors where Hardcover can resolve them;
 - optionally query a softcover Bookshelf endpoint to recover title/author/edition metadata, then remap that profile back through Hardcover;
 - query OpenLibrary for alternate title/author/ISBN profiles, then remap those candidates back through Hardcover;
+- query Google Books and the Library of Congress for additional migration recovery profiles, then remap only strict matches through Hardcover;
+- optionally call a configured Apify Actor to search Goodreads-compatible catalogs when the open APIs do not return useful metadata;
 - optionally create deterministic local Bookshelf records for the books Hardcover still cannot import.
+
+These additional catalogs currently support **migration and local-record
+recovery only**. They are not federated into BookshelfNG's ordinary search,
+author, or detail APIs. SeerrNG still uses its existing book identity and
+request flow; a Google Books or Apify ID is not a substitute for the
+provider-native ID expected by BookshelfNG. See the [metadata source support
+matrix](./docs/using-seerr/bookshelf-metadata-sources.md) for implemented
+behavior, setup, cost, rate, and identity details.
 
 Migration record states:
 
@@ -418,6 +428,11 @@ than the SeerrNG runtime container. Common ones include:
 | `HARDCOVER_EBOOK_API_KEY` / `HARDCOVER_AUDIOBOOK_API_KEY` | API keys for target Hardcover Bookshelf instances. |
 | `HARDCOVER_SOFTCOVER_EBOOK_BASE_URL` / `HARDCOVER_SOFTCOVER_AUDIOBOOK_BASE_URL` | Optional softcover recovery endpoints. |
 | `HARDCOVER_OPENLIBRARY_RECOVERY` | Enables OpenLibrary-assisted native Hardcover remapping. Defaults to `true`. |
+| `HARDCOVER_GOOGLEBOOKS_RECOVERY` | Enables Google Books recovery for migration/reconciliation. Defaults to `true`; `GOOGLE_BOOKS_API_KEY` is required by Google's public API. |
+| `HARDCOVER_LOC_RECOVERY` | Enables Library of Congress catalog recovery for migration/reconciliation. Defaults to `true`. |
+| `HARDCOVER_APIFY_GOODREADS_ACTOR` / `HARDCOVER_APIFY_TOKEN` | Optional Apify Actor adapter for Goodreads-compatible recovery. Actor runs may be metered; set a JSON `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` containing `{{query}}` when the Actor uses a different input schema. |
+| `HARDCOVER_APIFY_API_BASE_URL` | Apify API base URL; defaults to `https://api.apify.com`. |
+| `HARDCOVER_GOOGLEBOOKS_BASE_URL` / `HARDCOVER_LOC_BASE_URL` | Override provider API bases for controlled deployments and tests. |
 | `HARDCOVER_LOCAL_DB_IMPORT` | Enables deterministic local DB fallback after API and softcover recovery fail. |
 | `HARDCOVER_MATCH_CONCURRENCY` | Match report lookup concurrency. |
 | `HARDCOVER_API_TIMEOUT_MS` | Target API timeout for migration requests. |

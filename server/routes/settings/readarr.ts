@@ -14,8 +14,12 @@ import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { authorizedMutation } from '@server/middleware/authorizedMutation';
 import {
+  hydrateBookshelfLookupResult,
+  isAddableBookshelfLookupResult,
+} from '@server/utils/bookshelfLookup';
+import {
   classifyBookshelfProvider,
-  getBookshelfProviderWarning,
+  getBookshelfProviderNotice,
 } from '@server/utils/bookshelfProvider';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { parseNonNegativeRouteId } from '@server/utils/routeId';
@@ -65,44 +69,7 @@ const parseOptionalDiagnosticId = (
     : { value: parsed };
 };
 
-const isAddableBookLookupResult = (result: ReadarrBookLookupResult): boolean =>
-  !!(
-    result.foreignBookId &&
-    result.title &&
-    result.author?.foreignAuthorId &&
-    Array.isArray(result.editions) &&
-    result.editions.length > 0
-  );
-
-const parseAuthorName = (
-  result: ReadarrBookLookupResult
-): string | undefined => {
-  const authorTitle = result.authorTitle?.trim();
-
-  if (!authorTitle) {
-    return undefined;
-  }
-
-  const titleIndex = authorTitle
-    .toLocaleLowerCase()
-    .lastIndexOf(result.title.toLocaleLowerCase());
-  const rawAuthorName =
-    titleIndex > 0 ? authorTitle.slice(0, titleIndex).trim() : authorTitle;
-  const [lastName, ...firstNameParts] = rawAuthorName
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (!lastName) {
-    return undefined;
-  }
-
-  return firstNameParts.length
-    ? `${firstNameParts.join(' ')} ${lastName}`
-    : lastName;
-};
-
-const hydrateSoftcoverResult = async (
+const hydrateBookshelfResult = async (
   readarr: ReadarrAPI,
   result: ReadarrBookLookupResult,
   loadAuthor: (
@@ -118,39 +85,7 @@ const hydrateSoftcoverResult = async (
       : undefined;
   }
 ): Promise<ReadarrBookLookupResult> => {
-  if (isAddableBookLookupResult(result)) {
-    return result;
-  }
-
-  if (result.author || !result.foreignEditionId) {
-    return result;
-  }
-
-  const authorName = parseAuthorName(result);
-
-  if (!authorName) {
-    return result;
-  }
-
-  const author = await loadAuthor(authorName);
-  if (!author) {
-    return result;
-  }
-
-  return {
-    ...result,
-    author: {
-      foreignAuthorId: author.foreignAuthorId,
-      authorName: author.authorName,
-    },
-    editions: [
-      {
-        foreignEditionId: result.foreignEditionId,
-        title: result.title,
-        monitored: true,
-      },
-    ],
-  };
+  return hydrateBookshelfLookupResult(readarr, result, undefined, loadAuthor);
 };
 
 readarrRoutes.get('/', (_req, res) => {
@@ -255,7 +190,8 @@ readarrRoutes.post<
         tags: [],
         urlBase,
         provider,
-        legacyWarning: getBookshelfProviderWarning(provider),
+        providerNotice: getBookshelfProviderNotice(provider),
+        legacyWarning: getBookshelfProviderNotice(provider),
         metadataSource: development?.metadataSource,
       });
     } catch (e) {
@@ -355,8 +291,35 @@ readarrRoutes.post<
           readarr.getRootFolders(),
         ]);
       const provider = classifyBookshelfProvider(development?.metadataSource);
-      const legacyWarning = getBookshelfProviderWarning(provider);
-      const lookup = await readarr.lookupBook(lookupTerm);
+      const providerNotice = getBookshelfProviderNotice(provider);
+      let lookup: ReadarrBookLookupResult[];
+      try {
+        lookup = await readarr.lookupBook(lookupTerm);
+      } catch (error) {
+        logger.warn(
+          'Bookshelf metadata provider lookup failed during diagnosis.',
+          {
+            label: 'Readarr',
+            provider,
+            metadataSource: development?.metadataSource,
+            term: lookupTerm,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+          }
+        );
+        return res.status(200).json({
+          ok: false,
+          category: 'provider_failed',
+          message:
+            'The configured metadata provider failed this lookup. Check the Bookshelf provider logs and try again.',
+          term: lookupTerm,
+          provider,
+          providerNotice,
+          legacyWarning: providerNotice,
+          metadataSource: development?.metadataSource,
+          lookupCount: 0,
+        });
+      }
 
       if (!lookup.length) {
         return res.status(200).json({
@@ -370,7 +333,8 @@ readarrRoutes.post<
             urlBase: status.urlBase,
           },
           provider,
-          legacyWarning,
+          providerNotice,
+          legacyWarning: providerNotice,
           metadataSource: development?.metadataSource,
           profiles: profiles.map((profile) => ({
             id: profile.id,
@@ -393,18 +357,43 @@ readarrRoutes.post<
         string,
         Promise<DiagnosticAuthor | undefined>
       >();
+      let authorLookupFailed = false;
       const loadAuthor = (authorName: string) => {
         let pending = authorCache.get(authorName);
         if (!pending) {
-          pending = readarr.lookupAuthor(authorName).then(([author]) =>
-            author?.foreignAuthorId && author.authorName
-              ? {
-                  foreignAuthorId: author.foreignAuthorId,
-                  authorName: author.authorName,
-                  id: author.id,
-                }
-              : undefined
-          );
+          pending = readarr
+            .lookupAuthor(authorName)
+            .then((authors) => {
+              const normalizeName = (value: string) =>
+                value
+                  .toLocaleLowerCase()
+                  .normalize('NFKD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+                  .trim();
+              const complete = authors.filter(
+                (author) =>
+                  !!author.foreignAuthorId?.trim() &&
+                  !!author.authorName?.trim()
+              );
+              const author =
+                complete.find(
+                  (candidate) =>
+                    normalizeName(candidate.authorName) ===
+                    normalizeName(authorName)
+                ) ?? complete[0];
+              return author
+                ? {
+                    foreignAuthorId: author.foreignAuthorId,
+                    authorName: author.authorName,
+                    id: author.id,
+                  }
+                : undefined;
+            })
+            .catch((error) => {
+              authorLookupFailed = true;
+              throw error;
+            });
           authorCache.set(authorName, pending);
         }
         return pending;
@@ -412,19 +401,21 @@ readarrRoutes.post<
       const hydratedLookup = await mapWithConcurrency(
         lookup.slice(0, MAX_DIAGNOSTIC_LOOKUP_RESULTS),
         DIAGNOSTIC_LOOKUP_HYDRATION_CONCURRENCY,
-        (result) => hydrateSoftcoverResult(readarr, result, loadAuthor)
+        (result) => hydrateBookshelfResult(readarr, result, loadAuthor)
       );
-      const addableResult = hydratedLookup.find(isAddableBookLookupResult);
+      const addableResult = hydratedLookup.find(isAddableBookshelfLookupResult);
 
       if (!addableResult) {
         return res.status(200).json({
           ok: false,
           category: 'lookup_incomplete',
-          message:
-            'Bookshelf lookup returned results, but none had usable author and edition metadata.',
+          message: authorLookupFailed
+            ? 'Bookshelf found book results, but the metadata provider failed to resolve an author. Check provider logs and retry.'
+            : 'Bookshelf lookup returned results, but none had usable author and edition metadata.',
           term: lookupTerm,
           provider,
-          legacyWarning,
+          providerNotice,
+          legacyWarning: providerNotice,
           metadataSource: development?.metadataSource,
           lookupCount: lookup.length,
           sample: lookup.slice(0, 3).map((result) => ({
@@ -507,7 +498,8 @@ readarrRoutes.post<
                     : String(cleanupError),
                 term: lookupTerm,
                 provider,
-                legacyWarning,
+                providerNotice,
+                legacyWarning: providerNotice,
                 lookupCount: lookup.length,
                 addedBookId: added.id,
               });
@@ -520,7 +512,8 @@ readarrRoutes.post<
             message: e instanceof Error ? e.message : String(e),
             term: lookupTerm,
             provider,
-            legacyWarning,
+            providerNotice,
+            legacyWarning: providerNotice,
             lookupCount: lookup.length,
           });
         }
@@ -532,7 +525,8 @@ readarrRoutes.post<
         message: 'Bookshelf lookup returned usable metadata.',
         term: lookupTerm,
         provider,
-        legacyWarning,
+        providerNotice,
+        legacyWarning: providerNotice,
         metadataSource: development?.metadataSource,
         lookupCount: lookup.length,
         sample: {

@@ -10,6 +10,7 @@ import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
 import { Transition } from '@headlessui/react';
 import type { ReadarrSettings } from '@server/lib/settings';
+import type { BookshelfProvider } from '@server/utils/bookshelfProvider';
 import axios from 'axios';
 import { Formik } from 'formik';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -62,7 +63,7 @@ const messages = defineMessages('components.Settings.ReadarrModal', {
   compatibilityNote:
     'Bookshelf is the recommended book backend. Readarr-compatible servers, including Chaptarr, can also be used. For Chaptarr, set Book Format to match the configured root folder; Seerr sends that format explicitly on every request.',
   migrationNote:
-    'Existing Readarr or softcover libraries should be migrated before switching to Hardcover. The migration tool can preserve native Hardcover matches, recover metadata through softcover, and optionally create local Bookshelf records for books Hardcover cannot import.',
+    'Hardcover is used by default for new installs. Existing Goodreads/softcover libraries remain supported. Migration to Hardcover is optional; use the migration guide if you choose to move provider-specific metadata IDs.',
   migrationGuide: 'Bookshelf Hardcover migration guide',
   apiKeyHelp:
     'Find it in Bookshelf or Readarr: Settings > General > Security > API Key.',
@@ -98,7 +99,8 @@ interface TestResponse {
     label: string;
   }[];
   urlBase?: string;
-  provider?: 'hardcover' | 'softcover' | 'unknown';
+  provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
 }
@@ -110,9 +112,11 @@ interface DiagnosticResponse {
     | 'backend_unreachable'
     | 'lookup_empty'
     | 'lookup_incomplete'
+    | 'provider_failed'
     | 'backend_add_rejected';
   message: string;
-  provider?: 'hardcover' | 'softcover' | 'unknown';
+  provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
   lookupCount?: number;
@@ -230,12 +234,15 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
         setDiagnosticResponse(
           response.data.provider
             ? {
-                ok: response.data.provider !== 'softcover',
+                ok: true,
                 category: 'ok',
                 message:
+                  response.data.providerNotice ??
                   response.data.legacyWarning ??
                   'Bookshelf connection established successfully.',
                 provider: response.data.provider,
+                providerNotice:
+                  response.data.providerNotice ?? response.data.legacyWarning,
                 legacyWarning: response.data.legacyWarning,
                 metadataSource: response.data.metadataSource,
               }
@@ -516,8 +523,9 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       {diagnosticResponse.metadataSource
                         ? ` Metadata: ${diagnosticResponse.metadataSource}.`
                         : ''}
-                      {diagnosticResponse.legacyWarning
-                        ? ` ${diagnosticResponse.legacyWarning}`
+                      {(diagnosticResponse.providerNotice ??
+                      diagnosticResponse.legacyWarning)
+                        ? ` ${diagnosticResponse.providerNotice ?? diagnosticResponse.legacyWarning}`
                         : ''}
                     </p>
                   )}

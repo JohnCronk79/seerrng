@@ -5,6 +5,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
+  findBookMediaForBookResults,
   findBookMediaForSearchDocs,
   findBookMediaForWork,
 } from '@server/lib/bookMediaMatcher';
@@ -19,6 +20,11 @@ import {
   mapOpenLibrarySearchDoc,
   mapOpenLibraryWork,
 } from '@server/models/Book';
+import {
+  getBookshelfBookDetails,
+  parseBookshelfBookId,
+  searchBookshelfCatalogs,
+} from '@server/utils/bookshelfCatalog';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import {
   parseOptionalPositiveInt,
@@ -143,28 +149,69 @@ bookRoutes.get('/search', async (req, res, next) => {
   }
 
   const query = parsedQuery.value;
+  const settings = getSettings();
 
   try {
-    const openLibrary = new OpenLibraryAPI();
-    const response = await openLibrary.searchBooks({
-      query,
-      page,
-      limit: 20,
-    });
+    const [openLibraryResponse, bookshelfResults] = await Promise.allSettled([
+      new OpenLibraryAPI().searchBooks({ query, page, limit: 20 }),
+      searchBookshelfCatalogs(settings.readarr, query),
+    ]);
+    const docs =
+      openLibraryResponse.status === 'fulfilled'
+        ? openLibraryResponse.value.docs
+        : [];
+    if (
+      openLibraryResponse.status === 'rejected' &&
+      (bookshelfResults.status !== 'fulfilled' ||
+        !bookshelfResults.value.length)
+    ) {
+      throw openLibraryResponse.reason;
+    }
+    const mappedOpenLibrary = docs.map((doc) => mapOpenLibrarySearchDoc(doc));
+    const mappedBookshelf =
+      bookshelfResults.status === 'fulfilled' ? bookshelfResults.value : [];
+    const deduped = new Map<string, (typeof mappedOpenLibrary)[number]>();
+    for (const result of [...mappedOpenLibrary, ...mappedBookshelf]) {
+      const key = result.isbn13
+        ? `isbn:${result.isbn13}`
+        : `${result.title.toLowerCase()}:${result.author?.toLowerCase() ?? ''}`;
+      if (!deduped.has(key)) deduped.set(key, result);
+    }
+    const results = [...deduped.values()].slice(0, 40);
     const mediaByOpenLibraryId = await findBookMediaForSearchDocs(
-      response.docs,
+      docs,
+      req.user
+    );
+    const allMediaByBookId = await findBookMediaForBookResults(
+      results,
       req.user
     );
 
     return res.status(200).json({
       page,
-      totalPages: Math.max(Math.ceil(response.numFound / 20), 1),
-      totalResults: response.numFound,
-      results: response.docs.map((doc) =>
-        mapOpenLibrarySearchDoc(
-          doc,
-          mediaByOpenLibraryId.get(normalizeOpenLibraryWorkId(doc.key))
-        )
+      totalPages: Math.max(
+        Math.ceil(
+          ((openLibraryResponse.status === 'fulfilled'
+            ? openLibraryResponse.value.numFound
+            : 0) +
+            mappedBookshelf.length) /
+            20
+        ),
+        1
+      ),
+      totalResults:
+        (openLibraryResponse.status === 'fulfilled'
+          ? openLibraryResponse.value.numFound
+          : 0) + mappedBookshelf.length,
+      results: results.map((result) =>
+        result.provider === 'openlibrary'
+          ? {
+              ...result,
+              mediaInfo: mediaByOpenLibraryId.get(
+                normalizeOpenLibraryWorkId(result.id)
+              ),
+            }
+          : { ...result, mediaInfo: allMediaByBookId.get(result.id) }
       ),
     });
   } catch (e) {
@@ -178,6 +225,32 @@ bookRoutes.get('/search', async (req, res, next) => {
 });
 
 bookRoutes.get('/:id', async (req, res, next) => {
+  const bookshelfId = parseBookshelfBookId(req.params.id);
+  if (bookshelfId) {
+    const settings = getSettings();
+    const details = await getBookshelfBookDetails(
+      settings.readarr,
+      req.params.id
+    );
+    if (!details)
+      return res.status(404).json({ status: 404, message: 'Book not found' });
+    try {
+      const mediaMap = await findBookMediaForBookResults([details], req.user);
+      const media = mediaMap.get(details.id);
+      await upsertMediaSearchMetadata(undefined, {
+        title: details.title,
+        author: details.author,
+        publisher: details.publisher,
+        provider: 'Bookshelf catalog',
+        externalIds: [details.id, details.isbn13].filter(Boolean).join(' '),
+      });
+      return res
+        .status(200)
+        .json(filterEntityResponse({ ...details, mediaInfo: media }, req.user));
+    } catch (e) {
+      return next(e);
+    }
+  }
   const parsedBookId = parseOpenLibraryWorkId(req.params.id);
   if ('error' in parsedBookId) {
     return res.status(404).json({ status: 404, message: 'Book not found' });

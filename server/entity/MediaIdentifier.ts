@@ -34,7 +34,7 @@ export enum MediaIdentifierProvider {
 @Index('IDX_media_identifier_provider_value', ['provider', 'value'])
 @Index('UQ_media_identifier_canonical_book', ['provider', 'value'], {
   unique: true,
-  where: `"provider" IN ('isbn', 'openlibrary', 'openlibrary_edition')`,
+  where: `"provider" IN ('isbn', 'openlibrary', 'openlibrary_edition', 'bookshelf')`,
 })
 class MediaIdentifier {
   @PrimaryGeneratedColumn()

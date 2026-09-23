@@ -1,4 +1,10 @@
-export type BookshelfProvider = 'hardcover' | 'softcover' | 'unknown';
+export type BookshelfProvider =
+  | 'hardcover'
+  | 'softcover'
+  | 'openlibrary'
+  | 'googlebooks'
+  | 'custom'
+  | 'unknown';
 
 export const classifyBookshelfProvider = (
   metadataSource?: string
@@ -11,6 +17,7 @@ export const classifyBookshelfProvider = (
 
   if (
     normalizedMetadataSource.includes('goodreads') ||
+    normalizedMetadataSource.includes('softcover') ||
     normalizedMetadataSource.includes('rreading-glasses') ||
     normalizedMetadataSource.includes('127.0.0.1:8790') ||
     normalizedMetadataSource.includes('localhost:8790')
@@ -18,12 +25,27 @@ export const classifyBookshelfProvider = (
     return 'softcover';
   }
 
+  if (normalizedMetadataSource.includes('openlibrary')) {
+    return 'openlibrary';
+  }
+
+  if (
+    normalizedMetadataSource.includes('googlebooks') ||
+    normalizedMetadataSource.includes('google books')
+  ) {
+    return 'googlebooks';
+  }
+
+  if (normalizedMetadataSource.trim()) {
+    return 'custom';
+  }
+
   return 'unknown';
 };
 
-export const getBookshelfProviderWarning = (
+export const getBookshelfProviderNotice = (
   provider: BookshelfProvider
 ): string | undefined =>
   provider === 'softcover'
-    ? 'Legacy metadata backend. Hardcover is recommended for new installs.'
+    ? 'Goodreads-compatible metadata source detected. SeerrNG supports this backend.'
     : undefined;

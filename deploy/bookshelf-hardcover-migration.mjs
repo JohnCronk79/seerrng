@@ -194,6 +194,50 @@ const getOpenLibraryBaseUrl = () =>
   normalizeText(process.env.HARDCOVER_OPENLIBRARY_BASE_URL) ||
   'https://openlibrary.org';
 
+const getGoogleBooksRecoveryEnabled = () => {
+  const rawValue = process.env.HARDCOVER_GOOGLEBOOKS_RECOVERY;
+  return rawValue === undefined || rawValue === ''
+    ? true
+    : rawValue === 'true' || rawValue === '1' || rawValue === 'yes';
+};
+
+const getGoogleBooksBaseUrl = () =>
+  normalizeText(process.env.HARDCOVER_GOOGLEBOOKS_BASE_URL) ||
+  'https://www.googleapis.com';
+
+const getLibraryOfCongressRecoveryEnabled = () => {
+  const rawValue = process.env.HARDCOVER_LOC_RECOVERY;
+  return rawValue === undefined || rawValue === ''
+    ? true
+    : rawValue === 'true' || rawValue === '1' || rawValue === 'yes';
+};
+
+const getLibraryOfCongressBaseUrl = () =>
+  normalizeText(process.env.HARDCOVER_LOC_BASE_URL) || 'https://www.loc.gov';
+
+const getApifyGoodreadsActor = () =>
+  normalizeText(process.env.HARDCOVER_APIFY_GOODREADS_ACTOR);
+
+const getApifyGoodreadsInputTemplate = () => {
+  const value = process.env.HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE;
+  if (!value) {
+    return '{"searchQueries":[{{query}}],"maxItems":10}';
+  }
+  if (value.length > 16_384) {
+    throw new Error(
+      'HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must be 16384 characters or fewer.'
+    );
+  }
+  if (!value.includes('{{query}}')) {
+    throw new Error('HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must include {{query}}.');
+  }
+  return value;
+};
+
+const getApifyApiBaseUrl = () =>
+  normalizeText(process.env.HARDCOVER_APIFY_API_BASE_URL) ||
+  'https://api.apify.com';
+
 const getLocalImportEnabled = () => {
   const rawValue = process.env.HARDCOVER_LOCAL_IMPORT;
 
@@ -1237,6 +1281,359 @@ const identifiersFromOpenLibraryDoc = (doc, source) => {
   return [...new Set(identifiers)];
 };
 
+const catalogSearchTerms = (source) => {
+  const terms = [];
+  for (const identifier of source.identifiers ?? []) {
+    const clean = normalizeText(identifier);
+    if (clean) terms.push(clean);
+  }
+  if (source.title && source.author) {
+    terms.push(`${source.title} ${source.author}`);
+  } else if (source.title) {
+    terms.push(source.title);
+  }
+  return [...new Set(terms.map(normalizeText).filter(Boolean))].slice(
+    0,
+    getRecoveryLookupLimit()
+  );
+};
+
+const catalogCacheTtlMs = (provider) =>
+  provider === 'apify-goodreads' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+
+const loadCatalogCache = async (migrationDir) =>
+  readJsonIfExists(path.join(migrationDir, 'catalog-cache.json'), {});
+
+const catalogCacheKey = (provider, term) =>
+  `${provider}:${normalizeComparableText(term)}`;
+
+const getCachedCatalogProfiles = async ({
+  migrationDir,
+  cache,
+  provider,
+  term,
+  load,
+}) => {
+  const key = catalogCacheKey(provider, term);
+  const entry = cache[key];
+  if (
+    entry &&
+    Number.isFinite(Date.parse(entry.cachedAt)) &&
+    Date.now() - Date.parse(entry.cachedAt) < catalogCacheTtlMs(provider) &&
+    Array.isArray(entry.profiles)
+  ) {
+    return entry.profiles;
+  }
+
+  const profiles = await load();
+  cache[key] = {
+    cachedAt: new Date().toISOString(),
+    profiles,
+  };
+  await writeJson(path.join(migrationDir, 'catalog-cache.json'), cache);
+  return profiles;
+};
+
+const sanitizeCatalogImageUrl = (value, provider) => {
+  if (typeof value !== 'string' || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) {
+      return undefined;
+    }
+    const hostname = url.hostname.toLowerCase();
+    const allowedHosts = {
+      googlebooks: ['books.google.com', 'books.googleusercontent.com'],
+      loc: ['loc.gov', 'locimages2.loc.gov'],
+      'apify-goodreads': [
+        'goodreads.com',
+        'gr-assets.com',
+        'images-na.ssl-images-amazon.com',
+      ],
+    }[provider] ?? [];
+    if (
+      !allowedHosts.some(
+        (allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`)
+      )
+    ) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeCatalogProfile = ({
+  provider,
+  record,
+  source,
+  title,
+  author,
+  identifiers,
+  description,
+  publisher,
+  pageCount,
+  language,
+  releaseDate,
+  imageUrl,
+  externalId,
+}) => {
+  const normalizedTitle = normalizeText(title ?? source.title);
+  const normalizedAuthor = normalizeText(author ?? source.author);
+  if (!normalizedTitle || !normalizedAuthor) return undefined;
+  return {
+    title: normalizedTitle,
+    author: normalizedAuthor,
+    identifiers: [...new Set([...(identifiers ?? [])]
+      .map((value) => normalizeText(String(value ?? '')))
+      .filter(Boolean))],
+    recoveredFrom: provider,
+    externalId: normalizeText(externalId),
+    metadata: {
+      description: normalizeText(description).slice(0, 20_000),
+      publisher: normalizeText(publisher).slice(0, 1000),
+      pageCount: Number.isSafeInteger(Number(pageCount)) && Number(pageCount) > 0
+        ? Number(pageCount)
+        : undefined,
+      language: normalizeText(language).slice(0, 64),
+      releaseDate: normalizeText(releaseDate).slice(0, 64),
+      imageUrl: sanitizeCatalogImageUrl(imageUrl, provider),
+    },
+  };
+};
+
+const buildGoogleBooksRecoveredProfiles = async ({
+  item,
+  migrationDir,
+  catalogCache,
+}) => {
+  if (!getGoogleBooksRecoveryEnabled()) return [];
+  const apiKey = normalizeText(process.env.GOOGLE_BOOKS_API_KEY);
+  if (!apiKey) {
+    console.error('[catalog] Google Books recovery skipped: GOOGLE_BOOKS_API_KEY is required for public API requests.');
+    return [];
+  }
+  const profiles = [];
+  const seen = new Set();
+  for (const term of catalogSearchTerms(item.source)) {
+    const termProfiles = await getCachedCatalogProfiles({
+      migrationDir,
+      cache: catalogCache,
+      provider: 'googlebooks',
+      term,
+      load: async () => {
+        const url = new URL('/books/v1/volumes', getGoogleBooksBaseUrl());
+        url.searchParams.set('q', term);
+        url.searchParams.set('maxResults', '10');
+        url.searchParams.set('key', apiKey);
+        const response = await fetchJson(url);
+        return (Array.isArray(response?.items) ? response.items : [])
+          .slice(0, 10)
+          .map((volume) => {
+            const info = volume?.volumeInfo ?? {};
+            const ids = Array.isArray(info.industryIdentifiers)
+              ? info.industryIdentifiers.map((item) => item?.identifier)
+              : [];
+            const imageLinks = info.imageLinks ?? {};
+            return normalizeCatalogProfile({
+              provider: 'googlebooks',
+              record: volume,
+              source: item.source,
+              title: info.title,
+              author: Array.isArray(info.authors) ? info.authors[0] : undefined,
+              identifiers: ids,
+              description: info.description,
+              publisher: info.publisher,
+              pageCount: info.pageCount,
+              language: info.language,
+              releaseDate: info.publishedDate,
+              imageUrl: imageLinks.thumbnail ?? imageLinks.smallThumbnail,
+              externalId: volume?.id,
+            });
+          })
+          .filter(Boolean);
+      },
+    });
+    for (const profile of termProfiles) {
+      const key = `${normalizeComparableText(profile.title)}:${normalizeComparableText(profile.author)}:${profile.identifiers.join(',')}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        profiles.push({ ...profile, googleBooksLookupTerm: term });
+      }
+    }
+  }
+  return profiles;
+};
+
+const buildLibraryOfCongressRecoveredProfiles = async ({
+  item,
+  migrationDir,
+  catalogCache,
+}) => {
+  if (!getLibraryOfCongressRecoveryEnabled()) return [];
+  const profiles = [];
+  const seen = new Set();
+  for (const term of catalogSearchTerms(item.source)) {
+    const termProfiles = await getCachedCatalogProfiles({
+      migrationDir,
+      cache: catalogCache,
+      provider: 'loc',
+      term,
+      load: async () => {
+        const url = new URL('/books/', getLibraryOfCongressBaseUrl());
+        url.searchParams.set('q', term);
+        url.searchParams.set('fo', 'json');
+        url.searchParams.set('c', '10');
+        const response = await fetchJson(url);
+        return (Array.isArray(response?.results) ? response.results : [])
+          .slice(0, 10)
+          .map((record) => {
+            const ids = Array.isArray(record?.identifiers)
+              ? record.identifiers
+                  .map((value) => {
+                    if (typeof value !== 'string') return undefined;
+                    const match = value.match(/(?:isbn|978|979)[^0-9X]*(.*)/i);
+                    return match?.[1] ?? value;
+                  })
+                  .filter(Boolean)
+              : [];
+            const creators = Array.isArray(record?.contributors)
+              ? record.contributors
+              : [];
+            const images = typeof record?.image_url === 'string'
+              ? record.image_url
+              : undefined;
+            return normalizeCatalogProfile({
+              provider: 'loc',
+              record,
+              source: item.source,
+              title: record?.title,
+              author: creators[0],
+              identifiers: ids,
+              description: Array.isArray(record?.description)
+                ? record.description.join(' ')
+                : record?.description,
+              publisher: record?.publisher?.[0] ?? record?.publisher,
+              releaseDate: record?.date,
+              imageUrl: images,
+              externalId: record?.id,
+            });
+          })
+          .filter(Boolean);
+      },
+    });
+    for (const profile of termProfiles) {
+      const key = `${normalizeComparableText(profile.title)}:${normalizeComparableText(profile.author)}:${profile.identifiers.join(',')}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        profiles.push({ ...profile, locLookupTerm: term });
+      }
+    }
+  }
+  return profiles;
+};
+
+const buildApifyGoodreadsRecoveredProfiles = async ({
+  item,
+  migrationDir,
+  catalogCache,
+}) => {
+  const actor = getApifyGoodreadsActor();
+  const token = normalizeText(process.env.HARDCOVER_APIFY_TOKEN);
+  if (!actor || !token) return [];
+  if (!/^(?:[A-Za-z0-9_-]+~[A-Za-z0-9_-]+|[A-Za-z0-9_-]{10,64})$/.test(actor)) {
+    throw new Error('HARDCOVER_APIFY_GOODREADS_ACTOR is not a valid Apify actor identifier.');
+  }
+  const apiBase = new URL(getApifyApiBaseUrl());
+  if (apiBase.protocol !== 'https:' || apiBase.hostname !== 'api.apify.com') {
+    throw new Error('HARDCOVER_APIFY_API_BASE_URL must use https://api.apify.com.');
+  }
+  const profiles = [];
+  const seen = new Set();
+  // Actor runs may be metered. Use one title/author query and at most one ISBN query.
+  const apifyTerms = [
+    item.source.title && item.source.author
+      ? `${item.source.title} ${item.source.author}`
+      : item.source.title,
+    (item.source.identifiers ?? []).find((value) => isIsbn(stripIsbnHyphens(value))),
+  ].filter(Boolean).map(normalizeText);
+  for (const term of [...new Set(apifyTerms)].slice(0, 2)) {
+    const termProfiles = await getCachedCatalogProfiles({
+      migrationDir,
+      cache: catalogCache,
+      provider: 'apify-goodreads',
+      term,
+      load: async () => {
+        const inputText = getApifyGoodreadsInputTemplate().replaceAll(
+          '{{query}}',
+          JSON.stringify(term)
+        );
+        let input;
+        try {
+          input = JSON.parse(inputText);
+        } catch {
+          throw new Error('HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must be valid JSON with a {{query}} placeholder.');
+        }
+        const url = new URL(
+          `/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items`,
+          apiBase
+        );
+        url.searchParams.set('clean', 'true');
+        url.searchParams.set('format', 'json');
+        const response = await fetchJson(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(input),
+        });
+        return (Array.isArray(response) ? response : [])
+          .slice(0, 25)
+          .map((record) => {
+            const author =
+              record?.author ?? record?.authors ?? record?.authorName ?? record?.name;
+            const identifiers = [
+              record?.isbn13,
+              record?.isbn_13,
+              record?.isbn,
+              record?.isbn10,
+              record?.isbn_10,
+            ];
+            return normalizeCatalogProfile({
+              provider: 'apify-goodreads',
+              record,
+              source: item.source,
+              title: record?.title ?? record?.fullTitle ?? record?.bookTitle,
+              author: Array.isArray(author) ? author[0] : author,
+              identifiers,
+              description: record?.description ?? record?.overview,
+              publisher: record?.publisher,
+              pageCount: record?.pages ?? record?.pageCount,
+              language: record?.language,
+              releaseDate:
+                record?.publishedDate ?? record?.publicationDate ?? record?.published_date,
+              imageUrl:
+                record?.coverImage ?? record?.cover_image ?? record?.imageUrl ?? record?.image,
+              externalId:
+                record?.goodreadsId ?? record?.goodreads_id ?? record?.bookId ?? record?.id,
+            });
+          })
+          .filter(Boolean);
+      },
+    });
+    for (const profile of termProfiles) {
+      const key = `${normalizeComparableText(profile.title)}:${normalizeComparableText(profile.author)}:${profile.identifiers.join(',')}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        profiles.push({ ...profile, apifyGoodreadsLookupTerm: term });
+      }
+    }
+  }
+  return profiles;
+};
+
 const buildOpenLibraryRecoveredProfiles = async ({ item }) => {
   if (!getOpenLibraryRecoveryEnabled()) {
     return [];
@@ -1315,6 +1712,76 @@ const buildOpenLibraryRecoveredProfiles = async ({ item }) => {
   }
 
   return profiles;
+};
+
+const getExternalCatalogProfiles = async ({
+  item,
+  migrationDir,
+  catalogCache,
+}) => {
+  const recover = async (provider, load) => {
+    try {
+      return await load();
+    } catch (error) {
+      console.error(`[catalog] ${provider} recovery failed: ${error.message}`);
+      return [];
+    }
+  };
+  // Cache writes share one JSON file, so run providers sequentially.
+  const googleBooks = await recover('Google Books', () =>
+    buildGoogleBooksRecoveredProfiles({ item, migrationDir, catalogCache })
+  );
+  const loc = await recover('Library of Congress', () =>
+    buildLibraryOfCongressRecoveredProfiles({ item, migrationDir, catalogCache })
+  );
+  const apifyGoodreads = await recover('Apify Goodreads', () =>
+    buildApifyGoodreadsRecoveredProfiles({ item, migrationDir, catalogCache })
+  );
+  return [...googleBooks, ...loc, ...apifyGoodreads];
+};
+
+const catalogProfilesForLocalFallback = (source, profiles) => {
+  const sourceIdentifiers = new Set(
+    (source.identifiers ?? [])
+      .map((value) => normalizeText(String(value)).replace(/[^0-9X]/gi, '').toUpperCase())
+      .filter(Boolean)
+  );
+  const exactIdentifierMatch = profiles.find((profile) =>
+    profile.identifiers.some((value) =>
+      sourceIdentifiers.has(
+        normalizeText(String(value)).replace(/[^0-9X]/gi, '').toUpperCase()
+      )
+    )
+  );
+  const exactTitleAuthorMatch = profiles.find(
+    (profile) =>
+      normalizeComparableText(profile.title) ===
+        normalizeComparableText(source.title) &&
+      normalizeComparableText(profile.author) ===
+        normalizeComparableText(source.author)
+  );
+  const profile = exactIdentifierMatch ?? exactTitleAuthorMatch;
+  if (!profile) return source;
+
+  const localMetadata = { ...(source.localMetadata ?? {}) };
+  for (const field of [
+    'description',
+    'publisher',
+    'pageCount',
+    'language',
+    'releaseDate',
+    'imageUrl',
+  ]) {
+    if (!localMetadata[field] && profile.metadata?.[field]) {
+      localMetadata[field] = profile.metadata[field];
+    }
+  }
+  return {
+    ...source,
+    identifiers: [...new Set([...(source.identifiers ?? []), ...profile.identifiers])],
+    localMetadata,
+    metadataRecoveredFrom: profile.recoveredFrom,
+  };
 };
 
 const buildSoftcoverRecoveredProfiles = async ({ item, job }) => {
@@ -1396,6 +1863,7 @@ const buildSoftcoverRecoveredProfiles = async ({ item, job }) => {
 const recoverUnmatchedWithOpenLibrary = async ({
   migrationDir,
   lookupCache,
+  catalogCache,
   job,
   entries,
 }) => {
@@ -1403,19 +1871,29 @@ const recoverUnmatchedWithOpenLibrary = async ({
   const remaining = [];
 
   for (const entry of entries) {
-    if (!entry?.source || !getOpenLibraryRecoveryEnabled()) {
+    if (!entry?.source) {
       remaining.push(entry);
       continue;
     }
 
-    const profiles = await buildOpenLibraryRecoveredProfiles({
-      item: {
-        source: entry.source,
-      },
+    const lookupItem = {
+      source: entry.source,
+    };
+    const openLibraryProfiles = await buildOpenLibraryRecoveredProfiles({
+      item: lookupItem,
     });
+    const externalProfiles = await getExternalCatalogProfiles({
+      item: lookupItem,
+      migrationDir,
+      catalogCache,
+    });
+    const profiles = [...openLibraryProfiles, ...externalProfiles];
 
     if (!profiles.length) {
-      remaining.push(entry);
+      remaining.push({
+        ...entry,
+        source: catalogProfilesForLocalFallback(entry.source, profiles),
+      });
       continue;
     }
 
@@ -1453,6 +1931,10 @@ const recoverUnmatchedWithOpenLibrary = async ({
           hardcover: decision.result,
           recoveredFrom: profile?.recoveredFrom,
           openLibraryLookupTerm: profile?.openLibraryLookupTerm,
+          externalLookupTerm:
+            profile?.googleBooksLookupTerm ??
+            profile?.locLookupTerm ??
+            profile?.apifyGoodreadsLookupTerm,
         };
         break;
       }
@@ -1461,7 +1943,10 @@ const recoverUnmatchedWithOpenLibrary = async ({
     if (match) {
       recovered.push(match);
     } else {
-      remaining.push(entry);
+      remaining.push({
+        ...entry,
+        source: catalogProfilesForLocalFallback(entry.source, profiles),
+      });
     }
   }
 
@@ -2213,6 +2698,13 @@ const directInsertLocalBook = async ({ item, job, targetIds, tags }) => {
     searchForMissingBooks: false,
   });
   const ratings = JSON.stringify({ votes: 0, value: 0, popularity: 0 });
+  const metadata = source.localMetadata ?? {};
+  const releaseDate = metadata.releaseDate && /^\d{4}/.test(metadata.releaseDate)
+    ? metadata.releaseDate
+    : null;
+  const editionImages = metadata.imageUrl
+    ? JSON.stringify([{ coverType: 'cover', url: metadata.imageUrl }])
+    : '[]';
 
   const sql = `
     BEGIN IMMEDIATE;
@@ -2246,7 +2738,7 @@ const directInsertLocalBook = async ({ item, job, targetIds, tags }) => {
       ${sqliteQuote(bookForeignId)},
       ${sqliteQuote(bookSlug)},
       ${sqliteQuote(title)},
-      NULL,
+      ${sqliteQuote(releaseDate)},
       '[]',
       '[]',
       ${sqliteQuote(ratings)},
@@ -2270,15 +2762,15 @@ const directInsertLocalBook = async ({ item, job, targetIds, tags }) => {
       NULL,
       ${sqliteQuote(title)},
       ${sqliteQuote(`${bookSlug}-edition`)},
+      ${sqliteQuote(metadata.language || null)},
+      ${sqliteQuote(metadata.description || null)},
       NULL,
       NULL,
       NULL,
-      NULL,
-      NULL,
-      NULL,
-      NULL,
-      NULL,
-      '[]',
+      ${sqliteQuote(metadata.publisher || null)},
+      ${Number.isSafeInteger(metadata.pageCount) ? metadata.pageCount : 'NULL'},
+      ${sqliteQuote(releaseDate)},
+      ${sqliteQuote(editionImages)},
       '[]',
       ${sqliteQuote(ratings)},
       ${monitored},
@@ -2574,6 +3066,7 @@ const applyRebuildPayload = async ({ migrationDir, jobs }) => {
     path.join(migrationDir, 'rebuild-payload.json')
   );
   const lookupCache = await readLookupCache(migrationDir);
+  const catalogCache = await loadCatalogCache(migrationDir);
   const applied = await readJsonIfExists(
     path.join(migrationDir, 'applied-books.json'),
     []
@@ -2932,30 +3425,37 @@ const applyRebuildPayload = async ({ migrationDir, jobs }) => {
     authors.push(created);
   };
 
-  const buildRecoveredAddBook = async ({
-    item,
-    job,
-    targetIds,
-    tags,
-    rejectedIds,
-  }) => {
+const buildRecoveredAddBook = async ({
+  item,
+  job,
+  migrationDir,
+  catalogCache,
+  targetIds,
+  tags,
+  rejectedIds,
+}) => {
     const softcoverProfiles = await buildSoftcoverRecoveredProfiles({
       item,
       job,
     });
-    const openLibraryProfiles = softcoverProfiles.length
-      ? []
-      : await buildOpenLibraryRecoveredProfiles({
-          item,
-        });
-    const candidates = await lookupBookCandidates({
+  const openLibraryProfiles = softcoverProfiles.length
+    ? []
+    : await buildOpenLibraryRecoveredProfiles({
+        item,
+      });
+  const externalProfiles = await getExternalCatalogProfiles({
+    item,
+    migrationDir,
+    catalogCache,
+  });
+  const candidates = await lookupBookCandidates({
       migrationDir,
       lookupCache,
       serviceType: item.serviceType,
       baseUrl: job.baseUrl,
       apiKey: job.apiKey,
       source: item.source,
-      profiles: [...softcoverProfiles, ...openLibraryProfiles],
+    profiles: [...softcoverProfiles, ...openLibraryProfiles, ...externalProfiles],
       includeSource: false,
     });
     const usableCandidates = candidates.filter(({ candidate }) => {
@@ -3089,6 +3589,8 @@ const applyRebuildPayload = async ({ migrationDir, jobs }) => {
         const recovered = await buildRecoveredAddBook({
           item,
           job,
+          migrationDir,
+          catalogCache,
           targetIds,
           tags,
           rejectedIds,
@@ -3147,6 +3649,16 @@ const applyRebuildPayload = async ({ migrationDir, jobs }) => {
         if (!getLocalImportEnabled()) {
           throw recoveredPostError;
         }
+
+        const localProfiles = await getExternalCatalogProfiles({
+          item,
+          migrationDir,
+          catalogCache,
+        });
+        item.source = catalogProfilesForLocalFallback(
+          item.source,
+          localProfiles
+        );
 
         const originalReason =
           recoveredPostError instanceof Error
@@ -3498,6 +4010,7 @@ const reconcileLocalImports = async ({ migrationDir, jobs }) => {
     []
   );
   const lookupCache = await readLookupCache(migrationDir);
+  const catalogCache = await loadCatalogCache(migrationDir);
   const report = [];
 
   for (const item of applied.filter((entry) => entry?.localDbImport === true)) {
@@ -3522,6 +4035,11 @@ const reconcileLocalImports = async ({ migrationDir, jobs }) => {
     const openLibraryProfiles = softcoverProfiles.length
       ? []
       : await buildOpenLibraryRecoveredProfiles({ item });
+    const externalProfiles = await getExternalCatalogProfiles({
+      item,
+      migrationDir,
+      catalogCache,
+    });
     const candidates = await lookupBookCandidates({
       migrationDir,
       lookupCache,
@@ -3529,7 +4047,12 @@ const reconcileLocalImports = async ({ migrationDir, jobs }) => {
       baseUrl: job.baseUrl,
       apiKey: job.apiKey,
       source: item.source,
-      profiles: [item.source, ...softcoverProfiles, ...openLibraryProfiles],
+      profiles: [
+        item.source,
+        ...softcoverProfiles,
+        ...openLibraryProfiles,
+        ...externalProfiles,
+      ],
       includeSource: false,
     }).catch((error) => {
       report.push({
@@ -3894,6 +4417,7 @@ const main = async () => {
   const allUnmatched = [];
   const allAmbiguous = [];
   const lookupCache = await readLookupCache(migrationDir);
+  const catalogCache = await loadCatalogCache(migrationDir);
 
   for (const job of jobs) {
     const inventory = await readJson(
@@ -3937,6 +4461,7 @@ const main = async () => {
     const openLibraryRecovery = await recoverUnmatchedWithOpenLibrary({
       migrationDir,
       lookupCache,
+      catalogCache,
       job,
       entries: result.unmatched,
     });

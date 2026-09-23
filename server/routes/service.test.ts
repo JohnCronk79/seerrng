@@ -1624,6 +1624,39 @@ describe('Bookshelf settings routes', () => {
     assert.strictEqual(res.body.lookupCount, 0);
   });
 
+  it('reports metadata provider lookup failures as a provider error', async () => {
+    mock.method(ReadarrAPI.prototype, 'getSystemStatus', async () => ({
+      appName: 'Bookshelf',
+      version: '0.4.20.10',
+      urlBase: '',
+    }));
+    mock.method(ReadarrAPI.prototype, 'getDevelopmentConfig', async () => ({
+      id: 1,
+      metadataSource: 'http://127.0.0.1:8790',
+    }));
+    mock.method(ReadarrAPI.prototype, 'getProfiles', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getMetadataProfiles', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getRootFolders', async () => []);
+    mock.method(ReadarrAPI.prototype, 'lookupBook', async () => {
+      throw new Error(
+        "Search for 'Stephen King' failed. Invalid response received from Goodreads."
+      );
+    });
+
+    const res = await request(app)
+      .post('/settings/readarr/diagnose')
+      .send({
+        ...makeReadarr(),
+        term: 'Stephen King',
+      });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.ok, false);
+    assert.strictEqual(res.body.category, 'provider_failed');
+    assert.match(res.body.message, /metadata provider failed/i);
+    assert.strictEqual(res.body.provider, 'softcover');
+  });
+
   it('diagnoses incomplete Bookshelf lookups', async () => {
     mock.method(ReadarrAPI.prototype, 'getSystemStatus', async () => ({
       appName: 'Readarr',

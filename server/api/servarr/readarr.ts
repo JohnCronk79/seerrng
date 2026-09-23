@@ -89,6 +89,8 @@ export interface ReadarrAuthorLookupResult {
   foreignAuthorId: string;
   authorName: string;
   titleSlug?: string;
+  remotePoster?: string;
+  images?: ReadarrBookImage[];
 }
 
 export interface ReadarrEdition {
@@ -884,6 +886,62 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     throw new Error(
       `[Readarr] Failed to retrieve cover for book ${bookId}: ${
         lastError instanceof Error ? lastError.message : 'No cover path worked'
+      }`,
+      { cause: lastError }
+    );
+  }
+
+  public async getAuthorCover(authorId: number): Promise<ReadarrCoverImage> {
+    if (!Number.isSafeInteger(authorId) || authorId <= 0) {
+      throw new Error('[Readarr] Invalid author ID for cover lookup.');
+    }
+
+    const author = await this.get<ReadarrAuthorLookupResult>(
+      `/author/${authorId}`,
+      this.getRequestConfig()
+    );
+    const posterImages = (author?.images ?? []).filter((image) => {
+      const coverType = image.coverType?.toLowerCase();
+      return !coverType || coverType === 'poster' || coverType === 'headshot';
+    });
+    const candidatePaths = posterImages
+      .map((image) => image.url)
+      .filter((url): url is string => !!url && url.startsWith('/'));
+    const candidateUrls = [
+      ...candidatePaths.map((path) => this.buildCoverUrl(path)),
+      ...posterImages
+        .map((image) => image.remoteUrl)
+        .filter((url): url is string => !!url)
+        .map((url) => this.buildRemoteCoverUrl(url)),
+      this.buildCoverUrl(`/MediaCover/${authorId}/poster.jpg`),
+      author?.remotePoster
+        ? this.buildRemoteCoverUrl(author.remotePoster)
+        : undefined,
+    ].filter((url): url is string => !!url);
+    let lastError: unknown;
+
+    for (const coverUrl of [...new Set(candidateUrls)]) {
+      try {
+        const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
+        const response = await (
+          isLocalCoverUrl ? this.axios : axios
+        ).get<ArrayBuffer>(coverUrl, {
+          responseType: 'arraybuffer',
+          headers: { Accept: 'image/*' },
+        });
+        const contentType = String(response.headers['content-type'] ?? '');
+        if (!contentType.toLowerCase().startsWith('image/')) {
+          throw new Error('Upstream response is not an image');
+        }
+        return { imageBuffer: Buffer.from(response.data), contentType };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw new Error(
+      `[Readarr] Failed to retrieve cover for author ${authorId}: ${
+        lastError instanceof Error ? lastError.message : 'No poster path worked'
       }`,
       { cause: lastError }
     );

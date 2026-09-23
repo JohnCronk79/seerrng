@@ -30,6 +30,7 @@ import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
+import { searchBookshelfCatalogs } from '@server/utils/bookshelfCatalog';
 import {
   BoundedTaskQueue,
   mapWithConcurrency,
@@ -352,6 +353,15 @@ searchRoutes.get('/', async (req, res, next) => {
               limit: 20,
             })
           : Promise.resolve({ numFound: 0, start: 0, docs: [] }),
+        shouldSearchBooks && booksEnabled
+          ? searchBookshelfCatalogs(
+              getSettings().readarr,
+              queryString,
+              bookFormat === 'ebook' || bookFormat === 'audiobook'
+                ? bookFormat
+                : undefined
+            )
+          : Promise.resolve([]),
       ];
       type SearchProviderResult = {
         index: number;
@@ -366,6 +376,9 @@ searchRoutes.get('/', async (req, res, next) => {
       >;
       type BookSearchResults = Awaited<
         ReturnType<OpenLibraryAPI['searchBooks']>
+      >;
+      type BookshelfSearchResults = Awaited<
+        ReturnType<typeof searchBookshelfCatalogs>
       >;
 
       const providerResponses =
@@ -402,11 +415,14 @@ searchRoutes.get('/', async (req, res, next) => {
       };
 
       const bookProviderResponse = providerResults.get(3);
+      const bookshelfProviderResponse = providerResults.get(4);
       if (
         typeFilter === 'book' &&
         shouldSearchBooks &&
         booksEnabled &&
-        (!bookProviderResponse || bookProviderResponse.status === 'rejected')
+        (!bookProviderResponse || bookProviderResponse.status === 'rejected') &&
+        (!bookshelfProviderResponse ||
+          bookshelfProviderResponse.status === 'rejected')
       ) {
         return next({
           status: 503,
@@ -456,6 +472,10 @@ searchRoutes.get('/', async (req, res, next) => {
         start: 0,
         docs: [],
       });
+      const rawBookshelfResults = getProviderValue<BookshelfSearchResults>(
+        4,
+        []
+      );
       const bookResults = {
         ...rawBookResults,
         docs: capSearchProviderResults<BookSearchResults['docs'][number]>(
@@ -655,8 +675,12 @@ searchRoutes.get('/', async (req, res, next) => {
         musicResults.length,
         rawAlbumResults.totalResults + rawArtistResults.totalResults
       );
+      const bookshelfBookResults = rawBookshelfResults;
       const totalItems =
-        tmdbResults.total_results + musicTotalResults + bookResults.numFound;
+        tmdbResults.total_results +
+        musicTotalResults +
+        bookResults.numFound +
+        bookshelfBookResults.length;
       const totalPages = Math.max(
         tmdbResults.total_pages,
         Math.ceil(totalItems / 20)
@@ -677,6 +701,7 @@ searchRoutes.get('/', async (req, res, next) => {
         ...tmdbResults.results,
         ...musicResults,
         ...mappedBookResults,
+        ...bookshelfBookResults,
       ];
 
       results = {
@@ -712,7 +737,10 @@ searchRoutes.get('/', async (req, res, next) => {
         'mediaType' in result && result.mediaType === 'book'
     );
     const bookIds = bookResults
-      .filter((result) => result.mediaInfo === undefined)
+      .filter(
+        (result) =>
+          result.mediaInfo === undefined && result.provider !== 'bookshelf'
+      )
       .map((result) => normalizeOpenLibraryWorkId(result.id));
 
     const [movieTvMedia, musicMedia, bookMediaMap] = await Promise.all([

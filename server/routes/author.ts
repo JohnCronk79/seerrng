@@ -2,6 +2,7 @@ import { DEFAULT_EXTERNAL_API_TIMEOUT_MS } from '@server/api/externalapi';
 import OpenLibraryAPI, {
   type OpenLibraryAuthorWork,
 } from '@server/api/openlibrary';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import type { User } from '@server/entity/User';
 import { findBookMediaByOpenLibraryIds } from '@server/lib/bookMediaMatcher';
 import {
@@ -15,6 +16,10 @@ import {
   mapOpenLibraryAuthorWork,
   type AuthorDetails,
 } from '@server/models/Book';
+import {
+  getBookshelfAuthorDetails,
+  parseBookshelfAuthorId,
+} from '@server/utils/bookshelfCatalog';
 import { settlePromisesWithin } from '@server/utils/concurrency';
 import {
   MAX_PAGINATION_OFFSET,
@@ -186,6 +191,50 @@ const getAuthorWorksPayload = async (
   };
 };
 
+const normalizeAuthorName = (name: string) =>
+  name
+    .toLocaleLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
+const findBookshelfAuthorCover = async (
+  authorName: string
+): Promise<{ serviceId: number; authorId: number } | undefined> => {
+  const services = getSettings()
+    .readarr.filter((service) => service.isDefault)
+    .slice(0, 4);
+  const normalizedName = normalizeAuthorName(authorName);
+
+  for (const service of services) {
+    const readarr = new ReadarrAPI({
+      apiKey: service.apiKey,
+      url: ReadarrAPI.buildUrl(service, '/api/v1'),
+      mediaType: service.serviceType ?? 'ebook',
+    });
+    try {
+      const matches = await readarr.lookupAuthor(authorName);
+      const author = matches.find(
+        (match) =>
+          !!match.id && normalizeAuthorName(match.authorName) === normalizedName
+      );
+      if (author?.id) {
+        return { serviceId: service.id, authorId: author.id };
+      }
+    } catch (error) {
+      logger.warn('Bookshelf author image lookup failed.', {
+        label: 'Author',
+        serviceId: service.id,
+        errorMessage:
+          error instanceof Error ? error.message : 'Unknown provider error',
+      });
+    }
+  }
+
+  return undefined;
+};
+
 type AuthorWorksPayload = Awaited<ReturnType<typeof getAuthorWorksPayload>>;
 type AuthorResponse = Awaited<ReturnType<OpenLibraryAPI['getAuthor']>>;
 
@@ -206,6 +255,23 @@ authorRoutes.get<
   { id: string },
   AuthorDetails | { status: number; message: string }
 >('/:id', async (req, res, next) => {
+  if (parseBookshelfAuthorId(req.params.id)) {
+    const limit = parsePositiveInt(req.query.limit, 20, 100);
+    const offset = parseNonNegativeInt(
+      req.query.offset,
+      0,
+      MAX_PAGINATION_OFFSET
+    );
+    const author = await getBookshelfAuthorDetails(
+      getSettings().readarr,
+      req.params.id,
+      limit,
+      offset
+    );
+    return author
+      ? res.status(200).json(author)
+      : res.status(404).json({ status: 404, message: 'Author not found' });
+  }
   const parsedAuthorId = parseOpenLibraryAuthorId(req.params.id);
   if ('error' in parsedAuthorId) {
     return res.status(404).json({ status: 404, message: 'Author not found' });
@@ -261,6 +327,9 @@ authorRoutes.get<
     const biography =
       typeof author.bio === 'string' ? author.bio : author.bio?.value;
     const normalizedAuthorId = author.key.replace('/authors/', '');
+    const bookshelfCover = author.photos?.[0]
+      ? undefined
+      : await findBookshelfAuthorCover(author.name).catch(() => undefined);
 
     return res.status(200).json({
       id: normalizedAuthorId,
@@ -270,7 +339,9 @@ authorRoutes.get<
       deathDate: author.death_date,
       posterPath: author.photos?.[0]
         ? `https://covers.openlibrary.org/a/id/${author.photos[0]}-L.jpg`
-        : undefined,
+        : bookshelfCover
+          ? `/api/v1/author/${encodeURIComponent(normalizedAuthorId)}/cover?serviceId=${bookshelfCover.serviceId}&bookshelfAuthorId=${bookshelfCover.authorId}`
+          : undefined,
       works: worksPayload.works.map((work) => ({
         ...work,
         author: author.name,
@@ -361,6 +432,49 @@ authorRoutes.get<{ id: string }>('/:id/works', async (req, res, next) => {
       authorId,
     });
     return next({ status: 500, message: 'Unable to retrieve author works.' });
+  }
+});
+
+authorRoutes.get<{ id: string }>('/:id/cover', async (req, res) => {
+  const parsedAuthorId = parseOpenLibraryAuthorId(req.params.id);
+  const serviceId = parseNonNegativeInt(req.query.serviceId, -1, 100_000);
+  const bookshelfAuthorId = parsePositiveInt(
+    req.query.bookshelfAuthorId,
+    0,
+    100_000_000
+  );
+  if ('error' in parsedAuthorId || serviceId < 0 || !bookshelfAuthorId) {
+    return res.status(404).send('Author cover not found');
+  }
+
+  const service = getSettings().readarr.find(
+    (candidate) => candidate.id === serviceId
+  );
+  if (!service) {
+    return res.status(404).send('Author cover not found');
+  }
+
+  try {
+    const readarr = new ReadarrAPI({
+      apiKey: service.apiKey,
+      url: ReadarrAPI.buildUrl(service, '/api/v1'),
+      mediaType: service.serviceType ?? 'ebook',
+    });
+    const cover = await readarr.getAuthorCover(bookshelfAuthorId);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Type', cover.contentType);
+    res.setHeader('Content-Length', cover.imageBuffer.length);
+    return res.status(200).send(cover.imageBuffer);
+  } catch (error) {
+    logger.debug('Failed to retrieve Bookshelf author cover fallback.', {
+      label: 'Author',
+      serviceId,
+      authorId: parsedAuthorId.value,
+      bookshelfAuthorId,
+      errorMessage:
+        error instanceof Error ? error.message : 'Unknown cover error',
+    });
+    return res.status(404).send('Author cover not found');
   }
 });
 

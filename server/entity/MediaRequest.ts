@@ -58,8 +58,9 @@ import {
   runUserSecurityMutation,
 } from '@server/lib/userSecurityMutation';
 import logger from '@server/logger';
-import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import AsyncLock from '@server/utils/asyncLock';
+import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
+import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   AfterLoad,
   Column,
@@ -615,19 +616,22 @@ export class MediaRequest {
     }
 
     if (requestBody.mediaType === MediaType.BOOK && !options.resolvedBook) {
-      const openLibraryId = normalizeOpenLibraryWorkId(
-        requestBody.mediaId.toString()
-      );
-      const [, editions] = await Promise.all([
-        openLibrary.getWork(openLibraryId),
-        openLibrary.getWorkEditions(openLibraryId).catch(() => ({
-          size: 0,
-          entries: [],
-        })),
-      ]);
-      const openLibraryEditionId = requestBody.editionId
-        ? normalizeOpenLibraryEditionId(requestBody.editionId.toString())
-        : undefined;
+      const submittedBookId = requestBody.mediaId.toString();
+      const bookshelfBook = parseBookshelfBookId(submittedBookId);
+      const openLibraryId = bookshelfBook
+        ? submittedBookId
+        : normalizeOpenLibraryWorkId(submittedBookId);
+      const editions = bookshelfBook
+        ? { size: 0, entries: [] }
+        : await openLibrary.getWorkEditions(openLibraryId).catch(() => ({
+            size: 0,
+            entries: [],
+          }));
+      if (!bookshelfBook) await openLibrary.getWork(openLibraryId);
+      const openLibraryEditionId =
+        requestBody.editionId && !bookshelfBook
+          ? normalizeOpenLibraryEditionId(requestBody.editionId.toString())
+          : undefined;
       const maxIsbnCandidates =
         MAX_BOOK_REQUEST_IDENTIFIER_CANDIDATES -
         1 -
@@ -659,7 +663,9 @@ export class MediaRequest {
         openLibraryId,
         identifierCandidates: [
           {
-            provider: MediaIdentifierProvider.OPENLIBRARY,
+            provider: bookshelfBook
+              ? MediaIdentifierProvider.BOOKSHELF
+              : MediaIdentifierProvider.OPENLIBRARY,
             value: openLibraryId,
             canonical: true,
           },
@@ -695,6 +701,20 @@ export class MediaRequest {
 
     if (!options.serviceAdmissionGranted) {
       const useAdvancedOptions = canUseAdvancedRequestOptions(user);
+      const bookshelfCatalogServiceId = parseBookshelfBookId(
+        requestBody.mediaId?.toString() ?? ''
+      )?.serviceId;
+      const defaultBookshelfFor = (serviceType: 'ebook' | 'audiobook') =>
+        settings.readarr.find(
+          (service) =>
+            service.id === bookshelfCatalogServiceId &&
+            (service.serviceType ?? 'ebook') === serviceType
+        ) ??
+        settings.readarr.find(
+          (service) =>
+            service.isDefault &&
+            (service.serviceType ?? 'ebook') === serviceType
+        );
       const services: {
         serviceType: ServarrServiceType;
         serviceId: number;
@@ -740,28 +760,16 @@ export class MediaRequest {
             'readarr',
             useAdvancedOptions && requestBody.serverId != null
               ? requestBody.serverId
-              : settings.readarr.find(
-                  ({ isDefault, serviceType }) =>
-                    isDefault && (serviceType ?? 'ebook') === 'ebook'
-                )?.id
+              : defaultBookshelfFor('ebook')?.id
           );
-          addService(
-            'readarr',
-            settings.readarr.find(
-              ({ isDefault, serviceType }) =>
-                isDefault && serviceType === 'audiobook'
-            )?.id
-          );
+          addService('readarr', defaultBookshelfFor('audiobook')?.id);
         } else {
           addService(
             'readarr',
             useAdvancedOptions && requestBody.serverId != null
               ? requestBody.serverId
-              : settings.readarr.find(
-                  ({ isDefault, serviceType }) =>
-                    isDefault &&
-                    (serviceType ?? 'ebook') ===
-                      (format === 'audiobook' ? 'audiobook' : 'ebook')
+              : defaultBookshelfFor(
+                  format === 'audiobook' ? 'audiobook' : 'ebook'
                 )?.id
           );
         }
@@ -1104,18 +1112,23 @@ export class MediaRequest {
         );
       }
 
-      const defaultReadarr = settings.readarr.find(
-        (readarr) =>
-          readarr.isDefault &&
-          (readarr.serviceType ?? 'ebook') === requestedServiceType
-      );
-      const defaultEbookReadarr = settings.readarr.find(
-        (readarr) =>
-          readarr.isDefault && (readarr.serviceType ?? 'ebook') === 'ebook'
-      );
-      const defaultAudiobookReadarr = settings.readarr.find(
-        (readarr) => readarr.isDefault && readarr.serviceType === 'audiobook'
-      );
+      const bookshelfCatalogServiceId = parseBookshelfBookId(
+        requestBody.mediaId?.toString() ?? ''
+      )?.serviceId;
+      const findBookshelfService = (serviceType: 'ebook' | 'audiobook') =>
+        settings.readarr.find(
+          (readarr) =>
+            readarr.id === bookshelfCatalogServiceId &&
+            (readarr.serviceType ?? 'ebook') === serviceType
+        ) ??
+        settings.readarr.find(
+          (readarr) =>
+            readarr.isDefault &&
+            (readarr.serviceType ?? 'ebook') === serviceType
+        );
+      const defaultReadarr = findBookshelfService(requestedServiceType);
+      const defaultEbookReadarr = findBookshelfService('ebook');
+      const defaultAudiobookReadarr = findBookshelfService('audiobook');
 
       if (requestedBookFormat === 'both') {
         if (

@@ -13,6 +13,7 @@ import { normalizeValidIsbn } from '@server/lib/isbn';
 
 export interface BookResult {
   id: string;
+  provider?: 'openlibrary' | 'bookshelf';
   mediaType: 'book';
   title: string;
   author?: string;
@@ -120,6 +121,7 @@ export const mapOpenLibrarySearchDoc = (
 
   return {
     id: workId,
+    provider: 'openlibrary',
     mediaType: 'book',
     title: doc.title,
     author: doc.author_name?.[0],
@@ -160,6 +162,7 @@ export const mapOpenLibraryWork = (
 
   return {
     id: normalizeOpenLibraryWorkId(work.key),
+    provider: 'openlibrary',
     mediaType: 'book',
     title: work.title,
     author: authorName,
@@ -196,6 +199,7 @@ export const mapOpenLibraryAuthorWork = (
 
   return {
     id: normalizeOpenLibraryWorkId(work.key),
+    provider: 'openlibrary',
     mediaType: 'book',
     title: work.title,
     author: authorName,

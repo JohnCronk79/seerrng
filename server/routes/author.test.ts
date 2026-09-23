@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
 import OpenLibraryAPI from '@server/api/openlibrary';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -200,6 +201,70 @@ describe('GET /author/:id', () => {
       undefined
     );
     assert.strictEqual(res.body.works[0].mediaInfo.ratingKey, undefined);
+  });
+
+  it('uses a configured Bookshelf author image when Open Library has no photo', async () => {
+    const settings = getSettings();
+    const previousReadarr = settings.readarr;
+    settings.readarr = [
+      {
+        id: 14,
+        name: 'Softcover Bookshelf',
+        hostname: 'bookshelf.local',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 1,
+        activeProfileName: 'Default',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: false,
+        preventSearch: true,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'ebook',
+      },
+    ];
+    mock.method(OpenLibraryAPI.prototype, 'getAuthor', async () => ({
+      key: '/authors/OL1A',
+      name: 'Test Author',
+      photos: [],
+    }));
+    mock.method(OpenLibraryAPI.prototype, 'getAuthorWorks', async () => ({
+      size: 0,
+      entries: [],
+    }));
+    mock.method(ReadarrAPI.prototype, 'lookupAuthor', async () => [
+      {
+        id: 42,
+        foreignAuthorId: 'goodreads-author-42',
+        authorName: 'Test Author',
+        remotePoster: 'https://covers.example/author.jpg',
+      },
+    ]);
+    mock.method(ReadarrAPI.prototype, 'getAuthorCover', async () => ({
+      imageBuffer: Buffer.from('fake-image'),
+      contentType: 'image/jpeg',
+    }));
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/author/OL1A');
+
+      assert.strictEqual(res.status, 200);
+      assert.match(res.body.posterPath, /\/api\/v1\/author\/OL1A\/cover/);
+      assert.match(res.body.posterPath, /serviceId=14/);
+      assert.match(res.body.posterPath, /bookshelfAuthorId=42/);
+
+      const image = await agent.get(res.body.posterPath.replace('/api/v1', ''));
+      assert.strictEqual(image.status, 200);
+      assert.strictEqual(image.headers['content-type'], 'image/jpeg');
+      assert.strictEqual(image.body.toString(), 'fake-image');
+    } finally {
+      settings.readarr = previousReadarr;
+    }
   });
 });
 

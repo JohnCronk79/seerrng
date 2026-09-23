@@ -61,6 +61,11 @@ import {
 } from '@server/lib/serviceAdmission';
 import { type ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
+import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
+import {
+  hydrateBookshelfLookupResult,
+  isAddableBookshelfLookupResult,
+} from '@server/utils/bookshelfLookup';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { isEqual } from 'lodash';
 import type {
@@ -291,47 +296,7 @@ const lookupReadarrBookWithRetry = async (
   }
 };
 
-const isAddableReadarrBookLookupResult = (
-  result: ReadarrBookLookupResult
-): boolean => {
-  return !!(
-    result.foreignBookId &&
-    result.title &&
-    result.author?.foreignAuthorId &&
-    Array.isArray(result.editions) &&
-    result.editions.length > 0
-  );
-};
-
-const parseReadarrAuthorName = (
-  result: ReadarrBookLookupResult
-): string | undefined => {
-  const authorTitle = result.authorTitle?.trim();
-
-  if (!authorTitle) {
-    return undefined;
-  }
-
-  const titleIndex = authorTitle
-    .toLocaleLowerCase()
-    .lastIndexOf(result.title.toLocaleLowerCase());
-  const rawAuthorName =
-    titleIndex > 0 ? authorTitle.slice(0, titleIndex).trim() : authorTitle;
-  const [lastName, ...firstNameParts] = rawAuthorName
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (!lastName) {
-    return undefined;
-  }
-
-  return firstNameParts.length
-    ? `${firstNameParts.join(' ')} ${lastName}`
-    : lastName;
-};
-
-const hydrateSoftcoverLookupResults = async (
+const hydrateBookshelfLookupResults = async (
   readarr: ReadarrAPI,
   results: ReadarrBookLookupResult[],
   normalizedIsbn?: string
@@ -344,56 +309,43 @@ const hydrateSoftcoverLookupResults = async (
   return mapWithConcurrency(
     results.slice(0, READARR_MAX_LOOKUP_RESULTS),
     READARR_LOOKUP_HYDRATION_CONCURRENCY,
-    async (result) => {
-      if (isAddableReadarrBookLookupResult(result)) {
-        return result;
-      }
-
-      if (result.author || !result.foreignEditionId) {
-        return result;
-      }
-
-      const authorName = parseReadarrAuthorName(result);
-
-      if (!authorName) {
-        return result;
-      }
-
-      let pendingAuthor = authorCache.get(authorName);
-
-      if (!pendingAuthor) {
-        pendingAuthor = readarr
-          .lookupAuthor(authorName)
-          .then(([authorResult]) =>
-            authorResult?.foreignAuthorId && authorResult.authorName
+    (result) =>
+      hydrateBookshelfLookupResult(readarr, result, normalizedIsbn, (name) => {
+        let pending = authorCache.get(name);
+        if (!pending) {
+          pending = readarr.lookupAuthor(name).then((authors) => {
+            const normalized = name
+              .toLocaleLowerCase()
+              .normalize('NFKD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^\p{L}\p{N}]+/gu, ' ')
+              .trim();
+            const complete = authors.filter(
+              (author) =>
+                !!author.foreignAuthorId?.trim() && !!author.authorName?.trim()
+            );
+            const match = complete.find(
+              (author) =>
+                author.authorName
+                  .toLocaleLowerCase()
+                  .normalize('NFKD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+                  .trim() === normalized
+            );
+            const resolved = match ?? complete[0];
+            return resolved
               ? {
-                  foreignAuthorId: authorResult.foreignAuthorId,
-                  authorName: authorResult.authorName,
-                  id: authorResult.id,
+                  foreignAuthorId: resolved.foreignAuthorId,
+                  authorName: resolved.authorName,
+                  id: resolved.id,
                 }
-              : undefined
-          );
-        authorCache.set(authorName, pendingAuthor);
-      }
-
-      const author = await pendingAuthor;
-      if (!author) {
-        return result;
-      }
-
-      return {
-        ...result,
-        author,
-        editions: [
-          {
-            foreignEditionId: result.foreignEditionId,
-            title: result.title,
-            isbn13: normalizedIsbn,
-            monitored: true,
-          },
-        ],
-      };
-    }
+              : undefined;
+          });
+          authorCache.set(name, pending);
+        }
+        return pending;
+      })
   );
 };
 
@@ -1627,8 +1579,15 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       const isbn = media.identifiers?.find(
         (identifier) => identifier.provider === MediaIdentifierProvider.ISBN
       )?.value;
+      const bookshelfId = media.identifiers?.find(
+        (identifier) =>
+          identifier.provider === MediaIdentifierProvider.BOOKSHELF
+      )?.value;
+      const bookshelfLookupId = bookshelfId
+        ? (parseBookshelfBookId(bookshelfId)?.foreignBookId ?? bookshelfId)
+        : undefined;
 
-      if (!openLibraryId && !isbn) {
+      if (!openLibraryId && !isbn && !bookshelfId) {
         throw new Error('Book request is missing lookup identifiers');
       }
 
@@ -1640,6 +1599,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         ? await openLibrary.getWork(normalizedOpenLibraryId)
         : undefined;
       const lookupTerms = [
+        bookshelfLookupId,
         isbn,
         isbn ? `isbn:${isbn}` : undefined,
         work?.title,
@@ -1812,14 +1772,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             requestId: entity.id,
             serviceType,
           });
-          searchResults = await hydrateSoftcoverLookupResults(
+          searchResults = await hydrateBookshelfLookupResults(
             readarr,
             searchResults,
             normalizedIsbn
           );
 
           const addableSearchResults = searchResults.filter(
-            isAddableReadarrBookLookupResult
+            isAddableBookshelfLookupResult
           );
 
           if (addableSearchResults.length) {

@@ -23,7 +23,7 @@ import { isAuthenticated } from '@server/middleware/auth';
 import { authorizedMutation } from '@server/middleware/authorizedMutation';
 import {
   classifyBookshelfProvider,
-  getBookshelfProviderWarning,
+  getBookshelfProviderNotice,
 } from '@server/utils/bookshelfProvider';
 import {
   parseNonNegativeRouteId,
@@ -440,7 +440,8 @@ serviceRoutes.get<{ readarrId: string }>(
                 activeTags: readarrSettings.tags,
                 serviceType: readarrSettings.serviceType ?? 'ebook',
                 provider,
-                legacyWarning: getBookshelfProviderWarning(provider),
+                providerNotice: getBookshelfProviderNotice(provider),
+                legacyWarning: getBookshelfProviderNotice(provider),
                 metadataSource: development?.metadataSource,
               },
               profiles: profiles.map((profile) => ({
