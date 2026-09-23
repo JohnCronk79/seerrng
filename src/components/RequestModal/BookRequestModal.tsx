@@ -626,59 +626,59 @@ const BookRequestModal = ({
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(messages.close)}
         cancelButtonType="danger"
-        backdrop={data?.posterPath}
-        backdropFull
         alignTop
         actionButtonSize="standard"
-        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
+        dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-          {isOwner
-            ? intl.formatMessage(messages.pendingapproval)
-            : intl.formatMessage(messages.requestfrom, {
-                username: editRequest.requestedBy.displayName,
-              })}
-        </div>
-        <BookFormatSelector
-          value={bookFormat}
-          available={formatAvailable}
-          onChange={handleBookFormatChange}
-        />
-        {formatWarning && (
-          <div className="mt-4">
-            <Alert title={intl.formatMessage(formatWarning)} type="warning" />
+        <RequestMediaCard artwork={data?.posterPath} artworkType="book">
+          <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
           </div>
-        )}
-        {bookFormat === 'both' &&
-          (hasPermission(Permission.REQUEST_ADVANCED) ||
-            hasPermission(Permission.MANAGE_REQUESTS)) && (
+          <BookFormatSelector
+            value={bookFormat}
+            available={formatAvailable}
+            onChange={handleBookFormatChange}
+          />
+          {formatWarning && (
             <div className="mt-4">
-              <Alert
-                title={intl.formatMessage(messages.bothDefaultInfo)}
-                type="info"
-              />
+              <Alert title={intl.formatMessage(formatWarning)} type="warning" />
             </div>
           )}
-        {(hasPermission(Permission.REQUEST_ADVANCED) ||
-          hasPermission(Permission.MANAGE_REQUESTS)) && (
-          <AdvancedRequester
-            type="book"
-            is4k={false}
-            bookFormat={bookFormat}
-            mediaTitle={data?.title}
-            posterPath={data?.posterPath}
-            requestStatus={formatLabel}
-            requestUser={editRequest.requestedBy}
-            defaultOverrides={{
-              folder: editRequest.rootFolder,
-              metadataProfile: editRequest.metadataProfileId,
-              profile: editRequest.profileId,
-              server: editRequest.serverId,
-              tags: editRequest.tags,
-            }}
-            onChange={(overrides) => setRequestOverrides(overrides)}
-          />
-        )}
+          {bookFormat === 'both' &&
+            (hasPermission(Permission.REQUEST_ADVANCED) ||
+              hasPermission(Permission.MANAGE_REQUESTS)) && (
+              <div className="mt-4">
+                <Alert
+                  title={intl.formatMessage(messages.bothDefaultInfo)}
+                  type="info"
+                />
+              </div>
+            )}
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="book"
+              is4k={false}
+              bookFormat={bookFormat}
+              mediaTitle={data?.title}
+              posterPath={data?.posterPath}
+              requestStatus={formatLabel}
+              requestUser={editRequest.requestedBy}
+              defaultOverrides={{
+                folder: editRequest.rootFolder,
+                metadataProfile: editRequest.metadataProfileId,
+                profile: editRequest.profileId,
+                server: editRequest.serverId,
+                tags: editRequest.tags,
+              }}
+              onChange={(overrides) => setRequestOverrides(overrides)}
+            />
+          )}
+        </RequestMediaCard>
       </Modal>
     );
   }

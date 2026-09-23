@@ -376,40 +376,43 @@ const MovieRequestModal = ({
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(globalMessages.close)}
         cancelButtonType="danger"
-        backdrop={
-          data?.backdropPath
-            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
-            : undefined
-        }
-        backdropFull
         alignTop
         actionButtonSize="standard"
-        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
+        dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-          {isOwner
-            ? intl.formatMessage(messages.pendingapproval)
-            : intl.formatMessage(messages.requestfrom, {
-                username: editRequest.requestedBy.displayName,
-              })}
-        </div>
-        {(hasPermission(Permission.REQUEST_ADVANCED) ||
-          hasPermission(Permission.MANAGE_REQUESTS)) && (
-          <AdvancedRequester
-            type="movie"
-            is4k={is4k}
-            requestUser={editRequest.requestedBy}
-            defaultOverrides={{
-              folder: editRequest.rootFolder,
-              profile: editRequest.profileId,
-              server: editRequest.serverId,
-              tags: editRequest.tags,
-            }}
-            onChange={(overrides) => {
-              setRequestOverrides(overrides);
-            }}
-          />
-        )}
+        <RequestMediaCard
+          artwork={
+            data?.backdropPath
+              ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+              : undefined
+          }
+          artworkType="tmdb"
+        >
+          <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
+          </div>
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="movie"
+              is4k={is4k}
+              requestUser={editRequest.requestedBy}
+              defaultOverrides={{
+                folder: editRequest.rootFolder,
+                profile: editRequest.profileId,
+                server: editRequest.serverId,
+                tags: editRequest.tags,
+              }}
+              onChange={(overrides) => {
+                setRequestOverrides(overrides);
+              }}
+            />
+          )}
+        </RequestMediaCard>
       </Modal>
     );
   }

@@ -2151,20 +2151,20 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const token of [
-    'dialogClass="request-form-surfaces artwork-form-main-card refreshed-card-surface refreshed-detail-text"',
-    'backdropFull',
+    'dialogClass="request-modal-site-surface sm:max-w-5xl"',
+    '<RequestMediaCard',
     'className="refreshed-inset-surface rounded-lg border border-gray-700 p-3"',
   ]) {
     requireText(
       'src/components/RequestModal/TvRequestModal.tsx',
       token,
-      'Request Series must reuse the Report Issue main-card artwork, border, and inset-card layout'
+      'Request Series must reuse the shared request site canvas and inset artwork card'
     );
   }
   rejectText(
     'src/components/RequestModal/TvRequestModal.tsx',
-    '<RequestMediaCard',
-    'Request Series must not restore a nested artwork card inside the main modal card'
+    'backdropFull',
+    'Request Series must keep artwork in the media card, not behind the page heading'
   );
   requireText(
     globals,
@@ -4048,15 +4048,17 @@ const validateCurrentBatchContract = (files) => {
     'src/components/RequestModal/MusicRequestModal.tsx',
     'src/components/RequestModal/BookRequestModal.tsx',
   ]) {
-    requireText(
+    requireCount(
       editRequestFile,
-      'backdropFull',
-      'edit-request cards must use full-card artwork'
+      '<RequestMediaCard',
+      2,
+      'new and pending requests must both contain artwork in the shared media card'
     );
-    requireText(
+    requireCount(
       editRequestFile,
-      'refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl',
-      'edit-request cards must use the refreshed centered main-card layout'
+      'dialogClass="request-modal-site-surface sm:max-w-5xl"',
+      2,
+      'new and pending requests must both use the site canvas'
     );
     requireText(
       editRequestFile,
@@ -4066,8 +4068,8 @@ const validateCurrentBatchContract = (files) => {
   }
   requireText(
     'src/components/RequestModal/TvRequestModal.tsx',
-    'artwork-form-main-card refreshed-card-surface refreshed-detail-text',
-    'the Series edit-request card must retain the shared Report Issue main-card layout'
+    'request-modal-site-surface sm:max-w-5xl',
+    'Series new and pending requests must use the same site canvas as other media'
   );
   for (const token of ['action="delete"', 'action="remove"']) {
     requireOrder(

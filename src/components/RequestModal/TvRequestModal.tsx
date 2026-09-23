@@ -6,6 +6,7 @@ import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequ
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
+import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
 import {
   canPromotePendingDestinationRequests,
@@ -545,266 +546,269 @@ const TvRequestModal = ({
             : intl.formatMessage(globalMessages.cancel)
       }
       cancelButtonType={editRequest ? 'danger' : 'default'}
-      backdrop={
-        data?.backdropPath
-          ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
-          : getTmdbPosterImageUrl(data?.posterPath, 'original')
-      }
-      backdropFull
       actionButtonSize={editRequest ? 'standard' : 'sm'}
-      dialogClass="request-form-surfaces artwork-form-main-card refreshed-card-surface refreshed-detail-text"
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
-      {editRequest && (
-        <div className="refreshed-inset-surface card-spacing-after rounded-lg border border-gray-700 p-3">
-          {isOwner
-            ? intl.formatMessage(messages.pendingapproval)
-            : intl.formatMessage(messages.requestfrom, {
-                username: editRequest.requestedBy.displayName,
-              })}
-        </div>
-      )}
-      {(quota?.tv.limit ?? 0) > 0 && (
-        <QuotaDisplay
-          mediaType="tv"
-          quota={quota?.tv}
-          remaining={
-            !settings.currentSettings.partialRequestsEnabled &&
-            unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
-              ? 0
-              : currentlyRemaining
-          }
-          userOverride={
-            requestOverrides?.user && requestOverrides.user.id !== user?.id
-              ? requestOverrides?.user?.id
-              : undefined
-          }
-          overLimit={
-            !settings.currentSettings.partialRequestsEnabled &&
-            unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
-              ? unrequestedSeasons.length
-              : undefined
-          }
-        />
-      )}
-      <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
-            <CachedImage
-              type="tmdb"
-              src={
-                getTmdbPosterImageUrl(data?.posterPath) ||
-                '/images/seerr_poster_not_found.png'
-              }
-              alt=""
-              fill
-              sizes="(min-width: 640px) 80px, 64px"
-              className="object-cover"
-            />
+      <RequestMediaCard
+        artwork={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            : getTmdbPosterImageUrl(data?.posterPath, 'original')
+        }
+        artworkType="tmdb"
+      >
+        {editRequest && (
+          <div className="refreshed-inset-surface card-spacing-after rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
           </div>
+        )}
+        {(quota?.tv.limit ?? 0) > 0 && (
+          <QuotaDisplay
+            mediaType="tv"
+            quota={quota?.tv}
+            remaining={
+              !settings.currentSettings.partialRequestsEnabled &&
+              unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
+                ? 0
+                : currentlyRemaining
+            }
+            userOverride={
+              requestOverrides?.user && requestOverrides.user.id !== user?.id
+                ? requestOverrides?.user?.id
+                : undefined
+            }
+            overLimit={
+              !settings.currentSettings.partialRequestsEnabled &&
+              unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
+                ? unrequestedSeasons.length
+                : undefined
+            }
+          />
+        )}
+        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+            <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
+              <CachedImage
+                type="tmdb"
+                src={
+                  getTmdbPosterImageUrl(data?.posterPath) ||
+                  '/images/seerr_poster_not_found.png'
+                }
+                alt=""
+                fill
+                sizes="(min-width: 640px) 80px, 64px"
+                className="object-cover"
+              />
+            </div>
 
-          <div className="flex min-w-0 flex-col">
-            <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
-              {data?.name}
-              {releaseYear ? ` (${releaseYear})` : ''}
-            </h3>
+            <div className="flex min-w-0 flex-col">
+              <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
+                {data?.name}
+                {releaseYear ? ` (${releaseYear})` : ''}
+              </h3>
 
-            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
-              <div className="detail-paired-column-span min-w-0">
-                <dl className="media-detail-rows refreshed-detail-text-muted detail-paired-columns grid min-w-0 content-start text-xs">
-                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
-                    {intl.formatMessage(messages.mediaAndFormat)}:
-                  </dt>
-                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
-                    Series · {effectiveIs4k ? '4K' : 'HD'}
-                  </dd>
-                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
-                    {intl.formatMessage(messages.releaseDate)}:
-                  </dt>
-                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
-                    {firstAirDate}
-                  </dd>
-                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
-                    {intl.formatMessage(messages.runtime)}:
-                  </dt>
-                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
-                    {runtime
-                      ? `${intl.formatNumber(runtime)} minutes`
-                      : notAvailable}
-                  </dd>
-                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
-                    {featuredCrew.map((person) => (
-                      <div
-                        className="contents"
-                        key={`${person.job}-${person.id}`}
-                      >
-                        <dt className="font-medium text-gray-100">
-                          {person.job}:
-                        </dt>
-                        <dd className="m-0 truncate">{person.name}</dd>
-                      </div>
-                    ))}
-                    <dt className="font-medium text-gray-100">
-                      {intl.formatMessage(messages.network)}:
+              <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+                <div className="detail-paired-column-span min-w-0">
+                  <dl className="media-detail-rows refreshed-detail-text-muted detail-paired-columns grid min-w-0 content-start text-xs">
+                    <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
+                      {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
-                    <dd className="m-0 truncate">{network}</dd>
-                  </div>
-                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
-                    {intl.formatMessage(messages.genres)}:
+                    <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
+                      Series · {effectiveIs4k ? '4K' : 'HD'}
+                    </dd>
+                    <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
+                      {intl.formatMessage(messages.releaseDate)}:
+                    </dt>
+                    <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
+                      {firstAirDate}
+                    </dd>
+                    <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
+                      {intl.formatMessage(messages.runtime)}:
+                    </dt>
+                    <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
+                      {runtime
+                        ? `${intl.formatNumber(runtime)} minutes`
+                        : notAvailable}
+                    </dd>
+                    <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
+                      {featuredCrew.map((person) => (
+                        <div
+                          className="contents"
+                          key={`${person.job}-${person.id}`}
+                        >
+                          <dt className="font-medium text-gray-100">
+                            {person.job}:
+                          </dt>
+                          <dd className="m-0 truncate">{person.name}</dd>
+                        </div>
+                      ))}
+                      <dt className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.network)}:
+                      </dt>
+                      <dd className="m-0 truncate">{network}</dd>
+                    </div>
+                    <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
+                      {intl.formatMessage(messages.genres)}:
+                    </dt>
+                    <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
+                      {data?.genres?.length
+                        ? data.genres
+                            .slice(0, 3)
+                            .map((genre) => genre.name)
+                            .join(', ')
+                        : notAvailable}
+                    </dd>
+                  </dl>
+                </div>
+                <dl className="media-detail-rows refreshed-detail-text-muted media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.status)}:
                   </dt>
-                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
-                    {data?.genres?.length
-                      ? data.genres
-                          .slice(0, 3)
-                          .map((genre) => genre.name)
-                          .join(', ')
-                      : notAvailable}
+                  <dd className="m-0 truncate">
+                    {intl.formatMessage(
+                      selectedDestinationAvailable
+                        ? globalMessages.available
+                        : selectedDestinationRequested
+                          ? messages.requested
+                          : messages.readyToRequest
+                    )}
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.service)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {selectedService?.name ??
+                      fallbackService?.name ??
+                      notAvailable}
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.approval)}:
+                  </dt>
+                  <dd className="m-0 min-w-0">
+                    <RequestFooterStatus
+                      available={selectedDestinationAvailable}
+                      requested={selectedDestinationRequested}
+                      hasAutoApprove={hasAutoApprove}
+                    />
                   </dd>
                 </dl>
               </div>
-              <dl className="media-detail-rows refreshed-detail-text-muted media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.status)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {intl.formatMessage(
-                    selectedDestinationAvailable
-                      ? globalMessages.available
-                      : selectedDestinationRequested
-                        ? messages.requested
-                        : messages.readyToRequest
-                  )}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.service)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {selectedService?.name ??
-                    fallbackService?.name ??
-                    notAvailable}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.approval)}:
-                </dt>
-                <dd className="m-0 min-w-0">
-                  <RequestFooterStatus
-                    available={selectedDestinationAvailable}
-                    requested={selectedDestinationRequested}
-                    hasAutoApprove={hasAutoApprove}
-                  />
-                </dd>
-              </dl>
             </div>
           </div>
         </div>
-      </div>
 
-      {settings.currentSettings.partialRequestsEnabled && data && (
-        <SeriesSeasonEpisodeSelector
-          tvId={data.id}
-          seasons={visibleSeasons}
-          selections={seasonSelections}
-          activeSeason={
-            activeSeason >= 0
-              ? activeSeason
-              : (visibleSeasons[0]?.seasonNumber ?? -1)
-          }
-          disabledSeasons={getAllRequestedSeasons()}
-          disabledEpisodes={getAllRequestedEpisodes()}
-          onActiveSeasonChange={setActiveSeason}
-          onSelectionsChange={(nextSelections) => {
-            const allowedSelections =
-              (quota?.tv.remaining ?? 0) + (editRequest?.seasons.length ?? 0);
-            if (
-              !quota?.tv.limit ||
-              requestOverrides?.ignoreQuota ||
-              nextSelections.length <= allowedSelections
-            ) {
-              setSeasonSelections(nextSelections);
+        {settings.currentSettings.partialRequestsEnabled && data && (
+          <SeriesSeasonEpisodeSelector
+            tvId={data.id}
+            seasons={visibleSeasons}
+            selections={seasonSelections}
+            activeSeason={
+              activeSeason >= 0
+                ? activeSeason
+                : (visibleSeasons[0]?.seasonNumber ?? -1)
             }
-          }}
-        />
-      )}
+            disabledSeasons={getAllRequestedSeasons()}
+            disabledEpisodes={getAllRequestedEpisodes()}
+            onActiveSeasonChange={setActiveSeason}
+            onSelectionsChange={(nextSelections) => {
+              const allowedSelections =
+                (quota?.tv.remaining ?? 0) + (editRequest?.seasons.length ?? 0);
+              if (
+                !quota?.tv.limit ||
+                requestOverrides?.ignoreQuota ||
+                nextSelections.length <= allowedSelections
+              ) {
+                setSeasonSelections(nextSelections);
+              }
+            }}
+          />
+        )}
 
-      {canUseAdvancedOptions && (
-        <AdvancedRequester
-          type="tv"
-          is4k={is4k}
-          allow4kServerSelection={allow4kServerSelection && !editRequest}
-          isAnime={isAnime}
-          quota={quota}
-          requestUser={editRequest?.requestedBy}
-          defaultOverrides={
-            editRequest
-              ? {
-                  folder: editRequest.rootFolder,
-                  profile: editRequest.profileId,
-                  server: editRequest.serverId,
-                  language: editRequest.languageProfileId,
-                  tags: editRequest.tags,
-                }
-              : undefined
-          }
-          expanded={advancedOptionsOpen}
-          panelOnly
-          rootFolderTable
-          requestedByPortal={requestedByPortal}
-          onChange={(overrides) => setRequestOverrides(overrides)}
-        />
-      )}
+        {canUseAdvancedOptions && (
+          <AdvancedRequester
+            type="tv"
+            is4k={is4k}
+            allow4kServerSelection={allow4kServerSelection && !editRequest}
+            isAnime={isAnime}
+            quota={quota}
+            requestUser={editRequest?.requestedBy}
+            defaultOverrides={
+              editRequest
+                ? {
+                    folder: editRequest.rootFolder,
+                    profile: editRequest.profileId,
+                    server: editRequest.serverId,
+                    language: editRequest.languageProfileId,
+                    tags: editRequest.tags,
+                  }
+                : undefined
+            }
+            expanded={advancedOptionsOpen}
+            panelOnly
+            rootFolderTable
+            requestedByPortal={requestedByPortal}
+            onChange={(overrides) => setRequestOverrides(overrides)}
+          />
+        )}
 
-      <div className="mt-[5px] flex flex-wrap items-center justify-end gap-2">
-        <div className="mr-auto flex items-center gap-2">
-          {canUseAdvancedOptions && (
-            <button
-              type="button"
-              className="app-button app-button-manage button-standard"
-              aria-expanded={advancedOptionsOpen}
-              onClick={() => setAdvancedOptionsOpen((open) => !open)}
-            >
-              <AdjustmentsHorizontalIcon
-                className="h-3.5 w-3.5"
-                aria-hidden="true"
-              />
-              {intl.formatMessage(messages.advancedOptions)}
-              <ChevronDownIcon
-                className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
-                aria-hidden="true"
-              />
-            </button>
-          )}
-        </div>
-        <div
-          className="compact-control flex items-center"
-          ref={setRequestedByPortal}
-        />
-        <Button
-          type="button"
-          onClick={closeAction}
-          data-testid="modal-cancel-button"
-          buttonType="danger"
-          buttonSize="standard"
-        >
-          <XMarkIcon aria-hidden="true" />
-          {editRequest
-            ? intl.formatMessage(globalMessages.close)
-            : intl.formatMessage(globalMessages.cancel)}
-        </Button>
-        <Button
-          type="button"
-          disabled={requestDisabled}
-          onClick={() => void submitAction()}
-          data-testid="modal-ok-button"
-          buttonType="success"
-          buttonSize="standard"
-        >
-          {editRequest && selectedSeasons.length === 0 ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+          <div className="mr-auto flex items-center gap-2">
+            {canUseAdvancedOptions && (
+              <button
+                type="button"
+                className="app-button app-button-manage button-standard"
+                aria-expanded={advancedOptionsOpen}
+                onClick={() => setAdvancedOptionsOpen((open) => !open)}
+              >
+                <AdjustmentsHorizontalIcon
+                  className="h-3.5 w-3.5"
+                  aria-hidden="true"
+                />
+                {intl.formatMessage(messages.advancedOptions)}
+                <ChevronDownIcon
+                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+          </div>
+          <div
+            className="compact-control flex items-center"
+            ref={setRequestedByPortal}
+          />
+          <Button
+            type="button"
+            onClick={closeAction}
+            data-testid="modal-cancel-button"
+            buttonType="danger"
+            buttonSize="standard"
+          >
             <XMarkIcon aria-hidden="true" />
-          ) : (
-            <ArrowDownTrayIcon aria-hidden="true" />
-          )}
-          {requestButtonLabel}
-        </Button>
-      </div>
+            {editRequest
+              ? intl.formatMessage(globalMessages.close)
+              : intl.formatMessage(globalMessages.cancel)}
+          </Button>
+          <Button
+            type="button"
+            disabled={requestDisabled}
+            onClick={() => void submitAction()}
+            data-testid="modal-ok-button"
+            buttonType="success"
+            buttonSize="standard"
+          >
+            {editRequest && selectedSeasons.length === 0 ? (
+              <XMarkIcon aria-hidden="true" />
+            ) : (
+              <ArrowDownTrayIcon aria-hidden="true" />
+            )}
+            {requestButtonLabel}
+          </Button>
+        </div>
+      </RequestMediaCard>
     </Modal>
   );
 };

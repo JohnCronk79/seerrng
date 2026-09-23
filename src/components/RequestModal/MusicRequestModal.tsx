@@ -427,43 +427,48 @@ const MusicRequestModal = ({
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(messages.close)}
         cancelButtonType="danger"
-        backdrop={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
-        backdropFull
         alignTop
         actionButtonSize="standard"
-        dialogClass="refreshed-card-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-5xl"
+        dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        {serviceUnavailable && (
-          <div className="mb-4">
-            <Alert
-              title={intl.formatMessage(messages.noLidarrServer)}
-              type="warning"
-            />
+        <RequestMediaCard
+          artwork={
+            data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath
+          }
+          artworkType="music"
+        >
+          {serviceUnavailable && (
+            <div className="mb-4">
+              <Alert
+                title={intl.formatMessage(messages.noLidarrServer)}
+                type="warning"
+              />
+            </div>
+          )}
+          <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
           </div>
-        )}
-        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-          {isOwner
-            ? intl.formatMessage(messages.pendingapproval)
-            : intl.formatMessage(messages.requestfrom, {
-                username: editRequest.requestedBy.displayName,
-              })}
-        </div>
-        {(hasPermission(Permission.REQUEST_ADVANCED) ||
-          hasPermission(Permission.MANAGE_REQUESTS)) && (
-          <AdvancedRequester
-            type="music"
-            is4k={false}
-            requestUser={editRequest.requestedBy}
-            defaultOverrides={{
-              folder: editRequest.rootFolder,
-              metadataProfile: editRequest.metadataProfileId,
-              profile: editRequest.profileId,
-              server: editRequest.serverId,
-              tags: editRequest.tags,
-            }}
-            onChange={(overrides) => setRequestOverrides(overrides)}
-          />
-        )}
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="music"
+              is4k={false}
+              requestUser={editRequest.requestedBy}
+              defaultOverrides={{
+                folder: editRequest.rootFolder,
+                metadataProfile: editRequest.metadataProfileId,
+                profile: editRequest.profileId,
+                server: editRequest.serverId,
+                tags: editRequest.tags,
+              }}
+              onChange={(overrides) => setRequestOverrides(overrides)}
+            />
+          )}
+        </RequestMediaCard>
       </Modal>
     );
   }
