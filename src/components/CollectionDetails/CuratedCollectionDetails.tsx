@@ -142,12 +142,11 @@ export default function CuratedCollectionDetails({
   const {
     members,
     loading: loadingMembers,
-    complete: ratingsComplete,
     retry: retryRatings,
   } = useCuratedRatings(kind, id, ids ? ids.split(',') : []);
   const {
     posters,
-    complete: postersComplete,
+    loading: loadingPosters,
     retry: retryPosters,
   } = useCuratedPosters(
     kind === 'music' ? id : '',
@@ -436,7 +435,7 @@ export default function CuratedCollectionDetails({
               parts={parts}
               filters={filters}
               onChange={changeFilters}
-              loading={loadingMembers || !ratingsComplete || !postersComplete}
+              loading={loadingMembers || loadingPosters}
               selectedCount={shownSelection.length}
               totalCount={parts.length}
             />

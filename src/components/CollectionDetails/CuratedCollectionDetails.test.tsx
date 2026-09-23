@@ -8,6 +8,7 @@ import CuratedCollectionDetails from './CuratedCollectionDetails';
 const state = vi.hoisted(() => ({
   retryRatings: vi.fn(),
   retryPosters: vi.fn(),
+  loadingPosters: false,
   collection: {
     name: 'Test Collection',
     overview: 'Artist overview.',
@@ -48,12 +49,17 @@ vi.mock('@app/hooks/useCuratedRatings', () => ({
   default: () => ({
     members: [],
     loading: false,
-    complete: true,
+    complete: false,
     retry: state.retryRatings,
   }),
 }));
 vi.mock('@app/hooks/useCuratedPosters', () => ({
-  default: () => ({ posters: {}, complete: true, retry: state.retryPosters }),
+  default: () => ({
+    posters: {},
+    complete: false,
+    loading: state.loadingPosters,
+    retry: state.retryPosters,
+  }),
 }));
 vi.mock('@app/components/Common/CachedImage', () => ({ default: () => null }));
 vi.mock('@app/components/Common/PageTitle', () => ({ default: () => null }));
@@ -189,6 +195,30 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
         ) as HTMLSelectElement
       ).value
     ).toBe('Album');
+    expect(
+      document.querySelector('.music-collection-load-status')?.textContent
+    ).toBe('Selection 1/2');
+    state.loadingPosters = true;
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en">
+          <CuratedCollectionDetails kind="music" id="artist" />
+        </IntlProvider>
+      )
+    );
+    expect(
+      document
+        .querySelector('.music-collection-load-status')
+        ?.getAttribute('aria-busy')
+    ).toBe('true');
+    state.loadingPosters = false;
+    await act(async () =>
+      root.render(
+        <IntlProvider locale="en">
+          <CuratedCollectionDetails kind="music" id="artist" />
+        </IntlProvider>
+      )
+    );
     expect(
       document.querySelector('.music-collection-load-status')?.textContent
     ).toBe('Selection 1/2');

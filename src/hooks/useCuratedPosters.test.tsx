@@ -58,6 +58,7 @@ it('retains cached posters, retries only failures, and keeps loading until image
   try {
     await act(async () => root.render(<Probe />));
     expect(current.complete).toBe(false);
+    expect(current.loading).toBe(false);
     expect(current.posters).toEqual({ ok: parts[0].posterPath, absent: null });
     get.mockResolvedValue({
       data: { posterPath: 'https://coverartarchive.org/bad' },
@@ -113,10 +114,12 @@ it('preloads posters in groups of 50 without waiting for scroll or restarting on
   try {
     await act(async () => root.render(<Probe members={parts} />));
     expect(started).toHaveLength(50);
+    expect(current.loading).toBe(true);
     expect(current.complete).toBe(false);
     await act(async () => finishLast());
     expect(started).toHaveLength(51);
     expect(current.complete).toBe(true);
+    expect(current.loading).toBe(false);
     await act(async () => root.render(<Probe members={[...parts]} />));
     expect(started).toHaveLength(51);
   } finally {
