@@ -102,7 +102,7 @@ export default function DiscographyRequestActions({
       <Button
         buttonType="danger"
         disabled={busy}
-        onClick={() => void router.push(returnHref)}
+        onClick={() => void router.replace(returnHref)}
       >
         <XMarkIcon />
         <span>{intl.formatMessage(globalMessages.cancel)}</span>

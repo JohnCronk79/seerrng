@@ -2370,10 +2370,10 @@
   }
 
   .selection-circle {
-    @apply flex h-4 w-4 flex-none items-center justify-center rounded-full border text-transparent focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40;
-    border-color: rgb(var(--theme-control-border) / 0.72);
+    @apply flex h-4 w-4 flex-none items-center justify-center rounded-full border text-transparent focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-80;
+    border-color: rgb(52 211 153 / 0.95);
     background-color: rgb(var(--theme-control-surface) / 0.92);
-    --tw-ring-color: rgb(var(--theme-control-border));
+    --tw-ring-color: rgb(52 211 153);
   }
 
   .selection-circle[aria-pressed='true'] {

@@ -11,7 +11,7 @@ export const requestActionMessageText = {
   delete: 'Delete',
   deleting: 'Deleting…',
   deleteTooltip: 'Delete this request and its status history.',
-  deleteTitle: 'Delete request status entry?',
+  deleteTitle: 'Delete request entry?',
   deleteDescription:
     'Seerr will cancel any active work it can identify, clean up temporary request records, and permanently remove this entry and its history.',
   deleteFailed: 'Unable to delete this request entry.',

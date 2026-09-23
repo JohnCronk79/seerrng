@@ -69,6 +69,7 @@ const messages = defineMessages('components.RequestModal.Music', {
   artist: 'Artist',
   albumType: 'Album Type',
   trackCount: 'Track Count',
+  entireAlbum: 'This request includes the entire album.',
   status: 'Status',
   service: 'Service',
   approval: 'Approval',
@@ -625,7 +626,14 @@ const MusicRequestModal = ({
           </div>
         </div>
 
-        {data?.tracks.length ? <AlbumTrackList tracks={data.tracks} /> : null}
+        {data?.tracks.length ? (
+          <>
+            <p className="refreshed-detail-text-muted mt-2 text-xs">
+              {intl.formatMessage(messages.entireAlbum)}
+            </p>
+            <AlbumTrackList tracks={data.tracks} albumRequest />
+          </>
+        ) : null}
 
         {canUseAdvancedOptions && (
           <AdvancedRequester

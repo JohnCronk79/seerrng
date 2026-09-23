@@ -12,11 +12,13 @@ const state = vi.hoisted(() => ({
     { id: 9, name: 'Lidarr-FLAC' },
   ],
   post: vi.fn(),
-  push: vi.fn(),
+  replace: vi.fn(),
   mutate: vi.fn(),
 }));
 vi.mock('axios', () => ({ default: { post: state.post } }));
-vi.mock('next/router', () => ({ useRouter: () => ({ push: state.push }) }));
+vi.mock('next/router', () => ({
+  useRouter: () => ({ replace: state.replace }),
+}));
 vi.mock('swr', () => ({
   default: () => ({ data: state.services }),
   mutate: state.mutate,
@@ -70,9 +72,9 @@ it('confirms only the current selection, sends format-specific batches, and canc
   try {
     await render();
     expect(
-      [...document.querySelectorAll('button')].find(
-        (button) => button.textContent === 'Cancel'
-      )?.classList.contains('app-button-danger')
+      [...document.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Cancel')
+        ?.classList.contains('app-button-danger')
     ).toBe(true);
     await click('MP3');
     expect(state.post).not.toHaveBeenCalled();
@@ -103,7 +105,7 @@ it('confirms only the current selection, sends format-specific batches, and canc
       )?.disabled
     ).toBe(true);
     await click('Cancel');
-    expect(state.push).toHaveBeenCalledWith('/music/source-album');
+    expect(state.replace).toHaveBeenCalledWith('/music/source-album');
     state.allowed = false;
     await render();
     expect(
