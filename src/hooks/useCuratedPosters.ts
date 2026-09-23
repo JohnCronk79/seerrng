@@ -3,25 +3,26 @@ import { mapWithConcurrency } from '@app/utils/concurrency';
 import { getImageCacheUrl } from '@app/utils/imageCache';
 import type { CuratedCollectionMember } from '@server/models/CuratedCollection';
 import axios from 'axios';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const BATCH_SIZE = 50;
 
 export const preloadCuratedPoster = (url: string, signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    if (signal.aborted) return resolve();
+  new Promise<boolean>((resolve) => {
+    if (signal.aborted) return resolve(false);
     const image = new window.Image();
-    const finish = () => {
+    const abort = () => finish(false);
+    const finish = (success: boolean) => {
       clearTimeout(timer);
-      signal.removeEventListener('abort', finish);
+      signal.removeEventListener('abort', abort);
       image.onload = null;
       image.onerror = null;
-      resolve();
+      resolve(success);
     };
-    const timer = setTimeout(finish, 30000);
-    signal.addEventListener('abort', finish, { once: true });
-    image.onload = finish;
-    image.onerror = finish;
+    const timer = setTimeout(() => finish(false), 30000);
+    signal.addEventListener('abort', abort, { once: true });
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
     image.src = url;
   });
 
@@ -41,6 +42,8 @@ export default function useCuratedPosters(
     parts.map(({ id, posterPath }) => [id, posterPath])
   );
   const scope = JSON.stringify([collectionId, partKey, cacheImages]);
+  const retryRef = useRef<() => void>(() => undefined);
+  const retry = useCallback(() => retryRef.current(), []);
   const [snapshot, setSnapshot] = useState<PosterSnapshot>({
     scope: '',
     posters: {},
@@ -51,11 +54,20 @@ export default function useCuratedPosters(
     const controller = new AbortController();
     const entries = JSON.parse(partKey) as [string, string | undefined][];
     const posters: Record<string, string | null> = {};
+    const failed = new Set<string>();
+    const paths = new Map(entries);
+    let loading = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 30000;
     setSnapshot({ scope, posters: {}, complete: false });
-    const load = async () => {
-      for (let offset = 0; offset < entries.length; offset += BATCH_SIZE) {
+    const load = async (targets: typeof entries) => {
+      if (loading || controller.signal.aborted) return;
+      clearTimeout(timer);
+      loading = true;
+      setSnapshot({ scope, posters: { ...posters }, complete: false });
+      for (let offset = 0; offset < targets.length; offset += BATCH_SIZE) {
         if (controller.signal.aborted) return;
-        const batch = entries.slice(offset, offset + BATCH_SIZE);
+        const batch = targets.slice(offset, offset + BATCH_SIZE);
         await mapWithConcurrency(batch, 4, async ([id, existingPath]) => {
           if (controller.signal.aborted) return;
           let posterPath = existingPath ?? null;
@@ -67,28 +79,60 @@ export default function useCuratedPosters(
               );
               posterPath = response.data.posterPath;
             } catch {
-              // A failed lookup must not prevent later batches from loading.
+              failed.add(id);
+              return;
             }
           }
           if (posterPath && !controller.signal.aborted) {
-            await preloadCuratedPoster(
+            paths.set(id, posterPath);
+            const loaded = await preloadCuratedPoster(
               getImageCacheUrl({ cacheImages, src: posterPath, type: 'music' }),
               controller.signal
             );
+            if (!loaded) {
+              failed.add(id);
+              return;
+            }
           }
+          failed.delete(id);
           posters[id] = posterPath;
+          if (!controller.signal.aborted)
+            setSnapshot({ scope, posters: { ...posters }, complete: false });
         });
         if (!controller.signal.aborted)
           setSnapshot({ scope, posters: { ...posters }, complete: false });
       }
-      if (!controller.signal.aborted)
-        setSnapshot({ scope, posters: { ...posters }, complete: true });
+      loading = false;
+      if (!controller.signal.aborted) {
+        setSnapshot({ scope, posters: { ...posters }, complete: !failed.size });
+        if (failed.size) {
+          const attempt = () => {
+            if (controller.signal.aborted) return;
+            if (document.hidden || window.navigator.onLine === false) {
+              timer = setTimeout(attempt, 30000);
+              return;
+            }
+            retryRef.current();
+          };
+          timer = setTimeout(attempt, delay);
+          delay = Math.min(delay * 2, 300000);
+        }
+      }
     };
-    void load();
-    return () => controller.abort();
+    retryRef.current = () => {
+      if (!loading && failed.size && !controller.signal.aborted)
+        void load([...failed].map((id) => [id, paths.get(id)]));
+    };
+    void load(entries);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      retryRef.current = () => undefined;
+    };
   }, [scope, collectionId, partKey, cacheImages]);
   return {
     posters: snapshot.scope === scope ? snapshot.posters : {},
     complete: snapshot.scope === scope && snapshot.complete,
+    retry,
   };
 }

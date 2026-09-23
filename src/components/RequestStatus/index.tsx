@@ -2179,6 +2179,7 @@ const RequestStatus = () => {
         <div className="flex flex-wrap items-center gap-2">
           <FilterResetButton
             label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasFilters}
             onClick={clearFilters}
           />
           {[
@@ -2392,9 +2393,11 @@ const RequestStatus = () => {
         <div className="refreshed-card-surface flex min-h-12 flex-row flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 p-2 text-center">
           <span>{intl.formatMessage(messages.noResults)}</span>
           {hasFilters && (
-            <Button buttonType="default" buttonSize="sm" onClick={clearFilters}>
-              {intl.formatMessage(messages.clearFilters)}
-            </Button>
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={false}
+              onClick={clearFilters}
+            />
           )}
         </div>
       )}

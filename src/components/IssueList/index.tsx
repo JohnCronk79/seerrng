@@ -248,6 +248,20 @@ const IssueList = () => {
         <div className="flex flex-wrap items-center gap-2">
           <FilterResetButton
             label={intl.formatMessage(messages.clearFilters)}
+            selected={
+              filter === 'all' &&
+              timeFrame === 'all' &&
+              mediaFilter === 'all' &&
+              issueTypeFilter === 'all' &&
+              releaseYearFilter === 'any' &&
+              !genreFilter &&
+              !studioFilter &&
+              !networkFilter &&
+              !albumTypeFilter &&
+              !search &&
+              sort === 'added' &&
+              direction === 'desc'
+            }
             onClick={clearFilters}
           />
           {(

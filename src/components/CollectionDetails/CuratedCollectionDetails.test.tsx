@@ -6,6 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import CuratedCollectionDetails from './CuratedCollectionDetails';
 
 const state = vi.hoisted(() => ({
+  retryRatings: vi.fn(),
+  retryPosters: vi.fn(),
   collection: {
     name: 'Test Collection',
     overview: 'Artist overview.',
@@ -43,10 +45,15 @@ vi.mock('@app/hooks/useCollectionAvailability', () => ({
   default: () => ({}),
 }));
 vi.mock('@app/hooks/useCuratedRatings', () => ({
-  default: () => ({ members: [], loading: false, complete: true }),
+  default: () => ({
+    members: [],
+    loading: false,
+    complete: true,
+    retry: state.retryRatings,
+  }),
 }));
 vi.mock('@app/hooks/useCuratedPosters', () => ({
-  default: () => ({ posters: {}, complete: true }),
+  default: () => ({ posters: {}, complete: true, retry: state.retryPosters }),
 }));
 vi.mock('@app/components/Common/CachedImage', () => ({ default: () => null }));
 vi.mock('@app/components/Common/PageTitle', () => ({ default: () => null }));
@@ -196,6 +203,8 @@ it('keeps all actions scoped to shown selections and does not revive hidden sele
     expect(document.querySelectorAll('[data-member]')).toHaveLength(2);
     await click('Select All');
     await filter('Release Type', 'Live');
+    expect(state.retryRatings).toHaveBeenCalled();
+    expect(state.retryPosters).toHaveBeenCalled();
     expect(output('add')).toBe('live');
     await filter('Release Type', 'Compilation');
     expect(output('add')).toBe('live');

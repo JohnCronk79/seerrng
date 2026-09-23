@@ -122,6 +122,8 @@ export default function CuratedCollectionDetails({
   );
   const changeFilters = (next: MusicCollectionFilters) => {
     setFilters(next);
+    void retryRatings();
+    retryPosters();
     setManual(true);
     const shown = new Set(
       filterMusicCollection(data?.parts ?? [], next).map((part) => part.id)
@@ -141,8 +143,13 @@ export default function CuratedCollectionDetails({
     members,
     loading: loadingMembers,
     complete: ratingsComplete,
+    retry: retryRatings,
   } = useCuratedRatings(kind, id, ids ? ids.split(',') : []);
-  const { posters, complete: postersComplete } = useCuratedPosters(
+  const {
+    posters,
+    complete: postersComplete,
+    retry: retryPosters,
+  } = useCuratedPosters(
     kind === 'music' ? id : '',
     kind === 'music' ? (data?.parts ?? []) : []
   );
@@ -429,7 +436,7 @@ export default function CuratedCollectionDetails({
               parts={parts}
               filters={filters}
               onChange={changeFilters}
-              loading={!ratingsComplete || !postersComplete}
+              loading={loadingMembers || !ratingsComplete || !postersComplete}
               selectedCount={shownSelection.length}
               totalCount={parts.length}
             />

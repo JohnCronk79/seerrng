@@ -400,6 +400,14 @@ const Blocklist = () => {
         <div className="flex flex-wrap items-center gap-2">
           <FilterResetButton
             label={intl.formatMessage(messages.clearFilters)}
+            selected={
+              currentFilter === Filter.ALL &&
+              timeFrame === 'all' &&
+              mediaFilter === 'all' &&
+              !searchFilter &&
+              sort === 'date' &&
+              sortDirection === 'desc'
+            }
             onClick={clearFilters}
           />
           {filterOptions.map((option) => (

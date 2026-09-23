@@ -216,7 +216,7 @@ export default function useCuratedRatings(
     complete:
       snapshot.scope === scope &&
       (JSON.parse(requestedIds) as string[]).every((id) =>
-        snapshot.members.some((member) => member.id === id)
+        snapshot.members.some((member) => member.id === id && !member.failure)
       ),
     retry,
   };

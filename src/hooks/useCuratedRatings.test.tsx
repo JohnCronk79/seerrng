@@ -100,6 +100,7 @@ it('preserves successful and absent ratings and retries only failed items', asyn
     expect(e.read().members.find((m) => m.id === 'ok')?.musicRating).toEqual(
       rating
     );
+    expect(e.read().complete).toBe(false);
     expect(e.read().members.find((m) => m.id === 'bad')?.failure).toBe(
       'timeout'
     );
@@ -123,6 +124,7 @@ it('preserves successful and absent ratings and retries only failed items', asyn
     await act(async () => finish({ data: { rating } }));
     expect(e.read().loading).toBe(false);
     expect(e.read().members.some((m) => m.failure)).toBe(false);
+    expect(e.read().complete).toBe(true);
     await act(async () => e.read().retry());
     expect(get).toHaveBeenCalledTimes(4);
   } finally {

@@ -12,7 +12,7 @@ import { Fragment } from 'react';
 
 export const getFilterResetButtonClass = (selected: boolean) =>
   `app-filter-button ${
-    selected ? 'app-filter-button-active' : 'app-filter-reset-button-idle'
+    selected ? 'app-filter-button-active' : 'app-filter-button-idle'
   }`;
 
 export const getFilterToggleButtonClass = (selected: boolean) =>

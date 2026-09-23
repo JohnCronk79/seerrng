@@ -15,3 +15,16 @@ it('renders the shared reset icon and selected state', () => {
   expect(html).toContain('aria-hidden="true"');
   expect(html).toContain('<svg');
 });
+
+it('looks available when there are filters to clear', () => {
+  const html = renderToStaticMarkup(
+    <FilterResetButton
+      label="Clear Filters"
+      selected={false}
+      onClick={() => {}}
+    />
+  );
+  expect(html).toContain('app-filter-button-idle');
+  expect(html).not.toContain('app-filter-reset-button-idle');
+  expect(html).not.toContain('disabled=');
+});
