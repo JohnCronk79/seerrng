@@ -8,7 +8,9 @@ import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
 import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
-import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
+import AdvancedRequester, {
+  RequestListboxControl,
+} from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -909,20 +911,18 @@ const BulkRequestModal = ({
                   className="mt-0"
                 />
               ) : (
-                <label className="w-48">
-                  <span>{intl.formatMessage(messages.releasetype)}</span>
-                  <select
-                    className="mt-1 border-gray-700 bg-gray-800"
-                    value={releaseType}
-                    onChange={(e) => setReleaseType(e.target.value)}
-                  >
-                    {releaseTypeOptions.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <RequestListboxControl
+                  id="bulk-release-type"
+                  label={intl.formatMessage(messages.releasetype)}
+                  value={releaseType}
+                  onChange={setReleaseType}
+                  options={releaseTypeOptions.map((type) => ({
+                    value: type,
+                    label: type,
+                  }))}
+                  active={releaseType !== 'Album'}
+                  loadingLabel={intl.formatMessage(globalMessages.loading)}
+                />
               )}
               <div className="mt-4 flex flex-wrap items-center gap-4">
                 <Button buttonType="ghost" onClick={toggleAll}>

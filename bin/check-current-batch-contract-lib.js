@@ -2062,7 +2062,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     advancedRequester,
-    'className="request-form-control compact-control relative inline-flex',
+    'className="request-listbox-control"',
     'Requested By must use the dark Destination Server control treatment'
   );
   requireText(
@@ -2078,8 +2078,8 @@ const validateCurrentBatchContract = (files) => {
   requireCount(
     advancedRequester,
     '<RequestListboxControl',
-    4,
-    'Destination Server, Metadata Profile, Quality Profile, and Root Folder must all use the shared request listbox'
+    5,
+    'Destination Server, Metadata Profile, Quality Profile, Root Folder, and Language must all use the shared request listbox'
   );
   requireText(
     advancedRequester,
@@ -2133,8 +2133,8 @@ const validateCurrentBatchContract = (files) => {
     );
     requireText(
       fileName,
-      'className="request-form-control compact-control inline-flex',
-      'Advanced Options buttons must match the Destination Server control treatment'
+      'className="app-button app-button-manage button-standard"',
+      'Advanced Options buttons must use the shared standard management action style'
     );
   }
   for (const fileName of [
@@ -2151,7 +2151,7 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const token of [
-    'dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"',
+    'dialogClass="request-form-surfaces artwork-form-main-card refreshed-card-surface refreshed-detail-text"',
     'backdropFull',
     'className="refreshed-inset-surface rounded-lg border border-gray-700 p-3"',
   ]) {
@@ -2996,10 +2996,30 @@ const validateCurrentBatchContract = (files) => {
     '{name} (Default)',
     'obsolete unnamed Default column must stay removed'
   );
-  requireText(
+  rejectText(
     advanced,
     'invisible col-start-1 row-start-1 whitespace-nowrap',
-    'Requested By must size itself to the longest available username'
+    'Requested By must fit the selected username rather than reserve space for every user'
+  );
+  requireText(
+    'src/styles/globals.css',
+    '@apply z-[100] w-max overflow-auto',
+    'request dropdown portals must sit above the z-60 modal backdrop'
+  );
+  requireText(
+    'src/styles/globals.css',
+    '--anchor-max-height: calc(8 * var(--filter-option-height) + 0.5rem + 2px)',
+    'request dropdowns must limit their visible options to eight rows'
+  );
+  requireText(
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    '? { server: initialServerId }',
+    'music request controls must retain the selected format destination'
+  );
+  requireText(
+    advanced,
+    '(!applyOverrides || defaultOverrides.profile == null)',
+    'server-only overrides must still load the selected server quality profile'
   );
   const requestMediaCard = 'src/components/RequestModal/RequestMediaCard.tsx';
   requireText(

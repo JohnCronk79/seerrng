@@ -617,7 +617,7 @@ const MovieRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="request-form-control compact-control inline-flex items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                className="app-button app-button-manage button-standard"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -641,7 +641,7 @@ const MovieRequestModal = ({
             type="button"
             onClick={onCancel}
             data-testid="modal-cancel-button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none"
+            className="app-button app-button-danger button-standard"
           >
             <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {intl.formatMessage(globalMessages.cancel)}
@@ -655,7 +655,7 @@ const MovieRequestModal = ({
               selectedDestinationCovered ||
               (quota?.movie.restricted && !requestOverrides?.ignoreQuota)
             }
-            className="compact-control request-submit-control"
+            className="app-button app-button-success button-standard"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {requestButtonLabel}

@@ -10,6 +10,7 @@ import type { MouseEvent } from 'react';
 import React, { Fragment, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useIntl } from 'react-intl';
+import { isOwnedListboxClick } from './isOwnedListboxClick';
 
 interface ModalProps {
   title?: string;
@@ -94,7 +95,8 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
     useEffect(() => {
       backgroundClickableRef.current = backgroundClickable;
     }, [backgroundClickable]);
-    useClickOutside(modalRef, () => {
+    useClickOutside(modalRef, (event) => {
+      if (isOwnedListboxClick(modalRef.current, event.target)) return;
       if (onCancel && backgroundClickableRef.current) {
         onCancel();
       }

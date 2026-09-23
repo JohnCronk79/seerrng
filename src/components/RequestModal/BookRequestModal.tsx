@@ -4,7 +4,9 @@ import BookFormatSelector from '@app/components/Common/BookFormatSelector';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
-import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
+import AdvancedRequester, {
+  RequestListboxControl,
+} from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
@@ -824,37 +826,26 @@ const BookRequestModal = ({
         )}
         {!!data?.isbnCandidates?.length && (
           <div className="mt-2">
-            <label className="inline-flex h-8 max-w-full overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-              <span
-                className={`inline-flex flex-shrink-0 items-center justify-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold whitespace-nowrap text-indigo-100 transition-colors ${
-                  selectedIsbn ? 'bg-indigo-500/35 text-white' : ''
-                }`}
-              >
-                {intl.formatMessage(messages.edition)}
-              </span>
-              <select
-                id="isbn"
-                name="isbn"
-                value={selectedIsbn}
-                onChange={(e) => setSelectedIsbn(e.target.value)}
-                aria-label={intl.formatMessage(messages.edition)}
-                className="max-w-[32rem] min-w-0 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
-              >
-                <option value="">
-                  {intl.formatMessage(messages.automaticEdition)}
-                </option>
-                {data.isbnCandidates.slice(0, 25).map((candidate) => (
-                  <option
-                    key={`${candidate.editionId ?? candidate.isbn}-${candidate.isbn}`}
-                    value={candidate.isbn}
-                  >
-                    {[candidate.isbn, candidate.title, candidate.format]
-                      .filter(Boolean)
-                      .join(' - ')}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <RequestListboxControl
+              id="isbn"
+              label={intl.formatMessage(messages.edition)}
+              value={selectedIsbn}
+              onChange={setSelectedIsbn}
+              active={!!selectedIsbn}
+              loadingLabel={intl.formatMessage(messages.automaticEdition)}
+              options={[
+                {
+                  value: '',
+                  label: intl.formatMessage(messages.automaticEdition),
+                },
+                ...data.isbnCandidates.slice(0, 25).map((candidate) => ({
+                  value: candidate.isbn,
+                  label: [candidate.isbn, candidate.title, candidate.format]
+                    .filter(Boolean)
+                    .join(' - '),
+                })),
+              ]}
+            />
           </div>
         )}
 
@@ -879,7 +870,7 @@ const BookRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="request-form-control compact-control inline-flex items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                className="app-button app-button-manage button-standard"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -903,7 +894,7 @@ const BookRequestModal = ({
             type="button"
             onClick={onCancel}
             data-testid="modal-cancel-button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none"
+            className="app-button app-button-danger button-standard"
           >
             <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {intl.formatMessage(globalMessages.cancel)}
@@ -918,7 +909,7 @@ const BookRequestModal = ({
               quota?.book?.restricted ||
               !!formatWarning
             }
-            className="compact-control request-submit-control"
+            className="app-button app-button-success button-standard"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {requestButtonLabel}

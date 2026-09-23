@@ -14,7 +14,7 @@ import type {
   ServiceCommonServer,
   ServiceCommonServerWithDetails,
 } from '@server/interfaces/api/serviceInterfaces';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
@@ -52,7 +52,7 @@ const formatServiceLabel = (value: string) =>
 const controlLabelClass = (active: boolean) =>
   `request-listbox-label ${active ? 'request-listbox-label-active' : ''}`;
 
-const RequestListboxControl = <T extends RequestListboxValue>({
+export const RequestListboxControl = <T extends RequestListboxValue>({
   id,
   label,
   value,
@@ -86,6 +86,7 @@ const RequestListboxControl = <T extends RequestListboxValue>({
             />
           </Listbox.Button>
           <Transition
+            as={Fragment}
             show={open}
             enter="transition-opacity ease-in duration-150"
             enterFrom="opacity-0"
@@ -94,7 +95,12 @@ const RequestListboxControl = <T extends RequestListboxValue>({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <Listbox.Options static className="request-listbox-menu">
+            <Listbox.Options
+              anchor="bottom start"
+              portal
+              modal={false}
+              className="request-listbox-menu"
+            >
               {options.map((option) => (
                 <Listbox.Option key={option.value} value={option.value}>
                   {({ selected, active: optionActive }) => (
@@ -104,7 +110,7 @@ const RequestListboxControl = <T extends RequestListboxValue>({
                       }`}
                     >
                       <span
-                        className={selected ? 'font-semibold' : 'font-normal'}
+                        className={`block truncate ${selected ? 'font-semibold' : 'font-normal'}`}
                       >
                         {option.label}
                       </span>
@@ -395,7 +401,7 @@ const AdvancedRequester = ({
       if (
         defaultProfile &&
         defaultProfile.id !== selectedProfile &&
-        (!applyOverrides || defaultOverrides.profile === null)
+        (!applyOverrides || defaultOverrides.profile == null)
       ) {
         setSelectedProfile(defaultProfile.id);
       }
@@ -403,7 +409,7 @@ const AdvancedRequester = ({
       if (
         defaultMetadataProfile &&
         defaultMetadataProfile.id !== selectedMetadataProfile &&
-        (!applyOverrides || defaultOverrides.metadataProfile === null)
+        (!applyOverrides || defaultOverrides.metadataProfile == null)
       ) {
         setSelectedMetadataProfile(defaultMetadataProfile.id);
       }
@@ -419,7 +425,7 @@ const AdvancedRequester = ({
       if (
         defaultLanguage &&
         defaultLanguage.id !== selectedLanguage &&
-        (!applyOverrides || defaultOverrides.language === null)
+        (!applyOverrides || defaultOverrides.language == null)
       ) {
         setSelectedLanguage(defaultLanguage.id);
       }
@@ -427,7 +433,7 @@ const AdvancedRequester = ({
       if (
         defaultTags &&
         !areNumberArraysEqual(defaultTags, selectedTags) &&
-        (!applyOverrides || defaultOverrides.tags === null)
+        (!applyOverrides || defaultOverrides.tags == null)
       ) {
         setSelectedTags(defaultTags);
       }
@@ -588,42 +594,26 @@ const AdvancedRequester = ({
               setIgnoreQuota(false);
               setSelectedUser(value);
             }}
-            className="request-form-control compact-control relative inline-flex max-w-full flex-shrink-0 items-stretch overflow-visible rounded-md border"
+            className="request-listbox-control"
           >
             {({ open }) => (
               <>
                 <Listbox.Label
-                  className={`inline-flex h-full flex-shrink-0 items-center justify-center rounded-l-[5px] border-r border-gray-600 px-2 py-0 font-semibold whitespace-nowrap text-indigo-100 transition-colors ${
+                  className={controlLabelClass(
                     selectedUser.id !== currentUser?.id
-                      ? 'bg-indigo-500/35 text-white'
-                      : ''
-                  } text-[11px] leading-none`}
+                  )}
                 >
-                  <span className="relative top-px">
-                    {intl.formatMessage(messages.requestedBy)}
-                  </span>
+                  <span>{intl.formatMessage(messages.requestedBy)}</span>
                 </Listbox.Label>
-                <Listbox.Button className="inline-grid h-full max-w-[min(24rem,55vw)] grid-cols-[minmax(6rem,max-content)_auto] items-center gap-2 rounded-r-[5px] px-2 py-0 text-[11px] leading-none font-semibold text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset">
-                  <span className="grid min-w-0">
-                    {(selectableUserData ?? []).map((candidate) => (
-                      <span
-                        key={candidate.id}
-                        aria-hidden="true"
-                        className="invisible col-start-1 row-start-1 whitespace-nowrap"
-                      >
-                        {candidate.displayName}
-                      </span>
-                    ))}
-                    <span className="relative top-px col-start-1 row-start-1 truncate">
-                      {selectedUser.displayName}
-                    </span>
-                  </span>
+                <Listbox.Button className="request-listbox-button">
+                  <span className="truncate">{selectedUser.displayName}</span>
                   <ChevronDownIcon
-                    className="h-3.5 w-3.5 flex-shrink-0 text-gray-500"
+                    className="request-listbox-chevron"
                     aria-hidden="true"
                   />
                 </Listbox.Button>
                 <Transition
+                  as={Fragment}
                   show={open}
                   enter="transition-opacity ease-in duration-150"
                   enterFrom="opacity-0"
@@ -633,17 +623,17 @@ const AdvancedRequester = ({
                   leaveTo="opacity-0"
                 >
                   <Listbox.Options
-                    static
-                    className="absolute right-0 bottom-full z-50 mb-1 max-h-60 min-w-full overflow-auto rounded-md border border-gray-600 bg-gray-800 py-1 text-xs shadow-xl focus:outline-none"
+                    anchor="top end"
+                    portal
+                    modal={false}
+                    className="request-listbox-menu"
                   >
                     {(selectableUserData ?? []).map((candidate) => (
                       <Listbox.Option key={candidate.id} value={candidate}>
                         {({ selected, active }) => (
                           <div
-                            className={`relative cursor-default py-1.5 pr-3 pl-7 whitespace-nowrap select-none ${
-                              active
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-gray-300'
+                            className={`request-listbox-option ${
+                              active ? 'request-listbox-option-active' : ''
                             }`}
                           >
                             <span
@@ -655,7 +645,7 @@ const AdvancedRequester = ({
                             </span>
                             {selected && (
                               <CheckIcon
-                                className="absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2"
+                                className="request-listbox-check"
                                 aria-hidden="true"
                               />
                             )}
@@ -840,46 +830,24 @@ const AdvancedRequester = ({
                 (isValidating ||
                   !serverData ||
                   (serverData.languageProfiles ?? []).length > 0) && (
-                  <label className="inline-flex h-8 flex-shrink-0 overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-                    <span
-                      className={controlLabelClass(
-                        defaultLanguageId !== undefined &&
-                          selectedLanguage !== defaultLanguageId
-                      )}
-                    >
-                      {intl.formatMessage(messages.languageprofile)}
-                    </span>
-                    <select
-                      id="language"
-                      name="language"
-                      value={selectedLanguage}
-                      onChange={(e) =>
-                        setSelectedLanguage(parseInt(e.target.value))
-                      }
-                      onBlur={(e) =>
-                        setSelectedLanguage(parseInt(e.target.value))
-                      }
-                      aria-label={intl.formatMessage(messages.languageprofile)}
-                      className="min-w-36 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
-                      disabled={isValidating || !serverData}
-                    >
-                      {(isValidating || !serverData) && (
-                        <option value="">
-                          {intl.formatMessage(globalMessages.loading)}
-                        </option>
-                      )}
-                      {!isValidating &&
-                        serverData &&
-                        serverData.languageProfiles?.map((language) => (
-                          <option
-                            key={`folder-list${language.id}`}
-                            value={language.id}
-                          >
-                            {language.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                  <RequestListboxControl
+                    id="language"
+                    label={intl.formatMessage(messages.languageprofile)}
+                    value={selectedLanguage ?? 0}
+                    onChange={setSelectedLanguage}
+                    options={(serverData?.languageProfiles ?? []).map(
+                      (language) => ({
+                        value: language.id,
+                        label: language.name,
+                      })
+                    )}
+                    active={
+                      defaultLanguageId !== undefined &&
+                      selectedLanguage !== defaultLanguageId
+                    }
+                    disabled={isValidating || !serverData}
+                    loadingLabel={intl.formatMessage(globalMessages.loading)}
+                  />
                 )}
             </div>
           )}

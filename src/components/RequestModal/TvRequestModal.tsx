@@ -552,7 +552,7 @@ const TvRequestModal = ({
       }
       backdropFull
       actionButtonSize={editRequest ? 'standard' : 'sm'}
-      dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"
+      dialogClass="request-form-surfaces artwork-form-main-card refreshed-card-surface refreshed-detail-text"
     >
       {editRequest && (
         <div className="refreshed-inset-surface card-spacing-after rounded-lg border border-gray-700 p-3">
@@ -757,7 +757,7 @@ const TvRequestModal = ({
           {canUseAdvancedOptions && (
             <button
               type="button"
-              className="request-form-control compact-control inline-flex items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+              className="app-button app-button-manage button-standard"
               aria-expanded={advancedOptionsOpen}
               onClick={() => setAdvancedOptionsOpen((open) => !open)}
             >
@@ -794,7 +794,6 @@ const TvRequestModal = ({
           disabled={requestDisabled}
           onClick={() => void submitAction()}
           data-testid="modal-ok-button"
-          className="request-submit-control"
           buttonType="success"
           buttonSize="standard"
         >

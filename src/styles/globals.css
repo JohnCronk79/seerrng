@@ -1232,7 +1232,13 @@
   }
 
   .detail-item-surface {
-    @apply rounded-lg border border-gray-700 bg-gray-900/30;
+    @apply rounded-lg border border-gray-700;
+  }
+
+  .detail-item-surface,
+  .request-modal-site-surface .refreshed-inset-surface,
+  .request-form-surfaces .refreshed-inset-surface {
+    @apply bg-gray-900/30;
   }
 
   .detail-item-interactive {
@@ -1512,7 +1518,12 @@
   }
 
   .request-listbox-control {
-    @apply relative inline-flex h-8 flex-shrink-0 items-stretch rounded-md border transition-colors;
+    @apply relative inline-flex max-w-full min-w-0 items-stretch rounded-md border transition-colors focus-within:ring-2 focus-within:ring-indigo-400 focus-within:ring-inset;
+    width: fit-content;
+    height: var(--compact-control-height);
+    border-color: rgb(var(--theme-control-border) / 0.7);
+    background-color: rgb(var(--theme-control-surface) / 0.28);
+    text-shadow: none;
   }
 
   .request-listbox-label {
@@ -1524,22 +1535,33 @@
   }
 
   .request-listbox-button {
-    @apply inline-flex h-full min-w-36 items-center justify-between gap-2 rounded-r-[5px] bg-transparent px-2 py-0 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex h-full min-w-0 items-center justify-between gap-1.5 rounded-r-[5px] bg-transparent px-2 py-0 text-xs font-medium text-gray-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60;
+    max-width: min(24rem, 55vw);
   }
 
   .request-listbox-chevron {
     @apply h-4 w-4 flex-shrink-0 text-gray-500;
+    filter: none;
   }
 
   .request-listbox-menu {
-    @apply absolute top-full right-0 z-50 mt-1 max-h-60 min-w-full overflow-auto rounded-md border py-1 text-xs shadow-xl focus:outline-none;
+    @apply z-[100] w-max overflow-auto rounded-md border py-1 text-xs shadow-xl focus:outline-none;
+    --filter-option-height: 1.5rem;
+    --anchor-max-height: calc(8 * var(--filter-option-height) + 0.5rem + 2px);
+    --anchor-gap: 4px;
+    --anchor-padding: 8px;
+    max-height: var(--anchor-max-height);
+    min-width: var(--button-width);
+    max-width: min(24rem, calc(100vw - 16px));
     color: rgb(var(--theme-control-text));
     border-color: rgb(var(--theme-control-border) / 0.75);
     background-color: rgb(var(--theme-control-surface) / 0.98);
   }
 
   .request-listbox-option {
-    @apply relative cursor-default py-1.5 pr-3 pl-7 whitespace-nowrap text-gray-300 select-none;
+    @apply relative cursor-default py-1 pr-2 pl-7 text-gray-300 select-none;
+    height: var(--filter-option-height);
+    line-height: 1rem;
   }
 
   .request-listbox-option-active {
