@@ -1,7 +1,7 @@
 ---
 category: changed
 audience: users
-area: media details and requests
+area: media-details
 action: none
 breaking: false
 ---
