@@ -101,6 +101,8 @@ describe('Plex collection synchronization', () => {
       ['2', 0, 'missing'],
     ]);
     expect(PlexAPI.prototype.createCollection).not.toHaveBeenCalled();
+    expect(result.destinations[0].availableIds).toEqual(['11']);
+    expect(result.destinations[1].availableIds).toEqual([]);
   });
   it('creates only selected libraries containing available members and persists the link', async () => {
     const result = await checkCollection(55, ['1', '2']);

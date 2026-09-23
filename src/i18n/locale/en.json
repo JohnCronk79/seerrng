@@ -155,7 +155,7 @@
   "components.CollectionDetails.ServerActions.confirmRemove": "Remove collection from {server}?",
   "components.CollectionDetails.ServerActions.conflict": "An ambiguous or smart collection exists on {server}. Review it there before continuing.",
   "components.CollectionDetails.ServerActions.description": "Only selected items already indexed in enabled libraries will be included now. Newly available titles will be added automatically afterward. Already-available items omitted now and items manually removed on the media server stay out. Existing collections are preserved.",
-  "components.CollectionDetails.ServerActions.empty": "No matching items are indexed in an enabled library yet.",
+  "components.CollectionDetails.ServerActions.empty": "None of the selected items are available on {server} to add to this collection.",
   "components.CollectionDetails.ServerActions.exists": "This collection already exists in the matching {server} destinations.",
   "components.CollectionDetails.ServerActions.failed": "Some collections could not be verified. Retrying automatically; do not assume the operation completed.",
   "components.CollectionDetails.ServerActions.help": "Create this collection from the selected items on {server}. Newly available titles are added automatically afterward.",

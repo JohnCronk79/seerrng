@@ -38,11 +38,22 @@ describe('collection buttons', () => {
     expect(collectionAddState(status('exists'))).toBe('exists');
   });
   it('enables removal only for verified existing collections', () => {
+    // Removal intentionally does not depend on the current item selection.
     expect(collectionRemoveState(status('exists'))).toBe('ready');
     expect(collectionRemoveState(status('missing'))).toBe('absent');
     const unverified = status('exists');
     delete unverified.destinations[0].removalToken;
     expect(collectionRemoveState(unverified)).toBe('absent');
+  });
+  it('enables add for a mixed selection but not for unavailable selected members', () => {
+    const available = status('missing', 2);
+    available.destinations[0].availableIds = ['available', 'other'];
+    expect(
+      collectionAddState(available, undefined, ['available', 'missing'])
+    ).toBe('ready');
+    expect(collectionAddState(available, undefined, ['missing'])).toBe('empty');
+    expect(collectionAddState(available, undefined, [])).toBe('empty');
+    expect(collectionAddState(available, undefined, ['other'])).toBe('ready');
   });
   it('disables both actions during uncertainty, ambiguity and unsupported configurations', () => {
     for (const action of [collectionAddState, collectionRemoveState]) {

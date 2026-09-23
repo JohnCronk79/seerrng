@@ -236,6 +236,7 @@ export const checkCollection = async (
               libraryId: target.id,
               libraryName: target.name,
               count: new Set(items.map((item) => item.id)).size,
+              availableIds: [...new Set(items.map((item) => item.sourceId))],
               state: 'unknown',
               managed: !!link?.enabled,
             };

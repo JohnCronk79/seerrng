@@ -51,7 +51,9 @@ const plexMovie = (item: PlexLibraryItem): CollectionMovie => ({
   id: item.ratingKey,
   title: item.title,
   qualities: [
-    ...new Set((item.Media ?? []).map((media) => media.videoResolution === '4k')),
+    ...new Set(
+      (item.Media ?? []).map((media) => media.videoResolution === '4k')
+    ),
   ],
   addedAt: new Date(item.addedAt * 1000),
 });
@@ -61,9 +63,9 @@ const jellyfinMovie = (item: JellyfinLibraryItemExtended): CollectionMovie => ({
   qualities: [
     ...new Set(
       (item.MediaSources ?? []).flatMap((source) =>
-        (source.MediaStreams ?? []).filter(
-          (stream) => stream.Type === 'Video' && !!stream.Width
-        ).map((stream) => (stream.Width ?? 0) > 2000)
+        (source.MediaStreams ?? [])
+          .filter((stream) => stream.Type === 'Video' && !!stream.Width)
+          .map((stream) => (stream.Width ?? 0) > 2000)
       )
     ),
   ],
@@ -102,7 +104,7 @@ export const getCollectionServer = (
       (library) =>
         library.enabled &&
         library.type ===
-          (kind === 'tv' ? 'show' : kind === 'music' ? 'artist' : 'movie')
+          (kind === 'tv' ? 'show' : kind === 'music' ? 'music' : 'movie')
     );
     const convert = (item: PlexCollection): RemoteCollection => ({
       id: item.ratingKey,
@@ -158,7 +160,7 @@ export const getCollectionServer = (
     (library) =>
       library.enabled &&
       library.type ===
-        (kind === 'tv' ? 'show' : kind === 'music' ? 'artist' : 'movie')
+        (kind === 'tv' ? 'show' : kind === 'music' ? 'music' : 'movie')
   );
   const convert = (item: { id: string; title: string }): RemoteCollection => ({
     ...item,

@@ -19,6 +19,7 @@ import { useIntl } from 'react-intl';
 import {
   collectionAddState,
   collectionRemoveState,
+  selectedDestinationCount,
 } from './collectionActionState';
 
 const messages = defineMessages('components.CollectionDetails.ServerActions', {
@@ -28,7 +29,8 @@ const messages = defineMessages('components.CollectionDetails.ServerActions', {
   unavailable: 'Cannot check {server} right now. Retrying automatically.',
   exists:
     'This collection already exists in the matching {server} destinations.',
-  empty: 'No matching items are indexed in an enabled library yet.',
+  empty:
+    'None of the selected items are available on {server} to add to this collection.',
   selectItems: 'Select at least one item to create a collection.',
   absent: 'This collection does not exist on {server}.',
   conflict:
@@ -79,7 +81,7 @@ const CollectionServerActions = ({
   const [confirmedItemIds, setConfirmedItemIds] = useState<
     string[] | undefined
   >();
-  const addState = collectionAddState(availability?.sync, error);
+  const addState = collectionAddState(availability?.sync, error, selectedIds);
   const removeState = collectionRemoveState(availability?.sync, error);
   const state = action === 'remove' ? removeState : addState;
   const selectedChoices = choices.filter((entry) =>
@@ -90,11 +92,20 @@ const CollectionServerActions = ({
     const options =
       availability?.sync.destinations.filter((entry) =>
         next === 'add'
-          ? entry.state === 'missing' && entry.count > 0
+          ? entry.state === 'missing' &&
+            selectedDestinationCount(entry, selectedIds) > 0
           : entry.state === 'exists' && !!entry.removalToken
       ) ?? [];
     // Freeze the verified identities shown in the confirmation; polling cannot retarget removal.
-    setChoices(options.map((entry) => ({ ...entry })));
+    setChoices(
+      options.map((entry) => ({
+        ...entry,
+        count:
+          next === 'add'
+            ? selectedDestinationCount(entry, selectedIds)
+            : entry.count,
+      }))
+    );
     setSelected(options.map((entry) => entry.libraryId));
     setConfirmedItemIds(selectedIds ? [...selectedIds] : undefined);
     setAction(next);

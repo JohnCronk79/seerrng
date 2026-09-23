@@ -1,4 +1,17 @@
-import type { CollectionSyncStatus } from '@server/interfaces/api/collectionSync';
+import type {
+  CollectionDestination,
+  CollectionSyncStatus,
+} from '@server/interfaces/api/collectionSync';
+
+export const selectedDestinationCount = (
+  entry: CollectionDestination,
+  selectedIds?: string[]
+) =>
+  selectedIds === undefined
+    ? entry.count
+    : entry.availableIds === undefined
+      ? 0
+      : entry.availableIds.filter((id) => selectedIds.includes(id)).length;
 
 const verificationState = (status?: CollectionSyncStatus, error?: unknown) => {
   if (error || (status && !status.supported)) return 'unavailable';
@@ -10,13 +23,16 @@ const verificationState = (status?: CollectionSyncStatus, error?: unknown) => {
 };
 export const collectionAddState = (
   status?: CollectionSyncStatus,
-  error?: unknown
+  error?: unknown,
+  selectedIds?: string[]
 ) => {
   const verification = verificationState(status, error);
   if (verification) return verification;
   if (
     status?.destinations.some(
-      (entry) => entry.state === 'missing' && entry.count > 0
+      (entry) =>
+        entry.state === 'missing' &&
+        selectedDestinationCount(entry, selectedIds) > 0
     )
   )
     return 'ready';
