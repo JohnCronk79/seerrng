@@ -46,6 +46,7 @@
     --theme-page-gradient-main: 52 51 157;
     --theme-page-gradient-deep: 23 29 89;
     --theme-page-gradient-black: 0 0 0;
+    --theme-page-gradient-main-stop: 72%;
     --theme-searchbar-scrolled: 55 65 81;
     --theme-control-surface: 49 46 129;
     --theme-control-surface-hover: 55 48 163;
@@ -81,8 +82,9 @@
   [data-theme-palette='blackout'] {
     --theme-detail-divider-shadow: 0 0 4px 0 rgb(255 255 255 / 0.8);
     --theme-page-spotlight-strength: 0;
-    --theme-page-gradient-light: 40 68 120;
-    --theme-page-gradient-main: 26 50 96;
+    --theme-page-gradient-light: 0 0 0;
+    --theme-page-gradient-main: 40 68 120;
+    --theme-page-gradient-main-stop: 50%;
     --theme-page-gradient-deep: 14 28 58;
     --theme-page-gradient-black: 0 0 0;
     --theme-overlay-light: 0 0 0;
@@ -506,7 +508,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black)) 0%,
         rgb(var(--theme-page-gradient-deep)) 36%,
-        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-main))
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light)) 100%
       );
   }
@@ -563,7 +566,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black) / 0.8) 0%,
         rgb(var(--theme-page-gradient-deep) / 0.8) 36%,
-        rgb(var(--theme-page-gradient-main) / 0.8) 72%,
+        rgb(var(--theme-page-gradient-main) / 0.8)
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light) / 0.8) 100%
       );
     backdrop-filter: blur(5px);
@@ -599,7 +603,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black)) 0%,
         rgb(var(--theme-page-gradient-deep)) 36%,
-        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-main))
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light)) 100%
       );
   }
@@ -624,7 +629,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black) / 0.98) 0%,
         rgb(var(--theme-page-gradient-deep) / 0.98) 36%,
-        rgb(var(--theme-page-gradient-main) / 0.96) 72%,
+        rgb(var(--theme-page-gradient-main) / 0.96)
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light) / 0.96) 100%
       );
   }
@@ -654,7 +660,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black) / 0.98) 0%,
         rgb(var(--theme-page-gradient-deep) / 0.98) 36%,
-        rgb(var(--theme-page-gradient-main) / 0.96) 72%,
+        rgb(var(--theme-page-gradient-main) / 0.96)
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light) / 0.96) 100%
       ) !important;
   }
@@ -1043,6 +1050,14 @@
 
   .format-request-option {
     @apply inline-flex items-center border-r border-green-500/70 px-2 text-green-200 transition duration-150 last:border-r-0 hover:bg-green-600 hover:text-white focus:ring-2 focus:ring-green-300 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
+  }
+
+  .format-request-control.media-quality-unavailable {
+    @apply border-gray-600 bg-gray-950/70 grayscale;
+  }
+
+  .media-quality-unavailable .format-request-label {
+    @apply border-gray-600 text-gray-500 brightness-50;
   }
 
   .format-request-option[aria-pressed='true']:not(:disabled) {
@@ -1498,7 +1513,8 @@
         40deg,
         rgb(var(--theme-page-gradient-black)) 0%,
         rgb(var(--theme-page-gradient-deep)) 36%,
-        rgb(var(--theme-page-gradient-main)) 72%,
+        rgb(var(--theme-page-gradient-main))
+          var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light)) 100%
       ) !important;
   }

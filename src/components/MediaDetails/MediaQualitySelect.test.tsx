@@ -108,6 +108,7 @@ it('renders segmented qualities, blocks unavailable clicks and retains descripti
 });
 it('falls back to an available quality when availability changes', async () => {
   const change = await renderQuality(true, false);
+  expect(host.querySelector('.media-quality-unavailable')).toBeNull();
   expect(change).toHaveBeenCalledWith('4k');
 });
 it('can retain the HD default without automatically switching a collection to 4K', async () => {
@@ -124,6 +125,7 @@ it('can retain the HD default without automatically switching a collection to 4K
 });
 it('does not select or enable anything when neither quality is available', async () => {
   const change = await renderQuality(true, true);
+  expect(host.querySelector('.media-quality-unavailable')).not.toBeNull();
   expect(change).not.toHaveBeenCalled();
   expect(
     [...host.querySelectorAll('button')].every((button) => button.disabled)
@@ -132,6 +134,7 @@ it('does not select or enable anything when neither quality is available', async
 });
 it('can select either quality when both are available', async () => {
   const change = await renderQuality(false, false);
+  expect(host.querySelector('.media-quality-unavailable')).toBeNull();
   await act(async () =>
     host
       .querySelector<HTMLButtonElement>(

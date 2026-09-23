@@ -49,7 +49,7 @@ const MediaQualitySelect = <Quality extends string>({
     <FormatRequestControl
       label={label ?? intl.formatMessage(messages.selectQuality)}
       icon={<AdjustmentsHorizontalIcon aria-hidden="true" />}
-      className={className}
+      className={`${firstAvailable === undefined ? 'media-quality-unavailable' : ''} ${className ?? ''}`}
       options={options.map((option) => ({
         id: option.value,
         label: option.label,
