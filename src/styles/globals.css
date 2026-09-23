@@ -1053,11 +1053,12 @@
   }
 
   .format-request-control.media-quality-unavailable {
-    @apply border-gray-600 bg-gray-950/70 grayscale;
+    @apply opacity-50;
   }
 
-  .media-quality-unavailable .format-request-label {
-    @apply border-gray-600 text-gray-500 brightness-50;
+  .media-quality-unavailable .format-request-option:disabled {
+    @apply bg-transparent text-green-200;
+    filter: none;
   }
 
   .format-request-option[aria-pressed='true']:not(:disabled) {
