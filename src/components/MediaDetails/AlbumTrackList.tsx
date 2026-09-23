@@ -166,7 +166,7 @@ const AlbumTrackList = ({
       {layouts.map(({ columns, className }) => (
         <div
           key={`${columns.length}-${className}`}
-          className={`scrollable-card mt-2 max-h-[214px] gap-2 overflow-y-auto ${className}`}
+          className={`scrollable-card mt-2 max-h-[168px] gap-2 overflow-y-auto ${className}`}
         >
           {columns.map((columnTracks, columnIndex) => {
             return (

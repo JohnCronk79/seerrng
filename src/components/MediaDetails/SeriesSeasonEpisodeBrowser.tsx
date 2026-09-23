@@ -170,7 +170,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2"
+          className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2"
           data-testid="season-list"
         >
           {visibleSeasons.length === 0 && (
@@ -252,7 +252,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2"
+          className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2"
           data-testid="episode-list"
         >
           {!data && !error && activeSeason >= 0 && (

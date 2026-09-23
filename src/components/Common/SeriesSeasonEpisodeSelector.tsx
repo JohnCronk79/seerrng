@@ -191,7 +191,7 @@ const SeriesSeasonEpisodeSelector = ({
           <span>Season</span>
           <span className="text-center">Episodes</span>
         </div>
-        <div className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2">
+        <div className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2">
           {seasons.map((season) => {
             const seasonSelection = selections.find(
               (selection) => selection.seasonNumber === season.seasonNumber
@@ -245,7 +245,7 @@ const SeriesSeasonEpisodeSelector = ({
           <span>Episodes</span>
           <span>Title</span>
         </div>
-        <div className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2">
+        <div className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2">
           {!data && !error && activeSeason >= 0 && (
             <div className="flex h-20 items-center justify-center">
               <LoadingSpinner />
