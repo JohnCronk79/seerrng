@@ -183,7 +183,7 @@ Create the user and directories:
 
 ```bash
 id bookshelfng >/dev/null 2>&1 || \
-  sudo useradd --system --home-dir /var/lib/bookshelfng --create-home \
+  sudo useradd --system --user-group --home-dir /var/lib/bookshelfng --create-home \
     --shell /usr/sbin/nologin bookshelfng
 
 sudo install -d -m 0755 /opt/bookshelfng

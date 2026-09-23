@@ -614,6 +614,23 @@ cd /opt/bookshelf-backend
 
 Create `/opt/bookshelf-backend/.env`:
 
+`PUID` and `PGID` are numeric IDs on the Docker host, not account or group
+names. The values below are examples and may not match your host. To map an
+existing account, run `id -u accountname` and `id -g accountname` on the host,
+replacing `accountname` with that user. These report the user's UID and primary
+GID. If the media directories use a shared group, run `getent group groupname`
+and use that group's numeric GID instead. Copy the numeric values into `.env`;
+do not put names or shell expressions there. The `/config` mount must be
+writable, and Bookshelf must have the required read/write access to its media
+mounts.
+
+After changing these IDs, recreate both Bookshelf containers from
+`/opt/bookshelf-backend` so Compose applies the new values:
+
+```bash
+docker compose up -d --force-recreate bookshelf-ebooks bookshelf-audiobooks
+```
+
 ```env
 PUID=1000
 PGID=953
@@ -941,6 +958,17 @@ settings and backend containers.
 - confirm SeerrNG can reach the host and port,
 - confirm the API key is correct,
 - confirm URL Base is empty unless Bookshelf is configured with one.
+- For the supplied Compose files, SeerrNG and Bookshelf use host networking,
+  so `127.0.0.1` reaches services on that host. If either container uses a
+  bridge network instead, configure a host address and published port or a
+  service name on a shared network; loopback inside one container cannot reach
+  another container.
+- From `/opt/bookshelf-backend`, inspect container health and logs:
+
+  ```bash
+  docker compose ps
+  docker compose logs --tail=100 bookshelf-ebooks bookshelf-audiobooks
+  ```
 
 `lookup_empty`:
 
