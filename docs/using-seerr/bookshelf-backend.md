@@ -49,10 +49,47 @@ the same author; only the requested format/book is marked for monitoring. This
 is normal Chaptarr behaviour, not evidence that SeerrNG approved those other
 books.
 
-Pin the Chaptarr image to a tested version instead of relying on `latest`.
-Compatibility was validated against the official Docker image reporting
-`0.9.911.0`; Chaptarr is actively developed and its Readarr-compatible surface
-can change between releases.
+### Chaptarr interoperability
+
+SeerrNG detects Chaptarr from its system status and sends each Bookshelf service
+through the matching ebook or audiobook API facade. It reads Chaptarr's
+Hardcover setting to choose the provider-ID dialect; older Chaptarr versions
+without that setting use the Hardcover facade. Keep both SeerrNG service entries
+on the same Chaptarr instance when it manages both formats, and select the
+matching format in each entry.
+
+| Operation | SeerrNG behavior |
+| --- | --- |
+| Search and edition selection | Uses format-scoped lookups, retains the provider's work and edition IDs, and falls back to native lookup results when a format facade has no addressable result. |
+| Library scan | Reads paged, format-scoped results including unmonitored catalogue rows. It follows Chaptarr's reported total even when a page is short, and refuses to return a scan known to be incomplete. |
+| Add and search | Sends the selected format and monitoring intent. When Chaptarr queues author metadata preparation, SeerrNG stores the pending import and resumes the requested book add and search when it is ready. |
+| Request cancellation | Cancels the pending author import only when no other active request references it. For completed adds, normal book and queue cleanup applies. |
+| Settings diagnostic | A normal diagnostic checks the connection, profiles, folders, and lookup. The optional `testAdd` API flag performs a real add and removes the local book afterward. If Chaptarr returns a pending import, the diagnostic displays its ID and leaves it queued because Chaptarr may share that import with an active request. Check the import in Chaptarr and cancel it only if no request needs it. |
+
+The `testAdd` diagnostic is an API option; the Settings modal's **Run
+Diagnostic** button does not enable it. Use it only when you intend to exercise
+the add endpoint and can review any provider-side work it queues.
+
+When Chaptarr accepts an add with `202 Accepted` while it prepares author
+metadata, SeerrNG keeps the request waiting and resumes the selected format's
+add and search after Chaptarr reports that import complete. SeerrNG retains the
+provider work and edition IDs for that request, so it can restore tracking if
+Chaptarr assigns the local book a different row ID. Cancelling a waiting
+request also cancels its pending author import when no other request depends on
+that import.
+
+The last end-to-end Docker validation used Chaptarr `0.9.911.0`. As of
+2026-09-24, the client contract has also been source-reviewed against
+[Chaptarr v0.9.958](https://github.com/Chaptarr/chaptarr/releases/tag/v0.9.958),
+the latest listed pre-release, including the pending-add response and
+pending-author-import API available since v0.9.936. The v0.9.958 Docker image
+has not been runtime-tested with SeerrNG. Pin an exact Chaptarr image version
+instead of relying on `latest`, because Chaptarr is actively developed and its
+Readarr-compatible surface can change between releases.
+The source-reviewed contracts are in Chaptarr's
+[BookController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/Books/BookController.cs)
+and
+[PendingAuthorImportController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/PendingImport/PendingAuthorImportController.cs).
 
 If a Chaptarr lookup is empty, first verify that the selected **Book Format**
 has a writable root folder and matching quality/metadata profiles. If the

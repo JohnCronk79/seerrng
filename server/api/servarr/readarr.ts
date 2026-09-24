@@ -145,6 +145,17 @@ interface PagedReadarrBooksResponse {
 export interface ReadarrAddBookResult extends ReadarrBookLookupResult {
   createdBook: boolean;
   createdAuthor: boolean;
+  pending?: true;
+  pendingId?: number;
+  message?: string;
+}
+
+export interface ReadarrPendingAuthorImport {
+  id: number;
+  overallStatus?: string;
+  ebookStatus?: string;
+  audiobookStatus?: string;
+  lastError?: string;
 }
 
 type ReadarrQueueItem = {
@@ -183,6 +194,53 @@ const getReadarrErrorMessage = (error: unknown): string => {
         : error.message;
 
   return status ? `${message} (status ${status})` : message;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isReadarrBookLookupResult = (
+  value: unknown
+): value is ReadarrBookLookupResult =>
+  isRecord(value) &&
+  typeof value.title === 'string' &&
+  typeof value.foreignBookId === 'string';
+
+const normalizeProviderIdentity = (
+  value?: string,
+  edition = false
+): string | undefined => {
+  if (!value?.trim()) return undefined;
+
+  const openLibraryId = edition
+    ? normalizeOpenLibraryEditionId(value)
+    : normalizeOpenLibraryWorkId(value);
+  return (openLibraryId ?? value).trim().toLowerCase();
+};
+
+export const matchesReadarrBookProviderIdentity = (
+  book: ReadarrBookLookupResult,
+  providerBookId: string,
+  providerEditionId?: string
+): boolean => {
+  const normalizedBookId = normalizeProviderIdentity(providerBookId);
+  const normalizedEditionId = normalizeProviderIdentity(
+    providerEditionId,
+    true
+  );
+
+  return (
+    (!!normalizedBookId &&
+      normalizeProviderIdentity(book.foreignBookId) === normalizedBookId) ||
+    (!!normalizedEditionId &&
+      (normalizeProviderIdentity(book.foreignEditionId, true) ===
+        normalizedEditionId ||
+        (book.editions ?? []).some(
+          (edition) =>
+            normalizeProviderIdentity(edition.foreignEditionId, true) ===
+            normalizedEditionId
+        )))
+  );
 };
 
 class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
@@ -709,6 +767,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
   private async getChaptarrBooks(): Promise<ReadarrBook[]> {
     const books: ReadarrBook[] = [];
     let offset = 0;
+    let reportedTotalCount: number | undefined;
 
     while (books.length < MAX_SERVARR_LIBRARY_RESULTS) {
       const response = await this.get<unknown>(
@@ -741,12 +800,20 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         payload.offset >= 0
           ? payload.offset
           : offset;
+      if (responseOffset !== offset) {
+        throw new Error(
+          `Chaptarr returned offset ${responseOffset} when SeerrNG requested ${offset}`
+        );
+      }
       const totalCount =
         typeof payload.totalCount === 'number' &&
         Number.isSafeInteger(payload.totalCount) &&
         payload.totalCount >= 0
           ? payload.totalCount
           : undefined;
+      if (totalCount !== undefined) {
+        reportedTotalCount = totalCount;
+      }
       const page = sanitizeServarrRecordArray<ReadarrBook>(
         payload.records,
         Math.min(
@@ -775,11 +842,20 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         break;
       }
 
-      if (page.length < responsePageSize) {
+      if (totalCount === undefined && page.length < responsePageSize) {
         break;
       }
 
       offset = nextOffset;
+    }
+
+    if (
+      books.length >= MAX_SERVARR_LIBRARY_RESULTS &&
+      (reportedTotalCount === undefined || reportedTotalCount > books.length)
+    ) {
+      throw new Error(
+        `Chaptarr library scan reached the ${MAX_SERVARR_LIBRARY_RESULTS}-book safety limit before confirming the library was complete`
+      );
     }
 
     return books;
@@ -1126,6 +1202,104 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     }
   }
 
+  public async lookupBookByProviderIdentity(
+    providerBookId: string,
+    providerEditionId?: string
+  ): Promise<ReadarrBookLookupResult | undefined> {
+    await this.ensureProvider();
+    const terms = [...new Set([providerBookId, providerEditionId])].filter(
+      (term): term is string => !!term?.trim()
+    );
+
+    for (const term of terms) {
+      const results = await this.lookupBook(term);
+      const match = results.find((book) =>
+        matchesReadarrBookProviderIdentity(
+          book,
+          providerBookId,
+          providerEditionId
+        )
+      );
+      if (match) return match;
+    }
+
+    return undefined;
+  }
+
+  public async getPendingAuthorImport(
+    pendingId: number
+  ): Promise<ReadarrPendingAuthorImport | undefined> {
+    await this.ensureProvider();
+    if (
+      !this.isChaptarr() ||
+      !Number.isSafeInteger(pendingId) ||
+      pendingId <= 0
+    ) {
+      return undefined;
+    }
+
+    try {
+      const response = await this.get<unknown>(
+        `/pendingauthorimport/${pendingId}`,
+        this.getRequestConfig(),
+        0
+      );
+      if (!isRecord(response)) return undefined;
+
+      const readText = (value: unknown): string | undefined =>
+        typeof value === 'string' ? value.slice(0, 10_000) : undefined;
+      const status = (camel: string, pascal: string): string | undefined =>
+        readText(response[camel] ?? response[pascal]);
+      const responseId = Number(response.id ?? response.Id);
+
+      return {
+        id: Number.isSafeInteger(responseId) ? responseId : pendingId,
+        overallStatus: status('overallStatus', 'OverallStatus'),
+        ebookStatus: status('ebookStatus', 'EbookStatus'),
+        audiobookStatus: status('audiobookStatus', 'AudiobookStatus'),
+        lastError: status('lastError', 'LastError'),
+      };
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return undefined;
+      }
+
+      throw new Error(
+        `[Readarr] Failed to retrieve pending Chaptarr import ${pendingId}: ${getReadarrErrorMessage(error)}`,
+        { cause: error }
+      );
+    }
+  }
+
+  public async cancelPendingAuthorImport(pendingId: number): Promise<void> {
+    await this.ensureProvider();
+    if (
+      !this.isChaptarr() ||
+      !Number.isSafeInteger(pendingId) ||
+      pendingId <= 0
+    ) {
+      return;
+    }
+
+    try {
+      await this.request(
+        'DELETE',
+        `/pendingauthorimport/${pendingId}`,
+        undefined,
+        this.getRequestConfig()
+      );
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return;
+      }
+
+      throw new Error(
+        `[Readarr] Failed to cancel pending Chaptarr import ${pendingId}: ${getReadarrErrorMessage(error)}`,
+        { cause: error }
+      );
+    }
+  }
+
   public async lookupAuthor(
     term: string
   ): Promise<ReadarrAuthorLookupResult[]> {
@@ -1261,7 +1435,9 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
             author.foreignAuthorId === options.author?.foreignAuthorId
         );
 
-      const postedBook = await this.post<ReadarrBookLookupResult | number>(
+      const postedBook = await this.post<
+        ReadarrBookLookupResult | number | Record<string, unknown>
+      >(
         '/book',
         {
           ...this.getBookAddPayload(options),
@@ -1272,15 +1448,45 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         this.getRequestConfig()
       );
 
-      const addedBook: ReadarrBookLookupResult =
-        typeof postedBook === 'number'
-          ? {
-              ...(this.getBookAddPayload(
-                options
-              ) as unknown as ReadarrBookLookupResult),
-              id: postedBook,
-            }
-          : postedBook;
+      if (this.isChaptarr() && isRecord(postedBook)) {
+        const pendingIdValue = postedBook.pendingId ?? postedBook.PendingId;
+        if (pendingIdValue !== undefined) {
+          const pendingId = Number(pendingIdValue);
+          if (!Number.isSafeInteger(pendingId) || pendingId <= 0) {
+            throw new Error('Chaptarr returned an invalid pending add ID.');
+          }
+
+          return {
+            ...options,
+            id: undefined,
+            pending: true,
+            pendingId,
+            message:
+              typeof (postedBook.message ?? postedBook.Message) === 'string'
+                ? String(postedBook.message ?? postedBook.Message).slice(
+                    0,
+                    10_000
+                  )
+                : undefined,
+            createdBook: false,
+            createdAuthor: false,
+          };
+        }
+      }
+
+      let addedBook: ReadarrBookLookupResult;
+      if (typeof postedBook === 'number') {
+        addedBook = {
+          ...(this.getBookAddPayload(
+            options
+          ) as unknown as ReadarrBookLookupResult),
+          id: postedBook,
+        };
+      } else if (isReadarrBookLookupResult(postedBook)) {
+        addedBook = postedBook;
+      } else {
+        throw new Error('Bookshelf returned an invalid book response.');
+      }
 
       const ensuredBook = await this.ensureRequestedBookState(
         addedBook,

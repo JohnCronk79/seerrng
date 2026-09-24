@@ -33,14 +33,23 @@ export class BookRequestSearch {
   @Column({ type: 'varchar', length: 16 })
   public format: 'ebook' | 'audiobook';
 
-  @Column({ type: 'integer' })
-  public bookId: number;
+  @Column({ type: 'integer', nullable: true })
+  public bookId?: number | null;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  public providerBookId?: string | null;
+
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  public providerEditionId?: string | null;
+
+  @Column({ type: 'integer', nullable: true })
+  public pendingId?: number | null;
 
   @Column({ type: 'integer', nullable: true })
   public authorId?: number | null;
 
-  @Column({ type: 'integer' })
-  public commandId: number;
+  @Column({ type: 'integer', nullable: true })
+  public commandId?: number | null;
 
   @Column({ type: 'boolean', default: false })
   public createdBook: boolean;
@@ -51,6 +60,7 @@ export class BookRequestSearch {
   @Column({ type: 'varchar', length: 32, default: 'searching' })
   public state:
     | 'searching'
+    | 'pending'
     | 'settling'
     | 'grabbed'
     | 'importing'

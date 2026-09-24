@@ -482,6 +482,24 @@ readarrRoutes.post<
             },
           });
 
+          if (added.pending) {
+            return res.status(200).json({
+              ok: false,
+              category: 'backend_add_pending',
+              message: [
+                added.message ??
+                  'Chaptarr accepted the diagnostic add while preparing author metadata.',
+                'The import remains queued because Chaptarr may share it with an active SeerrNG request. Check its status in Chaptarr and cancel it only when no request needs it.',
+              ].join(' '),
+              term: lookupTerm,
+              provider,
+              providerNotice,
+              legacyWarning: providerNotice,
+              lookupCount: lookup.length,
+              pendingId: added.pendingId,
+            });
+          }
+
           if (added.id !== undefined && added.id !== null) {
             try {
               await readarr.removeBook(added.id, {

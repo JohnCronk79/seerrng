@@ -113,6 +113,7 @@ interface DiagnosticResponse {
     | 'lookup_empty'
     | 'lookup_incomplete'
     | 'provider_failed'
+    | 'backend_add_pending'
     | 'backend_add_rejected';
   message: string;
   provider?: BookshelfProvider;
@@ -120,6 +121,7 @@ interface DiagnosticResponse {
   legacyWarning?: string;
   metadataSource?: string;
   lookupCount?: number;
+  pendingId?: number;
   sample?: {
     title?: string;
     foreignBookId?: string;
@@ -522,6 +524,9 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                         : ''}
                       {diagnosticResponse.metadataSource
                         ? ` Metadata: ${diagnosticResponse.metadataSource}.`
+                        : ''}
+                      {diagnosticResponse.pendingId
+                        ? ` Pending import ID: ${diagnosticResponse.pendingId}.`
                         : ''}
                       {(diagnosticResponse.providerNotice ??
                       diagnosticResponse.legacyWarning)

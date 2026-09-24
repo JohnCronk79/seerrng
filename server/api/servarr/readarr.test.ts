@@ -688,6 +688,101 @@ describe('ReadarrAPI Chaptarr compatibility', () => {
     mock.restoreAll();
   });
 
+  it('returns pending Chaptarr book adds as durable pending results', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'ebook',
+    });
+    const internalApi = api as unknown as {
+      detectedSystemStatus?: { appName?: string; version?: string };
+      ensureProvider: () => Promise<void>;
+      findExistingBookForAdd: (
+        options: ReadarrBookOptions
+      ) => Promise<undefined>;
+    };
+    internalApi.detectedSystemStatus = { appName: 'Chaptarr' };
+    mock.method(internalApi, 'ensureProvider', async () => undefined);
+    mock.method(internalApi, 'findExistingBookForAdd', async () => undefined);
+    const postMock = mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'post',
+      async () =>
+        ({
+          PendingId: 901,
+          Message: 'Waiting for author metadata.',
+        }) as unknown as ReadarrBook
+    );
+
+    const result = await api.addBook(bookOptions);
+
+    assert.equal(result.pending, true);
+    assert.equal(result.pendingId, 901);
+    assert.equal(result.message, 'Waiting for author metadata.');
+    assert.equal(result.foreignBookId, bookOptions.foreignBookId);
+    assert.equal(result.id, undefined);
+    assert.equal(result.createdBook, false);
+    assert.equal(postMock.mock.calls.length, 1);
+  });
+
+  it('reads and cancels a pending Chaptarr author import', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'ebook',
+    });
+    const internalApi = api as unknown as {
+      detectedSystemStatus?: { appName?: string; version?: string };
+      ensureProvider: () => Promise<void>;
+    };
+    internalApi.detectedSystemStatus = { appName: 'Chaptarr' };
+    mock.method(internalApi, 'ensureProvider', async () => undefined);
+    const getMock = mock.method(
+      api as unknown as MockableReadarr,
+      'get',
+      async () => ({
+        Id: 901,
+        OverallStatus: 'InProgress',
+        EbookStatus: 'Retrying',
+        AudiobookStatus: 'NotRequested',
+        LastError: 'Author metadata is not available yet.',
+      })
+    );
+    const pendingImport = await api.getPendingAuthorImport(901);
+
+    assert.deepEqual(pendingImport, {
+      id: 901,
+      overallStatus: 'InProgress',
+      ebookStatus: 'Retrying',
+      audiobookStatus: 'NotRequested',
+      lastError: 'Author metadata is not available yet.',
+    });
+    assert.equal(
+      getMock.mock.calls[0].arguments[0],
+      '/pendingauthorimport/901'
+    );
+
+    const requestMock = mock.method(
+      api as unknown as {
+        request: (
+          method: string,
+          path: string,
+          data?: unknown,
+          config?: unknown
+        ) => Promise<{ data: unknown }>;
+      },
+      'request',
+      async () => ({ data: { message: 'Pending import cancelled' } })
+    );
+    await api.cancelPendingAuthorImport(901);
+
+    assert.equal(requestMock.mock.calls[0].arguments[0], 'DELETE');
+    assert.equal(
+      requestMock.mock.calls[0].arguments[1],
+      '/pendingauthorimport/901'
+    );
+  });
+
   it('adds a book without fetching an oversized unfiltered library', async () => {
     const requests: string[] = [];
     const oversizedLibrary = JSON.stringify(

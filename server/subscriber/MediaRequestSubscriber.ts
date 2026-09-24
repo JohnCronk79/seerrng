@@ -2017,35 +2017,51 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           },
         });
 
-        if (!result.id) {
+        const providerBookId =
+          result.foreignBookId?.trim() || bookInfo.foreignBookId;
+        const providerEditionId = bookEditions.find(
+          (edition) => edition.monitored
+        )?.foreignEditionId;
+        const hasLocalBookId =
+          typeof result.id === 'number' &&
+          Number.isSafeInteger(result.id) &&
+          result.id > 0;
+        const localBookId = hasLocalBookId ? (result.id as number) : null;
+
+        if (!hasLocalBookId && !result.pending) {
           throw new Error(
             'Bookshelf returned no book ID after adding the book.'
           );
         }
 
-        const searchCommand = await readarr.startBookSearch(result.id);
+        const searchCommand = hasLocalBookId
+          ? await readarr.startBookSearch(localBookId as number)
+          : undefined;
         await getRepository(BookRequestSearch).save(
           new BookRequestSearch({
             requestId: entity.id,
             serviceId: readarrSettings.id,
             format: serviceType,
-            bookId: result.id,
+            bookId: localBookId,
+            providerBookId,
+            providerEditionId: providerEditionId ?? null,
+            pendingId: result.pendingId ?? null,
             authorId: result.authorId ?? result.author?.id ?? null,
-            commandId: searchCommand.id,
+            commandId: searchCommand?.id ?? null,
             createdBook: result.createdBook,
             createdAuthor: result.createdAuthor,
-            state: 'searching',
+            state: result.pending ? 'pending' : 'searching',
           })
         );
 
         if (serviceType === 'audiobook') {
-          media.audiobookExternalServiceId = result.id ?? null;
+          media.audiobookExternalServiceId = localBookId;
           media.audiobookExternalServiceSlug =
-            result.titleSlug ?? result.foreignBookId;
+            result.titleSlug ?? providerBookId;
           media.audiobookServiceId = readarrSettings.id;
         } else {
-          media.externalServiceId = result.id ?? null;
-          media.externalServiceSlug = result.titleSlug ?? result.foreignBookId;
+          media.externalServiceId = localBookId;
+          media.externalServiceSlug = result.titleSlug ?? providerBookId;
           media.serviceId = readarrSettings.id;
         }
 
@@ -2058,20 +2074,20 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           metadataProfileId: metadataProfile,
           rootFolder,
           tags,
-          externalServiceId: result.id ?? null,
-          externalServiceSlug: result.titleSlug ?? result.foreignBookId,
+          externalServiceId: localBookId,
+          externalServiceSlug: result.titleSlug ?? providerBookId,
           status: media.status,
         });
 
-        const resultIsbn = result.editions?.find(
-          (edition) => edition.isbn13
-        )?.isbn13;
+        const resultIsbn =
+          result.editions?.find((edition) => edition.isbn13)?.isbn13 ??
+          bookInfo.editions?.find((edition) => edition.isbn13)?.isbn13;
         const normalizedResultIsbn = normalizeValidIsbn(resultIsbn);
         const identifierCandidates = [
-          (result.foreignBookId ?? bookInfo.foreignBookId)
+          providerBookId
             ? {
                 provider: MediaIdentifierProvider.READARR,
-                value: result.foreignBookId ?? bookInfo.foreignBookId,
+                value: providerBookId,
               }
             : undefined,
           normalizedResultIsbn

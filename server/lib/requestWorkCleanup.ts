@@ -70,16 +70,67 @@ class RequestWorkCleanupManager {
       url: ReadarrAPI.buildUrl(server, '/api/v1'),
       mediaType: operation.format,
     });
-    const command = await api.getCommand(operation.commandId);
-    if (
-      !['completed', 'failed', 'aborted', 'cancelled', 'orphaned'].includes(
-        String(command.status ?? '')
-          .trim()
-          .toLowerCase()
-      )
-    ) {
+    const clearServiceLink = async () =>
+      getRepository(Media).update(mediaId, {
+        ...(operation.format === 'audiobook'
+          ? {
+              audiobookServiceId: null,
+              audiobookExternalServiceId: null,
+              audiobookExternalServiceSlug: null,
+            }
+          : {
+              serviceId: null,
+              externalServiceId: null,
+              externalServiceSlug: null,
+            }),
+      });
+
+    if (operation.pendingId != null) {
+      const pendingReferences = await getRepository(BookRequestSearch).find({
+        where: {
+          pendingId: operation.pendingId,
+          serviceId: operation.serviceId,
+        },
+        select: { id: true, requestId: true, state: true },
+      });
+      const activeReferences = pendingReferences.filter(
+        (reference) =>
+          !['available', 'unavailable', 'failed'].includes(reference.state)
+      );
+      const referencedByAnotherRequest = activeReferences.some(
+        (reference) => reference.requestId !== operation.requestId
+      );
+      const earlierReferenceInRequest = activeReferences.some(
+        (reference) =>
+          reference.requestId === operation.requestId &&
+          reference.id < operation.id
+      );
+      if (!referencedByAnotherRequest && !earlierReferenceInRequest) {
+        await api.cancelPendingAuthorImport(operation.pendingId);
+      }
+      await clearServiceLink();
+      return;
+    }
+    if (operation.bookId == null) {
+      await clearServiceLink();
+      return;
+    }
+    if (operation.commandId != null) {
+      const command = await api.getCommand(operation.commandId);
+      if (
+        !['completed', 'failed', 'aborted', 'cancelled', 'orphaned'].includes(
+          String(command.status ?? '')
+            .trim()
+            .toLowerCase()
+        )
+      ) {
+        throw new RequestWorkCleanupError(
+          'Bookshelf has not finished its search command and cannot confirm cancellation yet.'
+        );
+      }
+    } else if (operation.state !== 'pending') {
       throw new RequestWorkCleanupError(
-        'Bookshelf has not finished its search command and cannot confirm cancellation yet.'
+        'Bookshelf request tracking is incomplete, so Seerr cannot confirm cancellation yet.'
       );
     }
     await removeMatchingQueueItems(

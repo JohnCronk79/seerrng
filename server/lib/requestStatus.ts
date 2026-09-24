@@ -779,6 +779,14 @@ const getStageFromRequest = (
       downloads,
     };
   }
+  if (options.bookSearchState === 'pending') {
+    return {
+      stage: RequestStatusStage.SEARCHING,
+      queueFailure: false,
+      downloads,
+      message: 'Waiting for Bookshelf to prepare the requested book.',
+    };
+  }
 
   if (
     request.type === MediaType.MUSIC &&
@@ -992,6 +1000,7 @@ const getBookSearchState = async (
   ) {
     return 'searching';
   }
+  if (records.some((record) => record.state === 'pending')) return 'pending';
   return undefined;
 };
 
@@ -1333,7 +1342,9 @@ const getBookSearchStates = async (
     if (
       !current ||
       nextState === 'importing' ||
-      (nextState === 'grabbed' && current === 'searching')
+      (nextState === 'grabbed' &&
+        (current === 'searching' || current === 'pending')) ||
+      (nextState === 'searching' && current === 'pending')
     ) {
       states.set(record.requestId, nextState);
     }

@@ -101,6 +101,96 @@ describe('RequestWorkCleanupManager', () => {
     getSettings().readarr = [];
   });
 
+  it('cancels a pending Chaptarr import without requiring a book or command ID', async () => {
+    const request = await createActiveBookRequest();
+    const operation = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+    });
+    await getRepository(BookRequestSearch).update(operation.id, {
+      bookId: null,
+      commandId: null,
+      providerBookId: 'hc:book-17',
+      pendingId: 904,
+      createdBook: false,
+      createdAuthor: false,
+      state: 'pending',
+    });
+    await getRepository(Media).update(request.media.id, {
+      externalServiceId: null,
+      externalServiceSlug: 'hc:book-17',
+    });
+    const canceled: number[] = [];
+    mock.method(
+      ReadarrAPI.prototype,
+      'cancelPendingAuthorImport',
+      async (pendingId: number) => {
+        canceled.push(pendingId);
+      }
+    );
+    const commandMock = mock.method(
+      ReadarrAPI.prototype,
+      'getCommand',
+      async () => {
+        throw new Error('A pending import has no command.');
+      }
+    );
+
+    await requestWorkCleanupManager.cleanup(request, true);
+
+    assert.deepEqual(canceled, [904]);
+    assert.equal(commandMock.mock.calls.length, 0);
+    assert.equal(
+      await getRepository(BookRequestSearch).countBy({ requestId: request.id }),
+      0
+    );
+    const media = await getRepository(Media).findOneByOrFail({
+      id: request.media.id,
+    });
+    assert.equal(media.serviceId, null);
+    assert.equal(media.externalServiceId, null);
+    assert.equal(media.externalServiceSlug, null);
+  });
+
+  it('keeps a pending Chaptarr import when another request still references it', async () => {
+    const request = await createActiveBookRequest();
+    const otherRequest = await createActiveBookRequest();
+    const operations = await getRepository(BookRequestSearch).find({
+      where: [{ requestId: request.id }, { requestId: otherRequest.id }],
+      order: { id: 'ASC' },
+    });
+    await getRepository(BookRequestSearch).update(
+      operations.map((operation) => operation.id),
+      {
+        bookId: null,
+        commandId: null,
+        providerBookId: 'hc:book-17',
+        pendingId: 905,
+        createdBook: false,
+        createdAuthor: false,
+        state: 'pending',
+      }
+    );
+    const canceled: number[] = [];
+    mock.method(
+      ReadarrAPI.prototype,
+      'cancelPendingAuthorImport',
+      async (pendingId: number) => {
+        canceled.push(pendingId);
+      }
+    );
+
+    await requestWorkCleanupManager.cleanup(request, true);
+
+    assert.deepEqual(canceled, []);
+    assert.equal(
+      await getRepository(BookRequestSearch).countBy({
+        requestId: otherRequest.id,
+        pendingId: 905,
+      }),
+      1
+    );
+  });
+
   it('cancels a book download and removes request-created empty records', async () => {
     const request = await createActiveBookRequest();
     mock.method(ReadarrAPI.prototype, 'getCommand', async () => ({
