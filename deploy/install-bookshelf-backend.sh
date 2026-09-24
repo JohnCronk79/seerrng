@@ -48,6 +48,26 @@ BOOKSHELF_HARDCOVER="${BOOKSHELF_HARDCOVER:-}"
 BOOKSHELF_HARDCOVER_NATIVE="${BOOKSHELF_HARDCOVER_NATIVE:-}"
 BOOKSHELF_HARDCOVER_AUTH="${BOOKSHELF_HARDCOVER_AUTH:-}"
 BOOKSHELF_HARDCOVER_API_URL="${BOOKSHELF_HARDCOVER_API_URL:-}"
+BOOKSHELF_M4B_MERGE_EXPLICIT="${BOOKSHELF_M4B_MERGE+x}"
+BOOKSHELF_M4B_MERGE="${BOOKSHELF_M4B_MERGE:-false}"
+BOOKSHELF_M4B_AAC_BITRATE_KBPS_EXPLICIT="${BOOKSHELF_M4B_AAC_BITRATE_KBPS+x}"
+BOOKSHELF_M4B_AAC_BITRATE_KBPS="${BOOKSHELF_M4B_AAC_BITRATE_KBPS:-128}"
+BOOKSHELF_METADATA_SOURCES_EXPLICIT="${BOOKSHELF_METADATA_SOURCES+x}"
+BOOKSHELF_METADATA_SOURCES="${BOOKSHELF_METADATA_SOURCES:-}"
+BOOKSHELF_EBOOKS_METADATA_SOURCES_EXPLICIT="${BOOKSHELF_EBOOKS_METADATA_SOURCES+x}"
+BOOKSHELF_EBOOKS_METADATA_SOURCES="${BOOKSHELF_EBOOKS_METADATA_SOURCES-}"
+BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES_EXPLICIT="${BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES+x}"
+BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="${BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES-}"
+GOOGLE_BOOKS_API_KEY_EXPLICIT="${GOOGLE_BOOKS_API_KEY+x}"
+GOOGLE_BOOKS_API_KEY="${GOOGLE_BOOKS_API_KEY:-}"
+EUROPEANA_API_KEY_EXPLICIT="${EUROPEANA_API_KEY+x}"
+EUROPEANA_API_KEY="${EUROPEANA_API_KEY:-}"
+HARDCOVER_APIFY_GOODREADS_ACTOR_EXPLICIT="${HARDCOVER_APIFY_GOODREADS_ACTOR+x}"
+HARDCOVER_APIFY_GOODREADS_ACTOR="${HARDCOVER_APIFY_GOODREADS_ACTOR:-}"
+HARDCOVER_APIFY_TOKEN_EXPLICIT="${HARDCOVER_APIFY_TOKEN+x}"
+HARDCOVER_APIFY_TOKEN="${HARDCOVER_APIFY_TOKEN:-}"
+HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE_EXPLICIT="${HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE+x}"
+HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE="${HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE:-}"
 RREADING_GLASSES_IMAGE="${RREADING_GLASSES_IMAGE:-}"
 COMPOSE_PROFILES="${COMPOSE_PROFILES:-}"
 HARDCOVER_AUTH="${HARDCOVER_AUTH:-${BOOKSHELF_HARDCOVER_AUTH:-${RREADING_GLASSES_HARDCOVER_AUTH:-}}}"
@@ -94,6 +114,14 @@ Common environment overrides:
   BOOKSHELF_HARDCOVER_NATIVE=true|false
   BOOKSHELF_HARDCOVER_AUTH (rendered native token; include Bearer prefix)
   BOOKSHELF_HARDCOVER_API_URL
+  BOOKSHELF_M4B_MERGE=true (opt in to chaptered M4B imports; default false)
+  BOOKSHELF_M4B_AAC_BITRATE_KBPS (48-320; default 128)
+  BOOKSHELF_METADATA_SOURCES (legacy shared override; empty disables extras)
+  BOOKSHELF_EBOOKS_METADATA_SOURCES (default: googlebooks,europeana)
+  BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES (default: loc,googlebooks,europeana)
+  GOOGLE_BOOKS_API_KEY / EUROPEANA_API_KEY (optional; enable their runtime searches)
+  HARDCOVER_APIFY_GOODREADS_ACTOR / HARDCOVER_APIFY_TOKEN (optional; may incur charges)
+  HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE (optional Actor-specific JSON template)
   RREADING_GLASSES_IMAGE
   HARDCOVER_AUTH (required for native and compatibility Hardcover modes; include Bearer prefix)
   COOKIE (optional for softcover mode)
@@ -287,6 +315,22 @@ validate_boolean() {
   fi
 }
 
+validate_audio_bitrate() {
+  local value="$1"
+
+  case "$value" in
+    '' | *[!0-9]*)
+      echo "BOOKSHELF_M4B_AAC_BITRATE_KBPS must be an integer from 48 to 320." >&2
+      exit 2
+      ;;
+  esac
+
+  if [ "$value" -lt 48 ] || [ "$value" -gt 320 ]; then
+    echo "BOOKSHELF_M4B_AAC_BITRATE_KBPS must be an integer from 48 to 320." >&2
+    exit 2
+  fi
+}
+
 validate_configuration() {
   local name
 
@@ -313,6 +357,8 @@ validate_configuration() {
   validate_boolean HARDCOVER_LOCAL_DB_IMPORT "$HARDCOVER_LOCAL_DB_IMPORT"
   validate_boolean BOOKSHELF_HARDCOVER "$BOOKSHELF_HARDCOVER"
   validate_boolean BOOKSHELF_HARDCOVER_NATIVE "$BOOKSHELF_HARDCOVER_NATIVE"
+  validate_boolean BOOKSHELF_M4B_MERGE "$BOOKSHELF_M4B_MERGE"
+  validate_audio_bitrate "$BOOKSHELF_M4B_AAC_BITRATE_KBPS"
 
   for name in \
     INSTALL_DIR BACKUP_DIR BOOKSHELF_EBOOKS_CONFIG_DIR \
@@ -320,7 +366,11 @@ validate_configuration() {
     MEDIA_ROOT DOWNLOAD_ROOT PLEX_ROOT TZ BOOKSHELF_IMAGE \
     BOOKSHELF_METADATA_MODE BOOKSHELF_METADATA_URL BOOKSHELF_HARDCOVER \
     BOOKSHELF_HARDCOVER_NATIVE BOOKSHELF_HARDCOVER_AUTH \
-    BOOKSHELF_HARDCOVER_API_URL \
+    BOOKSHELF_HARDCOVER_API_URL BOOKSHELF_M4B_MERGE \
+    BOOKSHELF_M4B_AAC_BITRATE_KBPS BOOKSHELF_METADATA_SOURCES \
+    BOOKSHELF_EBOOKS_METADATA_SOURCES BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES \
+    GOOGLE_BOOKS_API_KEY EUROPEANA_API_KEY HARDCOVER_APIFY_GOODREADS_ACTOR \
+    HARDCOVER_APIFY_TOKEN HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE \
     COMPOSE_PROFILES STOP_OLD_READARR_CONTAINER \
     RREADING_GLASSES_IMAGE RREADING_GLASSES_POSTGRES_PASSWORD \
     HARDCOVER_AUTH COOKIE; do
@@ -884,6 +934,19 @@ write_env_file() {
   local env_file="${INSTALL_DIR}/.env"
   local env_backup
   local existing_postgres_password
+  local existing_m4b_merge
+  local existing_m4b_aac_bitrate
+  local existing_metadata_sources
+  local existing_ebooks_metadata_sources
+  local existing_audiobooks_metadata_sources
+  local has_existing_metadata_sources=false
+  local has_existing_ebooks_metadata_sources=false
+  local has_existing_audiobooks_metadata_sources=false
+  local existing_google_books_api_key
+  local existing_europeana_api_key
+  local existing_apify_actor
+  local existing_apify_token
+  local existing_apify_template
 
   if [ "$DRY_RUN" = "true" ]; then
     echo "Would write ${env_file}"
@@ -891,8 +954,92 @@ write_env_file() {
   fi
 
   existing_postgres_password="$(env_file_value "$env_file" "RREADING_GLASSES_POSTGRES_PASSWORD")"
+  existing_m4b_merge="$(env_file_value "$env_file" "BOOKSHELF_M4B_MERGE")"
+  existing_m4b_aac_bitrate="$(env_file_value "$env_file" "BOOKSHELF_M4B_AAC_BITRATE_KBPS")"
   RREADING_GLASSES_POSTGRES_PASSWORD="${RREADING_GLASSES_POSTGRES_PASSWORD:-${existing_postgres_password:-$(generate_password)}}"
   validate_no_control_characters RREADING_GLASSES_POSTGRES_PASSWORD "$RREADING_GLASSES_POSTGRES_PASSWORD"
+
+  if [ "$BOOKSHELF_M4B_MERGE_EXPLICIT" != "x" ] && [ -n "$existing_m4b_merge" ]; then
+    BOOKSHELF_M4B_MERGE="$existing_m4b_merge"
+  fi
+  if [ "$BOOKSHELF_M4B_AAC_BITRATE_KBPS_EXPLICIT" != "x" ] && [ -n "$existing_m4b_aac_bitrate" ]; then
+    BOOKSHELF_M4B_AAC_BITRATE_KBPS="$existing_m4b_aac_bitrate"
+  fi
+  validate_boolean BOOKSHELF_M4B_MERGE "$BOOKSHELF_M4B_MERGE"
+  validate_audio_bitrate "$BOOKSHELF_M4B_AAC_BITRATE_KBPS"
+  validate_no_control_characters BOOKSHELF_M4B_MERGE "$BOOKSHELF_M4B_MERGE"
+  validate_no_control_characters BOOKSHELF_M4B_AAC_BITRATE_KBPS "$BOOKSHELF_M4B_AAC_BITRATE_KBPS"
+
+  existing_metadata_sources="$(env_file_value "$env_file" "BOOKSHELF_METADATA_SOURCES")"
+  existing_ebooks_metadata_sources="$(env_file_value "$env_file" "BOOKSHELF_EBOOKS_METADATA_SOURCES")"
+  existing_audiobooks_metadata_sources="$(env_file_value "$env_file" "BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES")"
+  grep -q '^BOOKSHELF_METADATA_SOURCES=' "$env_file" 2>/dev/null && has_existing_metadata_sources=true || true
+  grep -q '^BOOKSHELF_EBOOKS_METADATA_SOURCES=' "$env_file" 2>/dev/null && has_existing_ebooks_metadata_sources=true || true
+  grep -q '^BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=' "$env_file" 2>/dev/null && has_existing_audiobooks_metadata_sources=true || true
+  existing_google_books_api_key="$(env_file_value "$env_file" "GOOGLE_BOOKS_API_KEY")"
+  existing_europeana_api_key="$(env_file_value "$env_file" "EUROPEANA_API_KEY")"
+  existing_apify_actor="$(env_file_value "$env_file" "HARDCOVER_APIFY_GOODREADS_ACTOR")"
+  existing_apify_token="$(env_file_value "$env_file" "HARDCOVER_APIFY_TOKEN")"
+  existing_apify_template="$(env_file_value "$env_file" "HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE")"
+
+  if [ "$BOOKSHELF_METADATA_SOURCES_EXPLICIT" != "x" ]; then
+    if [ "$has_existing_metadata_sources" = "true" ]; then
+      BOOKSHELF_METADATA_SOURCES="$existing_metadata_sources"
+    else
+      BOOKSHELF_METADATA_SOURCES=""
+    fi
+    if [ "$existing_metadata_sources" = "loc,googlebooks,europeana" ]; then
+      BOOKSHELF_METADATA_SOURCES=""
+    fi
+  fi
+
+  if [ "$BOOKSHELF_EBOOKS_METADATA_SOURCES_EXPLICIT" = "x" ]; then
+    :
+  elif [ "$BOOKSHELF_METADATA_SOURCES_EXPLICIT" = "x" ]; then
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="$BOOKSHELF_METADATA_SOURCES"
+  elif [ "$has_existing_ebooks_metadata_sources" = "true" ]; then
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="$existing_ebooks_metadata_sources"
+  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ]; then
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="$existing_metadata_sources"
+  else
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="googlebooks,europeana"
+  fi
+
+  if [ "$BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES_EXPLICIT" = "x" ]; then
+    :
+  elif [ "$BOOKSHELF_METADATA_SOURCES_EXPLICIT" = "x" ]; then
+    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$BOOKSHELF_METADATA_SOURCES"
+  elif [ "$has_existing_audiobooks_metadata_sources" = "true" ]; then
+    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$existing_audiobooks_metadata_sources"
+  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ]; then
+    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$existing_metadata_sources"
+  else
+    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="loc,googlebooks,europeana"
+  fi
+  if [ "$GOOGLE_BOOKS_API_KEY_EXPLICIT" != "x" ]; then
+    GOOGLE_BOOKS_API_KEY="$existing_google_books_api_key"
+  fi
+  if [ "$EUROPEANA_API_KEY_EXPLICIT" != "x" ]; then
+    EUROPEANA_API_KEY="$existing_europeana_api_key"
+  fi
+  if [ "$HARDCOVER_APIFY_GOODREADS_ACTOR_EXPLICIT" != "x" ]; then
+    HARDCOVER_APIFY_GOODREADS_ACTOR="$existing_apify_actor"
+  fi
+  if [ "$HARDCOVER_APIFY_TOKEN_EXPLICIT" != "x" ]; then
+    HARDCOVER_APIFY_TOKEN="$existing_apify_token"
+  fi
+  if [ "$HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE_EXPLICIT" != "x" ]; then
+    HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE="$existing_apify_template"
+  fi
+
+  validate_no_control_characters BOOKSHELF_METADATA_SOURCES "$BOOKSHELF_METADATA_SOURCES"
+  validate_no_control_characters BOOKSHELF_EBOOKS_METADATA_SOURCES "$BOOKSHELF_EBOOKS_METADATA_SOURCES"
+  validate_no_control_characters BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES "$BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES"
+  validate_no_control_characters GOOGLE_BOOKS_API_KEY "$GOOGLE_BOOKS_API_KEY"
+  validate_no_control_characters EUROPEANA_API_KEY "$EUROPEANA_API_KEY"
+  validate_no_control_characters HARDCOVER_APIFY_GOODREADS_ACTOR "$HARDCOVER_APIFY_GOODREADS_ACTOR"
+  validate_no_control_characters HARDCOVER_APIFY_TOKEN "$HARDCOVER_APIFY_TOKEN"
+  validate_no_control_characters HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE "$HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE"
 
   if [ -f "$env_file" ]; then
     env_backup="${env_file}.bak-$(date +%Y%m%d-%H%M%S)-$$"
@@ -912,6 +1059,16 @@ BOOKSHELF_HARDCOVER=${BOOKSHELF_HARDCOVER}
 BOOKSHELF_HARDCOVER_NATIVE=${BOOKSHELF_HARDCOVER_NATIVE}
 BOOKSHELF_HARDCOVER_AUTH=${BOOKSHELF_HARDCOVER_AUTH:-}
 BOOKSHELF_HARDCOVER_API_URL=${BOOKSHELF_HARDCOVER_API_URL:-}
+BOOKSHELF_M4B_MERGE=${BOOKSHELF_M4B_MERGE}
+BOOKSHELF_M4B_AAC_BITRATE_KBPS=${BOOKSHELF_M4B_AAC_BITRATE_KBPS}
+BOOKSHELF_METADATA_SOURCES=${BOOKSHELF_METADATA_SOURCES}
+BOOKSHELF_EBOOKS_METADATA_SOURCES=${BOOKSHELF_EBOOKS_METADATA_SOURCES}
+BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=${BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES}
+GOOGLE_BOOKS_API_KEY=${GOOGLE_BOOKS_API_KEY}
+EUROPEANA_API_KEY=${EUROPEANA_API_KEY}
+HARDCOVER_APIFY_GOODREADS_ACTOR=${HARDCOVER_APIFY_GOODREADS_ACTOR}
+HARDCOVER_APIFY_TOKEN=${HARDCOVER_APIFY_TOKEN}
+HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE=${HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE}
 BOOKSHELF_EBOOKS_PORT=${BOOKSHELF_EBOOKS_PORT}
 BOOKSHELF_AUDIOBOOKS_PORT=${BOOKSHELF_AUDIOBOOKS_PORT}
 BOOKSHELF_EBOOKS_CONFIG_DIR=${BOOKSHELF_EBOOKS_CONFIG_DIR}

@@ -64,6 +64,30 @@ describe('Bookshelf catalog identities', () => {
     expect(mapped.isbn13).toBe('9780306406157');
   });
 
+  it('keeps Europeana IDs opaque when wrapping them for Seerr details and authors', () => {
+    const result: ReadarrBookLookupResult = {
+      title: 'Escrita criativa da ideia ao texto',
+      foreignBookId: 'europeana:LzIwMi9yZWNvcmQtMQ',
+      foreignEditionId: 'europeana:LzIwMi9yZWNvcmQtMQ',
+      author: {
+        foreignAuthorId: 'europeana-author:UnViZW5zIE1hcmNoaW9uaQ',
+        authorName: 'Rubens Marchioni',
+      },
+    };
+
+    const mapped = mapBookshelfBook(result, 31);
+
+    expect(parseBookshelfBookId(mapped.id)).toEqual({
+      serviceId: 31,
+      foreignBookId: 'europeana:LzIwMi9yZWNvcmQtMQ',
+    });
+    expect(parseBookshelfAuthorId(mapped.authorId!)).toMatchObject({
+      serviceId: 31,
+      foreignAuthorId: 'europeana-author:UnViZW5zIE1hcmNoaW9uaQ',
+      authorName: 'Rubens Marchioni',
+    });
+  });
+
   it('resolves details only through the service encoded in the result ID', async () => {
     const details = await getBookshelfBookDetails(
       [],

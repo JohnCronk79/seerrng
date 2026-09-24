@@ -235,6 +235,21 @@ describe('Bookshelf backup permissions', () => {
     assert.match(env, /BOOKSHELF_METADATA_URL=http:\/\/127\.0\.0\.1:8790/);
     assert.match(env, /BOOKSHELF_EBOOKS_PORT=8787/);
     assert.match(env, /BOOKSHELF_AUDIOBOOKS_PORT=8788/);
+    assert.match(env, /BOOKSHELF_METADATA_SOURCES=\n/);
+    assert.match(
+      env,
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,europeana/
+    );
+    assert.match(
+      env,
+      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,googlebooks,europeana/
+    );
+    assert.match(compose, /GOOGLE_BOOKS_API_KEY: \$\{GOOGLE_BOOKS_API_KEY-\}/);
+    assert.match(compose, /EUROPEANA_API_KEY: \$\{EUROPEANA_API_KEY-\}/);
+    assert.match(
+      compose,
+      /HARDCOVER_APIFY_TOKEN: \$\{HARDCOVER_APIFY_TOKEN-\}/
+    );
     assert.match(
       env,
       /RREADING_GLASSES_IMAGE=blampe\/rreading-glasses:hardcover@sha256:/
@@ -312,6 +327,10 @@ describe('Bookshelf backup permissions', () => {
       [
         'BOOKSHELF_BACKEND=hardcover',
         'BOOKSHELF_METADATA_URL=http://localhost:8790',
+        'BOOKSHELF_METADATA_SOURCES=loc',
+        'GOOGLE_BOOKS_API_KEY=old-google-key',
+        'EUROPEANA_API_KEY=old-europeana-key',
+        'HARDCOVER_APIFY_TOKEN=old-apify-token',
         'COMPOSE_PROFILES=rreading-glasses',
         'HARDCOVER_AUTH=Bearer old-token',
       ].join('\n') + '\n'
@@ -328,6 +347,144 @@ describe('Bookshelf backup permissions', () => {
     assert.match(env, /BOOKSHELF_HARDCOVER_NATIVE=false/);
     assert.match(env, /COMPOSE_PROFILES=rreading-glasses/);
     assert.match(env, /BOOKSHELF_METADATA_URL=http:\/\/localhost:8790/);
+    assert.match(env, /BOOKSHELF_METADATA_SOURCES=loc/);
+    assert.match(env, /BOOKSHELF_EBOOKS_METADATA_SOURCES=loc/);
+    assert.match(env, /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc/);
+    assert.match(env, /GOOGLE_BOOKS_API_KEY=old-google-key/);
+    assert.match(env, /EUROPEANA_API_KEY=old-europeana-key/);
+    assert.match(env, /HARDCOVER_APIFY_TOKEN=old-apify-token/);
+  });
+
+  it('persists metadata source settings and credentials for Bookshelf runtime', async () => {
+    const root = await createTemporaryDirectory();
+    const environment = await createDeploymentEnvironment(root);
+    environment.BOOKSHELF_METADATA_SOURCES =
+      'googlebooks,loc,europeana,apify-goodreads';
+    environment.GOOGLE_BOOKS_API_KEY = 'google-test-key';
+    environment.EUROPEANA_API_KEY = 'europeana-test-key';
+    environment.HARDCOVER_APIFY_GOODREADS_ACTOR = 'publisher~actor';
+    environment.HARDCOVER_APIFY_TOKEN = 'apify-test-token';
+    environment.HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE =
+      '{"searchQueries":[{{query}}],"maxItems":10}';
+
+    const result = await runInstaller(environment, '--skip-pull');
+
+    assert.equal(result.code, 0, result.stderr);
+    const compose = await readFile(
+      path.join(environment.INSTALL_DIR, 'compose.yml'),
+      'utf8'
+    );
+    const env = await readFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'utf8'
+    );
+    assert.match(
+      env,
+      /BOOKSHELF_METADATA_SOURCES=googlebooks,loc,europeana,apify-goodreads/
+    );
+    assert.match(
+      env,
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,loc,europeana,apify-goodreads/
+    );
+    assert.match(
+      env,
+      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=googlebooks,loc,europeana,apify-goodreads/
+    );
+    assert.match(env, /GOOGLE_BOOKS_API_KEY=google-test-key/);
+    assert.match(env, /EUROPEANA_API_KEY=europeana-test-key/);
+    assert.match(env, /HARDCOVER_APIFY_GOODREADS_ACTOR=publisher~actor/);
+    assert.match(env, /HARDCOVER_APIFY_TOKEN=apify-test-token/);
+    assert.match(
+      compose,
+      /BOOKSHELF_METADATA_SOURCES: \$\{BOOKSHELF_EBOOKS_METADATA_SOURCES-\$\{BOOKSHELF_METADATA_SOURCES-/
+    );
+    assert.match(
+      compose,
+      /BOOKSHELF_METADATA_SOURCES: \$\{BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES-\$\{BOOKSHELF_METADATA_SOURCES-/
+    );
+    assert.match(
+      env,
+      /HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE=\{"searchQueries":\[\{\{query\}\}\],"maxItems":10\}/
+    );
+  });
+
+  it('allows independent source lists and an empty override per Bookshelf service', async () => {
+    const root = await createTemporaryDirectory();
+    const environment = await createDeploymentEnvironment(root);
+    await mkdir(environment.INSTALL_DIR, { recursive: true });
+    await writeFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'BOOKSHELF_METADATA_SOURCES=loc\n'
+    );
+    environment.BOOKSHELF_EBOOKS_METADATA_SOURCES = 'googlebooks,europeana';
+    environment.BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES = '';
+
+    const result = await runInstaller(environment, '--skip-pull');
+
+    assert.equal(result.code, 0, result.stderr);
+    const env = await readFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'utf8'
+    );
+    assert.match(env, /BOOKSHELF_METADATA_SOURCES=loc/);
+    assert.match(
+      env,
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,europeana/
+    );
+    assert.match(env, /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=\n/);
+  });
+
+  it('applies an explicit legacy shared override to both services on rerun', async () => {
+    const root = await createTemporaryDirectory();
+    const environment = await createDeploymentEnvironment(root);
+    await mkdir(environment.INSTALL_DIR, { recursive: true });
+    await writeFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      [
+        'BOOKSHELF_METADATA_SOURCES=loc',
+        'BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks',
+        'BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc',
+      ].join('\n') + '\n'
+    );
+    environment.BOOKSHELF_METADATA_SOURCES = 'apify-goodreads';
+
+    const result = await runInstaller(environment, '--skip-pull');
+
+    assert.equal(result.code, 0, result.stderr);
+    const env = await readFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'utf8'
+    );
+    assert.match(env, /BOOKSHELF_METADATA_SOURCES=apify-goodreads/);
+    assert.match(env, /BOOKSHELF_EBOOKS_METADATA_SOURCES=apify-goodreads/);
+    assert.match(env, /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=apify-goodreads/);
+  });
+
+  it('splits the former shared default to keep LOC within shared host pacing', async () => {
+    const root = await createTemporaryDirectory();
+    const environment = await createDeploymentEnvironment(root);
+    await mkdir(environment.INSTALL_DIR, { recursive: true });
+    await writeFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'BOOKSHELF_METADATA_SOURCES=loc,googlebooks,europeana\n'
+    );
+
+    const result = await runInstaller(environment, '--skip-pull');
+
+    assert.equal(result.code, 0, result.stderr);
+    const env = await readFile(
+      path.join(environment.INSTALL_DIR, '.env'),
+      'utf8'
+    );
+    assert.match(env, /BOOKSHELF_METADATA_SOURCES=\n/);
+    assert.match(
+      env,
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,europeana/
+    );
+    assert.match(
+      env,
+      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,googlebooks,europeana/
+    );
   });
 
   it('supports hosted metadata without requiring a local Hardcover token', async () => {

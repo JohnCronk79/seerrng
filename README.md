@@ -296,13 +296,15 @@ The migration is layered:
 - optionally call a configured Apify Actor to search Goodreads-compatible catalogs when the open APIs do not return useful metadata;
 - optionally create deterministic local Bookshelf records for the books Hardcover still cannot import.
 
-These additional catalogs currently support **migration and local-record
-recovery only**. They are not federated into BookshelfNG's ordinary search,
-author, or detail APIs. SeerrNG still uses its existing book identity and
-request flow; a Google Books or Apify ID is not a substitute for the
-provider-native ID expected by BookshelfNG. See the [metadata source support
-matrix](./docs/using-seerr/bookshelf-metadata-sources.md) for implemented
-behavior, setup, cost, rate, and identity details.
+These catalogs support **normal BookshelfNG search and metadata lookups**, as
+well as migration recovery. SeerrNG merges BookshelfNG results with its
+Open Library results and carries each Bookshelf result's source identity
+through details and book requests. The managed two-instance deployment enables
+Library of Congress for the audiobook service by default; Google Books and
+Europeana are added when their API keys are configured. Apify remains
+operator-enabled. A provider result does not need a numeric Goodreads ID. See
+the [metadata source support matrix](./docs/using-seerr/bookshelf-metadata-sources.md)
+for setup, coverage, limits, and identity details.
 
 Migration record states:
 
@@ -421,6 +423,13 @@ than the SeerrNG runtime container. Common ones include:
 | `BOOKSHELF_HARDCOVER_NATIVE` | Rendered Bookshelf flag; the installer sets it from `BOOKSHELF_METADATA_MODE`. |
 | `BOOKSHELF_HARDCOVER_AUTH` | Native-mode token passed to BookshelfNG; compatibility mode passes `HARDCOVER_AUTH` to rreading-glasses instead. |
 | `BOOKSHELF_HARDCOVER_API_URL` | Optional native Hardcover GraphQL base URL. Defaults to `https://api.hardcover.app`. |
+| `BOOKSHELF_METADATA_SOURCES` | Legacy shared runtime override. When supplied to the installer it applies to both services; otherwise the per-service values take precedence. |
+| `BOOKSHELF_EBOOKS_METADATA_SOURCES` | Ebook source list; defaults to `googlebooks,europeana`. Google Books and Europeana run only when their keys are configured. |
+| `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` | Audiobook source list; defaults to `loc,googlebooks,europeana`. Google Books and Europeana run only when their keys are configured. |
+| `GOOGLE_BOOKS_API_KEY` | Optional Google Books runtime/migration key; Google Books is skipped without it. |
+| `EUROPEANA_API_KEY` | Optional Europeana runtime key; a free registered key is required, and runtime search uses openly reusable text records. |
+| `HARDCOVER_APIFY_GOODREADS_ACTOR` / `HARDCOVER_APIFY_TOKEN` | Optional runtime/migration Goodreads-compatible Actor; usage may be metered. |
+| `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` | Optional Apify Actor JSON input template containing `{{query}}`. |
 | `HARDCOVER_AUTH` | Hardcover API token. The installer passes it to native BookshelfNG by default, or to rreading-glasses in compatibility mode; include the `Bearer ` prefix. |
 | `COOKIE` | Optional Goodreads cookie for softcover mode. |
 | `BOOKSHELF_EBOOKS_CONFIG_DIR` | Ebook Bookshelf/Readarr config directory. |

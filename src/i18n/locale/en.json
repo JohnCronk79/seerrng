@@ -1717,7 +1717,7 @@
   "components.Settings.ReadarrModal.loadingrootfolders": "Loading root folders...",
   "components.Settings.ReadarrModal.metadataprofile": "Metadata Profile",
   "components.Settings.ReadarrModal.migrationGuide": "Bookshelf Hardcover migration guide",
-  "components.Settings.ReadarrModal.migrationNote": "Existing Readarr or softcover libraries should be migrated before switching to Hardcover. The migration tool can preserve native Hardcover matches, recover metadata through softcover, and optionally create local Bookshelf records for books Hardcover cannot import.",
+  "components.Settings.ReadarrModal.migrationNote": "Hardcover is used by default for new installs. Existing Goodreads/softcover libraries remain supported. Migration to Hardcover is optional; use the migration guide if you choose to move provider-specific metadata IDs.",
   "components.Settings.ReadarrModal.port": "Port",
   "components.Settings.ReadarrModal.qualityprofile": "Quality Profile",
   "components.Settings.ReadarrModal.rootfolder": "Root Folder",

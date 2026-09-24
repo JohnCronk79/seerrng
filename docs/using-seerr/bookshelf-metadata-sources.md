@@ -16,11 +16,11 @@ This page separates three capabilities that are easy to conflate:
 3. **Local fallback records** preserve a book in Bookshelf when a native
    Hardcover record cannot be safely resolved.
 
-Google Books, Library of Congress, and Apify Goodreads-compatible search can
-also serve normal BookshelfNG runtime searches when enabled. SeerrNG receives
-those provider-qualified IDs through its configured Bookshelf/Readarr services
-and preserves the service and source identity through search, details, and
-book requests.
+Google Books, Library of Congress, Europeana, and Apify Goodreads-compatible
+search can also serve normal BookshelfNG runtime searches when enabled. SeerrNG
+receives provider-qualified IDs through its configured Bookshelf/Readarr
+services and preserves the service and source identity through search,
+details, and book requests.
 
 ## Support matrix
 
@@ -29,11 +29,12 @@ book requests.
 | Hardcover native | Yes, in the `hardcover` image when `HARDCOVER=true` | Yes; primary target for remapping | Hardcover token; subject to Hardcover service availability and limits | Bookshelf-native Hardcover IDs are used for works, authors, and editions. |
 | rreading-glasses / compatible `METADATA_URL` | Yes, when configured as the Bookshelf metadata endpoint | Yes, when configured as a Bookshelf/Softcover recovery endpoint | Depends on the hosted or self-hosted endpoint | A compatible endpoint must implement the API Bookshelf expects. |
 | Goodreads-compatible / Softcover | Yes, through the compatible Bookshelf mode/image | Yes, when its endpoint is configured | Provider-specific; Goodreads no longer issues public API keys | Legacy Goodreads IDs remain provider-specific and cannot be converted by changing the image tag. |
-| Open Library | Not a runtime fallback in SeerrNG's Hardcover flow | Yes; existing recovery path | No key for basic API access; observe Open Library's published request policy | Results are candidate profiles and are mapped through Hardcover before native import. |
-| Google Books | Yes, opt-in in BookshelfNG; SeerrNG uses it through BookshelfNG | Yes | Public data requires a Google API key; no user OAuth is needed for this search | Can supply identifiers, descriptions, publisher, language, dates, page count, and cover URL. |
-| Library of Congress | Yes, opt-in in BookshelfNG; SeerrNG uses it through BookshelfNG | Yes | Public JSON API; no key, but rate limits apply | The implemented `/books/` endpoint searches LoC's digital collections and is not the complete LoC book catalog. |
+| Open Library | Yes; SeerrNG queries it directly alongside configured Bookshelf services | Yes | No key for basic API access; observe Open Library's published low-volume request policy | Search results provide a fallback when a Bookshelf source is unavailable, subject to SeerrNG's provider deadline. |
+| Google Books | Yes, enabled in BookshelfNG when `GOOGLE_BOOKS_API_KEY` is set; SeerrNG uses it through BookshelfNG | Yes | Public data requires a Google API key; no user OAuth is needed for this search | Can supply identifiers, descriptions, publisher, language, dates, page count, and cover URL. |
+| Library of Congress | Yes, enabled by default in BookshelfNG unless an explicit source list overrides it; SeerrNG uses it through BookshelfNG | Yes | Public JSON API; no key; requests are paced to one per 3.2 seconds per Bookshelf process | Available language metadata is retained for BookshelfNG's edition-language profiles. The `/books/` endpoint searches LoC's digitized collection and is not the complete LoC book catalog. |
 | Goodreads-compatible Apify Actor | Yes, opt-in in BookshelfNG; SeerrNG uses it through BookshelfNG | Optional migration adapter | Apify token required; Actor availability and pricing depend on its publisher | Actor schemas differ. Supply a JSON input template that contains `{{query}}`. |
-| Europeana, Japan NDL Search, OpenBD, Internet Archive | No | Not wired into the migration helper | Varies by service; some require a free key, and request policies differ | Candidate future integrations; listed here as research, not current support. |
+| Europeana | Yes, optional in BookshelfNG when `EUROPEANA_API_KEY` is set; SeerrNG uses it through BookshelfNG | Not wired into the migration helper | Free API key; results are limited to openly reusable text records; provider terms apply | Europeana is a runtime search source only; it does not replace Hardcover or merge records into the primary catalog. |
+| Japan NDL Search, OpenBD, Internet Archive | No | Not wired into the migration helper | Varies by service; some require a free key, and request policies differ | Candidate future integrations; not implemented in BookshelfNG runtime or migration recovery. |
 
 “Free” describes API access, not an unlimited service guarantee. Google applies
 quotas; Open Library asks applications to respect its request policy; Europeana
@@ -57,18 +58,24 @@ BookshelfNG has two broad runtime paths:
   in the Hardcover image, setting `HARDCOVER_NATIVE=false` selects that path.
   This endpoint must implement the BookInfo-compatible search and detail
   behavior Bookshelf expects.
-- The Hardcover image can query Google Books, LoC, and a configured Apify
-  Goodreads-compatible Actor alongside Hardcover when those providers are
-  enabled with `BOOKSHELF_METADATA_SOURCES`. See the BookshelfNG README for
-  credentials, cache lifetimes, and the Actor input template.
+- A standalone Hardcover image queries LOC alongside Hardcover by default. It
+  also queries Google Books and Europeana when their API keys are configured.
+  A selected Apify Goodreads-compatible Actor is queried only when explicitly
+  enabled. `BOOKSHELF_METADATA_SOURCES` replaces these defaults; setting it to
+  an empty value disables all additional Bookshelf catalogs. The managed
+  SeerrNG two-instance deployment enables LOC only on its audiobook service
+  by default, then permits separate overrides with
+  `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+  `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES`. See the BookshelfNG README for
+  credentials, cache lifetimes, request pacing, and the Actor input template.
 
 SeerrNG merges Open Library search results with results from configured
 BookshelfNG services. Each Bookshelf result uses a service-qualified SeerrNG ID
 that wraps the Bookshelf foreign ID. Details are resolved through that same
 service, and request admission carries the identity into Bookshelf lookup;
 ISBNs are retained as cross-source matching identifiers when available.
-Google volume IDs, LOC record identifiers, and Apify actor record IDs are not
-coerced into Goodreads integers or Open Library keys.
+Google volume IDs, LOC record identifiers, Europeana record IDs, and Apify
+Actor record IDs are not coerced into Goodreads integers or Open Library keys.
 
 The compatibility proxy's cache is distinct from migration recovery's file
 cache. The former serves runtime metadata requests. The latter is a local
@@ -103,18 +110,47 @@ database schema provides those fields. A later successful native match can
 reconcile a shadow local record in place, preserving the library row instead
 of creating a duplicate.
 
-## Configure Google Books and Library of Congress
+## Default sources and configure Google Books and Europeana
 
-Google Books public API requests require a project API key. No OAuth user
-authorization is needed for this public search. The key is free to create, but
-API usage is subject to Google quota and terms. LOC's public JSON API does not
-require a key; it enforces rate limits.
+Library of Congress is queried by default in a standalone BookshelfNG
+deployment and needs no API key. Its public JSON API enforces rate limits;
+Bookshelf paces requests to one per 3.2 seconds per process and caches
+successful search/detail responses for one day. Two Bookshelf processes sharing
+an outbound IP should avoid both querying LOC. The SeerrNG installer handles
+this by enabling LOC on the audiobook instance by default and leaving the
+ebook instance on Google Books and Europeana when keys are available. Set
+`BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+`BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` for per-service overrides, or use the
+legacy `BOOKSHELF_METADATA_SOURCES` variable as a shared override when running
+the installer.
+Set both per-service variables to an empty value to disable the additional
+catalogs in both containers.
+
+Google Books is enabled automatically when its API key is present. Public API
+requests require a project key; no OAuth user authorization is needed. The key
+is free to create, but API usage is subject to Google quota and terms.
+
+Europeana is enabled automatically when its API key is present. The key is
+available without charge after account registration. Runtime search filters
+to text records with open reuse status; metadata and cover availability still
+vary by contributing institution. Europeana is strongest as a multilingual
+cultural heritage fallback, not as a complete current-book catalog.
+See Europeana's [Search API](https://europeana.atlassian.net/wiki/spaces/EF/pages/2385739812/Search+API+Documentation),
+[Record API](https://europeana.atlassian.net/wiki/spaces/EF/pages/2385674279/Record+API+Documentation),
+and [API key registration](https://pro.europeana.eu/page/get-api) guidance.
 
 ```env
-HARDCOVER_GOOGLEBOOKS_RECOVERY=true
 GOOGLE_BOOKS_API_KEY=your-google-books-api-key
+EUROPEANA_API_KEY=your-europeana-api-key
 HARDCOVER_LOC_RECOVERY=true
 ```
+
+To override runtime defaults, set `BOOKSHELF_METADATA_SOURCES` on a standalone
+BookshelfNG container or use the ebook/audiobook-specific source variables in
+the SeerrNG installer. Supported values are `googlebooks`, `loc`,
+`europeana`, and `apify-goodreads`; use a comma-separated list. An explicitly
+empty value disables additional runtime catalogs for the relevant instance.
+These runtime variables are separate from the migration switches shown below.
 
 Without `GOOGLE_BOOKS_API_KEY`, Google Books recovery logs that it is skipped.
 The helper queries up to 10 Google Books volumes and 10 LOC results per query.
@@ -217,9 +253,6 @@ BookshelfNG runtime. Each needs source-specific identity mapping, request
 policy, error handling, response normalization, cache behavior, and tests
 before it should be described as supported:
 
-- **Europeana**: a free API key is available after account registration. Its
-  collection centers on cultural heritage, so results need book relevance
-  filtering. See [Europeana API access](https://api.europeana.eu/en).
 - **Japan National Diet Library Search (NDL Search)**: SRU, OpenSearch,
   OpenURL, and OAI-PMH interfaces cover metadata from participating providers.
   Some data use requires prior application, and coverage is limited to
@@ -241,6 +274,8 @@ books rather than the entire LoC catalog. [Open Library's API policy](https://op
 asks clients to cache, identify themselves, and keep use low-volume; it states
 that the API is not intended as a high-traffic third-party data backend.
 
-These remain possible future integrations. They should not be configured as
-runtime Bookshelf sources until adapters can retain and resolve their native
-IDs through search, detail, author, and edition endpoints.
+The candidates above remain possible future integrations. They should not be
+configured as runtime Bookshelf sources until adapters can retain and resolve
+their native IDs through search, detail, author, and edition endpoints.
+Europeana is already available for runtime search when `EUROPEANA_API_KEY` is
+configured, but is not part of migration recovery.

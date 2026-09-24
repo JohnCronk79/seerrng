@@ -187,16 +187,33 @@ Applying the generated rebuild payload is opt-in. Set
 `unmatched-books.json`, `ambiguous-books.json`, `rebuild-payload.json`, and
 `rebuild-blocked.json`.
 
-Migration recovery can also query Google Books and the Library of Congress
-catalog before creating an optional local shadow record. These lookups are
-cached in the migration directory and only promote a result into Hardcover
-when strict identity matching succeeds. An optional Apify Actor adapter can
-query Goodreads-compatible scrapers; configure
+BookshelfNG also searches Library of Congress alongside Hardcover. The managed
+two-instance SeerrNG installer enables LOC on the audiobook service by default
+so both processes do not exceed LOC's shared outbound request pacing. Google
+Books and Europeana are added when `GOOGLE_BOOKS_API_KEY` and
+`EUROPEANA_API_KEY` are configured. Europeana is limited to openly reusable
+text records from its cultural heritage collection. These runtime catalogs
+return source-qualified IDs that SeerrNG retains through details and requests.
+Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+`BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` to override each service; the legacy
+`BOOKSHELF_METADATA_SOURCES` value applies to both when supplied to the
+installer. An empty per-service source list disables additional catalogs for
+that service; set both per-service values empty to disable them in both
+containers.
+The installer preserves these settings and credentials when rewriting its
+private `.env` file. A directly managed single BookshelfNG instance enables
+LOC by default unless `BOOKSHELF_METADATA_SOURCES` overrides it.
+
+Migration recovery separately queries Google Books and Library of Congress
+before creating an optional local shadow record. These lookups are cached in
+the migration directory and only promote a result into Hardcover when strict
+identity matching succeeds. An optional Apify Actor adapter supports runtime
+search and migration recovery for Goodreads-compatible scrapers. Configure
 `HARDCOVER_APIFY_GOODREADS_ACTOR` and `HARDCOVER_APIFY_TOKEN`, and adjust
 `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` for the Actor's input schema. Actor
-availability and pricing depend on the selected Actor, and those calls are
-limited to a title/author query and at most one ISBN query. These are migration
-recovery sources, not additional live BookshelfNG runtime providers.
+availability and pricing depend on the selected Actor. Runtime responses are
+cached for one day; migration recovery makes at most two Actor runs per source
+item.
 Applied and failed adds are written to `applied-books.json` and
 `apply-failures.json`. After apply, the helper writes `validation-report.json`
 and marks `migration-report.json` as `validation_complete` or
@@ -1042,3 +1059,18 @@ service/profile override value, not as a missing or invalid ID.
   before every request.
 - Both-format book requests dispatch to two backend services. Check each
   Bookshelf instance when troubleshooting partial success.
+
+## Optional chaptered M4B imports
+
+BookshelfNG can merge an identified multi-file audiobook download into one
+chaptered M4B. In the SeerrNG-managed deployment, set
+`BOOKSHELF_M4B_MERGE=true` before running the installer. It stores that choice
+in the generated `.env` and passes it to both BookshelfNG instances. The
+default is `false`.
+
+The standard BookshelfNG Docker image includes FFmpeg. The merge encodes AAC
+at 128 kbps by default; set `BOOKSHELF_M4B_AAC_BITRATE_KBPS` to a value from
+48 to 320 to change it. Original audio files are kept if conversion or M4B
+import fails, and copy-only imports keep the source tracks. See the
+[BookshelfNG merge guide](https://github.com/Snapetech/bookshelfng/blob/main/docs/audiobook-m4b-merging.md)
+for track ordering and failure behavior.
