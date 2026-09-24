@@ -12,6 +12,7 @@ import authRoutes from '@server/routes/auth';
 import { setupTestDb } from '@server/test/db';
 import type { Express } from 'express';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import session from 'express-session';
 import request from 'supertest';
 import userRoutes from '.';
@@ -42,9 +43,11 @@ function createApp() {
       secret: 'test-secret',
       resave: false,
       saveUninitialized: false,
+      cookie: { secure: true },
+      proxy: true,
     })
   );
-  app.use(checkUser);
+  app.use(rateLimit({ windowMs: 60_000, limit: 10_000 }), checkUser);
   app.use('/auth', authRoutes);
   app.use('/user', isAuthenticated(), userRoutes);
   app.use(
@@ -82,11 +85,16 @@ async function loginAs(email: string, password: string) {
   const settings = getSettings();
   settings.main.localLogin = true;
 
-  const agent = request.agent(app);
-  const res = await agent.post('/auth/local').send({ email, password });
+  const res = await request(app)
+    .post('/auth/local')
+    .set('X-Forwarded-Proto', 'https')
+    .send({ email, password });
 
   assert.strictEqual(res.status, 200);
-  return { agent, userId: res.body.id as number };
+  const setCookie = res.headers['set-cookie']?.[0];
+  assert.ok(setCookie?.includes('; Secure'));
+  const sessionCookie = setCookie.split(';', 1)[0];
+  return { sessionCookie, userId: res.body.id as number };
 }
 
 describe('POST /user/:id/settings/linked-accounts/jellyfin/quickconnect', () => {
@@ -99,10 +107,15 @@ describe('POST /user/:id/settings/linked-accounts/jellyfin/quickconnect', () => 
   });
 
   it('links the account when the media server is Jellyfin', async () => {
-    const { agent, userId } = await loginAs('demo@seerr.dev', 'test1234');
+    const { sessionCookie, userId } = await loginAs(
+      'demo@seerr.dev',
+      'test1234'
+    );
 
-    const res = await agent
+    const res = await request(app)
       .post(`/user/${userId}/settings/linked-accounts/jellyfin/quickconnect`)
+      .set('X-Forwarded-Proto', 'https')
+      .set('Cookie', sessionCookie)
       .send({ secret: 'abc123def456abc123def456' });
 
     assert.strictEqual(res.status, 204);
@@ -116,11 +129,16 @@ describe('POST /user/:id/settings/linked-accounts/jellyfin/quickconnect', () => 
   });
 
   it('returns 403 when the media server is Emby', async () => {
-    const { agent, userId } = await loginAs('demo@seerr.dev', 'test1234');
+    const { sessionCookie, userId } = await loginAs(
+      'demo@seerr.dev',
+      'test1234'
+    );
     getSettings().main.mediaServerType = MediaServerType.EMBY;
 
-    const res = await agent
+    const res = await request(app)
       .post(`/user/${userId}/settings/linked-accounts/jellyfin/quickconnect`)
+      .set('X-Forwarded-Proto', 'https')
+      .set('Cookie', sessionCookie)
       .send({ secret: 'abc123def456abc123def456' });
 
     assert.strictEqual(res.status, 403);
