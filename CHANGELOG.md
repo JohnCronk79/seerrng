@@ -88,6 +88,21 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.24.1](https://github.com/snapetech/seerrng/compare/v3.24.0..v3.24.1) - 2026-09-24
+
+### User-facing changes
+
+#### Fixed
+
+- **Media Server:** Plex and Jellyfin now sync library lists and save library selections correctly, so administrators can manage enabled libraries from settings.
+- **Artwork:** Servarr artwork links from other hosts are now fetched through the safe image path even when their hostnames resemble a configured service address, restoring valid remote covers.
+
+### 🐛 Bug Fixes
+- *(artwork)* Compare Servarr cover origins exactly - ([1af8560](https://github.com/snapetech/seerrng/commit/1af85606c746ba36927410e4b008524594fd29a8))
+- *(settings)* Align media library API contract - ([e4f72f5](https://github.com/snapetech/seerrng/commit/e4f72f5f89735545f0f03fa11e22578d79c4a63b))
+
 ## [3.24.0](https://github.com/snapetech/seerrng/compare/v3.23.1..v3.24.0) - 2026-09-24
 
 ### User-facing changes
