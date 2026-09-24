@@ -156,6 +156,24 @@ export const sanitizeServarrImages = (value: unknown): ServarrImage[] =>
         : []
     );
 
+export const isServarrServiceUrl = (
+  candidateUrl: string,
+  serviceBaseUrl: string
+): boolean => {
+  try {
+    const candidate = new URL(candidateUrl);
+    const service = new URL(serviceBaseUrl);
+
+    return (
+      !candidate.username &&
+      !candidate.password &&
+      candidate.origin === service.origin
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const sanitizeServarrCommand = (value: unknown): ServarrCommand => {
   if (!isRecord(value) || !Number.isSafeInteger(value.id)) {
     throw new Error('Servarr returned an invalid command');

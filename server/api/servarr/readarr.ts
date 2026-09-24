@@ -13,6 +13,7 @@ import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import axios from 'axios';
 import ServarrBase, {
+  isServarrServiceUrl,
   MAX_SERVARR_CONFIGURATION_RESULTS,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
@@ -960,7 +961,10 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
     for (const coverUrl of uniqueCandidateUrls) {
       try {
-        const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
+        const isLocalCoverUrl = isServarrServiceUrl(
+          coverUrl,
+          this.coverBaseUrl
+        );
         if (!isLocalCoverUrl) {
           return await fetchSafeRemoteImage(coverUrl);
         }
@@ -1020,7 +1024,10 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
     for (const coverUrl of [...new Set(candidateUrls)]) {
       try {
-        const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
+        const isLocalCoverUrl = isServarrServiceUrl(
+          coverUrl,
+          this.coverBaseUrl
+        );
         if (!isLocalCoverUrl) {
           return await fetchSafeRemoteImage(coverUrl);
         }

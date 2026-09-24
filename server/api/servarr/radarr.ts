@@ -6,6 +6,7 @@ import {
 } from '@server/utils/safeRemoteImage';
 import { redactSecrets } from '@server/utils/security';
 import ServarrBase, {
+  isServarrServiceUrl,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
   sanitizeServarrImages,
@@ -345,7 +346,10 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
 
     for (const coverUrl of uniqueCandidateUrls) {
       try {
-        const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
+        const isLocalCoverUrl = isServarrServiceUrl(
+          coverUrl,
+          this.coverBaseUrl
+        );
         if (!isLocalCoverUrl) {
           return await fetchSafeRemoteImage(coverUrl);
         }
