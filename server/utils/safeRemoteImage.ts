@@ -26,6 +26,28 @@ export type SafeRemoteImage = {
   contentType: string;
 };
 
+export const normalizeSafeRasterImage = (
+  data: ArrayBuffer | Uint8Array,
+  rawContentType: unknown
+): SafeRemoteImage => {
+  const contentType = String(rawContentType ?? '')
+    .split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+  if (!SAFE_RASTER_CONTENT_TYPES.has(contentType)) {
+    throw new Error('Image response is not a supported raster image.');
+  }
+
+  const imageBuffer = Buffer.from(
+    data instanceof ArrayBuffer ? new Uint8Array(data) : data
+  );
+  if (imageBuffer.length > MAX_SAFE_REMOTE_IMAGE_BYTES) {
+    throw new Error('Image response exceeds the maximum allowed size.');
+  }
+
+  return { imageBuffer, contentType };
+};
+
 export const fetchSafeRemoteImage = async (
   remoteUrl: string
 ): Promise<SafeRemoteImage> => {
@@ -43,18 +65,8 @@ export const fetchSafeRemoteImage = async (
     headers: { Accept: 'image/*' },
   });
 
-  const contentType = String(response.headers['content-type'] ?? '')
-    .split(';', 1)[0]
-    .trim()
-    .toLowerCase();
-  if (!SAFE_RASTER_CONTENT_TYPES.has(contentType)) {
-    throw new Error('Remote response is not a supported raster image.');
-  }
-
-  const imageBuffer = Buffer.from(response.data);
-  if (imageBuffer.length > MAX_SAFE_REMOTE_IMAGE_BYTES) {
-    throw new Error('Remote image exceeds the maximum allowed size.');
-  }
-
-  return { imageBuffer, contentType };
+  return normalizeSafeRasterImage(
+    response.data,
+    response.headers['content-type']
+  );
 };

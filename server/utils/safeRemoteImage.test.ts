@@ -5,6 +5,7 @@ import axios from 'axios';
 import {
   fetchSafeRemoteImage,
   MAX_SAFE_REMOTE_IMAGE_BYTES,
+  normalizeSafeRasterImage,
 } from './safeRemoteImage';
 
 describe('fetchSafeRemoteImage', () => {
@@ -90,6 +91,31 @@ describe('fetchSafeRemoteImage', () => {
 
     await assert.rejects(
       fetchSafeRemoteImage('https://8.8.8.8/oversized.jpg'),
+      /maximum allowed size/
+    );
+  });
+});
+
+describe('normalizeSafeRasterImage', () => {
+  it('normalizes supported raster response types and bounds local image data', () => {
+    assert.deepStrictEqual(
+      normalizeSafeRasterImage(
+        Buffer.from('image'),
+        ' IMAGE/JPEG; charset=binary '
+      ),
+      { imageBuffer: Buffer.from('image'), contentType: 'image/jpeg' }
+    );
+
+    assert.throws(
+      () => normalizeSafeRasterImage(Buffer.from('<svg/>'), 'image/svg+xml'),
+      /supported raster image/
+    );
+    assert.throws(
+      () =>
+        normalizeSafeRasterImage(
+          Buffer.alloc(MAX_SAFE_REMOTE_IMAGE_BYTES + 1),
+          'image/jpeg'
+        ),
       /maximum allowed size/
     );
   });

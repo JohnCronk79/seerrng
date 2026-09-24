@@ -1,5 +1,9 @@
 import logger from '@server/logger';
-import { fetchSafeRemoteImage } from '@server/utils/safeRemoteImage';
+import {
+  fetchSafeRemoteImage,
+  MAX_SAFE_REMOTE_IMAGE_BYTES,
+  normalizeSafeRasterImage,
+} from '@server/utils/safeRemoteImage';
 import { redactSecrets } from '@server/utils/security';
 import ServarrBase, {
   MAX_SERVARR_LIBRARY_RESULTS,
@@ -348,18 +352,13 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
 
         const response = await this.axios.get<ArrayBuffer>(coverUrl, {
           responseType: 'arraybuffer',
+          maxContentLength: MAX_SAFE_REMOTE_IMAGE_BYTES,
           headers: { Accept: 'image/*' },
         });
-        const contentType = String(response.headers['content-type'] ?? '');
-
-        if (!contentType.toLowerCase().startsWith('image/')) {
-          throw new Error('Upstream response is not an image');
-        }
-
-        return {
-          imageBuffer: Buffer.from(response.data),
-          contentType,
-        };
+        return normalizeSafeRasterImage(
+          response.data,
+          response.headers['content-type']
+        );
       } catch (e) {
         lastError = e;
       }
