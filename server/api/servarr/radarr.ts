@@ -4,6 +4,7 @@ import { redactSecrets } from '@server/utils/security';
 import ServarrBase, {
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
+  sanitizeServarrImages,
   sanitizeServarrRecordArray,
 } from './base';
 
@@ -107,18 +108,7 @@ export const sanitizeRadarrMovie = (
     tags: (Array.isArray(value.tags) ? value.tags : [])
       .slice(0, MAX_RADARR_TAGS)
       .filter((tag): tag is number => Number.isSafeInteger(tag) && tag >= 0),
-    images: (Array.isArray(value.images) ? value.images : []).flatMap(
-      (image) =>
-        isRecord(image)
-          ? [
-              {
-                coverType: optionalText(image.coverType),
-                url: optionalText(image.url),
-                remoteUrl: optionalText(image.remoteUrl),
-              },
-            ]
-          : []
-    ),
+    images: sanitizeServarrImages(value.images),
     movieFile,
   };
 };
@@ -246,6 +236,10 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   }
 
   private buildRemoteCoverUrl(url: string): string | undefined {
+    if (url.length > 2_048) {
+      return undefined;
+    }
+
     try {
       const parsedUrl = new URL(url);
 

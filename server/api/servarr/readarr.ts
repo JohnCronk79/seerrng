@@ -12,6 +12,7 @@ import ServarrBase, {
   MAX_SERVARR_CONFIGURATION_RESULTS,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
+  sanitizeServarrImages,
   sanitizeServarrProfiles,
   sanitizeServarrRecordArray,
   sanitizeServarrSystemStatus,
@@ -616,6 +617,10 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
   }
 
   private buildRemoteCoverUrl(url: string): string | undefined {
+    if (url.length > 2_048) {
+      return undefined;
+    }
+
     try {
       const parsedUrl = new URL(url);
 
@@ -920,7 +925,8 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
   public async getBookCover(bookId: number): Promise<ReadarrCoverImage> {
     const book = await this.getBook(bookId).catch(() => undefined);
-    const advertisedCoverPaths = (book?.images ?? [])
+    const images = sanitizeServarrImages(book?.images);
+    const advertisedCoverPaths = images
       .filter((image) => {
         const coverType = image.coverType?.toLowerCase();
         return !coverType || coverType === 'cover' || coverType === 'poster';
@@ -932,7 +938,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
       `/MediaCover/${bookId}/cover.jpg`,
       `/MediaCover/${bookId}/poster.jpg`,
     ];
-    const remoteCoverUrls = (book?.images ?? [])
+    const remoteCoverUrls = images
       .filter((image) => {
         const coverType = image.coverType?.toLowerCase();
         return !coverType || coverType === 'cover' || coverType === 'poster';
@@ -991,10 +997,12 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
       `/author/${authorId}`,
       this.getRequestConfig()
     );
-    const posterImages = (author?.images ?? []).filter((image) => {
-      const coverType = image.coverType?.toLowerCase();
-      return !coverType || coverType === 'poster' || coverType === 'headshot';
-    });
+    const posterImages = sanitizeServarrImages(author?.images).filter(
+      (image) => {
+        const coverType = image.coverType?.toLowerCase();
+        return !coverType || coverType === 'poster' || coverType === 'headshot';
+      }
+    );
     const candidatePaths = posterImages
       .map((image) => image.url)
       .filter((url): url is string => !!url && url.startsWith('/'));

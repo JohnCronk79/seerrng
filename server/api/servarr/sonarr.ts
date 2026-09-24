@@ -6,6 +6,7 @@ import ServarrBase, {
   MAX_SERVARR_CONFIGURATION_RESULTS,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
+  sanitizeServarrImages,
   sanitizeServarrRecordArray,
 } from './base';
 
@@ -74,13 +75,7 @@ export const sanitizeSonarrSeries = (
     overview: text(value.overview),
     network: text(value.network),
     airTime: text(value.airTime),
-    images: (Array.isArray(value.images) ? value.images : [])
-      .slice(0, MAX_SONARR_NESTED_RESULTS)
-      .flatMap((image) =>
-        isRecord(image)
-          ? [{ coverType: text(image.coverType), url: text(image.url) }]
-          : []
-      ),
+    images: sanitizeServarrImages(value.images),
     remotePoster: text(value.remotePoster),
     seasons: (Array.isArray(value.seasons) ? value.seasons : [])
       .slice(0, MAX_SONARR_NESTED_RESULTS)
@@ -219,8 +214,8 @@ export interface SonarrSeries {
   network: string;
   airTime: string;
   images: {
-    coverType: string;
-    url: string;
+    coverType?: string;
+    url?: string;
     remoteUrl?: string;
   }[];
   remotePoster: string;
@@ -373,6 +368,10 @@ class SonarrAPI extends ServarrBase<{
   }
 
   private buildRemoteCoverUrl(url: string): string | undefined {
+    if (url.length > 2_048) {
+      return undefined;
+    }
+
     try {
       const parsedUrl = new URL(url);
 

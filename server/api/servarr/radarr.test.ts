@@ -5,7 +5,7 @@ import type { RadarrMovie } from '@server/api/servarr/radarr';
 import type { AxiosInstance } from 'axios';
 import axios from 'axios';
 
-import { MAX_SERVARR_LOOKUP_RESULTS } from './base';
+import { MAX_SERVARR_COVER_IMAGES, MAX_SERVARR_LOOKUP_RESULTS } from './base';
 import RadarrAPI, { sanitizeRadarrMovie } from './radarr';
 
 function buildRadarr(): RadarrAPI {
@@ -57,6 +57,42 @@ describe('Radarr response normalization', () => {
     });
     assert.strictEqual(movie?.title.length, 10_000);
     assert.strictEqual(movie?.id, 0);
+  });
+
+  it('bounds advertised cover images and rejects oversized image URLs', () => {
+    const movie = sanitizeRadarrMovie({
+      id: 9,
+      title: 'Movie',
+      tmdbId: 42,
+      images: [
+        {
+          coverType: 'poster',
+          url: '/poster.jpg',
+          remoteUrl: 'https://covers.example/poster.jpg',
+        },
+        {
+          coverType: 'poster',
+          url: 'x'.repeat(2_049),
+          remoteUrl: 'https://covers.example/' + 'x'.repeat(2_049),
+        },
+        ...Array.from({ length: MAX_SERVARR_COVER_IMAGES }, (_, index) => ({
+          coverType: 'banner',
+          url: `/banner-${index}.jpg`,
+        })),
+      ],
+    });
+
+    assert.equal(movie?.images?.length, MAX_SERVARR_COVER_IMAGES);
+    assert.deepEqual(movie?.images?.[0], {
+      coverType: 'poster',
+      url: '/poster.jpg',
+      remoteUrl: 'https://covers.example/poster.jpg',
+    });
+    assert.deepEqual(movie?.images?.[1], {
+      coverType: 'poster',
+      url: undefined,
+      remoteUrl: undefined,
+    });
   });
 });
 

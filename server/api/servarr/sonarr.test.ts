@@ -7,6 +7,7 @@ import axios from 'axios';
 
 import {
   MAX_SERVARR_CONFIGURATION_RESULTS,
+  MAX_SERVARR_COVER_IMAGES,
   MAX_SERVARR_LOOKUP_RESULTS,
 } from './base';
 import SonarrAPI, {
@@ -43,12 +44,30 @@ describe('Sonarr response normalization', () => {
           },
         },
       ],
+      images: [
+        {
+          coverType: 'poster',
+          url: '/MediaCover/42/poster.jpg',
+          remoteUrl: 'https://covers.example/poster.jpg',
+          providerSecret: 'must-not-leak',
+        },
+        ...Array.from({ length: MAX_SERVARR_COVER_IMAGES }, (_, index) => ({
+          coverType: 'banner',
+          url: `/banner-${index}.jpg`,
+        })),
+      ],
       statistics: { episodeFileCount: 4, totalEpisodeCount: 8 },
     });
 
     assert.ok(series);
     assert.deepStrictEqual(series.tags, [1, 2]);
     assert.strictEqual(series.seasons[0].statistics?.episodeFileCount, 4);
+    assert.equal(series.images.length, MAX_SERVARR_COVER_IMAGES);
+    assert.deepEqual(series.images[0], {
+      coverType: 'poster',
+      url: '/MediaCover/42/poster.jpg',
+      remoteUrl: 'https://covers.example/poster.jpg',
+    });
     assert.ok(!('apiKey' in series));
     assert.ok(!('providerOnly' in series.seasons[0]));
     assert.ok(!('providerSecret' in (series.seasons[0].statistics ?? {})));

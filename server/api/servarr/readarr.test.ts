@@ -14,6 +14,8 @@ import type {
 import ReadarrAPI from '@server/api/servarr/readarr';
 import axios from 'axios';
 
+import { MAX_SERVARR_COVER_IMAGES } from './base';
+
 type MockableReadarr = {
   get: (
     endpoint: string,
@@ -292,6 +294,36 @@ describe('ReadarrAPI.getBookCover', () => {
     assert.strictEqual(options.maxBodyLength, 10 * 1024 * 1024);
     assert.strictEqual(options.timeout, 10_000);
     assert.strictEqual(options.proxy, false);
+  });
+
+  it('limits untrusted provider cover entries before trying paths', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+    });
+    mock.method(api, 'getBook', async () =>
+      existingBook({
+        id: 42,
+        images: Array.from(
+          { length: MAX_SERVARR_COVER_IMAGES * 2 },
+          (_, index) => ({
+            coverType: 'cover',
+            url: `/MediaCover/missing-${index}.jpg`,
+          })
+        ),
+      })
+    );
+    const axiosGetMock = mock.fn(async () => {
+      throw new Error('missing image');
+    });
+    (
+      api as unknown as {
+        axios: { get: typeof axiosGetMock };
+      }
+    ).axios.get = axiosGetMock;
+
+    await assert.rejects(api.getBookCover(42), /Failed to retrieve cover/);
+    assert.equal(axiosGetMock.mock.callCount(), MAX_SERVARR_COVER_IMAGES + 2);
   });
 });
 
