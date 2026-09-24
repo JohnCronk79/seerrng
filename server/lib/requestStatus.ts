@@ -634,8 +634,20 @@ const getServiceName = (request: RequestLike): string | null => {
 
 const getMessage = (
   stage: RequestStatusStage,
-  queueFailure = false
+  queueFailure = false,
+  mediaType?: MediaType
 ): string => {
+  if (mediaType === MediaType.BOOK) {
+    if (stage === RequestStatusStage.UNAVAILABLE) {
+      return 'No usable edition is available from the connected book service. Check the requested edition and the service catalog or acquisition sources, then retry when they are ready.';
+    }
+    if (stage === RequestStatusStage.FAILED) {
+      return queueFailure
+        ? 'The connected book service reported a download or import failure. Check its queue or logs for the cause, fix it there, then retry here.'
+        : 'The connected book service could not accept this request. Check its connection and metadata provider settings, then retry.';
+    }
+  }
+
   switch (stage) {
     case RequestStatusStage.REQUESTED:
       return 'Your request is waiting for approval.';
@@ -894,15 +906,21 @@ export const getRequestStatus = (
   const metrics = calculateDownloadMetrics(result.downloads);
   const stage = result.stage;
   const latestEvent = options.latestEvent;
+  const hasGenericBookFailureMessage =
+    request.type === MediaType.BOOK &&
+    (latestEvent?.message === 'No usable release is currently available.' ||
+      latestEvent?.message === 'The download or import failed.' ||
+      latestEvent?.message === 'The request could not be completed.');
   const message =
     result.message ??
     (latestEvent &&
     (stage === RequestStatusStage.UNAVAILABLE ||
       stage === RequestStatusStage.FAILED) &&
     latestEvent.stage === stage &&
-    latestEvent.message
+    latestEvent.message &&
+    !hasGenericBookFailureMessage
       ? latestEvent.message
-      : getMessage(stage, result.queueFailure));
+      : getMessage(stage, result.queueFailure, request.type));
 
   return {
     stage,
