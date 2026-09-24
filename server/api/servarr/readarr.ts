@@ -4,6 +4,7 @@ import {
 } from '@server/lib/externalIds';
 import { normalizeIsbn } from '@server/lib/isbn';
 import logger from '@server/logger';
+import { fetchSafeRemoteImage } from '@server/utils/safeRemoteImage';
 import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import axios from 'axios';
@@ -874,9 +875,11 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     for (const coverUrl of uniqueCandidateUrls) {
       try {
         const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
-        const response = await (
-          isLocalCoverUrl ? this.axios : axios
-        ).get<ArrayBuffer>(coverUrl, {
+        if (!isLocalCoverUrl) {
+          return await fetchSafeRemoteImage(coverUrl);
+        }
+
+        const response = await this.axios.get<ArrayBuffer>(coverUrl, {
           responseType: 'arraybuffer',
           headers: { Accept: 'image/*' },
         });
@@ -935,9 +938,11 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     for (const coverUrl of [...new Set(candidateUrls)]) {
       try {
         const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
-        const response = await (
-          isLocalCoverUrl ? this.axios : axios
-        ).get<ArrayBuffer>(coverUrl, {
+        if (!isLocalCoverUrl) {
+          return await fetchSafeRemoteImage(coverUrl);
+        }
+
+        const response = await this.axios.get<ArrayBuffer>(coverUrl, {
           responseType: 'arraybuffer',
           headers: { Accept: 'image/*' },
         });

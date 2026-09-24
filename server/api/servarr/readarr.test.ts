@@ -253,7 +253,7 @@ describe('ReadarrAPI.getBookCover', () => {
           {
             coverType: 'cover',
             url: '/MediaCover/Books/42/cover.jpeg?lastWrite=123',
-            remoteUrl: 'https://assets.hardcover.app/book-cover.jpeg',
+            remoteUrl: 'https://8.8.8.8/book-cover.jpeg',
           },
         ],
       })
@@ -281,12 +281,17 @@ describe('ReadarrAPI.getBookCover', () => {
     assert.strictEqual(result.contentType, 'image/jpeg');
     assert.strictEqual(
       remoteGetMock.mock.calls[0].arguments[0],
-      'https://assets.hardcover.app/book-cover.jpeg'
+      'https://8.8.8.8/book-cover.jpeg'
     );
-    assert.deepStrictEqual(remoteGetMock.mock.calls[0].arguments[1], {
-      responseType: 'arraybuffer',
-      headers: { Accept: 'image/*' },
-    });
+    const options = remoteGetMock.mock.calls[0].arguments[1] as Record<
+      string,
+      unknown
+    >;
+    assert.strictEqual(options.responseType, 'arraybuffer');
+    assert.strictEqual(options.maxContentLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.maxBodyLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.timeout, 10_000);
+    assert.strictEqual(options.proxy, false);
   });
 });
 

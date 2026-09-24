@@ -1,7 +1,7 @@
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import logger from '@server/logger';
+import { fetchSafeRemoteImage } from '@server/utils/safeRemoteImage';
 import { redactSecrets } from '@server/utils/security';
-import axios from 'axios';
 import ServarrBase, {
   MAX_SERVARR_CONFIGURATION_RESULTS,
   MAX_SERVARR_LIBRARY_RESULTS,
@@ -476,9 +476,11 @@ class SonarrAPI extends ServarrBase<{
     for (const coverUrl of uniqueCandidateUrls) {
       try {
         const isLocalCoverUrl = coverUrl.startsWith(this.coverBaseUrl);
-        const response = await (
-          isLocalCoverUrl ? this.axios : axios
-        ).get<ArrayBuffer>(coverUrl, {
+        if (!isLocalCoverUrl) {
+          return await fetchSafeRemoteImage(coverUrl);
+        }
+
+        const response = await this.axios.get<ArrayBuffer>(coverUrl, {
           responseType: 'arraybuffer',
           headers: { Accept: 'image/*' },
         });

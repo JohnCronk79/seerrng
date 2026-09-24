@@ -303,7 +303,7 @@ describe('RadarrAPI.getMovieCover', () => {
           {
             coverType: 'poster',
             url: '/MediaCover/42/poster.jpg?lastWrite=123',
-            remoteUrl: 'https://image.tmdb.org/t/p/original/poster.jpg',
+            remoteUrl: 'https://8.8.8.8/poster.jpg',
           },
         ],
       })
@@ -331,11 +331,16 @@ describe('RadarrAPI.getMovieCover', () => {
     assert.strictEqual(result.contentType, 'image/jpeg');
     assert.strictEqual(
       remoteGetMock.mock.calls[0].arguments[0],
-      'https://image.tmdb.org/t/p/original/poster.jpg'
+      'https://8.8.8.8/poster.jpg'
     );
-    assert.deepStrictEqual(remoteGetMock.mock.calls[0].arguments[1], {
-      responseType: 'arraybuffer',
-      headers: { Accept: 'image/*' },
-    });
+    const options = remoteGetMock.mock.calls[0].arguments[1] as Record<
+      string,
+      unknown
+    >;
+    assert.strictEqual(options.responseType, 'arraybuffer');
+    assert.strictEqual(options.maxContentLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.maxBodyLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.timeout, 10_000);
+    assert.strictEqual(options.proxy, false);
   });
 });
