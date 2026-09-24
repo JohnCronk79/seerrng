@@ -23,6 +23,7 @@ export interface BookResult {
   isbn13?: string;
   editionId?: string;
   isbnCandidates?: BookIsbnCandidate[];
+  metadataSource?: { name: string; url: string };
   editionCount?: number;
   ratingsAverage?: number;
   ratingsCount?: number;

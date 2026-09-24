@@ -187,13 +187,15 @@ Applying the generated rebuild payload is opt-in. Set
 `unmatched-books.json`, `ambiguous-books.json`, `rebuild-payload.json`, and
 `rebuild-blocked.json`.
 
-BookshelfNG also searches Library of Congress alongside Hardcover. The managed
-two-instance SeerrNG installer enables LOC on the audiobook service by default
-so both processes do not exceed LOC's shared outbound request pacing. Google
-Books and Europeana are added when `GOOGLE_BOOKS_API_KEY` and
-`EUROPEANA_API_KEY` are configured. Europeana is limited to openly reusable
-text records from its cultural heritage collection. These runtime catalogs
-return source-qualified IDs that SeerrNG retains through details and requests.
+BookshelfNG also searches Library of Congress and Gutendex alongside Hardcover
+by default. The managed two-instance SeerrNG installer enables LOC on the
+audiobook service by default so both processes do not exceed LOC's shared
+outbound request pacing; it enables Gutendex on both services. Google Books
+and Europeana are added when `GOOGLE_BOOKS_API_KEY` and `EUROPEANA_API_KEY` are
+configured. Internet Archive and NDL Search are opt-in. Europeana is limited
+to openly reusable text records from its cultural heritage collection. These
+runtime catalogs return source-qualified IDs that SeerrNG retains through
+search, details, and requests.
 Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
 `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` to override each service; the legacy
 `BOOKSHELF_METADATA_SOURCES` value applies to both when supplied to the
@@ -397,6 +399,13 @@ detected and preserved on rerun.
 Native remains an explicit alternative when the shortest direct path is more
 valuable than the shared proxy boundary. Select it with
 `BOOKSHELF_METADATA_MODE=native`.
+
+Choose runtime fallback catalogs and enter provider credentials on each
+BookshelfNG instance under **Settings > Metadata**. That page also manages the
+native Hardcover token when no environment token is set. SeerrNG's own
+**Settings > Metadata** page selects TMDB or TVDB for video metadata; its book
+catalog panel directs administrators to the connected BookshelfNG settings,
+where catalog choices take effect.
 
 ### Native Hardcover failure behavior
 

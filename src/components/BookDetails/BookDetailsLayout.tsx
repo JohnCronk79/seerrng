@@ -32,6 +32,7 @@ const messages = defineMessages('components.BookDetails.Layout', {
   noGenres: 'No Genres Available',
   bookDetails: 'Book Details',
   openLibrary: 'Open Library',
+  metadataSource: 'Metadata source',
   edition: 'Edition',
   isbnCandidates: 'ISBN Candidates',
   available: 'Available',
@@ -436,19 +437,39 @@ const BookDetailsLayout = ({
               </dl>
 
               <dl className="media-detail-column-divider grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-1 text-xs leading-4">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.openLibrary)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  <a
-                    href={`https://openlibrary.org/works/${workId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                  >
-                    {data.id}
-                  </a>
-                </dd>
+                {data.metadataSource ? (
+                  <>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.metadataSource)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      <a
+                        href={data.metadataSource.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                      >
+                        {data.metadataSource.name}
+                      </a>
+                    </dd>
+                  </>
+                ) : data.provider === 'openlibrary' ? (
+                  <>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.openLibrary)}:
+                    </dt>
+                    <dd className="m-0 truncate">
+                      <a
+                        href={`https://openlibrary.org/works/${workId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                      >
+                        {data.id}
+                      </a>
+                    </dd>
+                  </>
+                ) : null}
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.isbnCandidates)}:
                 </dt>

@@ -40,6 +40,10 @@ const messages = defineMessages('components.Settings', {
   connectionTestFailed: 'Connection test failed',
   failedToSaveMetadataSettings: 'Failed to save metadata provider settings',
   metadataSettingsSaved: 'Metadata provider settings saved',
+  bookshelfCatalogSettings: 'Book Catalog Metadata Sources',
+  bookshelfCatalogSettingsDescription:
+    'Seerr searches Open Library directly and merges results from connected BookshelfNG services. Configure each BookshelfNG instance under Settings > Metadata to enable fallback catalogs and add the Hardcover, Google Books, Europeana, or Apify credentials it needs.',
+  bookshelfServicesLink: 'Manage connected Bookshelf services',
 });
 
 type ProviderStatus = 'ok' | 'not tested' | 'failed';
@@ -268,6 +272,21 @@ const SettingsMetadata = () => {
           intl.formatMessage(globalMessages.settings),
         ]}
       />
+
+      <section className="settings-group-card mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.bookshelfCatalogSettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.bookshelfCatalogSettingsDescription)}
+        </p>
+        <a
+          href="/settings/services"
+          className="mt-3 inline-flex text-sm text-indigo-400 hover:text-indigo-300 hover:underline"
+        >
+          {intl.formatMessage(messages.bookshelfServicesLink)}
+        </a>
+      </section>
 
       <section className="settings-group-card">
         <h3 className="heading">

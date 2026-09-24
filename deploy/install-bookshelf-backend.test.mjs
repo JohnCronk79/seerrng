@@ -238,11 +238,11 @@ describe('Bookshelf backup permissions', () => {
     assert.match(env, /BOOKSHELF_METADATA_SOURCES=\n/);
     assert.match(
       env,
-      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,europeana/
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=gutendex,googlebooks,europeana/
     );
     assert.match(
       env,
-      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,googlebooks,europeana/
+      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,gutendex,googlebooks,europeana/
     );
     assert.match(compose, /GOOGLE_BOOKS_API_KEY: \$\{GOOGLE_BOOKS_API_KEY-\}/);
     assert.match(compose, /EUROPEANA_API_KEY: \$\{EUROPEANA_API_KEY-\}/);
@@ -479,11 +479,11 @@ describe('Bookshelf backup permissions', () => {
     assert.match(env, /BOOKSHELF_METADATA_SOURCES=\n/);
     assert.match(
       env,
-      /BOOKSHELF_EBOOKS_METADATA_SOURCES=googlebooks,europeana/
+      /BOOKSHELF_EBOOKS_METADATA_SOURCES=gutendex,googlebooks,europeana/
     );
     assert.match(
       env,
-      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,googlebooks,europeana/
+      /BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES=loc,gutendex,googlebooks,europeana/
     );
   });
 

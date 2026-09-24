@@ -117,8 +117,8 @@ Common environment overrides:
   BOOKSHELF_M4B_MERGE=true (opt in to chaptered M4B imports; default false)
   BOOKSHELF_M4B_AAC_BITRATE_KBPS (48-320; default 128)
   BOOKSHELF_METADATA_SOURCES (legacy shared override; empty disables extras)
-  BOOKSHELF_EBOOKS_METADATA_SOURCES (default: googlebooks,europeana)
-  BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES (default: loc,googlebooks,europeana)
+  BOOKSHELF_EBOOKS_METADATA_SOURCES (default: gutendex,googlebooks,europeana)
+  BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES (default: loc,gutendex,googlebooks,europeana)
   GOOGLE_BOOKS_API_KEY / EUROPEANA_API_KEY (optional; enable their runtime searches)
   HARDCOVER_APIFY_GOODREADS_ACTOR / HARDCOVER_APIFY_TOKEN (optional; may incur charges)
   HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE (optional Actor-specific JSON template)
@@ -988,7 +988,7 @@ write_env_file() {
     else
       BOOKSHELF_METADATA_SOURCES=""
     fi
-    if [ "$existing_metadata_sources" = "loc,googlebooks,europeana" ]; then
+    if [ "$existing_metadata_sources" = "loc,googlebooks,europeana" ] || [ "$existing_metadata_sources" = "loc,gutendex,googlebooks,europeana" ]; then
       BOOKSHELF_METADATA_SOURCES=""
     fi
   fi
@@ -999,10 +999,10 @@ write_env_file() {
     BOOKSHELF_EBOOKS_METADATA_SOURCES="$BOOKSHELF_METADATA_SOURCES"
   elif [ "$has_existing_ebooks_metadata_sources" = "true" ]; then
     BOOKSHELF_EBOOKS_METADATA_SOURCES="$existing_ebooks_metadata_sources"
-  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ]; then
+  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ] && [ "$existing_metadata_sources" != "loc,gutendex,googlebooks,europeana" ]; then
     BOOKSHELF_EBOOKS_METADATA_SOURCES="$existing_metadata_sources"
   else
-    BOOKSHELF_EBOOKS_METADATA_SOURCES="googlebooks,europeana"
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="gutendex,googlebooks,europeana"
   fi
 
   if [ "$BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES_EXPLICIT" = "x" ]; then
@@ -1011,10 +1011,10 @@ write_env_file() {
     BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$BOOKSHELF_METADATA_SOURCES"
   elif [ "$has_existing_audiobooks_metadata_sources" = "true" ]; then
     BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$existing_audiobooks_metadata_sources"
-  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ]; then
+  elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ] && [ "$existing_metadata_sources" != "loc,gutendex,googlebooks,europeana" ]; then
     BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="$existing_metadata_sources"
   else
-    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="loc,googlebooks,europeana"
+    BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES="loc,gutendex,googlebooks,europeana"
   fi
   if [ "$GOOGLE_BOOKS_API_KEY_EXPLICIT" != "x" ]; then
     GOOGLE_BOOKS_API_KEY="$existing_google_books_api_key"

@@ -16,6 +16,90 @@ export const BOOKSHELF_AUTHOR_ID_PREFIX = 'bookshelf-author:';
 const encodeForeignId = (foreignBookId: string) =>
   Buffer.from(foreignBookId, 'utf8').toString('base64url');
 
+const decodeSourceId = (value: string): string =>
+  Buffer.from(value, 'base64url').toString('utf8');
+
+export const getBookshelfMetadataSource = (
+  foreignBookId: string
+): { name: string; url: string } | undefined => {
+  const separator = foreignBookId.indexOf(':');
+  if (separator < 1) return undefined;
+  const provider = foreignBookId.slice(0, separator).toLowerCase();
+  const value = foreignBookId.slice(separator + 1);
+
+  if (provider === 'googlebooks' && /^[A-Za-z0-9_-]{1,256}$/.test(value)) {
+    return {
+      name: 'Google Books',
+      url: `https://books.google.com/books?id=${encodeURIComponent(value)}`,
+    };
+  }
+
+  if (provider === 'loc') {
+    try {
+      const url = new URL(decodeSourceId(value));
+      if (
+        url.protocol === 'https:' &&
+        (url.hostname === 'www.loc.gov' || url.hostname === 'loc.gov')
+      ) {
+        return { name: 'Library of Congress', url: url.href };
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (provider === 'europeana') {
+    try {
+      const id = decodeSourceId(value).replace(/^\/+/, '');
+      if (/^\d+\/[A-Za-z0-9._-]+$/.test(id)) {
+        return {
+          name: 'Europeana',
+          url: `https://www.europeana.eu/item/${id}`,
+        };
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (provider === 'gutendex' && /^[1-9]\d{0,8}$/.test(value)) {
+    return {
+      name: 'Project Gutenberg',
+      url: `https://www.gutenberg.org/ebooks/${value}`,
+    };
+  }
+
+  if (provider === 'internetarchive') {
+    try {
+      const id = decodeSourceId(value);
+      if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) {
+        return {
+          name: 'Internet Archive',
+          url: `https://archive.org/details/${encodeURIComponent(id)}`,
+        };
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (provider === 'ndl') {
+    try {
+      const id = decodeSourceId(value);
+      if (/^R\d{9}-[A-Za-z0-9-]+$/.test(id)) {
+        return {
+          name: 'NDL Search API',
+          url: `https://ndlsearch.ndl.go.jp/books/${encodeURIComponent(id)}`,
+        };
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+};
+
 export const makeBookshelfBookId = (serviceId: number, foreignBookId: string) =>
   `${BOOKSHELF_BOOK_ID_PREFIX}${serviceId}:${encodeForeignId(foreignBookId)}`;
 
@@ -104,6 +188,7 @@ export const mapBookshelfBook = (
   return {
     id: makeBookshelfBookId(serviceId, result.foreignBookId),
     provider: 'bookshelf',
+    metadataSource: getBookshelfMetadataSource(result.foreignBookId),
     mediaType: 'book',
     title: result.title,
     author: result.author?.authorName,

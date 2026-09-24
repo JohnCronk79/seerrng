@@ -16,30 +16,35 @@ This page separates three capabilities that are easy to conflate:
 3. **Local fallback records** preserve a book in Bookshelf when a native
    Hardcover record cannot be safely resolved.
 
-Google Books, Library of Congress, Europeana, and Apify Goodreads-compatible
-search can also serve normal BookshelfNG runtime searches when enabled. SeerrNG
-receives provider-qualified IDs through its configured Bookshelf/Readarr
-services and preserves the service and source identity through search,
-details, and book requests.
+Google Books, Library of Congress, Gutendex, Internet Archive, NDL Search,
+Europeana, and Apify Goodreads-compatible search can also serve normal
+BookshelfNG runtime searches when enabled. SeerrNG receives provider-qualified
+IDs through configured Bookshelf/Readarr services and preserves the service
+and source identity through search, details, and book requests.
 
 ## Support matrix
 
 | Source or path | Ordinary Bookshelf search/details | Migration recovery | Authentication and cost | Notes |
 | --- | --- | --- | --- | --- |
-| Hardcover native | Yes, in the `hardcover` image when `HARDCOVER=true` | Yes; primary target for remapping | Hardcover token; subject to Hardcover service availability and limits | Bookshelf-native Hardcover IDs are used for works, authors, and editions. |
+| Hardcover native | Yes, in the `hardcover` image when `HARDCOVER=true` | Yes; primary target for remapping | Hardcover token; subject to Hardcover service availability and limits | Set the token in BookshelfNG **Settings > Metadata** or with `HARDCOVER_AUTH` / `HARDCOVER_API_KEY`. Bookshelf-native Hardcover IDs are used for works, authors, and editions. |
 | rreading-glasses / compatible `METADATA_URL` | Yes, when configured as the Bookshelf metadata endpoint | Yes, when configured as a Bookshelf/Softcover recovery endpoint | Depends on the hosted or self-hosted endpoint | A compatible endpoint must implement the API Bookshelf expects. |
 | Goodreads-compatible / Softcover | Yes, through the compatible Bookshelf mode/image | Yes, when its endpoint is configured | Provider-specific; Goodreads no longer issues public API keys | Legacy Goodreads IDs remain provider-specific and cannot be converted by changing the image tag. |
 | Open Library | Yes; SeerrNG queries it directly alongside configured Bookshelf services | Yes | No key for basic API access; observe Open Library's published low-volume request policy | Search results provide a fallback when a Bookshelf source is unavailable, subject to SeerrNG's provider deadline. |
-| Google Books | Yes, enabled in BookshelfNG when `GOOGLE_BOOKS_API_KEY` is set; SeerrNG uses it through BookshelfNG | Yes | Public data requires a Google API key; no user OAuth is needed for this search | Can supply identifiers, descriptions, publisher, language, dates, page count, and cover URL. |
-| Library of Congress | Yes, enabled by default in BookshelfNG unless an explicit source list overrides it; SeerrNG uses it through BookshelfNG | Yes | Public JSON API; no key; requests are paced to one per 3.2 seconds per Bookshelf process | Available language metadata is retained for BookshelfNG's edition-language profiles. The `/books/` endpoint searches LoC's digitized collection and is not the complete LoC book catalog. |
-| Goodreads-compatible Apify Actor | Yes, opt-in in BookshelfNG; SeerrNG uses it through BookshelfNG | Optional migration adapter | Apify token required; Actor availability and pricing depend on its publisher | Actor schemas differ. Supply a JSON input template that contains `{{query}}`. |
-| Europeana | Yes, optional in BookshelfNG when `EUROPEANA_API_KEY` is set; SeerrNG uses it through BookshelfNG | Not wired into the migration helper | Free API key; results are limited to openly reusable text records; provider terms apply | Europeana is a runtime search source only; it does not replace Hardcover or merge records into the primary catalog. |
-| Japan NDL Search, OpenBD, Internet Archive | No | Not wired into the migration helper | Varies by service; some require a free key, and request policies differ | Candidate future integrations; not implemented in BookshelfNG runtime or migration recovery. |
+| Google Books | Yes, enable in BookshelfNG **Settings > Metadata** and enter a Google Books API key; SeerrNG uses it through BookshelfNG | Yes | Public data requires a Google API key; no user OAuth is needed for this search | Can supply identifiers, descriptions, publisher, language, dates, page count, and cover URL. |
+| Library of Congress | Yes, enabled by default in BookshelfNG and toggleable in **Settings > Metadata**; SeerrNG uses it through BookshelfNG | Yes | Public JSON API; no key; requests are paced to one per 3.2 seconds per Bookshelf process | Available language metadata is retained for BookshelfNG's edition-language profiles. The `/books/` endpoint searches LoC's digitized collection and is not the complete LoC book catalog. |
+| Gutendex / Project Gutenberg | Yes, enabled by default in BookshelfNG and toggleable in **Settings > Metadata**; SeerrNG uses it through BookshelfNG | No | No key; Gutendex is open source and can be self-hosted; the shared endpoint is a third-party service | Literature-focused catalog with multiple languages and stable Gutenberg ebook IDs. Edition/ISBN metadata is limited; rights metadata describes US copyright status. |
+| Internet Archive | Yes, opt-in in BookshelfNG **Settings > Metadata**; SeerrNG uses it through BookshelfNG | No | Public search and metadata need no key; rights and terms vary by item | Text collection records use stable Archive item IDs. Edition identity and artwork vary widely. |
+| NDL Search | Yes, opt-in in BookshelfNG **Settings > Metadata**; SeerrNG uses it through BookshelfNG | No | No API key; use terms can require an application depending on use and source catalog | Metadata only: NDL ended its thumbnail service on March 31, 2026. SeerrNG book details display an NDL Search API source link for credit. Operators must check source-specific terms and inform NDL about continuous use. |
+| Goodreads-compatible Apify Actor | Yes, opt-in in BookshelfNG **Settings > Metadata**; SeerrNG uses it through BookshelfNG | Optional migration adapter | Apify token required; Actor availability and pricing depend on its publisher | Actor schemas differ. Supply a JSON input template that contains `{{query}}`. |
+| Europeana | Yes, enable in BookshelfNG **Settings > Metadata** and enter a Europeana API key; SeerrNG uses it through BookshelfNG | Not wired into the migration helper | Free API key; results are limited to openly reusable text records; provider terms apply | Europeana is a runtime search source only; it does not replace Hardcover or merge records into the primary catalog. |
+| OpenBD | No | Not wired into the migration helper | API v1 was discontinued; no current version is integrated | The historical service was ISBN lookup rather than free-text catalog search. Verify any successor API before relying on it. |
 
-“Free” describes API access, not an unlimited service guarantee. Google applies
+“Free” describes access to some API operations, not an unlimited-service
+guarantee or a blanket license for returned metadata and images. Google applies
 quotas; Open Library asks applications to respect its request policy; Europeana
-requires an API key; and Apify can charge for Actor compute or results. Check
-each provider's current terms and limits before operating at scale.
+requires a free registered key; NDL Search conditions vary by provider; and
+Apify can charge for Actor compute or results. Check each provider's current
+terms and limits before operating at scale.
 
 Goodreads stopped issuing new public developer keys and has retired or
 restricted access to its public API. The adapter described here calls an
@@ -58,14 +63,23 @@ BookshelfNG has two broad runtime paths:
   in the Hardcover image, setting `HARDCOVER_NATIVE=false` selects that path.
   This endpoint must implement the BookInfo-compatible search and detail
   behavior Bookshelf expects.
-- A standalone Hardcover image queries LOC alongside Hardcover by default. It
-  also queries Google Books and Europeana when their API keys are configured.
-  A selected Apify Goodreads-compatible Actor is queried only when explicitly
-  enabled. `BOOKSHELF_METADATA_SOURCES` replaces these defaults; setting it to
-  an empty value disables all additional Bookshelf catalogs. The managed
-  SeerrNG two-instance deployment enables LOC only on its audiobook service
-  by default, then permits separate overrides with
-  `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+- The active runtime catalogs and optional Google Books, Europeana, and Apify
+  credentials are configured per BookshelfNG instance in **Settings >
+  Metadata**. The Hardcover token can also be saved there for native Hardcover
+  mode. Credential inputs are write-only: the API returns whether a value is
+  present, never the saved key or token. A non-empty environment value takes
+  precedence over the saved value. A custom `BOOKSHELF_METADATA_SOURCES`
+  value overrides the saved catalog selection; installer-managed default lists
+  leave catalog choices editable in the UI.
+- A standalone Hardcover image queries LOC and Gutendex alongside Hardcover
+  by default. It also queries Google Books and Europeana when their API keys
+  are configured. Internet Archive and NDL Search are opt-in, while a selected
+  Apify Goodreads-compatible Actor is queried only when explicitly enabled.
+  `BOOKSHELF_METADATA_SOURCES` replaces these defaults; setting it to an empty
+  value disables all additional Bookshelf catalogs. The managed SeerrNG
+  two-instance deployment enables LOC only on its audiobook service by default
+  to coordinate request pacing; both services enable Gutendex. It permits
+  separate overrides with `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
   `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES`. See the BookshelfNG README for
   credentials, cache lifetimes, request pacing, and the Actor input template.
 
@@ -76,6 +90,9 @@ service, and request admission carries the identity into Bookshelf lookup;
 ISBNs are retained as cross-source matching identifiers when available.
 Google volume IDs, LOC record identifiers, Europeana record IDs, and Apify
 Actor record IDs are not coerced into Goodreads integers or Open Library keys.
+In SeerrNG, **Settings > Metadata** continues to select TMDB/TVDB for series
+and anime; its book-catalog panel points administrators to the connected
+BookshelfNG instances, where book sources and credentials are actually applied.
 
 The compatibility proxy's cache is distinct from migration recovery's file
 cache. The former serves runtime metadata requests. The latter is a local
@@ -110,16 +127,16 @@ database schema provides those fields. A later successful native match can
 reconcile a shadow local record in place, preserving the library row instead
 of creating a duplicate.
 
-## Default sources and configure Google Books and Europeana
+## Default sources and keyed catalogs
 
 Library of Congress is queried by default in a standalone BookshelfNG
 deployment and needs no API key. Its public JSON API enforces rate limits;
 Bookshelf paces requests to one per 3.2 seconds per process and caches
 successful search/detail responses for one day. Two Bookshelf processes sharing
 an outbound IP should avoid both querying LOC. The SeerrNG installer handles
-this by enabling LOC on the audiobook instance by default and leaving the
-ebook instance on Google Books and Europeana when keys are available. Set
-`BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+this by enabling LOC on the audiobook instance by default; both instances also
+enable Gutendex. Google Books and Europeana run on both when keys are available.
+Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
 `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` for per-service overrides, or use the
 legacy `BOOKSHELF_METADATA_SOURCES` variable as a shared override when running
 the installer.
@@ -139,6 +156,33 @@ See Europeana's [Search API](https://europeana.atlassian.net/wiki/spaces/EF/page
 [Record API](https://europeana.atlassian.net/wiki/spaces/EF/pages/2385674279/Record+API+Documentation),
 and [API key registration](https://pro.europeana.eu/page/get-api) guidance.
 
+Gutendex is enabled by default in BookshelfNG and needs no API key. It indexes
+Project Gutenberg's literature catalog, not the full commercial book market.
+Books use Project Gutenberg ebook IDs; author names, languages, summaries, and
+available format links are retained when present. Gutendex is an
+[open-source API](https://github.com/garethbjohnson/gutendex), and its hosted
+`gutendex.com` instance is run by a third party. The source project's API says
+its copyright field describes status in the United States; check the rights
+notice for each work before treating a text as public domain elsewhere.
+
+Internet Archive is opt-in with `internetarchive`. It searches public text
+items and resolves records through the [Item Metadata API](https://archive.org/developers/metadata.html).
+No key is required for public search or metadata reads. Archive identifiers
+are not edition identifiers, and creator/ISBN/cover fields vary by item.
+
+NDL Search is opt-in with `ndl` and adds Japanese and participating-library
+records. It uses NDL's [OpenSearch API](https://ndlsearch.ndl.go.jp/en/help/api/specifications)
+for search and SRU for record details. Requests are paced to one per second
+per BookshelfNG process and cached for a day. NDL ended its thumbnail service
+on March 31, 2026, so these records provide metadata only; see the [thumbnail
+service notice](https://ndlsearch.ndl.go.jp/news/20260401_thumbnail). The API
+does not need a key, but usage and reuse permissions depend on the contributing
+data provider. NDL asks continuous users to contact it, requires an NDL Search
+API credit, and may require prior application for commercial or for-profit use.
+SeerrNG displays an NDL Search API source link on matching book details;
+operators must also apply any provider-specific credit or application rules.
+See NDL's [English API terms](https://ndlsearch.ndl.go.jp/en/help/api/).
+
 ```env
 GOOGLE_BOOKS_API_KEY=your-google-books-api-key
 EUROPEANA_API_KEY=your-europeana-api-key
@@ -147,10 +191,17 @@ HARDCOVER_LOC_RECOVERY=true
 
 To override runtime defaults, set `BOOKSHELF_METADATA_SOURCES` on a standalone
 BookshelfNG container or use the ebook/audiobook-specific source variables in
-the SeerrNG installer. Supported values are `googlebooks`, `loc`,
-`europeana`, and `apify-goodreads`; use a comma-separated list. An explicitly
+the SeerrNG installer. Supported values are `googlebooks`, `loc`, `gutendex`,
+`internetarchive`, `ndl`, `europeana`, and `apify-goodreads`; use a
+comma-separated list. An explicitly
 empty value disables additional runtime catalogs for the relevant instance.
 These runtime variables are separate from the migration switches shown below.
+`HARDCOVER_AUTH`, `GOOGLE_BOOKS_API_KEY`, `EUROPEANA_API_KEY`, and the Apify
+credential variables remain supported for deployments that prefer environment
+configuration. The Settings page shows when environment values are controlling
+the active setting. Migration-recovery variables such as
+`HARDCOVER_GOOGLEBOOKS_BASE_URL` and Apify migration options only affect the
+one-off migration helper; they are not runtime Bookshelf settings.
 
 Without `GOOGLE_BOOKS_API_KEY`, Google Books recovery logs that it is skipped.
 The helper queries up to 10 Google Books volumes and 10 LOC results per query.
@@ -247,23 +298,9 @@ guide](./bookshelf-backend.md) and the [migration runbook](./bookshelf-hardcover
 
 ## Future provider candidates
 
-The following services were identified as possible free or freely accessible
-catalogs, but **are not implemented adapters** in this migration helper or
-BookshelfNG runtime. Each needs source-specific identity mapping, request
-policy, error handling, response normalization, cache behavior, and tests
-before it should be described as supported:
-
-- **Japan National Diet Library Search (NDL Search)**: SRU, OpenSearch,
-  OpenURL, and OAI-PMH interfaces cover metadata from participating providers.
-  Some data use requires prior application, and coverage is limited to
-  metadata that providers permit. See [NDL Search API specifications](https://ndlsearch.ndl.go.jp/help/api/specifications)
-  and [English usage terms](https://ndlsearch.ndl.go.jp/en/help/api/).
-- **OpenBD**: Japanese book catalog metadata. The documentation found for this
-  review is dated, so verify service health, current coverage, and terms before
-  relying on it. See the [OpenBD API document](https://openbd.jp/pdf/openBD_doc_20170123.pdf).
-- **Internet Archive**: public item metadata/search surfaces, but book-edition
-  identity and artwork suitability vary by item. See [Internet Archive item
-  search APIs](https://doc-tools.readthedocs.io/en/ia-test-gsod/item-search-apis.html).
+OpenBD is not integrated. Its official 2023 notice says API v1 was
+discontinued; its original ISBN-only contract would not provide ordinary
+free-text search. See the [OpenBD discontinuation notice](https://openbd.jp/news/20230725.html).
 
 The [Google Books API](https://developers.google.com/books/docs/v1/using)
 requires an API key or OAuth token to identify public API requests; this
@@ -274,8 +311,9 @@ books rather than the entire LoC catalog. [Open Library's API policy](https://op
 asks clients to cache, identify themselves, and keep use low-volume; it states
 that the API is not intended as a high-traffic third-party data backend.
 
-The candidates above remain possible future integrations. They should not be
-configured as runtime Bookshelf sources until adapters can retain and resolve
-their native IDs through search, detail, author, and edition endpoints.
-Europeana is already available for runtime search when `EUROPEANA_API_KEY` is
+Gutendex, Internet Archive, and NDL Search are runtime Bookshelf sources, but
+they are not wired into the Hardcover migration helper. NDL Search supplies
+metadata only because its thumbnail service ended March 31, 2026; see the
+[official notice](https://ndlsearch.ndl.go.jp/news/20260401_thumbnail).
+Europeana is also available for runtime search when `EUROPEANA_API_KEY` is
 configured, but is not part of migration recovery.
