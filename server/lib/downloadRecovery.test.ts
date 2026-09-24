@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { deduplicateRecoveryQueue } from './downloadRecovery';
+import {
+  deduplicateRecoveryQueue,
+  processRecoveryQueueByMedia,
+} from './downloadRecovery';
 
 describe('deduplicateRecoveryQueue', () => {
   it('keeps one recovery item per download ID', () => {
@@ -26,5 +29,70 @@ describe('deduplicateRecoveryQueue', () => {
       first,
       second,
     ]);
+  });
+});
+
+describe('processRecoveryQueueByMedia', () => {
+  it('serializes items for each media item and bounds concurrent media', async () => {
+    const items = [
+      { id: 1, mediaId: 10 },
+      { id: 2, mediaId: 10 },
+      { id: 3, mediaId: 20 },
+      { id: 4, mediaId: 30 },
+      { id: 5, mediaId: 40 },
+    ];
+    const activeByMedia = new Map<number, number>();
+    const maxActiveByMedia = new Map<number, number>();
+    let activeMediaCount = 0;
+    let maxActiveMediaCount = 0;
+    const processed: number[] = [];
+
+    await processRecoveryQueueByMedia(
+      items,
+      (item) => item.mediaId,
+      async (item) => {
+        const active = (activeByMedia.get(item.mediaId) ?? 0) + 1;
+        activeByMedia.set(item.mediaId, active);
+        maxActiveByMedia.set(
+          item.mediaId,
+          Math.max(maxActiveByMedia.get(item.mediaId) ?? 0, active)
+        );
+        activeMediaCount += 1;
+        maxActiveMediaCount = Math.max(maxActiveMediaCount, activeMediaCount);
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        processed.push(item.id);
+        activeByMedia.set(item.mediaId, activeByMedia.get(item.mediaId)! - 1);
+        activeMediaCount -= 1;
+      },
+      2
+    );
+
+    assert.deepEqual(
+      processed.filter((id) => id < 3),
+      [1, 2]
+    );
+    assert.equal(maxActiveByMedia.get(10), 1);
+    assert.ok(maxActiveMediaCount <= 2);
+  });
+
+  it('skips queue items without a valid external media ID', async () => {
+    const items = [
+      { id: 1, mediaId: undefined },
+      { id: 2, mediaId: 0 },
+      { id: 3, mediaId: Number.MAX_SAFE_INTEGER + 1 },
+    ];
+    const processed: number[] = [];
+
+    await processRecoveryQueueByMedia(
+      items,
+      (item) => item.mediaId,
+      async (item) => {
+        processed.push(item.id);
+      }
+    );
+
+    assert.deepEqual(processed, []);
   });
 });
