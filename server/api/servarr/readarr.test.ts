@@ -331,7 +331,11 @@ describe('ReadarrAPI.getAuthorCover', () => {
     assert.deepStrictEqual(result.imageBuffer, Buffer.from('author-image'));
     assert.strictEqual(result.contentType, 'image/jpeg');
     assert.strictEqual(
-      axiosGetMock.mock.calls[0].arguments[0],
+      (
+        axiosGetMock.mock.calls as unknown as {
+          arguments: [string];
+        }[]
+      )[0].arguments[0],
       'http://localhost:8787/base/MediaCover/42/poster.jpg'
     );
   });

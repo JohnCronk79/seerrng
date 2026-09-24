@@ -425,7 +425,7 @@ const Setup = () => {
             ) : (
               <div className="p-2">
                 {mediaServerType === MediaServerType.PLEX ? (
-                  <SettingsPlex onComplete={handleComplete} />
+                  <SettingsPlex isSetupSettings onComplete={handleComplete} />
                 ) : (
                   <SettingsJellyfin
                     isSetupSettings

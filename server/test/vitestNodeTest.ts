@@ -82,6 +82,13 @@ export const mock = {
     trackedSpies.clear();
     vi.restoreAllMocks();
   },
+  timers: {
+    enable: (options?: { apis?: ['setTimeout'] }) => {
+      vi.useFakeTimers({ toFake: options?.apis ?? ['setTimeout'] });
+    },
+    tick: (milliseconds: number) => vi.advanceTimersByTime(milliseconds),
+    reset: () => vi.useRealTimers(),
+  },
 };
 
 const withNodeContext = (callback: (...args: any[]) => any) => {

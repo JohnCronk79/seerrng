@@ -3,6 +3,7 @@ export enum ApiErrorCode {
   InvalidCredentials = 'INVALID_CREDENTIALS',
   InvalidAuthToken = 'INVALID_AUTH_TOKEN',
   InvalidEmail = 'INVALID_EMAIL',
+  ConnectionError = 'CONNECTION_ERROR',
   NotAdmin = 'NOT_ADMIN',
   NoAdminUser = 'NO_ADMIN_USER',
   OidcProviderDiscoveryFailed = 'OIDC_PROVIDER_DISCOVERY_FAILED',

@@ -1,4 +1,14 @@
-import type OverrideRule from '@server/entity/OverrideRule';
+import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
+import type {
+  TmdbKeyword,
+  TmdbMovieDetails,
+  TmdbTvDetails,
+} from '@server/api/themoviedb/interfaces';
+import { MediaType } from '@server/constants/media';
+import { getRepository } from '@server/datasource';
+import OverrideRule from '@server/entity/OverrideRule';
+import type { User } from '@server/entity/User';
+import { getSettings } from '@server/lib/settings';
 
 export const overrideRuleConditionFields = [
   'users',
@@ -79,4 +89,105 @@ export const getOverrideRuleTagIds = (rule: OverrideRule): number[] => {
     );
 
   return [...new Set(tagIds)];
+};
+
+export type OverrideRulesResult = {
+  rootFolder: string | null;
+  profileId: number | null;
+  tags: number[] | null;
+};
+
+const hasTmdbKeyword = (media: TmdbMovieDetails | TmdbTvDetails): boolean => {
+  const keywordList =
+    'keywords' in media.keywords
+      ? media.keywords.keywords
+      : media.keywords.results;
+  return keywordList.some((keyword) => keyword.id === ANIME_KEYWORD_ID);
+};
+
+export const evaluateOverrideRules = async ({
+  mediaType,
+  is4k,
+  tmdbMedia,
+  requestUser,
+  tags,
+  serviceId,
+}: {
+  mediaType: MediaType.MOVIE | MediaType.TV;
+  is4k: boolean;
+  tmdbMedia: TmdbMovieDetails | TmdbTvDetails;
+  requestUser: User;
+  tags?: number[] | null;
+  serviceId?: number;
+}): Promise<OverrideRulesResult> => {
+  const settings = getSettings();
+  const resolvedServiceId =
+    serviceId ??
+    (mediaType === MediaType.MOVIE
+      ? settings.radarr.find(
+          (server) => server.isDefault && server.is4k === is4k
+        )?.id
+      : settings.sonarr.find(
+          (server) => server.isDefault && server.is4k === is4k
+        )?.id);
+  const serviceField =
+    mediaType === MediaType.MOVIE ? 'radarrServiceId' : 'sonarrServiceId';
+  const rules = resolvedServiceId
+    ? await getRepository(OverrideRule).find({
+        where: { [serviceField]: resolvedServiceId },
+      })
+    : [];
+  const mediaKeywords: TmdbKeyword[] =
+    'keywords' in tmdbMedia.keywords
+      ? tmdbMedia.keywords.keywords
+      : tmdbMedia.keywords.results;
+  const isAnimeTv = mediaType === MediaType.TV && hasTmdbKeyword(tmdbMedia);
+  const matchingRules = rules.filter((rule) => {
+    if (
+      isAnimeTv &&
+      !rule.keywords?.split(',').map(Number).includes(ANIME_KEYWORD_ID)
+    ) {
+      return false;
+    }
+    if (!overrideRuleMatchesUser(rule, requestUser.id)) {
+      return false;
+    }
+    if (
+      rule.genre &&
+      !rule.genre
+        .split(',')
+        .some((id) => tmdbMedia.genres.some((genre) => genre.id === Number(id)))
+    ) {
+      return false;
+    }
+    if (
+      rule.language &&
+      !rule.language.split('|').includes(tmdbMedia.original_language)
+    ) {
+      return false;
+    }
+    if (
+      rule.keywords &&
+      !rule.keywords
+        .split(',')
+        .some((id) =>
+          mediaKeywords.some((keyword) => keyword.id === Number(id))
+        )
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const rule = selectMostSpecificOverrideRule(matchingRules);
+  const profileId = rule ? getOverrideRuleProfileId(rule) : undefined;
+  const overrideTags = rule ? getOverrideRuleTagIds(rule) : [];
+
+  return {
+    rootFolder: rule?.rootFolder || null,
+    profileId: profileId ?? null,
+    tags:
+      overrideTags.length > 0
+        ? [...new Set([...(tags ?? []), ...overrideTags])]
+        : (tags ?? null),
+  };
 };
