@@ -64,6 +64,7 @@ export interface RootFolder {
 export interface QualityProfile {
   id: number;
   name: string;
+  language?: string;
 }
 
 export interface QueueStatusMessage {
@@ -187,7 +188,19 @@ export const sanitizeServarrProfiles = (value: unknown): QualityProfile[] =>
         return [];
       }
       const name = boundedText(profile.name);
-      return name ? [{ id: profile.id as number, name }] : [];
+      const profileLanguage = profile.language;
+      const language = isRecord(profileLanguage)
+        ? boundedText(profileLanguage.name)
+        : boundedText(profileLanguage);
+      return name
+        ? [
+            {
+              id: profile.id as number,
+              name,
+              ...(language ? { language } : {}),
+            },
+          ]
+        : [];
     });
 
 export const sanitizeServarrRootFolders = (value: unknown): RootFolder[] =>

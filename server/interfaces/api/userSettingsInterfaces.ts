@@ -5,6 +5,16 @@ import type {
 
 export type CardTextVisibility = 'always' | 'hover';
 
+export type PreferredLanguageMediaType = 'movie' | 'tv' | 'music' | 'book';
+
+export interface UserPreferredLanguages {
+  all?: string;
+  movie?: string | null;
+  tv?: string | null;
+  music?: string | null;
+  book?: string | null;
+}
+
 export interface UserSettingsCardTextResponse {
   movie?: CardTextVisibility;
   tv?: CardTextVisibility;
@@ -35,6 +45,7 @@ export interface UserSettingsGeneralResponse {
   discoverRegion?: string;
   streamingRegion?: string;
   originalLanguage?: string;
+  preferredLanguages?: UserPreferredLanguages;
   movieQuotaLimit?: number;
   movieQuotaDays?: number;
   tvQuotaLimit?: number;

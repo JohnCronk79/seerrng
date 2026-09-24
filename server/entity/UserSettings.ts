@@ -1,6 +1,7 @@
 import type {
   CardTextVisibility,
   NotificationAgentTypes,
+  UserPreferredLanguages,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Notification, hasNotificationType } from '@server/lib/notifications';
@@ -131,6 +132,9 @@ export class UserSettings {
   @Column({ nullable: true })
   public originalLanguage?: string;
 
+  @Column({ type: 'simple-json', nullable: true })
+  public preferredLanguages?: UserPreferredLanguages;
+
   @Column({ nullable: true })
   public pgpKey?: string;
 
@@ -243,6 +247,7 @@ export class UserSettings {
       discoverRegion: this.discoverRegion,
       streamingRegion: this.streamingRegion,
       originalLanguage: this.originalLanguage,
+      preferredLanguages: this.preferredLanguages,
       discordIds: this.discordIds,
       notificationTypes: this.notificationTypes,
       watchlistSyncMovies: this.watchlistSyncMovies,

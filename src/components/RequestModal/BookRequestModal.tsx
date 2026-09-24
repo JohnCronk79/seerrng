@@ -37,8 +37,13 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
+import type { UserPreferredLanguages } from '@server/interfaces/api/userSettingsInterfaces';
 import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { BookDetails } from '@server/models/Book';
+import {
+  getPreferredLanguage,
+  languageCodesMatch,
+} from '@server/utils/preferredLanguage';
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -109,6 +114,15 @@ const getEditionLanguageName = (language: string, locale: string): string => {
   }
 };
 
+const matchesBookLanguage = (
+  editionLanguages: string[] | undefined,
+  preferredLanguage: string
+): boolean =>
+  !!preferredLanguage &&
+  !!editionLanguages?.some((language) =>
+    languageCodesMatch(language, preferredLanguage)
+  );
+
 interface BookRequestModalProps {
   bookId: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
@@ -136,6 +150,9 @@ const BookRequestModal = ({
   const [hasUserSelectedFormat, setHasUserSelectedFormat] = useState(false);
   const [selectedIsbn, setSelectedIsbn] = useState<string>('');
   const [preferredLanguage, setPreferredLanguage] = useState('');
+  const [appliedPreferenceUserId, setAppliedPreferenceUserId] = useState<
+    number | null
+  >(null);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
@@ -148,10 +165,39 @@ const BookRequestModal = ({
       revalidateOnMount: true,
     }
   );
-  const visibleEditionCandidates = useMemo(
-    () => data?.isbnCandidates?.slice(0, 25) ?? [],
-    [data?.isbnCandidates]
+  const canChooseRequestUser = hasPermission(
+    [Permission.MANAGE_REQUESTS, Permission.MANAGE_USERS],
+    { type: 'or' }
   );
+  const preferenceUserId = canChooseRequestUser
+    ? (requestOverrides?.user?.id ?? user?.id)
+    : user?.id;
+  const { data: requestUserLanguages } = useSWR<UserPreferredLanguages>(
+    preferenceUserId
+      ? `/api/v1/user/${preferenceUserId}/settings/preferred-languages`
+      : null
+  );
+  const preferredBookLanguage = getPreferredLanguage(
+    requestUserLanguages,
+    'book'
+  );
+  const visibleEditionCandidates = useMemo(() => {
+    const candidates = data?.isbnCandidates ?? [];
+    if (!preferredBookLanguage) {
+      return candidates.slice(0, 25);
+    }
+
+    const preferredCandidate = candidates.find((candidate) =>
+      matchesBookLanguage(candidate.languages, preferredBookLanguage)
+    );
+    const visibleCandidates = candidates
+      .slice(0, 25)
+      .filter((candidate) => candidate.isbn !== preferredCandidate?.isbn);
+
+    return preferredCandidate
+      ? [preferredCandidate, ...visibleCandidates].slice(0, 25)
+      : candidates.slice(0, 25);
+  }, [data?.isbnCandidates, preferredBookLanguage]);
   const editionLanguages = useMemo(() => {
     const languages = visibleEditionCandidates.flatMap(
       (candidate) => candidate.languages ?? []
@@ -278,8 +324,49 @@ const BookRequestModal = ({
     setHasUserSelectedFormat(false);
     setSelectedIsbn('');
     setPreferredLanguage('');
+    setAppliedPreferenceUserId(null);
     setRequestOverrides(null);
   }, [bookId, editRequest?.bookFormat, editRequest?.id, initialBookFormat]);
+
+  useEffect(() => {
+    if (
+      editRequest ||
+      !preferenceUserId ||
+      appliedPreferenceUserId === preferenceUserId ||
+      !requestUserLanguages ||
+      !data?.isbnCandidates
+    ) {
+      return;
+    }
+
+    setAppliedPreferenceUserId(preferenceUserId);
+
+    if (!preferredBookLanguage) {
+      return;
+    }
+
+    const preferredEdition = visibleEditionCandidates.find((candidate) =>
+      matchesBookLanguage(candidate.languages, preferredBookLanguage)
+    );
+    if (!preferredEdition) {
+      return;
+    }
+
+    setSelectedIsbn(preferredEdition.isbn);
+    setPreferredLanguage(
+      preferredEdition.languages?.find((language) =>
+        matchesBookLanguage([language], preferredBookLanguage)
+      ) ?? ''
+    );
+  }, [
+    data?.isbnCandidates,
+    editRequest,
+    appliedPreferenceUserId,
+    preferredBookLanguage,
+    preferenceUserId,
+    requestUserLanguages,
+    visibleEditionCandidates,
+  ]);
 
   const hasEbookServer = (bookServices ?? []).some(
     (service) => (service.serviceType ?? 'ebook') === 'ebook'
@@ -436,6 +523,7 @@ const BookRequestModal = ({
     : requestLabel;
 
   const handlePreferredLanguageChange = (language: string) => {
+    setAppliedPreferenceUserId(preferenceUserId ?? null);
     setPreferredLanguage(language);
     const matchingEdition = language
       ? visibleEditionCandidates.find((candidate) =>
@@ -904,6 +992,7 @@ const BookRequestModal = ({
                 name="isbn"
                 value={selectedIsbn}
                 onChange={(event) => {
+                  setAppliedPreferenceUserId(preferenceUserId ?? null);
                   setSelectedIsbn(event.target.value);
                   setPreferredLanguage('');
                 }}
