@@ -63,7 +63,7 @@ matching format in each entry.
 | Search and edition selection | Uses format-scoped lookups, retains the provider's work and edition IDs, and falls back to native lookup results when a format facade has no addressable result. |
 | Library scan | Reads paged, format-scoped results including unmonitored catalogue rows. It follows Chaptarr's reported total even when a page is short, and refuses to return a scan known to be incomplete. |
 | Add and search | Sends the selected format and monitoring intent. When Chaptarr queues author metadata preparation, SeerrNG stores the pending import and resumes the requested book add and search when it is ready. |
-| Request cancellation | Cancels the pending author import only when no other active request references it. For completed adds, normal book and queue cleanup applies. |
+| Request cancellation | Cancels the pending author import only when no other active request on the same Chaptarr instance references it. The check includes both SeerrNG ebook and audiobook service entries. For completed adds, normal book and queue cleanup applies. |
 | Settings diagnostic | A normal diagnostic checks the connection, profiles, folders, and lookup. The optional `testAdd` API flag performs a real add and removes the local book afterward. If Chaptarr returns a pending import, the diagnostic displays its ID and leaves it queued because Chaptarr may share that import with an active request. Check the import in Chaptarr and cancel it only if no request needs it. |
 
 The `testAdd` diagnostic is an API option; the Settings modal's **Run
@@ -75,8 +75,9 @@ metadata, SeerrNG keeps the request waiting and resumes the selected format's
 add and search after Chaptarr reports that import complete. SeerrNG retains the
 provider work and edition IDs for that request, so it can restore tracking if
 Chaptarr assigns the local book a different row ID. Cancelling a waiting
-request also cancels its pending author import when no other request depends on
-that import.
+request checks for active references across both format entries when they point
+to the same Chaptarr instance, and cancels the pending author import only when
+no other request depends on it.
 
 The last end-to-end Docker validation used Chaptarr `0.9.911.0`. As of
 2026-09-24, the client contract has also been source-reviewed against

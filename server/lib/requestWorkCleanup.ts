@@ -57,7 +57,9 @@ class RequestWorkCleanupManager {
     operation: BookRequestSearch,
     mediaId: number
   ): Promise<void> {
-    const server = getExternalRuntimeConfig().readarr.find(
+    const runtimeConfig = getExternalRuntimeConfig();
+    const readarrServices = runtimeConfig.readarr;
+    const server = readarrServices.find(
       (candidate) => candidate.id === operation.serviceId
     );
     if (!server?.syncEnabled) {
@@ -86,17 +88,38 @@ class RequestWorkCleanupManager {
       });
 
     if (operation.pendingId != null) {
+      const instanceUrl = new URL(ReadarrAPI.buildUrl(server, '/api/v1')).href;
       const pendingReferences = await getRepository(BookRequestSearch).find({
-        where: {
-          pendingId: operation.pendingId,
-          serviceId: operation.serviceId,
-        },
-        select: { id: true, requestId: true, state: true },
+        where: { pendingId: operation.pendingId },
+        select: { id: true, requestId: true, serviceId: true, state: true },
       });
-      const activeReferences = pendingReferences.filter(
-        (reference) =>
-          !['available', 'unavailable', 'failed'].includes(reference.state)
-      );
+      const activeReferences = pendingReferences.filter((reference) => {
+        if (['available', 'unavailable', 'failed'].includes(reference.state)) {
+          return false;
+        }
+
+        if (reference.serviceId === operation.serviceId) {
+          return true;
+        }
+
+        const referenceService = readarrServices.find(
+          (candidate) => candidate.id === reference.serviceId
+        );
+        if (!referenceService) {
+          return true;
+        }
+
+        try {
+          return (
+            new URL(ReadarrAPI.buildUrl(referenceService, '/api/v1')).href ===
+            instanceUrl
+          );
+        } catch {
+          // If a stored reference cannot be mapped to an instance, preserve
+          // the pending import rather than risking cancellation of shared work.
+          return true;
+        }
+      });
       const referencedByAnotherRequest = activeReferences.some(
         (reference) => reference.requestId !== operation.requestId
       );
