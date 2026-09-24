@@ -75,9 +75,7 @@ jobs:
           node-version-file: 'package.json'
 
       - name: Pnpm Setup
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10.24.0
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Get pnpm store directory
         shell: bash
@@ -118,9 +116,7 @@ jobs:
           persist-credentials: false
 
       - name: Pnpm Setup
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10.24.0
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Get pnpm store directory
         shell: sh
@@ -166,9 +162,7 @@ jobs:
           persist-credentials: false
 
       - name: Pnpm Setup
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10.24.0
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Get pnpm store directory
         shell: sh
