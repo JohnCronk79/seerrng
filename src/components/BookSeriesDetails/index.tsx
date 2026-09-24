@@ -256,7 +256,7 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
                       {book.title}
                     </Link>
                     {book.author && (
-                      <div className="mt-0.5 truncate text-sm text-gray-400">
+                      <div className="refreshed-detail-text-muted mt-0.5 truncate text-sm">
                         {book.author}
                       </div>
                     )}
