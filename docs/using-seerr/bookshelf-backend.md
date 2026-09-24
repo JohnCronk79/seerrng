@@ -1083,4 +1083,6 @@ passes it to BookshelfNG. The matching Bookshelf edition is selected for
 acquisition; if that edition is absent from the configured metadata source,
 the request reports the mismatch instead of silently switching editions.
 Edition choices show their language when the catalog provides it. The
-automatic edition option keeps the existing best-match behavior.
+language filter selects the first matching ISBN candidate, and the edition
+selector remains available for a manual override. The automatic edition
+option keeps the existing best-match behavior.

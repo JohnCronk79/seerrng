@@ -135,6 +135,7 @@ const BookRequestModal = ({
   );
   const [hasUserSelectedFormat, setHasUserSelectedFormat] = useState(false);
   const [selectedIsbn, setSelectedIsbn] = useState<string>('');
+  const [preferredLanguage, setPreferredLanguage] = useState('');
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
@@ -147,6 +148,22 @@ const BookRequestModal = ({
       revalidateOnMount: true,
     }
   );
+  const visibleEditionCandidates = useMemo(
+    () => data?.isbnCandidates?.slice(0, 25) ?? [],
+    [data?.isbnCandidates]
+  );
+  const editionLanguages = useMemo(() => {
+    const languages = visibleEditionCandidates.flatMap(
+      (candidate) => candidate.languages ?? []
+    );
+
+    return [...new Set(languages)].sort((left, right) =>
+      getEditionLanguageName(left, intl.locale).localeCompare(
+        getEditionLanguageName(right, intl.locale),
+        intl.locale
+      )
+    );
+  }, [intl.locale, visibleEditionCandidates]);
   const { data: bookServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/readarr'
   );
@@ -260,6 +277,7 @@ const BookRequestModal = ({
     setBookFormat(editRequest?.bookFormat ?? initialBookFormat);
     setHasUserSelectedFormat(false);
     setSelectedIsbn('');
+    setPreferredLanguage('');
     setRequestOverrides(null);
   }, [bookId, editRequest?.bookFormat, editRequest?.id, initialBookFormat]);
 
@@ -416,6 +434,16 @@ const BookRequestModal = ({
   const requestButtonLabel = isUpdating
     ? intl.formatMessage(globalMessages.requesting)
     : requestLabel;
+
+  const handlePreferredLanguageChange = (language: string) => {
+    setPreferredLanguage(language);
+    const matchingEdition = language
+      ? visibleEditionCandidates.find((candidate) =>
+          candidate.languages?.includes(language)
+        )
+      : undefined;
+    setSelectedIsbn(matchingEdition?.isbn ?? '');
+  };
 
   const sendRequest = useCallback(async () => {
     if (selectedDestinationCovered) {
@@ -830,7 +858,39 @@ const BookRequestModal = ({
           </div>
         )}
         {!!data?.isbnCandidates?.length && (
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {!!editionLanguages.length && (
+              <label className="inline-flex h-8 max-w-full overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+                <span className="inline-flex flex-shrink-0 items-center justify-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold whitespace-nowrap text-indigo-100">
+                  {intl.formatMessage({
+                    id: 'components.Discover.FilterPanel.language',
+                    defaultMessage: 'Language',
+                  })}
+                </span>
+                <select
+                  id="edition-language"
+                  name="edition-language"
+                  value={preferredLanguage}
+                  onChange={(event) =>
+                    handlePreferredLanguageChange(event.target.value)
+                  }
+                  aria-label={intl.formatMessage({
+                    id: 'components.Discover.FilterPanel.language',
+                    defaultMessage: 'Language',
+                  })}
+                  className="max-w-[16rem] min-w-0 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
+                >
+                  <option value="">
+                    {intl.formatMessage(globalMessages.all)}
+                  </option>
+                  {editionLanguages.map((language) => (
+                    <option key={language} value={language}>
+                      {getEditionLanguageName(language, intl.locale)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="inline-flex h-8 max-w-full overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
               <span
                 className={`inline-flex flex-shrink-0 items-center justify-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold whitespace-nowrap text-indigo-100 transition-colors ${
@@ -843,14 +903,17 @@ const BookRequestModal = ({
                 id="isbn"
                 name="isbn"
                 value={selectedIsbn}
-                onChange={(e) => setSelectedIsbn(e.target.value)}
+                onChange={(event) => {
+                  setSelectedIsbn(event.target.value);
+                  setPreferredLanguage('');
+                }}
                 aria-label={intl.formatMessage(messages.edition)}
                 className="max-w-[32rem] min-w-0 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
               >
                 <option value="">
                   {intl.formatMessage(messages.automaticEdition)}
                 </option>
-                {data.isbnCandidates.slice(0, 25).map((candidate) => (
+                {visibleEditionCandidates.map((candidate) => (
                   <option
                     key={`${candidate.editionId ?? candidate.isbn}-${candidate.isbn}`}
                     value={candidate.isbn}
