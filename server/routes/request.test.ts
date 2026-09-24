@@ -42,8 +42,8 @@ import {
 import requestWorkCleanupManager, {
   RequestWorkCleanupError,
 } from '@server/lib/requestWorkCleanup';
-import { getSettings } from '@server/lib/settings';
 import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
+import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';

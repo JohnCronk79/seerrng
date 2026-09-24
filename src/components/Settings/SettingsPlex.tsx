@@ -285,7 +285,6 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
       setIsSyncing(false);
       revalidate();
     }
-
   };
 
   const refreshPresetServers = async () => {

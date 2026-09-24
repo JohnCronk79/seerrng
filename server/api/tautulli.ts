@@ -3,13 +3,13 @@ import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import type { TautulliSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { proxyRequestInterceptor } from '@server/utils/customProxyAgent';
-import { userAgentRequestInterceptor } from '@server/utils/userAgent';
 import {
   createSafeHttpRequestOptions,
   createSafeHttpUrl,
   stringifySafeHttpUrl,
 } from '@server/utils/security';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
+import { userAgentRequestInterceptor } from '@server/utils/userAgent';
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
 import axios from 'axios';
 import { uniqWith } from 'lodash';

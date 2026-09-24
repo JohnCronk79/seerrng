@@ -302,22 +302,21 @@ export interface TmdbTvDetails {
   };
 }
 
-export interface TmdbTvScanDetails
-  extends Pick<
-    TmdbTvDetails,
-    | 'id'
-    | 'name'
-    | 'seasons'
-    | 'external_ids'
-    | 'keywords'
-    | 'original_name'
-    | 'first_air_date'
-    | 'genres'
-    | 'episode_run_time'
-    | 'created_by'
-    | 'production_companies'
-    | 'networks'
-  > {}
+export type TmdbTvScanDetails = Pick<
+  TmdbTvDetails,
+  | 'id'
+  | 'name'
+  | 'seasons'
+  | 'external_ids'
+  | 'keywords'
+  | 'original_name'
+  | 'first_air_date'
+  | 'genres'
+  | 'episode_run_time'
+  | 'created_by'
+  | 'production_companies'
+  | 'networks'
+>;
 
 export interface TmdbVideoResult {
   results: TmdbVideo[];

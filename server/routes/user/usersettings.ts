@@ -11,13 +11,13 @@ import { ALL_NOTIFICATIONS, UserSettings } from '@server/entity/UserSettings';
 import type {
   CardTextVisibility,
   DetailDisclosureMediaType,
+  UserPreferredLanguages,
   UserSettingsCardTextResponse,
   UserSettingsDetailDisclosureResponse,
   UserSettingsGeneralResponse,
   UserSettingsLinkedAccount,
   UserSettingsLinkedAccountResponse,
   UserSettingsNotificationsResponse,
-  UserPreferredLanguages,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import {
   getAuthAccountAdmissionResource,
@@ -736,44 +736,42 @@ const parseJellyfinLinkBody = (
 userSettingsRoutes.get<
   { id: string },
   UserPreferredLanguages | { status: number; message: string }
->(
-  '/preferred-languages',
-  isAuthenticated(),
-  async (req, res, next) => {
-    try {
-      const userId = parseUserSettingsRouteId(req.params.id);
-      if (!userId) {
-        return res.status(404).json({ status: 404, message: 'User not found.' });
-      }
-
-      const actor = req.user!;
-      if (
-        actor.id !== userId &&
-        !actor.hasPermission(
-          [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
-          { type: 'or' }
-        )
-      ) {
-        return res.status(403).json({ status: 403, message: 'Access denied.' });
-      }
-
-      const targetUser = await getRepository(User).findOne({
-        where: { id: userId },
-      });
-      if (!targetUser) {
-        return res.status(404).json({ status: 404, message: 'User not found.' });
-      }
-
-      return res.status(200).json(targetUser.settings?.preferredLanguages ?? {});
-    } catch (error) {
-      next({
-        status: 500,
-        message:
-          error instanceof Error ? error.message : 'Unable to read language preferences.',
-      });
+>('/preferred-languages', isAuthenticated(), async (req, res, next) => {
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
     }
+
+    const actor = req.user!;
+    if (
+      actor.id !== userId &&
+      !actor.hasPermission(
+        [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+        { type: 'or' }
+      )
+    ) {
+      return res.status(403).json({ status: 403, message: 'Access denied.' });
+    }
+
+    const targetUser = await getRepository(User).findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    return res.status(200).json(targetUser.settings?.preferredLanguages ?? {});
+  } catch (error) {
+    next({
+      status: 500,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to read language preferences.',
+    });
   }
-);
+});
 
 userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
   '/main',

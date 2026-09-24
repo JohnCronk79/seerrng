@@ -1512,11 +1512,14 @@ export class MediaRequest {
             );
             if (preferredProfile) profileId = preferredProfile.id;
           } catch (error) {
-            logger.debug('Could not match the preferred movie language profile.', {
-              label: 'Media Request',
-              errorMessage:
-                error instanceof Error ? error.message : String(error),
-            });
+            logger.debug(
+              'Could not match the preferred movie language profile.',
+              {
+                label: 'Media Request',
+                errorMessage:
+                  error instanceof Error ? error.message : String(error),
+              }
+            );
           }
         }
       } else if (requestBody.mediaType === MediaType.TV && selectedSonarr) {
@@ -1549,11 +1552,14 @@ export class MediaRequest {
             }
           }
         } catch (error) {
-          logger.debug('Could not match the preferred series language profile.', {
-            label: 'Media Request',
-            errorMessage:
-              error instanceof Error ? error.message : String(error),
-          });
+          logger.debug(
+            'Could not match the preferred series language profile.',
+            {
+              label: 'Media Request',
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+            }
+          );
         }
       }
     }

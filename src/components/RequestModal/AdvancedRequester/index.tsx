@@ -305,10 +305,7 @@ const AdvancedRequester = ({
       ? `/api/v1/user/${preferenceUserId}/settings/preferred-languages`
       : null
   );
-  const preferredLanguage = getPreferredLanguage(
-    requestUserLanguages,
-    type
-  );
+  const preferredLanguage = getPreferredLanguage(requestUserLanguages, type);
   const bookServiceType = bookFormat === 'audiobook' ? 'audiobook' : 'ebook';
   const serviceOverridesEnabled = type !== 'book' || bookFormat !== 'both';
   const serviceServers = useMemo(
@@ -462,11 +459,7 @@ const AdvancedRequester = ({
   useEffect(() => {
     if (!serverData || !preferredLanguage) return;
 
-    if (
-      defaultOverrides?.profile == null &&
-      type !== 'book' &&
-      type !== 'tv'
-    ) {
+    if (defaultOverrides?.profile == null && type !== 'book' && type !== 'tv') {
       const preferredProfile = serverData.profiles.find((profile) =>
         languageNameMatchesCode(profile.language, preferredLanguage)
       );

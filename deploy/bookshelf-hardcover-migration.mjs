@@ -229,7 +229,9 @@ const getApifyGoodreadsInputTemplate = () => {
     );
   }
   if (!value.includes('{{query}}')) {
-    throw new Error('HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must include {{query}}.');
+    throw new Error(
+      'HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must include {{query}}.'
+    );
   }
   return value;
 };
@@ -1299,7 +1301,9 @@ const catalogSearchTerms = (source) => {
 };
 
 const catalogCacheTtlMs = (provider) =>
-  provider === 'apify-goodreads' ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+  provider === 'apify-goodreads'
+    ? 7 * 24 * 60 * 60 * 1000
+    : 30 * 24 * 60 * 60 * 1000;
 
 const loadCatalogCache = async (migrationDir) =>
   readJsonIfExists(path.join(migrationDir, 'catalog-cache.json'), {});
@@ -1342,15 +1346,16 @@ const sanitizeCatalogImageUrl = (value, provider) => {
       return undefined;
     }
     const hostname = url.hostname.toLowerCase();
-    const allowedHosts = {
-      googlebooks: ['books.google.com', 'books.googleusercontent.com'],
-      loc: ['loc.gov', 'locimages2.loc.gov'],
-      'apify-goodreads': [
-        'goodreads.com',
-        'gr-assets.com',
-        'images-na.ssl-images-amazon.com',
-      ],
-    }[provider] ?? [];
+    const allowedHosts =
+      {
+        googlebooks: ['books.google.com', 'books.googleusercontent.com'],
+        loc: ['loc.gov', 'locimages2.loc.gov'],
+        'apify-goodreads': [
+          'goodreads.com',
+          'gr-assets.com',
+          'images-na.ssl-images-amazon.com',
+        ],
+      }[provider] ?? [];
     if (
       !allowedHosts.some(
         (allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`)
@@ -1385,17 +1390,22 @@ const normalizeCatalogProfile = ({
   return {
     title: normalizedTitle,
     author: normalizedAuthor,
-    identifiers: [...new Set([...(identifiers ?? [])]
-      .map((value) => normalizeText(String(value ?? '')))
-      .filter(Boolean))],
+    identifiers: [
+      ...new Set(
+        [...(identifiers ?? [])]
+          .map((value) => normalizeText(String(value ?? '')))
+          .filter(Boolean)
+      ),
+    ],
     recoveredFrom: provider,
     externalId: normalizeText(externalId),
     metadata: {
       description: normalizeText(description).slice(0, 20_000),
       publisher: normalizeText(publisher).slice(0, 1000),
-      pageCount: Number.isSafeInteger(Number(pageCount)) && Number(pageCount) > 0
-        ? Number(pageCount)
-        : undefined,
+      pageCount:
+        Number.isSafeInteger(Number(pageCount)) && Number(pageCount) > 0
+          ? Number(pageCount)
+          : undefined,
       language: normalizeText(language).slice(0, 64),
       releaseDate: normalizeText(releaseDate).slice(0, 64),
       imageUrl: sanitizeCatalogImageUrl(imageUrl, provider),
@@ -1411,7 +1421,9 @@ const buildGoogleBooksRecoveredProfiles = async ({
   if (!getGoogleBooksRecoveryEnabled()) return [];
   const apiKey = normalizeText(process.env.GOOGLE_BOOKS_API_KEY);
   if (!apiKey) {
-    console.error('[catalog] Google Books recovery skipped: GOOGLE_BOOKS_API_KEY is required for public API requests.');
+    console.error(
+      '[catalog] Google Books recovery skipped: GOOGLE_BOOKS_API_KEY is required for public API requests.'
+    );
     return [];
   }
   const profiles = [];
@@ -1501,9 +1513,10 @@ const buildLibraryOfCongressRecoveredProfiles = async ({
             const creators = Array.isArray(record?.contributors)
               ? record.contributors
               : [];
-            const images = typeof record?.image_url === 'string'
-              ? record.image_url
-              : undefined;
+            const images =
+              typeof record?.image_url === 'string'
+                ? record.image_url
+                : undefined;
             return normalizeCatalogProfile({
               provider: 'loc',
               record,
@@ -1543,11 +1556,15 @@ const buildApifyGoodreadsRecoveredProfiles = async ({
   const token = normalizeText(process.env.HARDCOVER_APIFY_TOKEN);
   if (!actor || !token) return [];
   if (!/^(?:[A-Za-z0-9_-]+~[A-Za-z0-9_-]+|[A-Za-z0-9_-]{10,64})$/.test(actor)) {
-    throw new Error('HARDCOVER_APIFY_GOODREADS_ACTOR is not a valid Apify actor identifier.');
+    throw new Error(
+      'HARDCOVER_APIFY_GOODREADS_ACTOR is not a valid Apify actor identifier.'
+    );
   }
   const apiBase = new URL(getApifyApiBaseUrl());
   if (apiBase.protocol !== 'https:' || apiBase.hostname !== 'api.apify.com') {
-    throw new Error('HARDCOVER_APIFY_API_BASE_URL must use https://api.apify.com.');
+    throw new Error(
+      'HARDCOVER_APIFY_API_BASE_URL must use https://api.apify.com.'
+    );
   }
   const profiles = [];
   const seen = new Set();
@@ -1556,8 +1573,12 @@ const buildApifyGoodreadsRecoveredProfiles = async ({
     item.source.title && item.source.author
       ? `${item.source.title} ${item.source.author}`
       : item.source.title,
-    (item.source.identifiers ?? []).find((value) => isIsbn(stripIsbnHyphens(value))),
-  ].filter(Boolean).map(normalizeText);
+    (item.source.identifiers ?? []).find((value) =>
+      isIsbn(stripIsbnHyphens(value))
+    ),
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
   for (const term of [...new Set(apifyTerms)].slice(0, 2)) {
     const termProfiles = await getCachedCatalogProfiles({
       migrationDir,
@@ -1573,7 +1594,9 @@ const buildApifyGoodreadsRecoveredProfiles = async ({
         try {
           input = JSON.parse(inputText);
         } catch {
-          throw new Error('HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must be valid JSON with a {{query}} placeholder.');
+          throw new Error(
+            'HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE must be valid JSON with a {{query}} placeholder.'
+          );
         }
         const url = new URL(
           `/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items`,
@@ -1593,7 +1616,10 @@ const buildApifyGoodreadsRecoveredProfiles = async ({
           .slice(0, 25)
           .map((record) => {
             const author =
-              record?.author ?? record?.authors ?? record?.authorName ?? record?.name;
+              record?.author ??
+              record?.authors ??
+              record?.authorName ??
+              record?.name;
             const identifiers = [
               record?.isbn13,
               record?.isbn_13,
@@ -1613,11 +1639,19 @@ const buildApifyGoodreadsRecoveredProfiles = async ({
               pageCount: record?.pages ?? record?.pageCount,
               language: record?.language,
               releaseDate:
-                record?.publishedDate ?? record?.publicationDate ?? record?.published_date,
+                record?.publishedDate ??
+                record?.publicationDate ??
+                record?.published_date,
               imageUrl:
-                record?.coverImage ?? record?.cover_image ?? record?.imageUrl ?? record?.image,
+                record?.coverImage ??
+                record?.cover_image ??
+                record?.imageUrl ??
+                record?.image,
               externalId:
-                record?.goodreadsId ?? record?.goodreads_id ?? record?.bookId ?? record?.id,
+                record?.goodreadsId ??
+                record?.goodreads_id ??
+                record?.bookId ??
+                record?.id,
             });
           })
           .filter(Boolean);
@@ -1732,7 +1766,11 @@ const getExternalCatalogProfiles = async ({
     buildGoogleBooksRecoveredProfiles({ item, migrationDir, catalogCache })
   );
   const loc = await recover('Library of Congress', () =>
-    buildLibraryOfCongressRecoveredProfiles({ item, migrationDir, catalogCache })
+    buildLibraryOfCongressRecoveredProfiles({
+      item,
+      migrationDir,
+      catalogCache,
+    })
   );
   const apifyGoodreads = await recover('Apify Goodreads', () =>
     buildApifyGoodreadsRecoveredProfiles({ item, migrationDir, catalogCache })
@@ -1743,13 +1781,19 @@ const getExternalCatalogProfiles = async ({
 const catalogProfilesForLocalFallback = (source, profiles) => {
   const sourceIdentifiers = new Set(
     (source.identifiers ?? [])
-      .map((value) => normalizeText(String(value)).replace(/[^0-9X]/gi, '').toUpperCase())
+      .map((value) =>
+        normalizeText(String(value))
+          .replace(/[^0-9X]/gi, '')
+          .toUpperCase()
+      )
       .filter(Boolean)
   );
   const exactIdentifierMatch = profiles.find((profile) =>
     profile.identifiers.some((value) =>
       sourceIdentifiers.has(
-        normalizeText(String(value)).replace(/[^0-9X]/gi, '').toUpperCase()
+        normalizeText(String(value))
+          .replace(/[^0-9X]/gi, '')
+          .toUpperCase()
       )
     )
   );
@@ -1778,7 +1822,9 @@ const catalogProfilesForLocalFallback = (source, profiles) => {
   }
   return {
     ...source,
-    identifiers: [...new Set([...(source.identifiers ?? []), ...profile.identifiers])],
+    identifiers: [
+      ...new Set([...(source.identifiers ?? []), ...profile.identifiers]),
+    ],
     localMetadata,
     metadataRecoveredFrom: profile.recoveredFrom,
   };
@@ -2699,9 +2745,10 @@ const directInsertLocalBook = async ({ item, job, targetIds, tags }) => {
   });
   const ratings = JSON.stringify({ votes: 0, value: 0, popularity: 0 });
   const metadata = source.localMetadata ?? {};
-  const releaseDate = metadata.releaseDate && /^\d{4}/.test(metadata.releaseDate)
-    ? metadata.releaseDate
-    : null;
+  const releaseDate =
+    metadata.releaseDate && /^\d{4}/.test(metadata.releaseDate)
+      ? metadata.releaseDate
+      : null;
   const editionImages = metadata.imageUrl
     ? JSON.stringify([{ coverType: 'cover', url: metadata.imageUrl }])
     : '[]';
@@ -3425,37 +3472,41 @@ const applyRebuildPayload = async ({ migrationDir, jobs }) => {
     authors.push(created);
   };
 
-const buildRecoveredAddBook = async ({
-  item,
-  job,
-  migrationDir,
-  catalogCache,
-  targetIds,
-  tags,
-  rejectedIds,
-}) => {
+  const buildRecoveredAddBook = async ({
+    item,
+    job,
+    migrationDir,
+    catalogCache,
+    targetIds,
+    tags,
+    rejectedIds,
+  }) => {
     const softcoverProfiles = await buildSoftcoverRecoveredProfiles({
       item,
       job,
     });
-  const openLibraryProfiles = softcoverProfiles.length
-    ? []
-    : await buildOpenLibraryRecoveredProfiles({
-        item,
-      });
-  const externalProfiles = await getExternalCatalogProfiles({
-    item,
-    migrationDir,
-    catalogCache,
-  });
-  const candidates = await lookupBookCandidates({
+    const openLibraryProfiles = softcoverProfiles.length
+      ? []
+      : await buildOpenLibraryRecoveredProfiles({
+          item,
+        });
+    const externalProfiles = await getExternalCatalogProfiles({
+      item,
+      migrationDir,
+      catalogCache,
+    });
+    const candidates = await lookupBookCandidates({
       migrationDir,
       lookupCache,
       serviceType: item.serviceType,
       baseUrl: job.baseUrl,
       apiKey: job.apiKey,
       source: item.source,
-    profiles: [...softcoverProfiles, ...openLibraryProfiles, ...externalProfiles],
+      profiles: [
+        ...softcoverProfiles,
+        ...openLibraryProfiles,
+        ...externalProfiles,
+      ],
       includeSource: false,
     });
     const usableCandidates = candidates.filter(({ candidate }) => {

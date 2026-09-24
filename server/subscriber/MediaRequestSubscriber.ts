@@ -64,13 +64,13 @@ import {
 } from '@server/lib/serviceAdmission';
 import { type ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
-import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
 import {
   hydrateBookshelfLookupResult,
   isAddableBookshelfLookupResult,
 } from '@server/utils/bookshelfLookup';
 import { mapWithConcurrency } from '@server/utils/concurrency';
+import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import { isEqual } from 'lodash';
 import type {
   EntityManager,

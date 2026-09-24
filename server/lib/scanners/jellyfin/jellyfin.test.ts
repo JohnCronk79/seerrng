@@ -18,12 +18,12 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
+import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 import {
   getSettings,
   MetadataProviderType,
   type Library,
 } from '@server/lib/settings';
-import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 import { setupTestDb } from '@server/test/db';
 import { runWithMockTimers } from '@server/test/runWithMockTimers';
 import assert from 'node:assert/strict';

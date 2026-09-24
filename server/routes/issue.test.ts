@@ -13,8 +13,8 @@ import IssueComment from '@server/entity/IssueComment';
 import Media from '@server/entity/Media';
 import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
-import { Permission } from '@server/lib/permissions';
 import notificationManager from '@server/lib/notifications';
+import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
@@ -65,7 +65,11 @@ before(() => {
 });
 
 beforeEach(() => {
-  mock.method(notificationManager, 'sendNotificationIntent', async () => undefined);
+  mock.method(
+    notificationManager,
+    'sendNotificationIntent',
+    async () => undefined
+  );
 });
 
 afterEach(() => {
