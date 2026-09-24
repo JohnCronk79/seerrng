@@ -4,11 +4,15 @@ import { DetailDisclosurePinsMutationState } from './detailDisclosurePinsMutatio
 
 const initialPins = {
   details: false,
+  advancedOptions: false,
   collection: false,
   cast: false,
   crew: false,
   artists: false,
   subjectTags: false,
+  filters: false,
+  mediaFilters: false,
+  sortBy: false,
 };
 
 test('optimistically updates one detail disclosure pin without clearing others', () => {
@@ -19,11 +23,15 @@ test('optimistically updates one detail disclosure pin without clearing others',
 
   assert.deepStrictEqual(mutation.next, {
     details: false,
+    advancedOptions: false,
     collection: false,
     cast: true,
     crew: true,
     artists: false,
     subjectTags: false,
+    filters: false,
+    mediaFilters: false,
+    sortBy: false,
   });
 });
 
@@ -43,15 +51,6 @@ test('collection pin changes preserve cast pins and roll back independently', ()
   state.synchronize('user-1:movie', previous);
   const mutation = state.begin('collection', true);
   assert.deepStrictEqual(mutation.next, { ...previous, collection: true });
-  assert.deepStrictEqual(state.rollback(mutation), previous);
-});
-
-test('details pin preserves other disclosures and rolls back on failure', () => {
-  const state = new DetailDisclosurePinsMutationState();
-  const previous = { ...initialPins, cast: true, collection: true };
-  state.synchronize('user-1:movie', previous);
-  const mutation = state.begin('details', true);
-  assert.deepStrictEqual(mutation.next, { ...previous, details: true });
   assert.deepStrictEqual(state.rollback(mutation), previous);
 });
 

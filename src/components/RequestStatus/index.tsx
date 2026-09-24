@@ -18,7 +18,8 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
@@ -1834,7 +1835,6 @@ const RequestStatus = () => {
   };
 
   const updateMediaFilter = (nextMediaFilter: MediaFilter) => {
-    mediaPin.remember(nextMediaFilter);
     const options = getSortOptions(nextMediaFilter);
     const keepsSort = options.some((option) => option.value === sort);
     const nextSort = keepsSort ? sort : 'added';
@@ -2097,7 +2097,6 @@ const RequestStatus = () => {
     setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
-    mediaPin.remember('all');
     setSort('added');
     setSortDirection('desc');
     setTimeFrame('all');
@@ -2261,30 +2260,40 @@ const RequestStatus = () => {
         </div>
       </section>
 
-      <section
-        className="app-filter-section-gap"
-        aria-label={intl.formatMessage(messages.mediaFilters)}
+      <PinnedFilterSection
+        mediaType={
+          mediaFilter === 'tv'
+            ? 'tv'
+            : mediaFilter === 'music'
+              ? 'music'
+              : mediaFilter === 'book' || mediaFilter === 'audiobook'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
       >
-        <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
-          <MediaFilterPin pin={mediaPin} />
           {mediaFilters.map((option) => (
-            <button
+            <MediaFilterOption
               key={option.value}
-              type="button"
-              aria-pressed={mediaFilter === option.value}
-              onClick={() => updateMediaFilter(option.value)}
-              className={getFilterToggleButtonClass(
-                mediaFilter === option.value
-              )}
+              pin={mediaPin}
+              value={option.value}
+              label={intl.formatMessage(messages[option.label])}
+              selected={mediaFilter === option.value}
             >
-              {intl.formatMessage(messages[option.label])}
-            </button>
+              <button
+                type="button"
+                aria-pressed={mediaFilter === option.value}
+                onClick={() => updateMediaFilter(option.value)}
+                className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+              >
+                {intl.formatMessage(messages[option.label])}
+              </button>
+            </MediaFilterOption>
           ))}
         </div>
-      </section>
+      </PinnedFilterSection>
 
       <section
         className="app-filter-section-gap"

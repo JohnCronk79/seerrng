@@ -1,5 +1,5 @@
-import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import defineMessages from '@app/utils/defineMessages';
 import {
@@ -75,36 +75,42 @@ const DiscoverMediaTabs = ({ selected, basePath }: DiscoverMediaTabsProps) => {
   });
 
   return (
-    <section aria-label={intl.formatMessage(messages.mediaFilters)}>
-      <div className="app-filter-section-heading">
-        {intl.formatMessage(messages.mediaFilters)}
-      </div>
+    <PinnedFilterSection
+      mediaType={selected === 'audiobook' ? 'book' : (selected ?? 'movie')}
+      section="mediaFilters"
+      label={intl.formatMessage(messages.mediaFilters)}
+    >
       <nav className="flex flex-wrap gap-2" data-testid="discover-media-tabs">
-        {basePath && <MediaFilterPin pin={pin} />}
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isSelected = selected === tab.type;
 
           return (
-            <Link
+            <MediaFilterOption
               key={tab.type}
-              onClick={() => pin.remember(tab.type)}
-              href={
-                basePath
-                  ? { pathname: basePath, query: { mediaType: tab.type } }
-                  : tab.href
-              }
-              aria-current={isSelected ? 'page' : undefined}
-              className={getFilterToggleButtonClass(isSelected)}
-              data-testid={`discover-media-tab-${tab.type}`}
+              pin={pin}
+              value={tab.type}
+              label={intl.formatMessage(tab.label)}
+              selected={isSelected}
             >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              <span>{intl.formatMessage(tab.label)}</span>
-            </Link>
+              <Link
+                href={
+                  basePath
+                    ? { pathname: basePath, query: { mediaType: tab.type } }
+                    : tab.href
+                }
+                aria-current={isSelected ? 'page' : undefined}
+                className="flex h-full items-center gap-1.5 px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                data-testid={`discover-media-tab-${tab.type}`}
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                <span>{intl.formatMessage(tab.label)}</span>
+              </Link>
+            </MediaFilterOption>
           );
         })}
       </nav>
-    </section>
+    </PinnedFilterSection>
   );
 };
 

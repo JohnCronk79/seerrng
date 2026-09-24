@@ -9,7 +9,8 @@ import {
   FilterResetButton,
   getFilterToggleButtonClass,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import { prepareFilterValues } from '@app/components/Discover/constants';
 import useDiscover from '@app/hooks/useDiscover';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
@@ -517,47 +518,61 @@ const Search = () => {
           {intl.formatMessage(messages.searchresults)}
         </Header>
       </div>
-      <div className="app-filter-section-gap">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
+      <PinnedFilterSection
+        mediaType={
+          category.key === 'tv'
+            ? 'tv'
+            : category.key === 'music'
+              ? 'music'
+              : category.key === 'book' || category.key === 'audiobook'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
+      >
         <div
           className="flex flex-wrap items-center gap-2"
           aria-label={intl.formatMessage(messages.mediaFilters)}
         >
-          <MediaFilterPin pin={mediaPin} />
           {searchCategories.map((searchCategory) => {
             const isSelected = category.key === searchCategory.key;
 
             return (
-              <button
+              <MediaFilterOption
                 key={searchCategory.key}
-                type="button"
-                className={getFilterToggleButtonClass(isSelected)}
-                aria-pressed={isSelected}
-                onClick={() => {
-                  mediaPin.remember(searchCategory.key);
-                  const nextQuery = getSearchCategoryQuery(router.query, {
-                    type: searchCategory.type,
-                    format:
-                      'format' in searchCategory
-                        ? searchCategory.format
-                        : undefined,
-                  });
-
-                  void router.replace(
-                    { pathname: router.pathname, query: nextQuery },
-                    undefined,
-                    { shallow: true, scroll: false }
-                  );
-                }}
+                pin={mediaPin}
+                value={searchCategory.key}
+                label={intl.formatMessage(searchCategory.message)}
+                selected={isSelected}
               >
-                {intl.formatMessage(searchCategory.message)}
-              </button>
+                <button
+                  type="button"
+                  className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    const nextQuery = getSearchCategoryQuery(router.query, {
+                      type: searchCategory.type,
+                      format:
+                        'format' in searchCategory
+                          ? searchCategory.format
+                          : undefined,
+                    });
+
+                    void router.replace(
+                      { pathname: router.pathname, query: nextQuery },
+                      undefined,
+                      { shallow: true, scroll: false }
+                    );
+                  }}
+                >
+                  {intl.formatMessage(searchCategory.message)}
+                </button>
+              </MediaFilterOption>
             );
           })}
         </div>
-      </div>
+      </PinnedFilterSection>
       <div className="app-filter-section-gap">
         <div className="mb-1 text-sm text-gray-300">
           {intl.formatMessage(messages.filter)}
@@ -570,7 +585,6 @@ const Search = () => {
             label={intl.formatMessage(messages.clearFilters)}
             selected={!hasActiveFilters}
             onClick={() => {
-              mediaPin.remember('all');
               void router.replace(
                 {
                   pathname: router.pathname,
