@@ -10,7 +10,9 @@ on 2026-08-31.
 - The six imported upstream Seerr tags from `v3.0.0` through `v3.4.1` are
   represented with provenance entries; no separate SeerrNG notes were recorded
   for those tags.
-- `v3.2.6` is not listed because no such tag exists.
+- `v3.2.6` is a release-preparation tag only; no GitHub release was published.
+  The Changelog records it as preparation-only, and `v3.2.7` covers the
+  intervening changes.
 - Releases that contain only release preparation or CI work are still listed,
   with that scope called out explicitly instead of inventing user-facing
   changes.

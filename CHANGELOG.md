@@ -4,8 +4,9 @@ SeerrNG release notes describe user-visible behavior and operational changes.
 The release workflow adds curated notes from `release-notes/` before the
 conventional-commit history.
 
-The audit below covers every SeerrNG tag currently in this repository. There is
-no `v3.2.6` tag; it is intentionally not represented as a release. Commit-level
+The audit below covers every SeerrNG tag currently in this repository. The
+`v3.2.6` tag records release preparation only; no GitHub release was published,
+and the following `v3.2.7` release includes the intervening changes. Commit-level
 links in the generated history remain the technical source of truth for changes
 that are not called out here.
 
@@ -1456,6 +1457,11 @@ the detailed commit history.
 ### Fixed
 
 - Release archives include the pnpm workspace configuration, application builds run on the build platform, and deployment avoids recursive ownership walks.
+
+## [3.2.6](https://github.com/snapetech/seerrng/commit/d1af3260697da688964a1ba9d4be87bffea78fdf) - 2026-06-16
+
+Release preparation only. No GitHub release was published for this tag; the
+following `v3.2.7` release includes the intervening changes.
 
 ## [3.2.5](https://github.com/snapetech/seerrng/compare/v3.2.4...v3.2.5) - 2026-06-16
 
