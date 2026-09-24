@@ -21,6 +21,7 @@ import {
 } from '@app/utils/localStorage';
 import {
   getPushSubscription,
+  unsubscribeToPushNotifications,
   verifyAndResubscribePushSubscription,
   verifyPushSubscription,
 } from '@app/utils/pushSubscriptionHelpers';

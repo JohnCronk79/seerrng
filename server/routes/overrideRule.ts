@@ -1,12 +1,16 @@
+import TheMovieDb from '@server/api/themoviedb';
+import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import { MediaRequest } from '@server/entity/MediaRequest';
 import OverrideRule from '@server/entity/OverrideRule';
+import { User } from '@server/entity/User';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { runOverrideRuleMutation } from '@server/lib/overrideRuleMutation';
 import {
   evaluateOverrideRules,
   type OverrideRulesResult,
 } from '@server/lib/overrideRules';
-import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
-import { runOverrideRuleMutation } from '@server/lib/overrideRuleMutation';
 import { Permission } from '@server/lib/permissions';
 import { runWithServarrServiceAdmission } from '@server/lib/serviceAdmission';
 import logger from '@server/logger';
@@ -470,7 +474,9 @@ overrideRuleRoutes.post<
           req.body.tags.length > MAX_OVERRIDE_RULE_LIST_ITEMS ||
           req.body.tags.some(
             (tag) =>
-              !Number.isSafeInteger(tag) || tag < 0 || tag > MAX_OVERRIDE_RULE_ID
+              !Number.isSafeInteger(tag) ||
+              tag < 0 ||
+              tag > MAX_OVERRIDE_RULE_ID
           )))
     ) {
       return res
@@ -498,12 +504,11 @@ overrideRuleRoutes.post<
           relations: { requestedBy: true },
         });
         if (!request) {
-          return res.status(404).json({ status: 404, message: 'Request not found.' });
+          return res
+            .status(404)
+            .json({ status: 404, message: 'Request not found.' });
         }
-        if (
-          request.requestedBy.id !== userId &&
-          !canManageRequests
-        ) {
+        if (request.requestedBy.id !== userId && !canManageRequests) {
           return res.status(403).json({
             status: 403,
             message: 'You do not have permission to modify this request.',
@@ -534,10 +539,7 @@ overrideRuleRoutes.post<
           requestedUserId != null && requestedUserId !== request.requestedBy.id
             ? await userRepository.findOne({ where: { id: requestedUserId } })
             : request.requestedBy;
-      } else if (
-        requestedUserId != null &&
-        requestedUserId !== userId
-      ) {
+      } else if (requestedUserId != null && requestedUserId !== userId) {
         if (!canManageRequests && !canManageUsers) {
           return res.status(403).json({
             status: 403,
@@ -550,7 +552,9 @@ overrideRuleRoutes.post<
       }
 
       if (!requestUser) {
-        return res.status(404).json({ status: 404, message: 'User not found.' });
+        return res
+          .status(404)
+          .json({ status: 404, message: 'User not found.' });
       }
 
       const tmdb = new TheMovieDb();
