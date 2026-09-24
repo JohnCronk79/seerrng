@@ -83,6 +83,18 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.23.1](https://github.com/snapetech/seerrng/compare/v3.23.0..v3.23.1) - 2026-09-24
+
+### 🧪 Testing
+- *(security)* Enforce route limits and secure cookies - ([9d59333](https://github.com/snapetech/seerrng/commit/9d593332021d641048e05e439a348739576c7a58))
+- Stabilize the migration timeout case - ([ed38bd5](https://github.com/snapetech/seerrng/commit/ed38bd527c6f2b159d91c7f9da5b14ad5b40690d))
+
+### ⚙️ Miscellaneous Tasks
+- Retain the passing pnpm setup action - ([a3dbde0](https://github.com/snapetech/seerrng/commit/a3dbde066926efb2b7f5c69ae9b60c4c051519e3))
+- Pin pnpm version for action setup v6.1.0 - ([8cfafda](https://github.com/snapetech/seerrng/commit/8cfafda6911080e288cc13318d8f433c56b96497))
+
 ## [3.23.0](https://github.com/snapetech/seerrng/compare/v3.22.0..v3.23.0) - 2026-09-24
 
 ### User-facing changes
