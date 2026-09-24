@@ -86,6 +86,53 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.24.0](https://github.com/snapetech/seerrng/compare/v3.23.1..v3.24.0) - 2026-09-24
+
+### User-facing changes
+
+#### Added
+
+- **Books:** Book search now includes authors and a Trending shelf. Series pages show each volume’s ebook and audiobook status and let you request missing titles together. Book details show audiobook runtime and narrator information when the configured catalog provides it.
+- **Books:** Chaptarr book requests needing author metadata remain pending during provider preparation, then resume through normal search tracking. Cancellation removes a queued import only when no other request needs it. SeerrNG restores tracking if Chaptarr changes a book's local row ID. Book scans honor paged totals; diagnostics show pending import IDs and explain when test work stays queued.
+
+#### Fixed
+
+- **Bookshelf:** Book authors in series details now use the refreshed detail text color for better contrast and visual consistency.
+- **Bookshelf:** Cancelling a Chaptarr request now keeps its pending import alive while another ebook or audiobook request on the same instance still depends on it.
+- **Downloads:** Automatic download recovery now applies its retry limit reliably when several failed downloads belong to the same media item, preventing duplicate retries from bypassing the cap.
+- **Artwork:** Sonarr can now use an advertised remote cover when its local artwork is missing, and oversized Servarr image lists are bounded so a malformed provider response cannot trigger an excessive series of cover requests.
+- **Scanners:** Radarr and Sonarr library cleanup now validates and bounds identifier lookup results, preventing malformed or oversized provider responses from disrupting availability cleanup.
+
+#### Security
+
+- **Music:** Music cover-art metadata requests now revalidate DNS when connecting and enforce response-size limits while following the supported archive redirect chain, protecting SeerrNG from unsafe redirects and oversized provider responses.
+- **Media Artwork:** Servarr artwork is now limited to supported raster images under 10 MiB, reducing exposure to active image files and oversized responses.
+- **Bookshelf:** Remote artwork returned by Servarr services is now fetched with public-address validation, redirect checks, download limits, and raster-image validation to protect the server and internal networks.
+- **Playback:** Plex playback now rejects alternate IPv6 and unspecified address forms that can reach local-only services, closing address-format bypasses while keeping ordinary LAN players available.
+- **Playback:** Plex playback now rejects player hostnames that resolve to loopback or cloud metadata addresses, closing a DNS-based route to local services while keeping ordinary LAN players available.
+
+### 🚀 Features
+- *(books)* Expand discovery and series workflows - ([b008430](https://github.com/snapetech/seerrng/commit/b008430a78c273f0288ede12be8bf2fc0266b3bc))
+- *(bookshelf)* Improve Chaptarr interoperability - ([840b99e](https://github.com/snapetech/seerrng/commit/840b99e83fb6d256d9367bd1f8c6636d24266d68))
+
+### 🐛 Bug Fixes
+- *(bookshelf)* Protect shared Chaptarr imports - ([cbdb9a4](https://github.com/snapetech/seerrng/commit/cbdb9a4bc5a6e52a58b7f6da4a44321f9b6e20a0))
+- *(downloads)* Enforce per-media recovery retry limit - ([33fb36f](https://github.com/snapetech/seerrng/commit/33fb36f4ff7994e246b6939862d97883ae1480e9))
+- *(release)* Document prep-only v3.2.6 tag - ([f095e8a](https://github.com/snapetech/seerrng/commit/f095e8aefa33a5ea9048131b1f35673b8af64d9a))
+- *(scanners)* Bound and preserve Servarr cover images - ([3971c91](https://github.com/snapetech/seerrng/commit/3971c915e55ebb6fd44bbeca5daec3d4b711a420))
+- *(scanners)* Bound Servarr identifier lookups - ([98ef535](https://github.com/snapetech/seerrng/commit/98ef535352dc7ba687d7a2c4450a975f31ae7a15))
+- *(security)* Restrict local Servarr artwork to safe raster images - ([b831c7f](https://github.com/snapetech/seerrng/commit/b831c7f40d816432f10f03cd33ab626b1cb4b8ea))
+- *(security)* Bound cover art metadata fetches - ([6a7b8d5](https://github.com/snapetech/seerrng/commit/6a7b8d507e6cc6ee2dac44df944e390a047e5e12))
+- *(security)* Bound remote Servarr artwork fetches - ([082900a](https://github.com/snapetech/seerrng/commit/082900a2f46d071e8e4fca6f7dc0b6e14e633c0c))
+- *(security)* Reject local-only Plex player addresses - ([c5fa189](https://github.com/snapetech/seerrng/commit/c5fa18991905ee417bc83aaa9534196069868ecd))
+- *(security)* Block DNS loopback in Plex playback targets - ([cb8c74c](https://github.com/snapetech/seerrng/commit/cb8c74ce6819bdf1d5c1c0531b415726587498f4))
+- *(ui)* Use refreshed text color for series authors - ([f16262c](https://github.com/snapetech/seerrng/commit/f16262ca324055398a53b087fe02f7a3f7f6bace))
+
+### 🧪 Testing
+- Cover shared Chaptarr pending import cleanup (release-note: none) - ([74df1f6](https://github.com/snapetech/seerrng/commit/74df1f6489295a49733ed151f8a629a57ac479b6))
+
 ## [3.23.1](https://github.com/snapetech/seerrng/compare/v3.23.0..v3.23.1) - 2026-09-24
 
 ### 🧪 Testing
