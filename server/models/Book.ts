@@ -29,6 +29,9 @@ export interface BookResult {
   ratingsCount?: number;
   wantToReadCount?: number;
   publisher?: string;
+  series?: BookSeriesReference[];
+  audiobookDuration?: number;
+  narrators?: string[];
   score?: number;
   mediaInfo?: Media;
 }
@@ -38,6 +41,31 @@ export interface BookDetails extends BookResult {
   subjects?: string[];
   numberOfPages?: number;
   onUserWatchlist?: boolean;
+}
+
+export interface BookSeriesReference {
+  id: string;
+  title: string;
+  position?: string;
+}
+
+export interface BookSeriesDetails {
+  id: string;
+  title: string;
+  description?: string;
+  books: BookResult[];
+}
+
+export interface AuthorResult {
+  id: string;
+  provider: 'openlibrary' | 'bookshelf';
+  mediaType: 'author';
+  name: string;
+  posterPath?: string;
+  topWork?: string;
+  workCount?: number;
+  birthDate?: string;
+  deathDate?: string;
 }
 
 export interface AuthorDetails {
@@ -144,6 +172,29 @@ export const mapOpenLibrarySearchDoc = (
     wantToReadCount: doc.want_to_read_count,
     publisher: doc.publisher?.[0],
     mediaInfo: media,
+  };
+};
+
+export const mapOpenLibraryAuthorSearchDoc = (doc: {
+  key: string;
+  name: string;
+  top_work?: string;
+  work_count?: number;
+  birth_date?: string;
+  death_date?: string;
+}): AuthorResult => {
+  const id = doc.key.replace(/^\/?authors\//, '');
+
+  return {
+    id,
+    provider: 'openlibrary',
+    mediaType: 'author',
+    name: doc.name,
+    posterPath: `https://covers.openlibrary.org/a/olid/${encodeURIComponent(id)}-L.jpg`,
+    topWork: doc.top_work,
+    workCount: doc.work_count,
+    birthDate: doc.birth_date,
+    deathDate: doc.death_date,
   };
 };
 

@@ -27,10 +27,17 @@ import {
 } from '@server/lib/search';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
-import { mapOpenLibrarySearchDoc } from '@server/models/Book';
+import {
+  mapOpenLibraryAuthorSearchDoc,
+  mapOpenLibrarySearchDoc,
+  type AuthorResult,
+} from '@server/models/Book';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
-import { searchBookshelfCatalogs } from '@server/utils/bookshelfCatalog';
+import {
+  searchBookshelfAuthors,
+  searchBookshelfCatalogs,
+} from '@server/utils/bookshelfCatalog';
 import {
   BoundedTaskQueue,
   mapWithConcurrency,
@@ -100,6 +107,7 @@ const searchTypes = [
   'album',
   'artist',
   'book',
+  'author',
   'music',
 ] as const;
 type SearchType = (typeof searchTypes)[number];
@@ -274,7 +282,7 @@ searchRoutes.get('/', async (req, res, next) => {
     });
   }
 
-  if (typeFilter === 'book' && !booksEnabled) {
+  if ((typeFilter === 'book' || typeFilter === 'author') && !booksEnabled) {
     return res.status(200).json({
       page,
       totalPages: 1,
@@ -316,6 +324,7 @@ searchRoutes.get('/', async (req, res, next) => {
         typeFilter === 'artist' ||
         typeFilter === 'music';
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
+      const shouldSearchAuthors = !typeFilter || typeFilter === 'author';
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
           ? tmdb.searchMulti({
@@ -362,6 +371,16 @@ searchRoutes.get('/', async (req, res, next) => {
                 : undefined
             )
           : Promise.resolve([]),
+        shouldSearchAuthors && booksEnabled
+          ? openLibrary.searchAuthors({
+              query: queryString,
+              page,
+              limit: 20,
+            })
+          : Promise.resolve({ numFound: 0, start: 0, docs: [] }),
+        shouldSearchAuthors && booksEnabled
+          ? searchBookshelfAuthors(getSettings().readarr, queryString)
+          : Promise.resolve([]),
       ];
       type SearchProviderResult = {
         index: number;
@@ -379,6 +398,12 @@ searchRoutes.get('/', async (req, res, next) => {
       >;
       type BookshelfSearchResults = Awaited<
         ReturnType<typeof searchBookshelfCatalogs>
+      >;
+      type AuthorSearchResults = Awaited<
+        ReturnType<OpenLibraryAPI['searchAuthors']>
+      >;
+      type BookshelfAuthorSearchResults = Awaited<
+        ReturnType<typeof searchBookshelfAuthors>
       >;
 
       const providerResponses =
@@ -416,6 +441,8 @@ searchRoutes.get('/', async (req, res, next) => {
 
       const bookProviderResponse = providerResults.get(3);
       const bookshelfProviderResponse = providerResults.get(4);
+      const authorProviderResponse = providerResults.get(5);
+      const bookshelfAuthorProviderResponse = providerResults.get(6);
       if (
         typeFilter === 'book' &&
         shouldSearchBooks &&
@@ -428,6 +455,21 @@ searchRoutes.get('/', async (req, res, next) => {
           status: 503,
           message:
             'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+        });
+      }
+      if (
+        typeFilter === 'author' &&
+        shouldSearchAuthors &&
+        booksEnabled &&
+        (!authorProviderResponse ||
+          authorProviderResponse.status === 'rejected') &&
+        (!bookshelfAuthorProviderResponse ||
+          bookshelfAuthorProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'The author catalogs timed out or are unavailable. Please try again.',
         });
       }
 
@@ -476,6 +518,13 @@ searchRoutes.get('/', async (req, res, next) => {
         4,
         []
       );
+      const rawAuthorResults = getProviderValue<AuthorSearchResults>(5, {
+        numFound: 0,
+        start: 0,
+        docs: [],
+      });
+      const rawBookshelfAuthorResults =
+        getProviderValue<BookshelfAuthorSearchResults>(6, []);
       const bookResults = {
         ...rawBookResults,
         docs: capSearchProviderResults<BookSearchResults['docs'][number]>(
@@ -497,6 +546,19 @@ searchRoutes.get('/', async (req, res, next) => {
             queryString
           )
       );
+      const dedupedAuthors = new Map<string, AuthorResult>();
+      for (const author of [
+        ...capSearchProviderResults<AuthorSearchResults['docs'][number]>(
+          rawAuthorResults.docs
+        ).map(mapOpenLibraryAuthorSearchDoc),
+        ...capSearchProviderResults<AuthorResult>(rawBookshelfAuthorResults),
+      ]) {
+        const key = normalizeSearchText(author.name);
+        if (key && !dedupedAuthors.has(key)) {
+          dedupedAuthors.set(key, author);
+        }
+      }
+      const authorResults = [...dedupedAuthors.values()];
 
       const albumIds = dedupedAlbumResults.map((album) =>
         normalizeMusicBrainzId(album.id)
@@ -680,7 +742,9 @@ searchRoutes.get('/', async (req, res, next) => {
         tmdbResults.total_results +
         musicTotalResults +
         bookResults.numFound +
-        bookshelfBookResults.length;
+        bookshelfBookResults.length +
+        rawAuthorResults.numFound +
+        rawBookshelfAuthorResults.length;
       const totalPages = Math.max(
         tmdbResults.total_pages,
         Math.ceil(totalItems / 20)
@@ -702,6 +766,7 @@ searchRoutes.get('/', async (req, res, next) => {
         ...musicResults,
         ...mappedBookResults,
         ...bookshelfBookResults,
+        ...authorResults,
       ];
 
       results = {

@@ -3259,6 +3259,44 @@ describe('GET /discover/books', () => {
     assert.strictEqual(searchBooksMock.mock.callCount(), 1);
   });
 
+  it('requests and returns Open Library trending scores for book discovery', async () => {
+    const searchBooksMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ query, sort }: { query: string; sort?: string }) => {
+        assert.strictEqual(query, '*:* AND trending_score_hourly_sum:[1 TO *]');
+        assert.strictEqual(sort, 'trending');
+
+        return {
+          numFound: 2,
+          start: 0,
+          docs: [
+            {
+              key: '/works/OL-trending-high',
+              title: 'Trending Book',
+              trending_score_hourly_sum: 42,
+            },
+            {
+              key: '/works/OL-trending-low',
+              title: 'Less Trending Book',
+              trending_score_hourly_sum: 8,
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/books?sortBy=trending');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(searchBooksMock.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { score: number }) => result.score),
+      [42, 8]
+    );
+  });
+
   it('combines book filters and applies the selected minimum rating', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,

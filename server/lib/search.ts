@@ -20,7 +20,7 @@ import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
-import type { BookResult } from '@server/models/Book';
+import type { AuthorResult, BookResult } from '@server/models/Book';
 import {
   mapOpenLibrarySearchDoc,
   mapOpenLibraryWork,
@@ -48,6 +48,7 @@ export type CombinedSearchResponse = {
     | TmdbPersonResult
     | TmdbCollectionResult
     | BookResult
+    | AuthorResult
   )[];
 };
 interface SearchProvider {

@@ -52,6 +52,12 @@ export interface ReadarrBookLookupResult {
   monitored?: boolean;
   tags?: number[];
   authorTitle?: string;
+  seriesTitle?: string;
+  releaseDate?: string;
+  audiobookDuration?: number;
+  audioSeconds?: number;
+  durationSeconds?: number;
+  narrators?: string[];
   author?: {
     foreignAuthorId?: string;
     authorName?: string;
@@ -74,6 +80,11 @@ export interface ReadarrBookLookupResult {
     isbn13?: string;
     asin?: string;
     monitored: boolean;
+    audiobookDuration?: number;
+    audioSeconds?: number;
+    durationSeconds?: number;
+    narrators?: string[];
+    contributors?: { name?: string; role?: string }[];
   }[];
   images?: ReadarrBookImage[];
 }

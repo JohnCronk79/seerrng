@@ -69,6 +69,7 @@ import playbackRoutes from './playback';
 import playlistRoutes from './playlist';
 import requestRoutes from './request';
 import searchRoutes from './search';
+import seriesRoutes from './series';
 import serviceRoutes from './service';
 import tvRoutes from './tv';
 import user from './user';
@@ -435,6 +436,7 @@ router.use(
 );
 router.use('/association', isAuthenticated(), associationRoutes);
 router.use('/author', isAuthenticated(), authorRoutes);
+router.use('/series', isAuthenticated(), seriesRoutes);
 router.use('/media', isAuthenticated(), mediaRoutes);
 router.use(
   '/person',

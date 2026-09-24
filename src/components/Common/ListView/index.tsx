@@ -1,4 +1,5 @@
 import ArtistCard from '@app/components/ArtistCard';
+import AuthorCard from '@app/components/AuthorCard';
 import PersonCard from '@app/components/PersonCard';
 import TitleCard from '@app/components/TitleCard';
 import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
@@ -18,6 +19,7 @@ import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import type {
   AlbumResult,
   ArtistResult,
+  AuthorResult,
   BookResult,
   CollectionResult,
   MovieResult,
@@ -37,6 +39,7 @@ type ListViewProps = {
     | ArtistResult
     | AlbumResult
     | BookResult
+    | AuthorResult
   )[];
   plexItems?: WatchlistItem[];
   isEmpty?: boolean;
@@ -257,6 +260,9 @@ const ListView = ({
                 preferredBookFormat={preferredBookFormat}
               />
             );
+            break;
+          case 'author':
+            titleCard = <AuthorCard key={title.id} author={title} canExpand />;
             break;
           default:
             return null;

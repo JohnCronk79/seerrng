@@ -24,6 +24,10 @@ const messages = defineMessages('components.BookDetails.Layout', {
   author: 'Author',
   editions: 'Editions',
   isbn: 'ISBN',
+  series: 'Series',
+  audiobookEdition: 'Audiobook Edition',
+  audiobookDuration: 'Runtime',
+  narrators: 'Narrators',
   ebook: 'Book',
   audiobook: 'Audiobook',
   overview: 'Overview',
@@ -310,6 +314,58 @@ const BookDetailsLayout = ({
             {primaryActions}
             {secondaryActions}
           </div>
+
+          {data.series && data.series.length > 0 && (
+            <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+              <h2 className="media-inset-heading">
+                {intl.formatMessage(messages.series)}
+              </h2>
+              <ul className="mt-3 flex flex-wrap gap-2">
+                {data.series.map((series) => (
+                  <li key={series.id}>
+                    <Link
+                      href={`/series/${encodeApiPathSegment(series.id)}`}
+                      className="inline-flex items-center rounded-md border border-blue-400/40 bg-blue-500/10 px-3 py-1.5 text-sm text-blue-100 hover:bg-blue-500/20 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                    >
+                      {series.title}
+                      {series.position ? ` #${series.position}` : ''}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {(data.audiobookDuration || data.narrators?.length) && (
+            <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+              <h2 className="media-inset-heading">
+                {intl.formatMessage(messages.audiobookEdition)}
+              </h2>
+              <dl className="mt-3 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+                {data.audiobookDuration && data.audiobookDuration > 0 && (
+                  <>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.audiobookDuration)}:
+                    </dt>
+                    <dd className="m-0">
+                      {Math.floor(data.audiobookDuration / 3600)}h{' '}
+                      {Math.floor((data.audiobookDuration % 3600) / 60)}m
+                    </dd>
+                  </>
+                )}
+                {data.narrators && data.narrators.length > 0 && (
+                  <>
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.narrators)}:
+                    </dt>
+                    <dd className="m-0 break-words">
+                      {data.narrators.join(', ')}
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </section>
+          )}
 
           <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
             <h2 className="media-inset-heading">

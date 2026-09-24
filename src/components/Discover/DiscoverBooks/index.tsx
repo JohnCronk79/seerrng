@@ -51,6 +51,7 @@ const messages = defineMessages('components.Discover.DiscoverBooks', {
   ratingFilter: 'Rating',
   any: 'Any',
   recommended: 'Recommended',
+  trending: 'Trending',
   rating: 'Rating',
   editions: 'Most Editions',
   date: 'First Published',
@@ -329,6 +330,12 @@ const DiscoverBooks = ({
             ) : (
               <BarsArrowDownIcon className="h-4 w-4" />
             )}
+          </button>
+          <button
+            className={getFilterToggleButtonClass(sortBy === 'trending')}
+            onClick={() => setParam({ sortBy: 'trending' })}
+          >
+            {intl.formatMessage(messages.trending)}
           </button>
           <button
             className={getFilterToggleButtonClass(

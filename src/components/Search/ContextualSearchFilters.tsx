@@ -30,6 +30,7 @@ const messages = defineMessages('components.Search.ContextualFilters', {
   searchBooks: 'Search Books',
   searchAudiobooks: 'Search Audiobooks',
   searchMusic: 'Search Music',
+  searchAuthors: 'Search Authors',
   firstPublished: 'First Published',
   genres: 'Genres',
   rating: 'Rating',
@@ -156,7 +157,9 @@ const LibrarySearchFilters = ({
         ? messages.searchBooks
         : category === 'audiobook'
           ? messages.searchAudiobooks
-          : messages.searchMusic;
+          : category === 'author'
+            ? messages.searchAuthors
+            : messages.searchMusic;
 
   return (
     <div className="contents">

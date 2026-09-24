@@ -17,10 +17,17 @@ import {
 } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
-import type { BookResult } from '@server/models/Book';
-export type { BookResult } from '@server/models/Book';
+import type { AuthorResult, BookResult } from '@server/models/Book';
+export type { AuthorResult, BookResult } from '@server/models/Book';
 export type MediaType =
-  'tv' | 'movie' | 'person' | 'collection' | 'artist' | 'album' | 'book';
+  | 'tv'
+  | 'movie'
+  | 'person'
+  | 'collection'
+  | 'artist'
+  | 'album'
+  | 'book'
+  | 'author';
 
 interface TmdbSearchResult {
   id: number;
@@ -131,7 +138,8 @@ export type Results =
   | CollectionResult
   | ArtistResult
   | AlbumResult
-  | BookResult;
+  | BookResult
+  | AuthorResult;
 
 export const mapMovieResult = (
   movieResult: TmdbMovieResult,
@@ -255,6 +263,7 @@ const isTmdbMovie = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is TmdbMovieResult => {
   return 'media_type' in result && result.media_type === 'movie';
 };
@@ -268,6 +277,7 @@ const isTmdbTv = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is TmdbTvResult => {
   return 'media_type' in result && result.media_type === 'tv';
 };
@@ -281,6 +291,7 @@ const isTmdbPerson = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is TmdbPersonResult => {
   return 'media_type' in result && result.media_type === 'person';
 };
@@ -294,6 +305,7 @@ const isTmdbCollection = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is TmdbCollectionResult => {
   return 'media_type' in result && result.media_type === 'collection';
 };
@@ -307,6 +319,7 @@ const isMbArtist = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is MbArtistResult => {
   return 'media_type' in result && result.media_type === 'artist';
 };
@@ -320,6 +333,7 @@ const isMbAlbum = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is MbAlbumResult => {
   return 'media_type' in result && result.media_type === 'album';
 };
@@ -333,9 +347,23 @@ const isBookResult = (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
 ): result is BookResult => {
   return 'mediaType' in result && result.mediaType === 'book';
 };
+
+const isAuthorResult = (
+  result:
+    | TmdbMovieResult
+    | TmdbTvResult
+    | TmdbPersonResult
+    | TmdbCollectionResult
+    | MbArtistResult
+    | MbAlbumResult
+    | BookResult
+    | AuthorResult
+): result is AuthorResult =>
+  'mediaType' in result && result.mediaType === 'author';
 
 export const mapSearchResults = async (
   results: (
@@ -346,6 +374,7 @@ export const mapSearchResults = async (
     | MbArtistResult
     | MbAlbumResult
     | BookResult
+    | AuthorResult
   )[],
   media?: Media[]
 ): Promise<Results[]> =>
@@ -382,6 +411,8 @@ export const mapSearchResults = async (
           )
         );
       } else if (isBookResult(result)) {
+        return result;
+      } else if (isAuthorResult(result)) {
         return result;
       }
 

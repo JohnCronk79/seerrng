@@ -47,6 +47,58 @@ describe('OpenLibraryAPI response bounds', () => {
     );
   });
 
+  it('searches and sanitizes bounded author results', async () => {
+    const openLibrary = new OpenLibraryAPI();
+    let endpoint = '';
+    let params: Record<string, string> | undefined;
+    Object.defineProperty(openLibrary, 'get', {
+      configurable: true,
+      value: async (
+        requestedEndpoint: string,
+        options: { params?: Record<string, string> }
+      ) => {
+        endpoint = requestedEndpoint;
+        params = options.params;
+        return {
+          numFound: 4,
+          start: 2,
+          docs: [
+            {
+              key: '/authors/OL1A',
+              name: 'Author One',
+              top_work: 'Top Book',
+              work_count: 12,
+            },
+            { key: '/authors/OL2A', name: 'x'.repeat(1_100) },
+            { key: '/authors/OL3A', name: '' },
+            null,
+          ],
+        };
+      },
+    });
+
+    const response = await openLibrary.searchAuthors({
+      query: 'author',
+      page: 2,
+      limit: 1_000,
+    });
+
+    assert.equal(endpoint, '/search/authors.json');
+    assert.deepStrictEqual(params, { q: 'author', page: '2', limit: '100' });
+    assert.equal(response.numFound, 4);
+    assert.equal(response.start, 2);
+    assert.equal(response.docs.length, 2);
+    assert.deepStrictEqual(response.docs[0], {
+      key: 'OL1A',
+      name: 'Author One',
+      top_work: 'Top Book',
+      work_count: 12,
+      birth_date: undefined,
+      death_date: undefined,
+    });
+    assert.equal(response.docs[1].name.length, MAX_OPENLIBRARY_TITLE_LENGTH);
+  });
+
   it('rejects path-control resource IDs before dispatch', async () => {
     const openLibrary = new OpenLibraryAPI();
     let dispatches = 0;

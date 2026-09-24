@@ -1122,17 +1122,67 @@ components:
         editionId:
           type: string
           example: OL8934157M
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookSeriesReference'
+        audiobookDuration:
+          type: number
+          description: Audiobook duration in seconds, when Bookshelf provides it.
+        narrators:
+          type: array
+          items:
+            type: string
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+    BookSeriesReference:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        position:
+          type: string
+    BookSeriesDetails:
+      type: object
+      required:
+        - id
+        - title
+        - books
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        books:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookResult'
     AuthorResult:
       type: object
       properties:
         id:
           type: string
           example: OL23919A
+        mediaType:
+          type: string
+          enum: [author]
+        provider:
+          type: string
+          enum: [openlibrary, bookshelf]
         name:
           type: string
           example: Ursula K. Le Guin
+        topWork:
+          type: string
+        workCount:
+          type: number
         biography:
           type: string
         birthDate:
@@ -7396,8 +7446,8 @@ paths:
                     type: number
   /search:
     get:
-      summary: Search for movies, TV shows, people, music, and books
-      description: Returns a list of movies, TV shows, people, music albums, artists, and books as a JSON object. Results are mixed from TMDB, MusicBrainz, ListenBrainz, and Open Library.
+      summary: Search for movies, TV shows, people, music, books, and authors
+      description: Returns a list of movies, TV shows, people, music albums, artists, books, and authors from TMDB, MusicBrainz, ListenBrainz, Open Library, and configured Bookshelf services.
       tags:
         - search
       parameters:
@@ -7429,6 +7479,7 @@ paths:
               - album
               - artist
               - book
+              - author
               - music
             description: Filter results by media type. When omitted, all types are returned.
         - in: query
@@ -7471,6 +7522,7 @@ paths:
                         - $ref: '#/components/schemas/MusicResult'
                         - $ref: '#/components/schemas/ArtistResult'
                         - $ref: '#/components/schemas/BookResult'
+                        - $ref: '#/components/schemas/AuthorResult'
   /search/keyword:
     get:
       summary: Search for keywords
@@ -8518,6 +8570,7 @@ paths:
               - rating.desc
               - editions
               - editions.asc
+              - trending
             default: ranked
         - in: query
           name: firstPublishYear
@@ -8895,6 +8948,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BookResult'
+  /series/{seriesId}:
+    get:
+      summary: Get a Bookshelf book series
+      description: Returns the Bookshelf books that belong to a series.
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: seriesId
+          required: true
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        '200':
+          description: Books in the series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookSeriesDetails'
+        '404':
+          description: Series not found
   /book/{bookId}/cover:
     get:
       summary: Get linked Bookshelf cover image

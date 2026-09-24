@@ -5,13 +5,16 @@ import { normalizeValidIsbn } from '@server/lib/isbn';
 import type { ReadarrSettings } from '@server/lib/settings';
 import type {
   AuthorDetails,
+  AuthorResult,
   BookDetails,
   BookIsbnCandidate,
   BookResult,
+  BookSeriesDetails,
 } from '@server/models/Book';
 
 export const BOOKSHELF_BOOK_ID_PREFIX = 'bookshelf:';
 export const BOOKSHELF_AUTHOR_ID_PREFIX = 'bookshelf-author:';
+export const BOOKSHELF_SERIES_ID_PREFIX = 'bookshelf-series:';
 
 const encodeForeignId = (foreignBookId: string) =>
   Buffer.from(foreignBookId, 'utf8').toString('base64url');
@@ -127,6 +130,9 @@ export const makeBookshelfAuthorId = (
 ) =>
   `${BOOKSHELF_AUTHOR_ID_PREFIX}${serviceId}:${encodeForeignId(JSON.stringify({ foreignAuthorId, authorName }))}`;
 
+export const makeBookshelfSeriesId = (serviceId: number, title: string) =>
+  `${BOOKSHELF_SERIES_ID_PREFIX}${serviceId}:${encodeForeignId(title)}`;
+
 export const parseBookshelfAuthorId = (
   value: string
 ):
@@ -160,6 +166,42 @@ export const parseBookshelfAuthorId = (
   }
 };
 
+export const parseBookshelfSeriesId = (
+  value: string
+): { serviceId: number; title: string } | undefined => {
+  const match = value.match(
+    /^bookshelf-series:(\d{1,10}):([A-Za-z0-9_-]{1,2048})$/
+  );
+  if (!match) return undefined;
+  const serviceId = Number(match[1]);
+  if (!Number.isSafeInteger(serviceId) || serviceId <= 0) return undefined;
+  try {
+    const title = Buffer.from(match[2], 'base64url').toString('utf8').trim();
+    return title && title.length <= 512 ? { serviceId, title } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const parseSeriesTitle = (value?: string) =>
+  (value ?? '')
+    .split(/\s*;\s*/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const match = entry.match(/^(.*?)\s+#\s*([\d]+(?:\.[\d]+)?)$/);
+      const title = (match?.[1] ?? entry).trim();
+      return title ? [{ title, position: match?.[2] }] : [];
+    });
+
+const normalizeSeriesTitle = (value: string) =>
+  value
+    .toLocaleLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 const getIsbnCandidates = (
   result: ReadarrBookLookupResult
 ): BookIsbnCandidate[] => {
@@ -182,6 +224,40 @@ export const mapBookshelfBook = (
   serviceId: number
 ): BookResult => {
   const isbnCandidates = getIsbnCandidates(result);
+  const audioEdition = (result.editions ?? []).find(
+    (edition) =>
+      edition.monitored &&
+      (edition.audiobookDuration ||
+        edition.audioSeconds ||
+        edition.durationSeconds ||
+        edition.narrators?.length ||
+        edition.contributors?.some((contributor) =>
+          contributor.role?.toLowerCase().includes('narrat')
+        ))
+  );
+  const series = parseSeriesTitle(result.seriesTitle).map(
+    ({ title, position }) => ({
+      id: makeBookshelfSeriesId(serviceId, title),
+      title,
+      position,
+    })
+  );
+  const audiobookDuration =
+    result.audiobookDuration ??
+    result.audioSeconds ??
+    result.durationSeconds ??
+    audioEdition?.audiobookDuration ??
+    audioEdition?.audioSeconds ??
+    audioEdition?.durationSeconds;
+  const narrators =
+    result.narrators ??
+    audioEdition?.narrators ??
+    audioEdition?.contributors
+      ?.filter((contributor) =>
+        contributor.role?.toLowerCase().includes('narrat')
+      )
+      .map((contributor) => contributor.name?.trim())
+      .filter((name): name is string => !!name);
   const image = result.images?.find(
     (entry) => entry.coverType?.toLowerCase() === 'cover'
   );
@@ -202,10 +278,113 @@ export const mapBookshelfBook = (
     posterPath: image?.remoteUrl ?? image?.url,
     isbn13: isbnCandidates.find((candidate) => candidate.isbn.length === 13)
       ?.isbn,
+    firstPublishYear: result.releaseDate
+      ? Number(result.releaseDate.match(/\d{4}/)?.[0]) || undefined
+      : undefined,
     isbnCandidates,
     editionId:
       result.foreignEditionId ?? result.editions?.[0]?.foreignEditionId,
+    series,
+    audiobookDuration,
+    narrators: narrators?.length ? [...new Set(narrators)] : undefined,
   };
+};
+
+export const searchBookshelfAuthors = async (
+  servers: ReadarrSettings[],
+  term: string
+): Promise<AuthorResult[]> => {
+  const results = await Promise.all(
+    servers.map(async (server) => {
+      try {
+        const authors = await getApi(server).lookupAuthor(term);
+        return authors.map((author) => ({
+          id: makeBookshelfAuthorId(
+            server.id,
+            author.foreignAuthorId,
+            author.authorName
+          ),
+          provider: 'bookshelf' as const,
+          mediaType: 'author' as const,
+          name: author.authorName,
+          posterPath:
+            author.images?.find(
+              (image) => image.coverType?.toLowerCase() === 'poster'
+            )?.remoteUrl ?? author.remotePoster,
+        }));
+      } catch {
+        return [];
+      }
+    })
+  );
+
+  return results.flat();
+};
+
+export const getBookshelfSeriesDetails = async (
+  servers: ReadarrSettings[],
+  id: string
+): Promise<BookSeriesDetails | undefined> => {
+  const parsed = parseBookshelfSeriesId(id);
+  const server =
+    parsed && servers.find((candidate) => candidate.id === parsed.serviceId);
+  if (!parsed || !server) return undefined;
+
+  try {
+    const matches = await getApi(server).lookupBook(parsed.title);
+    const expectedTitle = normalizeSeriesTitle(parsed.title);
+    const books = matches
+      .filter((book) =>
+        parseSeriesTitle(book.seriesTitle).some(
+          (series) => normalizeSeriesTitle(series.title) === expectedTitle
+        )
+      )
+      .map((book) => {
+        const mappedBook = mapBookshelfBook(book, server.id);
+        return {
+          ...mappedBook,
+          series: mappedBook.series?.map((series) =>
+            normalizeSeriesTitle(series.title) === expectedTitle
+              ? { ...series, id, title: parsed.title }
+              : series
+          ),
+        };
+      });
+    const dedupedBooks = [
+      ...new Map(books.map((book) => [book.id, book])).values(),
+    ];
+    dedupedBooks.sort((left, right) => {
+      const leftPosition = Number(
+        left.series?.find(
+          (entry) => normalizeSeriesTitle(entry.title) === expectedTitle
+        )?.position
+      );
+      const rightPosition = Number(
+        right.series?.find(
+          (entry) => normalizeSeriesTitle(entry.title) === expectedTitle
+        )?.position
+      );
+      const leftHasPosition = Number.isFinite(leftPosition);
+      const rightHasPosition = Number.isFinite(rightPosition);
+      if (
+        leftHasPosition &&
+        rightHasPosition &&
+        leftPosition !== rightPosition
+      ) {
+        return leftPosition - rightPosition;
+      }
+      if (leftHasPosition !== rightHasPosition) return leftHasPosition ? -1 : 1;
+      return left.title.localeCompare(right.title, undefined, {
+        numeric: true,
+      });
+    });
+
+    return dedupedBooks.length
+      ? { id, title: parsed.title, books: dedupedBooks }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 export const getBookshelfAuthorDetails = async (

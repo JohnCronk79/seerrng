@@ -5,6 +5,7 @@ import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 import ExternalAPI from '@server/api/externalapi';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import TheAudioDb from '@server/api/theaudiodb';
 import TmdbPersonMapper from '@server/api/themoviedb/personMapper';
 import { MediaStatus, MediaType } from '@server/constants/media';
@@ -214,6 +215,68 @@ describe('GET /search', () => {
       settings.lidarr = priorLidarr;
       settings.readarr = priorReadarr;
     }
+  });
+
+  it('searches authors in Open Library and configured Bookshelf services', async () => {
+    mock.method(OpenLibraryAPI.prototype, 'searchAuthors', async () => ({
+      numFound: 2,
+      start: 0,
+      docs: [
+        {
+          key: '/authors/OL1A',
+          name: 'Shared Writer',
+          top_work: 'First Book',
+          work_count: 20,
+        },
+        { key: '/authors/OL2A', name: 'Open Library Writer' },
+      ],
+    }));
+    mock.method(ReadarrAPI.prototype, 'lookupAuthor', async () => [
+      {
+        foreignAuthorId: 'bookshelf-author-1',
+        authorName: 'Shared Writer',
+      },
+      {
+        foreignAuthorId: 'bookshelf-author-2',
+        authorName: 'Bookshelf Writer',
+      },
+    ]);
+
+    getSettings().readarr = [
+      {
+        id: 7,
+        hostname: 'bookshelf.test',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      } as ReadarrSettings,
+    ];
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'writer',
+      type: 'author',
+    });
+
+    assert.strictEqual(res.status, 200);
+    const authors = res.body.results as {
+      id: string;
+      mediaType: string;
+      name: string;
+      provider: string;
+    }[];
+    assert.deepStrictEqual(authors.map(({ name }) => name).sort(), [
+      'Bookshelf Writer',
+      'Open Library Writer',
+      'Shared Writer',
+    ]);
+    assert.strictEqual(authors.length, 3);
+    assert.ok(authors.every((author) => author.mediaType === 'author'));
+    assert.strictEqual(
+      authors.find((author) => author.name === 'Shared Writer')?.provider,
+      'openlibrary'
+    );
   });
 
   it('rejects missing search queries before provider lookup', async () => {
@@ -1117,6 +1180,10 @@ describe('search filters behind the OpenAPI validator', () => {
     const audiobook = await request(validatedApp)
       .get('/api/v1/search')
       .query({ query: 'microsoft', type: 'book', format: 'audiobook' });
+    getSettings().readarr = [];
+    const authors = await request(validatedApp)
+      .get('/api/v1/search')
+      .query({ query: 'rowling', type: 'author' });
 
     getSettings().readarr = [{ serviceType: 'audiobook' } as ReadarrSettings];
     const ebook = await request(validatedApp)
@@ -1125,9 +1192,11 @@ describe('search filters behind the OpenAPI validator', () => {
 
     assert.strictEqual(music.status, 200);
     assert.strictEqual(audiobook.status, 200);
+    assert.strictEqual(authors.status, 200, JSON.stringify(authors.body));
     assert.strictEqual(ebook.status, 200);
     assert.deepStrictEqual(music.body.results, []);
     assert.deepStrictEqual(audiobook.body.results, []);
+    assert.deepStrictEqual(authors.body.results, []);
     assert.deepStrictEqual(ebook.body.results, []);
   });
 });

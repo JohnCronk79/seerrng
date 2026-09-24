@@ -9,6 +9,7 @@ export const bookSortOptions = new Set([
   'rating.asc',
   'editions',
   'editions.asc',
+  'trending',
 ]);
 
 export const musicSortOptions = new Set([

@@ -61,7 +61,7 @@ interface TitleCardProps {
   artist?: string;
   type?: string;
   userScore?: number;
-  mediaType: MediaType;
+  mediaType: Exclude<MediaType, 'author'>;
   status?: MediaStatus;
   status4k?: MediaStatus;
   canExpand?: boolean;

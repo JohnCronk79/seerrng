@@ -20,14 +20,30 @@ export interface OpenLibrarySearchDoc {
   ratings_average?: number;
   ratings_count?: number;
   want_to_read_count?: number;
+  trending_score_hourly_sum?: number;
   publisher?: string[];
   subject?: string[];
+}
+
+export interface OpenLibraryAuthorSearchDoc {
+  key: string;
+  name: string;
+  top_work?: string;
+  work_count?: number;
+  birth_date?: string;
+  death_date?: string;
 }
 
 interface OpenLibrarySearchResponse {
   numFound: number;
   start: number;
   docs: OpenLibrarySearchDoc[];
+}
+
+interface OpenLibraryAuthorSearchResponse {
+  numFound: number;
+  start: number;
+  docs: OpenLibraryAuthorSearchDoc[];
 }
 
 export interface OpenLibraryWork {
@@ -109,6 +125,7 @@ export const OPENLIBRARY_SEARCH_FIELDS = [
   'ratings_average',
   'ratings_count',
   'want_to_read_count',
+  'trending_score_hourly_sum',
   'publisher',
   'subject',
 ].join(',');
@@ -251,8 +268,41 @@ const sanitizeSearchDoc = (
       Number.isSafeInteger(value.want_to_read_count)
         ? value.want_to_read_count
         : undefined,
+    trending_score_hourly_sum:
+      typeof value.trending_score_hourly_sum === 'number' &&
+      Number.isFinite(value.trending_score_hourly_sum)
+        ? value.trending_score_hourly_sum
+        : undefined,
     publisher: boundedStrings(value.publisher, 100, 512),
     subject: boundedStrings(value.subject, 100, 512),
+  };
+};
+
+const sanitizeAuthorSearchDoc = (
+  value: unknown
+): OpenLibraryAuthorSearchDoc | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const key = boundedString(value.key, 128);
+  const name = boundedString(value.name, MAX_OPENLIBRARY_TITLE_LENGTH);
+  const authorId = key && normalizeOpenLibraryAuthorId(key);
+  if (!authorId || !isValidOpenLibraryResourceId(authorId) || !name) {
+    return undefined;
+  }
+
+  return {
+    key: authorId,
+    name,
+    top_work: boundedString(value.top_work, MAX_OPENLIBRARY_TITLE_LENGTH),
+    work_count:
+      typeof value.work_count === 'number' &&
+      Number.isSafeInteger(value.work_count) &&
+      value.work_count >= 0
+        ? value.work_count
+        : undefined,
+    birth_date: boundedString(value.birth_date, 128),
+    death_date: boundedString(value.death_date, 128),
   };
 };
 
@@ -461,7 +511,7 @@ class OpenLibraryAPI extends ExternalAPI {
           ...(sort ? { sort } : {}),
         },
       },
-      43200,
+      sort === 'trending' ? 3600 : 43200,
       (data) =>
         isRecord(data) && Array.isArray(data.docs) && data.docs.length > 0
     );
@@ -494,6 +544,58 @@ class OpenLibraryAPI extends ExternalAPI {
             .slice(0, boundedLimit)
             .map((doc) => sanitizeSearchDoc(doc, takeIsbns))
             .filter((doc): doc is OpenLibrarySearchDoc => !!doc)
+        : [],
+    };
+  }
+
+  public async searchAuthors({
+    query,
+    page = 1,
+    limit = 20,
+  }: {
+    query: string;
+    page?: number;
+    limit?: number;
+  }): Promise<OpenLibraryAuthorSearchResponse> {
+    const boundedLimit = clampPageSize(limit);
+    const response = await this.get<OpenLibraryAuthorSearchResponse>(
+      '/search/authors.json',
+      {
+        params: {
+          q: query,
+          page: page.toString(),
+          limit: boundedLimit.toString(),
+        },
+      },
+      43200
+    );
+
+    if (!isRecord(response)) {
+      throw new Error(
+        'Open Library returned an invalid author search response.'
+      );
+    }
+
+    return {
+      numFound:
+        typeof response.numFound === 'number' &&
+        Number.isSafeInteger(response.numFound) &&
+        response.numFound >= 0
+          ? response.numFound
+          : 0,
+      start:
+        typeof response.start === 'number' &&
+        Number.isSafeInteger(response.start) &&
+        response.start >= 0
+          ? response.start
+          : 0,
+      docs: Array.isArray(response.docs)
+        ? response.docs
+            .slice(0, boundedLimit)
+            .map(sanitizeAuthorSearchDoc)
+            .filter(
+              (doc): doc is OpenLibraryAuthorSearchDoc => doc !== undefined
+            )
         : [],
     };
   }

@@ -17,6 +17,7 @@ import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type {
   AlbumResult,
   ArtistResult,
+  AuthorResult,
   BookResult,
   MovieResult,
   PersonResult,
@@ -55,6 +56,7 @@ const messages = defineMessages('components.Search', {
   sortBy: 'Sort By',
   title: 'Title',
   author: 'Author',
+  authors: 'Authors',
   artist: 'Artist',
   date: 'Date',
   publisher: 'Publisher',
@@ -89,6 +91,7 @@ const searchCategories = [
     message: messages.audiobooks,
   },
   { key: 'music', type: 'music', message: messages.music },
+  { key: 'author', type: 'author', message: messages.authors },
 ] as const;
 
 type SearchCategory = (typeof searchCategories)[number];
@@ -99,7 +102,8 @@ type SearchResult =
   | PersonResult
   | AlbumResult
   | ArtistResult
-  | BookResult;
+  | BookResult
+  | AuthorResult;
 
 type SortOption = {
   field: SortField;
@@ -136,6 +140,7 @@ const sortFieldsByCategory: Record<
   music: ['date', 'title', 'artist'],
   book: ['date', 'title', 'author', 'publisher'],
   audiobook: ['date', 'title', 'author', 'publisher'],
+  author: ['title'],
 };
 
 const getSearchCategory = (
@@ -174,7 +179,11 @@ const getResultTitle = (result: SearchResult): string | undefined => {
     return result.name;
   }
 
-  if (result.mediaType === 'person' || result.mediaType === 'artist') {
+  if (
+    result.mediaType === 'person' ||
+    result.mediaType === 'artist' ||
+    result.mediaType === 'author'
+  ) {
     return result.name;
   }
 
@@ -376,6 +385,7 @@ const Search = () => {
               getResultAuthor(title),
               getResultArtist(title),
               title.mediaType === 'book' ? title.publisher : undefined,
+              title.mediaType === 'author' ? title.topWork : undefined,
             ],
             resultFilter
           )

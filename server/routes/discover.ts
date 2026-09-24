@@ -858,6 +858,7 @@ const bookSortOptions = new Set([
   'rating.asc',
   'editions',
   'editions.asc',
+  'trending',
 ]);
 
 const tmdbSortOptions = new Set<string>(SortOptionsIterable);
@@ -3319,6 +3320,9 @@ discoverRoutes.get('/books', async (req, res) => {
   if (language) {
     queryParts.push(`language:${language}`);
   }
+  if (sortByBase === 'trending') {
+    queryParts.push('trending_score_hourly_sum:[1 TO *]');
+  }
   if (firstPublishYear && firstPublishYear !== 'before-1970') {
     queryParts.push(`first_publish_year:${firstPublishYear}`);
   }
@@ -3350,7 +3354,9 @@ discoverRoutes.get('/books', async (req, res) => {
                 ? 'rating'
                 : sortByBase === 'editions'
                   ? 'editions'
-                  : undefined;
+                  : sortByBase === 'trending'
+                    ? 'trending'
+                    : undefined;
     const books = await settlePromisesWithin(
       [
         openLibrary.searchBooks({
@@ -3463,7 +3469,10 @@ discoverRoutes.get('/books', async (req, res) => {
           doc,
           mediaByOpenLibraryId.get(normalizeOpenLibraryWorkId(doc.key))
         ),
-        score: scoreBookDoc(doc),
+        score:
+          sortByBase === 'trending'
+            ? (doc.trending_score_hourly_sum ?? scoreBookDoc(doc))
+            : scoreBookDoc(doc),
       })),
     });
   } catch (e) {
