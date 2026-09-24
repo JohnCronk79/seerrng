@@ -15,8 +15,11 @@ system. This page is the validation checklist for alpha builds.
   [Bookshelf Backend](/using-seerr/bookshelf-backend) guide for the recommended
   two-instance ebook/audiobook deployment.
 - Jellyfin, Plex, or Emby for the inherited media-server integration. Jellyfin
-  music libraries are supported when albums expose MusicBrainz metadata; Lidarr
-  remains the automation and fallback availability source.
+  and Plex music libraries can provide music availability when albums expose
+  MusicBrainz metadata; Plex artist libraries can also be classified as
+  Audiobooks. Lidarr remains the music automation and fallback availability
+  source. See [media-server library setup](/using-seerr/settings/mediaserver)
+  for Plex library classification and scanning.
 
 ## Configuration Checklist
 
@@ -31,8 +34,12 @@ system. This page is the validation checklist for alpha builds.
 7. Enable sync on the Lidarr and Bookshelf services being tested.
 8. Confirm the root folder, quality profile, metadata profile, and tags returned
    by each test connection are the values expected by the backend.
-9. If testing Jellyfin music availability, sync the Jellyfin libraries and
-   confirm the albums expose a MusicBrainz release-group or album ID.
+9. If testing Jellyfin or Plex music availability, sync the media-server
+   libraries and confirm the albums expose a MusicBrainz release-group or
+   album ID.
+10. If testing Plex audiobook availability, sync the Plex libraries, select
+    **Reclassify as an Audiobooks library** for the artist library, enable it,
+    and start a manual scan.
 
 ## Music Validation
 
@@ -68,6 +75,11 @@ Jellyfin music scans use the MusicBrainz release-group ID as the canonical album
 identity. If Jellyfin exposes only a MusicBrainz album/release ID, SeerrNG
 resolves it through MusicBrainz. Albums without either ID are skipped; run a
 Lidarr scan when Lidarr is the authoritative availability source.
+
+Plex music scans use the same MusicBrainz identity rules. Plex reports music
+and audiobook libraries with the same artist-library type, so SeerrNG initially
+classifies them as Music. Reclassifying an artist library as Audiobooks in
+**Settings > Media Server** persists across library syncs and renames.
 
 ## Book Validation
 

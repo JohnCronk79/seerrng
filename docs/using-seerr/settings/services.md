@@ -90,3 +90,12 @@ If you choose to switch providers, use the
 runbook. Provider IDs are not portable; the runbook rebuilds records and can
 preserve strict matches, recover metadata, and create local records for books
 the target provider cannot import.
+
+## Override Rules
+
+Override rules can assign a root folder, quality profile, or tags when a movie
+or series request matches selected requester and media conditions. Matching
+rules are also applied in **Advanced Options** for movie and series requests,
+where you can review the resulting values before submission. See the
+[Override Rules guide](/using-seerr/override-rules) for setup and matching
+behavior.

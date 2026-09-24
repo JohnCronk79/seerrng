@@ -3,42 +3,47 @@ slug: /
 sidebar_position: 1
 ---
 
-# Introduction
+# SeerrNG Documentation
 
-Welcome to the Seerr Documentation.
+SeerrNG brings movie, television, music, ebook, and audiobook requests into one
+self-hosted app. These guides cover installation, request workflows, user
+settings, and the media services SeerrNG connects to.
 
-**SeerrNG** is a fork of Seerr focused on managing requests across video, music,
-and books. It integrates with the media server of your choice:
-[Jellyfin](https://jellyfin.org), [Plex](https://plex.tv), and
-[Emby](https://emby.media/). In addition, it integrates with your existing
-services, such as **[Sonarr](https://sonarr.tv/)**,
-**[Radarr](https://radarr.video/)**, **[Lidarr](https://lidarr.audio/)**, and
-Bookshelf through its Readarr-compatible API.
+## Start here
 
-## Features
+- [Getting started](/getting-started/): choose an installation method and
+  connect SeerrNG to your media server.
+- [Docker installation](/getting-started/docker/)
+- [Kubernetes installation](/getting-started/kubernetes/)
+- [Unraid installation](/getting-started/third-parties/unraid)
+- [Troubleshooting](/troubleshooting/)
 
-- **Full Jellyfin/Emby/Plex integration**. Login and manage user access with Jellyfin/Emby/Plex.
-- **Syncs to your Jellyfin/Emby/Plex library** to show what titles you already have.
-- Supports Movies, Shows, Music, Books and Mixed Libraries.
-- **Integrates with Sonarr, Radarr, Lidarr, and Bookshelf**.
-- **Imports Spotify and YouTube playlists into reviewable music requests**.
-- Optionally set **Override rules** for requests to match with your defined conditions.
-- **Easy to use request system** allowing users to request individual seasons or movies in a friendly, clean UI.
-- **Simple request management UI**. Don't dig through the app to approve recent requests.
-- **Mobile-friendly design**, for when you need to approve requests on the go.
-- Granular permission system.
-- Localization into other languages.
-- Support for **PostgreSQL** and **SQLite** databases.
-- Support for various notification agents.
-- Easily **Watchlist** or **Blocklist** media.
-- Browser, API, DNS, and image caching for faster refreshes and repeated browsing.
-- Service-worker runtime caching for cacheable API responses, static assets, and proxied images.
-- More features to come!
+## Use SeerrNG
 
-## We need your help!
+- [Find books, authors, and series](/using-seerr/books-and-series/)
+- [Follow requests and status history](/using-seerr/request-status/)
+- [Media details and playback controls](/using-seerr/media-details-and-playback/)
+- [Import a playlist as music requests](/using-seerr/playlist-requests/)
+- [Manage users and request preferences](/using-seerr/users/editing-users/)
+- [Configure notifications](/using-seerr/notifications/)
+- [Hide requested or available media](/using-seerr/settings/general)
+- [Plex watchlist auto-requests](/using-seerr/plex/watchlist-auto-request/)
 
-[Seerr](https://github.com/seerr-team/seerr) is an ambitious project developers/contributors poured a lot of work into, and we still have a lot more to do. Seerr is the result of a collaborative effort between the original Overseerr project and the Jellyseerr fork, created to deliver an excellent request management solution for Plex, Jellyfin and Emby users.
+## Configure and operate
 
-We value your feedback and support in identifying and fixing bugs to make Seerr even better. As an open-source project, we welcome contributions from everyone. Contribution includes building new features, patching bugs, translating the application, or even just writing documentation.
+- [Configure media and automation services](/using-seerr/settings/services/)
+- [Configure media-server libraries](/using-seerr/settings/mediaserver)
+- [Enable built-in HTTPS](/using-seerr/advanced/built-in-tls)
+- [Create override rules](/using-seerr/override-rules/)
+- [Bookshelf backend setup](/using-seerr/bookshelf-backend/)
+- [Bookshelf metadata sources](/using-seerr/bookshelf-metadata-sources/)
+- [Migrate a Bookshelf library to Hardcover](/using-seerr/bookshelf-hardcover-migration/)
+- [Network and transport settings](/using-seerr/settings/network/)
+- [Back up SeerrNG](/using-seerr/backups/)
 
-If you would like to contribute, please be sure to review our [contribution guidelines](https://github.com/snapetech/seerrng/blob/main/CONTRIBUTING.md).
+## Integrate and contribute
+
+- [REST API reference](/api/seerr-api/)
+- [Third-party client compatibility](/using-seerr/third-party-client-compatibility/)
+- [Contribution guidelines](https://github.com/snapetech/seerrng/blob/main/CONTRIBUTING.md)
+- [Support on Discord](https://discord.gg/5PyXBfvS6T)

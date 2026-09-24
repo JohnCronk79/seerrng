@@ -59,6 +59,27 @@ The historical tag coverage and audit method are documented in
 The in-app version check compares against published stable tags from the
 SeerrNG fork, not the upstream Seerr repository.
 
+## Documentation
+
+The [SeerrNG documentation site](https://snapetech.github.io/seerrng/) covers
+installation, setup, user workflows, and integrations. These guides are useful
+starting points:
+
+- [Install SeerrNG](https://snapetech.github.io/seerrng/getting-started/)
+- [Install on Unraid](https://snapetech.github.io/seerrng/getting-started/third-parties/unraid)
+- [Find books, authors, and series](https://snapetech.github.io/seerrng/using-seerr/books-and-series/)
+- [Track requests and status history](https://snapetech.github.io/seerrng/using-seerr/request-status/)
+- [Use media detail and playback controls](https://snapetech.github.io/seerrng/using-seerr/media-details-and-playback/)
+- [Configure media-server libraries, including Plex Music and Audiobooks](https://snapetech.github.io/seerrng/using-seerr/settings/mediaserver)
+- [Enable built-in HTTPS](https://snapetech.github.io/seerrng/using-seerr/advanced/built-in-tls/)
+- [Configure notifications](https://snapetech.github.io/seerrng/using-seerr/notifications/)
+- [Hide requested or available media](https://snapetech.github.io/seerrng/using-seerr/settings/general)
+- [Configure Bookshelf](https://snapetech.github.io/seerrng/using-seerr/bookshelf-backend/)
+- [Bookshelf metadata sources](https://snapetech.github.io/seerrng/using-seerr/bookshelf-metadata-sources/)
+- [Configure override rules](https://snapetech.github.io/seerrng/using-seerr/override-rules/)
+- [Manage users and request preferences](https://snapetech.github.io/seerrng/using-seerr/users/editing-users/)
+- [REST API reference](https://snapetech.github.io/seerrng/api/seerr-api/)
+
 ## Screenshots
 
 ### Discover
@@ -135,9 +156,10 @@ Music:
 - Lidarr server configured in **Settings > Services**.
 - Root folder, quality profile, metadata profile, and tags configured from the Lidarr service settings.
 - A default Lidarr server if users should be able to request music without choosing a service each time.
-- Jellyfin music libraries can also be enabled in **Settings > Media Server**;
-  albums must expose MusicBrainz metadata for SeerrNG to match existing media.
-  Lidarr remains the automation and fallback availability source.
+- Jellyfin and Plex music libraries can also be enabled in **Settings > Media
+  Server**; albums need MusicBrainz metadata for SeerrNG to match existing
+  media. Plex artist libraries can be reclassified as Audiobooks for audiobook
+  availability. Lidarr remains the music automation and fallback source.
 
 Books:
 
