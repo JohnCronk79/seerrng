@@ -12,6 +12,7 @@ import {
 import logger from '@server/logger';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import {
+  createSafeHttpRequestOptions,
   createSafeHttpUrl,
   stringifySafeHttpUrl,
 } from '@server/utils/security';
@@ -23,6 +24,7 @@ import { formatCoverArtArchiveThumbnailUrl } from './urls';
 const MAX_COVER_ART_IMAGES = 100;
 const MAX_COVER_ART_IDENTIFIER_LENGTH = 256;
 const MAX_ARCHIVE_ORG_REDIRECTS = 4;
+export const MAX_COVER_ART_METADATA_BYTES = 2 * 1024 * 1024;
 
 const isArchiveOrgHostname = (hostname: string): boolean =>
   hostname === 'coverartarchive.org' ||
@@ -144,11 +146,10 @@ class CoverArtArchive extends ExternalAPI {
   // `beforeRedirect` hook and fires regardless of per-request
   // `maxRedirects`, so it can't be selectively relaxed per call.
   //
-  // Follow this specific, known chain manually with a plain, unwrapped
-  // axios client instead: validate each hop is a safe, non-private URL
-  // (createSafeHttpUrl) and stays within coverartarchive.org/archive.org
-  // (including its dynamic CDN subdomains) before following it, bounded to
-  // a small number of hops.
+  // Follow this specific, known chain manually with a plain axios client:
+  // validate each hop before connecting, recheck DNS at socket time, block
+  // proxy routing and cap metadata responses. Hosts must stay within
+  // coverartarchive.org/archive.org (including its dynamic CDN subdomains).
   private async fetchReleaseGroupMetadata(albumId: string): Promise<unknown> {
     let url = `https://coverartarchive.org/release-group/${encodeURIComponent(albumId)}`;
 
@@ -160,8 +161,11 @@ class CoverArtArchive extends ExternalAPI {
 
       try {
         const response = await axios.get(stringifySafeHttpUrl(safeUrl), {
+          ...createSafeHttpRequestOptions(false, false, true),
           maxRedirects: 0,
           timeout: DEFAULT_EXTERNAL_API_TIMEOUT_MS,
+          maxContentLength: MAX_COVER_ART_METADATA_BYTES,
+          maxBodyLength: MAX_COVER_ART_METADATA_BYTES,
         });
         return response.data;
       } catch (error) {

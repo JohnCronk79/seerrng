@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import dns from 'node:dns/promises';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
-import CoverArtArchive from '@server/api/coverartarchive';
+import CoverArtArchive, {
+  MAX_COVER_ART_METADATA_BYTES,
+} from '@server/api/coverartarchive';
 import { getRepository } from '@server/datasource';
 import MetadataAlbum from '@server/entity/MetadataAlbum';
 import { MAX_MUSICBRAINZ_BATCH_IDS } from '@server/lib/externalIds';
@@ -252,20 +254,24 @@ describe('CoverArtArchive redirect chain resolution', () => {
   it('follows Cover Art Archive through archive.org to its CDN subdomain', async () => {
     const albumId = 'f5093c06-23e3-404f-aeaa-40f72885ee3a';
     const cdnUrl = 'https://dn710405.ca.archive.org/0/items/mbid-x/index.json';
-    const calls: string[] = [];
-    mock.method(axios, 'get', async (url: string) => {
-      calls.push(url);
-      if (calls.length === 1) {
-        throw redirectError(
-          307,
-          'https://archive.org/download/mbid-x/index.json'
-        );
+    const calls: { url: string; options: Record<string, unknown> }[] = [];
+    mock.method(
+      axios,
+      'get',
+      async (url: string, options: Record<string, unknown>) => {
+        calls.push({ url, options });
+        if (calls.length === 1) {
+          throw redirectError(
+            307,
+            'https://archive.org/download/mbid-x/index.json'
+          );
+        }
+        if (calls.length === 2) {
+          throw redirectError(302, cdnUrl);
+        }
+        return { data: { images: [], release: `/release/${albumId}` } };
       }
-      if (calls.length === 2) {
-        throw redirectError(302, cdnUrl);
-      }
-      return { data: { images: [], release: `/release/${albumId}` } };
-    });
+    );
 
     const archive = new CoverArtArchive() as unknown as CoverArtArchiveInternal;
     const result = await archive.fetchReleaseGroupMetadata(albumId);
@@ -275,7 +281,18 @@ describe('CoverArtArchive redirect chain resolution', () => {
       release: `/release/${albumId}`,
     });
     assert.strictEqual(calls.length, 3);
-    assert.strictEqual(calls[2], cdnUrl);
+    assert.strictEqual(calls[2].url, cdnUrl);
+    assert.strictEqual(calls[0].options.maxRedirects, 0);
+    assert.strictEqual(
+      calls[0].options.maxContentLength,
+      MAX_COVER_ART_METADATA_BYTES
+    );
+    assert.strictEqual(
+      calls[0].options.maxBodyLength,
+      MAX_COVER_ART_METADATA_BYTES
+    );
+    assert.strictEqual(calls[0].options.proxy, false);
+    assert.strictEqual(typeof calls[0].options.lookup, 'function');
   });
 
   it('refuses to follow a redirect outside Cover Art Archive/Internet Archive', async () => {
