@@ -81,6 +81,183 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.23.0](https://github.com/snapetech/seerrng/compare/v3.22.0..v3.23.0) - 2026-09-24
+
+### User-facing changes
+
+#### Added
+
+- **Requests:** Advanced movie and series requests now preview matching override rules for the selected server, profile, folder, and tags before submission.
+- **Demo:** Operators can enable demo mode to explore SeerrNG with sample content and interactions without using a live media library.
+- **Notifications:** Gotify notifications can now include the media poster as a large image, making it easier to recognize which title triggered an alert.
+- **Discovery:** Administrators can enable Hide Requested in General settings to remove movies and series with pending or approved requests from discovery and collection results.
+- **Notifications:** Notifications sent through ntfy can now include custom tags, so operators can use ntfy's tag-based filtering and notification behavior.
+- **Users:** Administrators can search the user list by username or email address to find accounts without paging through the full list.
+- **Books:** Book requests can carry a chosen ISBN edition through to BookshelfNG, which selects the matching edition for acquisition. The edition picker also shows language when catalog metadata provides it.
+- **Books:** Book requesters can filter available editions by language. SeerrNG selects a matching ISBN edition and carries it through to BookshelfNG, while the edition selector remains available for a manual override.
+- **Bookshelf:** BookshelfNG can merge identified multi-file audiobook downloads into chaptered M4B files. The managed deployment keeps this opt-in off by default and preserves the setting across installer runs.
+  - **Action required:** Set BOOKSHELF_M4B_MERGE=true to enable chaptered audiobook imports.
+- **User Preferences:** Users can choose one preferred language for all media, then override it for movies, series, music, or books. Requests select matching Radarr or Sonarr profiles when configured, and book requests select a matching edition when available. Music preferences are saved for future source support. Each request keeps its manual destination and edition controls.
+- **Bookshelf:** SeerrNG book searches now include the no-key Gutendex catalog by default through BookshelfNG, with optional Internet Archive and NDL Search results that retain their source identity through book details. The Settings > Metadata page now points administrators to the BookshelfNG settings where catalogs and credentials are managed.
+- **Unraid:** SeerrNG now includes a Community Applications template for Unraid with stable-image updates, persistent configuration storage, HTTP and optional HTTPS ports, metadata credentials, metrics, and guarded network settings.
+  - **Action required:** Make the selected appdata directory writable by UID 1000 and GID 1000 before the first start.
+- **Bookshelf:** BookshelfNG can merge optional Google Books, Library of Congress, and Apify Goodreads-compatible results with Hardcover. SeerrNG opens those provider-specific results and carries their identity into requests, while matching existing media by ISBN when available. Configure runtime sources in BookshelfNG; Google Books needs a key, and Apify may charge.
+
+#### Changed
+
+- **Bookshelf:** Bookshelf setup docs now explain how to map host users and groups to numeric container IDs, check mounted-folder access, diagnose unreachable services, and create a matching group for source installs.
+- **Documentation:** Discord notification setup now explains the Thread ID option, helping operators route messages to the intended forum thread.
+- **Documentation:** The Docker setup guide now includes capability dropping and security options for operators who want to run SeerrNG with a more restricted container.
+- **Documentation:** Helm installation guidance now describes chart signature verification accurately, helping operators validate the chart before installation.
+- **Containers:** Container images now include the current Node.js 22 patch release, incorporating runtime fixes for deployments that use the published SeerrNG images.
+- **Library Scanning:** Background library scans now use a separate bounded TMDB cache for lookup data, reducing repeated metadata traffic and limiting cache growth.
+- **Integrations:** Outbound API requests now identify Seerr in their user-agent header, helping external service operators recognize SeerrNG traffic in their logs.
+- **Bookshelf:** New SeerrNG installs default to Hardcover; existing Goodreads/Softcover libraries stay supported and migration is optional. The managed deployment enables Library of Congress for audiobook searches, can add Google Books or Europeana with their keys, and keeps Open Library results plus provider identities through details and requests. Apify search remains opt-in and may be metered.
+- **Bookshelf:** Failed or unavailable book requests now explain the likely service-side issue and point people to the connected book service's catalog, queue, or logs before retrying.
+
+#### Fixed
+
+- **Library Scanning:** Before cleanup declines a request as orphaned, SeerrNG now checks the configured media servers again, preventing temporary server gaps from changing request status.
+- **Requests:** Editing a series request no longer adds seasons already covered by another active request, preventing duplicate season requests.
+- **Database:** Startup migrations now normalize leftover Overseerr deleted statuses, keeping older database records consistent with SeerrNG status behavior.
+- **Notifications:** Discord comment notifications now handle users without a Discord ID, so webhook delivery no longer fails on an empty account identifier.
+- **Discovery:** Hide available and hide blocklisted settings no longer remove people from discovery results; those filters now apply only to media titles.
+- **Discovery:** Series discovery now sorts titles using TV-specific fields, and invalid sort choices are ignored instead of producing inconsistent results.
+- **Requests:** Editing a request now checks the applicable quota before saving, preventing request changes from exceeding the user's configured limit.
+- **Requests:** Editing a series request no longer changes season selections owned by another request, preserving each request's chosen seasons.
+- **Login:** The Quick Connect sign-in option is now hidden for Emby servers, where that login method is unavailable.
+- **Collections:** Empty collections are no longer shown as available media, keeping collection availability indicators accurate.
+- **Requests:** Requesting all seasons now skips seasons that contain no episodes, preventing empty seasons from creating unusable requests.
+- **Jellyfin:** Jellyfin API requests now use the Authorization header format expected by current Jellyfin servers, restoring authentication for library operations.
+- **Media Server:** Refreshing media server settings no longer resets which libraries are enabled for scanning, so existing scan selections remain in effect.
+- **Media Server:** Media server setup and synchronization now report connection failures clearly instead of treating an unreachable server as a successful connection.
+- **Requests:** Request status shown in the media details modal now updates immediately after a request action, without waiting for a later page refresh.
+- **Notifications:** Web push subscriptions now remain independent across devices and shared browsers, so disabling notifications on one account does not remove another user's subscription.
+- **Requests:** Deleting a series request now resets season statuses that no remaining request covers, allowing those seasons to be requested again.
+- **Requests:** Override rules now match the selected default Radarr or Sonarr server by its ID, so rules remain attached to the intended server after settings change.
+- **Requests:** Phantom special seasons with no episodes no longer prevent a series request from being created.
+- **Plex:** Plex setup now suggests the hosted Plex app address when no custom web app URL is configured, so users open the intended Plex interface.
+- **Networking:** Image proxy failures now return an error response instead of leaving the browser request open indefinitely.
+- **Login:** Signing in with Quick Connect now refreshes the user's avatar, so the profile image reflects the newly linked media server account.
+- **Media Server:** Renaming a library in Plex or Jellyfin no longer clears its SeerrNG scan settings, keeping the library enabled state with the renamed entry.
+- **Requests:** Request endpoints now preserve pending and failed states during route updates, keeping request status consistent with the action users performed.
+- **Requests:** Requests created at the same time for one account are now checked in order, preventing concurrent submissions from bypassing duplicate and quota checks.
+- **Requests:** Request approvals and status changes now persist on the same database connection as the save, avoiding missing or stale status updates.
+- **Requests:** Concurrent requests for the same title are now serialized, preventing duplicate media records when users submit at nearly the same time.
+- **Requests:** Series request cards now show download activity only for the seasons included in that request, avoiding unrelated progress indicators.
+- **Interface:** Closing a slide-over panel no longer causes its backdrop to flash back onto the screen during the exit animation.
+- **Database:** SQLite upgrades now remove a stale push-subscription uniqueness rule that could block valid subscriptions from additional devices or shared browsers.
+- **Unraid:** The Unraid repository now exposes a canonical MIT license header, allowing Community Applications to recognize the repository as an OSI-licensed source during submission review.
+- **Unraid:** The Unraid repository profile now clearly identifies this repository as the SeerrNG template source and distinguishes Seerr's existing movie and TV workflow from SeerrNG's added music and book support.
+
+#### Security
+
+- **Security:** Avatar image requests no longer forward the media server authorization header to the image proxy target, reducing the chance of exposing server credentials.
+
+### 🚀 Features
+- *(api)* Send a Seerr user agent on outbound requests (#3395) - ([a123d20](https://github.com/snapetech/seerrng/commit/a123d20b2c5821e57fc22082707ad83e866ec78f))
+- *(bookshelf)* Surface catalog sources in settings - ([aa7f862](https://github.com/snapetech/seerrng/commit/aa7f862d464cfbeab800372d4c516a7211dcaa6f))
+- *(bookshelf)* Enable supplemental catalog defaults - ([6641680](https://github.com/snapetech/seerrng/commit/66416803b70ff86c8cfebb4c5fe5563e98516cc7))
+- *(bookshelf)* Support provider-aware metadata - ([39509ea](https://github.com/snapetech/seerrng/commit/39509ea4131f9fdb122a1032b586599fdcf1d531))
+- *(notifications)* Add support for ntfy.sh tags (#3350) - ([92bad10](https://github.com/snapetech/seerrng/commit/92bad10c53976f903a145230141d8f78a7c5eba4))
+- *(notifications)* Add embed poster option for Gotify (#3332) - ([afb17aa](https://github.com/snapetech/seerrng/commit/afb17aa4f9eb030e0d39e87d6f4750bd8865a215))
+- *(overriderules)* Apply override rules to advanced requests (#2164) - ([794743a](https://github.com/snapetech/seerrng/commit/794743a45f17e3d6aba06d68e1716e8b15146673))
+- *(settings)* Hide already requested media (#1855) - ([6f5a177](https://github.com/snapetech/seerrng/commit/6f5a17735d383b110cca04326ecd536ad7675ed6))
+- *(users)* Configure preferred request languages - ([d1848c7](https://github.com/snapetech/seerrng/commit/d1848c744c66d2c613ab8f24a427105e0a8bb106))
+- *(users)* Add search box for user lookup by username or email (#2482) - ([aae8816](https://github.com/snapetech/seerrng/commit/aae8816766daddb8433e6e3b46f0a9695acb0320))
+- Add a demo feature (#3017) - ([38581ca](https://github.com/snapetech/seerrng/commit/38581ca1c05f37b3f404571da34358660d1b667b))
+- Filter book editions by language - ([4ed87e6](https://github.com/snapetech/seerrng/commit/4ed87e6a5a73f73ccedc9090f509e0ef2f675143))
+- Preserve requested book editions - ([67f104f](https://github.com/snapetech/seerrng/commit/67f104fdba0c7e10b01a5f8106361af41c77bb0c))
+- Add Unraid Community Apps template - ([4013399](https://github.com/snapetech/seerrng/commit/401339902f86cb1ecb243246061f15fb635824e5))
+
+### 🐛 Bug Fixes
+- *(api)* Stop library reads from resetting enabled flags (#3321) - ([985ddef](https://github.com/snapetech/seerrng/commit/985ddef3f01b4cb5523a7f00c0119a4c096e1509))
+- *(auth)* Refresh avatar on Quick Connect login (#3504) - ([d4eeea8](https://github.com/snapetech/seerrng/commit/d4eeea85be804af593d00ebba3ec051e355eb1ee))
+- *(datasource)* Break import cycle mistyping postgres timestamps (#3449) - ([d7b08bd](https://github.com/snapetech/seerrng/commit/d7b08bddc02467414b71166250f9a38e31df9488))
+- *(datasource)* Register entities and subscribers explicitly (#3375) - ([0f79ee6](https://github.com/snapetech/seerrng/commit/0f79ee663c32a3e3141ec64ef9ad79ca6dda5b89))
+- *(db)* Remap leftover Overseerr DELETED status after migration (#3510) - ([2bebae8](https://github.com/snapetech/seerrng/commit/2bebae836993db271d192c5db26510a469c83a55))
+- *(db)* Drop stale auth unique on sqlite push subscriptions (#3391) - ([5f4cb1e](https://github.com/snapetech/seerrng/commit/5f4cb1ea45b82e46031e8af583d04555087ca0a0))
+- *(discover)* Fix tv title sorting and validate sortBy per media type (#3305) - ([2759058](https://github.com/snapetech/seerrng/commit/2759058aeb01248beae841fd450f7e73ea8d95e3))
+- *(jellyfin-api)* Update Authorization headers for Jellyfin (#3502) - ([de57e7a](https://github.com/snapetech/seerrng/commit/de57e7ac6c59b0fd3dcbedac6679fb394d5e6c8b))
+- *(login)* Hide quick connect button for emby servers (#3369) - ([d103787](https://github.com/snapetech/seerrng/commit/d103787a8f25fa3b4dac35a0ec3a05356adae632))
+- *(override-rules)* Match default *arr server by id (#3428) - ([7fae95b](https://github.com/snapetech/seerrng/commit/7fae95bbeac58c749cd5687fa000f8c87f3938c2))
+- *(requests)* Serialize requests for the same title (#3380) - ([cc6f5c7](https://github.com/snapetech/seerrng/commit/cc6f5c76316c25b193f6a8887b9d0eaf3bb26eef))
+- *(requests)* Stop editing a request from re-requesting covered seasons (#3379) - ([10483e2](https://github.com/snapetech/seerrng/commit/10483e2c08db5d857edc261bb18afd5b9cc5766c))
+- *(requests)* Enforce the quota when editing a request (#3378) - ([8f0a977](https://github.com/snapetech/seerrng/commit/8f0a977de83620130ab6cce7f2d39f6d6725c87d))
+- *(requests)* Skip seasons with no episodes when requesting all seasons (#2698) - ([1dbf19b](https://github.com/snapetech/seerrng/commit/1dbf19b80355850973367a34bd826ada6d628cd2))
+- *(requests)* Scope download status to requested seasons on request cards (#3412) - ([c604bcc](https://github.com/snapetech/seerrng/commit/c604bccc003d4d2f74a66d8cb74d9e14d5ffda89))
+- *(requests)* Serialize request creation per user (#3377) - ([d7dc7bd](https://github.com/snapetech/seerrng/commit/d7dc7bdd347bd5fac83c5a6089ba5226ae57ed36))
+- *(requests)* Stop editing a request from stealing another's season (#3376) - ([17fc4cc](https://github.com/snapetech/seerrng/commit/17fc4cc659e121ce1bde82188a29a8b07c2dccf9))
+- *(requests)* Reset orphaned season statuses when a request is deleted (#3279) - ([970bb54](https://github.com/snapetech/seerrng/commit/970bb545716505e3d3d2fa7072a7aabbc5712c05))
+- *(requests)* Enforce pending and failed states on request routes (#3385) - ([9f6403e](https://github.com/snapetech/seerrng/commit/9f6403e14eea2095342407e865f1125d7a4c8896))
+- *(scanner)* Confirm orphan candidates against the servers before declining (#3399) - ([34b28d0](https://github.com/snapetech/seerrng/commit/34b28d0aba6961bde8cca9b362c1066593ea0313))
+- *(server)* Respond instead of hanging on proxy route errors (#3501) - ([a53f49b](https://github.com/snapetech/seerrng/commit/a53f49bdc3d9740077d84b79fbf470579fb831e7))
+- *(settings)* Mutate the query-string status key for modal immediately (#3432) - ([5af32cb](https://github.com/snapetech/seerrng/commit/5af32cb27aa13bc8d1ff3cb2478ed55eb5b5552c))
+- *(subscriber)* Keep request status updates on the owning save's connection (#3366) - ([059008c](https://github.com/snapetech/seerrng/commit/059008cbb2ee0ca457ac93597d379407cb61a622))
+- *(tv)* Prevent phantom specials from blocking season request (#3351) - ([7997f75](https://github.com/snapetech/seerrng/commit/7997f7564b1b830c53c6902ef8f9f520f4daf55b))
+- *(ui)* Stop the slideover backdrop flashing back on close (#3451) - ([df743f4](https://github.com/snapetech/seerrng/commit/df743f463836269eb1e3b15b07ce1bbd17f543ba))
+- *(ui)* Stop appear leaking onto the DOM in Modal and SlideOver (#3446) - ([da4b555](https://github.com/snapetech/seerrng/commit/da4b555ca85a5aea05627fc73a4d9cbcec7f7388))
+- *(ui)* Don't mark empty collections as available (#3431) - ([92f8404](https://github.com/snapetech/seerrng/commit/92f8404326cf6d8b1c3a9412dbfc6011e26f4112))
+- *(webpush)* Resolve push subscription bugs for multi-device and shared browsers (#3142) - ([59d5947](https://github.com/snapetech/seerrng/commit/59d5947b4df8591882bda70ae199f3a708e2d02b))
+- Finalize override and push settings integrations - ([2836066](https://github.com/snapetech/seerrng/commit/2836066a7f3b564dd4e6d22c257f11871d8a439e))
+- Complete upstream merge integration - ([992ce2d](https://github.com/snapetech/seerrng/commit/992ce2d94d5e8962f6c1ab6a189d0a887d9c1995))
+- Fix empty discordId in comment webhooks (#3467) - ([e73825b](https://github.com/snapetech/seerrng/commit/e73825b2f10f53664aeb30733a483b4cf18b6a2e))
+- Prevent hideAvailable/hideBlocklisted from filtering person results (#3434) - ([0be53e6](https://github.com/snapetech/seerrng/commit/0be53e6ecccd334b54ecf0ac1ffde7a44d7b13ca))
+- Stop masking connection failures across media server sync and login (#3324) - ([4d17e08](https://github.com/snapetech/seerrng/commit/4d17e08b91c8e1de41fd75a750c11b635d046434))
+- Keep library settings when renamed on media server (#3323) - ([c9f2ac5](https://github.com/snapetech/seerrng/commit/c9f2ac58be71bd06168f027a06e396558ee1f9f1))
+- Changes the suggested url from plex's "hosted" app (#3250) - ([d3c070e](https://github.com/snapetech/seerrng/commit/d3c070e13ae9ebb5de6a42ab02f18fa84d4f02a8))
+- Clarify Bookshelf request recovery - ([fe7a770](https://github.com/snapetech/seerrng/commit/fe7a770acf8f34c552b18b1750f63c3a1a4014e9))
+- Clarify Unraid repository profile - ([10e93b1](https://github.com/snapetech/seerrng/commit/10e93b15c1606ebf3dac01f0b4f07e7e3a4fde80))
+- Make Unraid license detection pass - ([a3a9be3](https://github.com/snapetech/seerrng/commit/a3a9be3aa2dfcf66cb6c2757a6a4b09580806f6d))
+
+### 📖 Documentation
+- *(discord)* Document the Thread ID notification setting. (#3481) - ([7afbb29](https://github.com/snapetech/seerrng/commit/7afbb2914f21afa78af357425bb5a840f5e95895))
+- *(docker)* Add cap-drop and security-opt to docker command (#3472) - ([a4f5eaa](https://github.com/snapetech/seerrng/commit/a4f5eaa21e30736648600e115ecc87e27a5f6666))
+- Clarify ai disclosure policy further (#3358) - ([dea5960](https://github.com/snapetech/seerrng/commit/dea596056af21480464a007ef4ae0a1727fea90c))
+- Clarify Bookshelf container permissions - ([ac7271e](https://github.com/snapetech/seerrng/commit/ac7271ee264979ed325d404d18d95344631449b5))
+
+### ⚡ Performance
+- Bound tmdb cache & split scan lookups into their own tier (#3367) - ([59ad5f1](https://github.com/snapetech/seerrng/commit/59ad5f191631ec9c60990c953aef7ae08a132782))
+
+### 🚜 Refactor
+- *(avatarproxy)* Remove unused auth header from avatarproxy (#3503) - ([b211652](https://github.com/snapetech/seerrng/commit/b2116523f767b9cb9d0065624f0f1dd4f2ca64da))
+- *(ui)* Use the Radio component instead of RadioGroup.Option (#3454) - ([46d5915](https://github.com/snapetech/seerrng/commit/46d5915d6c449fc8deccd84bbba50ef76d832f57))
+- *(ui)* Use headlessui flat named exports (#3453) - ([aa8e0de](https://github.com/snapetech/seerrng/commit/aa8e0de04ce018137a06d3e2b664c2ebda69be70))
+
+### 🎨 Styling
+- Satisfy CI formatting and lint checks - ([ffce36b](https://github.com/snapetech/seerrng/commit/ffce36b814ad18b763e11a34357ed0769da20491))
+
+### 🧪 Testing
+- *(cypress)* Stop dirty restartRequired flag cascading across specs (#3368) - ([39ff48c](https://github.com/snapetech/seerrng/commit/39ff48c650d30ced0516574c55914d0bd26c9983))
+- Restore outbound guard module imports - ([bdfbfbe](https://github.com/snapetech/seerrng/commit/bdfbfbebcbee06dc8a1c7ae5f061a4e7a0cda9c5))
+- Block outbound HTTP in unit tests (#3511) - ([abe2f3b](https://github.com/snapetech/seerrng/commit/abe2f3bb805429c4318afbc6f1684ce94c2d1e8e))
+- Add scanner update rate override for testing (#3241) - ([7a76142](https://github.com/snapetech/seerrng/commit/7a76142ae337ce27779109b2b47bdc14883e93b9))
+
+### ⚙️ Miscellaneous Tasks
+- *(actions)* Update github actions (#3478) - ([a3dbbd9](https://github.com/snapetech/seerrng/commit/a3dbbd94a654dcf9f4273d7ba754f66c6d71d799))
+- *(actions)* Update github actions (major) (#3471) - ([6bf3d04](https://github.com/snapetech/seerrng/commit/6bf3d0484ff86553c2e27ed0552c47d62ab2bd46))
+- *(actions)* Update github actions (#3306) - ([5a5f059](https://github.com/snapetech/seerrng/commit/5a5f0590018d648ba3b7d1529f6613d077c4c032))
+- *(i18n)* Update translations from Weblate - ([68c5bc8](https://github.com/snapetech/seerrng/commit/68c5bc8c7d8560d295387adeeee73982ea518e8f))
+- *(i18n)* Update translations from Weblate - ([5f97227](https://github.com/snapetech/seerrng/commit/5f9722758c4372cf1cd72f414c079e08b1993507))
+- *(i18n)* Update translations from Weblate - ([5c04640](https://github.com/snapetech/seerrng/commit/5c04640b631a3d20712006fea24200762b2e6f70))
+- *(i18n)* Update translations from Weblate - ([cc592e8](https://github.com/snapetech/seerrng/commit/cc592e8df2a818828855052161f779cbc46ee951))
+- Remove third party action dawidd6/action-download-artifact (#3480) - ([6fa7473](https://github.com/snapetech/seerrng/commit/6fa7473dbb3bc0a44fd47748435f53a3480cc4da))
+
+
+## New Contributors ❤️
+* @atilaszsz made their first contribution
+* @aussierk made their first contribution
+* @Xyerophyte made their first contribution
+* @Knat-Dev made their first contribution
+* @britsync07-prog made their first contribution
+* @MannXo made their first contribution
+* @bartdelange made their first contribution
+* @Arul1998 made their first contribution
+* @tuvokian made their first contribution
+* @peruzzof made their first contribution
+
 ## [3.22.0](https://github.com/snapetech/seerrng/compare/v3.21.4..v3.22.0) - 2026-09-17
 
 ### User-facing changes
