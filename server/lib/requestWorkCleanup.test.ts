@@ -191,6 +191,65 @@ describe('RequestWorkCleanupManager', () => {
     );
   });
 
+  it('keeps a pending import shared by ebook and audiobook entries on one instance', async () => {
+    const request = await createActiveBookRequest();
+    const otherRequest = await createActiveBookRequest();
+    const ebookService = getSettings().readarr[0];
+    getSettings().readarr = [
+      ebookService,
+      {
+        ...ebookService,
+        id: 21,
+        name: 'Bookshelf Audiobooks',
+        isDefault: false,
+        serviceType: 'audiobook',
+      },
+    ];
+
+    const operations = await getRepository(BookRequestSearch).find({
+      where: [{ requestId: request.id }, { requestId: otherRequest.id }],
+      order: { id: 'ASC' },
+    });
+    await getRepository(BookRequestSearch).update(
+      operations.map((operation) => operation.id),
+      {
+        bookId: null,
+        commandId: null,
+        providerBookId: 'hc:book-18',
+        pendingId: 906,
+        createdBook: false,
+        createdAuthor: false,
+        state: 'pending',
+      }
+    );
+    await getRepository(BookRequestSearch).update(operations[1].id, {
+      serviceId: 21,
+      format: 'audiobook',
+    });
+
+    const canceled: number[] = [];
+    mock.method(
+      ReadarrAPI.prototype,
+      'cancelPendingAuthorImport',
+      async (pendingId: number) => {
+        canceled.push(pendingId);
+      }
+    );
+
+    await requestWorkCleanupManager.cleanup(request, true);
+
+    assert.deepEqual(canceled, []);
+    assert.equal(
+      await getRepository(BookRequestSearch).countBy({
+        requestId: otherRequest.id,
+        pendingId: 906,
+        serviceId: 21,
+        format: 'audiobook',
+      }),
+      1
+    );
+  });
+
   it('cancels a book download and removes request-created empty records', async () => {
     const request = await createActiveBookRequest();
     mock.method(ReadarrAPI.prototype, 'getCommand', async () => ({
