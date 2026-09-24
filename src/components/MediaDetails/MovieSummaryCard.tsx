@@ -99,9 +99,10 @@ const MovieSummaryCard = ({
   const Title = href ? 'h3' : 'h1';
   return (
     <div
-      className={`detail-summary-card movie-summary-card ${standalone ? 'detail-summary-standalone refreshed-card-surface' : ratings ? 'detail-item-surface movie-summary-with-ratings' : 'refreshed-inset-surface'}`}
+      className={`detail-summary-card movie-summary-card ${selection ? 'movie-summary-card-with-selection' : ''} ${standalone ? 'detail-summary-standalone refreshed-card-surface' : ratings ? 'detail-item-surface movie-summary-with-ratings' : 'refreshed-inset-surface'}`}
     >
       {artwork}
+      {selection && <div className="movie-summary-selection">{selection}</div>}
       <div
         className="collection-summary-poster"
         data-testid="media-details-poster"
@@ -129,7 +130,6 @@ const MovieSummaryCard = ({
 
       <div className="relative z-10 flex min-w-0 flex-col">
         <Title className="movie-summary-title" data-testid="media-title">
-          {selection}
           {href ? (
             <Link href={href} onClick={onSelect}>
               {title}

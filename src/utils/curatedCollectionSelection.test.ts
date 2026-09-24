@@ -22,6 +22,29 @@ describe('shared TV/music selection', () => {
     expect(memberHasQuality(album, 'music', false)).toBe(false);
     expect(memberHasQuality(album, 'music', true)).toBe(true);
   });
+  it('allows playback through a legacy music root until variant roots exist', () => {
+    const album = {
+      id: 'legacy-album',
+      mediaInfo: { id: 4712, ratingKey: 'legacy-root' },
+    } as CuratedCollectionMember;
+    expect(
+      curatedPlaybackIds([album], ['legacy-album'], 'music', false)
+    ).toEqual([4712]);
+    expect(
+      curatedPlaybackIds([album], ['legacy-album'], 'music', true)
+    ).toEqual([4712]);
+    album.mediaInfo = {
+      id: 4712,
+      ratingKey: 'legacy-root',
+      ratingKeyFlac: 'flac-root',
+    } as CuratedCollectionMember['mediaInfo'];
+    expect(
+      curatedPlaybackIds([album], ['legacy-album'], 'music', false)
+    ).toEqual([]);
+    expect(
+      curatedPlaybackIds([album], ['legacy-album'], 'music', true)
+    ).toEqual([4712]);
+  });
   const parts = [
     {
       id: 'a',

@@ -9,6 +9,7 @@ interface BlocklistConfirmationModalProps {
   onComplete?: () => void;
   onCancel?: () => void;
   isUpdating?: boolean;
+  confirmationText?: string;
 }
 
 const messages = defineMessages('component.BlocklistConfirmationModal', {
@@ -21,6 +22,7 @@ const BlocklistConfirmationModal = ({
   onComplete,
   onCancel,
   isUpdating,
+  confirmationText,
 }: BlocklistConfirmationModalProps) => {
   const intl = useIntl();
 
@@ -52,7 +54,7 @@ const BlocklistConfirmationModal = ({
         actionButtonSize="standard"
       >
         <p className="text-center text-base font-bold text-white">
-          {intl.formatMessage(messages.confirmation)}
+          {confirmationText ?? intl.formatMessage(messages.confirmation)}
         </p>
       </Modal>
     </Transition>

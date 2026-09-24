@@ -682,6 +682,10 @@
     @apply justify-start;
   }
 
+  .music-collection-primary-action-row {
+    @apply justify-between;
+  }
+
   .discography-ratings {
     display: flex;
     flex-wrap: wrap;
@@ -766,6 +770,22 @@
   .movie-summary-card {
     @apply grid min-w-0 grid-cols-[64px_minmax(0,1fr)] sm:grid-cols-[80px_minmax(0,1fr)];
     gap: var(--card-spacing);
+  }
+
+  .movie-summary-card-with-selection {
+    @apply grid-cols-[16px_64px_minmax(0,1fr)] sm:grid-cols-[16px_80px_minmax(0,1fr)];
+  }
+
+  .movie-summary-selection {
+    align-self: start;
+  }
+
+  .collection-selection-action-row {
+    @apply justify-start;
+  }
+
+  .collection-selection-action-row .collection-server-actions {
+    margin-inline-start: auto;
   }
 
   .detail-summary-standalone {
@@ -2334,6 +2354,20 @@
     min-height: var(--action-control-height);
   }
 
+  .collection-playback-controls,
+  .collection-rating-links {
+    @apply flex items-center;
+    gap: var(--card-spacing);
+  }
+
+  .collection-playback-controls {
+    flex: none;
+  }
+
+  .collection-rating-links {
+    @apply min-w-0 justify-end;
+  }
+
   .media-rating-link {
     @apply inline-flex flex-none items-center gap-[5px] text-xs text-gray-300 hover:text-white;
     height: var(--action-control-height);
@@ -2764,6 +2798,11 @@
   @media (max-width: 767px) {
     .media-rating-row {
       @apply flex-wrap gap-y-[5px];
+    }
+
+    .collection-playback-controls,
+    .collection-rating-links {
+      @apply flex-wrap;
     }
   }
 

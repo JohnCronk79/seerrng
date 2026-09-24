@@ -98,8 +98,17 @@ export default function CuratedMemberCard({
   return (
     <article
       ref={card}
-      className="detail-item-surface detail-summary-card movie-summary-card movie-summary-with-ratings"
+      className="detail-item-surface detail-summary-card movie-summary-card movie-summary-card-with-selection movie-summary-with-ratings"
     >
+      <div className="movie-summary-selection">
+        <SelectionCircle
+          label={
+            selectionLabel ?? intl.formatMessage(messages.selection, { title })
+          }
+          selected={selected}
+          onClick={toggle}
+        />
+      </div>
       <Link
         href={href}
         className="collection-summary-poster"
@@ -121,14 +130,6 @@ export default function CuratedMemberCard({
       </Link>
       <div className="relative z-10 flex min-w-0 flex-col">
         <h3 className="movie-summary-title">
-          <SelectionCircle
-            label={
-              selectionLabel ??
-              intl.formatMessage(messages.selection, { title })
-            }
-            selected={selected}
-            onClick={toggle}
-          />
           <Link href={href}>{title}</Link>
         </h3>
         <div className="movie-summary-fields movie-summary-fields-with-ratings detail-card-heading-spacing grid min-w-0 flex-1">

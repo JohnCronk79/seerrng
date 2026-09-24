@@ -2,6 +2,8 @@ import type { CollectionSyncStatus } from '@server/interfaces/api/collectionSync
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  availableDestinationCount,
+  availableDestinationIds,
   collectionAddState,
   collectionRemoveState,
 } from './collectionActionState';
@@ -17,6 +19,7 @@ const status = (
       libraryName: 'Movies',
       state,
       count,
+      availableIds: Array.from({ length: count }, (_, index) => `${index + 1}`),
       managed: true,
       removalToken: state === 'exists' ? 'token' : undefined,
     },
@@ -45,15 +48,42 @@ describe('collection buttons', () => {
     delete unverified.destinations[0].removalToken;
     expect(collectionRemoveState(unverified)).toBe('absent');
   });
-  it('enables add for a mixed selection but not for unavailable selected members', () => {
+  it('enables Add Collection from any available member, independent of card selection', () => {
     const available = status('missing', 2);
     available.destinations[0].availableIds = ['available', 'other'];
+    expect(collectionAddState(available)).toBe('ready');
+    expect(collectionAddState(status('missing', 0))).toBe('empty');
+    expect(availableDestinationCount(available.destinations[0])).toBe(2);
+  });
+  it('submits all available member IDs across the chosen libraries', () => {
+    const first = status('missing', 2).destinations[0];
+    first.availableIds = ['available', 'other'];
+    const second = {
+      ...first,
+      libraryId: '2',
+      availableIds: ['other', 'another'],
+    };
+    expect(availableDestinationIds([first, second])).toEqual([
+      'available',
+      'other',
+      'another',
+    ]);
+  });
+  it('limits Add Collection to available members included by the active filters', () => {
+    const available = status('missing', 3);
+    available.destinations[0].availableIds = ['first', 'filtered', 'last'];
+    const visibleIds = ['filtered', 'not-available'];
+
+    expect(collectionAddState(available, undefined, visibleIds)).toBe('ready');
     expect(
-      collectionAddState(available, undefined, ['available', 'missing'])
-    ).toBe('ready');
-    expect(collectionAddState(available, undefined, ['missing'])).toBe('empty');
-    expect(collectionAddState(available, undefined, [])).toBe('empty');
-    expect(collectionAddState(available, undefined, ['other'])).toBe('ready');
+      availableDestinationCount(available.destinations[0], visibleIds)
+    ).toBe(1);
+    expect(availableDestinationIds(available.destinations, visibleIds)).toEqual(
+      ['filtered']
+    );
+    expect(collectionAddState(available, undefined, ['not-available'])).toBe(
+      'empty'
+    );
   });
   it('disables both actions during uncertainty, ambiguity and unsupported configurations', () => {
     for (const action of [collectionAddState, collectionRemoveState]) {

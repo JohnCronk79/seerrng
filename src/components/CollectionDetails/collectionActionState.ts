@@ -3,15 +3,34 @@ import type {
   CollectionSyncStatus,
 } from '@server/interfaces/api/collectionSync';
 
-export const selectedDestinationCount = (
+const destinationItemIds = (
   entry: CollectionDestination,
-  selectedIds?: string[]
+  includedIds?: string[]
+) => {
+  if (!entry.availableIds) return [];
+  if (!includedIds) return entry.availableIds;
+  const included = new Set(includedIds);
+  return entry.availableIds.filter((id) => included.has(id));
+};
+
+export const availableDestinationCount = (
+  entry: CollectionDestination,
+  includedIds?: string[]
 ) =>
-  selectedIds === undefined
-    ? entry.count
-    : entry.availableIds === undefined
-      ? 0
-      : entry.availableIds.filter((id) => selectedIds.includes(id)).length;
+  entry.availableIds
+    ? destinationItemIds(entry, includedIds).length
+    : includedIds === undefined
+      ? entry.count
+      : 0;
+
+export const availableDestinationIds = (
+  entries: CollectionDestination[],
+  includedIds?: string[]
+) => [
+  ...new Set(
+    entries.flatMap((entry) => destinationItemIds(entry, includedIds))
+  ),
+];
 
 const verificationState = (status?: CollectionSyncStatus, error?: unknown) => {
   if (error || (status && !status.supported)) return 'unavailable';
@@ -24,7 +43,7 @@ const verificationState = (status?: CollectionSyncStatus, error?: unknown) => {
 export const collectionAddState = (
   status?: CollectionSyncStatus,
   error?: unknown,
-  selectedIds?: string[]
+  includedIds?: string[]
 ) => {
   const verification = verificationState(status, error);
   if (verification) return verification;
@@ -32,7 +51,7 @@ export const collectionAddState = (
     status?.destinations.some(
       (entry) =>
         entry.state === 'missing' &&
-        selectedDestinationCount(entry, selectedIds) > 0
+        availableDestinationCount(entry, includedIds) > 0
     )
   )
     return 'ready';

@@ -1,6 +1,5 @@
 import BlocklistModal from '@app/components/BlocklistModal';
 import CollectionAssociationsButton from '@app/components/CollectionDetails/CollectionAssociationsButton';
-import CollectionMetadataDisclosures from '@app/components/CollectionDetails/CollectionMetadataDisclosures';
 import CollectionPlayOnDeviceButton from '@app/components/CollectionDetails/CollectionPlayOnDeviceButton';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
@@ -39,7 +38,12 @@ import {
 } from '@app/utils/imageCache';
 import { getMovieTrailerUrl } from '@app/utils/movieTrailer';
 import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
-import { EyeSlashIcon, FilmIcon } from '@heroicons/react/24/outline';
+import {
+  CheckCircleIcon,
+  EyeSlashIcon,
+  FilmIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { Collection } from '@server/models/Collection';
 import axios from 'axios';
@@ -79,8 +83,13 @@ const messages = defineMessages('components.CollectionDetails', {
   quality: 'Quality',
   chooseQuality: 'Choose HD or 4K before starting playback.',
   noQualitySelection: 'No selected movies are available in this quality.',
+  partialPlayback: 'Not all selected titles are available in this quality.',
   ratingsFailed: 'Some collection details or ratings could not be loaded.',
   retry: 'Retry',
+  selectAll: 'Select All',
+  selectNone: 'Clear Selection',
+  selectAllHelp: 'Select every available item for playback.',
+  selectNoneHelp: 'Clear the playback selection.',
   watchTrailer: 'Watch Trailer',
   trailerHelp:
     'Watch the trailer for {title}, the first movie in this collection, in a new browser window.',
@@ -93,10 +102,6 @@ interface CollectionDetailsProps {
 }
 
 const requestableStatuses = new Set([MediaStatus.UNKNOWN, MediaStatus.DELETED]);
-const availableStatuses = new Set([
-  MediaStatus.AVAILABLE,
-  MediaStatus.PARTIALLY_AVAILABLE,
-]);
 
 const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   const intl = useIntl();
@@ -170,28 +175,25 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
     setSelectedMediaIds([]);
     setHasManualPlaybackSelection(false);
   }, [collectionId]);
-  const availableParts = useMemo(
-    () =>
-      orderedParts.filter(
-        (part) =>
-          !!part.mediaInfo?.id &&
-          (availableStatuses.has(part.mediaInfo.status) ||
-            availableStatuses.has(part.mediaInfo.status4k))
-      ),
-    [orderedParts]
+  const selectedPlaybackParts = orderedParts.filter(
+    (part) => !hasManualPlaybackSelection || selectedMediaIds.includes(part.id)
   );
-  const availableMediaIds = useMemo(
-    () => availableParts.map((part) => part.mediaInfo!.id),
-    [availableParts]
+  const playableSelectedParts = selectedPlaybackParts.filter((part) =>
+    collectionPartHasQuality(part, playbackQuality)
   );
-  const effectivePlaybackMediaIds = availableMediaIds.filter((id) =>
-    orderedParts.some(
-      (part) =>
-        part.mediaInfo?.id === id &&
-        (!hasManualPlaybackSelection || selectedMediaIds.includes(part.id)) &&
-        collectionPartHasQuality(part, playbackQuality)
-    )
+  const effectivePlaybackMediaIds = playableSelectedParts.map(
+    (part) => part.mediaInfo!.id
   );
+  const allSelectedPlaybackAvailable =
+    selectedPlaybackParts.length > 0 &&
+    playableSelectedParts.length === selectedPlaybackParts.length;
+  const playbackUnavailableReason = !playbackQuality
+    ? intl.formatMessage(messages.chooseQuality)
+    : playableSelectedParts.length === 0
+      ? intl.formatMessage(messages.noQualitySelection)
+      : !allSelectedPlaybackAvailable
+        ? intl.formatMessage(messages.partialPlayback)
+        : undefined;
   useEffect(() => {
     setSelectedMediaIds((current) =>
       reconcileCollectionPlaybackSelection(
@@ -409,23 +411,13 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             <MediaServerPlayButton
               collectionMediaIds={effectivePlaybackMediaIds}
               defaultIs4k={playbackQuality === '4k'}
-              disabled={
-                !playbackQuality || effectivePlaybackMediaIds.length === 0
-              }
-              disabledReason={intl.formatMessage(
-                playbackQuality
-                  ? messages.noQualitySelection
-                  : messages.chooseQuality
-              )}
+              disabled={!allSelectedPlaybackAvailable}
+              disabledReason={playbackUnavailableReason}
             />
             <CollectionPlayOnDeviceButton
               mediaIds={effectivePlaybackMediaIds}
               is4k={playbackQuality === '4k'}
-              disabledReason={
-                !playbackQuality
-                  ? intl.formatMessage(messages.chooseQuality)
-                  : undefined
-              }
+              disabledReason={playbackUnavailableReason}
             />
             <CollectionRatings
               ratings={averages}
@@ -497,22 +489,40 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             <FormatRequestControl options={requestOptions} />
           </div>
 
-          <CollectionMetadataDisclosures
-            parts={data.parts}
-            actions={
-              availability.supported ? (
-                <CollectionServerActions
-                  key={collectionId}
-                  id={collectionId}
-                  title={data.name}
-                  availability={availability.data}
-                  error={availability.error}
-                  revalidate={availability.mutate}
-                  selectedIds={selectedMediaIds.map(String)}
-                />
-              ) : undefined
-            }
-          />
+          <div className="media-detail-disclosure-row collection-detail-disclosure-row collection-selection-action-row">
+            <Button
+              buttonType="association"
+              title={intl.formatMessage(messages.selectAllHelp)}
+              onClick={() => {
+                setHasManualPlaybackSelection(true);
+                setSelectedMediaIds(orderedParts.map((part) => part.id));
+              }}
+            >
+              <CheckCircleIcon />
+              <span>{intl.formatMessage(messages.selectAll)}</span>
+            </Button>
+            <Button
+              buttonType="association"
+              title={intl.formatMessage(messages.selectNoneHelp)}
+              onClick={() => {
+                setHasManualPlaybackSelection(true);
+                setSelectedMediaIds([]);
+              }}
+            >
+              <XMarkIcon />
+              <span>{intl.formatMessage(messages.selectNone)}</span>
+            </Button>
+            {availability.supported && (
+              <CollectionServerActions
+                key={collectionId}
+                id={collectionId}
+                title={data.name}
+                availability={availability.data}
+                error={availability.error}
+                revalidate={availability.mutate}
+              />
+            )}
+          </div>
 
           <div className="card-spacing-before">
             <ThreeItemScroll label={data.name}>

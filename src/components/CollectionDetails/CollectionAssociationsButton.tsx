@@ -10,7 +10,6 @@ import type {
 import { mapWithConcurrency } from '@app/utils/concurrency';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
-import type { MovieResult } from '@server/models/Search';
 import axios from 'axios';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -27,7 +26,13 @@ const getAssociationHref = (edge: AssociationEdge) => {
   return `/${routeType}/${edge.node.id}`;
 };
 
-const CollectionAssociationsButton = ({ parts }: { parts: MovieResult[] }) => {
+const CollectionAssociationsButton = ({
+  parts,
+  mediaType = 'movie',
+}: {
+  parts: { id: string | number }[];
+  mediaType?: 'movie' | 'tv' | 'album';
+}) => {
   const intl = useIntl();
   const [show, setShow] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -42,7 +47,7 @@ const CollectionAssociationsButton = ({ parts }: { parts: MovieResult[] }) => {
       try {
         return (
           await axios.get<AssociationGraph>(
-            `/api/v1/association/movie/${part.id}?includeWeak=true`
+            `/api/v1/association/${mediaType}/${encodeURIComponent(String(part.id))}?includeWeak=true`
           )
         ).data.edges;
       } catch {
@@ -52,7 +57,8 @@ const CollectionAssociationsButton = ({ parts }: { parts: MovieResult[] }) => {
     const unique = new Map<string, AssociationEdge>();
     results.flat().forEach((edge) => {
       const nodeId = String(edge.node.id);
-      if (edge.node.mediaType === 'movie' && collectionIds.has(nodeId)) return;
+      if (edge.node.mediaType === mediaType && collectionIds.has(nodeId))
+        return;
       const key = `${edge.node.mediaType}-${nodeId}`;
       if (!unique.has(key) || (unique.get(key)?.weight ?? 0) < edge.weight) {
         unique.set(key, edge);

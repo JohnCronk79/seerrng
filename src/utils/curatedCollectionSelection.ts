@@ -8,10 +8,25 @@ export const memberCanPlayQuality = (
 ) => {
   const media = part.mediaInfo;
   if (!media) return false;
-  if (kind === 'music')
-    return !!(high
+  if (kind === 'music') {
+    const selectedVariant = high
       ? media.ratingKeyFlac || media.jellyfinMediaIdFlac
-      : media.ratingKeyMp3 || media.jellyfinMediaIdMp3);
+      : media.ratingKeyMp3 || media.jellyfinMediaIdMp3;
+    if (selectedVariant) return true;
+    // Older library scans have a single, quality-agnostic root ID. Match the
+    // server-side playback resolver: use it only until variant-specific IDs
+    // have been recorded.
+    const hasQualitySpecificRoot = Boolean(
+      media.ratingKeyMp3 ||
+      media.ratingKeyFlac ||
+      media.jellyfinMediaIdMp3 ||
+      media.jellyfinMediaIdFlac
+    );
+    return (
+      !hasQualitySpecificRoot &&
+      Boolean(media.ratingKey || media.jellyfinMediaId)
+    );
+  }
   return [MediaStatus.AVAILABLE, MediaStatus.PARTIALLY_AVAILABLE].includes(
     high ? media.status4k : media.status
   );

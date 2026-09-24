@@ -1,19 +1,27 @@
+import BlocklistConfirmationModal from '@app/components/BlocklistConfirmationModal';
+import CollectionAssociationsButton from '@app/components/CollectionDetails/CollectionAssociationsButton';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
+import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
 import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
+import Tooltip from '@app/components/Common/Tooltip';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import MusicRatings from '@app/components/MediaDetails/MusicRatings';
 import useCollectionAvailability from '@app/hooks/useCollectionAvailability';
 import useCuratedPosters from '@app/hooks/useCuratedPosters';
 import useCuratedRatings from '@app/hooks/useCuratedRatings';
+import useSettings from '@app/hooks/useSettings';
+import useToasts from '@app/hooks/useToasts';
+import { Permission, useUser } from '@app/hooks/useUser';
 import {
   getCollectionMemberRatings,
   type CollectionRating,
 } from '@app/utils/collectionRatings';
+import { mapWithConcurrency } from '@app/utils/concurrency';
 import {
   curatedPlaybackIds,
   memberHasQuality,
@@ -30,14 +38,19 @@ import { averageMusicRatings } from '@app/utils/musicRatings';
 import { getSafeHref } from '@app/utils/safeUrl';
 import {
   CheckCircleIcon,
+  EyeSlashIcon,
   FilmIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { MediaStatus, MediaType } from '@server/constants/media';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type {
   CuratedCollection,
   CuratedCollectionMember,
 } from '@server/models/CuratedCollection';
 import type { TvDetails } from '@server/models/Tv';
+import axios from 'axios';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -65,15 +78,37 @@ const messages = defineMessages('components.CuratedCollection', {
   failed: 'This collection could not be loaded. Try again.',
   retry: 'Retry',
   noPlayback: 'No selected items are available in this quality.',
+  partialPlayback: 'Not all selected titles are available in this quality.',
   trailer: 'Watch Trailer',
   trailerHelp: 'Watch the trailer for the first series in this collection.',
   noTrailer: 'No trailer is available for the first series.',
+  blocklistAll: 'Blocklist all series in this collection.',
+  blocklistAllMusic: 'Blocklist all albums in this collection.',
+  blocklistComplete: 'Series collection added to the blocklist.',
+  blocklistPartial: 'Some series in the collection could not be blocklisted.',
+  alreadyBlocklisted: 'Every series in this collection is already blocklisted.',
+  blocklistCompleteMusic: 'Music collection added to the blocklist.',
+  blocklistPartialMusic:
+    'Some albums in the collection could not be blocklisted.',
+  alreadyBlocklistedMusic:
+    'Every album in this collection is already blocklisted.',
+  confirmBlocklist:
+    'Blocklist all {count} {count, plural, one {series} other {series}} in this collection?',
+  confirmBlocklistMusic:
+    'Blocklist all {count} {count, plural, one {album} other {albums}} in this collection?',
+  noSeriesSelected: 'Select at least one series to request.',
+  noAlbumSelected: 'Select at least one album to request.',
+  noFormatService: 'No {format} service is configured.',
   source: 'Collection Source',
   sourceHelp: 'Open the source catalogue in a new browser window.',
   empty: 'No collection members are listed by the provider.',
   discography: '{artist} Discography',
   ratings:
     'Average of {count} rated albums out of {total}; missing ratings are excluded.',
+});
+
+const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
+  ssr: false,
 });
 
 export default function CuratedCollectionDetails({
@@ -88,9 +123,15 @@ export default function CuratedCollectionDetails({
   returnAlbumId?: string;
 }) {
   const intl = useIntl();
+  const settings = useSettings();
+  const { hasPermission } = useUser();
+  const { addToast } = useToasts();
   const endpoint = `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
   const { data, error, mutate } = useSWR<CuratedCollection>(
     id ? endpoint : null
+  );
+  const { data: musicServices } = useSWR<ServiceCommonServer[]>(
+    kind === 'music' ? '/api/v1/service/lidarr' : null
   );
   const isDiscography = discographyArtist !== undefined;
   const availability = useCollectionAvailability(
@@ -104,11 +145,19 @@ export default function CuratedCollectionDetails({
     ...DEFAULT_MUSIC_COLLECTION_FILTERS,
   });
   const [quality, setQuality] = useState<'standard' | 'high'>('standard');
+  const [requestQueue, setRequestQueue] = useState<string[]>([]);
+  const [requestIs4k, setRequestIs4k] = useState(false);
+  const [requestMusicServerId, setRequestMusicServerId] = useState<number>();
+  const [showBlocklistConfirmation, setShowBlocklistConfirmation] =
+    useState(false);
+  const [isBlocklisting, setIsBlocklisting] = useState(false);
   useEffect(() => {
     setManual(false);
     setSelected([]);
     setQuality('standard');
     setFilters({ ...DEFAULT_MUSIC_COLLECTION_FILTERS });
+    setRequestQueue([]);
+    setRequestMusicServerId(undefined);
   }, [kind, id]);
   const ids = data?.parts.map((part) => part.id).join(',') ?? '';
   const visibleParts =
@@ -177,6 +226,141 @@ export default function CuratedCollectionDetails({
       <LoadingSpinner />
     );
   const parts = data.parts;
+  const blocklistParts = parts.filter(
+    (part) =>
+      part.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
+      (kind === 'music' ||
+        (Number.isSafeInteger(Number(part.id)) && Number(part.id) > 0))
+  );
+  const alreadyBlocklisted = parts.length > 0 && blocklistParts.length === 0;
+  const requestableTvIds = shownSelection.filter((memberId) => {
+    const numericId = Number(memberId);
+    return Number.isSafeInteger(numericId) && numericId > 0;
+  });
+  const canRequestTv = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_TV],
+    { type: 'or' }
+  );
+  const canRequestTv4k =
+    settings.currentSettings.series4kEnabled &&
+    hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_TV], {
+      type: 'or',
+    });
+  const startTvRequests = (is4k: boolean) => {
+    setRequestIs4k(is4k);
+    setRequestQueue(requestableTvIds);
+  };
+  const requestOptions = [
+    ...(canRequestTv
+      ? [
+          {
+            id: 'hd',
+            label: 'HD',
+            onClick: () => startTvRequests(false),
+            disabled: requestableTvIds.length === 0,
+            disabledReason: intl.formatMessage(messages.noSeriesSelected),
+          },
+        ]
+      : []),
+    ...(canRequestTv4k
+      ? [
+          {
+            id: '4k',
+            label: '4K',
+            onClick: () => startTvRequests(true),
+            disabled: requestableTvIds.length === 0,
+            disabledReason: intl.formatMessage(messages.noSeriesSelected),
+          },
+        ]
+      : []),
+  ];
+  const requestableMusicIds = shownSelection.filter((memberId) =>
+    parts.some(
+      (part) =>
+        part.id === memberId &&
+        part.mediaInfo?.status !== MediaStatus.BLOCKLISTED
+    )
+  );
+  const canRequestMusic = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_MUSIC],
+    { type: 'or' }
+  );
+  const startMusicRequests = (format: 'mp3' | 'flac') => {
+    const service = musicServices?.find((candidate) =>
+      candidate.name.toLocaleLowerCase().includes(format)
+    );
+    if (!service || requestableMusicIds.length === 0) return;
+    setRequestMusicServerId(service.id);
+    setRequestQueue(requestableMusicIds);
+  };
+  const musicRequestOptions = canRequestMusic
+    ? (['mp3', 'flac'] as const).map((format) => {
+        const service = musicServices?.find((candidate) =>
+          candidate.name.toLocaleLowerCase().includes(format)
+        );
+        return {
+          id: format,
+          label: format.toLocaleUpperCase(),
+          onClick: () => startMusicRequests(format),
+          disabled: !service || requestableMusicIds.length === 0,
+          disabledReason: !service
+            ? intl.formatMessage(messages.noFormatService, {
+                format: format.toLocaleUpperCase(),
+              })
+            : requestableMusicIds.length === 0
+              ? intl.formatMessage(messages.noAlbumSelected)
+              : undefined,
+        };
+      })
+    : [];
+  const onBlocklistCollection = async () => {
+    setIsBlocklisting(true);
+    try {
+      const succeeded = await mapWithConcurrency(
+        blocklistParts,
+        5,
+        async (part) => {
+          try {
+            await axios.post(
+              '/api/v1/blocklist',
+              kind === 'music'
+                ? {
+                    externalId: part.id,
+                    externalProvider: 'musicbrainz',
+                    mediaType: MediaType.MUSIC,
+                    title: part.title,
+                  }
+                : {
+                    tmdbId: Number(part.id),
+                    mediaType: 'tv',
+                    title: part.title,
+                  }
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        }
+      );
+      const complete = succeeded.every(Boolean);
+      addToast(
+        intl.formatMessage(
+          complete
+            ? kind === 'music'
+              ? messages.blocklistCompleteMusic
+              : messages.blocklistComplete
+            : kind === 'music'
+              ? messages.blocklistPartialMusic
+              : messages.blocklistPartial
+        ),
+        { appearance: complete ? 'success' : 'error', autoDismiss: true }
+      );
+      await mutate();
+    } finally {
+      setIsBlocklisting(false);
+      setShowBlocklistConfirmation(false);
+    }
+  };
   const displayName = isDiscography
     ? intl.formatMessage(messages.discography, {
         artist: discographyArtist || data.name.replace(/ Collection$/, ''),
@@ -188,6 +372,18 @@ export default function CuratedCollectionDetails({
     kind,
     quality === 'high'
   );
+  const allSelectedPlaybackAvailable =
+    shownSelection.length > 0 && playbackIds.length === shownSelection.length;
+  const playbackUnavailableReason =
+    playbackIds.length === 0
+      ? intl.formatMessage(messages.noPlayback)
+      : !allSelectedPlaybackAvailable
+        ? intl.formatMessage(messages.partialPlayback)
+        : undefined;
+  const qualityParts =
+    kind === 'music'
+      ? visibleParts.filter((part) => shownSelection.includes(part.id))
+      : parts;
   const memberRatings = (part: CuratedCollectionMember) =>
     getCollectionMemberRatings(
       {
@@ -238,6 +434,46 @@ export default function CuratedCollectionDetails({
   return (
     <>
       <PageTitle title={displayName} />
+      {showBlocklistConfirmation && (
+        <BlocklistConfirmationModal
+          show
+          onCancel={() => setShowBlocklistConfirmation(false)}
+          onComplete={() => void onBlocklistCollection()}
+          isUpdating={isBlocklisting}
+          confirmationText={intl.formatMessage(
+            kind === 'music'
+              ? messages.confirmBlocklistMusic
+              : messages.confirmBlocklist,
+            { count: blocklistParts.length }
+          )}
+        />
+      )}
+      {requestQueue[0] &&
+        (kind === 'tv' ? (
+          <RequestModal
+            type="tv"
+            tmdbId={Number(requestQueue[0])}
+            show
+            is4k={requestIs4k}
+            onComplete={() => {
+              setRequestQueue((current) => current.slice(1));
+              void mutate();
+            }}
+            onCancel={() => setRequestQueue([])}
+          />
+        ) : (
+          <RequestModal
+            type="music"
+            mbId={requestQueue[0]}
+            show
+            initialMusicServerId={requestMusicServerId}
+            onComplete={() => {
+              setRequestQueue((current) => current.slice(1));
+              void mutate();
+            }}
+            onCancel={() => setRequestQueue([])}
+          />
+        ))}
       <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {(kind === 'music' ? data.posterPath : data.backdropPath) && (
           <MediaDetailArtwork
@@ -297,56 +533,52 @@ export default function CuratedCollectionDetails({
           </div>
           {!isDiscography && (
             <div className="media-rating-row">
-              <MediaQualitySelect
-                value={quality}
-                onChange={setQuality}
-                label={intl.formatMessage(messages.quality)}
-                autoSelectAvailable={false}
-                options={[
-                  {
-                    label: kind === 'music' ? 'MP3' : 'HD',
-                    value: 'standard',
-                    disabled: !parts.some((part) =>
-                      memberHasQuality(part, kind, false)
-                    ),
-                  },
-                  {
-                    label: kind === 'music' ? 'FLAC' : '4K',
-                    value: 'high',
-                    disabled: !parts.some((part) =>
-                      memberHasQuality(part, kind, true)
-                    ),
-                  },
-                ]}
-              />
-              <MediaServerPlayButton
-                collectionMediaIds={playbackIds}
-                defaultIs4k={quality === 'high'}
-                disabled={!playbackIds.length}
-                disabledReason={
-                  !playbackIds.length
-                    ? intl.formatMessage(messages.noPlayback)
-                    : undefined
-                }
-              />
-              <CollectionPlayOnDeviceButton
-                mediaIds={playbackIds}
-                is4k={quality === 'high'}
-                disabledReason={
-                  !playbackIds.length
-                    ? intl.formatMessage(messages.noPlayback)
-                    : undefined
-                }
-              />
-              {kind === 'tv' ? (
-                <CollectionRatings
-                  ratings={averages}
-                  total={parts.length}
-                  loading={loadingMembers && !members.length}
+              <div className="collection-playback-controls">
+                <MediaQualitySelect
+                  value={quality}
+                  onChange={setQuality}
+                  label={intl.formatMessage(messages.quality)}
+                  autoSelectAvailable={kind === 'music'}
+                  options={[
+                    {
+                      label: kind === 'music' ? 'MP3' : 'HD',
+                      value: 'standard',
+                      disabled: !qualityParts.some((part) =>
+                        memberHasQuality(part, kind, false)
+                      ),
+                    },
+                    {
+                      label: kind === 'music' ? 'FLAC' : '4K',
+                      value: 'high',
+                      disabled: !qualityParts.some((part) =>
+                        memberHasQuality(part, kind, true)
+                      ),
+                    },
+                  ]}
                 />
-              ) : (
-                <MusicRatings ratings={musicAverages} total={parts.length} />
-              )}
+                <MediaServerPlayButton
+                  collectionMediaIds={playbackIds}
+                  defaultIs4k={quality === 'high'}
+                  disabled={!allSelectedPlaybackAvailable}
+                  disabledReason={playbackUnavailableReason}
+                />
+                <CollectionPlayOnDeviceButton
+                  mediaIds={playbackIds}
+                  is4k={quality === 'high'}
+                  disabledReason={playbackUnavailableReason}
+                />
+              </div>
+              <div className="collection-rating-links">
+                {kind === 'tv' ? (
+                  <CollectionRatings
+                    ratings={averages}
+                    total={parts.length}
+                    loading={loadingMembers && !members.length}
+                  />
+                ) : (
+                  <MusicRatings ratings={musicAverages} total={parts.length} />
+                )}
+              </div>
             </div>
           )}
           {isDiscography && (
@@ -354,10 +586,91 @@ export default function CuratedCollectionDetails({
               <MusicRatings ratings={musicAverages} total={parts.length} />
             </div>
           )}
+          {(kind === 'tv' || (kind === 'music' && !isDiscography)) && (
+            <div
+              className={[
+                'media-primary-action-row',
+                kind === 'music' ? 'music-collection-primary-action-row' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {hasPermission(Permission.MANAGE_BLOCKLIST) && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    alreadyBlocklisted
+                      ? kind === 'music'
+                        ? messages.alreadyBlocklistedMusic
+                        : messages.alreadyBlocklisted
+                      : kind === 'music'
+                        ? messages.blocklistAllMusic
+                        : messages.blocklistAll
+                  )}
+                >
+                  <Button
+                    buttonType="blocklist"
+                    buttonSize="standard"
+                    disabled={alreadyBlocklisted || isBlocklisting}
+                    disabledReason={intl.formatMessage(
+                      alreadyBlocklisted
+                        ? kind === 'music'
+                          ? messages.alreadyBlocklistedMusic
+                          : messages.alreadyBlocklisted
+                        : kind === 'music'
+                          ? messages.blocklistAllMusic
+                          : messages.blocklistAll
+                    )}
+                    onClick={() => setShowBlocklistConfirmation(true)}
+                    aria-label={intl.formatMessage(
+                      kind === 'music'
+                        ? messages.blocklistAllMusic
+                        : messages.blocklistAll
+                    )}
+                  >
+                    <EyeSlashIcon className="!mr-0" />
+                  </Button>
+                </Tooltip>
+              )}
+              {kind === 'tv' && trailerUrl ? (
+                <Button
+                  as="a"
+                  href={trailerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  buttonType="trailer"
+                  buttonSize="sm"
+                  title={intl.formatMessage(messages.trailerHelp)}
+                >
+                  <FilmIcon />
+                  <span>{intl.formatMessage(messages.trailer)}</span>
+                </Button>
+              ) : kind === 'tv' ? (
+                <Button
+                  buttonType="trailer"
+                  buttonSize="sm"
+                  disabled
+                  disabledReason={intl.formatMessage(messages.noTrailer)}
+                >
+                  <FilmIcon />
+                  <span>{intl.formatMessage(messages.trailer)}</span>
+                </Button>
+              ) : null}
+              <CollectionAssociationsButton
+                parts={parts}
+                mediaType={kind === 'tv' ? 'tv' : 'album'}
+              />
+              {kind === 'tv' ? (
+                <FormatRequestControl options={requestOptions} />
+              ) : (
+                <FormatRequestControl options={musicRequestOptions} />
+              )}
+            </div>
+          )}
           <div
             className={[
               'media-detail-disclosure-row',
               'collection-detail-disclosure-row',
+              kind === 'tv' ? 'collection-selection-action-row' : '',
               kind === 'music' ? 'music-collection-action-row' : '',
               isDiscography ? 'discography-selection-row' : '',
             ]
@@ -365,7 +678,7 @@ export default function CuratedCollectionDetails({
               .join(' ')}
           >
             <Button
-              buttonType={kind === 'music' ? 'association' : 'ghost'}
+              buttonType="association"
               title={
                 isDiscography
                   ? intl.formatMessage(messages.selectAll)
@@ -382,7 +695,7 @@ export default function CuratedCollectionDetails({
               <span>{intl.formatMessage(messages.selectAll)}</span>
             </Button>
             <Button
-              buttonType={kind === 'music' ? 'association' : 'ghost'}
+              buttonType="association"
               title={intl.formatMessage(
                 isDiscography ? messages.selectNone : messages.noneHelp
               )}
@@ -394,21 +707,6 @@ export default function CuratedCollectionDetails({
               <XMarkIcon />
               <span>{intl.formatMessage(messages.selectNone)}</span>
             </Button>
-            {kind === 'tv' && (
-              <Button
-                buttonType="trailer"
-                disabled={!trailerUrl}
-                disabledReason={intl.formatMessage(messages.noTrailer)}
-                title={intl.formatMessage(messages.trailerHelp)}
-                onClick={() =>
-                  trailerUrl &&
-                  window.open(trailerUrl, '_blank', 'noopener,noreferrer')
-                }
-              >
-                <FilmIcon />
-                <span>{intl.formatMessage(messages.trailer)}</span>
-              </Button>
-            )}
             {isDiscography ? (
               <DiscographyRequestActions
                 items={visibleParts.filter((part) =>
@@ -423,10 +721,10 @@ export default function CuratedCollectionDetails({
                 id={id}
                 title={data.name}
                 endpoint={endpoint}
-                selectedIds={shownSelection}
                 availability={availability.data}
                 error={availability.error}
                 revalidate={availability.mutate}
+                visibleItemIds={visibleParts.map((part) => part.id)}
               />
             )}
           </div>

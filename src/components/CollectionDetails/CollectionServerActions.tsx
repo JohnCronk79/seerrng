@@ -17,9 +17,10 @@ import axios from 'axios';
 import { Fragment, useState } from 'react';
 import { useIntl } from 'react-intl';
 import {
+  availableDestinationCount,
+  availableDestinationIds,
   collectionAddState,
   collectionRemoveState,
-  selectedDestinationCount,
 } from './collectionActionState';
 
 const messages = defineMessages('components.CollectionDetails.ServerActions', {
@@ -30,18 +31,17 @@ const messages = defineMessages('components.CollectionDetails.ServerActions', {
   exists:
     'This collection already exists in the matching {server} destinations.',
   empty:
-    'None of the selected items are available on {server} to add to this collection.',
-  selectItems: 'Select at least one item to create a collection.',
+    'No items in this collection are available on {server} to add to this collection.',
   absent: 'This collection does not exist on {server}.',
   conflict:
     'An ambiguous or smart collection exists on {server}. Review it there before continuing.',
-  help: 'Create this collection from the selected items on {server}. Newly available titles are added automatically afterward.',
+  help: 'Create this collection from available items currently shown on {server}. Newly available titles are added automatically afterward.',
   removeHelp:
     'Remove this collection from {server} and stop its automatic updates. Media files are not deleted.',
   confirm: 'Add collection to {server}?',
   confirmRemove: 'Remove collection from {server}?',
   description:
-    'Only selected items already indexed in enabled libraries will be included now. Newly available titles will be added automatically afterward. Already-available items omitted now and items manually removed on the media server stay out. Existing collections are preserved.',
+    'Only currently shown collection items already indexed in the selected libraries will be included now. Newly available titles will still be added automatically afterward. Existing collections are preserved.',
   removeDescription:
     'Remove the selected collection entries and their membership lists from {server}. This stops their automatic updates from Seerr. Library entries and media files remain untouched. Collections created outside Seerr are also removed if selected. You can choose a new selection and create the collection again with Add Collection.',
   cancel: 'Cancel',
@@ -57,7 +57,7 @@ const CollectionServerActions = ({
   availability,
   error,
   revalidate,
-  selectedIds,
+  visibleItemIds,
   endpoint,
 }: {
   id: string;
@@ -66,6 +66,7 @@ const CollectionServerActions = ({
   error?: unknown;
   revalidate: () => Promise<unknown>;
   selectedIds?: string[];
+  visibleItemIds?: string[];
   endpoint?: string;
 }) => {
   const intl = useIntl();
@@ -78,10 +79,14 @@ const CollectionServerActions = ({
   const [busy, setBusy] = useState(false);
   const [choices, setChoices] = useState<CollectionDestination[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [confirmedItemIds, setConfirmedItemIds] = useState<
+  const [availableItemIds, setAvailableItemIds] = useState<
     string[] | undefined
   >();
-  const addState = collectionAddState(availability?.sync, error, selectedIds);
+  const addState = collectionAddState(
+    availability?.sync,
+    error,
+    visibleItemIds
+  );
   const removeState = collectionRemoveState(availability?.sync, error);
   const state = action === 'remove' ? removeState : addState;
   const selectedChoices = choices.filter((entry) =>
@@ -93,7 +98,7 @@ const CollectionServerActions = ({
       availability?.sync.destinations.filter((entry) =>
         next === 'add'
           ? entry.state === 'missing' &&
-            selectedDestinationCount(entry, selectedIds) > 0
+            availableDestinationCount(entry, visibleItemIds) > 0
           : entry.state === 'exists' && !!entry.removalToken
       ) ?? [];
     // Freeze the verified identities shown in the confirmation; polling cannot retarget removal.
@@ -102,12 +107,16 @@ const CollectionServerActions = ({
         ...entry,
         count:
           next === 'add'
-            ? selectedDestinationCount(entry, selectedIds)
+            ? availableDestinationCount(entry, visibleItemIds)
             : entry.count,
       }))
     );
     setSelected(options.map((entry) => entry.libraryId));
-    setConfirmedItemIds(selectedIds ? [...selectedIds] : undefined);
+    setAvailableItemIds(
+      next === 'add'
+        ? availableDestinationIds(options, visibleItemIds)
+        : undefined
+    );
     setAction(next);
   };
   const perform = async () => {
@@ -130,7 +139,7 @@ const CollectionServerActions = ({
               actionEndpoint,
               {
                 libraryIds: selectedChoices.map((entry) => entry.libraryId),
-                selectedIds: confirmedItemIds,
+                selectedIds: availableItemIds,
               },
               { timeout: 60000 }
             );
@@ -185,14 +194,10 @@ const CollectionServerActions = ({
         </Button>
         <Button
           buttonType="playback"
-          disabled={busy || addState !== 'ready' || selectedIds?.length === 0}
+          disabled={busy || addState !== 'ready'}
           title={intl.formatMessage(messages.help, { server })}
           disabledReason={intl.formatMessage(
-            selectedIds?.length === 0
-              ? messages.selectItems
-              : addState === 'ready'
-                ? messages.checking
-                : messages[addState],
+            addState === 'ready' ? messages.checking : messages[addState],
             { server }
           )}
           onClick={() => open('add')}
@@ -226,7 +231,7 @@ const CollectionServerActions = ({
             busy ||
             state !== 'ready' ||
             !selectedChoices.length ||
-            (action === 'add' && confirmedItemIds?.length === 0)
+            (action === 'add' && !availableItemIds?.length)
           }
         >
           <div className="card-stack">
