@@ -6,8 +6,8 @@ import {
   createSafeHttpRequestOptions,
   getRateLimitKey,
   isLocalOrPrivateAddress,
-  isLoopbackOrLinkLocalAddress,
   isSafeHttpUrl,
+  isUnsafeLocalAddress,
   isValidApplicationUrl,
   isValidHttpUrl,
   preserveRedactedSecrets,
@@ -278,6 +278,11 @@ describe('safe HTTP connection options', () => {
       (error) =>
         error instanceof Error && 'code' in error && error.code === 'EACCES'
     );
+    await assert.rejects(
+      runLookup(lookup, '::ffff:7f00:1'),
+      (error) =>
+        error instanceof Error && 'code' in error && error.code === 'EACCES'
+    );
     await assert.doesNotReject(runLookup(lookup, '192.168.1.50'));
   });
 
@@ -297,7 +302,7 @@ describe('safe HTTP connection options', () => {
     );
   });
 
-  it('rejects loopback redirects while allowing LAN playback targets', () => {
+  it('rejects local-only redirects while allowing LAN playback targets', () => {
     const { beforeRedirect } = createSafeHttpRequestOptions(
       true,
       false,
@@ -435,26 +440,43 @@ describe('isLocalOrPrivateAddress', () => {
   });
 });
 
-describe('isLoopbackOrLinkLocalAddress', () => {
+describe('isUnsafeLocalAddress', () => {
   it('rejects loopback addresses', () => {
-    assert.equal(isLoopbackOrLinkLocalAddress('127.0.0.1'), true);
-    assert.equal(isLoopbackOrLinkLocalAddress('127.255.255.255'), true);
-    assert.equal(isLoopbackOrLinkLocalAddress('localhost'), true);
-    assert.equal(isLoopbackOrLinkLocalAddress('::1'), true);
+    assert.equal(isUnsafeLocalAddress('127.0.0.1'), true);
+    assert.equal(isUnsafeLocalAddress('127.255.255.255'), true);
+    assert.equal(isUnsafeLocalAddress('localhost'), true);
+    assert.equal(isUnsafeLocalAddress('::1'), true);
   });
 
   it('rejects link-local addresses, including the cloud metadata address', () => {
-    assert.equal(isLoopbackOrLinkLocalAddress('169.254.169.254'), true);
-    assert.equal(isLoopbackOrLinkLocalAddress('169.254.0.1'), true);
-    assert.equal(isLoopbackOrLinkLocalAddress('fe80::1'), true);
+    assert.equal(isUnsafeLocalAddress('169.254.169.254'), true);
+    assert.equal(isUnsafeLocalAddress('169.254.0.1'), true);
+    assert.equal(isUnsafeLocalAddress('fe80::1'), true);
+  });
+
+  it('rejects unspecified and IPv4-embedded IPv6 local destinations', () => {
+    assert.equal(isUnsafeLocalAddress('0.0.0.0'), true);
+    assert.equal(isUnsafeLocalAddress('224.0.0.1'), true);
+    assert.equal(isUnsafeLocalAddress('255.255.255.255'), true);
+    assert.equal(isUnsafeLocalAddress('::'), true);
+    assert.equal(isUnsafeLocalAddress('ff02::1'), true);
+    assert.equal(isUnsafeLocalAddress('fec0::1'), true);
+    assert.equal(isUnsafeLocalAddress('::ffff:7f00:1'), true);
+    assert.equal(isUnsafeLocalAddress('::ffff:a9fe:a9fe'), true);
+    assert.equal(isUnsafeLocalAddress('::ffff:0:7f00:1'), true);
+    assert.equal(isUnsafeLocalAddress('64:ff9b::7f00:1'), true);
+    assert.equal(isUnsafeLocalAddress('64:ff9b::a9fe:a9fe'), true);
   });
 
   it('allows ordinary LAN addresses used by real player devices', () => {
-    assert.equal(isLoopbackOrLinkLocalAddress('192.168.1.50'), false);
-    assert.equal(isLoopbackOrLinkLocalAddress('10.0.0.5'), false);
-    assert.equal(isLoopbackOrLinkLocalAddress('172.16.4.4'), false);
-    assert.equal(isLoopbackOrLinkLocalAddress('8.8.8.8'), false);
-    assert.equal(isLoopbackOrLinkLocalAddress('fc00::1'), false);
+    assert.equal(isUnsafeLocalAddress('192.168.1.50'), false);
+    assert.equal(isUnsafeLocalAddress('10.0.0.5'), false);
+    assert.equal(isUnsafeLocalAddress('172.16.4.4'), false);
+    assert.equal(isUnsafeLocalAddress('8.8.8.8'), false);
+    assert.equal(isUnsafeLocalAddress('fc00::1'), false);
+    assert.equal(isUnsafeLocalAddress('::ffff:c0a8:101'), false);
+    assert.equal(isUnsafeLocalAddress('::ffff:808:808'), false);
+    assert.equal(isUnsafeLocalAddress('64:ff9b::808:808'), false);
   });
 });
 

@@ -74,7 +74,7 @@ export const containsCredentialFields = (value: unknown): boolean => {
 export interface ExternalAPIOptions {
   allowPrivateAddresses?: boolean;
   requireDirectConnection?: boolean;
-  rejectLoopbackOrLinkLocalAddresses?: boolean;
+  rejectUnsafeLocalAddresses?: boolean;
   allowedBaseUrls?: string[];
   nodeCache?: CacheStore;
   headers?: Record<string, unknown>;
@@ -321,7 +321,7 @@ class ExternalAPI {
         options.allowPrivateAddresses ?? false,
         false,
         options.requireDirectConnection ?? false,
-        options.rejectLoopbackOrLinkLocalAddresses ?? false
+        options.rejectUnsafeLocalAddresses ?? false
       ),
       timeout: options.timeout ?? DEFAULT_EXTERNAL_API_TIMEOUT_MS,
       maxContentLength:

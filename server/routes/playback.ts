@@ -29,7 +29,7 @@ import { mapWithConcurrency } from '@server/utils/concurrency';
 import { getHostname } from '@server/utils/getHostname';
 import { getHttpErrorDetails } from '@server/utils/httpError';
 import { parsePositiveRouteId } from '@server/utils/routeId';
-import { isLoopbackOrLinkLocalAddress } from '@server/utils/security';
+import { isUnsafeLocalAddress } from '@server/utils/security';
 import { Router } from 'express';
 import { In } from 'typeorm';
 
@@ -53,7 +53,7 @@ const isSafePlaybackConnectionUri = (uri: string): boolean => {
     const parsed = new URL(uri);
     return (
       ['http:', 'https:'].includes(parsed.protocol) &&
-      !isLoopbackOrLinkLocalAddress(parsed.hostname)
+      !isUnsafeLocalAddress(parsed.hostname)
     );
   } catch {
     return false;

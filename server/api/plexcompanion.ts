@@ -26,7 +26,7 @@ class PlexCompanionAPI extends ExternalAPI {
       {
         allowPrivateAddresses: true,
         requireDirectConnection: true,
-        rejectLoopbackOrLinkLocalAddresses: true,
+        rejectUnsafeLocalAddresses: true,
         headers: {
           'X-Plex-Token': plexToken,
           'X-Plex-Client-Identifier': settings.clientId,
