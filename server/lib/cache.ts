@@ -3,6 +3,7 @@ import { serialize } from 'node:v8';
 
 export type AvailableCacheIds =
   | 'tmdb'
+  | 'tmdbscan'
   | 'radarr'
   | 'sonarr'
   | 'rt'
@@ -26,6 +27,34 @@ const DEFAULT_TTL = 300;
 const DEFAULT_CHECK_PERIOD = 120;
 export const DEFAULT_MAX_CACHE_KEYS = 10_000;
 export const DEFAULT_MAX_CACHE_BYTES = 64 * 1024 * 1024;
+
+const TMDB_MAX_KEYS = 1000;
+const TMDB_SCAN_MAX_KEYS = 2000;
+const RADARR_MAX_KEYS = 64;
+const SONARR_MAX_KEYS = 64;
+const RT_MAX_KEYS = 500;
+const IMDB_MAX_KEYS = 500;
+const GITHUB_MAX_KEYS = 16;
+const PLEX_TV_MAX_KEYS = 5000;
+const PLEX_WATCHLIST_MAX_KEYS = 500;
+const TVDB_MAX_KEYS = 500;
+
+export interface CacheStats {
+  hits: number;
+  misses: number;
+  keys: number;
+  ksize: number;
+  vsize: number;
+}
+
+export interface CacheStore {
+  get<T>(key: string): T | undefined;
+  set<T>(key: string, value: T, ttl?: number): boolean;
+  del(key: string): number;
+  getTtl(key: string): number | undefined;
+  getStats(): CacheStats;
+  flushAll(): void;
+}
 
 export const estimateCacheEntryBytes = (key: string, value: unknown): number =>
   Buffer.byteLength(key, 'utf8') + serialize(value).byteLength;
@@ -115,33 +144,39 @@ class CacheManager {
   private availableCaches: Record<AvailableCacheIds, Cache> = {
     tmdb: new Cache('tmdb', 'The Movie Database API', {
       stdTtl: 21600,
-      checkPeriod: 60 * 30,
+      maxKeys: TMDB_MAX_KEYS,
     }),
-    radarr: new Cache('radarr', 'Radarr API'),
-    sonarr: new Cache('sonarr', 'Sonarr API'),
+    tmdbscan: new Cache('tmdbscan', 'The Movie Database API (Library Scans)', {
+      stdTtl: 900,
+      maxKeys: TMDB_SCAN_MAX_KEYS,
+    }),
+    radarr: new Cache('radarr', 'Radarr API', { maxKeys: RADARR_MAX_KEYS }),
+    sonarr: new Cache('sonarr', 'Sonarr API', { maxKeys: SONARR_MAX_KEYS }),
     rt: new Cache('rt', 'Rotten Tomatoes API', {
       stdTtl: 43200,
-      checkPeriod: 60 * 30,
+      maxKeys: RT_MAX_KEYS,
     }),
     imdb: new Cache('imdb', 'IMDB Radarr Proxy', {
       stdTtl: 43200,
-      checkPeriod: 60 * 30,
+      maxKeys: IMDB_MAX_KEYS,
     }),
     github: new Cache('github', 'GitHub API', {
       stdTtl: 21600,
-      checkPeriod: 60 * 30,
-    }),
-    plexguid: new Cache('plexguid', 'Plex GUID', {
-      stdTtl: 86400 * 7, // 1 week cache
-      checkPeriod: 60 * 30,
+      maxKeys: GITHUB_MAX_KEYS,
     }),
     plextv: new Cache('plextv', 'Plex TV', {
       stdTtl: 86400 * 7, // 1 week cache
-      checkPeriod: 60,
+      maxKeys: PLEX_TV_MAX_KEYS,
     }),
-    plexwatchlist: new Cache('plexwatchlist', 'Plex Watchlist'),
+    plexwatchlist: new Cache('plexwatchlist', 'Plex Watchlist', {
+      maxKeys: PLEX_WATCHLIST_MAX_KEYS,
+    }),
     tvdb: new Cache('tvdb', 'The TVDB API', {
       stdTtl: 21600,
+      maxKeys: TVDB_MAX_KEYS,
+    }),
+    plexguid: new Cache('plexguid', 'Plex GUID', {
+      stdTtl: 86400 * 7,
       checkPeriod: 60 * 30,
     }),
     lidarr: new Cache('lidarr', 'Lidarr API'),

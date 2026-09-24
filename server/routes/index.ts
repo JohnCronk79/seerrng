@@ -458,11 +458,7 @@ router.post(
   warmImageCache
 );
 router.use('/auth', authRoutes);
-router.use(
-  '/overrideRule',
-  isAuthenticated(Permission.ADMIN),
-  overrideRuleRoutes
-);
+router.use('/overrideRule', isAuthenticated(), overrideRuleRoutes);
 
 router.get('/regions', isAuthenticated(), async (req, res, next) => {
   const tmdb = new TheMovieDb();

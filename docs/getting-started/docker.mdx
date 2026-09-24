@@ -132,6 +132,10 @@ services:
       timeout: 3s
       interval: 15s
       retries: 3
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL
     restart: unless-stopped
 ```
 
@@ -276,6 +280,10 @@ services:
       timeout: 3s
       interval: 15s
       retries: 3
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
 volumes:

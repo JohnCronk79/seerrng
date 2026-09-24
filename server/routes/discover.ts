@@ -13,7 +13,11 @@ import type { OpenLibrarySearchDoc } from '@server/api/openlibrary';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SortOptions } from '@server/api/themoviedb';
-import TheMovieDb, { SortOptionsIterable } from '@server/api/themoviedb';
+import TheMovieDb, {
+  MovieSortOptionsIterable,
+  SortOptionsIterable,
+  TvSortOptionsIterable,
+} from '@server/api/themoviedb';
 import type {
   TmdbCollectionResult,
   TmdbKeyword,
@@ -917,8 +921,15 @@ const QueryFilterOptions = z.object({
 });
 
 export type FilterOptions = z.infer<typeof QueryFilterOptions>;
-const ApiQuerySchema = QueryFilterOptions.omit({
+const MovieApiQuerySchema = QueryFilterOptions.omit({
   certificationMode: true,
+}).extend({
+  sortBy: z.enum(MovieSortOptionsIterable).optional().catch(undefined),
+});
+const TvApiQuerySchema = QueryFilterOptions.omit({
+  certificationMode: true,
+}).extend({
+  sortBy: z.enum(TvSortOptionsIterable).optional().catch(undefined),
 });
 const SEEDED_DISCOVERY_SHUFFLE_WINDOW = 80;
 const AVAILABLE_MEDIA_STATUSES = [
@@ -1408,7 +1419,7 @@ discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const parsedQuery = ApiQuerySchema.safeParse({ ...req.query });
+    const parsedQuery = MovieApiQuerySchema.safeParse({ ...req.query });
     if (!parsedQuery.success) {
       return res.status(400).json({
         status: 400,
@@ -1464,7 +1475,7 @@ discoverRoutes.get('/movies', async (req, res, next) => {
         })
       : await tmdb.getDiscoverMovies({
           page,
-          sortBy: getValidatedTmdbSort(query.sortBy),
+          sortBy: query.sortBy,
           language: req.locale ?? query.language,
           originalLanguage: query.language,
           genre: query.genre,
@@ -1512,7 +1523,8 @@ discoverRoutes.get('/movies', async (req, res, next) => {
       rankedResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.MOVIE,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     let keywordData: TmdbKeyword[] = [];
@@ -1590,7 +1602,8 @@ discoverRoutes.get<{ language: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -1661,7 +1674,8 @@ discoverRoutes.get<{ genreId: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -1724,7 +1738,8 @@ discoverRoutes.get<{ studioId: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -1786,7 +1801,8 @@ discoverRoutes.get('/movies/upcoming', async (req, res, next) => {
       data.results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.MOVIE,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     return res.status(200).json({
@@ -1819,7 +1835,7 @@ discoverRoutes.get('/tv', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const parsedQuery = ApiQuerySchema.safeParse({ ...req.query });
+    const parsedQuery = TvApiQuerySchema.safeParse({ ...req.query });
     if (!parsedQuery.success) {
       return res.status(400).json({
         status: 400,
@@ -1887,7 +1903,7 @@ discoverRoutes.get('/tv', async (req, res, next) => {
         })
       : await tmdb.getDiscoverTv({
           page,
-          sortBy: getValidatedTmdbSort(query.sortBy),
+          sortBy: query.sortBy,
           language: req.locale ?? query.language,
           genre: query.genre,
           network,
@@ -1936,7 +1952,8 @@ discoverRoutes.get('/tv', async (req, res, next) => {
       rankedResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     let keywordData: TmdbKeyword[] = [];
@@ -2013,7 +2030,8 @@ discoverRoutes.get<{ language: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -2086,7 +2104,8 @@ discoverRoutes.get<{ genreId: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -2151,7 +2170,8 @@ discoverRoutes.get<{ networkId: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.TV,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({
@@ -2213,7 +2233,8 @@ discoverRoutes.get('/tv/upcoming', async (req, res, next) => {
       data.results.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     return res.status(200).json({
@@ -2325,7 +2346,8 @@ discoverRoutes.get('/trending', async (req, res, next) => {
       data.results.map((result) => ({
         tmdbId: result.id,
         mediaType: isMovie(result) ? MediaType.MOVIE : MediaType.TV,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     return res.status(200).json({
@@ -2386,7 +2408,8 @@ discoverRoutes.get<{ keywordId: string }>(
         rankedResults.map((result) => ({
           tmdbId: result.id,
           mediaType: MediaType.MOVIE,
-        }))
+        })),
+        { includeActiveRequest: true }
       );
 
       return res.status(200).json({

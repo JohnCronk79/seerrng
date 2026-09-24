@@ -329,12 +329,24 @@ const MediaSlider = ({
           continue;
         }
 
+        if (
+          settings.currentSettings.hideRequested &&
+          (item.mediaType === 'movie' || item.mediaType === 'tv') &&
+          item.mediaInfo?.hasActiveRequest
+        ) {
+          continue;
+        }
+
         filteredTitles.push(item);
       }
     }
 
     return filteredTitles;
-  }, [data, settings.currentSettings.hideAvailable]);
+  }, [
+    data,
+    settings.currentSettings.hideAvailable,
+    settings.currentSettings.hideRequested,
+  ]);
   const renderableTitles = titles;
   const visibleTitles = useMemo(
     () => renderableTitles.slice(0, MEDIA_SLIDER_TITLE_LIMIT),

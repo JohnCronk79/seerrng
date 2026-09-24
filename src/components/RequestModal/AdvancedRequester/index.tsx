@@ -2,6 +2,7 @@
 import CachedImage from '@app/components/Common/CachedImage';
 import { SmallLoadingSpinner } from '@app/components/Common/LoadingSpinner';
 import SlideCheckbox from '@app/components/Common/SlideCheckbox';
+import useToasts from '@app/hooks/useToasts';
 import type { User } from '@app/hooks/useUser';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -14,6 +15,14 @@ import type {
   ServiceCommonServer,
   ServiceCommonServerWithDetails,
 } from '@server/interfaces/api/serviceInterfaces';
+import type { UserPreferredLanguages } from '@server/interfaces/api/userSettingsInterfaces';
+import type { OverrideRulesResult } from '@server/lib/overrideRules';
+import {
+  getPreferredLanguage,
+  languageNameMatchesCode,
+} from '@server/utils/preferredLanguage';
+import axios from 'axios';
+import { isEqual } from 'lodash';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useIntl } from 'react-intl';
@@ -173,11 +182,13 @@ type ClientUserResultsResponse = PaginatedResponse & {
 
 interface AdvancedRequesterProps {
   type: 'movie' | 'tv' | 'music' | 'book';
+  tmdbId?: number;
   is4k: boolean;
   isAnime?: boolean;
   bookFormat?: 'ebook' | 'audiobook' | 'both';
   defaultOverrides?: RequestOverrides;
   requestUser?: RequestUser;
+  requestId?: number;
   quota?: {
     movie: { limit?: number };
     tv: { limit?: number };
@@ -197,11 +208,13 @@ interface AdvancedRequesterProps {
 
 const AdvancedRequester = ({
   type,
+  tmdbId,
   is4k = false,
   isAnime = false,
   bookFormat,
   defaultOverrides,
   requestUser,
+  requestId,
   quota,
   mediaTitle,
   posterPath,
@@ -214,6 +227,7 @@ const AdvancedRequester = ({
   onChange,
 }: AdvancedRequesterProps) => {
   const intl = useIntl();
+  const { addToast } = useToasts();
   const { user: currentUser, hasPermission: currentHasPermission } = useUser();
   const serviceType =
     type === 'movie'
@@ -283,6 +297,17 @@ const AdvancedRequester = ({
 
   const [selectedUser, setSelectedUser] = useState<RequestUser | null>(
     requestUser ?? null
+  );
+  const preferenceUserId =
+    selectedUser?.id ?? requestUser?.id ?? currentUser?.id;
+  const { data: requestUserLanguages } = useSWR<UserPreferredLanguages>(
+    preferenceUserId
+      ? `/api/v1/user/${preferenceUserId}/settings/preferred-languages`
+      : null
+  );
+  const preferredLanguage = getPreferredLanguage(
+    requestUserLanguages,
+    type
   );
   const bookServiceType = bookFormat === 'audiobook' ? 'audiobook' : 'ebook';
   const serviceOverridesEnabled = type !== 'book' || bookFormat !== 'both';
@@ -435,6 +460,52 @@ const AdvancedRequester = ({
   }, [serverData]);
 
   useEffect(() => {
+    if (!serverData || !preferredLanguage) return;
+
+    if (
+      defaultOverrides?.profile == null &&
+      type !== 'book' &&
+      type !== 'tv'
+    ) {
+      const preferredProfile = serverData.profiles.find((profile) =>
+        languageNameMatchesCode(profile.language, preferredLanguage)
+      );
+      if (preferredProfile) {
+        setSelectedProfile(preferredProfile.id);
+      }
+    }
+
+    if (type === 'tv') {
+      if (defaultOverrides?.profile == null) {
+        const preferredQualityProfile = serverData.profiles.find((profile) =>
+          languageNameMatchesCode(profile.language, preferredLanguage)
+        );
+        if (preferredQualityProfile) {
+          setSelectedProfile(preferredQualityProfile.id);
+        }
+      }
+
+      if (defaultOverrides?.language == null) {
+        const preferredLanguageProfile = serverData.languageProfiles?.find(
+          (profile) =>
+            (profile.languages ?? []).some((language) =>
+              languageNameMatchesCode(language, preferredLanguage)
+            ) || languageNameMatchesCode(profile.name, preferredLanguage)
+        );
+        if (preferredLanguageProfile) {
+          setSelectedLanguage(preferredLanguageProfile.id);
+        }
+      }
+    }
+  }, [
+    defaultOverrides?.language,
+    defaultOverrides?.profile,
+    preferredLanguage,
+    serverData,
+    type,
+  ]);
+
+  useEffect(() => {
     if (defaultOverrides && defaultOverrides.server != null) {
       setSelectedServer(defaultOverrides.server);
     }
@@ -522,6 +593,72 @@ const AdvancedRequester = ({
     serviceOverridesEnabled,
     ignoreQuota,
     isIgnoreQuotaVisible,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (
+        tmdbId &&
+        (type === 'movie' || type === 'tv') &&
+        serverData?.server.id === selectedServer
+      ) {
+        try {
+          const { data: override } = await axios.post<OverrideRulesResult>(
+            '/api/v1/overrideRule/advancedRequest',
+            {
+              mediaType: type,
+              is4k,
+              requestUser:
+                selectedUser?.id ?? requestUser?.id ?? currentUser?.id,
+              tmdbId,
+              tags: selectedTags.length > 0 ? selectedTags : undefined,
+              serviceId: selectedServer ?? undefined,
+              requestId: requestId ?? undefined,
+            }
+          );
+          if (cancelled) {
+            return;
+          }
+          if (!defaultOverrides?.folder && override.rootFolder) {
+            setSelectedFolder(override.rootFolder);
+          }
+          if (!defaultOverrides?.profile && override.profileId) {
+            setSelectedProfile(override.profileId);
+          }
+          if (
+            !defaultOverrides?.tags &&
+            override.tags &&
+            !isEqual(override.tags, selectedTags)
+          ) {
+            setSelectedTags(override.tags);
+          }
+        } catch {
+          if (cancelled) {
+            return;
+          }
+          addToast(intl.formatMessage(globalMessages.error), {
+            appearance: 'error',
+            autoDismiss: true,
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    tmdbId,
+    type,
+    is4k,
+    serverData?.server.id,
+    selectedServer,
+    selectedUserId,
+    requestUser?.id,
+    currentUser?.id,
+    defaultOverrides?.folder,
+    defaultOverrides?.profile,
+    defaultOverrides?.tags,
   ]);
 
   if (!data && !error) {

@@ -2991,6 +2991,7 @@ requestRoutes.put<{ requestId: string }>(
                         tmdbId: request.media.tmdbId,
                         mediaType: MediaType.TV,
                       },
+                      relations: { seasons: true },
                     });
                     const existingSeasonRequests = await getRepository(
                       SeasonRequest
@@ -3031,9 +3032,27 @@ requestRoutes.put<{ requestId: string }>(
                         );
                         existingEpisodes.set(season.seasonNumber, episodes);
                       });
+                    const currentSeasonNumbers = new Set(
+                      request.seasons.map((season) => season.seasonNumber)
+                    );
+                    const availableSeasonNumbers = new Set(
+                      media.seasons
+                        .filter(
+                          (season) =>
+                            (request.is4k ? season.status4k : season.status) ===
+                            MediaStatus.AVAILABLE
+                        )
+                        .map((season) => season.seasonNumber)
+                    );
                     const filteredSelections = requestedSelections.flatMap(
                       (selection) => {
                         if (fullyRequestedSeasons.has(selection.seasonNumber)) {
+                          return [];
+                        }
+                        if (
+                          !currentSeasonNumbers.has(selection.seasonNumber) &&
+                          availableSeasonNumbers.has(selection.seasonNumber)
+                        ) {
                           return [];
                         }
                         if (!selection.episodeNumbers) {
@@ -3059,10 +3078,21 @@ requestRoutes.put<{ requestId: string }>(
                     }
 
                     const quotas = await requestUser.getQuota();
-                    const existingAllowance = changesRequestUser
-                      ? 0
-                      : request.seasons.length;
+                    const quotaDays = quotas.tv.days ?? 0;
+                    const quotaWindowStart = quotaDays ? new Date() : undefined;
+                    quotaWindowStart?.setDate(
+                      quotaWindowStart.getDate() - quotaDays
+                    );
+                    const existingRequestCountsTowardQuota =
+                      !request.ignoreQuota &&
+                      (!quotaWindowStart ||
+                        request.createdAt > quotaWindowStart);
+                    const existingAllowance =
+                      changesRequestUser || !existingRequestCountsTowardQuota
+                        ? 0
+                        : request.seasons.length;
                     if (
+                      !request.ignoreQuota &&
                       quotas.tv.limit &&
                       filteredSelections.length >
                         (quotas.tv.remaining ?? 0) + existingAllowance
@@ -3110,9 +3140,6 @@ requestRoutes.put<{ requestId: string }>(
                       }
                     }
 
-                    const currentSeasonNumbers = new Set(
-                      request.seasons.map((season) => season.seasonNumber)
-                    );
                     const newSelections = filteredSelections.filter(
                       (selection) =>
                         !currentSeasonNumbers.has(selection.seasonNumber)
@@ -3385,11 +3412,13 @@ requestRoutes.post<{
               request.status === MediaRequestStatus.APPROVED &&
               currentStatus.stage !== RequestStatusStage.UNAVAILABLE &&
               currentStatus.stage !== RequestStatusStage.FAILED;
-            if (
-              currentStatus.stage === RequestStatusStage.REQUESTED ||
-              alreadyQueued ||
-              (!canRetryAny && !currentStatus.retryable)
-            ) {
+            if (currentStatus.stage === RequestStatusStage.REQUESTED) {
+              return next({
+                status: 409,
+                message: 'Only failed or unavailable requests can be retried.',
+              });
+            }
+            if (alreadyQueued || (!canRetryAny && !currentStatus.retryable)) {
               return next({
                 status: 409,
                 message:

@@ -50,6 +50,8 @@ const messages = defineMessages('components.Settings', {
     'Custom authentication with Automatic Library Grouping not supported',
   jellyfinSyncFailedGenericError:
     'Something went wrong while syncing libraries',
+  jellyfinSyncFailedConnectionError:
+    'Unable to reach the {mediaServerName} server. Check that it is running and reachable from Seerr.',
   jellyfinLibraryUpdateFailure: 'Failed to update {mediaServerName} libraries.',
   invalidurlerror: 'Unable to connect to {mediaServerName} server.',
   syncing: 'Syncing',
@@ -94,8 +96,8 @@ interface SettingsJellyfinProps {
 }
 
 const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
-  onComplete,
   isSetupSettings,
+  onComplete,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const {
@@ -106,7 +108,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const { data: dataSync, mutate: revalidateSync } = useSWR<SyncStatus>(
     '/api/v1/settings/jellyfin/sync',
     {
-      refreshInterval: 1000,
+      refreshInterval: (latestData) => (latestData?.running ? 1000 : 10000),
     }
   );
   const intl = useIntl();
@@ -166,16 +168,8 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const syncLibraries = async () => {
     setIsSyncing(true);
 
-    const params: { sync: boolean; enable?: string } = {
-      sync: true,
-    };
-
-    if (activeLibraries.length > 0) {
-      params.enable = activeLibraries.join(',');
-    }
-
     try {
-      await axios.post('/api/v1/settings/jellyfin/library', params);
+      await axios.post('/api/v1/settings/jellyfin/library/sync');
       setIsSyncing(false);
       revalidate();
     } catch (e) {
@@ -187,6 +181,19 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           {
             autoDismiss: true,
             appearance: 'warning',
+          }
+        );
+      } else if (e?.response?.data?.message === 'CONNECTION_ERROR') {
+        addToast(
+          intl.formatMessage(messages.jellyfinSyncFailedConnectionError, {
+            mediaServerName:
+              settings.currentSettings.mediaServerType === MediaServerType.EMBY
+                ? 'Emby'
+                : 'Jellyfin',
+          }),
+          {
+            autoDismiss: true,
+            appearance: 'error',
           }
         );
       } else if (e?.response?.data?.message === 'SYNC_ERROR_NO_LIBRARIES') {
@@ -225,21 +232,9 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
     try {
-      if (activeLibraries.includes(libraryId)) {
-        const params: { enable?: string } = {};
-
-        if (activeLibraries.length > 1) {
-          params.enable = activeLibraries
-            .filter((id) => id !== libraryId)
-            .join(',');
-        }
-
-        await axios.post('/api/v1/settings/jellyfin/library', params);
-      } else {
-        await axios.post('/api/v1/settings/jellyfin/library', {
-          enable: [...activeLibraries, libraryId].join(','),
-        });
-      }
+      await axios.put(`/api/v1/settings/jellyfin/library/${libraryId}`, {
+        enabled: !activeLibraries.includes(libraryId),
+      });
       if (onComplete) {
         onComplete();
       }

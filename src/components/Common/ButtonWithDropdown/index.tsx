@@ -1,6 +1,6 @@
 import Dropdown from '@app/components/Common/Dropdown';
 import { withProperties } from '@app/utils/typeHelpers';
-import { Menu } from '@headlessui/react';
+import { Menu, MenuButton } from '@headlessui/react';
 import { ChevronDownIcon } from '@heroicons/react/24/solid';
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
 
@@ -57,7 +57,7 @@ const ButtonWithDropdown = ({
       </TriggerElement>
       {children && (
         <span className="relative -ml-px block">
-          <Menu.Button
+          <MenuButton
             type="button"
             disabled={disabled}
             className={`relative z-10 -ml-px rounded-l-none px-1.5 hover:z-20 focus:z-20 ${sharedClasses}`}
@@ -65,7 +65,7 @@ const ButtonWithDropdown = ({
             title={disabledTitle}
           >
             {dropdownIcon ? dropdownIcon : <ChevronDownIcon />}
-          </Menu.Button>
+          </MenuButton>
           <Dropdown.Items dropdownType={buttonType}>{children}</Dropdown.Items>
         </span>
       )}

@@ -97,46 +97,45 @@ export const verifyAndResubscribePushSubscription = async (
     return true;
   }
 
-  if (currentSettings.enablePushRegistration) {
-    try {
-      const oldEndpoint = subscription?.endpoint;
-      if (subscription) {
-        await subscription.unsubscribe();
-      }
-      if (!isCurrent()) {
-        return false;
-      }
-
-      const subscribedEndpoint = await subscribeToPushNotifications(
-        userId,
-        currentSettings,
-        isCurrent
-      );
-      if (!subscribedEndpoint || !isCurrent()) {
-        return false;
-      }
-
-      if (oldEndpoint && oldEndpoint !== subscribedEndpoint) {
-        try {
-          await axios.delete(
-            `/api/v1/user/${userId}/pushSubscription/${encodeURIComponent(
-              oldEndpoint
-            )}`
-          );
-        } catch {
-          // Ignore errors when deleting old endpoint (it might not exist)
-        }
-      }
-
-      return true;
-    } catch (error) {
-      throw new Error(`[SW] Resubscribe failed: ${error.message}`, {
-        cause: error,
-      });
-    }
+  if (!currentSettings.enablePushRegistration) {
+    return false;
   }
 
-  return false;
+  try {
+    const oldEndpoint = subscription?.endpoint;
+    if (subscription) {
+      await subscription.unsubscribe();
+    }
+    if (!isCurrent()) {
+      return false;
+    }
+
+    const subscribedEndpoint = await subscribeToPushNotifications(
+      userId,
+      currentSettings,
+      isCurrent
+    );
+    if (!subscribedEndpoint || !isCurrent()) {
+      return false;
+    }
+
+    if (oldEndpoint && oldEndpoint !== subscribedEndpoint) {
+      try {
+        await axios.delete(
+          `/api/v1/user/${userId}/pushSubscription/${encodeURIComponent(
+            oldEndpoint
+          )}`
+        );
+      } catch {
+        // Ignore errors when deleting old endpoint (it might not exist)
+      }
+    }
+    return true;
+  } catch (error) {
+    throw new Error(`[SW] Resubscribe failed: ${error.message}`, {
+      cause: error,
+    });
+  }
 };
 
 export const subscribeToPushNotifications = async (

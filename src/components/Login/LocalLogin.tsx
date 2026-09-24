@@ -29,6 +29,7 @@ const messages = defineMessages('components.Login', {
   signingin: 'Signing In…',
   signin: 'Sign In',
   forgotpassword: 'Forgot Password?',
+  demoModeInfo: 'Demo mode is enabled. Use the demo credentials to sign in.',
 });
 
 interface LocalLoginProps {
@@ -56,8 +57,9 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
   return (
     <Formik
       initialValues={{
-        email: '',
-        password: '',
+        email:
+          process.env.unsafeDoNotUseDemo === 'true' ? 'demo@seerr.dev' : '',
+        password: process.env.unsafeDoNotUseDemo === 'true' ? 'test1234' : '',
       }}
       validationSchema={LoginSchema}
       validateOnBlur={false}

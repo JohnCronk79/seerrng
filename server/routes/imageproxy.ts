@@ -279,7 +279,10 @@ const serveCachedImage = async (
       imagePath: imageLogPath,
       errorMessage: e.message,
     });
-    res.status(500).send();
+    if (!res.headersSent) {
+      return next({ status: 500, message: 'Failed to proxy image.' });
+    }
+    next(e);
   }
 };
 

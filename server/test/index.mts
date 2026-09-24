@@ -57,8 +57,13 @@ if (positionals.length > 0) {
   files = positionals.map((f) => resolve(f));
 } else {
   files = [];
-  for (const pattern of ['server/**/*.test.ts', 'src/**/*.test.ts']) {
-    for await (const entry of glob(join(BASE_DIR, pattern))) {
+  for await (const entry of glob(join(BASE_DIR, 'server/**/*.test.ts'))) {
+    if (!entry.endsWith('.vitest.test.ts')) {
+      files.push(resolve(entry));
+    }
+  }
+  for await (const entry of glob(join(BASE_DIR, 'src/**/*.test.ts'))) {
+    if (!entry.endsWith('.vitest.test.ts')) {
       files.push(resolve(entry));
     }
   }

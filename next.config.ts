@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: projectRoot,
   env: {
     commitTag: process.env.COMMIT_TAG || 'local',
+    unsafeDoNotUseDemo: process.env.UNSAFE_DO_NOT_USE_DEMO,
   },
   async headers() {
     return [

@@ -168,6 +168,36 @@ components:
           type: string
           nullable: true
           example: 'en'
+        preferredLanguages:
+          type: object
+          description: 'Universal preferred acquisition language with optional per-media overrides'
+          additionalProperties: false
+          properties:
+            all:
+              type: string
+              nullable: true
+              description: Clear the universal preference when null.
+              example: 'en'
+            movie:
+              type: string
+              nullable: true
+              description: Null means any language; omit to inherit all.
+              example: 'en'
+            tv:
+              type: string
+              nullable: true
+              description: Null means any language; omit to inherit all.
+              example: 'ja'
+            music:
+              type: string
+              nullable: true
+              description: Null means any language; omit to inherit all.
+              example: 'fr'
+            book:
+              type: string
+              nullable: true
+              description: Null means any language; omit to inherit all.
+              example: 'es'
         movieQuotaLimit:
           type: number
           nullable: true
@@ -304,6 +334,9 @@ components:
           type: string
           example: https://os.example.com
         hideAvailable:
+          type: boolean
+          example: false
+        hideRequested:
           type: boolean
           example: false
         partialRequestsEnabled:
@@ -2366,6 +2399,8 @@ components:
             url:
               type: string
             topic:
+              type: string
+            tags:
               type: string
             authMethodUsernamePassword:
               type: boolean
@@ -6823,6 +6858,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserSettings'
+  /user/{userId}/settings/preferred-languages:
+    get:
+      summary: Get preferred languages for a user
+      description: Returns only the user's preferred language settings. Other users' preferences are visible to request managers and user managers.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Preferred language settings returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  all:
+                    type: string
+                  movie:
+                    type: string
+                    nullable: true
+                  tv:
+                    type: string
+                    nullable: true
+                  music:
+                    type: string
+                    nullable: true
+                  book:
+                    type: string
+                    nullable: true
   /user/{userId}/settings/card-text:
     get:
       summary: Get card text visibility settings for a user
@@ -9706,6 +9776,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+        '409':
+          description: Only pending requests can be modified
     delete:
       summary: Delete request
       description: Removes a request. If the user has the `MANAGE_REQUESTS` permission, any request can be removed. Otherwise, only pending requests can be removed.
@@ -9796,6 +9868,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+        '400':
+          description: Status must be approve or decline
+        '409':
+          description: Only pending requests can be approved or declined
   /movie/{movieId}:
     get:
       summary: Get movie details

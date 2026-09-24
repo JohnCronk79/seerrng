@@ -1,6 +1,8 @@
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
+import RadarrAPI from '@server/api/servarr/radarr';
+import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
@@ -50,6 +52,7 @@ import {
   type ServarrServiceType,
 } from '@server/lib/serviceAdmission';
 import {
+  type RadarrSettings,
   type ReadarrSettings,
   type SonarrSettings,
 } from '@server/lib/settings';
@@ -61,6 +64,10 @@ import logger from '@server/logger';
 import AsyncLock from '@server/utils/asyncLock';
 import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
+import {
+  getPreferredLanguage,
+  languageNameMatchesCode,
+} from '@server/utils/preferredLanguage';
 import {
   AfterLoad,
   Column,
@@ -1425,7 +1432,7 @@ export class MediaRequest {
     }
 
     const useAdvancedOptions = canUseAdvancedRequestOptions(user);
-    const useOverrides = !useAdvancedOptions;
+    const useOverrides = !user.hasPermission(Permission.MANAGE_REQUESTS);
     const defaultRadarr = requestBody.is4k
       ? settings.radarr.find((r) => r.is4k && r.isDefault)
       : settings.radarr.find((r) => !r.is4k && r.isDefault);
@@ -1476,7 +1483,7 @@ export class MediaRequest {
     let tags = useAdvancedOptions
       ? (requestBody.tags ?? selectedServer?.tags)
       : selectedServer?.tags;
-    const languageProfileId =
+    let languageProfileId =
       requestBody.mediaType === MediaType.TV
         ? useAdvancedOptions
           ? (requestBody.languageProfileId ??
@@ -1484,14 +1491,88 @@ export class MediaRequest {
           : selectedSonarr?.activeLanguageProfileId
         : undefined;
 
+    const mediaLanguagePreference = getPreferredLanguage(
+      requestUser.settings?.preferredLanguages,
+      requestBody.mediaType === MediaType.MOVIE ? 'movie' : 'tv'
+    );
+    if (mediaLanguagePreference) {
+      if (
+        requestBody.mediaType === MediaType.MOVIE &&
+        !(useAdvancedOptions && requestBody.profileId != null)
+      ) {
+        const radarrServer = selectedServer as RadarrSettings | undefined;
+        if (radarrServer) {
+          try {
+            const profiles = await new RadarrAPI({
+              apiKey: radarrServer.apiKey,
+              url: RadarrAPI.buildUrl(radarrServer, '/api/v3'),
+            }).getProfiles();
+            const preferredProfile = profiles.find((profile) =>
+              languageNameMatchesCode(profile.language, mediaLanguagePreference)
+            );
+            if (preferredProfile) profileId = preferredProfile.id;
+          } catch (error) {
+            logger.debug('Could not match the preferred movie language profile.', {
+              label: 'Media Request',
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } else if (requestBody.mediaType === MediaType.TV && selectedSonarr) {
+        try {
+          const sonarr = new SonarrAPI({
+            apiKey: selectedSonarr.apiKey,
+            url: SonarrAPI.buildUrl(selectedSonarr, '/api/v3'),
+          });
+          if (!(useAdvancedOptions && requestBody.languageProfileId != null)) {
+            const languageProfiles = await sonarr
+              .getLanguageProfiles()
+              .catch(() => []);
+            const preferredProfile = languageProfiles.find(
+              (profile) =>
+                (profile.languages ?? []).some((language) =>
+                  languageNameMatchesCode(language, mediaLanguagePreference)
+                ) ||
+                languageNameMatchesCode(profile.name, mediaLanguagePreference)
+            );
+            if (preferredProfile) languageProfileId = preferredProfile.id;
+          }
+
+          if (!(useAdvancedOptions && requestBody.profileId != null)) {
+            const qualityProfiles = await sonarr.getProfiles();
+            const preferredQualityProfile = qualityProfiles.find((profile) =>
+              languageNameMatchesCode(profile.language, mediaLanguagePreference)
+            );
+            if (preferredQualityProfile) {
+              profileId = preferredQualityProfile.id;
+            }
+          }
+        } catch (error) {
+          logger.debug('Could not match the preferred series language profile.', {
+            label: 'Media Request',
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
     if (useOverrides) {
       const overrideRuleRepository = getRepository(OverrideRule);
-      const overrideRules = await overrideRuleRepository.find({
-        where:
-          requestBody.mediaType === MediaType.MOVIE
-            ? { radarrServiceId: defaultRadarr?.id }
-            : { sonarrServiceId: defaultSonarr?.id },
-      });
+      const defaultServiceId =
+        requestBody.mediaType === MediaType.MOVIE
+          ? defaultRadarr?.id
+          : defaultSonarr?.id;
+      const overrideRules =
+        defaultServiceId == null
+          ? []
+          : await overrideRuleRepository.find({
+              where:
+                requestBody.mediaType === MediaType.MOVIE
+                  ? { radarrServiceId: defaultServiceId }
+                  : { sonarrServiceId: defaultServiceId },
+            });
 
       const appliedOverrideRules = overrideRules.filter((rule) => {
         const hasAnimeKeyword =
@@ -1573,7 +1654,7 @@ export class MediaRequest {
         }
 
         logger.debug('Override rule applied.', {
-          label: 'Media Request',
+          label: 'Override Rules',
           overrides: prioritizedRule,
         });
       }
@@ -1603,6 +1684,21 @@ export class MediaRequest {
             .getMany()
         : [];
     const destinationRequests = await loadDestinationRequests(media);
+
+    if (
+      !selectedDestination &&
+      requestBody.mediaType === MediaType.MOVIE &&
+      destinationRequests.some(
+        (request) =>
+          (request.status === MediaRequestStatus.PENDING ||
+            request.status === MediaRequestStatus.APPROVED) &&
+          request.is4k === requestBody.is4k
+      )
+    ) {
+      throw new DuplicateMediaRequestError(
+        'Request for this media already exists.'
+      );
+    }
 
     if (selectedDestination) {
       const hasTrackedAvailability = hasTrackedAvailableDestination(
@@ -1721,7 +1817,10 @@ export class MediaRequest {
       const requestedSeasons =
         requestBody.seasons === 'all'
           ? tmdbMediaShow.seasons
-              .filter((season) => season.season_number !== 0)
+              .filter(
+                (season) =>
+                  season.season_number !== 0 && season.episode_count > 0
+              )
               .map((season) => season.season_number)
           : (requestBody.seasons as number[]);
       let requestedSeasonSelections: SeasonEpisodeSelection[] = requestBody
@@ -1778,16 +1877,21 @@ export class MediaRequest {
       const getFinalSeasons = async (
         requestMedia: Media
       ): Promise<SeasonEpisodeSelection[]> => {
-        const activeRequestedSeasonRows: SeasonRequest[] = selectedDestination
-          ? (await loadDestinationRequests(requestMedia))
-              .filter((request) =>
-                isDestinationCoveredByActiveRequest(
+        const activeRequestedSeasonRows: SeasonRequest[] = (
+          await loadDestinationRequests(requestMedia)
+        )
+          .filter((request) =>
+            selectedDestination
+              ? isDestinationCoveredByActiveRequest(
                   [request],
                   selectedDestination
                 )
-              )
-              .flatMap((request) => request.seasons ?? [])
-          : [];
+              : request.type === MediaType.TV &&
+                request.is4k === requestBody.is4k &&
+                (request.status === MediaRequestStatus.PENDING ||
+                  request.status === MediaRequestStatus.APPROVED)
+          )
+          .flatMap((request) => request.seasons ?? []);
         const fullyRequestedSeasons = new Set(
           activeRequestedSeasonRows
             .filter((season) => season.episodeNumbers == null)

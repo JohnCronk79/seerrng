@@ -66,6 +66,9 @@ const messages = defineMessages('components.Settings.SettingsMain', {
   hideAvailable: 'Hide Available Media',
   hideAvailableTip:
     'Hide available media from the discover pages but not search results',
+  hideRequested: 'Hide Requested Media',
+  hideRequestedTip:
+    'Hide media that has been requested from the discover pages but not search results',
   cacheImages: 'Enable Image Caching',
   cacheImagesTip:
     'Cache externally sourced images (requires a significant amount of disk space)',

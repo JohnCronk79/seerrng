@@ -154,6 +154,7 @@ function JellyfinSetup({
             e?.response?.data?.message ?? e?.response?.data?.error;
           switch (responseError) {
             case ApiErrorCode.InvalidUrl:
+            case ApiErrorCode.ConnectionError:
               errorMessage = messages.invalidurlerror;
               break;
             case ApiErrorCode.InvalidCredentials:

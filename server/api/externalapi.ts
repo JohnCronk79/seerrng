@@ -1,3 +1,4 @@
+import type { CacheStore } from '@server/lib/cache';
 import { recordCacheHit, recordExternalApiCall } from '@server/lib/metrics';
 import logger from '@server/logger';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
@@ -8,10 +9,10 @@ import {
   createSafeHttpUrl,
   stringifySafeHttpUrl,
 } from '@server/utils/security';
+import { userAgentRequestInterceptor } from '@server/utils/userAgent';
 import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import axios from 'axios';
 import rateLimit from 'axios-rate-limit';
-import type NodeCache from 'node-cache';
 import { createHash } from 'node:crypto';
 
 // 5 minute default TTL (in seconds)
@@ -73,7 +74,7 @@ export const containsCredentialFields = (value: unknown): boolean => {
 export interface ExternalAPIOptions {
   allowPrivateAddresses?: boolean;
   allowedBaseUrls?: string[];
-  nodeCache?: NodeCache;
+  nodeCache?: CacheStore;
   headers?: Record<string, unknown>;
   timeout?: number;
   maxContentLength?: number;
@@ -294,7 +295,7 @@ class ExternalAPI {
   private baseUrl: string;
   private allowedOrigins: ReadonlySet<string>;
   private cacheScope: string;
-  private cache?: NodeCache;
+  private cache?: CacheStore;
   private backgroundCacheRefreshEnabled: boolean;
   private static pendingRequests = new Map<string | symbol, Promise<unknown>>();
 
@@ -342,6 +343,7 @@ class ExternalAPI {
       return config;
     });
     this.axios.interceptors.request.use(proxyRequestInterceptor);
+    this.axios.interceptors.request.use(userAgentRequestInterceptor);
 
     if (options.rateLimit) {
       this.axios = rateLimit(this.axios, {
@@ -416,25 +418,37 @@ class ExternalAPI {
     }
   }
 
+  // transform runs before the cache write.
   protected async get<T>(
     endpoint: string,
     config?: AxiosRequestConfig,
     ttl?: number,
-    isUsableResponse?: (data: T) => boolean
+    options?:
+      | ((data: T) => boolean)
+      | {
+          cache?: CacheStore;
+          transform?: (data: T) => T;
+        }
   ): Promise<T> {
+    const cache =
+      typeof options === 'object' ? (options.cache ?? this.cache) : this.cache;
+    const isUsableResponse =
+      typeof options === 'function' ? options : undefined;
+    const transform =
+      typeof options === 'object' ? options.transform : undefined;
     const cacheKey = this.serializeCacheKey(endpoint, {
       params: config?.params,
       headers: config?.headers,
       baseURL: config?.baseURL,
     });
     if (ttl !== 0) {
-      const cachedItem = this.cache?.get<T>(cacheKey);
+      const cachedItem = cache?.get<T>(cacheKey);
       if (cachedItem !== undefined) {
         if (!isUsableResponse || isUsableResponse(cachedItem)) {
           recordCacheHit('external-api');
           return cachedItem;
         }
-        this.cache?.del(cacheKey);
+        cache?.del(cacheKey);
       }
     }
 
@@ -443,7 +457,9 @@ class ExternalAPI {
       cacheKey,
       () => this.request<T>('GET', endpoint, undefined, config),
       ttl,
-      isUsableResponse
+      isUsableResponse,
+      cache,
+      transform
     );
 
     if (isUsableResponse && !isUsableResponse(response)) {
@@ -452,7 +468,9 @@ class ExternalAPI {
         cacheKey,
         () => this.request<T>('GET', endpoint, undefined, config),
         0,
-        isUsableResponse
+        isUsableResponse,
+        cache,
+        transform
       );
     }
 
@@ -561,7 +579,9 @@ class ExternalAPI {
     cacheKey: string,
     request: () => Promise<{ data: T }>,
     ttl?: number,
-    isUsableResponse?: (data: T) => boolean
+    isUsableResponse?: (data: T) => boolean,
+    cache: CacheStore | undefined = this.cache,
+    transform?: (data: T) => T
   ): Promise<T> {
     const pendingKey = `${method}:${cacheKey}`;
     const cacheable =
@@ -589,13 +609,14 @@ class ExternalAPI {
     const pending = Promise.resolve()
       .then(request)
       .then((response) => {
+        const data = transform ? transform(response.data) : response.data;
         if (
-          this.cache &&
+          cache &&
           cacheable &&
-          (!isUsableResponse || isUsableResponse(response.data))
+          (!isUsableResponse || isUsableResponse(data))
         ) {
           try {
-            this.cache.set(cacheKey, response.data, ttl ?? DEFAULT_TTL);
+            cache.set(cacheKey, data, ttl ?? DEFAULT_TTL);
           } catch (error) {
             logger.warn('Unable to cache external API response', {
               label: 'External API',
@@ -605,7 +626,7 @@ class ExternalAPI {
           }
         }
 
-        return response.data;
+        return data;
       })
       .finally(() => {
         ExternalAPI.pendingRequests.delete(requestKey);

@@ -19,6 +19,7 @@ import { LinkedAccount } from '@server/entity/LinkedAccount';
 import { User } from '@server/entity/User';
 import { UserSettings } from '@server/entity/UserSettings';
 import PreparedEmail from '@server/lib/email';
+import ImageProxy from '@server/lib/imageproxy';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
@@ -156,6 +157,35 @@ const authenticateQCMock = mock.method(
   'authenticateQuickConnect',
   async () => ({ ...defaultAuthenticateResponse })
 );
+const fakeAvatarBuffer = Buffer.from('fake-quickconnect-avatar-bytes');
+
+const axiosHeadMock = mock.method(axios, 'head', async () => ({
+  status: 200,
+  headers: { 'last-modified': 'Wed, 01 Jan 2025 00:00:00 GMT' },
+}));
+
+const clearCachedImageMock = mock.method(
+  ImageProxy.prototype,
+  'clearCachedImage',
+  async () => undefined
+);
+
+const getImageMock = mock.method(
+  ImageProxy.prototype,
+  'getImage',
+  async () => ({
+    imageBuffer: fakeAvatarBuffer,
+    meta: {
+      revalidateAfter: 3600,
+      curRevalidate: 3600,
+      isStale: false,
+      etag: 'mock-meta-etag',
+      extension: 'jpg',
+      cacheKey: 'mock-cache-key',
+      cacheMiss: true,
+    },
+  })
+);
 
 let app: Express;
 
@@ -244,6 +274,15 @@ describe('POST /auth/jellyfin/quickconnect/initiate', () => {
     assert.strictEqual(res.body.code, '123456');
     assert.strictEqual(res.body.secret, 'abc123def456abc123def456');
     assert.strictEqual(initiateQCMock.mock.callCount(), 1);
+  });
+
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
+
+    const res = await request(app).post('/auth/jellyfin/quickconnect/initiate');
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(initiateQCMock.mock.callCount(), 0);
   });
 
   it('returns 500 when Jellyfin API fails', async () => {
@@ -338,6 +377,17 @@ describe('GET /auth/jellyfin/quickconnect/check', () => {
     assert.strictEqual(checkQCMock.mock.callCount(), 0);
   });
 
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
+
+    const res = await request(app)
+      .get('/auth/jellyfin/quickconnect/check')
+      .query({ secret: 'abc123def456abc123def456' });
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(checkQCMock.mock.callCount(), 0);
+  });
+
   it('returns error when Jellyfin API fails', async () => {
     checkQCMock.mock.mockImplementation(async () => {
       throw new ApiError(500, ApiErrorCode.Unknown);
@@ -357,6 +407,9 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     authenticateQCMock.mock.mockImplementation(async () => ({
       ...defaultAuthenticateResponse,
     }));
+    axiosHeadMock.mock.resetCalls();
+    clearCachedImageMock.mock.resetCalls();
+    getImageMock.mock.resetCalls();
     configureJellyfin();
   });
 
@@ -460,6 +513,39 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     assert.notStrictEqual(updatedUser.jellyfinDeviceId, 'old-device-id');
   });
 
+  it('refreshes avatarVersion/avatarETag when the remote avatar has changed', async () => {
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'qc-avatar-change@seerr.dev',
+      jellyfinUsername: 'quickconnectuser',
+      jellyfinUserId: 'jf-qc-user-001',
+      jellyfinDeviceId: 'old-device-id',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-qc-user-001?v=old',
+      avatarVersion: 'old-version',
+      avatarETag: 'old-etag',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const agent = request.agent(app);
+    const res = await agent
+      .post('/auth/jellyfin/quickconnect/authenticate')
+      .send({ secret: 'abc123def456abc123def456' });
+
+    assert.strictEqual(res.status, 200);
+
+    const updatedUser = await userRepo.findOneOrFail({
+      where: { jellyfinUserId: 'jf-qc-user-001' },
+    });
+    assert.notStrictEqual(updatedUser.avatarVersion, 'old-version');
+    assert.notStrictEqual(updatedUser.avatarETag, 'old-etag');
+    assert.notStrictEqual(
+      updatedUser.avatar,
+      '/avatarproxy/jf-qc-user-001?v=old'
+    );
+  });
+
   it('creates a new user when newPlexLogin is enabled and user does not exist', async () => {
     const settings = getSettings();
     settings.main.newPlexLogin = true;
@@ -495,38 +581,15 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     assert.strictEqual(meRes.status, 200);
   });
 
-  it('sets userType to EMBY when media server is Emby', async () => {
-    const settings = getSettings();
-    settings.main.mediaServerType = MediaServerType.EMBY;
-    settings.main.newPlexLogin = true;
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
 
-    authenticateQCMock.mock.mockImplementation(async () => ({
-      User: {
-        Id: 'emby-new-user',
-        Name: 'embyuser',
-        ServerId: 'server-1',
-        Policy: { IsAdministrator: false },
-      },
-      AccessToken: 'emby-token',
-    }));
-
-    const agent = request.agent(app);
-    const res = await agent
+    const res = await request(app)
       .post('/auth/jellyfin/quickconnect/authenticate')
       .send({ secret: 'abc123def456abc123def456' });
 
-    assert.strictEqual(res.status, 200);
-
-    const meRes = await agent.get('/auth/me');
-    assert.strictEqual(meRes.status, 200);
-    assert.strictEqual(meRes.body.jellyfinUsername, 'embyuser');
-
-    const userRepo = getRepository(User);
-    const user = await userRepo.findOne({
-      where: { jellyfinUserId: 'emby-new-user' },
-    });
-    assert.ok(user);
-    assert.strictEqual(user.userType, UserType.EMBY);
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(authenticateQCMock.mock.callCount(), 0);
   });
 
   it('applies default permissions to newly created users', async () => {
@@ -1598,7 +1661,7 @@ describe('POST /auth/local', () => {
   it('allows the non-admin user to log in', async () => {
     const res = await request(app)
       .post('/auth/local')
-      .send({ email: 'friend@seerr.dev', password: 'test1234' });
+      .send({ email: 'demo@seerr.dev', password: 'test1234' });
 
     assert.strictEqual(res.status, 200);
     assert.ok('id' in res.body);

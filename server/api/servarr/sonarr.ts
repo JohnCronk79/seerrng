@@ -294,7 +294,29 @@ export interface AddSeriesOptions {
 export interface LanguageProfile {
   id: number;
   name: string;
+  languages?: string[];
 }
+
+const sanitizeLanguageNames = (value: unknown): string[] =>
+  (Array.isArray(value) ? value.slice(0, 100) : []).flatMap((entry) => {
+    if (typeof entry === 'string') return [entry.slice(0, 100)];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+
+    const languageEntry = entry as Record<string, unknown>;
+    if (languageEntry.allowed === false) return [];
+    const language =
+      languageEntry.language &&
+      typeof languageEntry.language === 'object' &&
+      !Array.isArray(languageEntry.language)
+        ? (languageEntry.language as Record<string, unknown>)
+        : languageEntry;
+
+    return typeof language.name === 'string' && language.name
+      ? [language.name.slice(0, 100)]
+      : [];
+  });
 
 export const sanitizeSonarrLanguageProfiles = (
   value: unknown
@@ -302,13 +324,24 @@ export const sanitizeSonarrLanguageProfiles = (
   sanitizeServarrRecordArray<Record<string, unknown>>(
     value,
     MAX_SERVARR_CONFIGURATION_RESULTS
-  ).flatMap((profile) =>
-    Number.isSafeInteger(profile.id) &&
-    typeof profile.name === 'string' &&
-    profile.name.length > 0
-      ? [{ id: profile.id as number, name: profile.name.slice(0, 10_000) }]
-      : []
-  );
+  ).flatMap((profile) => {
+    if (
+      !Number.isSafeInteger(profile.id) ||
+      typeof profile.name !== 'string' ||
+      profile.name.length === 0
+    ) {
+      return [];
+    }
+
+    const languages = sanitizeLanguageNames(profile.languages);
+    return [
+      {
+        id: profile.id as number,
+        name: profile.name.slice(0, 10_000),
+        ...(languages.length > 0 ? { languages } : {}),
+      },
+    ];
+  });
 
 class SonarrAPI extends ServarrBase<{
   seriesId: number;
@@ -368,6 +401,23 @@ class SonarrAPI extends ServarrBase<{
       throw new Error(`[Sonarr] Failed to retrieve series: ${e.message}`, {
         cause: e,
       });
+    }
+  }
+
+  public async getLibrarySeriesByTvdbId(
+    tvdbId: number
+  ): Promise<SonarrSeries[]> {
+    try {
+      const response = await this.axios.get<SonarrSeries[]>('/series', {
+        params: { tvdbId },
+      });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve series by TVDB ID: ${e.message}`,
+        { cause: e }
+      );
     }
   }
 

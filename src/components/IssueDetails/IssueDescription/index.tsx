@@ -2,7 +2,13 @@ import Button from '@app/components/Common/Button';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
-import { Menu, Transition } from '@headlessui/react';
+import {
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuItems,
+  Transition,
+} from '@headlessui/react';
 import { EllipsisVerticalIcon } from '@heroicons/react/24/solid';
 import { MAX_ISSUE_MESSAGE_LENGTH } from '@server/constants/issue';
 import { Field, Form, Formik } from 'formik';
@@ -60,13 +66,13 @@ const IssueDescription = ({
             {({ open }) => (
               <>
                 <div>
-                  <Menu.Button className="flex items-center rounded-full text-gray-400 hover:text-gray-200 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-100 focus:outline-none">
+                  <MenuButton className="flex items-center rounded-full text-gray-400 hover:text-gray-200 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-100 focus:outline-none">
                     <span className="sr-only">Open options</span>
                     <EllipsisVerticalIcon
                       className="h-5 w-5"
                       aria-hidden="true"
                     />
-                  </Menu.Button>
+                  </MenuButton>
                 </div>
 
                 <Transition
@@ -79,13 +85,13 @@ const IssueDescription = ({
                   leaveFrom="opacity-100 scale-100"
                   leaveTo="opacity-0 scale-95"
                 >
-                  <Menu.Items
+                  <MenuItems
                     static
                     className="ring-opacity-5 absolute right-0 mt-2 w-56 origin-top-right rounded-md bg-gray-700 shadow-lg ring-1 ring-black focus:outline-none"
                   >
                     <div className="py-1">
                       {belongsToUser && (
-                        <Menu.Item>
+                        <MenuItem>
                           {({ active }) => (
                             <button
                               onClick={() => setIsEditing(true)}
@@ -98,11 +104,11 @@ const IssueDescription = ({
                               {intl.formatMessage(messages.edit)}
                             </button>
                           )}
-                        </Menu.Item>
+                        </MenuItem>
                       )}
                       {(hasPermission(Permission.MANAGE_ISSUES) ||
                         !commentCount) && (
-                        <Menu.Item>
+                        <MenuItem>
                           {({ active }) => (
                             <button
                               onClick={() => onDelete()}
@@ -115,10 +121,10 @@ const IssueDescription = ({
                               {intl.formatMessage(messages.deleteissue)}
                             </button>
                           )}
-                        </Menu.Item>
+                        </MenuItem>
                       )}
                     </div>
-                  </Menu.Items>
+                  </MenuItems>
                 </Transition>
               </>
             )}

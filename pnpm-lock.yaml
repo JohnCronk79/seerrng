@@ -172,6 +172,9 @@ importers:
       lodash:
         specifier: 4.18.1
         version: 4.18.1
+      lru-cache:
+        specifier: 11.2.1
+        version: 11.2.1
       mime:
         specifier: ^4.1.0
         version: 4.1.0
@@ -5937,6 +5940,10 @@ packages:
 
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
+
+  lru-cache@11.2.1:
+    resolution: {integrity: sha512-r8LA6i4LP4EeWOhqBaZZjDWwehd1xUJPCJd9Sv300H0ZmcUER4+JPh7bqqZeqs1o5pgtgvXm+d9UGrB5zZGDiQ==}
+    engines: {node: 20 || >=22}
 
   lru-cache@11.5.2:
     resolution: {integrity: sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==}
@@ -12443,7 +12450,7 @@ snapshots:
 
   dns-caching@0.2.9:
     dependencies:
-      lru-cache: 11.5.2
+      lru-cache: 11.2.1
 
   doctrine@2.1.0:
     dependencies:
@@ -14827,6 +14834,8 @@ snapshots:
 
   lru-cache@10.4.3:
     optional: true
+
+  lru-cache@11.2.1: {}
 
   lru-cache@11.5.2: {}
 

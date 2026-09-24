@@ -1,6 +1,10 @@
 import { getRepository } from '@server/datasource';
 import OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
+import {
+  evaluateOverrideRules,
+  type OverrideRulesResult,
+} from '@server/lib/overrideRules';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { runOverrideRuleMutation } from '@server/lib/overrideRuleMutation';
 import { Permission } from '@server/lib/permissions';
@@ -418,6 +422,156 @@ overrideRuleRoutes.post(
       }
     }
   )
+);
+
+overrideRuleRoutes.post<
+  Record<string, string>,
+  OverrideRulesResult | OverrideRuleErrorResponse,
+  {
+    mediaType: MediaType;
+    is4k: boolean;
+    tmdbId: number;
+    requestUser?: number;
+    requestId?: number | null;
+    tags?: number[] | null;
+    serviceId?: number;
+  }
+>(
+  '/advancedRequest',
+  isAuthenticated([Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS], {
+    type: 'or',
+  }),
+  async (req, res, next) => {
+    const userId = req.user?.id;
+    const mediaType = req.body.mediaType;
+    const tmdbId = parsePositiveRouteId(req.body.tmdbId);
+    const requestId =
+      req.body.requestId == null
+        ? undefined
+        : parsePositiveRouteId(req.body.requestId);
+    const requestedUserId =
+      req.body.requestUser == null
+        ? undefined
+        : parsePositiveRouteId(req.body.requestUser);
+    const serviceId =
+      req.body.serviceId == null
+        ? undefined
+        : parsePositiveRouteId(req.body.serviceId);
+
+    if (
+      !userId ||
+      !tmdbId ||
+      (req.body.requestId != null && !requestId) ||
+      (req.body.requestUser != null && !requestedUserId) ||
+      (req.body.serviceId != null && !serviceId) ||
+      typeof req.body.is4k !== 'boolean' ||
+      (req.body.tags != null &&
+        (!Array.isArray(req.body.tags) ||
+          req.body.tags.length > MAX_OVERRIDE_RULE_LIST_ITEMS ||
+          req.body.tags.some(
+            (tag) =>
+              !Number.isSafeInteger(tag) || tag < 0 || tag > MAX_OVERRIDE_RULE_ID
+          )))
+    ) {
+      return res
+        .status(400)
+        .json({ status: 400, message: 'Invalid advanced request options.' });
+    }
+    if (mediaType !== MediaType.MOVIE && mediaType !== MediaType.TV) {
+      return res
+        .status(400)
+        .json({ status: 400, message: 'Invalid advanced request media type.' });
+    }
+
+    const canManageRequests = req.user?.hasPermission(
+      Permission.MANAGE_REQUESTS
+    );
+    const canManageUsers = req.user?.hasPermission(Permission.MANAGE_USERS);
+    const userRepository = getRepository(User);
+    const requestRepository = getRepository(MediaRequest);
+    let requestUser: User | null | undefined = req.user;
+
+    try {
+      if (requestId) {
+        const request = await requestRepository.findOne({
+          where: { id: requestId },
+          relations: { requestedBy: true },
+        });
+        if (!request) {
+          return res.status(404).json({ status: 404, message: 'Request not found.' });
+        }
+        if (
+          request.requestedBy.id !== userId &&
+          !canManageRequests
+        ) {
+          return res.status(403).json({
+            status: 403,
+            message: 'You do not have permission to modify this request.',
+          });
+        }
+        if (
+          request.requestedBy.id === userId &&
+          !canManageRequests &&
+          !req.user?.hasPermission(Permission.REQUEST_ADVANCED)
+        ) {
+          return res.status(403).json({
+            status: 403,
+            message: 'You do not have permission to modify this request.',
+          });
+        }
+        if (
+          requestedUserId != null &&
+          requestedUserId !== request.requestedBy.id &&
+          !canManageRequests &&
+          !canManageUsers
+        ) {
+          return res.status(403).json({
+            status: 403,
+            message: 'You do not have permission to modify the request user.',
+          });
+        }
+        requestUser =
+          requestedUserId != null && requestedUserId !== request.requestedBy.id
+            ? await userRepository.findOne({ where: { id: requestedUserId } })
+            : request.requestedBy;
+      } else if (
+        requestedUserId != null &&
+        requestedUserId !== userId
+      ) {
+        if (!canManageRequests && !canManageUsers) {
+          return res.status(403).json({
+            status: 403,
+            message: 'You do not have permission to modify the request user.',
+          });
+        }
+        requestUser = await userRepository.findOne({
+          where: { id: requestedUserId },
+        });
+      }
+
+      if (!requestUser) {
+        return res.status(404).json({ status: 404, message: 'User not found.' });
+      }
+
+      const tmdb = new TheMovieDb();
+      const tmdbMedia =
+        req.body.mediaType === MediaType.MOVIE
+          ? await tmdb.getMovie({ movieId: tmdbId })
+          : await tmdb.getTvShow({ tvId: tmdbId });
+      const result = await evaluateOverrideRules({
+        mediaType,
+        is4k: req.body.is4k,
+        tmdbMedia,
+        requestUser,
+        tags: req.body.tags,
+        serviceId,
+      });
+
+      return res.status(200).json(result);
+    } catch (error) {
+      reportOverrideRuleError('evaluate', error, next);
+    }
+  }
 );
 
 overrideRuleRoutes.put(

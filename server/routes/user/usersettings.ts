@@ -17,6 +17,7 @@ import type {
   UserSettingsLinkedAccount,
   UserSettingsLinkedAccountResponse,
   UserSettingsNotificationsResponse,
+  UserPreferredLanguages,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import {
   getAuthAccountAdmissionResource,
@@ -321,6 +322,58 @@ const parseOptionalDiscordIds = (
   return { value: ids };
 };
 
+const preferredLanguageMediaTypes = ['movie', 'tv', 'music', 'book'] as const;
+
+const parsePreferredLanguages = (
+  value: unknown
+): { value: UserPreferredLanguages | undefined } | { error: string } => {
+  if (value === undefined || value === null) {
+    return { value: undefined };
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'preferredLanguages must be an object.' };
+  }
+
+  const input = value as Record<string, unknown>;
+  const allowedKeys = new Set(['all', ...preferredLanguageMediaTypes]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+    return { error: 'preferredLanguages contains an unsupported media type.' };
+  }
+
+  const parsed: UserPreferredLanguages = {};
+  for (const fieldName of ['all', ...preferredLanguageMediaTypes] as const) {
+    if (!hasOwn(input, fieldName)) {
+      continue;
+    }
+
+    const fieldValue = input[fieldName];
+    if (fieldValue === null || fieldValue === '') {
+      if (fieldName !== 'all') {
+        parsed[fieldName] = null;
+      }
+      continue;
+    }
+
+    const language = parseBoundedString(fieldValue, {
+      fieldName: `preferredLanguages.${fieldName}`,
+      maxLength: USER_SETTINGS_LIMITS.language,
+    });
+    if ('error' in language) {
+      return language;
+    }
+    if (!/^[a-z]{2}$/i.test(language.value)) {
+      return {
+        error: `preferredLanguages.${fieldName} must be a two-letter language code.`,
+      };
+    }
+
+    parsed[fieldName] = language.value.toLowerCase();
+  }
+
+  return { value: parsed };
+};
+
 const parseGeneralSettingsBody = (
   body: unknown
 ):
@@ -383,6 +436,16 @@ const parseGeneralSettingsBody = (
     }
 
     value[fieldName] = parsed.value;
+  }
+
+  if (hasOwn(bodyObject, 'preferredLanguages')) {
+    const preferredLanguages = parsePreferredLanguages(
+      bodyObject.preferredLanguages
+    );
+    if ('error' in preferredLanguages) {
+      return preferredLanguages;
+    }
+    value.preferredLanguages = preferredLanguages.value;
   }
 
   if (hasOwn(bodyObject, 'discordIds')) {
@@ -670,6 +733,48 @@ const parseJellyfinLinkBody = (
   return { value: { username: username.value, password: password.value } };
 };
 
+userSettingsRoutes.get<
+  { id: string },
+  UserPreferredLanguages | { status: number; message: string }
+>(
+  '/preferred-languages',
+  isAuthenticated(),
+  async (req, res, next) => {
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return res.status(404).json({ status: 404, message: 'User not found.' });
+      }
+
+      const actor = req.user!;
+      if (
+        actor.id !== userId &&
+        !actor.hasPermission(
+          [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+          { type: 'or' }
+        )
+      ) {
+        return res.status(403).json({ status: 403, message: 'Access denied.' });
+      }
+
+      const targetUser = await getRepository(User).findOne({
+        where: { id: userId },
+      });
+      if (!targetUser) {
+        return res.status(404).json({ status: 404, message: 'User not found.' });
+      }
+
+      return res.status(200).json(targetUser.settings?.preferredLanguages ?? {});
+    } catch (error) {
+      next({
+        status: 500,
+        message:
+          error instanceof Error ? error.message : 'Unable to read language preferences.',
+      });
+    }
+  }
+);
+
 userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
   '/main',
   isOwnProfileOrAdmin(),
@@ -706,6 +811,7 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             discoverRegion: user.settings?.discoverRegion,
             streamingRegion: user.settings?.streamingRegion,
             originalLanguage: user.settings?.originalLanguage,
+            preferredLanguages: user.settings?.preferredLanguages,
             movieQuotaLimit: user.movieQuotaLimit,
             movieQuotaDays: user.movieQuotaDays,
             tvQuotaLimit: user.tvQuotaLimit,
@@ -840,6 +946,7 @@ userSettingsRoutes.post<
             'discoverRegion',
             'streamingRegion',
             'originalLanguage',
+            'preferredLanguages',
             'watchlistSyncMovies',
             'watchlistSyncTv',
             'watchlistSyncMusic',
@@ -878,6 +985,7 @@ userSettingsRoutes.post<
             discoverRegion: savedUser.settings?.discoverRegion,
             streamingRegion: savedUser.settings?.streamingRegion,
             originalLanguage: savedUser.settings?.originalLanguage,
+            preferredLanguages: savedUser.settings?.preferredLanguages,
             watchlistSyncMovies: savedUser.settings?.watchlistSyncMovies,
             watchlistSyncTv: savedUser.settings?.watchlistSyncTv,
             watchlistSyncMusic: savedUser.settings?.watchlistSyncMusic,
@@ -1982,6 +2090,12 @@ userSettingsRoutes.post<{ secret: string }>(
         .json({ message: 'Jellyfin/Emby login is disabled' });
     }
 
+    if (settings.main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return res
+        .status(403)
+        .json({ message: 'Quick Connect is only supported by Jellyfin.' });
+    }
+
     const hostname = getHostname();
     const jellyfinServer = new JellyfinAPI(hostname);
 
@@ -2003,10 +2117,7 @@ userSettingsRoutes.post<{ secret: string }>(
         user.id === 1 ? 'BOT_seerr' : `BOT_seerr_${user.username ?? ''}`
       ).toString('base64');
 
-      user.userType =
-        settings.main.mediaServerType === MediaServerType.EMBY
-          ? UserType.EMBY
-          : UserType.JELLYFIN;
+      user.userType = UserType.JELLYFIN;
       user.jellyfinUserId = account.User.Id;
       user.jellyfinUsername = account.User.Name;
       user.jellyfinAuthToken = account.AccessToken;

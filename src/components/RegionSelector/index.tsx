@@ -1,6 +1,12 @@
 import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
-import { Listbox, Transition } from '@headlessui/react';
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOption,
+  ListboxOptions,
+  Transition,
+} from '@headlessui/react';
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/solid';
 import type { Region } from '@server/lib/settings';
 import { countries } from 'country-flag-icons';
@@ -99,7 +105,7 @@ const RegionSelector = ({
             <span
               className={`inline-block w-full ${compact ? '' : 'rounded-md shadow-sm'}`}
             >
-              <Listbox.Button
+              <ListboxButton
                 className={`settings-compatible-listbox-button focus:shadow-outline-blue relative flex w-full cursor-default items-center text-left text-white transition duration-150 ease-in-out focus:outline-none ${
                   compact
                     ? 'rounded-none border-0 bg-transparent pr-8 pl-2'
@@ -134,7 +140,7 @@ const RegionSelector = ({
                 <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 text-gray-500">
                   <ChevronDownIcon className="h-5 w-5" />
                 </span>
-              </Listbox.Button>
+              </ListboxButton>
             </span>
 
             <Transition
@@ -145,12 +151,12 @@ const RegionSelector = ({
               leaveTo="opacity-0"
               className="absolute z-50 mt-1 w-full rounded-md bg-gray-800 shadow-lg"
             >
-              <Listbox.Options
+              <ListboxOptions
                 static
                 className={`overflow-auto rounded-md py-1 text-base leading-6 shadow-xs focus:outline-none sm:text-sm sm:leading-5 ${compact ? 'max-h-60 text-xs leading-4 sm:text-xs sm:leading-4' : 'max-h-60'}`}
               >
                 {isUserSetting && (
-                  <Listbox.Option value={null}>
+                  <ListboxOption value={null}>
                     {({ selected, active }) => (
                       <div
                         className={`${
@@ -188,10 +194,10 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 )}
                 {!disableAll && (
-                  <Listbox.Option value={isUserSetting ? allRegion : null}>
+                  <ListboxOption value={isUserSetting ? allRegion : null}>
                     {({ selected, active }) => (
                       <div
                         className={`${
@@ -216,10 +222,10 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 )}
                 {sortedRegions?.map((region) => (
-                  <Listbox.Option key={region.iso_3166_1} value={region}>
+                  <ListboxOption key={region.iso_3166_1} value={region}>
                     {({ selected, active }) => (
                       <div
                         className={`${
@@ -253,9 +259,9 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 ))}
-              </Listbox.Options>
+              </ListboxOptions>
             </Transition>
           </div>
         )}

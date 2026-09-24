@@ -8,6 +8,8 @@ export interface SeedDbOptions {
   preserveDb?: boolean;
   /** If true, runs migrations instead of synchronizing schema */
   withMigrations?: boolean;
+  /** If true, permits seeding while NODE_ENV is not test */
+  allowOutsideTest?: boolean;
 }
 
 // Precomputed bcrypt hash of 'test1234'. We precompute this to avoid
@@ -15,11 +17,21 @@ export interface SeedDbOptions {
 const TEST_USER_PASSWORD_HASH =
   '$2b$12$Z5V2P5HZgmx4/AnWFMZN1.aD5AM1NucNi.mhNTSQ9oVtmdzu7Le/a';
 
+function assertTestDatabase(operation: string, allowOutsideTest = false): void {
+  if (allowOutsideTest || process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  throw new Error(
+    `Refusing to ${operation} while NODE_ENV is not test: this drops every table and seeds accounts with a known password.`
+  );
+}
+
 /**
  * Seeds test users into the database.
  * Assumes the database schema is already set up.
  */
-async function seedTestUsers(): Promise<void> {
+export async function seedTestUsers(): Promise<void> {
   const userRepository = getRepository(User);
 
   const admin = await userRepository.findOne({
@@ -43,24 +55,41 @@ async function seedTestUsers(): Promise<void> {
   user.avatar = gravatarUrl('admin@seerr.dev', { default: 'mm', size: 200 });
   await userRepository.save(user);
 
-  // Create the other user
-  const otherUser =
+  const friendUser =
     (await userRepository.findOne({
       where: { email: 'friend@seerr.dev' },
     })) ?? new User();
-  otherUser.plexId = 2;
-  otherUser.plexToken = '1234';
-  otherUser.plexUsername = 'friend';
-  otherUser.username = 'friend';
-  otherUser.email = 'friend@seerr.dev';
-  otherUser.userType = UserType.PLEX;
-  otherUser.password = TEST_USER_PASSWORD_HASH;
-  otherUser.permissions = 32;
-  otherUser.avatar = gravatarUrl('friend@seerr.dev', {
+  friendUser.plexId = 2;
+  friendUser.plexToken = '1234';
+  friendUser.plexUsername = 'friend';
+  friendUser.username = 'friend';
+  friendUser.email = 'friend@seerr.dev';
+  friendUser.userType = UserType.PLEX;
+  friendUser.password = TEST_USER_PASSWORD_HASH;
+  friendUser.permissions = 32;
+  friendUser.avatar = gravatarUrl('friend@seerr.dev', {
     default: 'mm',
     size: 200,
   });
-  await userRepository.save(otherUser);
+  await userRepository.save(friendUser);
+
+  const demoUser =
+    (await userRepository.findOne({
+      where: { email: 'demo@seerr.dev' },
+    })) ?? new User();
+  demoUser.plexId = 3;
+  demoUser.plexToken = '1234';
+  demoUser.plexUsername = 'demo';
+  demoUser.username = 'demo';
+  demoUser.email = 'demo@seerr.dev';
+  demoUser.userType = UserType.PLEX;
+  demoUser.password = TEST_USER_PASSWORD_HASH;
+  demoUser.permissions = 32;
+  demoUser.avatar = gravatarUrl('demo@seerr.dev', {
+    default: 'mm',
+    size: 200,
+  });
+  await userRepository.save(demoUser);
 }
 
 /**
@@ -68,6 +97,8 @@ async function seedTestUsers(): Promise<void> {
  * Used by both Cypress tests and Vitest unit tests.
  */
 export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
+  assertTestDatabase('seed the test database', options.allowOutsideTest);
+
   const dbConnection = dataSource.isInitialized
     ? dataSource
     : await dataSource.initialize();
@@ -91,6 +122,8 @@ export async function seedTestDb(options: SeedDbOptions = {}): Promise<void> {
  * Assumes DB has been initialized.
  */
 export async function resetTestDb(): Promise<void> {
+  assertTestDatabase('reset the test database');
+
   await dataSource.synchronize(true);
   await seedTestUsers();
 }

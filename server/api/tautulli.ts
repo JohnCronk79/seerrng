@@ -3,6 +3,7 @@ import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import type { TautulliSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { proxyRequestInterceptor } from '@server/utils/customProxyAgent';
+import { userAgentRequestInterceptor } from '@server/utils/userAgent';
 import {
   createSafeHttpRequestOptions,
   createSafeHttpUrl,
@@ -160,6 +161,7 @@ class TautulliAPI {
       ...TAUTULLI_HTTP_LIMITS,
     });
     this.axios.interceptors.request.use(proxyRequestInterceptor);
+    this.axios.interceptors.request.use(userAgentRequestInterceptor);
   }
 
   private async get<T>(

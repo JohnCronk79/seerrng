@@ -52,6 +52,10 @@ class NtfyAgent
     const embedPoster = settings.embedPoster;
 
     const topic = settings.options.topic;
+    const tags = settings.options.tags
+      ?.split(',')
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0);
     const priority = settings.options.priority ?? 3;
 
     const title = truncateNotificationUtf8(
@@ -133,6 +137,9 @@ class NtfyAgent
       message,
       markdown,
     };
+    if (tags && tags.length > 0) {
+      ntfyPayload.tags = tags;
+    }
     if (attach) {
       ntfyPayload.attach = attach;
     }

@@ -722,11 +722,13 @@ const TvRequestModal = ({
       {canUseAdvancedOptions && (
         <AdvancedRequester
           type="tv"
+          tmdbId={tmdbId}
           is4k={is4k}
           allow4kServerSelection={allow4kServerSelection && !editRequest}
           isAnime={isAnime}
           quota={quota}
           requestUser={editRequest?.requestedBy}
+          requestId={editRequest?.id}
           defaultOverrides={
             editRequest
               ? {

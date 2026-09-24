@@ -64,6 +64,7 @@ import {
 } from '@server/lib/serviceAdmission';
 import { type ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
+import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
 import {
   hydrateBookshelfLookupResult,
@@ -786,13 +787,6 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
         }
 
-        const tmdb = new TheMovieDb();
-        const radarr = new RadarrAPI({
-          apiKey: radarrSettings.apiKey,
-          url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
-        });
-        const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
-
         const media = await mediaRepository.findOne({
           where: { id: entity.media.id },
         });
@@ -805,6 +799,28 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
           return false;
         }
+
+        if (
+          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
+        ) {
+          logger.warn('Media already exists, marking request as COMPLETED', {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+          });
+
+          const requestRepository = getRepository(MediaRequest);
+          entity.status = MediaRequestStatus.COMPLETED;
+          await requestRepository.save(entity);
+          return true;
+        }
+
+        const tmdb = new TheMovieDb();
+        const radarr = new RadarrAPI({
+          apiKey: radarrSettings.apiKey,
+          url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
+        });
+        const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
 
         if (radarrSettings.tagRequests) {
           const radarrTags = await radarr.getTags();
@@ -2353,6 +2369,10 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     manager: EntityManager,
     entity: MediaRequest
   ): Promise<void> {
+    const fullMedia = await manager.findOneOrFail(Media, {
+      where: { id: entity.media.id },
+      relations: { requests: { seasons: true }, seasons: true },
+    });
     const media = await manager.findOneOrFail(Media, {
       where: { id: entity.media.id },
     });
@@ -2454,6 +2474,40 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
 
       await manager.save(media);
     }
+
+    // Reset stale seasons or re-requests fail ("No seasons available to request")
+    if (fullMedia.mediaType === MediaType.TV) {
+      const statusKey = entity.is4k ? 'status4k' : 'status';
+      const removedSeasonNumbers = new Set(
+        entity.seasons.map((s) => s.seasonNumber)
+      );
+      const activeSeasonNumbers = new Set(
+        fullMedia.requests
+          .filter(
+            (request) =>
+              request.is4k === entity.is4k &&
+              request.status !== MediaRequestStatus.COMPLETED &&
+              request.status !== MediaRequestStatus.DECLINED
+          )
+          .flatMap((request) => request.seasons.map((s) => s.seasonNumber))
+      );
+
+      const changedSeasons: Season[] = [];
+      for (const season of fullMedia.seasons) {
+        if (
+          (season[statusKey] === MediaStatus.PENDING ||
+            season[statusKey] === MediaStatus.PROCESSING) &&
+          removedSeasonNumbers.has(season.seasonNumber) &&
+          !activeSeasonNumbers.has(season.seasonNumber)
+        ) {
+          season[statusKey] = MediaStatus.UNKNOWN;
+          changedSeasons.push(season);
+        }
+      }
+      if (changedSeasons.length) {
+        await manager.save(changedSeasons);
+      }
+    }
   }
 
   public async afterUpdate(event: UpdateEvent<MediaRequest>): Promise<void> {
@@ -2474,9 +2528,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       return;
     }
 
-    await this.updateParentStatus(
-      event.manager as EntityManager,
-      event.entity as MediaRequest
+    await withNestedTransaction(event.manager as EntityManager, (manager) =>
+      this.updateParentStatus(manager, event.entity as MediaRequest)
     );
     await recordRequestStatus((event.entity as MediaRequest).id, {
       manager: event.manager as EntityManager,
@@ -2497,9 +2550,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     );
     await this.enqueueRequestDispatch(event.entity as MediaRequest, event);
 
-    await this.updateParentStatus(
-      event.manager as EntityManager,
-      event.entity as MediaRequest
+    await withNestedTransaction(event.manager as EntityManager, (manager) =>
+      this.updateParentStatus(manager, event.entity as MediaRequest)
     );
     await recordRequestStatus((event.entity as MediaRequest).id, {
       manager: event.manager as EntityManager,

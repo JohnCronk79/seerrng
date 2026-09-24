@@ -2,7 +2,11 @@ import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
-import { MediaStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import { Blocklist } from '@server/entity/Blocklist';
@@ -45,9 +49,12 @@ import Season from './Season';
   where: `"mediaType" = 'music' AND "mbId" IS NOT NULL`,
 })
 class Media {
+  public hasActiveRequest?: boolean;
+
   public static async getRelatedMedia(
     user: User | undefined,
-    items: { tmdbId: number; mediaType: string }[] | number[] | string[]
+    items: { tmdbId: number; mediaType: string }[] | number[] | string[],
+    { includeActiveRequest = false }: { includeActiveRequest?: boolean } = {}
   ): Promise<Media[]> {
     const mediaRepository = getRepository(Media);
 
@@ -77,7 +84,7 @@ class Media {
           'watchlist',
           'media.id= watchlist.media and watchlist.requestedBy = :userId',
           { userId: user?.id }
-        ) //,
+        )
         .where(
           isMusicIdLookup
             ? 'media.mbId in (:...finalIds)'
@@ -90,15 +97,40 @@ class Media {
         (item) => restrictMediaRelationsForUser(item, user) as Media
       );
 
-      if (!isLegacyItem) {
-        return restrictedMedia;
+      const relatedMedia = !isLegacyItem
+        ? restrictedMedia
+        : restrictedMedia.filter((m) =>
+            (items as { tmdbId: number; mediaType: string }[]).some(
+              (i) => i.tmdbId === m.tmdbId && i.mediaType === m.mediaType
+            )
+          );
+
+      if (
+        includeActiveRequest &&
+        getSettings().main.hideRequested &&
+        relatedMedia.length > 0
+      ) {
+        const activeRequestMediaIds = await mediaRepository
+          .createQueryBuilder('media')
+          .select('media.id', 'id')
+          .distinct(true)
+          .innerJoin('media.requests', 'request')
+          .where('media.id IN (:...mediaIds)', {
+            mediaIds: relatedMedia.map((m) => m.id),
+          })
+          .andWhere('request.status IN (:...statuses)', {
+            statuses: [MediaRequestStatus.PENDING, MediaRequestStatus.APPROVED],
+          })
+          .getRawMany<{ id: number }>();
+
+        const activeIds = new Set(activeRequestMediaIds.map((row) => row.id));
+
+        relatedMedia.forEach((m) => {
+          m.hasActiveRequest = activeIds.has(m.id);
+        });
       }
 
-      return restrictedMedia.filter((m) =>
-        (items as { tmdbId: number; mediaType: string }[]).some(
-          (i) => i.tmdbId === m.tmdbId && i.mediaType === m.mediaType
-        )
-      );
+      return relatedMedia;
     } catch (e) {
       logger.error(e.message);
       return [];

@@ -5,11 +5,14 @@ import {
   readDatabaseTlsFile,
 } from '@server/lib/databaseConfig';
 import { secureSqliteDatabaseFiles } from '@server/lib/sqliteFileSecurity';
+import { isPgsql } from '@server/utils/dbType';
 import fs from 'fs';
 import 'reflect-metadata';
 import type { TlsOptions } from 'tls';
 import type { DataSourceOptions, EntityTarget, Repository } from 'typeorm';
 import { DataSource } from 'typeorm';
+
+export { isPgsql };
 
 const getMigrationFiles = (directory: string, extension: 'ts' | 'js') =>
   fs.existsSync(directory)
@@ -171,8 +174,6 @@ const postgresProdConfig: DataSourceOptions = {
   migrations: getMigrationFiles('dist/migration/postgres', 'js'),
   subscribers: getRuntimeFiles('dist/subscriber', 'js'),
 };
-
-export const isPgsql = process.env.DB_TYPE === 'postgres';
 
 function getDataSource(): DataSourceOptions {
   if (process.env.NODE_ENV === 'test') {

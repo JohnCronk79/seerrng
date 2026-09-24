@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { afterEach, before, describe, it, mock } from 'node:test';
+import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
 import {
   IssueStatus,
@@ -14,6 +14,7 @@ import Media from '@server/entity/Media';
 import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Permission } from '@server/lib/permissions';
+import notificationManager from '@server/lib/notifications';
 import { getSettings } from '@server/lib/settings';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
@@ -61,6 +62,10 @@ function createApp() {
 
 before(() => {
   app = createApp();
+});
+
+beforeEach(() => {
+  mock.method(notificationManager, 'sendNotificationIntent', async () => undefined);
 });
 
 afterEach(() => {
@@ -672,7 +677,7 @@ describe('POST /issue on behalf of another user', () => {
     const userRepo = getRepository(User);
     const media = await seedMedia(20001);
     const friend = await userRepo.findOneOrFail({
-      where: { email: 'friend@seerr.dev' },
+      where: { email: 'demo@seerr.dev' },
     });
 
     const agent = await login();
@@ -717,13 +722,13 @@ describe('POST /issue on behalf of another user', () => {
     const userRepo = getRepository(User);
     const media = await seedMedia(20003);
     const friend = await userRepo.findOneOrFail({
-      where: { email: 'friend@seerr.dev' },
+      where: { email: 'demo@seerr.dev' },
     });
 
     friend.permissions = Permission.CREATE_ISSUES;
     await userRepo.save(friend);
 
-    const agent = await loginAs('friend@seerr.dev');
+    const agent = await loginAs('demo@seerr.dev');
     const res = await agent.post('/issue').send({
       issueType: IssueType.SUBTITLES,
       message: 'Subtitles are missing.',
@@ -740,7 +745,7 @@ describe('POST /issue on behalf of another user', () => {
     const userRepo = getRepository(User);
     const media = await seedMedia(20004);
     const friend = await userRepo.findOneOrFail({
-      where: { email: 'friend@seerr.dev' },
+      where: { email: 'demo@seerr.dev' },
     });
     const admin = await userRepo.findOneOrFail({
       where: { email: 'admin@seerr.dev' },
@@ -749,7 +754,7 @@ describe('POST /issue on behalf of another user', () => {
     friend.permissions = Permission.CREATE_ISSUES;
     await userRepo.save(friend);
 
-    const agent = await loginAs('friend@seerr.dev');
+    const agent = await loginAs('demo@seerr.dev');
     const res = await agent.post('/issue').send({
       issueType: IssueType.OTHER,
       message: 'Something else is wrong.',

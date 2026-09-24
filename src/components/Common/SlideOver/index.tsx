@@ -1,6 +1,6 @@
 /* eslint-disable jsx-a11y/click-events-have-key-events */
 import { useLockBodyScroll } from '@app/hooks/useLockBodyScroll';
-import { Transition } from '@headlessui/react';
+import { Transition, TransitionChild } from '@headlessui/react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
@@ -39,7 +39,7 @@ const SlideOver = ({
       enter="transition-opacity ease-in-out duration-300"
       enterFrom="opacity-0"
       enterTo="opacity-100"
-      leave="transition-opacity ease-in-out duration-300"
+      leave="transition-opacity ease-in-out duration-500 sm:duration-700"
       leaveFrom="opacity-100"
       leaveTo="opacity-0"
     >
@@ -55,7 +55,7 @@ const SlideOver = ({
       >
         <div className="absolute inset-0 overflow-hidden">
           <section className="absolute inset-y-0 right-0 flex max-w-full">
-            <Transition.Child
+            <TransitionChild
               enter="transition-transform ease-in-out duration-500 sm:duration-700"
               enterFrom="translate-x-full"
               enterTo="translate-x-0"
@@ -100,7 +100,7 @@ const SlideOver = ({
                   </div>
                 </div>
               </div>
-            </Transition.Child>
+            </TransitionChild>
           </section>
         </div>
       </div>
