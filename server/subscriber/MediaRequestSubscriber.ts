@@ -3,7 +3,10 @@ import type { LidarrAlbumOptions } from '@server/api/servarr/lidarr';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import type { RadarrMovieOptions } from '@server/api/servarr/radarr';
 import RadarrAPI from '@server/api/servarr/radarr';
-import type { ReadarrBookLookupResult } from '@server/api/servarr/readarr';
+import type {
+  ReadarrBookLookupResult,
+  ReadarrEdition,
+} from '@server/api/servarr/readarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import type {
   AddSeriesOptions,
@@ -1586,6 +1589,10 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       const bookshelfLookupId = bookshelfId
         ? (parseBookshelfBookId(bookshelfId)?.foreignBookId ?? bookshelfId)
         : undefined;
+      const preferredEditionId = entity.preferredEditionId?.trim() || undefined;
+      const preferredIsbn = normalizeValidIsbn(
+        entity.preferredIsbn13 ?? undefined
+      );
 
       if (!openLibraryId && !isbn && !bookshelfId) {
         throw new Error('Book request is missing lookup identifiers');
@@ -1600,6 +1607,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         : undefined;
       const lookupTerms = [
         bookshelfLookupId,
+        preferredIsbn,
+        preferredIsbn ? `isbn:${preferredIsbn}` : undefined,
         isbn,
         isbn ? `isbn:${isbn}` : undefined,
         work?.title,
@@ -1690,7 +1699,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           .slice(0, READARR_MAX_EXPANDED_LOOKUP_TERMS);
       };
       const identifierRepository = getRepository(MediaIdentifier);
-      const normalizedIsbn = normalizeValidIsbn(isbn);
+      const normalizedIsbn = preferredIsbn ?? normalizeValidIsbn(isbn);
       const existingIdentifierKeys = new Set(
         (media.identifiers ?? []).map(
           (identifier) => `${identifier.provider}:${identifier.value}`
@@ -1838,12 +1847,55 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           );
         }
 
+        const findPreferredEdition = (
+          editions?: ReadarrEdition[]
+        ): ReadarrEdition | undefined =>
+          (preferredEditionId
+            ? editions?.find(
+                (edition) => edition.foreignEditionId === preferredEditionId
+              )
+            : undefined) ??
+          (preferredIsbn
+            ? editions?.find(
+                (edition) =>
+                  normalizeValidIsbn(edition.isbn13) === preferredIsbn
+              )
+            : undefined);
         const bookInfo =
-          searchResults.find((result) =>
-            result.editions?.some(
-              (edition) => normalizeValidIsbn(edition.isbn13) === normalizedIsbn
-            )
-          ) ?? searchResults[0];
+          searchResults.find(
+            (result) => findPreferredEdition(result.editions) !== undefined
+          ) ??
+          (!preferredEditionId && !preferredIsbn
+            ? (searchResults.find((result) =>
+                result.editions?.some(
+                  (edition) =>
+                    normalizeValidIsbn(edition.isbn13) === normalizedIsbn
+                )
+              ) ?? searchResults[0])
+            : undefined);
+
+        if (!bookInfo) {
+          throw new Error(
+            `Bookshelf metadata does not contain the selected edition${preferredIsbn ? ` (ISBN ${preferredIsbn})` : ''}. Choose another edition or update the Bookshelf metadata source.`
+          );
+        }
+        const matchedPreferredEdition =
+          preferredEditionId || preferredIsbn
+            ? findPreferredEdition(bookInfo.editions)
+            : undefined;
+        if ((preferredEditionId || preferredIsbn) && !matchedPreferredEdition) {
+          throw new Error(
+            `Bookshelf metadata does not contain the selected edition${preferredIsbn ? ` (ISBN ${preferredIsbn})` : ''}. Choose another edition or update the Bookshelf metadata source.`
+          );
+        }
+        const bookEditions = matchedPreferredEdition
+          ? (bookInfo.editions ?? []).map((edition) => ({
+              ...edition,
+              monitored:
+                edition.foreignEditionId ===
+                matchedPreferredEdition.foreignEditionId,
+            }))
+          : (bookInfo.editions ?? []);
         const savedTarget = entity.serviceTargets?.find(
           (target) =>
             target.serviceType === 'readarr' && target.format === serviceType
@@ -1939,7 +1991,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                 manualAdd: true,
               }
             : bookInfo.author,
-          editions: bookInfo.editions ?? [],
+          editions: bookEditions,
+          useRequestedEdition: !!(preferredEditionId || preferredIsbn),
           addOptions: {
             // Seerr starts and tracks BookSearch explicitly after the add.
             // The Bookshelf convenience flag depends on a later metadata

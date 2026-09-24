@@ -1305,6 +1305,8 @@ export class MediaRequest {
           : selectedReadarr?.tags,
         serviceTargets: uncoveredBookTargets,
         bookFormat: requestedBookFormat,
+        preferredEditionId: requestBody.preferredEditionId,
+        preferredIsbn13: normalizeValidIsbn(requestBody.preferredIsbn13),
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
       });
@@ -2051,6 +2053,12 @@ export class MediaRequest {
 
   @Column({ nullable: true, type: 'varchar' })
   public bookFormat?: 'ebook' | 'audiobook' | 'both' | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  public preferredEditionId?: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  public preferredIsbn13?: string | null;
 
   @Column({
     type: 'text',

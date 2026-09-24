@@ -106,6 +106,7 @@ export interface ReadarrBookOptions extends ReadarrBookLookupResult {
   metadataProfileId: number;
   rootFolderPath: string;
   monitored: boolean;
+  useRequestedEdition?: boolean;
   tags?: number[];
   addOptions?: {
     searchForNewBook: boolean;
@@ -1132,8 +1133,15 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
     try {
       await this.ensureProvider();
       const existingBook = await this.findExistingBookForAdd(options);
+      const editionUpdate = existingBook
+        ? this.getRequestedEditionUpdate(existingBook, options)
+        : undefined;
 
-      if (existingBook && this.isBookMonitored(existingBook)) {
+      if (
+        existingBook &&
+        this.isBookMonitored(existingBook) &&
+        !editionUpdate?.changed
+      ) {
         logger.info(
           'Book is already monitored in Bookshelf/Readarr. Skipping add and returning success',
           {
@@ -1156,7 +1164,9 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
       if (existingBook) {
         logger.info(
-          'Book exists in Bookshelf/Readarr but is not monitored. Updating monitored status.',
+          editionUpdate?.changed
+            ? 'Updating the requested Bookshelf edition.'
+            : 'Book exists in Bookshelf/Readarr but is not monitored. Updating monitored status.',
           {
             label: 'Readarr',
             bookId: existingBook.id,
@@ -1171,7 +1181,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           `/book/${existingBook.id}`,
           {
             ...existingBook,
-            editions: existingBook.editions ?? [],
+            editions: editionUpdate?.editions ?? existingBook.editions ?? [],
             monitored: true,
             qualityProfileId:
               options.qualityProfileId ?? existingBook.qualityProfileId,
@@ -1191,6 +1201,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
           updatedBookResponse.data,
           {
             ...existingBook,
+            editions: editionUpdate?.editions ?? existingBook.editions ?? [],
             monitored: true,
             ...(this.isChaptarr() ? this.getMediaMonitoringFields(true) : {}),
             ...(this.isChaptarr() && options.addOptions
@@ -1237,7 +1248,7 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
       const postedBook = await this.post<ReadarrBookLookupResult | number>(
         '/book',
         {
-          ...(options as unknown as Record<string, unknown>),
+          ...this.getBookAddPayload(options),
           ...(this.isChaptarr()
             ? this.getMediaMonitoringFields(options.monitored)
             : {}),
@@ -1247,7 +1258,12 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
 
       const addedBook: ReadarrBookLookupResult =
         typeof postedBook === 'number'
-          ? { ...options, id: postedBook }
+          ? {
+              ...(this.getBookAddPayload(
+                options
+              ) as unknown as ReadarrBookLookupResult),
+              id: postedBook,
+            }
           : postedBook;
 
       const ensuredBook = await this.ensureRequestedBookState(
@@ -1271,6 +1287,53 @@ class ReadarrAPI extends ServarrBase<ReadarrQueueItem> {
         }
       );
     }
+  }
+
+  private getRequestedEditionUpdate(
+    existingBook: ReadarrBookLookupResult,
+    options: ReadarrBookOptions
+  ): { editions: ReadarrEdition[]; changed: boolean } | undefined {
+    if (!options.useRequestedEdition) {
+      return undefined;
+    }
+
+    const requestedEdition = options.editions?.find(
+      (edition) => edition.monitored
+    );
+    if (!requestedEdition) {
+      return undefined;
+    }
+
+    const currentEditions = existingBook.editions ?? [];
+    const requestedEditionExists = currentEditions.some(
+      (edition) =>
+        edition.foreignEditionId === requestedEdition.foreignEditionId
+    );
+    const editions = requestedEditionExists
+      ? currentEditions
+      : [...currentEditions, requestedEdition];
+    const monitoredEditions = editions.map((edition) => ({
+      ...edition,
+      monitored: edition.foreignEditionId === requestedEdition.foreignEditionId,
+    }));
+
+    return {
+      editions: monitoredEditions,
+      changed:
+        monitoredEditions.length !== currentEditions.length ||
+        currentEditions.some(
+          (edition, index) =>
+            edition.monitored !== monitoredEditions[index]?.monitored
+        ),
+    };
+  }
+
+  private getBookAddPayload(
+    options: ReadarrBookOptions
+  ): Record<string, unknown> {
+    const payload = { ...options };
+    delete payload.useRequestedEdition;
+    return payload;
   }
 
   public async removeBook(

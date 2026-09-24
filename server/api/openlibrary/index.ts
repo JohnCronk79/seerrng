@@ -69,6 +69,7 @@ export interface OpenLibraryEdition {
   isbn_10?: string[];
   isbn_13?: string[];
   physical_format?: string;
+  languages?: { key: string }[];
   number_of_pages?: number;
   works?: {
     key: string;
@@ -309,6 +310,19 @@ const sanitizeEdition = (value: unknown): OpenLibraryEdition | undefined => {
         })
         .filter((work): work is { key: string } => work !== undefined)
     : undefined;
+  const languages = Array.isArray(value.languages)
+    ? value.languages
+        .slice(0, 50)
+        .map((language) => {
+          const languageKey = isRecord(language)
+            ? boundedString(language.key, 128)
+            : undefined;
+          return languageKey ? { key: languageKey } : undefined;
+        })
+        .filter(
+          (language): language is { key: string } => language !== undefined
+        )
+    : undefined;
 
   return {
     key,
@@ -317,6 +331,7 @@ const sanitizeEdition = (value: unknown): OpenLibraryEdition | undefined => {
     isbn_10: boundedStrings(value.isbn_10),
     isbn_13: boundedStrings(value.isbn_13),
     physical_format: boundedString(value.physical_format, 256),
+    languages: languages?.length ? languages : undefined,
     works: works?.length ? works : undefined,
   };
 };

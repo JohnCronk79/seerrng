@@ -42,6 +42,8 @@ export type MediaRequestBody = {
   format?: 'ebook' | 'audiobook' | 'both';
   editionId?: string;
   isbn13?: string;
+  preferredEditionId?: string;
+  preferredIsbn13?: string;
   authorId?: string;
   userId?: number;
   tags?: number[];

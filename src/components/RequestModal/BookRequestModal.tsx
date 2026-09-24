@@ -96,6 +96,19 @@ const messages = defineMessages('components.RequestModal.Book', {
   advancedOptions: 'Advanced Options',
 });
 
+const getEditionLanguageName = (language: string, locale: string): string => {
+  const languageCode = language.split('/').filter(Boolean).pop() ?? language;
+
+  try {
+    return (
+      new Intl.DisplayNames([locale], { type: 'language' }).of(languageCode) ??
+      languageCode.toUpperCase()
+    );
+  } catch {
+    return languageCode.toUpperCase();
+  }
+};
+
 interface BookRequestModalProps {
   bookId: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
@@ -412,16 +425,18 @@ const BookRequestModal = ({
     setIsUpdating(true);
 
     try {
+      const selectedEdition = data?.isbnCandidates?.find(
+        (candidate) => candidate.isbn === selectedIsbn
+      );
       const response = await axios.post<MediaRequest>('/api/v1/request', {
         mediaId: data?.id
           ? normalizeOpenLibraryWorkId(data.id)
           : normalizedBookId,
         mediaType: MediaType.BOOK,
         isbn13: selectedIsbn || data?.isbn13,
-        editionId:
-          data?.isbnCandidates?.find(
-            (candidate) => candidate.isbn === selectedIsbn
-          )?.editionId ?? data?.editionId,
+        editionId: selectedEdition?.editionId ?? data?.editionId,
+        preferredIsbn13: selectedIsbn || undefined,
+        preferredEditionId: selectedEdition?.editionId,
         authorId: data?.authorId,
         format: bookFormat,
         ...getOverrideParams(),
@@ -841,6 +856,11 @@ const BookRequestModal = ({
                     value={candidate.isbn}
                   >
                     {[candidate.isbn, candidate.title, candidate.format]
+                      .concat(
+                        (candidate.languages ?? []).map((language) =>
+                          getEditionLanguageName(language, intl.locale)
+                        )
+                      )
                       .filter(Boolean)
                       .join(' - ')}
                   </option>

@@ -59,6 +59,7 @@ export interface BookIsbnCandidate {
   editionId?: string;
   title?: string;
   format?: string;
+  languages?: string[];
 }
 
 export const MAX_BOOK_ISBN_CANDIDATES = 200;
@@ -75,6 +76,9 @@ const mapEditionIsbnCandidates = (
     const editionId = getEditionId(edition.key);
     const title = edition.title;
     const format = edition.physical_format;
+    const languages = edition.languages
+      ?.map(({ key }) => key.split('/').filter(Boolean).pop() ?? key)
+      .filter((language, index, values) => values.indexOf(language) === index);
 
     for (const isbn of [
       ...(edition.isbn_13 ?? []),
@@ -88,6 +92,7 @@ const mapEditionIsbnCandidates = (
           editionId,
           title,
           format,
+          languages,
         });
 
         if (candidates.size >= MAX_BOOK_ISBN_CANDIDATES) {

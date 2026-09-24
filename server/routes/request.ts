@@ -47,6 +47,7 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeValidIsbn } from '@server/lib/isbn';
 import { hydrateMediaRequestRelations } from '@server/lib/mediaRequestHydration';
 import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
@@ -239,6 +240,8 @@ const getRequestLogBody = (body: Partial<MediaRequestBody> | undefined) => ({
   format: body?.format,
   editionId: body?.editionId,
   hasIsbn13: !!body?.isbn13,
+  hasPreferredEdition: !!body?.preferredEditionId,
+  hasPreferredIsbn13: !!body?.preferredIsbn13,
   authorId: body?.authorId,
   userId: body?.userId,
 });
@@ -846,6 +849,47 @@ const sanitizeMediaRequestBody = (
     return format;
   }
 
+  const preferredEditionId = parseOptionalRequestString(
+    bodyObject.preferredEditionId,
+    'preferredEditionId',
+    maxBulkRequestItemTextLength
+  );
+  if ('error' in preferredEditionId) {
+    return preferredEditionId;
+  }
+
+  const preferredIsbn13 = parseOptionalRequestString(
+    bodyObject.preferredIsbn13,
+    'preferredIsbn13',
+    maxBulkRequestItemTextLength
+  );
+  if ('error' in preferredIsbn13) {
+    return preferredIsbn13;
+  }
+  const normalizedPreferredIsbn13 = preferredIsbn13.value
+    ? normalizeValidIsbn(preferredIsbn13.value)
+    : undefined;
+  if (preferredIsbn13.value && !normalizedPreferredIsbn13) {
+    return {
+      error: {
+        status: 400,
+        message: 'preferredIsbn13 must be a valid ISBN.',
+      },
+    };
+  }
+  if (
+    mediaType !== MediaType.BOOK &&
+    (preferredEditionId.value !== undefined ||
+      normalizedPreferredIsbn13 !== undefined)
+  ) {
+    return {
+      error: {
+        status: 400,
+        message: 'Edition preferences are only valid for book requests.',
+      },
+    };
+  }
+
   const tags = parseOptionalRequestTags(bodyObject.tags);
   if ('error' in tags) {
     return tags;
@@ -884,6 +928,8 @@ const sanitizeMediaRequestBody = (
     languageProfileId: languageProfileId.value,
     metadataProfileId: metadataProfileId.value,
     format: format.value,
+    preferredEditionId: preferredEditionId.value,
+    preferredIsbn13: normalizedPreferredIsbn13,
     userId: userId.value,
     tags: tags.value,
     seasons:
@@ -2163,6 +2209,8 @@ requestRoutes.post<never, BulkMediaRequestResponse, BulkMediaRequestBody>(
               format: body.format,
               isbn13: item.isbn13,
               editionId: item.editionId,
+              preferredIsbn13: item.isbn13,
+              preferredEditionId: item.editionId,
               authorId: item.authorId,
               serverId: body.serverId,
               profileId: body.profileId,

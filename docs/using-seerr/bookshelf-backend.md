@@ -1074,3 +1074,13 @@ at 128 kbps by default; set `BOOKSHELF_M4B_AAC_BITRATE_KBPS` to a value from
 import fails, and copy-only imports keep the source tracks. See the
 [BookshelfNG merge guide](https://github.com/Snapetech/bookshelfng/blob/main/docs/audiobook-m4b-merging.md)
 for track ordering and failure behavior.
+
+## Requesting a specific edition
+
+The book request dialog lets you choose an ISBN edition. When you make an
+explicit choice, SeerrNG keeps that ISBN and edition with the request and
+passes it to BookshelfNG. The matching Bookshelf edition is selected for
+acquisition; if that edition is absent from the configured metadata source,
+the request reports the mismatch instead of silently switching editions.
+Edition choices show their language when the catalog provides it. The
+automatic edition option keeps the existing best-match behavior.
