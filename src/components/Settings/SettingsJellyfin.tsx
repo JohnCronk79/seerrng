@@ -14,6 +14,10 @@ import { isValidURL } from '@app/utils/urlValidationHelper';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
+import {
+  createSettingsLibraryUpdateBody,
+  getSettingsLibraryApiPath,
+} from '@server/constants/settingsLibraryApi';
 import type { JellyfinSettings } from '@server/lib/settings';
 import axios from 'axios';
 import { Formik } from 'formik';
@@ -169,7 +173,13 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
     setIsSyncing(true);
 
     try {
-      await axios.post('/api/v1/settings/jellyfin/library/sync');
+      await axios.post(
+        getSettingsLibraryApiPath('jellyfin'),
+        createSettingsLibraryUpdateBody({
+          sync: true,
+          enabledLibraryIds: activeLibraries,
+        })
+      );
       setIsSyncing(false);
       revalidate();
     } catch (e) {
@@ -232,9 +242,14 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
     try {
-      await axios.put(`/api/v1/settings/jellyfin/library/${libraryId}`, {
-        enabled: !activeLibraries.includes(libraryId),
-      });
+      const enabledLibraryIds = activeLibraries.includes(libraryId)
+        ? activeLibraries.filter((id) => id !== libraryId)
+        : [...activeLibraries, libraryId];
+
+      await axios.post(
+        getSettingsLibraryApiPath('jellyfin'),
+        createSettingsLibraryUpdateBody({ enabledLibraryIds })
+      );
       if (onComplete) {
         onComplete();
       }

@@ -12,6 +12,10 @@ import {
 } from '@server/constants/blocklist';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
+import {
+  SETTINGS_LIBRARY_ROUTE_PATHS,
+  SETTINGS_PLEX_LIBRARY_TYPE_ROUTE_PATH,
+} from '@server/constants/settingsLibraryApi';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
@@ -1568,7 +1572,7 @@ settingsRoutes.get('/plex/devices/servers', async (req, res, next) => {
   }
 });
 
-settingsRoutes.get('/plex/library', (req, res) => {
+settingsRoutes.get(SETTINGS_LIBRARY_ROUTE_PATHS.plex, (req, res) => {
   const settings = getSettings();
   if (req.query.sync !== undefined || req.query.enable !== undefined) {
     return res.status(400).json({
@@ -1580,7 +1584,7 @@ settingsRoutes.get('/plex/library', (req, res) => {
 });
 
 settingsRoutes.post(
-  '/plex/library',
+  SETTINGS_LIBRARY_ROUTE_PATHS.plex,
   authorizedMutation(Permission.ADMIN, async (req, res) => {
     const parsedBody = parseSettingsBodyObject(req.body);
     if ('error' in parsedBody) {
@@ -1624,7 +1628,7 @@ settingsRoutes.post(
 );
 
 settingsRoutes.put(
-  '/plex/library/:libraryId/type',
+  SETTINGS_PLEX_LIBRARY_TYPE_ROUTE_PATH,
   authorizedMutation(Permission.ADMIN, async (req, res) => {
     const libraryId = parseBoundedString(req.params.libraryId, {
       fieldName: 'Library ID',
@@ -1807,7 +1811,7 @@ settingsRoutes.post(
   })
 );
 
-settingsRoutes.get('/jellyfin/library', (req, res) => {
+settingsRoutes.get(SETTINGS_LIBRARY_ROUTE_PATHS.jellyfin, (req, res) => {
   const settings = getSettings();
   if (req.query.sync !== undefined || req.query.enable !== undefined) {
     return res.status(400).json({
@@ -1819,7 +1823,7 @@ settingsRoutes.get('/jellyfin/library', (req, res) => {
 });
 
 settingsRoutes.post(
-  '/jellyfin/library',
+  SETTINGS_LIBRARY_ROUTE_PATHS.jellyfin,
   authorizedMutation(Permission.ADMIN, async (req, res, next) => {
     const parsedBody = parseSettingsBodyObject(req.body);
     if ('error' in parsedBody) {

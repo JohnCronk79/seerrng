@@ -23,6 +23,11 @@ import {
   MagnifyingGlassIcon,
   XMarkIcon,
 } from '@heroicons/react/24/solid';
+import {
+  createSettingsLibraryUpdateBody,
+  getSettingsLibraryApiPath,
+  getSettingsPlexLibraryTypeApiPath,
+} from '@server/constants/settingsLibraryApi';
 import type { PlexDevice } from '@server/interfaces/api/plexInterfaces';
 import type { PlexSettings, TautulliSettings } from '@server/lib/settings';
 import axios from 'axios';
@@ -268,7 +273,13 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
     setIsSyncing(true);
 
     try {
-      await axios.post('/api/v1/settings/plex/library/sync');
+      await axios.post(
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({
+          sync: true,
+          enabledLibraryIds: activeLibraries,
+        })
+      );
     } catch (e) {
       addToast(
         e?.response?.data?.message === 'CONNECTION_ERROR'
@@ -344,9 +355,14 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
     try {
-      await axios.put(`/api/v1/settings/plex/library/${libraryId}`, {
-        enabled: !activeLibraries.includes(libraryId),
-      });
+      const enabledLibraryIds = activeLibraries.includes(libraryId)
+        ? activeLibraries.filter((id) => id !== libraryId)
+        : [...activeLibraries, libraryId];
+
+      await axios.post(
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({ enabledLibraryIds })
+      );
       if (onComplete) {
         onComplete();
       }
@@ -365,13 +381,13 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
     setIsSyncing(true);
 
     try {
-      const enable = enabled
-        ? data?.libraries.map((library) => library.id).join(',')
-        : undefined;
-
       await axios.post(
-        '/api/v1/settings/plex/library',
-        enable ? { enable } : {}
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({
+          enabledLibraryIds: enabled
+            ? (data?.libraries.map((library) => library.id) ?? [])
+            : [],
+        })
       );
 
       if (onComplete) {
@@ -393,12 +409,9 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
     nextType: 'music' | 'book'
   ) => {
     try {
-      await axios.put(
-        `/api/v1/settings/plex/library/${encodeURIComponent(libraryId)}/type`,
-        {
-          type: nextType,
-        }
-      );
+      await axios.put(getSettingsPlexLibraryTypeApiPath(libraryId), {
+        type: nextType,
+      });
       revalidate();
     } catch {
       addToast(intl.formatMessage(messages.toastReclassifyFailure), {
