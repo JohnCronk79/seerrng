@@ -1,5 +1,7 @@
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
+import http from 'node:http';
+import https from 'node:https';
 import { after, before } from 'node:test';
 
 // supertest serves the app over a real loopback socket, so only external hosts
@@ -30,8 +32,7 @@ function hostnameOf(args: unknown[]): string {
   }
 
   const options = (fromUrl !== undefined ? second : first) as
-    | { hostname?: string; host?: string }
-    | undefined;
+    { hostname?: string; host?: string } | undefined;
   const fromOptions =
     typeof options === 'object' && options !== null
       ? (options.hostname ??
