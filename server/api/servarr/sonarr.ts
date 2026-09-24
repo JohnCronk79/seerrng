@@ -408,11 +408,20 @@ class SonarrAPI extends ServarrBase<{
     tvdbId: number
   ): Promise<SonarrSeries[]> {
     try {
-      const response = await this.axios.get<SonarrSeries[]>('/series', {
-        params: { tvdbId },
-      });
+      const response = await this.request<unknown[]>(
+        'GET',
+        '/series',
+        undefined,
+        { params: { tvdbId } }
+      );
 
-      return response.data;
+      return sanitizeServarrRecordArray<Record<string, unknown>>(
+        response.data,
+        MAX_SERVARR_LOOKUP_RESULTS
+      ).flatMap((series) => {
+        const normalized = sanitizeSonarrSeries(series);
+        return normalized ? [normalized] : [];
+      });
     } catch (e) {
       throw new Error(
         `[Sonarr] Failed to retrieve series by TVDB ID: ${e.message}`,

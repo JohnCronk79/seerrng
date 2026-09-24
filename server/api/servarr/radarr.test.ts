@@ -5,6 +5,7 @@ import type { RadarrMovie } from '@server/api/servarr/radarr';
 import type { AxiosInstance } from 'axios';
 import axios from 'axios';
 
+import { MAX_SERVARR_LOOKUP_RESULTS } from './base';
 import RadarrAPI, { sanitizeRadarrMovie } from './radarr';
 
 function buildRadarr(): RadarrAPI {
@@ -56,6 +57,36 @@ describe('Radarr response normalization', () => {
     });
     assert.strictEqual(movie?.title.length, 10_000);
     assert.strictEqual(movie?.id, 0);
+  });
+});
+
+describe('RadarrAPI getLibraryMoviesByTmdbId', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('normalizes and bounds movie lookup results', async () => {
+    const radarr = buildRadarr();
+    const records = Array.from(
+      { length: MAX_SERVARR_LOOKUP_RESULTS + 1 },
+      (_, index) => ({
+        id: index + 1,
+        title: `Movie ${index + 1}`,
+        tmdbId: 550,
+        apiKey: 'provider-secret',
+      })
+    );
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: records,
+    }));
+
+    const movies = await radarr.getLibraryMoviesByTmdbId(550);
+
+    assert.equal(movies.length, MAX_SERVARR_LOOKUP_RESULTS);
+    assert.equal(movies[0].tmdbId, 550);
+    assert.ok(!('apiKey' in movies[0]));
+    assert.equal(get.mock.callCount(), 1);
+    const requestConfig = get.mock.calls[0].arguments[1] as
+      { params?: Record<string, unknown> } | undefined;
+    assert.equal(requestConfig?.params?.tmdbId, 550);
   });
 });
 

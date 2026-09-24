@@ -5,7 +5,10 @@ import type { SonarrSeries } from '@server/api/servarr/sonarr';
 import type { AxiosInstance } from 'axios';
 import axios from 'axios';
 
-import { MAX_SERVARR_CONFIGURATION_RESULTS } from './base';
+import {
+  MAX_SERVARR_CONFIGURATION_RESULTS,
+  MAX_SERVARR_LOOKUP_RESULTS,
+} from './base';
 import SonarrAPI, {
   sanitizeSonarrLanguageProfiles,
   sanitizeSonarrSeries,
@@ -85,6 +88,36 @@ describe('Sonarr response normalization', () => {
 
     assert.strictEqual(profiles.length, MAX_SERVARR_CONFIGURATION_RESULTS - 2);
     assert.deepStrictEqual(profiles[0], { id: 0, name: 'Profile 0' });
+  });
+});
+
+describe('SonarrAPI getLibrarySeriesByTvdbId', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('normalizes and bounds series lookup results', async () => {
+    const sonarr = buildSonarr();
+    const records = Array.from(
+      { length: MAX_SERVARR_LOOKUP_RESULTS + 1 },
+      (_, index) => ({
+        id: index + 1,
+        title: `Series ${index + 1}`,
+        tvdbId: 1234,
+        apiKey: 'provider-secret',
+      })
+    );
+    const get = mock.method(getAxios(sonarr), 'get', async () => ({
+      data: records,
+    }));
+
+    const series = await sonarr.getLibrarySeriesByTvdbId(1234);
+
+    assert.equal(series.length, MAX_SERVARR_LOOKUP_RESULTS);
+    assert.equal(series[0].tvdbId, 1234);
+    assert.ok(!('apiKey' in series[0]));
+    assert.equal(get.mock.callCount(), 1);
+    const requestConfig = get.mock.calls[0].arguments[1] as
+      { params?: Record<string, unknown> } | undefined;
+    assert.equal(requestConfig?.params?.tvdbId, 1234);
   });
 });
 

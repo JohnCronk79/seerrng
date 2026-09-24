@@ -281,11 +281,20 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     tmdbId: number
   ): Promise<RadarrMovie[]> => {
     try {
-      const response = await this.axios.get<RadarrMovie[]>('/movie', {
-        params: { tmdbId },
-      });
+      const response = await this.request<unknown[]>(
+        'GET',
+        '/movie',
+        undefined,
+        { params: { tmdbId } }
+      );
 
-      return response.data;
+      return sanitizeServarrRecordArray<Record<string, unknown>>(
+        response.data,
+        MAX_SERVARR_LOOKUP_RESULTS
+      ).flatMap((movie) => {
+        const normalized = sanitizeRadarrMovie(movie);
+        return normalized ? [normalized] : [];
+      });
     } catch (e) {
       throw new Error(
         `[Radarr] Failed to retrieve movies by TMDB ID: ${e.message}`,
