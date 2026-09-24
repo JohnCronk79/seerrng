@@ -12,6 +12,7 @@ import {
   isValidHttpUrl,
   preserveRedactedSecrets,
   redactSecrets,
+  requiresDirectSafeHttpConnection,
   safeStringEqual,
 } from './security';
 
@@ -268,6 +269,18 @@ describe('safe HTTP connection options', () => {
     await assert.doesNotReject(runLookup(lookup, 'localhost'));
   });
 
+  it('rejects loopback DNS results while preserving direct LAN connections', async () => {
+    const lookup = createSafeHttpLookup(true, false, true);
+
+    assert.equal(requiresDirectSafeHttpConnection(lookup), true);
+    await assert.rejects(
+      runLookup(lookup, 'localhost'),
+      (error) =>
+        error instanceof Error && 'code' in error && error.code === 'EACCES'
+    );
+    await assert.doesNotReject(runLookup(lookup, '192.168.1.50'));
+  });
+
   it('rejects redirects to literal private addresses and unsafe protocols', () => {
     const { beforeRedirect } = createSafeHttpRequestOptions();
 
@@ -281,6 +294,40 @@ describe('safe HTTP connection options', () => {
     );
     assert.doesNotThrow(() =>
       beforeRedirect({ hostname: 'example.com', protocol: 'https:' })
+    );
+  });
+
+  it('rejects loopback redirects while allowing LAN playback targets', () => {
+    const { beforeRedirect } = createSafeHttpRequestOptions(
+      true,
+      false,
+      true,
+      true
+    );
+
+    assert.throws(
+      () =>
+        beforeRedirect(
+          {
+            href: 'http://127.0.0.1/redirected',
+            hostname: '127.0.0.1',
+            protocol: 'http:',
+          },
+          undefined,
+          { url: 'http://127.0.0.1/start' }
+        ),
+      /Refusing to connect/
+    );
+    assert.doesNotThrow(() =>
+      beforeRedirect(
+        {
+          href: 'http://192.168.1.50/redirected',
+          hostname: '192.168.1.50',
+          protocol: 'http:',
+        },
+        undefined,
+        { url: 'http://192.168.1.50/start' }
+      )
     );
   });
 

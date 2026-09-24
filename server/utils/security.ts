@@ -442,7 +442,8 @@ const createCrossOriginRedirectError = (): NodeJS.ErrnoException => {
  */
 export const createSafeHttpLookup = (
   allowPrivateAddresses: PrivateAddressPolicy = false,
-  requireDirectConnection = false
+  requireDirectConnection = false,
+  rejectLoopbackOrLinkLocal = false
 ) => {
   const lookup = (
     hostname: string,
@@ -464,8 +465,13 @@ export const createSafeHttpLookup = (
         }
 
         if (
-          !isPrivateAddressAllowed(allowPrivateAddresses) &&
-          addresses.some((address) => isLocalOrPrivateAddress(address.address))
+          addresses.some(
+            (address) =>
+              (!isPrivateAddressAllowed(allowPrivateAddresses) &&
+                isLocalOrPrivateAddress(address.address)) ||
+              (rejectLoopbackOrLinkLocal &&
+                isLoopbackOrLinkLocalAddress(address.address))
+          )
         ) {
           callback(createPrivateAddressError(hostname), []);
           return;
@@ -496,7 +502,7 @@ export const createSafeHttpLookup = (
     );
   };
 
-  if (requireDirectConnection) {
+  if (requireDirectConnection || rejectLoopbackOrLinkLocal) {
     directConnectionLookups.add(lookup);
   }
 
@@ -506,10 +512,17 @@ export const createSafeHttpLookup = (
 export const createSafeHttpRequestOptions = (
   allowPrivateAddresses: PrivateAddressPolicy = false,
   allowCrossOriginRedirects = true,
-  requireDirectConnection = false
+  requireDirectConnection = false,
+  rejectLoopbackOrLinkLocal = false
 ) => ({
-  lookup: createSafeHttpLookup(allowPrivateAddresses, requireDirectConnection),
-  ...(requireDirectConnection ? { proxy: false as const } : {}),
+  lookup: createSafeHttpLookup(
+    allowPrivateAddresses,
+    requireDirectConnection,
+    rejectLoopbackOrLinkLocal
+  ),
+  ...(requireDirectConnection || rejectLoopbackOrLinkLocal
+    ? { proxy: false as const }
+    : {}),
   beforeRedirect: (
     options: Record<string, unknown>,
     _response?: unknown,
@@ -551,10 +564,11 @@ export const createSafeHttpRequestOptions = (
       typeof options.hostname === 'string' ? options.hostname : '';
 
     if (
-      !isPrivateAddressAllowed(allowPrivateAddresses) &&
-      (!['http:', 'https:'].includes(protocol) ||
-        !hostname ||
-        isLocalOrPrivateAddress(hostname))
+      !['http:', 'https:'].includes(protocol) ||
+      !hostname ||
+      (!isPrivateAddressAllowed(allowPrivateAddresses) &&
+        isLocalOrPrivateAddress(hostname)) ||
+      (rejectLoopbackOrLinkLocal && isLoopbackOrLinkLocalAddress(hostname))
     ) {
       throw createPrivateAddressError(hostname || 'redirect target');
     }
