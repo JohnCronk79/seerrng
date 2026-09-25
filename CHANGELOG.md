@@ -92,6 +92,31 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.25.0](https://github.com/snapetech/seerrng/compare/v3.24.2..v3.25.0) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+
+#### Changed
+
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+### 🚀 Features
+- *(comics)* Add comics request-and-dispatch backend (Mylar3 + Kapowarr) - ([777a85b](https://github.com/snapetech/seerrng/commit/777a85b18f7e85620fbeec03ad315454f11a2b5b))
+
+### 🐛 Bug Fixes
+- *(i18n)* Sync generated English messages - ([6d233ea](https://github.com/snapetech/seerrng/commit/6d233eae8d06e16c19e4017f473bb2ad8ca30157))
+
+### 📖 Documentation
+- *(release-notes)* Document comics requests - ([1e94e6a](https://github.com/snapetech/seerrng/commit/1e94e6a57e42645f2e04b9976e7adf97d2653482))
+
 ## [3.24.2](https://github.com/snapetech/seerrng/compare/v3.24.1..v3.24.2) - 2026-09-25
 
 ### User-facing changes
