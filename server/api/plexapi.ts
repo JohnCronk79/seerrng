@@ -59,6 +59,7 @@ export interface PlexMetadata {
   parentIndex?: number;
   leafCount: number;
   viewedLeafCount: number;
+  viewCount: number;
   addedAt: number;
   updatedAt: number;
   Media: Media[];
@@ -335,6 +336,7 @@ export const sanitizePlexMetadata = (
         : undefined,
     leafCount: plexInteger(value.leafCount),
     viewedLeafCount: plexInteger(value.viewedLeafCount),
+    viewCount: plexInteger(value.viewCount),
     addedAt: item.addedAt,
     updatedAt: item.updatedAt,
     Media: item.Media,
@@ -600,7 +602,8 @@ class PlexAPI extends ExternalAPI {
           const tracks = await this.getChildrenMetadata(album.ratingKey);
           if (
             tracks.some(
-              (track) => track.type === 'track' && (track.Media?.length ?? 0) > 0
+              (track) =>
+                track.type === 'track' && (track.Media?.length ?? 0) > 0
             )
           )
             matches.push(album);
@@ -913,6 +916,28 @@ class PlexAPI extends ExternalAPI {
       .flatMap((item) => {
         const normalized = sanitizePlexMetadata(item);
         return normalized ? [normalized] : [];
+      });
+  }
+
+  public async getAllLeavesMetadata(key: string): Promise<PlexMetadata[]> {
+    const response = await this.get<unknown>(
+      `/library/metadata/${encodeURIComponent(
+        boundedPlexText(key, 128)
+      )}/allLeaves`,
+      { params: { 'X-Plex-Container-Size': MAX_PLEX_METADATA_ITEMS } }
+    );
+    const mediaContainer =
+      isRecord(response) && isRecord(response.MediaContainer)
+        ? response.MediaContainer
+        : {};
+
+    return (
+      Array.isArray(mediaContainer.Metadata) ? mediaContainer.Metadata : []
+    )
+      .slice(0, MAX_PLEX_METADATA_ITEMS)
+      .flatMap((item) => {
+        const normalized = sanitizePlexMetadata(item);
+        return normalized?.type === 'episode' ? [normalized] : [];
       });
   }
 

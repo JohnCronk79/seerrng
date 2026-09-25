@@ -822,6 +822,14 @@
     overflow-wrap: anywhere;
   }
 
+  .detail-watched-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--card-spacing);
+    text-align: left;
+  }
+
   .association-detail-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -2647,6 +2655,44 @@
     width: var(--poster-control-content-height);
     height: var(--poster-control-content-height);
     margin: 0;
+  }
+
+  .watched-status-badge {
+    @apply inline-flex items-center justify-center rounded-md border border-gray-500 bg-black text-white;
+    box-sizing: border-box;
+    height: var(--poster-control-height);
+    min-height: var(--poster-control-height);
+    padding-inline: 4px;
+    column-gap: var(--poster-control-gap);
+    font-size: 12px;
+    line-height: var(--poster-control-content-height);
+    white-space: nowrap;
+  }
+
+  .watched-status-logo {
+    width: auto;
+    height: var(--poster-control-content-height);
+    max-width: 38px;
+    flex: none;
+  }
+
+  .watched-status-icon {
+    width: var(--poster-control-content-height);
+    height: var(--poster-control-content-height);
+    flex: none;
+  }
+
+  .season-watch-grid {
+    grid-template-columns: 2rem minmax(5.5rem, 1fr) 4rem 2.5rem 2.5rem;
+  }
+
+  .episode-watch-grid {
+    grid-template-columns: 2rem 4.5rem minmax(0, 1fr) 2.5rem 2.5rem;
+  }
+
+  .watched-status-cell {
+    @apply inline-flex items-center justify-center text-xs text-white;
+    min-width: 2.5rem;
   }
 
   .auth-login-page {

@@ -20,4 +20,3 @@ export interface WatchStatusResponse {
   unwatchedCount: number;
   seasons?: WatchSeasonStatus[];
 }
-

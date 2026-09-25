@@ -1,4 +1,7 @@
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaServerIcon, {
+  getMediaServerName,
+} from '@app/components/Common/MediaServerIcon';
 import SelectionCircle, {
   selectFromRow,
   selectFromRowKey,
@@ -11,8 +14,10 @@ import {
   ServerStackIcon,
   XCircleIcon,
 } from '@heroicons/react/24/outline';
+import { CheckIcon } from '@heroicons/react/24/solid';
 import type { PlaybackCatalogResponse } from '@server/models/Playback';
 import type { SeasonWithEpisodes, TvDetails } from '@server/models/Tv';
+import type { WatchStatusResponse } from '@server/models/WatchStatus';
 import { useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -34,12 +39,17 @@ const messages = defineMessages('components.MediaDetails.SeriesBrowser', {
   selection: 'Select items to play',
   selectSeasonEpisodes: 'Select every available episode in this season',
   deselectSeasonEpisodes: 'Clear this season from the playback selection',
+  watched: 'Watched',
+  unwatched: 'Unwatched',
+  unwatchedCount:
+    '{count} unwatched {count, plural, one {episode} other {episodes}}',
 });
 
 interface SeriesSeasonEpisodeBrowserProps {
   tvId: number;
   seasons: TvDetails['seasons'];
   catalog?: PlaybackCatalogResponse;
+  watchedStatus?: WatchStatusResponse;
   selectedItemIds: string[];
   onSelectionChange: (itemIds: string[]) => void;
 }
@@ -48,6 +58,7 @@ const SeriesSeasonEpisodeBrowser = ({
   tvId,
   seasons,
   catalog,
+  watchedStatus,
   selectedItemIds,
   onSelectionChange,
 }: SeriesSeasonEpisodeBrowserProps) => {
@@ -165,11 +176,61 @@ const SeriesSeasonEpisodeBrowser = ({
       </Tooltip>
     );
   };
+  const WatchHeading = () =>
+    watchedStatus && getMediaServerName(watchedStatus.serverType) ? (
+      <Tooltip content={getMediaServerName(watchedStatus.serverType) ?? ''}>
+        <span className="watched-status-cell">
+          <MediaServerIcon
+            mediaServerType={watchedStatus.serverType}
+            className="watched-status-logo"
+          />
+        </span>
+      </Tooltip>
+    ) : (
+      <span className="watched-status-cell" />
+    );
+  const WatchCell = ({
+    watched,
+    unwatchedCount,
+    incompleteLibrary = false,
+  }: {
+    watched: boolean;
+    unwatchedCount?: number;
+    incompleteLibrary?: boolean;
+  }) => {
+    if (!watchedStatus) {
+      return <span className="watched-status-cell" />;
+    }
+    if (watched && !unwatchedCount && !incompleteLibrary) {
+      return (
+        <Tooltip content={intl.formatMessage(messages.watched)}>
+          <span className="watched-status-cell">
+            <CheckIcon className="watched-status-icon" aria-hidden="true" />
+          </span>
+        </Tooltip>
+      );
+    }
+    const label =
+      incompleteLibrary && watched && !unwatchedCount
+        ? 'All downloaded episodes watched; this season is partially available'
+        : unwatchedCount && watched
+          ? intl.formatMessage(messages.unwatchedCount, {
+              count: unwatchedCount,
+            })
+          : intl.formatMessage(messages.unwatched);
+    return (
+      <Tooltip content={label}>
+        <span className="watched-status-cell" aria-label={label}>
+          {unwatchedCount && watched ? unwatchedCount : '–'}
+        </span>
+      </Tooltip>
+    );
+  };
 
   return (
     <div className="mt-[5px] grid min-w-0 gap-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
       <section className="refreshed-inset-surface min-w-[12rem] rounded-lg border border-gray-700 p-2">
-        <div className="media-inset-table-heading media-scroll-grid-header request-divider-dark grid grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 border-b pb-2 pl-1">
+        <div className="media-inset-table-heading media-scroll-grid-header request-divider-dark season-watch-grid grid items-center gap-x-2 border-b pb-2 pl-1">
           <SelectionCircle
             disabled={allPlayableItemIds.length === 0}
             onClick={() => toggleItems(allPlayableItemIds)}
@@ -183,6 +244,7 @@ const SeriesSeasonEpisodeBrowser = ({
             {intl.formatMessage(messages.episodes)}
           </span>
           <AvailabilityHeading />
+          <WatchHeading />
         </div>
         <div
           className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2 pb-1"
@@ -207,10 +269,13 @@ const SeriesSeasonEpisodeBrowser = ({
             const allSelected =
               !!group?.items.length && selectedCount === group.items.length;
             const partiallySelected = selectedCount > 0 && !allSelected;
+            const watchSeason = watchedStatus?.seasons?.find(
+              (item) => item.seasonNumber === season.seasonNumber
+            );
             return (
               <div
                 key={season.seasonNumber}
-                className={`selectable-table-row season-focus-row grid w-full grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 rounded px-1 py-1 ${
+                className={`selectable-table-row season-focus-row season-watch-grid grid w-full items-center gap-x-2 rounded px-1 py-1 ${
                   activeSeason === season.seasonNumber ? 'bg-indigo-500/15' : ''
                 }`}
                 data-active={activeSeason === season.seasonNumber}
@@ -267,6 +332,18 @@ const SeriesSeasonEpisodeBrowser = ({
                   available={available}
                   partial={partiallyAvailable}
                 />
+                <WatchCell
+                  watched={Boolean(watchSeason?.watchedCount)}
+                  incompleteLibrary={
+                    Boolean(watchSeason?.availableCount) &&
+                    (watchSeason?.availableCount ?? 0) < season.episodeCount
+                  }
+                  unwatchedCount={
+                    watchSeason
+                      ? watchSeason.availableCount - watchSeason.watchedCount
+                      : undefined
+                  }
+                />
               </div>
             );
           })}
@@ -274,7 +351,7 @@ const SeriesSeasonEpisodeBrowser = ({
       </section>
 
       <section className="refreshed-inset-surface min-w-0 rounded-lg border border-gray-700 p-2">
-        <div className="media-inset-table-heading media-scroll-grid-header request-divider-dark grid grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 border-b pb-2 pl-1">
+        <div className="media-inset-table-heading media-scroll-grid-header request-divider-dark episode-watch-grid grid items-center gap-x-2 border-b pb-2 pl-1">
           <SelectionCircle
             disabled={activeItemIds.length === 0}
             onClick={() => toggleItems(activeItemIds)}
@@ -288,6 +365,7 @@ const SeriesSeasonEpisodeBrowser = ({
             {intl.formatMessage(messages.title)}
           </span>
           <AvailabilityHeading />
+          <WatchHeading />
         </div>
         <div
           className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2"
@@ -316,10 +394,15 @@ const SeriesSeasonEpisodeBrowser = ({
             const selected = playableItem
               ? selection.has(playableItem.id)
               : false;
+            const watchEpisode = watchedStatus?.seasons
+              ?.find((season) => season.seasonNumber === activeSeason)
+              ?.episodes.find(
+                (item) => item.episodeNumber === episode.episodeNumber
+              );
             return (
               <div
                 key={episode.id}
-                className="selectable-table-row grid w-full grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 rounded px-1 py-1"
+                className="selectable-table-row episode-watch-grid grid w-full items-center gap-x-2 rounded px-1 py-1"
                 data-selectable={available}
                 role={available ? 'button' : undefined}
                 tabIndex={available ? 0 : undefined}
@@ -330,7 +413,9 @@ const SeriesSeasonEpisodeBrowser = ({
                 }}
                 onKeyDown={(event) => {
                   if (playableItem)
-                    selectFromRowKey(event, () => toggleEpisode(playableItem.id));
+                    selectFromRowKey(event, () =>
+                      toggleEpisode(playableItem.id)
+                    );
                 }}
               >
                 <SelectionCircle
@@ -348,6 +433,7 @@ const SeriesSeasonEpisodeBrowser = ({
                   {episode.name || intl.formatMessage(messages.untitled)}
                 </span>
                 <AvailabilityIcon available={available} />
+                <WatchCell watched={watchEpisode?.watched === true} />
               </div>
             );
           })}

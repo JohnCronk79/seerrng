@@ -1,10 +1,9 @@
-import { ViewAsContext } from '@app/context/ViewAsContext';
 import { isAuthenticationError } from '@app/utils/auth';
 import { UserType } from '@server/constants/user';
 import type {
   CardTextVisibility,
-  UserMediaFilterPins,
   UserPreferredLanguages,
+  UserMediaFilterPins,
   UserSettingsCardTextResponse,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
@@ -12,7 +11,6 @@ import type { PermissionCheckOptions } from '@server/lib/permissions';
 import { Permission, hasPermission } from '@server/lib/permissions';
 import type { NotificationAgentKey } from '@server/lib/settings';
 import { useRouter } from 'next/router';
-import { useContext } from 'react';
 import type { MutatorCallback } from 'swr';
 import useSWR from 'swr';
 
@@ -64,7 +62,6 @@ export interface UserSettings {
 
 interface UserHookResponse {
   user?: User;
-  presentationPermissions: number;
   loading: boolean;
   error: string;
   revalidate: (
@@ -81,7 +78,6 @@ export const useUser = ({
   id,
   initialData,
 }: { id?: number; initialData?: User } = {}): UserHookResponse => {
-  const { viewedUser } = useContext(ViewAsContext);
   const router = useRouter();
   const isAuthPage = /^\/(login|setup|resetpassword(?:\/|$))/.test(
     router.pathname
@@ -103,21 +99,15 @@ export const useUser = ({
     shouldRetryOnError: (error) => !isAuthPage && !isAuthenticationError(error),
   });
 
-  // View As changes presentation only. The returned user remains the actual
-  // authenticated account for data, request ownership, and API operations.
-  const presentationPermissions =
-    !id && viewedUser ? viewedUser.permissions : (data?.permissions ?? 0);
-
   const checkPermission = (
     permission: Permission | Permission[],
     options?: PermissionCheckOptions
   ): boolean => {
-    return hasPermission(permission, presentationPermissions, options);
+    return hasPermission(permission, data?.permissions ?? 0, options);
   };
 
   return {
     user: data,
-    presentationPermissions,
     loading: !data && !error,
     error,
     hasPermission: checkPermission,

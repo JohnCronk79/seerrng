@@ -15,6 +15,7 @@ import { subjectTagClassName } from '@app/components/MediaDetails/subjectTagStyl
 import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import useLocale from '@app/hooks/useLocale';
+import useWatchStatus from '@app/hooks/useWatchStatus';
 import defineMessages from '@app/utils/defineMessages';
 import { getSafeHref } from '@app/utils/safeUrl';
 import type { RatingResponse } from '@server/api/ratings';
@@ -98,6 +99,11 @@ const MovieDetailsLayout = ({
 }: MovieDetailsLayoutProps) => {
   const intl = useIntl();
   const { locale } = useLocale();
+  const { data: watchedStatus } = useWatchStatus(
+    'movie',
+    data.id,
+    Boolean(data.mediaInfo)
+  );
   const { pins, togglePinned } = useDetailDisclosurePins('movie');
   const [showDetails, setShowDetails] = useState(false);
   useEffect(() => {
@@ -203,6 +209,7 @@ const MovieDetailsLayout = ({
             data={data}
             sortedCrew={sortedCrew}
             show4kAvailability={show4kAvailability}
+            watchedStatus={watchedStatus}
           />
 
           <div className="media-rating-row">

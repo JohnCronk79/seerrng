@@ -9,6 +9,7 @@ import CachedImage from '@app/components/Common/CachedImage';
 import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
+import WatchedBadge from '@app/components/Common/WatchedBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
 import PosterRatingPopover from '@app/components/TitleCard/PosterRatingPopover';
@@ -21,6 +22,7 @@ import { useIsTouch } from '@app/hooks/useIsTouch';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
+import useWatchStatus from '@app/hooks/useWatchStatus';
 import globalMessages from '@app/i18n/globalMessages';
 import {
   encodeApiPathSegment,
@@ -443,6 +445,37 @@ const TitleCard = ({
   const videoMediaType =
     mediaType === 'movie' || mediaType === 'collection' || mediaType === 'tv';
   const numericId = typeof id === 'number' ? id : Number(id);
+  const canShowWatchedStatus =
+    (mediaType === 'movie' || mediaType === 'tv') &&
+    (currentStatus === MediaStatus.AVAILABLE ||
+      currentStatus === MediaStatus.PARTIALLY_AVAILABLE ||
+      currentStatus4k === MediaStatus.AVAILABLE ||
+      currentStatus4k === MediaStatus.PARTIALLY_AVAILABLE);
+  const [watchStatusInView, setWatchStatusInView] = useState(false);
+  useEffect(() => {
+    if (!canShowWatchedStatus || watchStatusInView) return;
+    const card = cardRef.current;
+    if (!card || typeof IntersectionObserver === 'undefined') {
+      setWatchStatusInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setWatchStatusInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [canShowWatchedStatus, watchStatusInView]);
+  const { data: watchedStatus } = useWatchStatus(
+    mediaType === 'tv' ? 'tv' : 'movie',
+    Number.isSafeInteger(numericId) ? numericId : undefined,
+    canShowWatchedStatus && watchStatusInView
+  );
   const canUseVideoActions = videoMediaType && Number.isFinite(numericId);
   const canUseRequestActions = canUseVideoActions || isAlbum || isBook;
   const canUseWatchlistActions = canUseVideoActions || isAlbum || isBook;
@@ -640,7 +673,7 @@ const TitleCard = ({
             priority={priority}
           />
           <div className="absolute right-0 left-0 p-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] gap-x-2 gap-y-1">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] gap-x-1 gap-y-1">
               <div className="flex min-w-0 flex-col items-start gap-1">
                 {isBook ? (
                   showAllBookFormats ? (
@@ -671,7 +704,7 @@ const TitleCard = ({
                   />
                 )}
               </div>
-              <div className="z-40 flex min-h-6 items-center justify-end">
+              <div className="z-40 flex min-h-4 items-center justify-end">
                 {primaryStatusBadge && (
                   <StatusBadgeMini
                     status={primaryStatusBadge.status}
@@ -699,7 +732,7 @@ const TitleCard = ({
                   </Tooltip>
                 )}
               </div>
-              <div className="z-40 flex min-h-6 items-center">
+              <div className="z-40 flex min-h-4 items-center">
                 {currentStatus !== MediaStatus.BLOCKLISTED && (
                   <AssociationBadge
                     mediaType={mediaType}
@@ -709,7 +742,7 @@ const TitleCard = ({
                   />
                 )}
               </div>
-              <div className="z-40 flex min-h-6 items-center justify-end">
+              <div className="z-40 flex min-h-4 items-center justify-end">
                 {secondaryStatusBadge && (
                   <StatusBadgeMini
                     status={secondaryStatusBadge.status}
@@ -719,6 +752,23 @@ const TitleCard = ({
                   />
                 )}
               </div>
+              {watchedStatus && watchedStatus.watchedCount > 0 && (
+                <>
+                  <span aria-hidden="true" />
+                  <div className="z-40 flex items-center justify-end">
+                    <WatchedBadge
+                      status={watchedStatus}
+                      incompleteLibrary={
+                        mediaType === 'tv' &&
+                        (currentStatus === MediaStatus.PARTIALLY_AVAILABLE ||
+                          (currentStatus !== MediaStatus.AVAILABLE &&
+                            currentStatus4k ===
+                              MediaStatus.PARTIALLY_AVAILABLE))
+                      }
+                    />
+                  </div>
+                </>
+              )}
             </div>
             {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
               <div className="mt-1 flex justify-end">

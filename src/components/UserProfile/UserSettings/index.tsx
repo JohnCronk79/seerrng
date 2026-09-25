@@ -33,7 +33,7 @@ type UserSettingsProps = {
 const UserSettings = ({ children }: UserSettingsProps) => {
   const router = useRouter();
   const settings = useSettings();
-  const { user: currentUser, presentationPermissions } = useUser();
+  const { user: currentUser } = useUser();
   const userId = getPositiveQueryParamNumber(router.query.userId);
   const { user, error } = useUser({ id: userId });
   const intl = useIntl();
@@ -61,7 +61,7 @@ const UserSettings = ({ children }: UserSettingsProps) => {
       regex: /\/settings\/password/,
       hidden:
         (!settings.currentSettings.localLogin &&
-          !hasPermission(Permission.ADMIN, presentationPermissions)) ||
+          !hasPermission(Permission.ADMIN, currentUser?.permissions ?? 0)) ||
         (currentUser?.id !== 1 &&
           currentUser?.id !== user?.id &&
           hasPermission(Permission.ADMIN, user?.permissions ?? 0)),

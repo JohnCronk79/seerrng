@@ -72,7 +72,7 @@ const RequestButton = ({
   const intl = useIntl();
   const settings = useSettings();
   const { addToast } = useToasts();
-  const { user, hasPermission, presentationPermissions } = useUser();
+  const { user, hasPermission } = useUser();
   const serviceType = mediaType === 'movie' ? 'radarr' : 'sonarr';
   const { data: requestServices } = useSWR<ServiceCommonServer[]>(
     `/api/v1/service/${serviceType}`
@@ -316,11 +316,11 @@ const RequestButton = ({
   const canApproveStandard =
     !!user &&
     !!activeRequest &&
-    hasAutoApprovePermission(presentationPermissions, mediaType);
+    hasAutoApprovePermission(user.permissions, mediaType);
   const canApprove4k =
     !!user &&
     !!active4kRequest &&
-    hasAutoApprovePermission(presentationPermissions, mediaType, true);
+    hasAutoApprovePermission(user.permissions, mediaType, true);
   const standardIsAvailable = isVideoQualityAvailable(media, mediaType);
   const fourKIsAvailable = isVideoQualityAvailable(media, mediaType, true);
   const canOpenStandardAlternate =
