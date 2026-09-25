@@ -3,7 +3,6 @@ import {
   deleteRequestStatus,
   RequestActionConfirmation,
 } from '@app/components/RequestStatus/destructiveActions';
-import englishMessages from '@app/i18n/locale/en.json';
 import { IssueStatus } from '@server/constants/issue';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
@@ -26,23 +25,9 @@ import {
 const state = vi.hoisted(() => ({
   permission: true,
   blocklistPermission: true,
-  blocked: undefined as boolean | undefined,
-  checkingBlocklist: false,
-  blocklistError: undefined as Error | undefined,
   libraryPlan: { token: 'test-token', targets: [] } as LibraryRemovalPlan,
   remove: vi.fn(),
   post: vi.fn(),
-}));
-vi.mock('next/router', () => ({
-  useRouter: () => ({ query: {} }),
-}));
-vi.mock('@app/hooks/useTitleBlocklist', () => ({
-  default: (_id: unknown, _type: unknown, fallback: boolean) => ({
-    isBlocklisted: state.blocked ?? fallback,
-    checking: state.checkingBlocklist,
-    error: state.blocklistError,
-    setBlocklisted: vi.fn(),
-  }),
 }));
 vi.mock('axios', () => ({
   default: {
@@ -109,18 +94,11 @@ vi.mock('@app/components/Common/Modal', () => ({
 const media = (values: Partial<Media> = {}) =>
   ({ id: 42, requests: [], ...values }) as Media;
 const render = (value: React.ReactNode) =>
-  renderToStaticMarkup(
-    <IntlProvider locale="en" messages={englishMessages}>
-      {value}
-    </IntlProvider>
-  );
+  renderToStaticMarkup(<IntlProvider locale="en">{value}</IntlProvider>);
 beforeEach(() => {
   vi.stubGlobal('React', React);
   state.permission = true;
   state.blocklistPermission = true;
-  state.blocked = undefined;
-  state.checkingBlocklist = false;
-  state.blocklistError = undefined;
   state.libraryPlan = { token: 'test-token', targets: [] };
   state.remove.mockReset();
   state.post.mockReset();
@@ -201,18 +179,9 @@ it('disables actions without targets and never mutates during render', () => {
     />
   );
   expect(html.match(/disabled=""/g)).toHaveLength(7);
-  expect(html).toContain('title="No request is linked to this title."');
+  expect(html).toContain('title="There are no requests to delete."');
   expect(html).toContain('No linked library item is available to delete.');
-  expect(html).toContain(
-    'Delete Request cancels identifiable active request work'
-  );
-  expect(html).not.toContain('connected media server');
-  expect(html).not.toContain('There are no requests to delete.');
-  expect(html).not.toContain('Open this item in any verified service.');
-  expect(html).not.toContain('View issues for this item.');
-  expect(html).not.toContain(
-    'This does not change an indexer or download blocklist in another app.'
-  );
+  expect(html).toContain('connected media server');
   expect(html).toContain('title="This media is not currently blocklisted."');
   const unblockButton = html
     .match(/<button[^>]*>[\s\S]*?<\/button>/g)
@@ -255,10 +224,9 @@ it('groups actions in the requested order and names the configured service next 
   expect(html).toContain(
     'Open this media’s page in Radarr-HD in a new browser tab or window.'
   );
-  expect(html).toContain('Delete Request');
-  expect(html).not.toContain('Delete Requests');
+  expect(html).toContain('Delete Requests');
   expect(html).toMatch(
-    /Service<\/h4>[\s\S]*Open title in Radarr-HD[\s\S]*Delete From Library[\s\S]*Blocklist<\/h4>[\s\S]*Request<\/h4>[\s\S]*Issues<\/h4>/
+    /Services<\/h4>[\s\S]*Open title in Radarr-HD[\s\S]*Delete From Library[\s\S]*Blocklist<\/h4>[\s\S]*Requests<\/h4>[\s\S]*Issues<\/h4>/
   );
   const unblockButton = html
     .match(/<button[^>]*>[\s\S]*?<\/button>/g)
@@ -270,30 +238,6 @@ it('groups actions in the requested order and names the configured service next 
 });
 
 const issue = (id: number, status: IssueStatus) => ({ id, status }) as Issue;
-it.each([
-  [[], 0, 0],
-  [[issue(7, IssueStatus.OPEN), issue(8, IssueStatus.RESOLVED)], 2, 1],
-  [[issue(8, IssueStatus.RESOLVED)], 1, 0],
-])(
-  'shows total and open issue counts on their respective buttons',
-  (issues, total, open) => {
-    const html = render(
-      <ManageMediaActions
-        media={media({ issues: issues as Issue[] })}
-        mediaType={MediaType.MOVIE}
-        title="Movie"
-        onUpdate={vi.fn()}
-      />
-    );
-    expect(html).toContain('View All Issues');
-    expect(html).toContain(`class="button-count-badge">${total}</span>`);
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('Close Open Issues');
-    expect(html).toContain(`class="button-count-badge">${open}</span>`);
-    expect(html).toContain('Delete All Issues');
-    expect(html).not.toContain('Delete All Issues (');
-  }
-);
 it('closes only open issues and deletes both open and resolved issues without duplicates', async () => {
   const issues = [
     issue(7, IssueStatus.OPEN),
@@ -425,53 +369,6 @@ it('hides destructive actions without request-management permission', () => {
     )
   ).toBe('');
 });
-
-it.each([true, false])(
-  'uses shared blocklist membership %s instead of stale media status',
-  (blocked) => {
-    state.blocked = blocked;
-    const html = render(
-      <ManageMediaActions
-        media={media({
-          tmdbId: 123,
-          status: blocked ? MediaStatus.AVAILABLE : MediaStatus.BLOCKLISTED,
-        })}
-        mediaType={MediaType.MOVIE}
-        title="Title"
-        onUpdate={vi.fn()}
-      />
-    );
-    const buttons = html.match(/<button[^>]*>[\s\S]*?<\/button>/g) ?? [];
-    const block = buttons.find((b) => b.includes('>Blocklist Title</')) ?? '';
-    const unblock =
-      buttons.find((b) => b.includes('>Remove From Blocklist</')) ?? '';
-    expect(block.includes('disabled=""')).toBe(blocked);
-    expect(unblock.includes('disabled=""')).toBe(!blocked);
-  }
-);
-
-it.each(['loading', 'error'])(
-  'disables both blocklist actions while membership is %s',
-  (phase) => {
-    state.checkingBlocklist = phase === 'loading';
-    state.blocklistError =
-      phase === 'error' ? new Error('Unavailable') : undefined;
-    const html = render(
-      <ManageMediaActions
-        media={media({ tmdbId: 123, status: MediaStatus.BLOCKLISTED })}
-        mediaType={MediaType.MOVIE}
-        title="Title"
-        onUpdate={vi.fn()}
-      />
-    );
-    const buttons = html.match(/<button[^>]*>[\s\S]*?<\/button>/g) ?? [];
-    for (const label of ['Blocklist Title', 'Remove From Blocklist']) {
-      expect(buttons.find((b) => b.includes(`>${label}</`))).toContain(
-        'disabled=""'
-      );
-    }
-  }
-);
 it('shares permanent-delete wording and green cancel/red confirmation', () => {
   const html = render(
     <RequestActionConfirmation

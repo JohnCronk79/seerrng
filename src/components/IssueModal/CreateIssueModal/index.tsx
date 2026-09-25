@@ -386,7 +386,7 @@ const CreateIssueModal = ({
                 buttonType="danger"
                 buttonSize="standard"
               >
-                <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
+                <span className="inline-flex items-center">
                   <XMarkIcon className="h-4 w-4" aria-hidden="true" />
                   <span>{intl.formatMessage(globalMessages.cancel)}</span>
                 </span>
@@ -403,7 +403,7 @@ const CreateIssueModal = ({
                     !hasAvailableVideoQuality)
                 }
               >
-                <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
+                <span className="inline-flex items-center">
                   <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
                   <span>{intl.formatMessage(messages.submitissue)}</span>
                 </span>

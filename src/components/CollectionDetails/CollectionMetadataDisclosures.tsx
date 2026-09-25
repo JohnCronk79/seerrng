@@ -24,12 +24,12 @@ import { useIntl } from 'react-intl';
 const messages = defineMessages('components.CollectionDetails.Metadata', {
   viewCast: 'Cast',
   viewCrew: 'Crew',
-  subjectTags: 'Subject Tags',
+  subjectTags: 'Keywords',
   fullCastList: 'Full Cast List',
   fullCrewList: 'Full Crew List',
   noCast: 'No cast information available',
   noCrew: 'No crew information available',
-  noTags: 'No subject tags available',
+  noTags: 'No keywords available',
 });
 
 const CollectionMetadataDisclosures = ({
@@ -193,7 +193,7 @@ const CollectionMetadataDisclosures = ({
               {[...keywords].map(([id, name], index) => (
                 <Link
                   key={id}
-                  href={`/discover/movies/keyword?keywords=${id}`}
+                  href={`/discover/movies?search=${encodeURIComponent(name)}`}
                   className={subjectTagClassName(index)}
                 >
                   {name}

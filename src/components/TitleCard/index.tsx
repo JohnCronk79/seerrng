@@ -11,6 +11,7 @@ import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import PosterRatingPopover from '@app/components/TitleCard/PosterRatingPopover';
 import {
   getTitleCardStatusBadges,
   getTitleCardStatusBadgeSlots,
@@ -62,6 +63,9 @@ interface TitleCardProps {
   artist?: string;
   type?: string;
   userScore?: number;
+  voteCount?: number;
+  bookRatingAverage?: number;
+  bookRatingCount?: number;
   mediaType: MediaType;
   status?: MediaStatus;
   status4k?: MediaStatus;
@@ -76,6 +80,7 @@ interface TitleCardProps {
   hideAssociationWhenEmpty?: boolean;
   priority?: boolean;
   preferredBookFormat?: 'ebook' | 'audiobook';
+  showAllBookFormats?: boolean;
   availableQualities?: ('MP3' | 'FLAC')[];
   qualityStatuses?: AlbumResult['qualityStatuses'];
 }
@@ -98,6 +103,10 @@ const TitleCard = ({
   year,
   title,
   artist,
+  userScore,
+  voteCount,
+  bookRatingAverage,
+  bookRatingCount,
   status,
   status4k,
   mediaType,
@@ -111,6 +120,7 @@ const TitleCard = ({
   hideAssociationWhenEmpty = false,
   priority = false,
   preferredBookFormat,
+  showAllBookFormats = false,
   availableQualities,
   qualityStatuses,
 }: TitleCardProps) => {
@@ -631,13 +641,28 @@ const TitleCard = ({
           />
           <div className="absolute right-0 left-0 p-2">
             <div className="grid grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_auto] gap-x-2 gap-y-1">
-              <div className="flex min-w-0 items-center">
+              <div className="flex min-w-0 flex-col items-start gap-1">
                 {isBook ? (
-                  <BookFormatBadge
-                    format={preferredBookFormat}
-                    variant="card"
-                    className="pointer-events-none z-40 self-start"
-                  />
+                  showAllBookFormats ? (
+                    <>
+                      <BookFormatBadge
+                        format="ebook"
+                        variant="card"
+                        className="pointer-events-none z-40 self-start"
+                      />
+                      <BookFormatBadge
+                        format="audiobook"
+                        variant="card"
+                        className="pointer-events-none z-40 self-start"
+                      />
+                    </>
+                  ) : (
+                    <BookFormatBadge
+                      format={preferredBookFormat}
+                      variant="card"
+                      className="pointer-events-none z-40 self-start"
+                    />
+                  )
                 ) : (
                   <MediaTypeBadge
                     mediaType={mediaType === 'person' ? 'artist' : mediaType}
@@ -843,6 +868,24 @@ const TitleCard = ({
           </Transition>
         </div>
       </div>
+      {showDetail &&
+        !isTouch &&
+        (mediaType === 'movie' ||
+          mediaType === 'tv' ||
+          mediaType === 'album' ||
+          mediaType === 'book') && (
+          <PosterRatingPopover
+            anchorRef={cardRef}
+            id={canonicalId}
+            mediaType={mediaType}
+            userScore={userScore}
+            voteCount={voteCount}
+            bookRatingAverage={bookRatingAverage}
+            bookRatingCount={bookRatingCount}
+            title={title}
+            artist={artist}
+          />
+        )}
     </div>
   );
 };

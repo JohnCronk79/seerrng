@@ -1,8 +1,9 @@
 import Alert from '@app/components/Common/Alert';
 import { getBookFormatMessage } from '@app/components/Common/BookFormatBadge';
-import BookFormatSelector from '@app/components/Common/BookFormatSelector';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import AdvancedOptionsDisclosureButton from '@app/components/RequestModal/AdvancedOptionsDisclosureButton';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester, {
   RequestListboxControl,
@@ -16,6 +17,7 @@ import {
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
 } from '@app/components/RequestModal/requestAvailability';
+import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -24,12 +26,7 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  AdjustmentsHorizontalIcon,
-  ArrowDownTrayIcon,
-  ChevronDownIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -53,7 +50,6 @@ const messages = defineMessages('components.RequestModal.Book', {
   requestEdited: 'Request for <strong>{title}</strong> edited successfully!',
   requestApproved: 'Request for <strong>{title}</strong> approved!',
   requestbook: 'Request Book',
-  requestBookFormat: 'Request {format}',
   pendingrequest: 'Pending Book Request',
   pendingRequestFormat: 'Pending {format} Request',
   edit: 'Edit Request',
@@ -66,8 +62,6 @@ const messages = defineMessages('components.RequestModal.Book', {
   backendRequestFailed:
     'The request was submitted, but Bookshelf rejected it while processing.',
   editerror: 'Something went wrong while editing the request.',
-  bothDefaultInfo:
-    'Book + Audiobook uses your default Book and Audiobook Bookshelf services. Choose a single format to override server, profile, folder, or tags.',
   edition: 'Edition / ISBN',
   automaticEdition: 'Automatic best match',
   automaticEditionInfo:
@@ -78,11 +72,8 @@ const messages = defineMessages('components.RequestModal.Book', {
     'No Book Bookshelf service is configured. Book requests are unavailable.',
   noAudiobookServer:
     'No audiobook Bookshelf service is configured. Audiobook requests are unavailable.',
-  noBothServers:
-    'Book + Audiobook requires Book and Audiobook Bookshelf services to be configured.',
   ebook: 'Book',
   audiobook: 'Audiobook',
-  ebookAndAudiobook: 'Book and Audiobook',
   mediaAndFormat: 'Media & Format',
   firstPublished: 'First Published',
   pages: 'Pages',
@@ -96,6 +87,7 @@ const messages = defineMessages('components.RequestModal.Book', {
   requested: 'Requested',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
+  format: 'Format',
 });
 
 interface BookRequestModalProps {
@@ -119,14 +111,21 @@ const BookRequestModal = ({
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
-  const [bookFormat, setBookFormat] = useState<'ebook' | 'audiobook' | 'both'>(
-    editRequest?.bookFormat ?? initialBookFormat
+  const [bookFormat, setBookFormat] = useState<'ebook' | 'audiobook'>(
+    (editRequest?.bookFormat ?? initialBookFormat) === 'audiobook'
+      ? 'audiobook'
+      : 'ebook'
   );
   const [hasUserSelectedFormat, setHasUserSelectedFormat] = useState(false);
   const [selectedIsbn, setSelectedIsbn] = useState<string>('');
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
+  const {
+    open: advancedOptionsOpen,
+    pinned: advancedOptionsPinned,
+    toggleOpen: toggleAdvancedOptions,
+    togglePin: toggleAdvancedOptionsPin,
+  } = useAdvancedOptionsDisclosure('book');
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const normalizedBookId = normalizeOpenLibraryWorkId(bookId);
@@ -165,11 +164,7 @@ const BookRequestModal = ({
     bookFormat === 'audiobook' ? requestOverrides : null
   );
   const selectedDestinations =
-    bookFormat === 'both'
-      ? [ebookDestination, audiobookDestination]
-      : bookFormat === 'audiobook'
-        ? [audiobookDestination]
-        : [ebookDestination];
+    bookFormat === 'audiobook' ? [audiobookDestination] : [ebookDestination];
   const destinationAvailable = (format: 'ebook' | 'audiobook') => {
     const target = format === 'ebook' ? ebookDestination : audiobookDestination;
     const externalServiceId =
@@ -246,7 +241,11 @@ const BookRequestModal = ({
   );
 
   useEffect(() => {
-    setBookFormat(editRequest?.bookFormat ?? initialBookFormat);
+    setBookFormat(
+      (editRequest?.bookFormat ?? initialBookFormat) === 'audiobook'
+        ? 'audiobook'
+        : 'ebook'
+    );
     setHasUserSelectedFormat(false);
     setSelectedIsbn('');
     setRequestOverrides(null);
@@ -262,7 +261,6 @@ const BookRequestModal = ({
     () => ({
       ebook: hasEbookServer,
       audiobook: hasAudiobookServer,
-      both: hasEbookServer && hasAudiobookServer,
     }),
     [hasAudiobookServer, hasEbookServer]
   );
@@ -345,12 +343,6 @@ const BookRequestModal = ({
       return {};
     }
 
-    if (bookFormat === 'both') {
-      return {
-        userId: requestOverrides.user?.id,
-      };
-    }
-
     return {
       serverId: requestOverrides.server,
       profileId: requestOverrides.profile,
@@ -359,14 +351,15 @@ const BookRequestModal = ({
       userId: requestOverrides.user?.id,
       tags: requestOverrides.tags,
     };
-  }, [bookFormat, requestOverrides]);
+  }, [requestOverrides]);
 
-  const handleBookFormatChange = (value: 'ebook' | 'audiobook' | 'both') => {
+  const handleBookFormatChange = (value: 'ebook' | 'audiobook') => {
     if (bookServices && !formatAvailable[value]) {
       return;
     }
 
     setHasUserSelectedFormat(true);
+    setRequestOverrides(null);
     setBookFormat(value);
   };
 
@@ -374,18 +367,10 @@ const BookRequestModal = ({
     bookServices && !formatAvailable[bookFormat]
       ? bookFormat === 'ebook'
         ? messages.noEbookServer
-        : bookFormat === 'audiobook'
-          ? messages.noAudiobookServer
-          : messages.noBothServers
-      : bookServices &&
-          bookFormat === 'both' &&
-          (!hasEbookServer || !hasAudiobookServer)
-        ? messages.noBothServers
-        : null;
+        : messages.noAudiobookServer
+      : null;
   const formatLabel = intl.formatMessage(getBookFormatMessage(bookFormat));
-  const requestLabel = intl.formatMessage(messages.requestBookFormat, {
-    format: formatLabel,
-  });
+  const requestLabel = intl.formatMessage(messages.requestbook);
   const canUseAdvancedOptions = hasPermission(
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
@@ -393,18 +378,27 @@ const BookRequestModal = ({
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const serviceLabel =
     selectedService?.name ??
-    (bookFormat === 'both'
-      ? [defaultEbookService?.name, defaultAudiobookService?.name]
-          .filter(Boolean)
-          .join(' + ')
-      : bookFormat === 'audiobook'
-        ? defaultAudiobookService?.name
-        : defaultEbookService?.name) ??
+    (bookFormat === 'audiobook'
+      ? defaultAudiobookService?.name
+      : defaultEbookService?.name) ??
     notAvailable;
   const genres = data?.subjects?.slice(0, 3).join(', ') || notAvailable;
   const requestButtonLabel = isUpdating
     ? intl.formatMessage(globalMessages.requesting)
-    : requestLabel;
+    : intl.formatMessage(globalMessages.request);
+
+  const formatOptions = [
+    {
+      label: intl.formatMessage(messages.ebook),
+      value: 'ebook' as const,
+      disabled: !formatAvailable.ebook,
+    },
+    {
+      label: intl.formatMessage(messages.audiobook),
+      value: 'audiobook' as const,
+      disabled: !formatAvailable.audiobook,
+    },
+  ];
 
   const sendRequest = useCallback(async () => {
     if (selectedDestinationCovered) {
@@ -449,9 +443,7 @@ const BookRequestModal = ({
         const formatLabel =
           bookFormat === 'ebook'
             ? intl.formatMessage(messages.ebook)
-            : bookFormat === 'audiobook'
-              ? intl.formatMessage(messages.audiobook)
-              : intl.formatMessage(messages.ebookAndAudiobook);
+            : intl.formatMessage(messages.audiobook);
         addToast(
           <span>
             {intl.formatMessage(messages.requestSuccessWithFormat, {
@@ -638,26 +630,19 @@ const BookRequestModal = ({
                   username: editRequest.requestedBy.displayName,
                 })}
           </div>
-          <BookFormatSelector
+          <MediaQualitySelect
             value={bookFormat}
-            available={formatAvailable}
+            options={formatOptions}
             onChange={handleBookFormatChange}
+            label={intl.formatMessage(messages.format)}
+            autoSelectAvailable={false}
+            purpose="request"
           />
           {formatWarning && (
             <div className="mt-4">
               <Alert title={intl.formatMessage(formatWarning)} type="warning" />
             </div>
           )}
-          {bookFormat === 'both' &&
-            (hasPermission(Permission.REQUEST_ADVANCED) ||
-              hasPermission(Permission.MANAGE_REQUESTS)) && (
-              <div className="mt-4">
-                <Alert
-                  title={intl.formatMessage(messages.bothDefaultInfo)}
-                  type="info"
-                />
-              </div>
-            )}
           {(hasPermission(Permission.REQUEST_ADVANCED) ||
             hasPermission(Permission.MANAGE_REQUESTS)) && (
             <AdvancedRequester
@@ -812,20 +797,16 @@ const BookRequestModal = ({
           </div>
         </div>
 
-        <div className="mt-2">
-          <BookFormatSelector
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <MediaQualitySelect
             value={bookFormat}
-            available={formatAvailable}
+            options={formatOptions}
             onChange={handleBookFormatChange}
+            label={intl.formatMessage(messages.format)}
+            autoSelectAvailable={false}
+            purpose="request"
           />
-        </div>
-        {formatWarning && (
-          <div className="mt-2">
-            <Alert title={intl.formatMessage(formatWarning)} type="warning" />
-          </div>
-        )}
-        {!!data?.isbnCandidates?.length && (
-          <div className="mt-2">
+          {!!data?.isbnCandidates?.length && (
             <RequestListboxControl
               id="isbn"
               label={intl.formatMessage(messages.edition)}
@@ -846,11 +827,17 @@ const BookRequestModal = ({
                 })),
               ]}
             />
+          )}
+        </div>
+        {formatWarning && (
+          <div className="mt-2">
+            <Alert title={intl.formatMessage(formatWarning)} type="warning" />
           </div>
         )}
 
         {canUseAdvancedOptions && (
           <AdvancedRequester
+            key={bookFormat}
             type="book"
             is4k={false}
             bookFormat={bookFormat}
@@ -868,22 +855,13 @@ const BookRequestModal = ({
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <div className="mr-auto flex items-center gap-2">
             {canUseAdvancedOptions && (
-              <button
-                type="button"
-                className="app-button app-button-manage button-standard"
-                aria-expanded={advancedOptionsOpen}
-                onClick={() => setAdvancedOptionsOpen((open) => !open)}
-              >
-                <AdjustmentsHorizontalIcon
-                  className="h-3.5 w-3.5"
-                  aria-hidden="true"
-                />
-                {intl.formatMessage(messages.advancedOptions)}
-                <ChevronDownIcon
-                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
+              <AdvancedOptionsDisclosureButton
+                label={intl.formatMessage(messages.advancedOptions)}
+                open={advancedOptionsOpen}
+                pinned={advancedOptionsPinned}
+                onToggle={toggleAdvancedOptions}
+                onPin={toggleAdvancedOptionsPin}
+              />
             )}
           </div>
           <div

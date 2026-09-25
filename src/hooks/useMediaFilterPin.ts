@@ -24,7 +24,6 @@ export default function useMediaFilterPin<T extends MediaFilterValue>({
 }) {
   const { user, revalidate } = useUser();
   const saved = user?.settings?.mediaFilterPins?.[scope];
-  const pinned = saved !== undefined;
   const initialized = useRef<string | undefined>(undefined);
   const queue = useRef(Promise.resolve());
   const [busy, setBusy] = useState(false);
@@ -62,13 +61,10 @@ export default function useMediaFilterPin<T extends MediaFilterValue>({
       .finally(() => setBusy(false));
   };
   return {
-    pinned,
+    pinnedValue: saved,
     busy,
     error,
     available: Boolean(user),
-    toggle: () => save(pinned ? null : selected),
-    remember: (value: T) => {
-      if (pinned) save(value);
-    },
+    toggle: (value: T) => save(saved === value ? null : value),
   };
 }

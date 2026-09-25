@@ -514,6 +514,93 @@ describe('GET /discover/movies', () => {
     );
   });
 
+  it('searches movie and series keywords on their main discovery pages', async () => {
+    mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
+      if (endpoint === '/search/keyword') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [{ id: 987, name: 'time travel' }],
+        };
+      }
+
+      if (endpoint === '/search/movie' || endpoint === '/search/tv') {
+        return { page: 1, total_pages: 1, total_results: 0, results: [] };
+      }
+
+      if (endpoint === '/discover/movie') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [
+            {
+              id: 91,
+              media_type: 'movie',
+              title: 'A Different Title',
+              original_title: 'A Different Title',
+              release_date: '2026-01-01',
+              adult: false,
+              video: false,
+              popularity: 20,
+              poster_path: undefined,
+              backdrop_path: undefined,
+              vote_count: 100,
+              vote_average: 7,
+              genre_ids: [],
+              overview: '',
+              original_language: 'en',
+            },
+          ],
+        };
+      }
+
+      if (endpoint === '/discover/tv') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [
+            {
+              id: 92,
+              media_type: 'tv',
+              name: 'Another Different Title',
+              original_name: 'Another Different Title',
+              origin_country: ['US'],
+              first_air_date: '2026-01-01',
+              popularity: 20,
+              poster_path: undefined,
+              backdrop_path: undefined,
+              vote_count: 100,
+              vote_average: 7,
+              genre_ids: [],
+              overview: '',
+              original_language: 'en',
+            },
+          ],
+        };
+      }
+
+      throw new Error('Unexpected TMDB endpoint: ' + String(endpoint));
+    });
+
+    const agent = await login();
+    const movie = await agent.get('/discover/movies?search=time%20travel');
+    const series = await agent.get('/discover/tv?search=time%20travel');
+
+    assert.strictEqual(movie.status, 200);
+    assert.strictEqual(series.status, 200);
+    assert.deepStrictEqual(
+      movie.body.results.map((result: { title: string }) => result.title),
+      ['A Different Title']
+    );
+    assert.deepStrictEqual(
+      series.body.results.map((result: { name: string }) => result.name),
+      ['Another Different Title']
+    );
+  });
+
   it('drops broad movie search results that do not contain every keyword', async () => {
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
       assert.strictEqual(endpoint, '/search/movie');
@@ -1452,23 +1539,6 @@ describe('GET /discover/music', () => {
       assert.strictEqual(searchAlbum.mock.callCount(), 0);
       assert.strictEqual(getTopAlbums.mock.callCount(), 0);
       assert.strictEqual(getFreshReleases.mock.callCount(), 0);
-      const secondarySearch = mock.method(
-        MusicBrainz.prototype,
-        'searchAlbumWithTotal',
-        async ({ query }: { query: string }) => {
-          assert.match(query, /secondarytype:"Live"/);
-          assert.match(query, /rgid:"11111111-1111-4111-8111-111111111111"/);
-          assert.doesNotMatch(query, /22222222-2222-4222-8222-222222222222/);
-          return { results: [{ id: mp3Album.mbId }], totalResults: 1 };
-        }
-      );
-      const live = await agent
-        .get('/discover/music')
-        .query({ availability: 'mp3', releaseType: 'Live' });
-      assert.strictEqual(live.status, 200);
-      assert.strictEqual(live.body.totalResults, 1);
-      assert.strictEqual(live.body.results[0].title, 'Fast MP3 Album');
-      assert.strictEqual(secondarySearch.mock.callCount(), 1);
     } finally {
       settings.lidarr = previousLidarr;
     }
@@ -1675,7 +1745,7 @@ describe('GET /discover/music', () => {
     );
     const searchAlbumMock = mock.method(
       MusicBrainz.prototype,
-      'searchAlbumWithTotal',
+      'searchAlbum',
       async ({
         query,
         limit,
@@ -1685,9 +1755,9 @@ describe('GET /discover/music', () => {
         limit?: number;
         offset?: number;
       }) => {
-        assert.match(query, /releasegroup:kind/);
-        assert.strictEqual(limit, 20);
-        assert.strictEqual(offset, 20);
+        assert.strictEqual(query, 'kind AND of AND blue');
+        assert.strictEqual(limit, 100);
+        assert.strictEqual(offset, 0);
 
         const fillerAlbum = {
           id: 'musicbrainz-release-group-filler',
@@ -1714,39 +1784,36 @@ describe('GET /discover/music', () => {
           releasedate: '1958',
         };
 
-        return {
-          totalResults: 21,
-          results: [
-            ...Array.from({ length: 20 }, (_, index) => ({
-              ...fillerAlbum,
-              id: `${fillerAlbum.id}-${index}`,
-            })),
-            {
-              id: 'musicbrainz-release-group-id',
-              score: 100,
-              media_type: 'album',
-              title: 'Kind of Blue',
-              'primary-type': 'Album',
-              'primary-type-id': '',
-              'type-id': '',
-              'first-release-date': '1959',
-              'artist-credit': [
-                {
+        return [
+          ...Array.from({ length: 20 }, (_, index) => ({
+            ...fillerAlbum,
+            id: `${fillerAlbum.id}-${index}`,
+          })),
+          {
+            id: 'musicbrainz-release-group-id',
+            score: 100,
+            media_type: 'album',
+            title: 'Kind of Blue',
+            'primary-type': 'Album',
+            'primary-type-id': '',
+            'type-id': '',
+            'first-release-date': '1959',
+            'artist-credit': [
+              {
+                name: 'Miles Davis',
+                artist: {
+                  id: 'artist-id',
                   name: 'Miles Davis',
-                  artist: {
-                    id: 'artist-id',
-                    name: 'Miles Davis',
-                    'sort-name': 'Davis, Miles',
-                  },
+                  'sort-name': 'Davis, Miles',
                 },
-              ],
-              posterPath: undefined,
-              count: 1,
-              releases: [],
-              releasedate: '1959',
-            },
-          ].slice(offset, offset! + limit!),
-        };
+              },
+            ],
+            posterPath: undefined,
+            count: 1,
+            releases: [],
+            releasedate: '1959',
+          },
+        ];
       }
     );
 
@@ -1762,12 +1829,64 @@ describe('GET /discover/music', () => {
     assert.strictEqual(res.body.results[0].title, 'Kind of Blue');
   });
 
-  it('drops broad music results that do not contain every keyword', async () => {
+  it('finds music by an album tag when title and artist differ', async () => {
     mock.method(
       MusicBrainz.prototype,
       'searchAlbumWithTotal',
       async ({ query }: { query: string }) => {
-        assert.match(query, /releasegroup:microsoft/);
+        assert.strictEqual(
+          query,
+          '(releasegroup:ambient OR artist:ambient OR tag:ambient)'
+        );
+        return {
+          totalResults: 1,
+          results: [
+            {
+              id: 'ambient-tagged-album',
+              score: 100,
+              media_type: 'album',
+              title: 'A Different Album',
+              'primary-type': 'Album',
+              'primary-type-id': '',
+              'type-id': '',
+              'first-release-date': '2024',
+              'artist-credit': [
+                {
+                  name: 'Different Artist',
+                  artist: {
+                    id: 'different-artist',
+                    name: 'Different Artist',
+                    'sort-name': 'Different Artist',
+                  },
+                },
+              ],
+              tags: [{ name: 'ambient', count: 1 }],
+              posterPath: undefined,
+              count: 1,
+              releases: [],
+              releasedate: '2024',
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/music?query=ambient');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['A Different Album']
+    );
+  });
+
+  it('drops broad music results that do not contain every keyword', async () => {
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbum',
+      async ({ query }: { query: string }) => {
+        assert.strictEqual(query, 'microsoft AND windows');
 
         const album = {
           score: 100,
@@ -1783,41 +1902,38 @@ describe('GET /discover/music', () => {
           tags: [],
         };
 
-        return {
-          totalResults: 2,
-          results: [
-            {
-              ...album,
-              id: 'relevant-album',
-              title: 'Microsoft Windows Sounds',
-              'artist-credit': [
-                {
+        return [
+          {
+            ...album,
+            id: 'relevant-album',
+            title: 'Microsoft Windows Sounds',
+            'artist-credit': [
+              {
+                name: 'System Artist',
+                artist: {
+                  id: 'system-artist',
                   name: 'System Artist',
-                  artist: {
-                    id: 'system-artist',
-                    name: 'System Artist',
-                    'sort-name': 'System Artist',
-                  },
+                  'sort-name': 'System Artist',
                 },
-              ],
-            },
-            {
-              ...album,
-              id: 'broad-album',
-              title: 'Windows at Night',
-              'artist-credit': [
-                {
+              },
+            ],
+          },
+          {
+            ...album,
+            id: 'broad-album',
+            title: 'Windows at Night',
+            'artist-credit': [
+              {
+                name: 'Novel Band',
+                artist: {
+                  id: 'novel-band',
                   name: 'Novel Band',
-                  artist: {
-                    id: 'novel-band',
-                    name: 'Novel Band',
-                    'sort-name': 'Novel Band',
-                  },
+                  'sort-name': 'Novel Band',
                 },
-              ],
-            },
-          ],
-        };
+              },
+            ],
+          },
+        ];
       }
     );
 
@@ -1858,36 +1974,33 @@ describe('GET /discover/music', () => {
           availableMusicServiceIds: [0, 2],
         })
       );
-      mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
-        totalResults: 1,
-        results: [
-          {
-            id: 'quality-available-album',
-            title: 'Quality Available Album',
-            score: 100,
-            media_type: 'album',
-            'primary-type': 'Album',
-            'primary-type-id': '',
-            'type-id': '',
-            'first-release-date': '2026',
-            posterPath: undefined,
-            count: 1,
-            releases: [],
-            releasedate: '2026',
-            tags: [],
-            'artist-credit': [
-              {
+      mock.method(MusicBrainz.prototype, 'searchAlbum', async () => [
+        {
+          id: 'quality-available-album',
+          title: 'Quality Available Album',
+          score: 100,
+          media_type: 'album',
+          'primary-type': 'Album',
+          'primary-type-id': '',
+          'type-id': '',
+          'first-release-date': '2026',
+          posterPath: undefined,
+          count: 1,
+          releases: [],
+          releasedate: '2026',
+          tags: [],
+          'artist-credit': [
+            {
+              name: 'Quality Artist',
+              artist: {
+                id: 'quality-artist',
                 name: 'Quality Artist',
-                artist: {
-                  id: 'quality-artist',
-                  name: 'Quality Artist',
-                  'sort-name': 'Quality Artist',
-                },
+                'sort-name': 'Quality Artist',
               },
-            ],
-          },
-        ],
-      }));
+            },
+          ],
+        },
+      ]);
 
       const agent = await login();
       const res = await agent.get('/discover/music?query=quality%20available');
@@ -1981,39 +2094,43 @@ describe('GET /discover/music', () => {
   });
 
   it('applies release type, genre, and year filters to music searches', async () => {
-    mock.method(
-      MusicBrainz.prototype,
-      'searchAlbumWithTotal',
-      async ({ query }: { query: string }) => {
-        assert.match(query, /primarytype:"Album"/);
-        assert.match(query, /tag:"jazz"/);
-        assert.match(query, /firstreleasedate:\[2024-01-01 TO 2024-12-31\]/);
-        return {
-          totalResults: 1,
-          results: [
-            {
-              id: 'matching-album',
-              score: 100,
-              media_type: 'album',
-              title: 'Matching Album',
-              'primary-type': 'Album',
-              'primary-type-id': '',
-              'type-id': '',
-              'first-release-date': '2024-06-01',
-              'artist-credit': [],
-              posterPath: undefined,
-              count: 1,
-              releases: [],
-              releasedate: '2024-06-01',
-              tags: [
-                { count: 5, name: 'jazz' },
-                { count: 4, name: 'blue' },
-              ],
-            },
-          ],
-        };
-      }
-    );
+    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => [
+      {
+        id: 'matching-album',
+        score: 100,
+        media_type: 'album',
+        title: 'Matching Album',
+        'primary-type': 'Album',
+        'primary-type-id': '',
+        'type-id': '',
+        'first-release-date': '2024-06-01',
+        'artist-credit': [],
+        posterPath: undefined,
+        count: 1,
+        releases: [],
+        releasedate: '2024-06-01',
+        tags: [
+          { count: 5, name: 'jazz' },
+          { count: 4, name: 'blue' },
+        ],
+      },
+      {
+        id: 'wrong-year-album',
+        score: 90,
+        media_type: 'album',
+        title: 'Wrong Year Album',
+        'primary-type': 'Album',
+        'primary-type-id': '',
+        'type-id': '',
+        'first-release-date': '2023-06-01',
+        'artist-credit': [],
+        posterPath: undefined,
+        count: 1,
+        releases: [],
+        releasedate: '2023-06-01',
+        tags: [{ count: 5, name: 'jazz' }],
+      },
+    ]);
 
     const agent = await login();
     const res = await agent.get('/discover/music').query({
@@ -2405,7 +2522,9 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get('/discover/music?sortBy=ranked&days=14');
+    const res = await agent.get(
+      '/discover/music?sortBy=ranked&releaseType=Album'
+    );
 
     assert.strictEqual(res.status, 200);
     assert.deepStrictEqual(
@@ -2479,7 +2598,9 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get('/discover/music?sortBy=ranked&days=14');
+    const res = await agent.get(
+      '/discover/music?sortBy=ranked&releaseType=Album'
+    );
 
     assert.strictEqual(res.status, 200);
     const titles = res.body.results
@@ -2959,7 +3080,9 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get('/discover/music?sortBy=unsupported&days=14');
+    const res = await agent.get(
+      '/discover/music?sortBy=unsupported&releaseType=Album'
+    );
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(topAlbumsMock.mock.callCount(), 0);
@@ -3030,16 +3153,18 @@ describe('GET /discover/music', () => {
     assert.deepStrictEqual(res.body.results, []);
   });
 
-  it('returns a retryable error when MusicBrainz search is unavailable', async () => {
-    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => {
+  it('returns an empty result set when MusicBrainz search is unavailable', async () => {
+    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => {
       throw new Error('provider unavailable');
     });
 
     const agent = await login();
     const res = await agent.get('/discover/music?query=kind%20of%20blue');
 
-    assert.strictEqual(res.status, 503);
-    assert.match(res.body.message, /temporarily unavailable/);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.page, 1);
+    assert.strictEqual(res.body.totalResults, 0);
+    assert.deepStrictEqual(res.body.results, []);
   });
 
   it('only exposes the current user watchlist state on music results', async () => {
@@ -3110,7 +3235,7 @@ describe('GET /discover/music', () => {
     ]);
 
     const agent = await login('friend@seerr.dev');
-    const res = await agent.get('/discover/music?days=14');
+    const res = await agent.get('/discover/music?releaseType=Album');
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.results[0].mediaInfo.watchlists.length, 0);
@@ -3133,36 +3258,6 @@ describe('GET /discover/music', () => {
 });
 
 describe('GET /discover/books', () => {
-  it('sends the author constraint to the provider together with the genre and keyword', async () => {
-    const searchBooks = mock.method(
-      OpenLibraryAPI.prototype,
-      'searchBooks',
-      async ({ query }) => {
-        assert.match(query, /author:"stephen"/);
-        assert.match(query, /author:"king"/);
-        assert.match(query, /subject:horror/);
-        assert.match(query, /title:"shining"/);
-        return { numFound: 0, start: 0, docs: [] };
-      }
-    );
-    const agent = await login();
-    const response = await agent
-      .get('/discover/books')
-      .query({ author: 'Stephen King', query: 'Shining', subject: 'horror' });
-    assert.strictEqual(response.status, 200);
-    assert.strictEqual(searchBooks.mock.callCount(), 1);
-  });
-
-  it('rejects oversized author searches before provider lookup', async () => {
-    const searchBooks = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
-    const agent = await login();
-    const response = await agent
-      .get('/discover/books')
-      .query({ author: 'x'.repeat(257) });
-    assert.strictEqual(response.status, 400);
-    assert.strictEqual(searchBooks.mock.callCount(), 0);
-  });
-
   it('keeps completed book subject results when another subject stalls', async () => {
     const result = await settlePromisesWithin(
       [
@@ -3318,7 +3413,7 @@ describe('GET /discover/books', () => {
       }) => {
         assert.strictEqual(
           query,
-          '(title:"alpha" OR author:"alpha") AND (title:"beta" OR author:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
+          '(title:"alpha" OR author:"alpha" OR subject:"alpha") AND (title:"beta" OR author:"beta" OR subject:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
         );
         assert.strictEqual(page, 1);
         assert.strictEqual(limit, 50);
@@ -3476,14 +3571,14 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('keeps relevant book search order and drops hidden metadata-only matches', async () => {
+  it('includes book subject tags and drops hidden metadata-only matches', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
       async ({ query, limit }: { query: string; limit?: number }) => {
         assert.strictEqual(
           query,
-          '(title:"microsoft" OR author:"microsoft") AND (title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
+          '(title:"microsoft" OR author:"microsoft" OR subject:"microsoft") AND (title:"windows" OR author:"windows" OR subject:"windows") AND (title:"11" OR author:"11" OR subject:"11")'
         );
         assert.strictEqual(limit, 50);
 
@@ -3524,7 +3619,7 @@ describe('GET /discover/books', () => {
     assert.strictEqual(searchBooksMock.mock.callCount(), 1);
     assert.deepStrictEqual(
       res.body.results.map((result: { title: string }) => result.title),
-      ['The Microsoft Windows 11 Reference']
+      ['Windows 11 Guide', 'The Microsoft Windows 11 Reference']
     );
   });
 

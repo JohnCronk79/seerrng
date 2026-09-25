@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 const css = readFileSync(new URL('./globals.css', import.meta.url), 'utf8');
-test('rating links use action height while images and values use the shared content height', () => {
+test('rating images and values share the action height without legacy fixed heights', () => {
   for (const name of [
     'media-rating-link',
     'media-rating-icon',
@@ -13,12 +13,7 @@ test('rating links use action height while images and values use the shared cont
   ]) {
     const body = css.match(new RegExp('\\.' + name + '\\s*\\{([^}]+)'))?.[1];
     assert.ok(body, name);
-    assert.match(
-      body,
-      name === 'media-rating-link'
-        ? /height: var\(--action-control-height\);/
-        : /height: var\(--action-control-content-height\);/
-    );
+    assert.match(body, /height: var\(--action-control-height\);/);
     assert.doesNotMatch(body, /\bh-(?:3\.5|4|5|6|\[30px\])/);
   }
   assert.match(css, /\.media-rating-link\s*\{[^}]*text-xs/);

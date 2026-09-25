@@ -1,16 +1,13 @@
 import AssociationBadge from '@app/components/Association/AssociationBadge';
-import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
 import PageTitle from '@app/components/Common/PageTitle';
 import MediaSlider from '@app/components/MediaSlider';
 import TitleCard from '@app/components/TitleCard';
-import { Permission, useUser } from '@app/hooks/useUser';
 import ErrorPage from '@app/pages/_error';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
-import { ArrowDownTrayIcon } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import type { AlbumResult } from '@server/models/Search';
@@ -34,7 +31,6 @@ const messages = defineMessages('components.ArtistDetails', {
   similarartists: 'Similar Artists',
   showall: 'Show All',
   showless: 'Show Less',
-  requestdiscography: 'Request Discography',
 });
 
 interface Album {
@@ -90,7 +86,6 @@ const albumTypeMessages: Record<string, keyof typeof messages> = {
 const ArtistDetails = () => {
   const intl = useIntl();
   const router = useRouter();
-  const { hasPermission } = useUser();
   const artistId = router.query.artistId as string | undefined;
   const { data, error } = useSWR<ArtistData>(
     artistId ? `/api/v1/artist/${encodeApiPathSegment(artistId)}` : null,
@@ -248,23 +243,6 @@ const ArtistDetails = () => {
             <p className="mt-4 max-w-4xl text-sm leading-6 lg:text-base">
               {biography}
             </p>
-          )}
-          {hasPermission([Permission.REQUEST, Permission.REQUEST_MUSIC], {
-            type: 'or',
-          }) && (
-            <div className="mt-5">
-              <Button
-                buttonType="primary"
-                onClick={() =>
-                  void router.push(
-                    `/collections/music/${artistId}?view=discography`
-                  )
-                }
-              >
-                <ArrowDownTrayIcon />
-                <span>{intl.formatMessage(messages.requestdiscography)}</span>
-              </Button>
-            </div>
           )}
         </div>
       </div>

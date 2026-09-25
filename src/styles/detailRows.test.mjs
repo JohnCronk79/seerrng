@@ -57,19 +57,6 @@ const cards = [
     (type) => `RequestModal/${type}RequestModal.tsx`
   ),
 ];
-test('all media summaries use the same paired table and fourth-row genres', () => {
-  for (const file of [
-    'MediaDetails/MovieSummaryCard.tsx',
-    'TvDetails/SeriesDetailsLayout.tsx',
-    'BookDetails/BookDetailsLayout.tsx',
-    'MusicDetails/MusicDetailsLayout.tsx',
-  ]) {
-    const source = read(`../components/${file}`);
-    assert.match(source, /media-detail-rows detail-paired-columns/);
-    assert.match(source, /card:row-start-4/);
-    assert.doesNotMatch(source, /detail-paired-simple-columns/);
-  }
-});
 for (const file of cards) {
   test(`${file} uses shared rows without extra fourth-row margins`, () => {
     const source = read(`../components/${file}`);
@@ -108,37 +95,6 @@ test('collection and advanced summaries share the global title gap', () => {
     const source = read(`../components/${file}`);
     assert.match(source, /detail-card-heading-after/);
     assert.doesNotMatch(source, /media-inset-heading mb-3/);
-  }
-});
-
-test('album and book supplemental details do not repeat summary fields', () => {
-  for (const [file, id, removed, retained] of [
-    [
-      'MusicDetails/MusicDetailsLayout.tsx',
-      'music-additional-details',
-      ['status', 'releaseDate', 'albumType', 'runtime', 'trackCount', 'artist'],
-      ['musicBrainz', 'artistType', 'origin'],
-    ],
-    [
-      'BookDetails/BookDetailsLayout.tsx',
-      'book-additional-details',
-      ['firstPublished', 'pages', 'editions', 'author'],
-      ['publisher', 'edition', 'openLibrary', 'isbnCandidates'],
-    ],
-  ]) {
-    const source = read(`../components/${file}`);
-    const details = source.slice(source.indexOf(`id="${id}"`));
-    for (const field of removed)
-      assert.ok(
-        !details.includes(`messages.${field})`),
-        `${file}: duplicate ${field}`
-      );
-    for (const field of retained)
-      assert.ok(
-        details.includes(`messages.${field})`),
-        `${file}: missing ${field}`
-      );
-    assert.equal((details.match(/<dl /g) ?? []).length, 3);
   }
 });
 

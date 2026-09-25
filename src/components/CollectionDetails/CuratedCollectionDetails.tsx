@@ -43,7 +43,6 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { MediaStatus, MediaType } from '@server/constants/media';
-import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type {
   CuratedCollection,
   CuratedCollectionMember,
@@ -60,7 +59,6 @@ import CollectionRatings from './CollectionRatings';
 import CollectionServerActions from './CollectionServerActions';
 import CuratedGenreLinks from './CuratedGenreLinks';
 import CuratedMemberCard from './CuratedMemberCard';
-import DiscographyRequestActions from './DiscographyRequestActions';
 import MusicCollectionFilterRow from './MusicCollectionFilterRow';
 
 const messages = defineMessages('components.CuratedCollection', {
@@ -97,15 +95,16 @@ const messages = defineMessages('components.CuratedCollection', {
   confirmBlocklistMusic:
     'Blocklist all {count} {count, plural, one {album} other {albums}} in this collection?',
   noSeriesSelected: 'Select at least one series to request.',
-  noAlbumSelected: 'Select at least one album to request.',
-  noFormatService: 'No {format} service is configured.',
-  source: 'Collection Source',
-  sourceHelp: 'Open the source catalogue in a new browser window.',
+  noAlbumsSelected: 'Select at least one album to request.',
   empty: 'No collection members are listed by the provider.',
-  discography: '{artist} Discography',
   ratings:
     'Average of {count} rated albums out of {total}; missing ratings are excluded.',
 });
+
+const MusicCollectionRequestModal = dynamic(
+  () => import('@app/components/RequestModal/MusicCollectionRequestModal'),
+  { ssr: false }
+);
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -114,13 +113,9 @@ const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
 export default function CuratedCollectionDetails({
   kind,
   id,
-  discographyArtist,
-  returnAlbumId,
 }: {
   kind: 'tv' | 'music';
   id: string;
-  discographyArtist?: string;
-  returnAlbumId?: string;
 }) {
   const intl = useIntl();
   const settings = useSettings();
@@ -130,24 +125,18 @@ export default function CuratedCollectionDetails({
   const { data, error, mutate } = useSWR<CuratedCollection>(
     id ? endpoint : null
   );
-  const { data: musicServices } = useSWR<ServiceCommonServer[]>(
-    kind === 'music' ? '/api/v1/service/lidarr' : null
-  );
-  const isDiscography = discographyArtist !== undefined;
-  const availability = useCollectionAvailability(
-    isDiscography ? '' : id,
-    data,
-    kind
-  );
+  const availability = useCollectionAvailability(id, data, kind);
   const [selected, setSelected] = useState<string[]>([]);
   const [manual, setManual] = useState(false);
   const [filters, setFilters] = useState<MusicCollectionFilters>({
     ...DEFAULT_MUSIC_COLLECTION_FILTERS,
   });
   const [quality, setQuality] = useState<'standard' | 'high'>('standard');
-  const [requestQueue, setRequestQueue] = useState<string[]>([]);
+  const [showCollectionRequest, setShowCollectionRequest] = useState(false);
+  const [requestMusicFormat, setRequestMusicFormat] = useState<'mp3' | 'flac'>(
+    'mp3'
+  );
   const [requestIs4k, setRequestIs4k] = useState(false);
-  const [requestMusicServerId, setRequestMusicServerId] = useState<number>();
   const [showBlocklistConfirmation, setShowBlocklistConfirmation] =
     useState(false);
   const [isBlocklisting, setIsBlocklisting] = useState(false);
@@ -156,8 +145,7 @@ export default function CuratedCollectionDetails({
     setSelected([]);
     setQuality('standard');
     setFilters({ ...DEFAULT_MUSIC_COLLECTION_FILTERS });
-    setRequestQueue([]);
-    setRequestMusicServerId(undefined);
+    setShowCollectionRequest(false);
   }, [kind, id]);
   const ids = data?.parts.map((part) => part.id).join(',') ?? '';
   const visibleParts =
@@ -248,7 +236,7 @@ export default function CuratedCollectionDetails({
     });
   const startTvRequests = (is4k: boolean) => {
     setRequestIs4k(is4k);
-    setRequestQueue(requestableTvIds);
+    setShowCollectionRequest(true);
   };
   const requestOptions = [
     ...(canRequestTv
@@ -274,45 +262,6 @@ export default function CuratedCollectionDetails({
         ]
       : []),
   ];
-  const requestableMusicIds = shownSelection.filter((memberId) =>
-    parts.some(
-      (part) =>
-        part.id === memberId &&
-        part.mediaInfo?.status !== MediaStatus.BLOCKLISTED
-    )
-  );
-  const canRequestMusic = hasPermission(
-    [Permission.REQUEST, Permission.REQUEST_MUSIC],
-    { type: 'or' }
-  );
-  const startMusicRequests = (format: 'mp3' | 'flac') => {
-    const service = musicServices?.find((candidate) =>
-      candidate.name.toLocaleLowerCase().includes(format)
-    );
-    if (!service || requestableMusicIds.length === 0) return;
-    setRequestMusicServerId(service.id);
-    setRequestQueue(requestableMusicIds);
-  };
-  const musicRequestOptions = canRequestMusic
-    ? (['mp3', 'flac'] as const).map((format) => {
-        const service = musicServices?.find((candidate) =>
-          candidate.name.toLocaleLowerCase().includes(format)
-        );
-        return {
-          id: format,
-          label: format.toLocaleUpperCase(),
-          onClick: () => startMusicRequests(format),
-          disabled: !service || requestableMusicIds.length === 0,
-          disabledReason: !service
-            ? intl.formatMessage(messages.noFormatService, {
-                format: format.toLocaleUpperCase(),
-              })
-            : requestableMusicIds.length === 0
-              ? intl.formatMessage(messages.noAlbumSelected)
-              : undefined,
-        };
-      })
-    : [];
   const onBlocklistCollection = async () => {
     setIsBlocklisting(true);
     try {
@@ -361,11 +310,7 @@ export default function CuratedCollectionDetails({
       setShowBlocklistConfirmation(false);
     }
   };
-  const displayName = isDiscography
-    ? intl.formatMessage(messages.discography, {
-        artist: discographyArtist || data.name.replace(/ Collection$/, ''),
-      })
-    : data.name;
+  const displayName = data.name;
   const playbackIds = curatedPlaybackIds(
     visibleParts,
     shownSelection,
@@ -448,32 +393,32 @@ export default function CuratedCollectionDetails({
           )}
         />
       )}
-      {requestQueue[0] &&
-        (kind === 'tv' ? (
-          <RequestModal
-            type="tv"
-            tmdbId={Number(requestQueue[0])}
-            show
-            is4k={requestIs4k}
-            onComplete={() => {
-              setRequestQueue((current) => current.slice(1));
-              void mutate();
-            }}
-            onCancel={() => setRequestQueue([])}
-          />
-        ) : (
-          <RequestModal
-            type="music"
-            mbId={requestQueue[0]}
-            show
-            initialMusicServerId={requestMusicServerId}
-            onComplete={() => {
-              setRequestQueue((current) => current.slice(1));
-              void mutate();
-            }}
-            onCancel={() => setRequestQueue([])}
-          />
-        ))}
+      {kind === 'music' && showCollectionRequest && (
+        <MusicCollectionRequestModal
+          collectionId={id}
+          initialSelectedIds={shownSelection}
+          initialFormat={requestMusicFormat}
+          onCancel={() => setShowCollectionRequest(false)}
+          onComplete={() => {
+            setShowCollectionRequest(false);
+            void mutate();
+          }}
+        />
+      )}
+      {kind === 'tv' && showCollectionRequest && (
+        <RequestModal
+          type="collection"
+          collectionId={id}
+          initialSelectedIds={requestableTvIds}
+          show
+          is4k={requestIs4k}
+          onComplete={() => {
+            setShowCollectionRequest(false);
+            void mutate();
+          }}
+          onCancel={() => setShowCollectionRequest(false)}
+        />
+      )}
       <article className="media-detail-card refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 p-3 shadow-lg shadow-gray-950/20">
         {(kind === 'music' ? data.posterPath : data.backdropPath) && (
           <MediaDetailArtwork
@@ -531,7 +476,7 @@ export default function CuratedCollectionDetails({
               </dl>
             </div>
           </div>
-          {!isDiscography && (
+          {
             <div className="media-rating-row">
               <div className="collection-playback-controls">
                 <MediaQualitySelect
@@ -580,13 +525,8 @@ export default function CuratedCollectionDetails({
                 )}
               </div>
             </div>
-          )}
-          {isDiscography && (
-            <div className="discography-ratings">
-              <MusicRatings ratings={musicAverages} total={parts.length} />
-            </div>
-          )}
-          {(kind === 'tv' || (kind === 'music' && !isDiscography)) && (
+          }
+          {
             <div
               className={[
                 'media-primary-action-row',
@@ -662,30 +602,42 @@ export default function CuratedCollectionDetails({
               {kind === 'tv' ? (
                 <FormatRequestControl options={requestOptions} />
               ) : (
-                <FormatRequestControl options={musicRequestOptions} />
+                hasPermission([Permission.REQUEST, Permission.REQUEST_MUSIC], {
+                  type: 'or',
+                }) && (
+                  <FormatRequestControl
+                    options={(['mp3', 'flac'] as const).map((format) => ({
+                      id: format,
+                      label: format.toUpperCase(),
+                      disabled: shownSelection.length === 0,
+                      disabledReason: intl.formatMessage(
+                        messages.noAlbumsSelected
+                      ),
+                      onClick: () => {
+                        setRequestMusicFormat(format);
+                        setShowCollectionRequest(true);
+                      },
+                    }))}
+                  />
+                )
               )}
             </div>
-          )}
+          }
           <div
             className={[
               'media-detail-disclosure-row',
               'collection-detail-disclosure-row',
               kind === 'tv' ? 'collection-selection-action-row' : '',
               kind === 'music' ? 'music-collection-action-row' : '',
-              isDiscography ? 'discography-selection-row' : '',
             ]
               .filter(Boolean)
               .join(' ')}
           >
             <Button
               buttonType="association"
-              title={
-                isDiscography
-                  ? intl.formatMessage(messages.selectAll)
-                  : intl.formatMessage(
-                      kind === 'music' ? messages.visibleHelp : messages.allHelp
-                    )
-              }
+              title={intl.formatMessage(
+                kind === 'music' ? messages.visibleHelp : messages.allHelp
+              )}
               onClick={() => {
                 setManual(true);
                 setSelected(visibleParts.map((part) => part.id));
@@ -696,9 +648,7 @@ export default function CuratedCollectionDetails({
             </Button>
             <Button
               buttonType="association"
-              title={intl.formatMessage(
-                isDiscography ? messages.selectNone : messages.noneHelp
-              )}
+              title={intl.formatMessage(messages.noneHelp)}
               onClick={() => {
                 setManual(true);
                 setSelected([]);
@@ -707,26 +657,15 @@ export default function CuratedCollectionDetails({
               <XMarkIcon />
               <span>{intl.formatMessage(messages.selectNone)}</span>
             </Button>
-            {isDiscography ? (
-              <DiscographyRequestActions
-                items={visibleParts.filter((part) =>
-                  shownSelection.includes(part.id)
-                )}
-                returnHref={
-                  returnAlbumId ? `/music/${returnAlbumId}` : `/artist/${id}`
-                }
-              />
-            ) : (
-              <CollectionServerActions
-                id={id}
-                title={data.name}
-                endpoint={endpoint}
-                availability={availability.data}
-                error={availability.error}
-                revalidate={availability.mutate}
-                visibleItemIds={visibleParts.map((part) => part.id)}
-              />
-            )}
+            <CollectionServerActions
+              id={id}
+              title={data.name}
+              endpoint={endpoint}
+              availability={availability.data}
+              error={availability.error}
+              revalidate={availability.mutate}
+              visibleItemIds={visibleParts.map((part) => part.id)}
+            />
           </div>
           {kind === 'music' && (
             <MusicCollectionFilterRow
@@ -753,7 +692,6 @@ export default function CuratedCollectionDetails({
                   }}
                   kind={kind}
                   selected={shownSelection.includes(part.id)}
-                  selectionLabel={isDiscography ? part.title : undefined}
                   toggle={() => toggle(part.id)}
                   ratings={
                     kind === 'tv' ? (
@@ -776,16 +714,6 @@ export default function CuratedCollectionDetails({
                 />
               ))}
             </ThreeItemScroll>
-          )}
-          {!isDiscography && (
-            <a
-              href={data.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              title={intl.formatMessage(messages.sourceHelp)}
-            >
-              {intl.formatMessage(messages.source)}
-            </a>
           )}
         </div>
       </article>

@@ -1,5 +1,7 @@
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import AdvancedOptionsDisclosureButton from '@app/components/RequestModal/AdvancedOptionsDisclosureButton';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
@@ -12,18 +14,14 @@ import {
   isRequestDestinationRequested,
   isVideoQualityAvailable,
 } from '@app/components/RequestModal/requestAvailability';
+import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
-import {
-  AdjustmentsHorizontalIcon,
-  ArrowDownTrayIcon,
-  ChevronDownIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
@@ -64,6 +62,7 @@ const messages = defineMessages('components.RequestModal', {
   readyToRequest: 'Ready to Request',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
+  quality: 'Quality',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -86,6 +85,8 @@ const MovieRequestModal = ({
   allow4kServerSelection = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedIs4k, setSelectedIs4k] = useState(is4k);
+  const [qualityRevision, setQualityRevision] = useState(0);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const { addToast } = useToasts();
@@ -111,10 +112,15 @@ const MovieRequestModal = ({
       revalidateOnFocus: false,
     }
   );
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
+  const {
+    open: advancedOptionsOpen,
+    pinned: advancedOptionsPinned,
+    toggleOpen: toggleAdvancedOptions,
+    togglePin: toggleAdvancedOptionsPin,
+  } = useAdvancedOptionsDisclosure('movie');
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
-  const effectiveIs4k = requestOverrides?.is4k ?? is4k;
+  const effectiveIs4k = requestOverrides?.is4k ?? selectedIs4k;
   const selectedService = radarrServers?.find(
     (server) => server.id === requestOverrides?.server
   );
@@ -597,10 +603,29 @@ const MovieRequestModal = ({
           </div>
         </div>
 
+        <div className="mt-2 flex items-center">
+          <MediaQualitySelect
+            value={effectiveIs4k ? '4k' : 'hd'}
+            options={[
+              { label: 'HD', value: 'hd' },
+              { label: '4K', value: '4k' },
+            ]}
+            onChange={(quality) => {
+              setSelectedIs4k(quality === '4k');
+              setRequestOverrides(null);
+              setQualityRevision((current) => current + 1);
+            }}
+            label={intl.formatMessage(messages.quality)}
+            autoSelectAvailable={false}
+            purpose="request"
+          />
+        </div>
+
         {canUseAdvancedOptions && (
           <AdvancedRequester
+            key={(selectedIs4k ? '4k' : 'hd') + '-' + qualityRevision}
             type="movie"
-            is4k={is4k}
+            is4k={selectedIs4k}
             allow4kServerSelection={allow4kServerSelection}
             quota={quota}
             mediaTitle={data?.title}
@@ -618,22 +643,13 @@ const MovieRequestModal = ({
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <div className="mr-auto flex items-center gap-2">
             {canUseAdvancedOptions && (
-              <button
-                type="button"
-                className="app-button app-button-manage button-standard"
-                aria-expanded={advancedOptionsOpen}
-                onClick={() => setAdvancedOptionsOpen((open) => !open)}
-              >
-                <AdjustmentsHorizontalIcon
-                  className="h-3.5 w-3.5"
-                  aria-hidden="true"
-                />
-                {intl.formatMessage(messages.advancedOptions)}
-                <ChevronDownIcon
-                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
+              <AdvancedOptionsDisclosureButton
+                label={intl.formatMessage(messages.advancedOptions)}
+                open={advancedOptionsOpen}
+                pinned={advancedOptionsPinned}
+                onToggle={toggleAdvancedOptions}
+                onPin={toggleAdvancedOptionsPin}
+              />
             )}
           </div>
           <div

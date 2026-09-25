@@ -22,6 +22,7 @@ const messages = defineMessages('components.Common.PlayOnDeviceButton', {
 interface PlayOnDeviceButtonProps {
   mediaId?: number;
   itemIds: string[];
+  unavailableReason?: string;
   is4k?: boolean;
   className?: string;
 }
@@ -29,6 +30,7 @@ interface PlayOnDeviceButtonProps {
 const PlayOnDeviceButton = ({
   mediaId,
   itemIds,
+  unavailableReason,
   is4k = false,
   className,
 }: PlayOnDeviceButtonProps) => {
@@ -44,7 +46,7 @@ const PlayOnDeviceButton = ({
   const canPlay = !!mediaId && selectedItemIds.length > 0;
   const availableDevices = canPlay ? (devices ?? []) : [];
   const disabledReason = !canPlay
-    ? intl.formatMessage(messages.emptySelection)
+    ? (unavailableReason ?? intl.formatMessage(messages.emptySelection))
     : error || (devices && devices.length === 0)
       ? intl.formatMessage(messages.noDevices)
       : undefined;
@@ -102,7 +104,7 @@ const PlayOnDeviceButton = ({
                 void startPlayback(device);
               }}
             >
-              <ComputerDesktopIcon className="mr-2 h-4 w-4 flex-none" />
+              <ComputerDesktopIcon className="h-4 w-4 flex-none" />
               <span className="min-w-0">
                 <span className="block truncate">{device.name}</span>
                 <span className="block truncate text-xs text-gray-500">

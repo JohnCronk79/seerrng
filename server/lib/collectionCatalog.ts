@@ -77,6 +77,8 @@ export const getCuratedCollection = async (
         id: String(show.id),
         title: show.name,
         releaseDate: show.first_air_date,
+        originalLanguage: show.original_language,
+        status: show.status,
         posterPath: show.poster_path,
         overview: show.overview,
         subtitle: show.created_by?.map((person) => person.name).join(', '),

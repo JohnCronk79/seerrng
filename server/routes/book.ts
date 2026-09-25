@@ -251,6 +251,30 @@ bookRoutes.get('/:id', async (req, res, next) => {
   }
 });
 
+bookRoutes.get('/:id/ratings', async (req, res) => {
+  const parsedBookId = parseOpenLibraryWorkId(req.params.id);
+  if ('error' in parsedBookId) {
+    return res.status(404).json({ status: 404, message: 'Book not found' });
+  }
+
+  try {
+    const ratings = await new OpenLibraryAPI().getWorkRatings(
+      parsedBookId.value
+    );
+    return res.status(200).json(ratings);
+  } catch (error) {
+    logger.debug('Failed to retrieve book ratings', {
+      label: 'Book',
+      errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      bookId: parsedBookId.value,
+    });
+    return res.status(503).json({
+      status: 503,
+      message: 'Unable to retrieve book ratings.',
+    });
+  }
+});
+
 bookRoutes.get('/:id/cover', async (req, res) => {
   const parsedBookId = parseOpenLibraryWorkId(req.params.id);
   if ('error' in parsedBookId) {

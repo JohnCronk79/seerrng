@@ -293,7 +293,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
       <div className="section">
         <Button onClick={() => syncLibraries()} disabled={isSyncing}>
           <svg
-            className={`${isSyncing ? 'animate-spin' : ''} mr-1 h-5 w-5`}
+            className={`${isSyncing ? 'animate-spin' : ''} h-5 w-5`}
             fill="currentColor"
             viewBox="0 0 20 20"
             xmlns="http://www.w3.org/2000/svg"
@@ -388,7 +388,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
               {!dataSync?.running && (
                 <Button buttonType="warning" onClick={() => startScan()}>
                   <svg
-                    className="mr-1 h-5 w-5"
+                    className="h-5 w-5"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"

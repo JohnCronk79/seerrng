@@ -2,16 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 const read = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
-test('shared middle groups center as one unit and stretch across their allotted rows', () => {
-  const css = read('./globals.css');
-  assert.match(css, /\.detail-paired-columns > \.media-detail-column-divider,\s*\.detail-paired-simple-columns > \.media-detail-column-divider,[\s\S]*?width: max-content;\s*max-width: 100%;\s*justify-self: center;\s*align-self: stretch;/);
-  assert.match(css, /\.detail-three-column-grid:not\(:has\(> \.detail-paired-column-span\)\)\s*> \.media-detail-column-divider:nth-child\(2\)/);
-});
 const files = [
   'MediaDetails/MovieSummaryCard.tsx',
   'TvDetails/SeriesDetailsLayout.tsx',
   'BookDetails/BookDetailsLayout.tsx',
-  'MusicDetails/MusicDetailsLayout.tsx',
   'Blocklist/index.tsx',
   'IssueDetails/IssueMediaSummary.tsx',
   'IssueList/IssueItem/index.tsx',
@@ -52,7 +46,7 @@ test('paired spans share intrinsic parent tracks without fixed proportions', () 
   );
   assert.match(
     read('../components/MusicDetails/MusicDetailsLayout.tsx'),
-    /detail-paired-column-span min-w-0/
+    /detail-paired-column-span detail-paired-simple-columns min-w-0/
   );
 });
 

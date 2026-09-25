@@ -10,6 +10,25 @@ import {
 } from '@heroicons/react/24/solid';
 import { Fragment } from 'react';
 
+let closingOtherFilterMenus = false;
+
+const closeOtherFilterMenus = (current: HTMLButtonElement) => {
+  if (closingOtherFilterMenus) return;
+
+  closingOtherFilterMenus = true;
+  try {
+    document
+      .querySelectorAll<HTMLButtonElement>(
+        'button.app-filter-select-trigger[aria-expanded="true"]'
+      )
+      .forEach((button) => {
+        if (button !== current) button.click();
+      });
+  } finally {
+    closingOtherFilterMenus = false;
+  }
+};
+
 export const getFilterResetButtonClass = (selected: boolean) =>
   `app-filter-button ${
     selected ? 'app-filter-button-active' : 'app-filter-button-idle'
@@ -90,6 +109,7 @@ export const CompactSelect = ({
         <Listbox.Button
           aria-label={label}
           className="app-control-shadow-exempt app-filter-select-trigger"
+          onClickCapture={(event) => closeOtherFilterMenus(event.currentTarget)}
         >
           <span className="max-w-48 truncate">{selected.label}</span>
           <ChevronDownIcon
@@ -204,6 +224,7 @@ export const CompactRatingSelect = ({
         <Listbox.Button
           aria-label={label}
           className="app-control-shadow-exempt app-filter-select-trigger app-filter-select-trigger-rating"
+          onClickCapture={(event) => closeOtherFilterMenus(event.currentTarget)}
         >
           {selectedHasScore ? (
             <RatingStars score={selected.score ?? 0} maxScore={maxScore} />

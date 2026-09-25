@@ -1450,6 +1450,26 @@ const shuffleRankedWindow = <T>(
   return [...windowedResults, ...rankedResults.slice(windowSize)];
 };
 
+const findMatchingVideoKeywordIds = async (
+  tmdb: TheMovieDb,
+  search: string
+): Promise<string | undefined> => {
+  try {
+    const response = await tmdb.searchKeyword({ query: search });
+    const ids = response.results
+      .filter((keyword) => matchesAllSearchTerms([keyword.name], search))
+      .slice(0, MAX_DISCOVER_KEYWORD_IDS)
+      .map((keyword) => keyword.id);
+    return ids.length ? ids.join('|') : undefined;
+  } catch (error) {
+    logger.debug('Unable to include TMDB keywords in discovery search', {
+      label: 'API',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+};
+
 discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
@@ -1502,6 +1522,9 @@ discoverRoutes.get('/movies', async (req, res, next) => {
         })
       );
     }
+    const matchingKeywordIdsPromise = query.search
+      ? findMatchingVideoKeywordIds(tmdb, query.search)
+      : Promise.resolve(undefined);
     const data = query.search
       ? await tmdb.searchMovies({
           query: query.search,
@@ -1537,10 +1560,25 @@ discoverRoutes.get('/movies', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    const matchingKeywordIds = await matchingKeywordIdsPromise;
+    const taggedData = matchingKeywordIds
+      ? await tmdb.getDiscoverMovies({
+          page,
+          language: req.locale ?? query.language,
+          keywords: matchingKeywordIds,
+        })
+      : undefined;
+    const taggedIds = new Set(taggedData?.results.map((result) => result.id));
+    const combinedResults = [...data.results, ...(taggedData?.results ?? [])];
     data.results = await filterVideoSearchResults(
       tmdb,
       'movie',
-      data.results,
+      combinedResults.filter(
+        (result, index) =>
+          combinedResults.findIndex(
+            (candidate) => candidate.id === result.id
+          ) === index
+      ),
       query,
       req.locale
     );
@@ -1552,11 +1590,13 @@ discoverRoutes.get('/movies', async (req, res, next) => {
             parsedShuffleSeed.value
           );
     const rankedResults = query.search
-      ? providerResults.filter((result) =>
-          matchesAllSearchTerms(
-            [result.title, result.original_title],
-            query.search ?? ''
-          )
+      ? providerResults.filter(
+          (result) =>
+            taggedIds.has(result.id) ||
+            matchesAllSearchTerms(
+              [result.title, result.original_title],
+              query.search ?? ''
+            )
         )
       : providerResults;
 
@@ -1583,8 +1623,8 @@ discoverRoutes.get('/movies', async (req, res, next) => {
 
     return res.status(200).json({
       page: data.page,
-      totalPages: data.total_pages,
-      totalResults: data.total_results,
+      totalPages: Math.max(data.total_pages, taggedData?.total_pages ?? 0),
+      totalResults: data.total_results + (taggedData?.total_results ?? 0),
       keywords: keywordData,
       results: rankedResults.map((result) =>
         mapMovieResult(
@@ -1932,6 +1972,9 @@ discoverRoutes.get('/tv', async (req, res, next) => {
         })
       );
     }
+    const matchingKeywordIdsPromise = query.search
+      ? findMatchingVideoKeywordIds(tmdb, query.search)
+      : Promise.resolve(undefined);
     const data = query.search
       ? await tmdb.searchTvShows({
           query: query.search,
@@ -1968,10 +2011,25 @@ discoverRoutes.get('/tv', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    const matchingKeywordIds = await matchingKeywordIdsPromise;
+    const taggedData = matchingKeywordIds
+      ? await tmdb.getDiscoverTv({
+          page,
+          language: req.locale ?? query.language,
+          keywords: matchingKeywordIds,
+        })
+      : undefined;
+    const taggedIds = new Set(taggedData?.results.map((result) => result.id));
+    const combinedResults = [...data.results, ...(taggedData?.results ?? [])];
     data.results = await filterVideoSearchResults(
       tmdb,
       'tv',
-      data.results,
+      combinedResults.filter(
+        (result, index) =>
+          combinedResults.findIndex(
+            (candidate) => candidate.id === result.id
+          ) === index
+      ),
       query,
       req.locale
     );
@@ -1983,11 +2041,13 @@ discoverRoutes.get('/tv', async (req, res, next) => {
             parsedShuffleSeed.value
           );
     const rankedResults = query.search
-      ? providerResults.filter((result) =>
-          matchesAllSearchTerms(
-            [result.name, result.original_name],
-            query.search ?? ''
-          )
+      ? providerResults.filter(
+          (result) =>
+            taggedIds.has(result.id) ||
+            matchesAllSearchTerms(
+              [result.name, result.original_name],
+              query.search ?? ''
+            )
         )
       : providerResults;
 
@@ -2014,8 +2074,8 @@ discoverRoutes.get('/tv', async (req, res, next) => {
 
     return res.status(200).json({
       page: data.page,
-      totalPages: data.total_pages,
-      totalResults: data.total_results,
+      totalPages: Math.max(data.total_pages, taggedData?.total_pages ?? 0),
+      totalResults: data.total_results + (taggedData?.total_results ?? 0),
       keywords: keywordData,
       results: rankedResults.map((result) =>
         mapTvResult(
@@ -3353,7 +3413,7 @@ discoverRoutes.get('/books', async (req, res) => {
   };
   const queryParts = [
     hasSearchQuery
-      ? toFieldedBooleanAndQuery(searchQuery, ['title', 'author'])
+      ? toFieldedBooleanAndQuery(searchQuery, ['title', 'author', 'subject'])
       : hasSubjectFilter
         ? `subject:${subjectQuery}`
         : '*:*',
@@ -3435,7 +3495,7 @@ discoverRoutes.get('/books', async (req, res) => {
       if (
         hasSearchQuery &&
         !matchesAllSearchTerms(
-          [doc.title, ...(doc.author_name ?? [])],
+          [doc.title, ...(doc.author_name ?? []), ...(doc.subject ?? [])],
           searchQuery
         )
       ) {

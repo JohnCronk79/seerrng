@@ -36,12 +36,25 @@ export interface UserSettingsCardTextResponse {
 }
 
 export type DetailDisclosurePin =
-  'cast' | 'crew' | 'artists' | 'subjectTags' | 'collection' | 'details';
+  | 'cast'
+  | 'crew'
+  | 'artists'
+  | 'subjectTags'
+  | 'collection'
+  | 'details'
+  | 'advancedOptions'
+  | 'filters'
+  | 'mediaFilters'
+  | 'sortBy';
 
 export type DetailDisclosureMediaType = 'movie' | 'tv' | 'music' | 'book';
 
 export interface UserSettingsDetailDisclosureResponse {
   details?: boolean;
+  advancedOptions?: boolean;
+  filters?: boolean;
+  mediaFilters?: boolean;
+  sortBy?: boolean;
   collection?: boolean;
   cast?: boolean;
   crew?: boolean;

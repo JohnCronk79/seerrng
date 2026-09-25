@@ -9,13 +9,15 @@ import {
   FilterResetButton,
   getFilterToggleButtonClass,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import { prepareFilterValues } from '@app/components/Discover/constants';
 import useDiscover from '@app/hooks/useDiscover';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
 import defineMessages from '@app/utils/defineMessages';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
+import type { DetailDisclosureMediaType } from '@server/interfaces/api/userSettingsInterfaces';
 import type {
   AlbumResult,
   ArtistResult,
@@ -265,6 +267,14 @@ const Search = () => {
   const query =
     typeof router.query.query === 'string' ? router.query.query.trim() : '';
   const category = getSearchCategory(router.query.type, router.query.format);
+  const filterMediaType: DetailDisclosureMediaType =
+    category.key === 'tv'
+      ? 'tv'
+      : category.key === 'music'
+        ? 'music'
+        : category.key === 'book' || category.key === 'audiobook'
+          ? 'book'
+          : 'movie';
   const mediaPin = useMediaFilterPin<SearchCategory['key']>({
     scope: 'search',
     selected: category.key,
@@ -304,10 +314,11 @@ const Search = () => {
   };
   const resultFilter = getSearchResultFilter(router.query).trim();
   const combinedQuery = [query, resultFilter].filter(Boolean).join(' ');
-  const preparedVideoFilters = prepareFilterValues({
-    ...router.query,
-    search: combinedQuery || undefined,
-  });
+  const preparedVideoFilters = prepareFilterValues(
+    category.key === 'movie' || category.key === 'tv'
+      ? { ...router.query, search: combinedQuery || undefined }
+      : { search: combinedQuery || undefined }
+  );
   const searchEndpoint = getSearchEndpoint(
     category.key,
     query,
@@ -334,6 +345,7 @@ const Search = () => {
       if (category.key === 'music') {
         return {
           query: combinedQuery,
+          availability: getRoutedString('availability') || undefined,
           days: '14',
           sortBy: 'ranked',
           genre: getRoutedString('genre'),
@@ -348,6 +360,7 @@ const Search = () => {
       if (category.key === 'book' || category.key === 'audiobook') {
         return {
           query: combinedQuery,
+          author: getRoutedString('author'),
           subject: getRoutedString('subject'),
           firstPublishYear: getRoutedString('firstPublishYear'),
           language: getRoutedString('language'),
@@ -388,6 +401,15 @@ const Search = () => {
     mutate,
   } = useDiscover<SearchResult>(searchEndpoint, searchOptions, {
     enabled: isSearchReady,
+    availableQuality:
+      category.key === 'music'
+        ? router.query.availability === 'mp3' ||
+          router.query.availability === 'flac'
+          ? router.query.availability
+          : undefined
+        : category.key === 'movie' || category.key === 'tv'
+          ? preparedVideoFilters.availability
+          : undefined,
     hideAvailable: false,
     hideBlocklisted: true,
     showErrorToast: false,
@@ -517,51 +539,58 @@ const Search = () => {
           {intl.formatMessage(messages.searchresults)}
         </Header>
       </div>
-      <div className="app-filter-section-gap">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
+      >
         <div
           className="flex flex-wrap items-center gap-2"
           aria-label={intl.formatMessage(messages.mediaFilters)}
         >
-          <MediaFilterPin pin={mediaPin} />
           {searchCategories.map((searchCategory) => {
             const isSelected = category.key === searchCategory.key;
 
             return (
-              <button
+              <MediaFilterOption
                 key={searchCategory.key}
-                type="button"
-                className={getFilterToggleButtonClass(isSelected)}
-                aria-pressed={isSelected}
-                onClick={() => {
-                  mediaPin.remember(searchCategory.key);
-                  const nextQuery = getSearchCategoryQuery(router.query, {
-                    type: searchCategory.type,
-                    format:
-                      'format' in searchCategory
-                        ? searchCategory.format
-                        : undefined,
-                  });
-
-                  void router.replace(
-                    { pathname: router.pathname, query: nextQuery },
-                    undefined,
-                    { shallow: true, scroll: false }
-                  );
-                }}
+                pin={mediaPin}
+                value={searchCategory.key}
+                label={intl.formatMessage(searchCategory.message)}
+                selected={isSelected}
               >
-                {intl.formatMessage(searchCategory.message)}
-              </button>
+                <button
+                  type="button"
+                  className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    const nextQuery = getSearchCategoryQuery(router.query, {
+                      type: searchCategory.type,
+                      format:
+                        'format' in searchCategory
+                          ? searchCategory.format
+                          : undefined,
+                    });
+
+                    void router.replace(
+                      { pathname: router.pathname, query: nextQuery },
+                      undefined,
+                      { shallow: true, scroll: false }
+                    );
+                  }}
+                >
+                  {intl.formatMessage(searchCategory.message)}
+                </button>
+              </MediaFilterOption>
             );
           })}
         </div>
-      </div>
-      <div className="app-filter-section-gap">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.filter)}
-        </div>
+      </PinnedFilterSection>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="filters"
+        label={intl.formatMessage(messages.filter)}
+      >
         <div
           className="flex flex-wrap items-center gap-2"
           aria-label={intl.formatMessage(messages.filter)}
@@ -570,7 +599,6 @@ const Search = () => {
             label={intl.formatMessage(messages.clearFilters)}
             selected={!hasActiveFilters}
             onClick={() => {
-              mediaPin.remember('all');
               void router.replace(
                 {
                   pathname: router.pathname,
@@ -586,11 +614,12 @@ const Search = () => {
           />
           <ContextualSearchFilters category={category.key} />
         </div>
-      </div>
-      <div className="app-filter-section-gap">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.sortBy)}
-        </div>
+      </PinnedFilterSection>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="sortBy"
+        label={intl.formatMessage(messages.sortBy)}
+      >
         <div className="flex flex-wrap items-center gap-2">
           {sortOptions.map((sortOption) => {
             const isSelected = sortField === sortOption.field;
@@ -642,7 +671,7 @@ const Search = () => {
             );
           })}
         </div>
-      </div>
+      </PinnedFilterSection>
       {error && sortedTitles.length === 0 ? (
         searchError
       ) : (

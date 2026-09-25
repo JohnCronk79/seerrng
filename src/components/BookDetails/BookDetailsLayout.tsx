@@ -2,6 +2,8 @@ import CachedImage from '@app/components/Common/CachedImage';
 import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import OpenLibraryRating from '@app/components/MediaDetails/OpenLibraryRating';
 import PlaybackTrackList from '@app/components/MediaDetails/PlaybackTrackList';
 import { subjectTagClassName } from '@app/components/MediaDetails/subjectTagStyle';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
@@ -11,6 +13,7 @@ import { normalizeBookOverviewMarkdown } from '@app/utils/bookMarkdown';
 import defineMessages from '@app/utils/defineMessages';
 import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
 import { getSafeMarkdownHref } from '@app/utils/safeUrl';
+import type { OpenLibraryWorkRatingResponse } from '@server/api/openlibrary';
 import type { BookDetails } from '@server/models/Book';
 import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -31,14 +34,16 @@ const messages = defineMessages('components.BookDetails.Layout', {
   overviewUnavailable: 'Overview unavailable',
   genres: 'Genres',
   noGenres: 'No Genres Available',
+  keywords: 'Keywords',
+  noKeywords: 'No keywords available',
   bookDetails: 'Details',
   openLibrary: 'Open Library',
   edition: 'Edition',
   isbnCandidates: 'ISBN Candidates',
   available: 'Available',
   requested: 'Requested',
-  notRequested: 'Not Requested',
   notAvailable: 'Not Available',
+  format: 'Format',
 });
 
 export interface BookFormatCoverage {
@@ -49,26 +54,41 @@ export interface BookFormatCoverage {
 
 interface BookDetailsLayoutProps {
   data: BookDetails;
+  ratingData?: OpenLibraryWorkRatingResponse;
   formatCoverage: BookFormatCoverage[];
+  initialPlaybackFormat: 'ebook' | 'audiobook';
   primaryActions: ReactNode;
   secondaryActions: ReactNode;
   catalogActions?: ReactNode;
-  playbackActions?: (itemIds: string[]) => ReactNode;
+  playbackActions?: (
+    itemIds: string[],
+    format: 'ebook' | 'audiobook'
+  ) => ReactNode;
+  playbackUnavailableReason?: (format: 'ebook' | 'audiobook') => string;
   additionalContent?: ReactNode;
 }
 
 const BookDetailsLayout = ({
   data,
+  ratingData,
   formatCoverage,
+  initialPlaybackFormat,
   primaryActions,
   secondaryActions,
   catalogActions,
   playbackActions,
+  playbackUnavailableReason,
   additionalContent,
 }: BookDetailsLayoutProps) => {
   const intl = useIntl();
   const { pins, togglePinned } = useDetailDisclosurePins('book');
   const [showDetails, setShowDetails] = useState(false);
+  const [selectedPlaybackFormat, setSelectedPlaybackFormat] = useState<
+    'ebook' | 'audiobook'
+  >(initialPlaybackFormat);
+  useEffect(() => {
+    setSelectedPlaybackFormat(initialPlaybackFormat);
+  }, [data.id, initialPlaybackFormat]);
   useEffect(() => {
     setShowDetails(pins.details);
   }, [pins.details, data.id]);
@@ -124,7 +144,7 @@ const BookDetailsLayout = ({
         ? messages.available
         : coverage.requested
           ? messages.requested
-          : messages.notRequested
+          : messages.notAvailable
     );
 
   return (
@@ -243,7 +263,7 @@ const BookDetailsLayout = ({
                             <span key={genre}>
                               {index > 0 && ', '}
                               <Link
-                                href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
+                                href={`/discover/books?search=${encodeURIComponent(genre)}&sortBy=ranked`}
                                 className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {genre}
@@ -293,15 +313,46 @@ const BookDetailsLayout = ({
               onSelectionChange={setSelectedPlaybackItemIds}
             />
           )}
-          {playbackActions && (
-            <div className="media-rating-row">
-              {playbackActions(effectivePlaybackItemIds)}
+          <div className="media-rating-row">
+            <MediaQualitySelect
+              value={selectedPlaybackFormat}
+              options={[
+                {
+                  label: intl.formatMessage(messages.ebook),
+                  value: 'ebook',
+                },
+                {
+                  label: intl.formatMessage(messages.audiobook),
+                  value: 'audiobook',
+                },
+              ]}
+              onChange={setSelectedPlaybackFormat}
+              label={intl.formatMessage(messages.format)}
+              autoSelectAvailable={false}
+            />
+            {playbackActions?.(
+              effectivePlaybackItemIds,
+              selectedPlaybackFormat
+            )}
+            {playbackActions && (
               <PlayOnDeviceButton
                 mediaId={data.mediaInfo?.id}
-                itemIds={effectivePlaybackItemIds}
+                unavailableReason={playbackUnavailableReason?.(
+                  selectedPlaybackFormat
+                )}
+                itemIds={
+                  selectedPlaybackFormat === 'audiobook'
+                    ? effectivePlaybackItemIds
+                    : []
+                }
               />
-            </div>
-          )}
+            )}
+            <OpenLibraryRating
+              average={ratingData?.average}
+              count={ratingData?.count}
+              workId={data.id}
+            />
+          </div>
 
           <div className="media-primary-action-row">
             {primaryActions}
@@ -334,7 +385,7 @@ const BookDetailsLayout = ({
 
           <div className="media-detail-disclosure-row">
             <DetailDisclosureButton
-              label={intl.formatMessage(messages.genres)}
+              label={intl.formatMessage(messages.keywords)}
               open={showGenres}
               onClick={() => setShowGenres((open) => !open)}
               pinned={pins.subjectTags}
@@ -354,18 +405,18 @@ const BookDetailsLayout = ({
           {showGenres && (
             <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
               <h2 className="media-inset-heading mb-2">
-                {intl.formatMessage(messages.genres)}
+                {intl.formatMessage(messages.keywords)}
               </h2>
               {genres.length === 0 ? (
                 <p className="refreshed-detail-text-muted text-xs">
-                  {intl.formatMessage(messages.noGenres)}
+                  {intl.formatMessage(messages.noKeywords)}
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   {genres.map((genre, index) => (
                     <Link
                       key={genre}
-                      href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
+                      href={`/discover/books?search=${encodeURIComponent(genre)}&sortBy=ranked`}
                       className={subjectTagClassName(index)}
                     >
                       {genre}

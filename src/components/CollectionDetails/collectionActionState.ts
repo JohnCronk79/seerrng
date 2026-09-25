@@ -26,11 +26,8 @@ export const availableDestinationCount = (
 export const availableDestinationIds = (
   entries: CollectionDestination[],
   includedIds?: string[]
-) => [
-  ...new Set(
-    entries.flatMap((entry) => destinationItemIds(entry, includedIds))
-  ),
-];
+) =>
+  [...new Set(entries.flatMap((entry) => destinationItemIds(entry, includedIds)))];
 
 const verificationState = (status?: CollectionSyncStatus, error?: unknown) => {
   if (error || (status && !status.supported)) return 'unavailable';

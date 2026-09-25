@@ -2,6 +2,8 @@ import Alert from '@app/components/Common/Alert';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import AlbumTrackList from '@app/components/MediaDetails/AlbumTrackList';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import AdvancedOptionsDisclosureButton from '@app/components/RequestModal/AdvancedOptionsDisclosureButton';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
@@ -13,6 +15,7 @@ import {
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
 } from '@app/components/RequestModal/requestAvailability';
+import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -21,12 +24,7 @@ import {
   normalizeMusicBrainzId,
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  AdjustmentsHorizontalIcon,
-  ArrowDownTrayIcon,
-  ChevronDownIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -77,6 +75,7 @@ const messages = defineMessages('components.RequestModal.Music', {
   readyToRequest: 'Ready to Request',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
+  quality: 'Quality',
 });
 
 interface MusicRequestModalProps {
@@ -100,11 +99,20 @@ const MusicRequestModal = ({
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState<'mp3' | 'flac' | null>(
+    null
+  );
+  const [qualityRevision, setQualityRevision] = useState(0);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(
       initialServerId !== undefined ? { server: initialServerId } : null
     );
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
+  const {
+    open: advancedOptionsOpen,
+    pinned: advancedOptionsPinned,
+    toggleOpen: toggleAdvancedOptions,
+    togglePin: toggleAdvancedOptionsPin,
+  } = useAdvancedOptionsDisclosure('music');
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const normalizedMbId = normalizeMusicBrainzId(mbId);
@@ -117,10 +125,20 @@ const MusicRequestModal = ({
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
   );
+  const initialService = musicServices?.find(
+    (server) => server.id === initialServerId
+  );
+  const effectiveFormat =
+    selectedFormat ??
+    (initialService?.name.toLowerCase().includes('flac') ? 'flac' : 'mp3');
+  const qualityService = musicServices?.find((server) =>
+    server.name.toLowerCase().includes(effectiveFormat)
+  );
   const selectedService = musicServices?.find(
     (server) => server.id === requestOverrides?.server
   );
-  const fallbackService = musicServices?.find((server) => server.isDefault);
+  const fallbackService =
+    qualityService ?? musicServices?.find((server) => server.isDefault);
   const selectedDestination = createRequestDestination(
     'lidarr',
     'music',
@@ -170,6 +188,7 @@ const MusicRequestModal = ({
     setRequestOverrides(
       initialServerId !== undefined ? { server: initialServerId } : null
     );
+    setSelectedFormat(null);
   }, [editRequest?.id, initialServerId, mbId]);
 
   useEffect(() => {
@@ -186,14 +205,14 @@ const MusicRequestModal = ({
     try {
       const overrideParams = requestOverrides
         ? {
-            serverId: requestOverrides.server,
+            serverId: requestOverrides.server ?? qualityService?.id,
             profileId: requestOverrides.profile,
             metadataProfileId: requestOverrides.metadataProfile,
             rootFolder: requestOverrides.folder,
             userId: requestOverrides.user?.id,
             tags: requestOverrides.tags,
           }
-        : {};
+        : { serverId: qualityService?.id };
       const response = await axios.post<MediaRequest>('/api/v1/request', {
         mediaId: data?.mbId
           ? normalizeMusicBrainzId(data.mbId)
@@ -252,6 +271,7 @@ const MusicRequestModal = ({
     intl,
     normalizedMbId,
     onComplete,
+    qualityService?.id,
     requestOverrides,
     selectedDestinationCovered,
   ]);
@@ -260,7 +280,7 @@ const MusicRequestModal = ({
     requestOverrides?.user?.permissions ?? user?.permissions ?? 0,
     'music'
   );
-  const serviceUnavailable = !!musicServices && musicServices.length === 0;
+  const serviceUnavailable = !!musicServices && !qualityService;
   const canUseAdvancedOptions = hasPermission(
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
@@ -635,15 +655,54 @@ const MusicRequestModal = ({
           </>
         ) : null}
 
+        <div className="mt-2 flex items-center">
+          <MediaQualitySelect
+            value={
+              selectedService?.name.toLowerCase().includes('flac')
+                ? 'flac'
+                : selectedService?.name.toLowerCase().includes('mp3')
+                  ? 'mp3'
+                  : effectiveFormat
+            }
+            options={[
+              {
+                label: 'MP3',
+                value: 'mp3',
+                disabled:
+                  !!musicServices &&
+                  !musicServices.some((server) =>
+                    server.name.toLowerCase().includes('mp3')
+                  ),
+              },
+              {
+                label: 'FLAC',
+                value: 'flac',
+                disabled:
+                  !!musicServices &&
+                  !musicServices.some((server) =>
+                    server.name.toLowerCase().includes('flac')
+                  ),
+              },
+            ]}
+            onChange={(quality) => {
+              setSelectedFormat(quality);
+              setRequestOverrides(null);
+              setQualityRevision((current) => current + 1);
+            }}
+            label={intl.formatMessage(messages.quality)}
+            autoSelectAvailable={false}
+            purpose="request"
+          />
+        </div>
+
         {canUseAdvancedOptions && (
           <AdvancedRequester
+            key={effectiveFormat + '-' + qualityRevision}
             type="music"
             is4k={false}
             expanded={advancedOptionsOpen}
             defaultOverrides={
-              initialServerId !== undefined
-                ? { server: initialServerId }
-                : undefined
+              qualityService ? { server: qualityService.id } : undefined
             }
             panelOnly
             rootFolderTable
@@ -655,22 +714,13 @@ const MusicRequestModal = ({
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <div className="mr-auto flex items-center gap-2">
             {canUseAdvancedOptions && (
-              <button
-                type="button"
-                className="app-button app-button-manage button-standard"
-                aria-expanded={advancedOptionsOpen}
-                onClick={() => setAdvancedOptionsOpen((open) => !open)}
-              >
-                <AdjustmentsHorizontalIcon
-                  className="h-3.5 w-3.5"
-                  aria-hidden="true"
-                />
-                {intl.formatMessage(messages.advancedOptions)}
-                <ChevronDownIcon
-                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
+              <AdvancedOptionsDisclosureButton
+                label={intl.formatMessage(messages.advancedOptions)}
+                open={advancedOptionsOpen}
+                pinned={advancedOptionsPinned}
+                onToggle={toggleAdvancedOptions}
+                onPin={toggleAdvancedOptionsPin}
+              />
             )}
           </div>
           <div

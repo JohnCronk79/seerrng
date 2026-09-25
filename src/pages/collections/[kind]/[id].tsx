@@ -13,18 +13,9 @@ export default function CollectionPage() {
     return <ErrorPage statusCode={404} />;
   return (
     <CuratedCollectionDetails
-      key={`${query.kind}:${query.id}:${query.view}`}
+      key={`${query.kind}:${query.id}`}
       kind={query.kind}
       id={query.id}
-      discographyArtist={
-        query.kind === 'music' && query.view === 'discography' ? '' : undefined
-      }
-      returnAlbumId={
-        typeof query.albumId === 'string' &&
-        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(query.albumId)
-          ? query.albumId
-          : undefined
-      }
     />
   );
 }

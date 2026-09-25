@@ -1,5 +1,4 @@
-import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import defineMessages from '@app/utils/defineMessages';
 import { parseQueryFromPath } from '@app/utils/routeQuery';
@@ -68,6 +67,11 @@ const BookFormatTabs = ({
   className = '',
 }: BookFormatTabsProps) => {
   const intl = useIntl();
+  const router = useRouter();
+  const allPathname =
+    router.pathname === '/discover/audiobooks'
+      ? '/discover/audiobooks'
+      : '/discover/books';
   const tabs: {
     format: BookDiscoveryFormat;
     label: (typeof messages)[keyof typeof messages];
@@ -79,7 +83,7 @@ const BookFormatTabs = ({
       format: 'all',
       label: messages.allBooks,
       icon: Squares2X2Icon,
-      pathname: '/discover/books',
+      pathname: allPathname,
       queryFormat: 'all',
     },
     {
@@ -101,7 +105,6 @@ const BookFormatTabs = ({
   // contains a query string and fall back to the parsed router query otherwise.
   const pathQuery = currentPath ? parseQueryFromPath(currentPath) : {};
   const preservedQuery = Object.keys(pathQuery).length > 0 ? pathQuery : query;
-  const router = useRouter();
   const pin = useMediaFilterPin<BookDiscoveryFormat>({
     scope: 'books',
     selected: format,
@@ -124,27 +127,32 @@ const BookFormatTabs = ({
       className={`flex flex-wrap gap-2 ${className}`}
       data-testid="book-format-tabs"
     >
-      <MediaFilterPin pin={pin} />
       {tabs.map((tab) => {
         const isSelected = tab.format === format;
         const Icon = tab.icon;
 
         return (
-          <Link
+          <MediaFilterOption
             key={tab.format}
-            onClick={() => pin.remember(tab.format)}
-            href={getBookFormatHref(
-              tab.pathname,
-              preservedQuery,
-              tab.queryFormat
-            )}
-            aria-current={isSelected ? 'page' : undefined}
-            data-testid={`book-format-tab-${tab.format}`}
-            className={getFilterToggleButtonClass(isSelected)}
+            pin={pin}
+            value={tab.format}
+            label={intl.formatMessage(tab.label)}
+            selected={isSelected}
           >
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            <span>{intl.formatMessage(tab.label)}</span>
-          </Link>
+            <Link
+              href={getBookFormatHref(
+                tab.pathname,
+                preservedQuery,
+                tab.queryFormat
+              )}
+              aria-current={isSelected ? 'page' : undefined}
+              data-testid={`book-format-tab-${tab.format}`}
+              className="flex h-full items-center gap-1.5 px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              <span>{intl.formatMessage(tab.label)}</span>
+            </Link>
+          </MediaFilterOption>
         );
       })}
     </nav>

@@ -39,6 +39,7 @@ import {
   MinusCircleIcon,
   StarIcon,
 } from '@heroicons/react/24/solid';
+import type { OpenLibraryWorkRatingResponse } from '@server/api/openlibrary';
 import { IssueStatus } from '@server/constants/issue';
 import {
   MediaRequestStatus,
@@ -87,6 +88,7 @@ const messages = defineMessages('components.BookDetails', {
   requestBookFormat: 'Request {format}',
   requestbibliography: 'Request Bibliography',
   selectToPlay: 'No playable audiobook tracks are currently available.',
+  selectAudiobookToPlay: 'Select Audiobook to enable playback.',
   bookAvailable: 'The Book format is already available.',
   audiobookAvailable: 'The Audiobook format is already available.',
   bookPending: 'An open Book request already exists.',
@@ -156,6 +158,12 @@ const BookDetails = () => {
       ? `/api/v1/book/${encodeApiPathSegment(normalizedRouteBookId)}`
       : null
   );
+  const { data: ratingData } = useSWR<OpenLibraryWorkRatingResponse>(
+    normalizedRouteBookId
+      ? `/api/v1/book/${encodeApiPathSegment(normalizedRouteBookId)}/ratings`
+      : null,
+    { revalidateOnFocus: false }
+  );
   const { data: bookServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/readarr'
   );
@@ -197,15 +205,21 @@ const BookDetails = () => {
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
+  const playbackUnavailableReason = (format: 'ebook' | 'audiobook') =>
+    intl.formatMessage(
+      format === 'audiobook'
+        ? messages.selectToPlay
+        : messages.selectAudiobookToPlay
+    );
   const playbackActions = canRequest
-    ? (itemIds: string[]) => (
+    ? (itemIds: string[], format: 'ebook' | 'audiobook') => (
         <MediaServerPlayButton
           mediaUrl={data.mediaInfo?.mediaUrl}
           iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
           mediaId={data.mediaInfo?.id}
           itemIds={itemIds}
-          disabled={itemIds.length === 0}
-          disabledReason={intl.formatMessage(messages.selectToPlay)}
+          disabled={format !== 'audiobook' || itemIds.length === 0}
+          disabledReason={playbackUnavailableReason(format)}
         />
       )
     : undefined;
@@ -763,11 +777,16 @@ const BookDetails = () => {
       )}
       <BookDetailsLayout
         data={data}
+        ratingData={ratingData}
         formatCoverage={formatCoverage}
+        initialPlaybackFormat={
+          preferredBookFormat === 'audiobook' ? 'audiobook' : 'ebook'
+        }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
         catalogActions={catalogActions}
         playbackActions={playbackActions}
+        playbackUnavailableReason={playbackUnavailableReason}
         additionalContent={additionalContent}
       />
     </>

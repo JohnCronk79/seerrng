@@ -32,9 +32,22 @@ const messages = defineMessages('components.Login', {
   signinwithjellyfin: 'Use your {mediaServerName} account',
   signinwithoverseerr: 'Use your {applicationTitle} account',
   orsigninwith: 'Or sign in with',
+  movie: 'Movie',
+  series: 'Series',
 });
 
-const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
+export type LoginBackdrop = {
+  path: string;
+  title: string;
+  mediaType: 'movie' | 'tv';
+  year?: string;
+};
+
+const Login = ({
+  initialBackdrops,
+}: {
+  initialBackdrops?: LoginBackdrop[];
+}) => {
   const intl = useIntl();
   const router = useRouter();
   const settings = useSettings();
@@ -109,7 +122,7 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
     }
   }, [user, router]);
 
-  const { data: backdrops } = useSWR<string[]>('/api/v1/backdrops', {
+  const { data: backdrops } = useSWR<LoginBackdrop[]>('/api/v1/backdrops', {
     fallbackData: initialBackdrops,
     revalidateOnMount: !initialBackdrops,
     refreshInterval: 0,
@@ -199,7 +212,18 @@ const Login = ({ initialBackdrops }: { initialBackdrops?: string[] }) => {
       <ImageFader
         backgroundImages={
           backdrops?.map(
-            (backdrop) => `https://image.tmdb.org/t/p/w1280${backdrop}`
+            (backdrop) => `https://image.tmdb.org/t/p/w1280${backdrop.path}`
+          ) ?? []
+        }
+        backgroundTitles={
+          backdrops?.map(
+            (backdrop) =>
+              intl.formatMessage(
+                backdrop.mediaType === 'tv' ? messages.series : messages.movie
+              ) +
+              ': ' +
+              backdrop.title +
+              (backdrop.year ? ' (' + backdrop.year + ')' : '')
           ) ?? []
         }
       />

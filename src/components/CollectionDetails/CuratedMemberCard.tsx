@@ -152,7 +152,16 @@ export default function CuratedMemberCard({
                 {intl.formatMessage(messages.release)}:
               </dt>
               <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
-                {part.releaseDate || unavailable}
+                {part.releaseDate
+                  ? kind === 'tv'
+                    ? intl.formatDate(part.releaseDate, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        timeZone: 'UTC',
+                      })
+                    : part.releaseDate
+                  : unavailable}
               </dd>
               <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                 {intl.formatMessage(messages.runtime)}:

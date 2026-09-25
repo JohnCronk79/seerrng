@@ -18,7 +18,8 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
@@ -1108,7 +1109,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.approveTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('approve')}
             >
@@ -1119,7 +1120,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.declineTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('decline')}
             >
@@ -1130,7 +1131,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.editTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => setShowEditModal(true)}
             >
@@ -1143,7 +1144,7 @@ const RequestStatusCard = ({
       <Tooltip content={intl.formatMessage(messages.retryTooltip)}>
         <button
           type="button"
-          className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="compact-control inline-flex items-center rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canRetry || isRetrying || isDeleting || isRemoving}
           onClick={() => void onRetry(item.request.id)}
         >
@@ -1544,7 +1545,7 @@ const RequestStatusCard = ({
           {actionControls}
           <button
             type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-800/45 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="compact-control inline-flex items-center rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-800/45 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             aria-expanded={isHistoryOpen}
             onClick={() => onToggleHistory(item.request.id)}
           >
@@ -1834,7 +1835,6 @@ const RequestStatus = () => {
   };
 
   const updateMediaFilter = (nextMediaFilter: MediaFilter) => {
-    mediaPin.remember(nextMediaFilter);
     const options = getSortOptions(nextMediaFilter);
     const keepsSort = options.some((option) => option.value === sort);
     const nextSort = keepsSort ? sort : 'added';
@@ -2030,7 +2030,7 @@ const RequestStatus = () => {
             onClick={() => void mutate()}
           >
             <ArrowPathIcon
-              className={`mr-1.5 h-4 w-4 ${isValidating ? 'animate-spin' : ''}`}
+              className={`h-4 w-4 ${isValidating ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
             {intl.formatMessage(
@@ -2097,7 +2097,6 @@ const RequestStatus = () => {
     setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
-    mediaPin.remember('all');
     setSort('added');
     setSortDirection('desc');
     setTimeFrame('all');
@@ -2261,30 +2260,40 @@ const RequestStatus = () => {
         </div>
       </section>
 
-      <section
-        className="app-filter-section-gap"
-        aria-label={intl.formatMessage(messages.mediaFilters)}
+      <PinnedFilterSection
+        mediaType={
+          mediaFilter === 'tv'
+            ? 'tv'
+            : mediaFilter === 'music'
+              ? 'music'
+              : mediaFilter === 'book' || mediaFilter === 'audiobook'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
       >
-        <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
-          <MediaFilterPin pin={mediaPin} />
           {mediaFilters.map((option) => (
-            <button
+            <MediaFilterOption
               key={option.value}
-              type="button"
-              aria-pressed={mediaFilter === option.value}
-              onClick={() => updateMediaFilter(option.value)}
-              className={getFilterToggleButtonClass(
-                mediaFilter === option.value
-              )}
+              pin={mediaPin}
+              value={option.value}
+              label={intl.formatMessage(messages[option.label])}
+              selected={mediaFilter === option.value}
             >
-              {intl.formatMessage(messages[option.label])}
-            </button>
+              <button
+                type="button"
+                aria-pressed={mediaFilter === option.value}
+                onClick={() => updateMediaFilter(option.value)}
+                className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+              >
+                {intl.formatMessage(messages[option.label])}
+              </button>
+            </MediaFilterOption>
           ))}
         </div>
-      </section>
+      </PinnedFilterSection>
 
       <section
         className="app-filter-section-gap"
@@ -2302,7 +2311,7 @@ const RequestStatus = () => {
           />
           <label className="discover-filter-control w-72 flex-none self-center">
             <span
-              className={`discover-filter-control-label gap-1 ${
+              className={`discover-filter-control-label ${
                 searchFilter.trim()
                   ? 'discover-filter-control-label-active'
                   : ''

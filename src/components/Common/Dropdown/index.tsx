@@ -104,7 +104,7 @@ const Dropdown = ({
         className={[
           buttonType === 'playback'
             ? `app-button app-button-playback playback-dropdown-trigger ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
-            : `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center gap-2 rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
+            : `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
           buttonType === 'playback'
             ? ''
             : buttonType === 'ghost'

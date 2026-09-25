@@ -20,7 +20,6 @@ import {
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import {
-  ArrowDownTrayIcon,
   CogIcon,
   ExclamationTriangleIcon,
   EyeSlashIcon,
@@ -75,7 +74,6 @@ const messages = defineMessages('components.MusicDetails', {
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
   viewrequest: 'View Request',
-  requestdiscography: 'Request Discography',
   selectToPlay: 'No playable tracks are currently available.',
   mp3Available: 'The MP3 version is already available.',
   flacAvailable: 'The FLAC version is already available.',
@@ -158,7 +156,6 @@ const MusicDetails = () => {
 
   const musicBrainzId = normalizeMusicBrainzId(data.mbId);
   const albumId = normalizeMusicBrainzId(data.id);
-  const artistId = normalizeMusicBrainzId(data.artist.id);
 
   const canRequest = hasPermission(
     [Permission.REQUEST, Permission.REQUEST_MUSIC],
@@ -374,26 +371,6 @@ const MusicDetails = () => {
     }
   };
 
-  const catalogActions = (
-    <>
-      {canRequest && artistId && (
-        <Button
-          buttonType="bulkRequest"
-          buttonSize="sm"
-          className="media-detail-catalog-action"
-          onClick={() =>
-            void router.push(
-              `/collections/music/${artistId}?view=discography&albumId=${albumId}`
-            )
-          }
-        >
-          <ArrowDownTrayIcon />
-          <span>{intl.formatMessage(messages.requestdiscography)}</span>
-        </Button>
-      )}
-    </>
-  );
-
   const primaryActions = (
     <>
       {canUseBlocklist && (
@@ -601,7 +578,6 @@ const MusicDetails = () => {
         data={data}
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
-        catalogActions={catalogActions}
         playbackActions={playbackActions}
         ratingData={ratingData}
         additionalContent={additionalContent}

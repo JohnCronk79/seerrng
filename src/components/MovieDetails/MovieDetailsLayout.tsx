@@ -39,12 +39,12 @@ const messages = defineMessages('components.MovieDetails.Layout', {
   viewCast: 'Cast',
   viewCollection: 'Collection',
   viewCrew: 'Crew',
-  subjectTags: 'Subject Tags',
+  subjectTags: 'Keywords',
   fullCastList: 'Full Cast List',
   fullCrewList: 'Full Crew List',
   noCast: 'No cast information available',
   noCrew: 'No crew information available',
-  noTags: 'No subject tags available',
+  noTags: 'No keywords available',
   movieDetails: 'Details',
   status: 'Status',
   releaseDates: 'Release Dates',
@@ -437,7 +437,7 @@ const MovieDetailsLayout = ({
                   {data.keywords.map((keyword, index) => (
                     <Link
                       key={keyword.id}
-                      href={`/discover/movies/keyword?keywords=${keyword.id}`}
+                      href={`/discover/movies?search=${encodeURIComponent(keyword.name)}`}
                       className={subjectTagClassName(index)}
                     >
                       {keyword.name}

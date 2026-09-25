@@ -2467,60 +2467,6 @@ describe('User route input validation', () => {
     assert.strictEqual(user.settings?.detailDisclosureSubjectTagsPinned, true);
   });
 
-  it('persists media filter pins per page and removes only the unpinned scope', async () => {
-    const agent = await loginAs('admin@seerr.dev', 'test1234');
-    assert.strictEqual(
-      (
-        await agent
-          .post('/user/1/settings/media-filter-pins/books')
-          .send({ value: 'ebook' })
-      ).status,
-      200
-    );
-    const saved = await agent
-      .post('/user/1/settings/media-filter-pins/search')
-      .send({ value: 'music' });
-    assert.strictEqual(saved.status, 200);
-    assert.deepStrictEqual(saved.body, { books: 'ebook', search: 'music' });
-    const user = await getRepository(User).findOneOrFail({ where: { id: 1 } });
-    assert.deepStrictEqual(user.settings?.mediaFilterPins, saved.body);
-    const removed = await agent
-      .post('/user/1/settings/media-filter-pins/books')
-      .send({ value: null });
-    assert.deepStrictEqual(removed.body, { search: 'music' });
-    assert.strictEqual(
-      (
-        await agent
-          .post('/user/1/settings/media-filter-pins/unknown')
-          .send({ value: 'book' })
-      ).status,
-      400
-    );
-    assert.strictEqual(
-      (
-        await agent
-          .post('/user/1/settings/media-filter-pins/books')
-          .send({ value: 'invalid' })
-      ).status,
-      400
-    );
-    assert.strictEqual(
-      (await agent.post('/user/1/settings/media-filter-pins/books').send({}))
-        .status,
-      400
-    );
-  });
-
-  it('does not let another account change media filter pins', async () => {
-    const otherUser = await loginAs('friend@seerr.dev', 'test1234');
-    const denied = await otherUser
-      .post('/user/1/settings/media-filter-pins/books')
-      .send({ value: 'ebook' });
-    assert.strictEqual(denied.status, 403);
-    const user = await getRepository(User).findOneOrFail({ where: { id: 1 } });
-    assert.ok(!user.settings?.mediaFilterPins?.books);
-  });
-
   it('persists detail disclosure pins independently per media category', async () => {
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const movieSave = await agent
@@ -2532,7 +2478,6 @@ describe('User route input validation', () => {
 
     assert.strictEqual(movieSave.status, 200);
     assert.deepStrictEqual(movieSave.body, {
-      details: false,
       collection: false,
       cast: true,
       crew: false,
@@ -2541,7 +2486,6 @@ describe('User route input validation', () => {
     });
     assert.strictEqual(tvSave.status, 200);
     assert.deepStrictEqual(tvSave.body, {
-      details: false,
       cast: false,
       crew: true,
       artists: false,
@@ -2559,7 +2503,6 @@ describe('User route input validation', () => {
       where: { id: 1 },
     });
     assert.deepStrictEqual(user.settings?.detailDisclosurePins?.movie, {
-      details: false,
       collection: false,
       cast: true,
       crew: false,
@@ -2567,7 +2510,6 @@ describe('User route input validation', () => {
       subjectTags: true,
     });
     assert.deepStrictEqual(user.settings?.detailDisclosurePins?.tv, {
-      details: false,
       cast: false,
       crew: true,
       artists: false,
@@ -2618,33 +2560,6 @@ describe('User route input validation', () => {
       .post('/user/1/settings/detail-disclosures/movie')
       .send({ collection: true });
     assert.strictEqual(response.status, 403);
-  });
-
-  it('persists details pins independently for all media types and rejects invalid values', async () => {
-    const agent = await loginAs('admin@seerr.dev', 'test1234');
-    for (const mediaType of ['movie', 'tv', 'music', 'book']) {
-      const endpoint = '/user/1/settings/detail-disclosures/' + mediaType;
-      const initial = await agent.get(endpoint);
-      assert.strictEqual(initial.body.details, false);
-      const saved = await agent.post(endpoint).send({ details: true });
-      assert.strictEqual(saved.status, 200);
-      assert.strictEqual(saved.body.details, true);
-      const fetched = await agent.get(endpoint);
-      assert.deepStrictEqual(fetched.body, saved.body);
-      const invalid = await agent.post(endpoint).send({ details: 'true' });
-      assert.strictEqual(invalid.status, 400);
-    }
-    const movie = await agent
-      .post('/user/1/settings/detail-disclosures/movie')
-      .send({ details: false });
-    assert.strictEqual(movie.body.details, false);
-    const tv = await agent.get('/user/1/settings/detail-disclosures/tv');
-    assert.strictEqual(tv.body.details, true);
-    const otherUser = await loginAs('friend@seerr.dev', 'test1234');
-    const denied = await otherUser
-      .post('/user/1/settings/detail-disclosures/book')
-      .send({ details: false });
-    assert.strictEqual(denied.status, 403);
   });
 
   it('saves card text visibility through main user settings without clearing other media types', async () => {

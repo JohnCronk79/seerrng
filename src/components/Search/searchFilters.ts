@@ -5,6 +5,7 @@ export type SearchFilterCategory =
 
 export const searchContextualFilterKeys = [
   'artist',
+  'author',
   'artistId',
   'availability',
   'certification',

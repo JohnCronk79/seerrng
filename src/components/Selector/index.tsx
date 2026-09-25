@@ -42,13 +42,6 @@ const messages = defineMessages('components.Selector', {
   nooptions: 'No results',
   showmore: 'Show More',
   showless: 'Show Less',
-  searchStatus: 'Select status...',
-  returningSeries: 'Returning Series',
-  planned: 'Planned',
-  inProduction: 'In Production',
-  ended: 'Ended',
-  canceled: 'Canceled',
-  pilot: 'Pilot',
 });
 
 type SingleVal = {
@@ -300,80 +293,6 @@ export const GenreSelector = ({
       loadOptions={loadGenreOptions}
       placeholder={intl.formatMessage(
         compact ? messages.any : messages.searchGenres
-      )}
-      onChange={(value) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        onChange(value as any);
-      }}
-    />
-  );
-};
-
-export const StatusSelector = ({
-  isMulti,
-  isDisabled,
-  defaultValue,
-  compact,
-  onChange,
-}: BaseSelectorMultiProps | BaseSelectorSingleProps) => {
-  const intl = useIntl();
-  const [defaultDataValue, setDefaultDataValue] = useState<
-    { label: string; value: number }[] | null
-  >(null);
-
-  const options = useMemo(
-    () => [
-      { name: intl.formatMessage(messages.returningSeries), id: 0 },
-      { name: intl.formatMessage(messages.planned), id: 1 },
-      { name: intl.formatMessage(messages.inProduction), id: 2 },
-      { name: intl.formatMessage(messages.ended), id: 3 },
-      { name: intl.formatMessage(messages.canceled), id: 4 },
-      { name: intl.formatMessage(messages.pilot), id: 5 },
-    ],
-    [intl]
-  );
-
-  useEffect(() => {
-    if (!defaultValue) {
-      setDefaultDataValue(null);
-      return;
-    }
-    const statuses = defaultValue.split('|');
-
-    const statusData = options
-      .filter((opt) => statuses.find((s) => Number(s) === opt.id))
-      .map((o) => ({
-        label: o.name,
-        value: o.id,
-      }));
-
-    setDefaultDataValue(statusData);
-  }, [defaultValue, options]);
-
-  const loadStatusOptions = async () => {
-    return options
-      .map((result) => ({
-        label: result.name,
-        value: result.id,
-      }))
-      .filter(({ label }) => label.toLowerCase());
-  };
-
-  return (
-    <AsyncSelect
-      key={`status-select-${defaultDataValue}`}
-      className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
-      classNamePrefix="react-select"
-      unstyled={compact}
-      components={compact ? compactSelectComponents : undefined}
-      defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
-      defaultOptions
-      isMulti={isMulti}
-      hideSelectedOptions={!isMulti}
-      isDisabled={isDisabled}
-      loadOptions={loadStatusOptions}
-      placeholder={intl.formatMessage(
-        compact ? messages.any : messages.searchStatus
       )}
       onChange={(value) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -673,7 +592,7 @@ export const WatchProviderSelector = ({
           )}
           {otherProviders.length > 0 && (
             <button
-              className="relative top-4 flex items-center justify-center space-x-2 text-sm text-gray-400 transition hover:text-gray-200"
+              className="media-selector-more-control relative top-4 flex items-center justify-center text-sm text-gray-400 transition hover:text-gray-200"
               type="button"
               onClick={() => setShowMore(!showMore)}
             >

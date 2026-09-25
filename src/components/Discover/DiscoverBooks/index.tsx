@@ -7,18 +7,12 @@ import BookFormatTabs, {
   type BookDiscoveryFormat,
 } from '@app/components/Discover/BookFormatTabs';
 import {
-  CompactRatingSelect,
-  CompactSelect,
   FilterResetButton,
   getFilterToggleButtonClass,
-  type CompactSelectOption,
-  type RatingOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import {
-  BOOK_GENRES,
-  BOOK_LANGUAGES,
-  bookSortOptions,
-} from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import LibraryFilterFields from '@app/components/Discover/FilterPanel/LibraryFilterFields';
+import { bookSortOptions } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useDiscover from '@app/hooks/useDiscover';
 import useDiscoverScrollRestoration from '@app/hooks/useDiscoverScrollRestoration';
@@ -26,11 +20,7 @@ import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import defineMessages from '@app/utils/defineMessages';
 import { parseQueryFromPath } from '@app/utils/routeQuery';
-import {
-  BarsArrowDownIcon,
-  BarsArrowUpIcon,
-  MagnifyingGlassIcon,
-} from '@heroicons/react/24/solid';
+import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { BookResult } from '@server/models/Book';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -42,16 +32,7 @@ const messages = defineMessages('components.Discover.DiscoverBooks', {
   mediaFilters: 'Media Filters',
   filters: 'Filters',
   sortBy: 'Sort By',
-  search: 'Keyword Search',
-  searchBooks: 'Search Books',
-  authorSearch: 'Author Search',
-  searchAuthors: 'Search Authors',
   clearFilters: 'Clear Filters',
-  genres: 'Genres',
-  firstPublished: 'First Published',
-  language: 'Language',
-  ratingFilter: 'Rating',
-  any: 'Any',
   recommended: 'Recommended',
   rating: 'Rating',
   editions: 'Most Editions',
@@ -102,19 +83,27 @@ const DiscoverBooks = ({
   const [author, debouncedAuthor, setAuthor] = useDebouncedState(authorQuery);
   const routedAuthorRef = useRef(authorQuery.trim());
   useEffect(() => {
-    routedAuthorRef.current = authorQuery.trim();
-    setAuthor(authorQuery);
+    const routedAuthor = authorQuery.trim();
+    if (routedAuthor !== routedAuthorRef.current) {
+      routedAuthorRef.current = routedAuthor;
+      setAuthor(authorQuery);
+    }
   }, [authorQuery, setAuthor]);
   const routedFormat =
-    routeQuery.format === 'ebook' || routeQuery.format === 'audiobook'
+    routeQuery.format === 'all' ||
+    routeQuery.format === 'ebook' ||
+    routeQuery.format === 'audiobook'
       ? routeQuery.format
       : undefined;
   const activeFormat = routedFormat ?? format;
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
-    routedSearchRef.current = query.trim();
-    setSearch(query);
+    const routedSearch = query.trim();
+    if (routedSearch !== routedSearchRef.current) {
+      routedSearchRef.current = routedSearch;
+      setSearch(query);
+    }
   }, [query, setSearch]);
   const subject =
     typeof routeQuery.subject === 'string' ? routeQuery.subject : '';
@@ -178,14 +167,20 @@ const DiscoverBooks = ({
 
     if (nextSearch !== routedSearchRef.current) {
       routedSearchRef.current = nextSearch;
-      update({ search: nextSearch || undefined, page: undefined });
+      update(
+        { search: nextSearch || undefined, page: undefined },
+        { shallow: true, scroll: false }
+      );
     }
   }, [debouncedSearch, update]);
   useEffect(() => {
     const nextAuthor = debouncedAuthor.trim();
     if (nextAuthor !== routedAuthorRef.current) {
       routedAuthorRef.current = nextAuthor;
-      update({ author: nextAuthor || undefined, page: undefined });
+      update(
+        { author: nextAuthor || undefined, page: undefined },
+        { shallow: true, scroll: false }
+      );
     }
   }, [debouncedAuthor, update]);
   useSearchActivityReporter(
@@ -199,36 +194,10 @@ const DiscoverBooks = ({
   const title =
     titleOverride ??
     intl.formatMessage(
-      activeFormat === 'audiobook' ? messages.audiobooks : messages.books
+      router.pathname === '/discover/audiobooks'
+        ? messages.audiobooks
+        : messages.books
     );
-  const currentYear = new Date().getFullYear();
-  const yearOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...Array.from({ length: currentYear - 1969 }, (_, index) => {
-      const year = currentYear - index;
-      return { label: year.toString(), value: year.toString() };
-    }),
-    { label: '<1970', value: 'before-1970' },
-  ];
-  const genreOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...BOOK_GENRES.map(([value, label]) => ({ value, label })),
-  ];
-  const languageOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...BOOK_LANGUAGES.map(([value, label]) => ({ value, label })),
-  ];
-  const ratingOptions: RatingOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...Array.from({ length: 9 }, (_, index) => {
-      const score = 1 + index * 0.5;
-      return {
-        label: `${score.toFixed(1)}+`,
-        value: score.toFixed(1),
-        score,
-      };
-    }),
-  ];
   const hasActiveFilters = Boolean(
     query ||
     authorQuery ||
@@ -248,204 +217,163 @@ const DiscoverBooks = ({
         <Header>{title}</Header>
         {mediaFilters}
         {showFormatTabs && (
-          <>
-            <div className="app-filter-section-heading">
-              {intl.formatMessage(messages.mediaFilters)}
-            </div>
+          <PinnedFilterSection
+            mediaType="book"
+            section="mediaFilters"
+            label={intl.formatMessage(messages.mediaFilters)}
+          >
             <BookFormatTabs
               format={activeFormat}
               query={routeQuery}
               currentPath={currentPath}
             />
-          </>
+          </PinnedFilterSection>
         )}
-        <div className="app-filter-section-heading">
-          {intl.formatMessage(messages.filters)}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <FilterResetButton
-            label={intl.formatMessage(messages.clearFilters)}
-            selected={!hasActiveFilters}
-            onClick={() => {
-              setSearch('');
-              setAuthor('');
-              setParam({
-                search: undefined,
-                author: undefined,
-                subject: undefined,
-                firstPublishYear: undefined,
-                language: undefined,
-                minRating: undefined,
-                sortBy: undefined,
-              });
-            }}
-          />
-          <CardTextVisibilityToggle mediaType="book" />
-          <form
-            className="discover-filter-control w-52 max-w-full flex-none"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const nextSearch = search.trim();
-              routedSearchRef.current = nextSearch;
-              setParam({ search: nextSearch || undefined });
-            }}
-          >
-            <span
-              className={`discover-filter-control-label gap-1.5 ${
-                search.trim() ? 'discover-filter-control-label-active' : ''
-              }`}
-            >
-              <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
-              {intl.formatMessage(messages.search)}
-            </span>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={intl.formatMessage(messages.searchBooks)}
-              aria-label={intl.formatMessage(messages.searchBooks)}
-              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
+        <PinnedFilterSection
+          mediaType="book"
+          section="filters"
+          label={intl.formatMessage(messages.filters)}
+        >
+          <div className="flex flex-wrap gap-2">
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={!hasActiveFilters}
+              onClick={() => {
+                setSearch('');
+                setAuthor('');
+                setParam({
+                  search: undefined,
+                  author: undefined,
+                  subject: undefined,
+                  firstPublishYear: undefined,
+                  language: undefined,
+                  minRating: undefined,
+                  sortBy: undefined,
+                });
+              }}
             />
-          </form>
-          <CompactSelect
-            label={intl.formatMessage(messages.firstPublished)}
-            value={firstPublishYear}
-            options={yearOptions}
-            onChange={(value) =>
-              setParam({ firstPublishYear: value || undefined })
-            }
-          />
-          <CompactSelect
-            label={intl.formatMessage(messages.genres)}
-            value={subject}
-            options={genreOptions}
-            onChange={(value) => setParam({ subject: value || undefined })}
-          />
-          <form
-            className="discover-filter-control w-52 max-w-full flex-none"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const nextAuthor = author.trim();
-              routedAuthorRef.current = nextAuthor;
-              setParam({ author: nextAuthor || undefined });
-            }}
-          >
-            <span
-              className={`discover-filter-control-label gap-1.5 ${author.trim() ? 'discover-filter-control-label-active' : ''}`}
-            >
-              <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
-              {intl.formatMessage(messages.authorSearch)}
-            </span>
-            <input
-              type="search"
-              value={author}
-              onChange={(event) => setAuthor(event.target.value)}
-              placeholder={intl.formatMessage(messages.searchAuthors)}
-              aria-label={intl.formatMessage(messages.searchAuthors)}
-              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
+            <CardTextVisibilityToggle mediaType="book" />
+            <LibraryFilterFields
+              mediaType="book"
+              audiobook={activeFormat === 'audiobook'}
+              search={search}
+              onSearchChange={setSearch}
+              onSearchSubmit={() => {
+                const nextSearch = search.trim();
+                routedSearchRef.current = nextSearch;
+                update(
+                  { search: nextSearch || undefined, page: undefined },
+                  { shallow: true, scroll: false }
+                );
+              }}
+              author={author}
+              onAuthorChange={setAuthor}
+              onAuthorSubmit={() => {
+                const nextAuthor = author.trim();
+                routedAuthorRef.current = nextAuthor;
+                update(
+                  { author: nextAuthor || undefined, page: undefined },
+                  { shallow: true, scroll: false }
+                );
+              }}
+              firstPublishYear={firstPublishYear}
+              subject={subject}
+              minRating={minRating}
+              language={language}
+              setParam={setParam}
             />
-          </form>
-          <CompactRatingSelect
-            label={intl.formatMessage(messages.ratingFilter)}
-            value={minRating}
-            options={ratingOptions}
-            maxScore={5}
-            onChange={(value) => setParam({ minRating: value || undefined })}
-          />
-          <CompactSelect
-            label={intl.formatMessage(messages.language)}
-            value={language}
-            options={languageOptions}
-            onChange={(value) => setParam({ language: value || undefined })}
-          />
-        </div>
-        <div className="app-filter-section-heading">
-          {intl.formatMessage(messages.sortBy)}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'ranked' || sortBy === 'ranked.asc'
-            )}
-            onClick={() =>
-              setParam({
-                sortBy: sortBy === 'ranked' ? 'ranked.asc' : 'ranked',
-              })
-            }
-          >
-            {intl.formatMessage(messages.recommended)}
-            {sortBy === 'ranked.asc' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
+          </div>
+        </PinnedFilterSection>
+        <PinnedFilterSection
+          mediaType="book"
+          section="sortBy"
+          label={intl.formatMessage(messages.sortBy)}
+        >
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'ranked' || sortBy === 'ranked.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy: sortBy === 'ranked' ? 'ranked.asc' : 'ranked',
+                })
+              }
+            >
+              {intl.formatMessage(messages.recommended)}
+              {sortBy === 'ranked.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'rating' ||
+                  sortBy === 'rating.desc' ||
+                  sortBy === 'rating.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy:
+                    sortBy === 'rating' || sortBy === 'rating.desc'
+                      ? 'rating.asc'
+                      : 'rating.desc',
+                })
+              }
+            >
+              {intl.formatMessage(messages.rating)}
+              {sortBy === 'rating.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'editions' || sortBy === 'editions.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy: sortBy === 'editions' ? 'editions.asc' : 'editions',
+                })
+              }
+            >
+              {intl.formatMessage(messages.editions)}
+              {sortBy === 'editions.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'newest' || sortBy === 'oldest'
+              )}
+              onClick={() =>
+                setParam({ sortBy: sortBy === 'newest' ? 'oldest' : 'newest' })
+              }
+            >
+              {intl.formatMessage(messages.date)}
+              {sortBy === 'oldest' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(sortBy === 'random')}
+              onClick={() =>
+                sortBy === 'random'
+                  ? discover.mutate?.()
+                  : setParam({ sortBy: 'random' })
+              }
+            >
+              {intl.formatMessage(messages.random)}
               <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'rating' ||
-                sortBy === 'rating.desc' ||
-                sortBy === 'rating.asc'
-            )}
-            onClick={() =>
-              setParam({
-                sortBy:
-                  sortBy === 'rating' || sortBy === 'rating.desc'
-                    ? 'rating.asc'
-                    : 'rating.desc',
-              })
-            }
-          >
-            {intl.formatMessage(messages.rating)}
-            {sortBy === 'rating.asc' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
-              <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'editions' || sortBy === 'editions.asc'
-            )}
-            onClick={() =>
-              setParam({
-                sortBy: sortBy === 'editions' ? 'editions.asc' : 'editions',
-              })
-            }
-          >
-            {intl.formatMessage(messages.editions)}
-            {sortBy === 'editions.asc' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
-              <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'newest' || sortBy === 'oldest'
-            )}
-            onClick={() =>
-              setParam({ sortBy: sortBy === 'newest' ? 'oldest' : 'newest' })
-            }
-          >
-            {intl.formatMessage(messages.date)}
-            {sortBy === 'oldest' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
-              <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(sortBy === 'random')}
-            onClick={() =>
-              sortBy === 'random'
-                ? discover.mutate?.()
-                : setParam({ sortBy: 'random' })
-            }
-          >
-            {intl.formatMessage(messages.random)}
-            <BarsArrowDownIcon className="h-4 w-4" />
-          </button>
-        </div>
+            </button>
+          </div>
+        </PinnedFilterSection>
       </div>
       {discover.error && (
         <div
@@ -478,6 +406,7 @@ const DiscoverBooks = ({
           preferredBookFormat={
             activeFormat === 'audiobook' ? 'audiobook' : 'ebook'
           }
+          showAllBookFormats={activeFormat === 'all'}
           isEmpty={isRouteReady && discover.isEmpty}
           isLoading={
             !isRouteReady ||

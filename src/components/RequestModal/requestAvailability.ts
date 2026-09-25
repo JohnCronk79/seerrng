@@ -3,9 +3,12 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import {
   getActiveRequestForDestination,
+  getStoredRequestDestinations,
   hasTrackedAvailableDestination,
   isDestinationAvailableInTargets,
   isDestinationCoveredByActiveRequest,
+  isExactRequestDestination,
+  legacyRequestDestinationCovers,
   type RequestDestination,
   type StoredRequestDestination,
 } from '@server/lib/requestDestination';
@@ -91,6 +94,22 @@ export const isRequestDestinationRequested = (
   selected: RequestDestination | null | undefined
 ): boolean =>
   selected ? isDestinationCoveredByActiveRequest(requests, selected) : false;
+
+export const isRequestForDestination = (
+  request: StoredRequestDestination,
+  selected: RequestDestination | null | undefined
+): boolean => {
+  if (!selected) {
+    return false;
+  }
+
+  const { targets, legacy } = getStoredRequestDestinations(request);
+  return targets.some((target) =>
+    legacy
+      ? legacyRequestDestinationCovers(target, selected)
+      : isExactRequestDestination(target, selected)
+  );
+};
 
 export const canPromotePendingDestinationRequests = (
   requests: StoredRequestDestination[] | null | undefined,

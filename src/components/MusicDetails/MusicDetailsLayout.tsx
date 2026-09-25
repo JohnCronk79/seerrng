@@ -29,10 +29,10 @@ const messages = defineMessages('components.MusicDetails.Layout', {
   trackCount: 'Track Count',
   status: 'Status',
   viewArtists: 'Artists',
-  subjectTags: 'Subject Tags',
+  subjectTags: 'Keywords',
   fullArtistList: 'Full Artist List',
   noArtists: 'No artist information available',
-  noTags: 'No subject tags available',
+  noTags: 'No keywords available',
   albumDetails: 'Details',
   artistType: 'Artist Type',
   origin: 'Origin',
@@ -318,7 +318,7 @@ const MusicDetailsLayout = ({
                             <span key={tag.name}>
                               {index > 0 && ', '}
                               <Link
-                                href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
+                                href={`/discover/music?search=${encodeURIComponent(tag.name)}`}
                                 className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {tag.name}
@@ -507,7 +507,7 @@ const MusicDetailsLayout = ({
                   {tags.map((tag, index) => (
                     <Link
                       key={tag.name}
-                      href={`/discover/music?genre=${encodeURIComponent(tag.name)}`}
+                      href={`/discover/music?search=${encodeURIComponent(tag.name)}`}
                       className={subjectTagClassName(index)}
                     >
                       {tag.name}

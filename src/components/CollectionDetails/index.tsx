@@ -88,8 +88,8 @@ const messages = defineMessages('components.CollectionDetails', {
   retry: 'Retry',
   selectAll: 'Select All',
   selectNone: 'Clear Selection',
-  selectAllHelp: 'Select every available item for playback.',
-  selectNoneHelp: 'Clear the playback selection.',
+  selectAllHelp: 'Select every item for playback and collection creation.',
+  selectNoneHelp: 'Clear the shared playback and collection selection.',
   watchTrailer: 'Watch Trailer',
   trailerHelp:
     'Watch the trailer for {title}, the first movie in this collection, in a new browser window.',
@@ -520,6 +520,7 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
                 availability={availability.data}
                 error={availability.error}
                 revalidate={availability.mutate}
+                selectedIds={selectedMediaIds.map(String)}
               />
             )}
           </div>

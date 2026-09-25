@@ -1,17 +1,35 @@
+import AuthorSummaryCard from '@app/components/AuthorDetails/AuthorSummaryCard';
 import Alert from '@app/components/Common/Alert';
 import {
   getBookFormatMessage,
   type RequestedBookFormat,
 } from '@app/components/Common/BookFormatBadge';
-import BookFormatSelector from '@app/components/Common/BookFormatSelector';
 import Button from '@app/components/Common/Button';
+import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
 import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
+import {
+  CompactRatingSelect,
+  CompactSelect,
+  FilterResetButton,
+  type CompactSelectOption,
+  type RatingOption,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import {
+  BOOK_GENRES,
+  BOOK_LANGUAGES,
+} from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import AdvancedOptionsDisclosureButton from '@app/components/RequestModal/AdvancedOptionsDisclosureButton';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester, {
   RequestListboxControl,
 } from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
+import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -25,6 +43,7 @@ import {
 } from '@app/utils/bulkCatalogPagination';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
+import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import type {
@@ -33,7 +52,7 @@ import type {
 } from '@server/interfaces/api/requestInterfaces';
 import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
-import type { BookResult } from '@server/models/Book';
+import type { AuthorDetails, BookResult } from '@server/models/Book';
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -44,12 +63,10 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
   requestdiscography: 'Request Discography',
   requestitems: 'Request {count} {count, plural, one {Item} other {Items}}',
   selectitems: 'Select Items',
-  requestadmin: 'This request will be approved automatically.',
   largeBatch:
     'You selected {count} items. Confirm once more before submitting this batch.',
   quotaexceeded: 'Not enough request quota remaining.',
   summary: '{created} created, {skipped} skipped, {failed} failed.',
-  requestbibliographyFormat: 'Request {format} Bibliography',
   requestitemsFormat:
     'Request {count} {count, plural, one {Item} other {Items}} as {format}',
   faileditems: 'Failed Items',
@@ -61,8 +78,10 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
     'No Book Bookshelf service is configured. Book requests are unavailable.',
   noAudiobookServer:
     'No audiobook Bookshelf service is configured. Audiobook requests are unavailable.',
-  noBothServers:
-    'Book + Audiobook requires Book and Audiobook Bookshelf services to be configured.',
+  noMusicQualityServer:
+    'No matching MP3 or FLAC music destination is configured.',
+  quality: 'Quality',
+  format: 'Format',
   releasetype: 'Release Type',
   loadmore: 'Load More',
   available: 'Available',
@@ -73,9 +92,18 @@ const messages = defineMessages('components.RequestModal.BulkRequestModal', {
   ambiguous: 'Ambiguous match',
   sourceTrack: 'Source: {title}',
   openSource: 'Open original playlist',
+  clearFilters: 'Clear Filters',
+  firstPublished: 'First Published',
+  genres: 'Genres',
+  rating: 'Rating',
+  language: 'Language',
+  any: 'Any',
+  loadingRatings: 'Loading book ratings…',
+  ratingsUnavailable:
+    'Book ratings could not be loaded. Clear the Rating filter to continue.',
 });
 
-type BulkBookFormat = RequestedBookFormat;
+type BulkBookFormat = Exclude<RequestedBookFormat, 'both'>;
 type BulkMediaType = 'music' | 'book';
 
 export type BulkItem = {
@@ -88,6 +116,9 @@ export type BulkItem = {
   editionId?: string;
   authorId?: string;
   mediaInfo?: Media;
+  subjects?: string[];
+  languages?: string[];
+  ratingsAverage?: number;
   releaseType?: string;
   sourceTitle?: string;
   matchStatus?: 'matched' | 'unmatched' | 'ambiguous';
@@ -124,6 +155,11 @@ type AuthorWorksResponse = {
   };
 };
 
+type AuthorRatingsResponse = {
+  docs: { key: string; ratings_average?: number }[];
+  numFound: number;
+};
+
 const getBulkRequestErrorMessage = (error: unknown): string | undefined => {
   if (axios.isAxiosError(error)) {
     const responseMessage = error.response?.data?.message;
@@ -146,6 +182,7 @@ export interface BulkRequestModalProps {
   title: string;
   artistId?: string;
   authorId?: string;
+  initialBookFormat?: BulkBookFormat;
   initialItems?: BulkItem[];
   initialTotalItems?: number;
   sourceUrl?: string;
@@ -227,6 +264,9 @@ const mapBookWorkToBulkItem = (work: BookResult): BulkItem => ({
   editionId: work.editionId,
   authorId: work.authorId,
   mediaInfo: work.mediaInfo,
+  subjects: work.subjects,
+  languages: work.languages,
+  ratingsAverage: work.ratingsAverage,
 });
 
 const isActiveRequest = (requestStatus?: MediaRequestStatus) =>
@@ -297,10 +337,6 @@ const getBookIneligibleReason = (
     return messages.requested.defaultMessage;
   }
 
-  if (format === 'both' && ebookCovered && audiobookCovered) {
-    return messages.requested.defaultMessage;
-  }
-
   return undefined;
 };
 
@@ -338,6 +374,7 @@ const BulkRequestModal = ({
   title,
   artistId,
   authorId,
+  initialBookFormat = 'ebook',
   initialItems = EMPTY_BULK_ITEMS,
   initialTotalItems,
   sourceUrl,
@@ -347,12 +384,32 @@ const BulkRequestModal = ({
   const intl = useIntl();
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
-  const [format, setFormat] = useState<BulkBookFormat>('ebook');
+  const [format, setFormat] = useState<BulkBookFormat>(initialBookFormat);
+  const [musicQuality, setMusicQuality] = useState<'mp3' | 'flac'>('mp3');
+  const [qualityRevision, setQualityRevision] = useState(0);
+  const {
+    open: advancedOptionsOpen,
+    pinned: advancedOptionsPinned,
+    toggleOpen: toggleAdvancedOptions,
+    togglePin: toggleAdvancedOptionsPin,
+  } = useAdvancedOptionsDisclosure(mediaType);
   const [releaseType, setReleaseType] = useState('Album');
   const [items, setItems] = useState<BulkItem[]>(
     dedupeBulkItems(initialItems, mediaType)
   );
+  const [firstPublishedFilter, setFirstPublishedFilter] = useState('');
+  const [genreFilter, setGenreFilter] = useState('');
+  const [ratingFilter, setRatingFilter] = useState('');
+  const [languageFilter, setLanguageFilter] = useState('');
+  const [authorRatings, setAuthorRatings] = useState<{
+    authorId: string;
+    values: Record<string, number>;
+  }>();
+  const [isLoadingRatings, setIsLoadingRatings] = useState(false);
+  const [ratingsError, setRatingsError] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [requestedByPortal, setRequestedByPortal] =
+    useState<HTMLDivElement | null>(null);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const [isLoadingItems, setIsLoadingItems] = useState(false);
@@ -377,8 +434,22 @@ const BulkRequestModal = ({
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
       : null
   );
+  const { data: authorDetails } = useSWR<AuthorDetails>(
+    mediaType === 'book' && authorId
+      ? `/api/v1/author/${encodeApiPathSegment(authorId)}`
+      : null
+  );
   const { data: bookServices } = useSWR<ServiceCommonServer[]>(
     mediaType === 'book' ? '/api/v1/service/readarr' : null
+  );
+  const { data: musicServices } = useSWR<ServiceCommonServer[]>(
+    mediaType === 'music' ? '/api/v1/service/lidarr' : null
+  );
+  const musicQualityService = musicServices?.find((server) =>
+    server.name.toLowerCase().includes(musicQuality)
+  );
+  const selectedMusicService = musicServices?.find(
+    (server) => server.id === requestOverrides?.server
   );
 
   const formatAvailable = useMemo(() => {
@@ -392,7 +463,6 @@ const BulkRequestModal = ({
     return {
       ebook: hasEbookServer,
       audiobook: hasAudiobookServer,
-      both: hasEbookServer && hasAudiobookServer,
     };
   }, [bookServices]);
 
@@ -518,6 +588,80 @@ const BulkRequestModal = ({
     [authorId]
   );
 
+  const ratingsById =
+    authorRatings && authorRatings.authorId === authorId
+      ? authorRatings.values
+      : undefined;
+  useEffect(() => {
+    if (
+      !show ||
+      mediaType !== 'book' ||
+      !authorId ||
+      !ratingFilter ||
+      ratingsById
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    setIsLoadingRatings(true);
+    setRatingsError(false);
+
+    void loadNumberedCatalog({
+      pageSize: 100,
+      signal: controller.signal,
+      loadPage: async (page, _pageSize, signal) => {
+        const response = await axios.get<AuthorRatingsResponse>(
+          'https://openlibrary.org/search.json',
+          {
+            params: {
+              q: `author_key:${authorId}`,
+              fields: 'key,ratings_average',
+              page,
+              limit: 100,
+            },
+            signal,
+          }
+        );
+        return {
+          items: response.data.docs.map((doc) => ({
+            id: doc.key.replace(/^\/?works\//, ''),
+            rating: doc.ratings_average,
+          })),
+          totalPages: Math.ceil(response.data.numFound / 100),
+        };
+      },
+    })
+      .then((ratings) => {
+        if (active) {
+          setAuthorRatings({
+            authorId,
+            values: Object.fromEntries(
+              ratings
+                .filter((item): item is { id: string; rating: number } =>
+                  Number.isFinite(item.rating)
+                )
+                .map((item) => [item.id, item.rating])
+            ),
+          });
+        }
+      })
+      .catch((error) => {
+        if (active && !axios.isCancel(error)) {
+          setRatingsError(true);
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoadingRatings(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [authorId, mediaType, ratingFilter, ratingsById, show]);
+
   const getIneligibleReason = useCallback(
     (item: BulkItem): string | undefined =>
       mediaType === 'book'
@@ -538,41 +682,80 @@ const BulkRequestModal = ({
     }
   }, [bookServices, format, formatAvailable, mediaType]);
 
+  const visibleItems = useMemo(
+    () =>
+      mediaType !== 'book'
+        ? items
+        : items.filter((item) => {
+            const year = Number(item.year);
+            if (
+              firstPublishedFilter &&
+              (firstPublishedFilter === 'before-1970'
+                ? !Number.isFinite(year) || year >= 1970
+                : item.year?.toString() !== firstPublishedFilter)
+            ) {
+              return false;
+            }
+            if (
+              genreFilter &&
+              !item.subjects?.some((subject) =>
+                subject
+                  .toLowerCase()
+                  .replace(/[_-]/g, ' ')
+                  .includes(genreFilter.replace(/_/g, ' '))
+              )
+            ) {
+              return false;
+            }
+            if (languageFilter && !item.languages?.includes(languageFilter)) {
+              return false;
+            }
+            if (
+              ratingFilter &&
+              (ratingsById?.[item.id] ?? item.ratingsAverage ?? 0) <
+                Number(ratingFilter)
+            ) {
+              return false;
+            }
+            return true;
+          }),
+    [
+      firstPublishedFilter,
+      genreFilter,
+      items,
+      languageFilter,
+      mediaType,
+      ratingFilter,
+      ratingsById,
+    ]
+  );
   const eligibleItems = useMemo(
-    () => items.filter((item) => !getIneligibleReason(item)),
-    [getIneligibleReason, items]
+    () => visibleItems.filter((item) => !getIneligibleReason(item)),
+    [getIneligibleReason, visibleItems]
   );
 
   useEffect(() => {
     setSelectedIds(eligibleItems.map((item) => item.id));
   }, [eligibleItems]);
 
-  const selectedItems = items.filter((item) => selectedIds.includes(item.id));
+  const selectedItems = visibleItems.filter((item) =>
+    selectedIds.includes(item.id)
+  );
   const currentQuota = mediaType === 'book' ? quota?.book : quota?.music;
   const remaining =
     currentQuota?.remaining !== undefined
-      ? currentQuota.remaining - selectedIds.length
+      ? currentQuota.remaining - selectedItems.length
       : undefined;
   const selectedExceedsQuota =
     !!currentQuota?.limit && remaining !== undefined && remaining < 0;
-  const hasAutoApprove = hasPermission(
-    [
-      Permission.MANAGE_REQUESTS,
-      Permission.AUTO_APPROVE,
-      mediaType === 'book'
-        ? Permission.AUTO_APPROVE_BOOK
-        : Permission.AUTO_APPROVE_MUSIC,
-    ],
-    { type: 'or' }
-  );
   const formatWarning =
     mediaType === 'book' && bookServices && !formatAvailable[format]
       ? format === 'ebook'
         ? messages.noEbookServer
-        : format === 'audiobook'
-          ? messages.noAudiobookServer
-          : messages.noBothServers
-      : null;
+        : messages.noAudiobookServer
+      : mediaType === 'music' && musicServices && !musicQualityService
+        ? messages.noMusicQualityServer
+        : null;
 
   const toggleItem = (item: BulkItem) => {
     if (getIneligibleReason(item)) {
@@ -671,6 +854,9 @@ const BulkRequestModal = ({
     (authorTotal === undefined || authorOffset < authorTotal);
 
   const submit = async () => {
+    if (formatWarning || (mediaType === 'music' && !musicQualityService)) {
+      return;
+    }
     if (selectedExceedsQuota) {
       addToast(intl.formatMessage(messages.quotaexceeded), {
         appearance: 'error',
@@ -679,7 +865,7 @@ const BulkRequestModal = ({
       return;
     }
 
-    if (selectedIds.length > 50 && !confirmLargeBatch) {
+    if (selectedItems.length > 50 && !confirmLargeBatch) {
       setConfirmLargeBatch(true);
       return;
     }
@@ -704,7 +890,9 @@ const BulkRequestModal = ({
             mediaType,
             format: mediaType === 'book' ? format : undefined,
             items: chunk,
-            serverId: requestOverrides?.server,
+            serverId:
+              requestOverrides?.server ??
+              (mediaType === 'music' ? musicQualityService?.id : undefined),
             profileId: requestOverrides?.profile,
             metadataProfileId: requestOverrides?.metadataProfile,
             rootFolder: requestOverrides?.folder,
@@ -775,6 +963,365 @@ const BulkRequestModal = ({
     </div>
   );
 
+  const anyLabel = intl.formatMessage(messages.any);
+  const bookYearOptions: CompactSelectOption[] = [
+    { label: anyLabel, value: '' },
+    ...Array.from({ length: new Date().getFullYear() - 1969 }, (_, index) => {
+      const year = new Date().getFullYear() - index;
+      return { label: year.toString(), value: year.toString() };
+    }),
+    { label: '<1970', value: 'before-1970' },
+  ];
+  const bookGenreOptions: CompactSelectOption[] = [
+    { label: anyLabel, value: '' },
+    ...BOOK_GENRES.map(([value, label]) => ({ value, label })),
+  ];
+  const bookRatingOptions: RatingOption[] = [
+    { label: anyLabel, value: '' },
+    ...Array.from({ length: 9 }, (_, index) => {
+      const score = 1 + index * 0.5;
+      return { label: `${score.toFixed(1)}+`, value: score.toFixed(1), score };
+    }),
+  ];
+  const bookLanguageOptions: CompactSelectOption[] = [
+    { label: anyLabel, value: '' },
+    ...BOOK_LANGUAGES.map(([value, label]) => ({ value, label })),
+  ];
+
+  const modalContent = (
+    <>
+      {summary ? (
+        <div className="mt-6 text-gray-200">
+          <Alert
+            type={summary.failed.length ? 'warning' : 'info'}
+            title={intl.formatMessage(messages.summary, {
+              created: summary.created.length,
+              skipped: summary.skipped.length,
+              failed: summary.failed.length,
+            })}
+          />
+          {summary.failed.length > 0 && (
+            <>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-lg font-semibold">
+                  {intl.formatMessage(messages.faileditems)}
+                </div>
+                <Button buttonType="primary" onClick={retryFailedItems}>
+                  {intl.formatMessage(messages.retryfailed)}
+                </Button>
+              </div>
+              {renderFailures(summary.failed)}
+            </>
+          )}
+        </div>
+      ) : (
+        <>
+          {confirmLargeBatch && (
+            <div className="mt-6">
+              <Alert
+                title={intl.formatMessage(messages.largeBatch, {
+                  count: selectedItems.length,
+                })}
+                type="warning"
+              />
+            </div>
+          )}
+          {selectedExceedsQuota && (
+            <div className="mt-6">
+              <Alert
+                title={intl.formatMessage(messages.quotaexceeded)}
+                type="warning"
+              />
+            </div>
+          )}
+          {submitProgress && (
+            <div className="mt-6">
+              <Alert
+                title={intl.formatMessage(messages.submittingprogress, {
+                  processed: submitProgress.processed,
+                  total: submitProgress.total,
+                })}
+                type="info"
+              />
+            </div>
+          )}
+          {(currentQuota?.limit ?? 0) > 0 && (
+            <QuotaDisplay
+              mediaType={mediaType}
+              quota={currentQuota}
+              remaining={remaining}
+              userOverride={
+                requestOverrides?.user && requestOverrides.user.id !== user?.id
+                  ? requestOverrides.user.id
+                  : undefined
+              }
+            />
+          )}
+          {mediaType === 'music' && (
+            <div className="mt-6">
+              <RequestListboxControl
+                id="bulk-release-type"
+                label={intl.formatMessage(messages.releasetype)}
+                value={releaseType}
+                onChange={setReleaseType}
+                options={releaseTypeOptions.map((type) => ({
+                  value: type,
+                  label: type,
+                }))}
+                active={releaseType !== 'Album'}
+                loadingLabel={intl.formatMessage(globalMessages.loading)}
+              />
+            </div>
+          )}
+          {formatWarning && (
+            <div className="mt-4">
+              <Alert title={intl.formatMessage(formatWarning)} type="warning" />
+            </div>
+          )}
+          {sourceUrl && (
+            <div className="mt-4 text-sm text-gray-300">
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-indigo-300 hover:text-indigo-200"
+              >
+                {intl.formatMessage(messages.openSource)}
+              </a>
+            </div>
+          )}
+          {mediaType === 'book' ? (
+            <div className="card-spacing-before grid grid-cols-1 items-start gap-2 sm:grid-cols-2">
+              {[
+                visibleItems.slice(0, Math.ceil(visibleItems.length / 2)),
+                visibleItems.slice(Math.ceil(visibleItems.length / 2)),
+              ].map((column, index) => (
+                <section
+                  key={index}
+                  className="refreshed-inset-surface overflow-hidden rounded-lg border border-gray-700 p-2"
+                >
+                  <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 border-b px-2 pb-2">
+                    {index === 0 ? (
+                      <SelectionCircle
+                        label={intl.formatMessage(messages.selectitems)}
+                        selected={
+                          selectedItems.length > 0 &&
+                          selectedItems.length === eligibleItems.length
+                        }
+                        disabled={isUpdating}
+                        onClick={toggleAll}
+                      />
+                    ) : (
+                      <span aria-hidden="true" />
+                    )}
+                    <span className="media-inset-poster-column-heading text-left">
+                      Book
+                    </span>
+                  </div>
+                  <div className="scrollable-card -mr-3 max-h-[228px] space-y-0.5 overflow-y-auto pt-1 pr-3">
+                    {column.map((item) => (
+                      <div
+                        key={item.id}
+                        className="refreshed-inset-surface grid min-h-[54px] grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 rounded-lg border border-gray-700 px-2"
+                      >
+                        <SelectionCircle
+                          label={item.title}
+                          selected={selectedIds.includes(item.id)}
+                          disabled={isUpdating || !!getIneligibleReason(item)}
+                          onClick={() => toggleItem(item)}
+                        />
+                        <div className="relative h-[46px] w-[35px] justify-self-center overflow-hidden rounded-md ring-1 ring-gray-700">
+                          <CachedImage
+                            type="book"
+                            src={
+                              item.image || '/images/seerr_poster_not_found.png'
+                            }
+                            alt=""
+                            fill
+                            sizes="35px"
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm leading-5 font-semibold text-gray-100">
+                            {item.title}
+                          </div>
+                          <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-1 text-xs leading-4">
+                            {(['ebook', 'audiobook'] as const).map(
+                              (bookFormat) => {
+                                const available = hasBookFormat(
+                                  item.mediaInfo,
+                                  bookFormat
+                                );
+                                const requested = hasBookRequest(
+                                  item.mediaInfo,
+                                  bookFormat
+                                );
+                                return (
+                                  <div key={bookFormat} className="contents">
+                                    <dt className="font-medium text-gray-100">
+                                      {bookFormat === 'ebook'
+                                        ? 'Book'
+                                        : 'Audiobook'}
+                                      :
+                                    </dt>
+                                    <dd className="m-0 truncate font-medium">
+                                      <AvailabilityValue
+                                        tone={
+                                          available
+                                            ? 'available'
+                                            : requested
+                                              ? 'processing'
+                                              : 'unavailable'
+                                        }
+                                      >
+                                        {available
+                                          ? 'Available'
+                                          : requested
+                                            ? 'Requested'
+                                            : 'Not Available'}
+                                      </AvailabilityValue>
+                                    </dd>
+                                  </div>
+                                );
+                              }
+                            )}
+                          </dl>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <section className="refreshed-inset-surface card-spacing-before">
+              <ThreeItemScroll label={intl.formatMessage(messages.selectitems)}>
+                {items.map((item) => (
+                  <BulkRequestItemCard
+                    key={item.id}
+                    item={item}
+                    mediaType={mediaType}
+                    format={format}
+                    selected={selectedIds.includes(item.id)}
+                    reason={getIneligibleReason(item)}
+                    onToggle={() => toggleItem(item)}
+                    onNavigate={onCancel}
+                  />
+                ))}
+              </ThreeItemScroll>
+            </section>
+          )}
+          {hasMoreAuthorWorks && (
+            <div className="mt-4">
+              <Button
+                buttonType="ghost"
+                disabled={isLoadingItems}
+                onClick={() => void loadMoreAuthorWorks()}
+              >
+                {intl.formatMessage(messages.loadmore)}
+              </Button>
+            </div>
+          )}
+          {mediaType === 'book' && (
+            <div className="mt-2 flex items-center">
+              <MediaQualitySelect
+                value={format}
+                options={[
+                  {
+                    label: intl.formatMessage(getBookFormatMessage('ebook')),
+                    value: 'ebook',
+                    disabled: !formatAvailable.ebook,
+                  },
+                  {
+                    label: intl.formatMessage(
+                      getBookFormatMessage('audiobook')
+                    ),
+                    value: 'audiobook',
+                    disabled: !formatAvailable.audiobook,
+                  },
+                ]}
+                onChange={(value) => {
+                  setRequestOverrides(null);
+                  setFormat(value);
+                }}
+                label={intl.formatMessage(messages.format)}
+                autoSelectAvailable={false}
+                purpose="request"
+              />
+            </div>
+          )}
+          {mediaType === 'music' && (
+            <div className="mt-2 flex items-center">
+              <MediaQualitySelect
+                value={
+                  selectedMusicService?.name.toLowerCase().includes('flac')
+                    ? 'flac'
+                    : selectedMusicService?.name.toLowerCase().includes('mp3')
+                      ? 'mp3'
+                      : musicQuality
+                }
+                options={[
+                  {
+                    label: 'MP3',
+                    value: 'mp3',
+                    disabled:
+                      !!musicServices &&
+                      !musicServices.some((service) =>
+                        service.name.toLowerCase().includes('mp3')
+                      ),
+                  },
+                  {
+                    label: 'FLAC',
+                    value: 'flac',
+                    disabled:
+                      !!musicServices &&
+                      !musicServices.some((service) =>
+                        service.name.toLowerCase().includes('flac')
+                      ),
+                  },
+                ]}
+                onChange={(quality) => {
+                  setMusicQuality(quality);
+                  setRequestOverrides(null);
+                  setQualityRevision((current) => current + 1);
+                }}
+                label={intl.formatMessage(messages.quality)}
+                autoSelectAvailable={false}
+                purpose="request"
+              />
+            </div>
+          )}
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              key={
+                mediaType === 'music'
+                  ? musicQuality + '-' + qualityRevision
+                  : format
+              }
+              type={mediaType}
+              is4k={false}
+              bookFormat={mediaType === 'book' ? format : undefined}
+              defaultOverrides={
+                mediaType === 'music' && musicQualityService
+                  ? { server: musicQualityService.id }
+                  : undefined
+              }
+              onChange={(overrides) => setRequestOverrides(overrides)}
+              panelOnly={mediaType === 'book'}
+              expanded={mediaType === 'book' ? advancedOptionsOpen : undefined}
+              rootFolderTable={mediaType === 'book'}
+              requestedByPortal={
+                mediaType === 'book' ? requestedByPortal : undefined
+              }
+            />
+          )}
+        </>
+      )}
+    </>
+  );
+
   return (
     <Transition
       as="div"
@@ -787,17 +1334,13 @@ const BulkRequestModal = ({
       show={show}
     >
       <Modal
-        loading={
-          !quota || isLoadingItems || (mediaType === 'book' && !bookServices)
-        }
+        loading={!quota || (mediaType === 'book' && !bookServices)}
         title={
           mediaType === 'book'
-            ? intl.formatMessage(messages.requestbibliographyFormat, {
-                format: intl.formatMessage(getBookFormatMessage(format)),
-              })
+            ? 'Request Bibliography'
             : intl.formatMessage(messages.requestdiscography)
         }
-        subTitle={title}
+        subTitle={mediaType === 'book' ? undefined : title}
         onCancel={onCancel}
         onOk={summary ? onCancel : submit}
         okText={
@@ -822,171 +1365,144 @@ const BulkRequestModal = ({
             isUpdating ||
             selectedIds.length === 0 ||
             selectedExceedsQuota ||
-            !!formatWarning)
+            !!formatWarning ||
+            (mediaType === 'music' && !musicQualityService))
         }
+        hideActions={mediaType === 'book'}
+        alignTop={mediaType === 'book'}
+        cancelButtonType="danger"
+        okButtonType="success"
+        actionButtonSize="standard"
         dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        {summary ? (
-          <div className="mt-6 text-gray-200">
-            <Alert
-              type={summary.failed.length ? 'warning' : 'info'}
-              title={intl.formatMessage(messages.summary, {
-                created: summary.created.length,
-                skipped: summary.skipped.length,
-                failed: summary.failed.length,
-              })}
-            />
-            {summary.failed.length > 0 && (
-              <>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-lg font-semibold">
-                    {intl.formatMessage(messages.faileditems)}
-                  </div>
-                  <Button buttonType="primary" onClick={retryFailedItems}>
-                    {intl.formatMessage(messages.retryfailed)}
-                  </Button>
-                </div>
-                {renderFailures(summary.failed)}
-              </>
+        {mediaType === 'book' ? (
+          <RequestMediaCard
+            artwork={authorDetails?.posterPath}
+            artworkType="book"
+          >
+            {authorDetails && (
+              <AuthorSummaryCard
+                author={authorDetails}
+                selectionSize={{
+                  selected: selectedItems.length,
+                  visible: visibleItems.length,
+                }}
+              />
             )}
-          </div>
-        ) : (
-          <>
-            {hasAutoApprove && !currentQuota?.restricted && (
-              <div className="mt-6">
-                <Alert
-                  title={intl.formatMessage(messages.requestadmin)}
-                  type="info"
+            {!summary && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <FilterResetButton
+                  label={intl.formatMessage(messages.clearFilters)}
+                  selected={
+                    !firstPublishedFilter &&
+                    !genreFilter &&
+                    !ratingFilter &&
+                    !languageFilter
+                  }
+                  onClick={() => {
+                    setFirstPublishedFilter('');
+                    setGenreFilter('');
+                    setRatingFilter('');
+                    setLanguageFilter('');
+                  }}
                 />
+                <CompactSelect
+                  label={intl.formatMessage(messages.firstPublished)}
+                  value={firstPublishedFilter}
+                  options={bookYearOptions}
+                  onChange={setFirstPublishedFilter}
+                />
+                <CompactSelect
+                  label={intl.formatMessage(messages.genres)}
+                  value={genreFilter}
+                  options={bookGenreOptions}
+                  onChange={setGenreFilter}
+                />
+                <CompactRatingSelect
+                  label={intl.formatMessage(messages.rating)}
+                  value={ratingFilter}
+                  options={bookRatingOptions}
+                  maxScore={5}
+                  onChange={setRatingFilter}
+                />
+                <CompactSelect
+                  label={intl.formatMessage(messages.language)}
+                  value={languageFilter}
+                  options={bookLanguageOptions}
+                  onChange={setLanguageFilter}
+                />
+                {ratingFilter && isLoadingRatings && (
+                  <span
+                    className="self-center text-sm text-gray-300"
+                    role="status"
+                  >
+                    {intl.formatMessage(messages.loadingRatings)}
+                  </span>
+                )}
+                {ratingFilter && ratingsError && (
+                  <span
+                    className="self-center text-sm text-red-300"
+                    role="alert"
+                  >
+                    {intl.formatMessage(messages.ratingsUnavailable)}
+                  </span>
+                )}
               </div>
             )}
-            {confirmLargeBatch && (
-              <div className="mt-6">
-                <Alert
-                  title={intl.formatMessage(messages.largeBatch, {
-                    count: selectedIds.length,
-                  })}
-                  type="warning"
-                />
+            {modalContent}
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+              <div className="mr-auto flex items-center gap-2">
+                {(hasPermission(Permission.REQUEST_ADVANCED) ||
+                  hasPermission(Permission.MANAGE_REQUESTS)) &&
+                  !summary && (
+                    <AdvancedOptionsDisclosureButton
+                      label="Advanced Options"
+                      open={advancedOptionsOpen}
+                      pinned={advancedOptionsPinned}
+                      onToggle={toggleAdvancedOptions}
+                      onPin={toggleAdvancedOptionsPin}
+                    />
+                  )}
               </div>
-            )}
-            {selectedExceedsQuota && (
-              <div className="mt-6">
-                <Alert
-                  title={intl.formatMessage(messages.quotaexceeded)}
-                  type="warning"
-                />
-              </div>
-            )}
-            {submitProgress && (
-              <div className="mt-6">
-                <Alert
-                  title={intl.formatMessage(messages.submittingprogress, {
-                    processed: submitProgress.processed,
-                    total: submitProgress.total,
-                  })}
-                  type="info"
-                />
-              </div>
-            )}
-            {(currentQuota?.limit ?? 0) > 0 && (
-              <QuotaDisplay
-                mediaType={mediaType}
-                quota={currentQuota}
-                remaining={remaining}
-                userOverride={
-                  requestOverrides?.user &&
-                  requestOverrides.user.id !== user?.id
-                    ? requestOverrides.user.id
-                    : undefined
+              <div
+                className="compact-control flex items-center"
+                ref={setRequestedByPortal}
+              />
+              <Button
+                type="button"
+                onClick={onCancel}
+                disabled={isUpdating}
+                buttonType="danger"
+                buttonSize="standard"
+              >
+                <XMarkIcon aria-hidden="true" />
+                {intl.formatMessage(globalMessages.cancel)}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void (summary ? onCancel() : submit())}
+                disabled={
+                  !summary &&
+                  (isLoadingItems ||
+                    (Boolean(ratingFilter) &&
+                      (isLoadingRatings || ratingsError)) ||
+                    isUpdating ||
+                    selectedItems.length === 0 ||
+                    selectedExceedsQuota ||
+                    !!formatWarning)
                 }
-              />
-            )}
-            <div className="mt-6">
-              {mediaType === 'book' ? (
-                <BookFormatSelector
-                  value={format}
-                  available={formatAvailable}
-                  onChange={setFormat}
-                  className="mt-0"
-                />
-              ) : (
-                <RequestListboxControl
-                  id="bulk-release-type"
-                  label={intl.formatMessage(messages.releasetype)}
-                  value={releaseType}
-                  onChange={setReleaseType}
-                  options={releaseTypeOptions.map((type) => ({
-                    value: type,
-                    label: type,
-                  }))}
-                  active={releaseType !== 'Album'}
-                  loadingLabel={intl.formatMessage(globalMessages.loading)}
-                />
-              )}
-              <div className="mt-4 flex flex-wrap items-center gap-4">
-                <Button buttonType="ghost" onClick={toggleAll}>
-                  {intl.formatMessage(messages.selectitems)}
-                </Button>
-              </div>
+                buttonType="success"
+                buttonSize="standard"
+              >
+                <ArrowDownTrayIcon aria-hidden="true" />
+                {summary
+                  ? intl.formatMessage(messages.close)
+                  : intl.formatMessage(globalMessages.request)}
+              </Button>
             </div>
-            {formatWarning && (
-              <div className="mt-4">
-                <Alert
-                  title={intl.formatMessage(formatWarning)}
-                  type="warning"
-                />
-              </div>
-            )}
-            {sourceUrl && (
-              <div className="mt-4 text-sm text-gray-300">
-                <a
-                  href={sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-300 hover:text-indigo-200"
-                >
-                  {intl.formatMessage(messages.openSource)}
-                </a>
-              </div>
-            )}
-            <section className="refreshed-inset-surface card-spacing-before">
-              <ThreeItemScroll label={intl.formatMessage(messages.selectitems)}>
-                {items.map((item) => (
-                  <BulkRequestItemCard
-                    key={item.id}
-                    item={item}
-                    mediaType={mediaType}
-                    format={format}
-                    selected={selectedIds.includes(item.id)}
-                    reason={getIneligibleReason(item)}
-                    onToggle={() => toggleItem(item)}
-                    onNavigate={onCancel}
-                  />
-                ))}
-              </ThreeItemScroll>
-            </section>
-            {hasMoreAuthorWorks && (
-              <div className="mt-4">
-                <Button
-                  buttonType="ghost"
-                  disabled={isLoadingItems}
-                  onClick={() => void loadMoreAuthorWorks()}
-                >
-                  {intl.formatMessage(messages.loadmore)}
-                </Button>
-              </div>
-            )}
-            {(hasPermission(Permission.REQUEST_ADVANCED) ||
-              hasPermission(Permission.MANAGE_REQUESTS)) && (
-              <AdvancedRequester
-                type={mediaType}
-                is4k={false}
-                bookFormat={mediaType === 'book' ? format : undefined}
-                onChange={(overrides) => setRequestOverrides(overrides)}
-              />
-            )}
-          </>
+          </RequestMediaCard>
+        ) : (
+          modalContent
         )}
       </Modal>
     </Transition>

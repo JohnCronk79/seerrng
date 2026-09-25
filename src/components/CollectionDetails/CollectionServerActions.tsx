@@ -17,10 +17,10 @@ import axios from 'axios';
 import { Fragment, useState } from 'react';
 import { useIntl } from 'react-intl';
 import {
-  availableDestinationCount,
-  availableDestinationIds,
   collectionAddState,
   collectionRemoveState,
+  availableDestinationIds,
+  availableDestinationCount,
 } from './collectionActionState';
 
 const messages = defineMessages('components.CollectionDetails.ServerActions', {
@@ -96,8 +96,8 @@ const CollectionServerActions = ({
   const open = (next: 'add' | 'remove') => {
     const options =
       availability?.sync.destinations.filter((entry) =>
-        next === 'add'
-          ? entry.state === 'missing' &&
+          next === 'add'
+            ? entry.state === 'missing' &&
             availableDestinationCount(entry, visibleItemIds) > 0
           : entry.state === 'exists' && !!entry.removalToken
       ) ?? [];
@@ -105,7 +105,7 @@ const CollectionServerActions = ({
     setChoices(
       options.map((entry) => ({
         ...entry,
-        count:
+          count:
           next === 'add'
             ? availableDestinationCount(entry, visibleItemIds)
             : entry.count,

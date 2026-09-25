@@ -90,7 +90,7 @@ test('black glowing divider overrides are limited to Blackout', () => {
   );
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
   const theme = css.match(
-    /\[data-theme-palette='blackout'\]\s*\{([^}]+)\}/
+    /\[data-theme-palette='seerr'\]\s*\{([^}]+)\}/
   )?.[1];
   assert.ok(theme);
   assert.match(
@@ -104,7 +104,7 @@ test('black glowing divider overrides are limited to Blackout', () => {
   assert.equal(glowing.length, 2);
   for (const [, selectors, body] of glowing) {
     for (const selector of selectors.split(',')) {
-      assert.ok(selector.trim().startsWith("[data-theme-palette='blackout']"));
+      assert.ok(selector.trim().startsWith("[data-theme-palette='seerr']"));
     }
     assert.match(body, /background-color: black;/);
   }

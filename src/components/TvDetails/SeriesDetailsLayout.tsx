@@ -43,12 +43,12 @@ const messages = defineMessages('components.TvDetails.Layout', {
   overviewUnavailable: 'Overview unavailable',
   viewCast: 'Cast',
   viewCrew: 'Crew',
-  subjectTags: 'Subject Tags',
+  subjectTags: 'Keywords',
   fullCastList: 'Full Cast List',
   fullCrewList: 'Full Crew List',
   noCast: 'No cast information available',
   noCrew: 'No crew information available',
-  noTags: 'No subject tags available',
+  noTags: 'No keywords available',
   seriesDetails: 'Details',
   status: 'Status',
   airDates: 'Air Dates',
@@ -629,7 +629,7 @@ const SeriesDetailsLayout = ({
                   {data.keywords.map((keyword, index) => (
                     <Link
                       key={keyword.id}
-                      href={`/discover/tv/keyword?keywords=${keyword.id}`}
+                      href={`/discover/tv?search=${encodeURIComponent(keyword.name)}`}
                       className={subjectTagClassName(index)}
                     >
                       {keyword.name}

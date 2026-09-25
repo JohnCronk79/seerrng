@@ -17,6 +17,7 @@ import CuratedGenreLinks from './CuratedGenreLinks';
 const messages = defineMessages('components.CollectionSummaryCard', {
   genres: 'Genres',
   collectionSize: 'Collection Size',
+  selectionSize: 'Selection Size',
   overview: 'Overview',
   overviewUnavailable: 'Overview unavailable',
   notAvailable: 'Not Available',
@@ -29,11 +30,13 @@ const messages = defineMessages('components.CollectionSummaryCard', {
 const CollectionSummaryCard = ({
   collection,
   kind,
+  selectionSize,
 }: {
   collection:
     | NonNullable<MovieDetails['collection']>
     | { id: string | number; name: string; posterPath?: string };
   kind?: 'tv' | 'music';
+  selectionSize?: { selected: number; visible: number };
 }) => {
   const intl = useIntl();
   const { data, error, mutate } = useSWR<Collection | CuratedCollection>(
@@ -143,6 +146,16 @@ const CollectionSummaryCard = ({
               <dd className="collection-summary-size-value">
                 {data?.parts.length ?? '—'}
               </dd>
+              {selectionSize && (
+                <>
+                  <dt className="collection-summary-selection-label">
+                    {intl.formatMessage(messages.selectionSize)}:
+                  </dt>
+                  <dd className="collection-summary-selection-value">
+                    {selectionSize.selected} / {selectionSize.visible}
+                  </dd>
+                </>
+              )}
             </div>
           </dl>
         </div>

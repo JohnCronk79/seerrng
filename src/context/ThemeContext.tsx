@@ -20,7 +20,7 @@ type ThemeChrome = 'classic' | 'blackout';
 export type ThemePalette = {
   id: string;
   name: string;
-  swatches: string[];
+  swatchCount?: number;
   surface: ThemeScaleName;
   primary: ThemeScaleName;
   secondary: ThemeScaleName;
@@ -29,35 +29,24 @@ export type ThemePalette = {
 
 export const themePalettes: ThemePalette[] = [
   {
-    id: 'classic',
-    name: 'Seerr',
-    swatches: ['#1f2937', '#4f46e5', '#9333ea'],
-    surface: 'gray',
-    primary: 'indigo',
-    secondary: 'purple',
-    chrome: 'classic',
-  },
-  {
     id: 'seerr',
     name: 'SeerrNG',
-    swatches: ['#0f172a', '#2563eb', '#38bdf8'],
-    surface: 'slate',
-    primary: 'blue',
-    secondary: 'sky',
-  },
-  {
-    id: 'blackout',
-    name: 'Blackout',
-    swatches: ['#000000', '#1a3260', '#333333'],
     surface: 'gray',
     primary: 'indigo',
     secondary: 'purple',
     chrome: 'blackout',
   },
   {
+    id: 'classic',
+    name: 'Seerr',
+    surface: 'gray',
+    primary: 'indigo',
+    secondary: 'purple',
+    chrome: 'classic',
+  },
+  {
     id: 'aurora',
     name: 'Aurora',
-    swatches: ['#4f46e5', '#a855f7', '#14b8a6'],
     surface: 'indigo',
     primary: 'indigo',
     secondary: 'purple',
@@ -65,7 +54,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'ember',
     name: 'Ember',
-    swatches: ['#dc2626', '#f97316', '#f59e0b'],
     surface: 'orange',
     primary: 'red',
     secondary: 'orange',
@@ -73,7 +61,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'lagoon',
     name: 'Lagoon',
-    swatches: ['#0f766e', '#0891b2', '#2563eb'],
     surface: 'teal',
     primary: 'teal',
     secondary: 'cyan',
@@ -81,7 +68,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'orchid',
     name: 'Orchid',
-    swatches: ['#7c3aed', '#d946ef', '#ec4899'],
     surface: 'fuchsia',
     primary: 'violet',
     secondary: 'fuchsia',
@@ -89,7 +75,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'forest',
     name: 'Forest',
-    swatches: ['#15803d', '#65a30d', '#0f766e'],
     surface: 'green',
     primary: 'green',
     secondary: 'lime',
@@ -97,7 +82,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'sapphire',
     name: 'Sapphire',
-    swatches: ['#1d4ed8', '#0284c7', '#6366f1'],
     surface: 'blue',
     primary: 'blue',
     secondary: 'sky',
@@ -105,7 +89,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'rosewood',
     name: 'Rosewood',
-    swatches: ['#be123c', '#db2777', '#7c2d12'],
     surface: 'rose',
     primary: 'rose',
     secondary: 'pink',
@@ -113,7 +96,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'citrus',
     name: 'Citrus',
-    swatches: ['#ca8a04', '#84cc16', '#f97316'],
     surface: 'yellow',
     primary: 'yellow',
     secondary: 'lime',
@@ -121,7 +103,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'arctic',
     name: 'Arctic',
-    swatches: ['#0284c7', '#64748b', '#22d3ee'],
     surface: 'slate',
     primary: 'sky',
     secondary: 'slate',
@@ -129,7 +110,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'grape',
     name: 'Grape',
-    swatches: ['#6d28d9', '#9333ea', '#4f46e5'],
     surface: 'purple',
     primary: 'purple',
     secondary: 'violet',
@@ -137,7 +117,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'coral',
     name: 'Coral',
-    swatches: ['#e11d48', '#fb7185', '#f97316'],
     surface: 'orange',
     primary: 'rose',
     secondary: 'orange',
@@ -145,7 +124,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'mint',
     name: 'Mint',
-    swatches: ['#059669', '#10b981', '#06b6d4'],
     surface: 'emerald',
     primary: 'emerald',
     secondary: 'teal',
@@ -153,7 +131,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'steel',
     name: 'Steel',
-    swatches: ['#475569', '#2563eb', '#0f766e'],
     surface: 'slate',
     primary: 'slate',
     secondary: 'blue',
@@ -161,7 +138,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'gold',
     name: 'Gold',
-    swatches: ['#b45309', '#eab308', '#ea580c'],
     surface: 'amber',
     primary: 'amber',
     secondary: 'yellow',
@@ -169,7 +145,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'plum',
     name: 'Plum',
-    swatches: ['#86198f', '#be185d', '#7c3aed'],
     surface: 'pink',
     primary: 'fuchsia',
     secondary: 'pink',
@@ -177,7 +152,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'skyline',
     name: 'Skyline',
-    swatches: ['#0369a1', '#4f46e5', '#06b6d4'],
     surface: 'sky',
     primary: 'sky',
     secondary: 'indigo',
@@ -185,7 +159,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'moss',
     name: 'Moss',
-    swatches: ['#4d7c0f', '#16a34a', '#ca8a04'],
     surface: 'lime',
     primary: 'lime',
     secondary: 'green',
@@ -193,7 +166,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'flame',
     name: 'Flame',
-    swatches: ['#c2410c', '#dc2626', '#f59e0b'],
     surface: 'red',
     primary: 'orange',
     secondary: 'red',
@@ -201,7 +173,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'violet',
     name: 'Violet',
-    swatches: ['#5b21b6', '#7e22ce', '#2563eb'],
     surface: 'violet',
     primary: 'violet',
     secondary: 'blue',
@@ -209,7 +180,6 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'ocean',
     name: 'Ocean',
-    swatches: ['#075985', '#0d9488', '#1d4ed8'],
     surface: 'cyan',
     primary: 'cyan',
     secondary: 'blue',
@@ -217,14 +187,14 @@ export const themePalettes: ThemePalette[] = [
   {
     id: 'sietch-neon',
     name: 'Sietch',
-    swatches: ['#8e6036', '#43352e', '#8f5cff', '#d7ff3f'],
+    swatchCount: 4,
     surface: 'sietchSpice',
     primary: 'sietchSpice',
     secondary: 'sietchNeon',
   },
 ];
 
-export const DEFAULT_THEME_PALETTE_ID = 'classic';
+export const DEFAULT_THEME_PALETTE_ID = 'seerr';
 
 const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
@@ -686,6 +656,7 @@ type ThemeContextValue = {
 
 const THEME_MODE_KEY = 'seerr-theme-mode';
 const THEME_PALETTE_KEY = 'seerr-theme-palette';
+const THEME_PALETTE_MIGRATION_KEY = 'seerr-theme-default-v2';
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
@@ -695,6 +666,11 @@ const getStoredMode = (): ThemeMode => {
 };
 
 const getStoredPalette = (): string => {
+  if (readLocalStorageValue(THEME_PALETTE_MIGRATION_KEY) !== '1') {
+    writeLocalStorageValue(THEME_PALETTE_MIGRATION_KEY, '1');
+    return DEFAULT_THEME_PALETTE_ID;
+  }
+
   const storedPalette = readLocalStorageValue(THEME_PALETTE_KEY);
   return storedPalette &&
     themePalettes.some((palette) => palette.id === storedPalette)

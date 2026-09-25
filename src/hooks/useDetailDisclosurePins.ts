@@ -14,6 +14,10 @@ import {
 
 const defaultPins: DetailDisclosurePins = {
   details: false,
+  advancedOptions: false,
+  filters: false,
+  mediaFilters: false,
+  sortBy: false,
   collection: false,
   cast: false,
   crew: false,
@@ -27,6 +31,10 @@ const fromUserSettings = (
 ): DetailDisclosurePins => {
   const legacyPins: DetailDisclosurePins = {
     details: false,
+    advancedOptions: false,
+    filters: false,
+    mediaFilters: false,
+    sortBy: false,
     collection: false,
     cast:
       mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,

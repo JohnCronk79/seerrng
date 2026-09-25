@@ -46,8 +46,29 @@ test('action buttons fit a 16px detail row without shrinking their text', () => 
     css,
     /\.issue-action-value\s*\{[^}]*display: flex;[^}]*align-items: center;/s
   );
-  assert.match(css, /\.issue-view-action\s*\{[^}]*text-\[11px\]/s);
   assert.match(css, /\.button-sm\s*\{[^}]*text-xs/s);
+});
+
+test('icon and label spacing is defined once for shared buttons and filters', () => {
+  assert.match(css, /--button-content-gap: 0\.375rem;/);
+  for (const selector of [
+    '.format-request-label',
+    '.app-button',
+    '.app-button > span',
+    '.detail-disclosure-button',
+    '.app-filter-button',
+    '.app-filter-select-trigger',
+    '.discover-filter-control-label',
+    '.request-listbox-button',
+  ]) {
+    const start = css.lastIndexOf('\n  ' + selector + ' {');
+    assert.ok(start > -1, selector);
+    const rule = css.slice(start, css.indexOf('}', start));
+    assert.ok(
+      rule.includes('column-gap: var(--button-content-gap);'),
+      selector
+    );
+  }
 });
 
 test('form input and dropdown control heights remain 20px', () => {

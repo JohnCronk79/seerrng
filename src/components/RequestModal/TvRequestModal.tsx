@@ -2,6 +2,8 @@ import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import SeriesSeasonEpisodeSelector from '@app/components/Common/SeriesSeasonEpisodeSelector';
+import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
+import AdvancedOptionsDisclosureButton from '@app/components/RequestModal/AdvancedOptionsDisclosureButton';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
@@ -9,12 +11,14 @@ import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatu
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
 import {
-  canPromotePendingDestinationRequests,
   createRequestDestination,
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
+  isRequestForDestination,
   isVideoQualityAvailable,
 } from '@app/components/RequestModal/requestAvailability';
+import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
+import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
@@ -23,11 +27,12 @@ import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import {
-  AdjustmentsHorizontalIcon,
-  ArrowDownTrayIcon,
-  ChevronDownIcon,
-  XMarkIcon,
-} from '@heroicons/react/24/outline';
+  getAvailableEpisodesBySeason,
+  getDefaultUnavailableSeasonSelections,
+  getRequestableTvSelections,
+  mergeEpisodeNumbersBySeason,
+} from '@app/utils/tvRequestSelection';
+import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
@@ -38,7 +43,7 @@ import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
@@ -52,12 +57,12 @@ const messages = defineMessages('components.RequestModal', {
   pendingrequest: 'Pending Request',
   pending4krequest: 'Pending 4K Request',
   requestfrom: "{username}'s request is pending approval.",
-  requestseasons:
-    'Request {seasonCount} {seasonCount, plural, one {Season} other {Seasons}}',
-  requestseasons4k:
-    'Request {seasonCount} {seasonCount, plural, one {Season} other {Seasons}} in 4K',
-  alreadyrequested: 'Already Requested',
-  selectseason: 'Select Season(s)',
+  selectItemsToRequest: 'Select unavailable seasons or episodes to request.',
+  alreadyAvailable:
+    'The selected seasons or episodes are already available or requested.',
+  noUnavailableItems: 'No unavailable seasons or episodes remain to request.',
+  requestQuotaExceeded:
+    'Your remaining request quota is not enough for this selection.',
   season: 'Season',
   episodes: 'Episodes',
   seasonnumber: 'Season {number}',
@@ -80,6 +85,7 @@ const messages = defineMessages('components.RequestModal', {
   requested: 'Requested',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
+  quality: 'Quality',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -102,6 +108,8 @@ const TvRequestModal = ({
   allow4kServerSelection = false,
 }: RequestModalProps) => {
   const settings = useSettings();
+  const [selectedIs4k, setSelectedIs4k] = useState(is4k);
+  const [qualityRevision, setQualityRevision] = useState(0);
   const { addToast } = useToasts();
   const editingSeasonSelections: SeasonEpisodeSelection[] = (
     editRequest?.seasons ?? []
@@ -115,16 +123,30 @@ const TvRequestModal = ({
   const [seasonSelections, setSeasonSelections] = useState<
     SeasonEpisodeSelection[]
   >(editRequest ? editingSeasonSelections : []);
+  const [initializedSelectionKey, setInitializedSelectionKey] = useState('');
   const [activeSeason, setActiveSeason] = useState<number>(
     editingSeasonSelections[0]?.seasonNumber ?? -1
   );
   const selectedSeasons = seasonSelections.map(
     (selection) => selection.seasonNumber
   );
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
+  const {
+    open: advancedOptionsOpen,
+    pinned: advancedOptionsPinned,
+    toggleOpen: toggleAdvancedOptions,
+    togglePin: toggleAdvancedOptionsPin,
+  } = useAdvancedOptionsDisclosure('tv');
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
-  const effectiveIs4k = requestOverrides?.is4k ?? is4k;
+  const effectiveIs4k = requestOverrides?.is4k ?? selectedIs4k;
+  const { data: playbackCatalog } = usePlaybackCatalog(
+    data?.mediaInfo?.id,
+    effectiveIs4k
+  );
+  const availableEpisodesBySeason = useMemo(
+    () => getAvailableEpisodesBySeason(playbackCatalog),
+    [playbackCatalog]
+  );
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -156,12 +178,25 @@ const TvRequestModal = ({
   const fallbackService = sonarrServers?.find(
     (server) => server.isDefault && server.is4k === effectiveIs4k
   );
-  const selectedDestination = createRequestDestination(
-    'sonarr',
-    effectiveIs4k ? '4k' : 'standard',
-    selectedService ?? fallbackService,
-    requestOverrides
+  const selectedDestination = useMemo(
+    () =>
+      createRequestDestination(
+        'sonarr',
+        effectiveIs4k ? '4k' : 'standard',
+        selectedService ?? fallbackService,
+        requestOverrides
+      ),
+    [effectiveIs4k, fallbackService, requestOverrides, selectedService]
   );
+  const requestSelectionKey = JSON.stringify([
+    tmdbId,
+    effectiveIs4k,
+    selectedDestination?.serverId,
+    selectedDestination?.profileId,
+    selectedDestination?.metadataProfileId,
+    selectedDestination?.languageProfileId,
+    selectedDestination?.rootFolder,
+  ]);
   const selectedDestinationAvailable =
     !editRequest &&
     (isVideoQualityAvailable(data?.mediaInfo, 'tv', effectiveIs4k) ||
@@ -172,24 +207,6 @@ const TvRequestModal = ({
       data?.mediaInfo?.requests,
       selectedDestination
     );
-  const selectedDestinationPromotable =
-    selectedDestinationRequested &&
-    canPromotePendingDestinationRequests(
-      data?.mediaInfo?.requests,
-      [selectedDestination],
-      {
-        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
-        hasAutoApprove: hasAutoApprovePermission(
-          user?.permissions ?? 0,
-          'tv',
-          effectiveIs4k
-        ),
-      }
-    );
-  const selectedDestinationCovered =
-    selectedDestinationAvailable ||
-    (selectedDestinationRequested && !selectedDestinationPromotable);
-
   const currentlyRemaining =
     (quota?.tv.remaining ?? 0) -
     selectedSeasons.length +
@@ -266,7 +283,7 @@ const TvRequestModal = ({
   };
 
   const sendRequest = async () => {
-    if (selectedDestinationCovered) {
+    if (requestDisabled) {
       return;
     }
 
@@ -301,12 +318,14 @@ const TvRequestModal = ({
         is4k: effectiveIs4k,
         ignoreQuota: requestOverrides?.ignoreQuota,
         seasons: settings.currentSettings.partialRequestsEnabled
-          ? [...selectedSeasons].sort((a, b) => a - b)
+          ? requestableSelections
+              .map((selection) => selection.seasonNumber)
+              .sort((a, b) => a - b)
           : getAllSeasons().filter(
               (season) => !getAllRequestedSeasons().includes(season)
             ),
         seasonRequests: settings.currentSettings.partialRequestsEnabled
-          ? seasonSelections
+          ? requestableSelections
           : undefined,
         ...overrideParams,
       });
@@ -341,7 +360,7 @@ const TvRequestModal = ({
     }
   };
 
-  const getAllSeasons = (): number[] => {
+  const getAllSeasons = useCallback((): number[] => {
     let allSeasons = (data?.seasons ?? []).filter(
       (season) => season.episodeCount !== 0
     );
@@ -349,14 +368,47 @@ const TvRequestModal = ({
       allSeasons = allSeasons.filter((season) => season.seasonNumber > 0);
     }
     return allSeasons.map((season) => season.seasonNumber);
-  };
+  }, [data?.seasons, settings.currentSettings.enableSpecialEpisodes]);
 
-  const getAllRequestedSeasons = (): number[] => {
+  const getAllRequestedEpisodes = useCallback((): Record<number, number[]> => {
+    const requestedEpisodes: Record<number, number[]> = {};
+    (data?.mediaInfo?.requests ?? [])
+      .filter(
+        (request) =>
+          request.id !== editRequest?.id &&
+          (selectedDestination
+            ? isRequestForDestination(request, selectedDestination)
+            : request.is4k === effectiveIs4k) &&
+          request.status !== MediaRequestStatus.DECLINED &&
+          request.status !== MediaRequestStatus.FAILED &&
+          request.status !== MediaRequestStatus.COMPLETED
+      )
+      .flatMap((request) => request.seasons)
+      .filter((season) => season.episodeNumbers != null)
+      .forEach((season) => {
+        requestedEpisodes[season.seasonNumber] = [
+          ...new Set([
+            ...(requestedEpisodes[season.seasonNumber] ?? []),
+            ...(season.episodeNumbers ?? []),
+          ]),
+        ];
+      });
+    return requestedEpisodes;
+  }, [
+    data?.mediaInfo?.requests,
+    editRequest?.id,
+    effectiveIs4k,
+    selectedDestination,
+  ]);
+
+  const getAllRequestedSeasons = useCallback((): number[] => {
     const requestedSeasons = (data?.mediaInfo?.requests ?? [])
       .filter(
         (request) =>
           request.id !== editRequest?.id &&
-          request.is4k === effectiveIs4k &&
+          (selectedDestination
+            ? isRequestForDestination(request, selectedDestination)
+            : request.is4k === effectiveIs4k) &&
           request.status !== MediaRequestStatus.DECLINED &&
           request.status !== MediaRequestStatus.FAILED &&
           request.status !== MediaRequestStatus.COMPLETED
@@ -375,40 +427,148 @@ const TvRequestModal = ({
         (season) =>
           season[effectiveIs4k ? 'status4k' : 'status'] ===
             MediaStatus.AVAILABLE &&
+          (!selectedDestination ||
+            (effectiveIs4k
+              ? data?.mediaInfo?.serviceId4k
+              : data?.mediaInfo?.serviceId) == null ||
+            (effectiveIs4k
+              ? data?.mediaInfo?.serviceId4k
+              : data?.mediaInfo?.serviceId) === selectedDestination.serverId) &&
           !requestedSeasons.includes(season.seasonNumber)
       )
       .map((season) => season.seasonNumber);
 
-    return [...requestedSeasons, ...availableSeasons];
-  };
-
-  const getAllRequestedEpisodes = (): Record<number, number[]> => {
-    const requestedEpisodes: Record<number, number[]> = {};
-    (data?.mediaInfo?.requests ?? [])
+    const fullyAvailableCatalogSeasons = (data?.seasons ?? [])
       .filter(
-        (request) =>
-          request.id !== editRequest?.id &&
-          request.is4k === effectiveIs4k &&
-          request.status !== MediaRequestStatus.DECLINED &&
-          request.status !== MediaRequestStatus.FAILED &&
-          request.status !== MediaRequestStatus.COMPLETED
+        (season) =>
+          season.episodeCount > 0 &&
+          (availableEpisodesBySeason[season.seasonNumber]?.length ?? 0) >=
+            season.episodeCount
       )
-      .flatMap((request) => request.seasons)
-      .filter((season) => season.episodeNumbers != null)
-      .forEach((season) => {
-        requestedEpisodes[season.seasonNumber] = [
-          ...new Set([
-            ...(requestedEpisodes[season.seasonNumber] ?? []),
-            ...(season.episodeNumbers ?? []),
-          ]),
-        ];
-      });
-    return requestedEpisodes;
-  };
+      .map((season) => season.seasonNumber);
+    const blockedEpisodes = mergeEpisodeNumbersBySeason(
+      availableEpisodesBySeason,
+      getAllRequestedEpisodes()
+    );
+    const fullyBlockedSeasons = (data?.seasons ?? [])
+      .filter(
+        (season) =>
+          season.episodeCount > 0 &&
+          (blockedEpisodes[season.seasonNumber]?.length ?? 0) >=
+            season.episodeCount
+      )
+      .map((season) => season.seasonNumber);
+
+    return [
+      ...new Set([
+        ...requestedSeasons,
+        ...availableSeasons,
+        ...fullyAvailableCatalogSeasons,
+        ...fullyBlockedSeasons,
+      ]),
+    ];
+  }, [
+    availableEpisodesBySeason,
+    data?.mediaInfo?.requests,
+    data?.mediaInfo?.seasons,
+    data?.seasons,
+    editRequest?.id,
+    effectiveIs4k,
+    getAllRequestedEpisodes,
+    selectedDestination,
+    data?.mediaInfo?.serviceId,
+    data?.mediaInfo?.serviceId4k,
+  ]);
 
   const unrequestedSeasons = getAllSeasons().filter(
     (season) => !getAllRequestedSeasons().includes(season)
   );
+  const blockedEpisodesBySeason = mergeEpisodeNumbersBySeason(
+    availableEpisodesBySeason,
+    getAllRequestedEpisodes()
+  );
+  const requestSelections = settings.currentSettings.partialRequestsEnabled
+    ? seasonSelections
+    : unrequestedSeasons.map((seasonNumber) => ({ seasonNumber }));
+  const requestableSelections = getRequestableTvSelections(
+    requestSelections,
+    data?.seasons ?? [],
+    getAllRequestedSeasons(),
+    blockedEpisodesBySeason
+  );
+  const partialQuotaExceeded =
+    !!quota?.tv.limit &&
+    !requestOverrides?.ignoreQuota &&
+    requestableSelections.length >
+      (quota.tv.remaining ?? 0) + (editRequest?.seasons.length ?? 0);
+  const fullQuotaExceeded =
+    !!quota?.tv.limit &&
+    !requestOverrides?.ignoreQuota &&
+    unrequestedSeasons.length > (quota.tv.remaining ?? 0);
+  const requestDisabledReason =
+    partialQuotaExceeded ||
+    (!settings.currentSettings.partialRequestsEnabled && fullQuotaExceeded)
+      ? intl.formatMessage(messages.requestQuotaExceeded)
+      : requestableSelections.length === 0
+        ? settings.currentSettings.partialRequestsEnabled &&
+          seasonSelections.length === 0 &&
+          unrequestedSeasons.length > 0
+          ? intl.formatMessage(messages.selectItemsToRequest)
+          : intl.formatMessage(
+              unrequestedSeasons.length === 0
+                ? messages.noUnavailableItems
+                : messages.alreadyAvailable
+            )
+        : undefined;
+
+  useEffect(() => {
+    if (
+      editRequest ||
+      !settings.currentSettings.partialRequestsEnabled ||
+      !data ||
+      initializedSelectionKey === requestSelectionKey
+    ) {
+      return;
+    }
+
+    const defaults = getDefaultUnavailableSeasonSelections(
+      data.seasons.filter((season) =>
+        getAllSeasons().includes(season.seasonNumber)
+      ),
+      getAllRequestedSeasons()
+    );
+    setSeasonSelections(defaults);
+    if (
+      defaults.length > 0 &&
+      !defaults.some((selection) => selection.seasonNumber === activeSeason)
+    ) {
+      setActiveSeason(defaults[0].seasonNumber);
+    }
+    setInitializedSelectionKey(requestSelectionKey);
+  }, [
+    activeSeason,
+    data,
+    editRequest,
+    effectiveIs4k,
+    getAllRequestedSeasons,
+    getAllSeasons,
+    initializedSelectionKey,
+    requestSelectionKey,
+    settings.currentSettings.partialRequestsEnabled,
+  ]);
+
+  useEffect(() => {
+    if (editRequest) {
+      return;
+    }
+
+    const coveredSeasons = new Set(getAllRequestedSeasons());
+    setSeasonSelections((currentSelections) =>
+      currentSelections.filter(
+        (selection) => !coveredSeasons.has(selection.seasonNumber)
+      )
+    );
+  }, [editRequest, getAllRequestedSeasons]);
 
   const isOwner = editRequest && editRequest.requestedBy.id === user?.id;
   const canUseAdvancedOptions = hasPermission(
@@ -458,30 +618,12 @@ const TvRequestModal = ({
       : hasPermission(Permission.MANAGE_REQUESTS)
         ? intl.formatMessage(messages.approve)
         : intl.formatMessage(messages.edit)
-    : getAllRequestedSeasons().length >= getAllSeasons().length
-      ? intl.formatMessage(messages.alreadyrequested)
-      : !settings.currentSettings.partialRequestsEnabled
-        ? intl.formatMessage(
-            effectiveIs4k ? globalMessages.request4k : globalMessages.request
-          )
-        : selectedSeasons.length === 0
-          ? intl.formatMessage(messages.selectseason)
-          : intl.formatMessage(
-              effectiveIs4k
-                ? messages.requestseasons4k
-                : messages.requestseasons,
-              { seasonCount: selectedSeasons.length }
-            );
+    : intl.formatMessage(globalMessages.request);
   const requestDisabled = editRequest
     ? false
-    : selectedDestinationCovered ||
-      (!settings.currentSettings.partialRequestsEnabled &&
-        quota?.tv.limit &&
-        unrequestedSeasons.length > quota.tv.limit &&
-        !requestOverrides?.ignoreQuota) ||
-      getAllRequestedSeasons().length >= getAllSeasons().length ||
-      (settings.currentSettings.partialRequestsEnabled &&
-        selectedSeasons.length === 0);
+    : requestableSelections.length === 0 ||
+      partialQuotaExceeded ||
+      (!settings.currentSettings.partialRequestsEnabled && fullQuotaExceeded);
   const closeAction = tvdbId ? () => setSearchModal({ show: true }) : onCancel;
   const submitAction = () =>
     editRequest
@@ -705,14 +847,15 @@ const TvRequestModal = ({
           <SeriesSeasonEpisodeSelector
             tvId={data.id}
             seasons={visibleSeasons}
-            selections={seasonSelections}
+            selections={requestableSelections}
             activeSeason={
               activeSeason >= 0
                 ? activeSeason
                 : (visibleSeasons[0]?.seasonNumber ?? -1)
             }
             disabledSeasons={getAllRequestedSeasons()}
-            disabledEpisodes={getAllRequestedEpisodes()}
+            disabledEpisodes={blockedEpisodesBySeason}
+            availableEpisodesBySeason={availableEpisodesBySeason}
             onActiveSeasonChange={setActiveSeason}
             onSelectionsChange={(nextSelections) => {
               const allowedSelections =
@@ -720,6 +863,7 @@ const TvRequestModal = ({
               if (
                 !quota?.tv.limit ||
                 requestOverrides?.ignoreQuota ||
+                nextSelections.length <= seasonSelections.length ||
                 nextSelections.length <= allowedSelections
               ) {
                 setSeasonSelections(nextSelections);
@@ -728,10 +872,31 @@ const TvRequestModal = ({
           />
         )}
 
+        {!editRequest && (
+          <div className="mt-2 flex items-center">
+            <MediaQualitySelect
+              value={effectiveIs4k ? '4k' : 'hd'}
+              options={[
+                { label: 'HD', value: 'hd' },
+                { label: '4K', value: '4k' },
+              ]}
+              onChange={(quality) => {
+                setSelectedIs4k(quality === '4k');
+                setRequestOverrides(null);
+                setQualityRevision((current) => current + 1);
+              }}
+              label={intl.formatMessage(messages.quality)}
+              autoSelectAvailable={false}
+              purpose="request"
+            />
+          </div>
+        )}
+
         {canUseAdvancedOptions && (
           <AdvancedRequester
+            key={(selectedIs4k ? '4k' : 'hd') + '-' + qualityRevision}
             type="tv"
-            is4k={is4k}
+            is4k={selectedIs4k}
             allow4kServerSelection={allow4kServerSelection && !editRequest}
             isAnime={isAnime}
             quota={quota}
@@ -758,22 +923,13 @@ const TvRequestModal = ({
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <div className="mr-auto flex items-center gap-2">
             {canUseAdvancedOptions && (
-              <button
-                type="button"
-                className="app-button app-button-manage button-standard"
-                aria-expanded={advancedOptionsOpen}
-                onClick={() => setAdvancedOptionsOpen((open) => !open)}
-              >
-                <AdjustmentsHorizontalIcon
-                  className="h-3.5 w-3.5"
-                  aria-hidden="true"
-                />
-                {intl.formatMessage(messages.advancedOptions)}
-                <ChevronDownIcon
-                  className={`h-3.5 w-3.5 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`}
-                  aria-hidden="true"
-                />
-              </button>
+              <AdvancedOptionsDisclosureButton
+                label={intl.formatMessage(messages.advancedOptions)}
+                open={advancedOptionsOpen}
+                pinned={advancedOptionsPinned}
+                onToggle={toggleAdvancedOptions}
+                onPin={toggleAdvancedOptionsPin}
+              />
             )}
           </div>
           <div
@@ -795,6 +951,7 @@ const TvRequestModal = ({
           <Button
             type="button"
             disabled={requestDisabled}
+            disabledReason={requestDisabledReason}
             onClick={() => void submitAction()}
             data-testid="modal-ok-button"
             buttonType="success"

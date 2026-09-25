@@ -8,14 +8,12 @@ import AvailabilityQualityControl, {
   type AvailabilityQuality,
 } from '@app/components/Discover/AvailabilityQualityControl';
 import {
-  CompactSelect,
   FilterResetButton,
   getFilterToggleButtonClass,
-  type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import LibraryFilterFields from '@app/components/Discover/FilterPanel/LibraryFilterFields';
 import { musicSortOptions } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
-import MusicArtistFilter from '@app/components/Discover/FilterPanel/MusicArtistSelector';
-import MusicReleaseTypeSelect from '@app/components/Discover/FilterPanel/MusicReleaseTypeSelect';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
 import PlaylistImportModal from '@app/components/RequestModal/PlaylistImportModal';
 import useDebouncedState from '@app/hooks/useDebouncedState';
@@ -26,7 +24,6 @@ import defineMessages from '@app/utils/defineMessages';
 import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
-  MagnifyingGlassIcon,
   QueueListIcon,
 } from '@heroicons/react/24/solid';
 import type { PlaylistResolutionResponse } from '@server/interfaces/api/playlistInterfaces';
@@ -39,16 +36,7 @@ const messages = defineMessages('components.Discover.DiscoverMusic', {
   music: 'Music',
   filters: 'Filters',
   sortBy: 'Sort By',
-  search: 'Keyword Search',
-  searchMusic: 'Search Music',
   clearFilters: 'Clear Filters',
-  genres: 'Genres',
-  releaseType: 'Release Type',
-  releaseYear: 'Release Year',
-  any: 'Any',
-  album: 'Album',
-  ep: 'EP',
-  single: 'Single',
   recommended: 'Recommended',
   week: 'Popular This Week',
   month: 'Popular This Month',
@@ -58,17 +46,6 @@ const messages = defineMessages('components.Discover.DiscoverMusic', {
   loadError: 'Music discovery could not be loaded right now.',
   importPlaylist: 'Import Playlist',
 });
-const genres = [
-  'Alternative',
-  'Classical',
-  'Country',
-  'Electronic',
-  'Hip-Hop',
-  'Jazz',
-  'Metal',
-  'Pop',
-  'Rock',
-];
 const musicSorts = [
   { label: messages.recommended, asc: 'ranked.asc', desc: 'ranked' },
   {
@@ -114,8 +91,11 @@ const DiscoverMusic = ({
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
-    routedSearchRef.current = query.trim();
-    setSearch(query);
+    const routedSearch = query.trim();
+    if (routedSearch !== routedSearchRef.current) {
+      routedSearchRef.current = routedSearch;
+      setSearch(query);
+    }
   }, [query, setSearch]);
   const genre =
     typeof router.query.genre === 'string' ? router.query.genre : '';
@@ -182,18 +162,12 @@ const DiscoverMusic = ({
 
     if (nextSearch !== routedSearchRef.current) {
       routedSearchRef.current = nextSearch;
-      update({ search: nextSearch || undefined, page: undefined });
+      update(
+        { search: nextSearch || undefined, page: undefined },
+        { shallow: true, scroll: false }
+      );
     }
   }, [debouncedSearch, update]);
-  const currentYear = new Date().getFullYear();
-  const yearOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: 'any' },
-    ...Array.from({ length: currentYear - 1969 }, (_, index) => {
-      const year = currentYear - index;
-      return { label: year.toString(), value: year.toString() };
-    }),
-    { label: '<1970', value: 'before-1970' },
-  ];
   const releaseYear =
     !releaseDateGte && !releaseDateLte
       ? 'any'
@@ -203,10 +177,6 @@ const DiscoverMusic = ({
             releaseDateLte === `${releaseDateGte.slice(0, 4)}-12-31`
           ? releaseDateGte.slice(0, 4)
           : 'any';
-  const genreOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...genres.map((value) => ({ label: value, value: value.toLowerCase() })),
-  ];
   const hasActiveFilters = Boolean(
     query ||
     artist ||
@@ -235,129 +205,89 @@ const DiscoverMusic = ({
           </div>
         </div>
         {mediaFilters}
-        <div className="app-filter-section-heading">
-          {intl.formatMessage(messages.filters)}
-        </div>
-        <div className="discover-filter-primary-row">
-          <FilterResetButton
-            label={intl.formatMessage(messages.clearFilters)}
-            selected={!hasActiveFilters}
-            onClick={() => {
-              setSearch('');
-              setParam({
-                search: undefined,
-                artist: undefined,
-                artistId: undefined,
-                availability: undefined,
-                genre: undefined,
-                releaseType: undefined,
-                primaryReleaseDateGte: undefined,
-                primaryReleaseDateLte: undefined,
-                sortBy: undefined,
-              });
-            }}
-            className="order-1"
-          />
-          <CardTextVisibilityToggle mediaType="album" className="order-2" />
-          <AvailabilityQualityControl
-            mediaType="music"
-            value={availability}
-            onChange={(value) => setParam({ availability: value })}
-            className="order-3"
-          />
-        </div>
-        <div className="discover-filter-secondary-row">
-          <MusicArtistFilter className="order-5" />
-          <form
-            className="discover-filter-control order-5 w-72 flex-none"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const nextSearch = search.trim();
-              routedSearchRef.current = nextSearch;
-              setParam({ search: nextSearch || undefined });
-            }}
-          >
-            <span
-              className={`discover-filter-control-label gap-1 ${
-                search.trim() ? 'discover-filter-control-label-active' : ''
-              }`}
-            >
-              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              {intl.formatMessage(messages.search)}
-            </span>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={intl.formatMessage(messages.searchMusic)}
-              aria-label={intl.formatMessage(messages.searchMusic)}
-              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
-            />
-          </form>
-          <CompactSelect
-            className="order-8"
-            label={intl.formatMessage(messages.genres)}
-            value={genre}
-            options={genreOptions}
-            onChange={(value) => setParam({ genre: value || undefined })}
-          />
-          <MusicReleaseTypeSelect
-            className="order-7"
-            value={releaseType}
-            onChange={(value) => setParam({ releaseType: value || undefined })}
-          />
-          <CompactSelect
-            className="order-6"
-            label={intl.formatMessage(messages.releaseYear)}
-            value={releaseYear}
-            options={yearOptions}
-            onChange={(value) => {
-              if (value === 'any') {
+        <PinnedFilterSection
+          mediaType="music"
+          section="filters"
+          label={intl.formatMessage(messages.filters)}
+        >
+          <div className="discover-filter-primary-row">
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={!hasActiveFilters}
+              onClick={() => {
+                setSearch('');
                 setParam({
+                  search: undefined,
+                  artist: undefined,
+                  artistId: undefined,
+                  availability: undefined,
+                  genre: undefined,
+                  releaseType: undefined,
                   primaryReleaseDateGte: undefined,
                   primaryReleaseDateLte: undefined,
+                  sortBy: undefined,
                 });
-              } else if (value === 'before-1970') {
-                setParam({
-                  primaryReleaseDateGte: undefined,
-                  primaryReleaseDateLte: '1969-12-31',
-                });
-              } else {
-                setParam({
-                  primaryReleaseDateGte: `${value}-01-01`,
-                  primaryReleaseDateLte: `${value}-12-31`,
-                });
-              }
-            }}
-          />
-        </div>
-        <div className="app-filter-section-heading">
-          {intl.formatMessage(messages.sortBy)}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {musicSorts.map((option) => {
-            const active = sortBy === option.asc || sortBy === option.desc;
-            const ascending = sortBy === option.asc;
-            const Icon = ascending ? BarsArrowUpIcon : BarsArrowDownIcon;
+              }}
+              className="order-1"
+            />
+            <CardTextVisibilityToggle mediaType="album" className="order-2" />
+            <AvailabilityQualityControl
+              mediaType="music"
+              value={availability}
+              onChange={(value) => setParam({ availability: value })}
+              className="order-3"
+            />
+          </div>
+          <div className="discover-filter-secondary-row">
+            <LibraryFilterFields
+              mediaType="music"
+              search={search}
+              onSearchChange={setSearch}
+              onSearchSubmit={() => {
+                const nextSearch = search.trim();
+                routedSearchRef.current = nextSearch;
+                update(
+                  { search: nextSearch || undefined, page: undefined },
+                  { shallow: true, scroll: false }
+                );
+              }}
+              genre={genre}
+              releaseType={releaseType}
+              releaseYear={releaseYear}
+              setParam={setParam}
+            />
+          </div>
+        </PinnedFilterSection>
+        <PinnedFilterSection
+          mediaType="music"
+          section="sortBy"
+          label={intl.formatMessage(messages.sortBy)}
+        >
+          <div className="flex flex-wrap gap-2">
+            {musicSorts.map((option) => {
+              const active = sortBy === option.asc || sortBy === option.desc;
+              const ascending = sortBy === option.asc;
+              const Icon = ascending ? BarsArrowUpIcon : BarsArrowDownIcon;
 
-            return (
-              <button
-                key={option.desc}
-                type="button"
-                aria-pressed={active}
-                onClick={() =>
-                  setParam({
-                    sortBy: active && !ascending ? option.asc : option.desc,
-                  })
-                }
-                className={getFilterToggleButtonClass(active)}
-              >
-                {intl.formatMessage(option.label)}
-                <Icon className="h-4 w-4" />
-              </button>
-            );
-          })}
-        </div>
+              return (
+                <button
+                  key={option.desc}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() =>
+                    setParam({
+                      sortBy: active && !ascending ? option.asc : option.desc,
+                    })
+                  }
+                  className={getFilterToggleButtonClass(active)}
+                >
+                  {intl.formatMessage(option.label)}
+                  <Icon className="h-4 w-4" />
+                </button>
+              );
+            })}
+          </div>
+        </PinnedFilterSection>
       </div>
       {discover.error &&
         !discover.titles.length &&
