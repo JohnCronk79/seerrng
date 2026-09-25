@@ -23,14 +23,18 @@ seerrng_seed_settings() {
 }
 
 seerrng_prepare_service() {
+	local database_directory="$data_dir/db"
 	local log_directory="$data_dir/logs"
 
-	if [[ -L "$log_directory" ]]; then
-		ynh_die --message="Refusing to use a symlink as the SeerrNG log directory."
-	fi
-	mkdir -p "$log_directory"
-	chown "$app:$app" "$log_directory"
-	chmod 0700 "$log_directory"
+	for directory in "$database_directory" "$log_directory"; do
+		if [[ -L "$directory" ]]; then
+			ynh_die --message="Refusing to use a symlink as a SeerrNG data directory."
+		fi
+		if [[ -e "$directory" && ! -d "$directory" ]]; then
+			ynh_die --message="SeerrNG data path exists but is not a directory."
+		fi
+	done
+	install -d -o "$app" -g "$app" -m 0700 "$database_directory" "$log_directory"
 	ynh_config_add_nginx
 	ynh_config_add_systemd
 }
