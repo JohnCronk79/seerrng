@@ -5067,14 +5067,15 @@ const validateCurrentBatchContract = (files) => {
   }
   for (const token of [
     '.media-inset-heading {',
-    '@apply text-sm leading-5 font-semibold text-white;',
+    '@apply text-sm leading-5 font-semibold;',
     '.media-inset-table-heading {',
-    '@apply text-xs leading-4 font-semibold text-white;',
+    '@apply text-xs leading-4 font-semibold;',
+    'color: rgb(var(--theme-heading-text));',
   ]) {
     requireText(
       globals,
       token,
-      'media inset and table headings must use their shared white typography'
+      'media inset and table headings must use their shared mode-aware typography'
     );
   }
   for (const fileName of [

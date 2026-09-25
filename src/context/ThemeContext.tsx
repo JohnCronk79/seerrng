@@ -507,33 +507,93 @@ const applyScale = (
   });
 };
 
+type ThemeChromeTokens = {
+  pageBg: string;
+  pageGlowStart: string;
+  pageGlowEnd: string;
+  pageSpotlightCenter: string;
+  pageSpotlightEdge: string;
+  pageGradientLight: string;
+  pageGradientMain: string;
+  pageGradientDeep: string;
+  pageGradientBlack: string;
+  searchbarScrolled: string;
+  sidebarStart: string;
+  sidebarEnd: string;
+  sidebarBorder: string;
+  sidebarHover: string;
+  controlSurface: string;
+  controlSurfaceHover: string;
+  controlBorder: string;
+  controlText: string;
+  headingText: string;
+};
+
+type ThemeArtworkTokens = {
+  artworkScrim: string;
+  artworkGradientLight: string;
+  artworkGradientMain: string;
+  artworkGradientDeep: string;
+  artworkGradientBlack: string;
+  artworkText: string;
+};
+
 const applyThemeChrome = (
   root: HTMLElement,
-  surfaceScale: readonly string[],
-  primaryScale: readonly string[],
-  secondaryScale: readonly string[],
-  mode: ThemeMode,
-  chrome?: ThemeChrome
+  theme: ThemeChromeTokens & ThemeArtworkTokens
 ) => {
-  const themeChrome = getThemeChromeTokens(
-    surfaceScale,
-    primaryScale,
-    secondaryScale,
-    mode,
-    chrome
-  );
-
-  root.style.setProperty('--theme-page-bg', themeChrome.pageBg);
-  root.style.setProperty('--theme-page-glow-start', themeChrome.pageGlowStart);
-  root.style.setProperty('--theme-page-glow-end', themeChrome.pageGlowEnd);
+  root.style.setProperty('--theme-page-bg', theme.pageBg);
+  root.style.setProperty('--theme-page-glow-start', theme.pageGlowStart);
+  root.style.setProperty('--theme-page-glow-end', theme.pageGlowEnd);
   root.style.setProperty(
-    '--theme-searchbar-scrolled',
-    themeChrome.searchbarScrolled
+    '--theme-page-spotlight-center',
+    theme.pageSpotlightCenter
   );
-  root.style.setProperty('--theme-sidebar-start', themeChrome.sidebarStart);
-  root.style.setProperty('--theme-sidebar-end', themeChrome.sidebarEnd);
-  root.style.setProperty('--theme-sidebar-border', themeChrome.sidebarBorder);
-  root.style.setProperty('--theme-sidebar-hover', themeChrome.sidebarHover);
+  root.style.setProperty(
+    '--theme-page-spotlight-edge',
+    theme.pageSpotlightEdge
+  );
+  root.style.setProperty(
+    '--theme-page-gradient-light',
+    theme.pageGradientLight
+  );
+  root.style.setProperty('--theme-page-gradient-main', theme.pageGradientMain);
+  root.style.setProperty('--theme-page-gradient-deep', theme.pageGradientDeep);
+  root.style.setProperty(
+    '--theme-page-gradient-black',
+    theme.pageGradientBlack
+  );
+  root.style.setProperty('--theme-searchbar-scrolled', theme.searchbarScrolled);
+  root.style.setProperty('--theme-sidebar-start', theme.sidebarStart);
+  root.style.setProperty('--theme-sidebar-end', theme.sidebarEnd);
+  root.style.setProperty('--theme-sidebar-border', theme.sidebarBorder);
+  root.style.setProperty('--theme-sidebar-hover', theme.sidebarHover);
+  root.style.setProperty('--theme-control-surface', theme.controlSurface);
+  root.style.setProperty(
+    '--theme-control-surface-hover',
+    theme.controlSurfaceHover
+  );
+  root.style.setProperty('--theme-control-border', theme.controlBorder);
+  root.style.setProperty('--theme-control-text', theme.controlText);
+  root.style.setProperty('--theme-heading-text', theme.headingText);
+  root.style.setProperty('--theme-artwork-scrim', theme.artworkScrim);
+  root.style.setProperty(
+    '--theme-artwork-gradient-light',
+    theme.artworkGradientLight
+  );
+  root.style.setProperty(
+    '--theme-artwork-gradient-main',
+    theme.artworkGradientMain
+  );
+  root.style.setProperty(
+    '--theme-artwork-gradient-deep',
+    theme.artworkGradientDeep
+  );
+  root.style.setProperty(
+    '--theme-artwork-gradient-black',
+    theme.artworkGradientBlack
+  );
+  root.style.setProperty('--theme-artwork-text', theme.artworkText);
 };
 
 const parseRgb = (value: string): [number, number, number] =>
@@ -596,17 +656,6 @@ const createSurfaceScale = (
   );
 };
 
-type ThemeChromeTokens = {
-  pageBg: string;
-  pageGlowStart: string;
-  pageGlowEnd: string;
-  searchbarScrolled: string;
-  sidebarStart: string;
-  sidebarEnd: string;
-  sidebarBorder: string;
-  sidebarHover: string;
-};
-
 const getThemeChromeTokens = (
   surfaceScale: readonly string[],
   primaryScale: readonly string[],
@@ -614,41 +663,113 @@ const getThemeChromeTokens = (
   mode: ThemeMode,
   chrome?: ThemeChrome
 ): ThemeChromeTokens => {
-  if (mode === 'dark' && chrome === 'classic') {
-    return {
-      pageBg: surfaceScale[9],
-      pageGlowStart: surfaceScale[8],
-      pageGlowEnd: surfaceScale[9],
-      searchbarScrolled: surfaceScale[7],
-      sidebarStart: surfaceScale[8],
-      sidebarEnd: '19 25 40',
-      sidebarBorder: surfaceScale[7],
-      sidebarHover: surfaceScale[7],
-    };
-  }
+  const classicDark = mode === 'dark' && chrome === 'classic';
+  const pageBg = surfaceScale[9];
+  const pageGlowStart = classicDark
+    ? surfaceScale[8]
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[8], primaryScale[7], 0.56)
+      : mixRgb(surfaceScale[8], primaryScale[3], 0.44);
+  const pageGlowEnd = surfaceScale[9];
+  const searchbarScrolled = classicDark
+    ? surfaceScale[7]
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[8], primaryScale[7], 0.44)
+      : mixRgb(surfaceScale[8], primaryScale[2], 0.38);
+  const sidebarStart = classicDark
+    ? surfaceScale[8]
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[8], primaryScale[8], 0.58)
+      : mixRgb(primaryScale[7], surfaceScale[2], 0.24);
+  const sidebarEnd = classicDark
+    ? '19 25 40'
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[10], primaryScale[9], 0.52)
+      : mixRgb(primaryScale[9], surfaceScale[1], 0.18);
+  const sidebarBorder = classicDark
+    ? surfaceScale[7]
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[7], secondaryScale[6], 0.48)
+      : mixRgb(primaryScale[6], secondaryScale[6], 0.42);
+  const sidebarHover = classicDark
+    ? surfaceScale[7]
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[7], primaryScale[7], 0.52)
+      : mixRgb(primaryScale[6], secondaryScale[5], 0.32);
 
-  if (mode === 'dark') {
-    return {
-      pageBg: surfaceScale[9],
-      pageGlowStart: mixRgb(surfaceScale[8], primaryScale[7], 0.56),
-      pageGlowEnd: surfaceScale[9],
-      searchbarScrolled: mixRgb(surfaceScale[8], primaryScale[7], 0.44),
-      sidebarStart: mixRgb(surfaceScale[8], primaryScale[8], 0.58),
-      sidebarEnd: mixRgb(surfaceScale[10], primaryScale[9], 0.52),
-      sidebarBorder: mixRgb(surfaceScale[7], secondaryScale[6], 0.48),
-      sidebarHover: mixRgb(surfaceScale[7], primaryScale[7], 0.52),
-    };
-  }
+  const pageSpotlightCenter = classicDark
+    ? '194 169 255'
+    : mode === 'dark'
+      ? mixRgb(primaryScale[2], secondaryScale[2], 0.5)
+      : mixRgb(primaryScale[1], secondaryScale[1], 0.5);
+  const pageSpotlightEdge = classicDark
+    ? '151 115 246'
+    : mode === 'dark'
+      ? mixRgb(primaryScale[4], secondaryScale[4], 0.5)
+      : mixRgb(primaryScale[2], secondaryScale[2], 0.5);
+
+  const pageGradientLight = classicDark
+    ? '76 67 189'
+    : mode === 'dark'
+      ? mixRgb(pageGlowStart, primaryScale[6], 0.18)
+      : pageGlowStart;
+  const pageGradientMain = classicDark
+    ? '52 51 157'
+    : mode === 'dark'
+      ? mixRgb(pageBg, primaryScale[8], 0.35)
+      : mixRgb(pageBg, pageGlowStart, 0.2);
+  const pageGradientDeep = classicDark
+    ? '23 29 89'
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[10], primaryScale[9], 0.42)
+      : mixRgb(pageBg, surfaceScale[8], 0.2);
+  const pageGradientBlack = classicDark
+    ? '0 0 0'
+    : mode === 'dark'
+      ? '0 0 0'
+      : pageBg;
+
+  const controlSurface = classicDark
+    ? '49 46 129'
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[8], primaryScale[9], 0.18)
+      : mixRgb(surfaceScale[9], secondaryScale[0], 0.12);
+  const controlSurfaceHover = classicDark
+    ? '55 48 163'
+    : mode === 'dark'
+      ? mixRgb(surfaceScale[7], primaryScale[8], 0.18)
+      : mixRgb(surfaceScale[8], secondaryScale[0], 0.1);
+  const controlBorder = classicDark ? '99 102 241' : primaryScale[5];
+  const controlText = classicDark
+    ? '199 210 254'
+    : mode === 'dark'
+      ? primaryScale[2]
+      : mixRgb(surfaceScale[2], primaryScale[9], 0.12);
+  const headingText =
+    mode === 'dark'
+      ? '255 255 255'
+      : mixRgb(surfaceScale[1], primaryScale[9], 0.12);
 
   return {
-    pageBg: surfaceScale[9],
-    pageGlowStart: mixRgb(surfaceScale[8], primaryScale[3], 0.44),
-    pageGlowEnd: surfaceScale[9],
-    searchbarScrolled: mixRgb(surfaceScale[8], primaryScale[2], 0.38),
-    sidebarStart: mixRgb(primaryScale[7], surfaceScale[2], 0.24),
-    sidebarEnd: mixRgb(primaryScale[9], surfaceScale[1], 0.18),
-    sidebarBorder: mixRgb(primaryScale[6], secondaryScale[6], 0.42),
-    sidebarHover: mixRgb(primaryScale[6], secondaryScale[5], 0.32),
+    pageBg,
+    pageGlowStart,
+    pageGlowEnd,
+    pageSpotlightCenter,
+    pageSpotlightEdge,
+    pageGradientLight,
+    pageGradientMain,
+    pageGradientDeep,
+    pageGradientBlack,
+    searchbarScrolled,
+    sidebarStart,
+    sidebarEnd,
+    sidebarBorder,
+    sidebarHover,
+    controlSurface,
+    controlSurfaceHover,
+    controlBorder,
+    controlText,
+    headingText,
   };
 };
 
@@ -705,6 +826,27 @@ export const getThemeTokens = (mode: ThemeMode, palette: string) => {
     mode,
     activePalette.chrome
   );
+  const darkSurfaceScale =
+    mode === 'dark'
+      ? surfaceScale
+      : activePalette.chrome === 'classic'
+        ? themeScales.gray
+        : createSurfaceScale(
+            themeScales[activePalette.surface],
+            primaryScale,
+            secondaryScale,
+            'dark'
+          );
+  const darkChromeTokens =
+    mode === 'dark'
+      ? chromeTokens
+      : getThemeChromeTokens(
+          darkSurfaceScale,
+          primaryScale,
+          secondaryScale,
+          'dark',
+          activePalette.chrome
+        );
 
   return {
     activePaletteId: activePalette.id,
@@ -713,6 +855,12 @@ export const getThemeTokens = (mode: ThemeMode, palette: string) => {
     surfaceScale,
     chrome: activePalette.chrome,
     ...chromeTokens,
+    artworkScrim: darkChromeTokens.pageGradientMain,
+    artworkGradientLight: darkChromeTokens.pageGradientLight,
+    artworkGradientMain: darkChromeTokens.pageGradientMain,
+    artworkGradientDeep: darkChromeTokens.pageGradientDeep,
+    artworkGradientBlack: '0 0 0',
+    artworkText: primaryScale[2],
   };
 };
 
@@ -730,14 +878,7 @@ const applyTheme = (mode: ThemeMode, palette: string) => {
   applyScale(document.documentElement, 'indigo', themeTokens.primaryScale);
   applyScale(document.documentElement, 'purple', themeTokens.secondaryScale);
   applyScale(document.documentElement, 'gray', themeTokens.surfaceScale);
-  applyThemeChrome(
-    document.documentElement,
-    themeTokens.surfaceScale,
-    themeTokens.primaryScale,
-    themeTokens.secondaryScale,
-    mode,
-    themeTokens.chrome
-  );
+  applyThemeChrome(document.documentElement, themeTokens);
   document
     .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
     ?.setAttribute('content', rgbToHex(themeTokens.sidebarStart));

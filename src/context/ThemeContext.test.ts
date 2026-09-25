@@ -7,6 +7,30 @@ import {
   themePalettes,
 } from './ThemeContext';
 
+const getRelativeLuminance = (rgb: string): number => {
+  const [red, green, blue] = rgb
+    .split(' ')
+    .map(Number)
+    .map((channel) => {
+      const value = channel / 255;
+
+      return value <= 0.04045
+        ? value / 12.92
+        : ((value + 0.055) / 1.055) ** 2.4;
+    });
+
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+};
+
+const getContrastRatio = (foreground: string, background: string): number => {
+  const luminance = [
+    getRelativeLuminance(foreground),
+    getRelativeLuminance(background),
+  ].sort((left, right) => right - left);
+
+  return (luminance[0] + 0.05) / (luminance[1] + 0.05);
+};
+
 describe('themePalettes', () => {
   it('uses the Seerr palette as the default', () => {
     assert.equal(DEFAULT_THEME_PALETTE_ID, 'classic');
@@ -26,6 +50,37 @@ describe('themePalettes', () => {
     assert.equal(tokens.sidebarHover, '55 65 81');
     assert.equal(tokens.primaryScale[6], '79 70 229');
     assert.equal(tokens.secondaryScale[6], '147 51 234');
+  });
+
+  it('keeps light surfaces and text in the selected mode while preserving dark artwork overlays', () => {
+    const darkTokens = getThemeTokens('dark', 'classic');
+    const lightTokens = getThemeTokens('light', 'classic');
+
+    assert.equal(lightTokens.pageGradientBlack, lightTokens.pageBg);
+    assert.notEqual(lightTokens.pageGradientMain, darkTokens.pageGradientMain);
+    assert.notEqual(lightTokens.controlSurface, darkTokens.controlSurface);
+    assert.notEqual(lightTokens.controlText, darkTokens.controlText);
+    assert.equal(lightTokens.artworkScrim, darkTokens.artworkScrim);
+    assert.equal(
+      lightTokens.artworkGradientDeep,
+      darkTokens.artworkGradientDeep
+    );
+    assert.equal(lightTokens.artworkGradientBlack, '0 0 0');
+  });
+
+  it('keeps light-mode control and heading colors readable across palettes', () => {
+    for (const palette of themePalettes) {
+      const tokens = getThemeTokens('light', palette.id);
+
+      assert.ok(
+        getContrastRatio(tokens.controlText, tokens.controlSurface) >= 4.5,
+        `${palette.name} light controls should meet normal-text contrast`
+      );
+      assert.ok(
+        getContrastRatio(tokens.headingText, tokens.pageGradientMain) >= 4.5,
+        `${palette.name} light headings should meet normal-text contrast`
+      );
+    }
   });
 
   it('exposes a distinct Seerr-branded blue palette', () => {

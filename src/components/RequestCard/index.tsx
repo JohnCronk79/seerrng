@@ -634,7 +634,15 @@ const RequestCard = ({
             </div>
           )}
         <div
-          className="relative z-10 flex min-w-0 flex-1 flex-col pr-4"
+          className={`relative z-10 flex min-w-0 flex-1 flex-col pr-4 ${
+            !isMusic(title) &&
+            !isBook(title) &&
+            !isComic(title) &&
+            !isMagazine(title) &&
+            title.backdropPath
+              ? 'request-card-artwork-copy'
+              : ''
+          }`}
           data-testid="request-card-title"
         >
           <div className="flex flex-wrap items-center gap-1 text-xs font-medium text-white">

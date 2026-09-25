@@ -95,6 +95,25 @@ const validateGlobalStylesheet = (fileName, source) => {
     }
   });
 
+  const requestArtworkRule = source.match(
+    /\.request-card-artwork-gradient\s*\{([^}]*)\}/su
+  );
+  if (
+    !requestArtworkRule ||
+    !/var\(--theme-artwork-gradient-black\)/u.test(requestArtworkRule[1])
+  ) {
+    errors.push(
+      `${fileName}:1: request card artwork must use the mode-independent dark artwork token`
+    );
+  }
+  if (
+    /\.request-card-artwork-gradient\s*\{[^}]*--color-gray-900/su.test(source)
+  ) {
+    errors.push(
+      `${fileName}:1: request card artwork must not use mode-switched gray-900 as its overlay`
+    );
+  }
+
   return errors;
 };
 
