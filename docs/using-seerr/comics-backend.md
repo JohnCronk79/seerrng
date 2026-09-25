@@ -113,9 +113,6 @@ Point Kapowarr's FlareSolverr setting at the `flaresolverr` container, then:
 This is a first-pass integration; the following are deliberate scope cuts,
 not bugs:
 
-- No per-request backend/root-folder/profile picker. Comics dispatch to
-  whichever default (or explicitly targeted) server SeerrNG resolves, the
-  same way movie and TV quality-profile overrides do not apply here.
 - No per-request root-folder or profile picker. Users with advanced request
   permission can choose a comic server when multiple instances are configured;
   other requests use a configured default.
