@@ -291,7 +291,7 @@ const IssueList = () => {
               className={getFilterToggleButtonClass(filter === value)}
             >
               {intl.formatMessage(label)}
-              <span className="rounded-full bg-black/25 px-1.5 text-[10px]">
+              <span className="rounded-full bg-black/35 px-1.5 text-[10px]">
                 {count}
               </span>
             </button>

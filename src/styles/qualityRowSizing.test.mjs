@@ -36,7 +36,7 @@ test('quality icons, ratings and playback logos share the 14px content height', 
 test('disabled playback retains its border and uses shared disabled styling', () => {
   assert.match(
     css,
-    /\.app-button-playback\s*\{\s*@apply border-gray-500 bg-black/
+    /\.app-button-playback\s*\{\s*@apply border-gray-500 bg-black\/35[^}]*hover:bg-black\/55[^}]*active:bg-black\/70/
   );
   assert.doesNotMatch(css, /\.app-button-playback:disabled/);
   assert.match(css, /\.app-button\s*\{[^}]*disabled:opacity-60/s);

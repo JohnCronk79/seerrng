@@ -26,14 +26,14 @@ const DropdownItem = ({
         className={[
           'button-md flex cursor-pointer items-center rounded px-4 py-2 text-sm leading-5 focus:text-white focus:outline-none',
           buttonType === 'ghost'
-            ? 'bg-transparent from-indigo-600 to-purple-600 text-white hover:bg-gradient-to-br focus:border-gray-500'
+            ? 'border border-gray-600 bg-black/35 text-white hover:border-gray-200 hover:bg-black/55 focus:border-gray-500 active:bg-black/70'
             : buttonType === 'playback'
-              ? 'border border-gray-500 bg-black text-gray-400 hover:border-white hover:text-white focus:border-white'
+              ? 'border border-gray-500 bg-black/35 text-gray-400 hover:border-white hover:bg-black/55 hover:text-white focus:border-white active:bg-black/70'
               : buttonType === 'detailRequest'
-                ? 'border border-green-500/90 bg-green-950/95 text-green-200 hover:bg-green-900 focus:border-green-300'
+                ? 'border border-green-500/90 bg-green-950/35 text-green-200 hover:bg-green-900/55 focus:border-green-300 active:bg-green-900/70'
                 : buttonType === 'success'
-                  ? 'bg-green-600 text-white hover:bg-green-500 focus:border-green-700'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-500 focus:border-indigo-700',
+                  ? 'bg-green-950/35 text-white hover:bg-green-900/55 focus:border-green-700 active:bg-green-900/70'
+                  : 'bg-indigo-950/35 text-white hover:bg-indigo-900/55 focus:border-indigo-700 active:bg-indigo-900/70',
         ].join(' ')}
         {...props}
       >
@@ -104,16 +104,16 @@ const Dropdown = ({
         className={[
           buttonType === 'playback'
             ? `app-button app-button-playback playback-dropdown-trigger ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
-            : `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
-          buttonType === 'playback'
-            ? ''
             : buttonType === 'ghost'
-              ? 'border-gray-600 bg-transparent text-white hover:border-gray-200 focus:border-gray-100 active:border-gray-100'
+              ? `app-button app-button-ghost ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
               : buttonType === 'detailRequest'
-                ? 'focus:ring-green border-green-500/90 bg-green-950/35 text-green-300 hover:border-green-300 hover:bg-green-900/55 hover:text-green-100 focus:border-green-300 active:border-green-400 active:bg-green-900/70'
+                ? `app-button app-button-detail-request ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
                 : buttonType === 'success'
-                  ? 'focus:ring-green border-green-500 bg-green-500/80 text-white hover:border-green-400 hover:bg-green-500 focus:border-green-700 active:border-green-700 active:bg-green-600'
-                  : `focus:ring-blue border-indigo-500 bg-indigo-600/80 text-white hover:border-indigo-500 hover:bg-indigo-600 active:border-indigo-700 active:bg-indigo-700`,
+                  ? `app-button app-button-success ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
+                  : `app-button app-button-primary ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`,
+          buttonType === 'playback'
+            ? 'hover:z-20 focus:z-20'
+            : 'hover:z-20 focus:z-20 disabled:brightness-50 disabled:grayscale',
           className,
         ].join(' ')}
         ref={buttonRef}

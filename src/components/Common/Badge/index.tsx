@@ -28,7 +28,7 @@ const Badge = (
     case 'danger':
       badgeStyle.push('bg-red-600/35 border-red-500 border !text-red-100');
       if (href) {
-        badgeStyle.push('hover:bg-red-500/55');
+        badgeStyle.push('hover:bg-red-500/55 active:bg-red-500/70');
       }
       break;
     case 'warning':
@@ -36,7 +36,7 @@ const Badge = (
         'bg-yellow-500/35 border-yellow-500 border !text-yellow-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-yellow-500/55');
+        badgeStyle.push('hover:bg-yellow-500/55 active:bg-yellow-500/70');
       }
       break;
     case 'success':
@@ -44,19 +44,19 @@ const Badge = (
         'bg-green-500/35 border border-green-500 !text-green-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-green-500/55');
+        badgeStyle.push('hover:bg-green-500/55 active:bg-green-500/70');
       }
       break;
     case 'dark':
       badgeStyle.push('bg-gray-900/35 !text-gray-400');
       if (href) {
-        badgeStyle.push('hover:bg-gray-800/55');
+        badgeStyle.push('hover:bg-gray-800/55 active:bg-gray-800/70');
       }
       break;
     case 'light':
       badgeStyle.push('bg-gray-700/35 !text-gray-300');
       if (href) {
-        badgeStyle.push('hover:bg-gray-600/55');
+        badgeStyle.push('hover:bg-gray-600/55 active:bg-gray-600/70');
       }
       break;
     default:
@@ -64,7 +64,7 @@ const Badge = (
         'bg-indigo-500/35 border border-indigo-500 !text-indigo-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-indigo-500/55');
+        badgeStyle.push('hover:bg-indigo-500/55 active:bg-indigo-500/70');
       }
   }
 
