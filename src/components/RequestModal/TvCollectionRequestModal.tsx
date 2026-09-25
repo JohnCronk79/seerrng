@@ -10,37 +10,44 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
+import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
-import { orderCollectionPartsOldestFirst } from '@app/utils/collectionPlaybackSelection';
-import {
-  getCollectionPartRequestPresentation,
-  getCoveredCollectionPartIds,
-} from '@app/utils/collectionRequestState';
 import { mapWithConcurrency } from '@app/utils/concurrency';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
+import {
+  getAvailableEpisodesBySeason,
+  getRequestableTvSelections,
+  mergeEpisodeNumbersBySeason,
+} from '@app/utils/tvRequestSelection';
 import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
-import { MediaStatus } from '@server/constants/media';
+import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
+import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
-import type { Collection } from '@server/models/Collection';
+import type {
+  CuratedCollection,
+  CuratedCollectionMember,
+} from '@server/models/CuratedCollection';
+import type { PlaybackCatalogResponse } from '@server/models/Playback';
+import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
-const messages = defineMessages('components.RequestModal', {
+const messages = defineMessages('components.TvCollectionRequestModal', {
   requestSuccess: '<strong>{title}</strong> requested successfully!',
   requestcollectiontitle: 'Request Collection',
   requestcollection4ktitle: 'Request Collection in 4K',
   requesterror: 'Something went wrong while submitting the request.',
   requestpartial: '{created} requested; {failed} failed.',
-  selectItemsToRequest: 'Select at least one movie to request.',
-  selection: 'Select this movie to request',
-  selectAll: 'Select every movie that is ready to request',
+  selectItemsToRequest: 'Select at least one series to request.',
+  selection: 'Select this series to request',
+  selectAll: 'Select every series that is ready to request',
   advancedOptions: 'Advanced Options',
   hd: 'HD',
   ultraHd: '4K',
@@ -50,49 +57,186 @@ const messages = defineMessages('components.RequestModal', {
   processing: 'Processing',
   blocklisted: 'Blocklisted',
   notAvailable: 'Not Available',
-  quotaRestricted: 'The selected user cannot make more movie requests.',
+  quotaRestricted: 'The selected user cannot make more series requests.',
+  detailsUnavailable: 'Series request details could not be loaded.',
+  missingTvdb:
+    'This series needs an individual request to select its TVDB match.',
 });
 
-const COLLECTION_REQUEST_CONCURRENCY = 5;
+const activeRequest = (status: MediaRequestStatus) =>
+  status !== MediaRequestStatus.DECLINED &&
+  status !== MediaRequestStatus.FAILED &&
+  status !== MediaRequestStatus.COMPLETED;
 
-interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
-  tmdbId: number;
+const requestableSelections = (
+  detail: TvDetails | undefined,
+  is4k: boolean,
+  includeSpecials: boolean,
+  catalog?: PlaybackCatalogResponse
+): SeasonEpisodeSelection[] => {
+  if (!detail?.externalIds.tvdbId) return [];
+  const seasons = detail.seasons.filter(
+    (season) =>
+      season.episodeCount > 0 && (includeSpecials || season.seasonNumber > 0)
+  );
+  const requests = (detail.mediaInfo?.requests ?? []).filter(
+    (request) => request.is4k === is4k && activeRequest(request.status)
+  );
+  const coveredSeasons = seasons
+    .filter((season) => {
+      const mediaSeason = detail.mediaInfo?.seasons?.find(
+        (existing) => existing.seasonNumber === season.seasonNumber
+      );
+      const status = mediaSeason?.[is4k ? 'status4k' : 'status'];
+      return (
+        status === MediaStatus.AVAILABLE ||
+        status === MediaStatus.PROCESSING ||
+        status === MediaStatus.BLOCKLISTED ||
+        requests.some((request) =>
+          request.seasons.some(
+            (requested) =>
+              requested.seasonNumber === season.seasonNumber &&
+              requested.episodeNumbers == null
+          )
+        )
+      );
+    })
+    .map((season) => season.seasonNumber);
+  const pendingEpisodes: Record<number, number[]> = {};
+  requests
+    .flatMap((request) => request.seasons)
+    .forEach((season) => {
+      if (season.episodeNumbers) {
+        pendingEpisodes[season.seasonNumber] = [
+          ...new Set([
+            ...(pendingEpisodes[season.seasonNumber] ?? []),
+            ...season.episodeNumbers,
+          ]),
+        ];
+      }
+    });
+  const blockedEpisodes = mergeEpisodeNumbersBySeason(
+    getAvailableEpisodesBySeason(catalog),
+    pendingEpisodes
+  );
+  return getRequestableTvSelections(
+    seasons.map((season) => ({ seasonNumber: season.seasonNumber })),
+    seasons,
+    coveredSeasons,
+    blockedEpisodes
+  );
+};
+
+interface Props {
+  collectionId: string;
+  initialSelectedIds: string[];
   is4k?: boolean;
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus, is4k?: boolean) => void;
   onUpdating?: (isUpdating: boolean) => void;
 }
 
-const CollectionRequestModal = ({
+const TvCollectionRequestModal = ({
+  collectionId,
+  initialSelectedIds,
+  is4k = false,
   onCancel,
   onComplete,
-  tmdbId,
   onUpdating,
-  is4k = false,
-}: RequestModalProps) => {
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [selectedParts, setSelectedParts] = useState<number[]>([]);
+}: Props) => {
+  const intl = useIntl();
+  const settings = useSettings();
+  const { user, hasPermission } = useUser();
+  const { addToast } = useToasts();
+  const [selectedParts, setSelectedParts] =
+    useState<string[]>(initialSelectedIds);
   const [requestOverrides, setRequestOverrides] = useState<RequestOverrides>();
+  const effectiveIs4k = requestOverrides?.is4k ?? is4k;
   const {
     open: advancedOptionsOpen,
     pinned: advancedOptionsPinned,
     toggleOpen: toggleAdvancedOptions,
     togglePin: toggleAdvancedOptionsPin,
-  } = useAdvancedOptionsDisclosure('movie');
+  } = useAdvancedOptionsDisclosure('tv');
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
   const mountedRef = useRef(true);
   const submissionActiveRef = useRef(false);
-  const { addToast } = useToasts();
   const {
     data,
     error,
     mutate: revalidateCollection,
-  } = useSWR<Collection>(`/api/v1/collection/${tmdbId}`, {
-    revalidateOnMount: true,
-  });
-  const intl = useIntl();
-  const { user, hasPermission } = useUser();
+  } = useSWR<CuratedCollection>(
+    '/api/v1/collection-catalog/tv/' + encodeURIComponent(collectionId),
+    { revalidateOnMount: true }
+  );
+  const { data: details, error: detailsError } = useSWR<
+    Record<string, TvDetails>
+  >(
+    data
+      ? [
+          'tv-collection-request-details',
+          collectionId,
+          data.parts.map((part) => part.id).join(','),
+        ]
+      : null,
+    async () => {
+      const results = await mapWithConcurrency(
+        data?.parts ?? [],
+        5,
+        async (part) => {
+          try {
+            const response = await axios.get<TvDetails>(
+              '/api/v1/tv/' + part.id
+            );
+            return [part.id, response.data] as const;
+          } catch {
+            return null;
+          }
+        }
+      );
+      return Object.fromEntries(
+        results.filter(
+          (result): result is readonly [string, TvDetails] => result !== null
+        )
+      );
+    }
+  );
+  const { data: catalogs, error: catalogsError } = useSWR<
+    Record<string, PlaybackCatalogResponse | undefined>
+  >(
+    details
+      ? [
+          'tv-collection-request-catalogs',
+          collectionId,
+          effectiveIs4k,
+          Object.values(details)
+            .map((detail) => detail.mediaInfo?.id)
+            .join(','),
+        ]
+      : null,
+    async () => {
+      const results = await mapWithConcurrency(
+        Object.entries(details ?? {}),
+        5,
+        async ([id, detail]) => {
+          if (!detail.mediaInfo?.id) return [id, undefined] as const;
+          try {
+            const response = await axios.get<PlaybackCatalogResponse>(
+              '/api/v1/playback/media/' +
+                detail.mediaInfo.id +
+                (effectiveIs4k ? '?is4k=true' : '')
+            );
+            return [id, response.data] as const;
+          } catch {
+            return [id, undefined] as const;
+          }
+        }
+      );
+      return Object.fromEntries(results);
+    }
+  );
   const canManageSelectedUser = hasPermission(
     [Permission.MANAGE_REQUESTS, Permission.MANAGE_USERS],
     { type: 'or' }
@@ -100,94 +244,58 @@ const CollectionRequestModal = ({
   const quotaUserId = requestOverrides?.user?.id ?? user?.id;
   const { data: quota, error: quotaError } = useSWR<QuotaResponse>(
     user && (!requestOverrides?.user?.id || canManageSelectedUser)
-      ? `/api/v1/user/${quotaUserId}/quota`
+      ? '/api/v1/user/' + quotaUserId + '/quota'
       : null
   );
-  const effectiveIs4k = requestOverrides?.is4k ?? is4k;
-
-  const currentlyRemaining =
-    (quota?.movie.remaining ?? 0) - selectedParts.length;
-
-  const getAllParts = (): number[] => {
-    return (data?.parts ?? [])
-      .filter(
-        (part) =>
-          part.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] !==
-          MediaStatus.BLOCKLISTED
-      )
-      .map((part) => part.id);
-  };
-
-  const getAllRequestedParts = (): number[] =>
-    getCoveredCollectionPartIds(data?.parts ?? [], effectiveIs4k);
-
-  const isSelectedPart = (tmdbId: number): boolean =>
-    selectedParts.includes(tmdbId);
-
-  const togglePart = (tmdbId: number): void => {
-    // If this part already has a pending request, don't allow it to be toggled
-    if (getAllRequestedParts().includes(tmdbId)) {
-      return;
-    }
-
-    // If there are no more remaining requests available, block toggle
-    if (
-      quota?.movie.limit &&
-      currentlyRemaining <= 0 &&
-      !isSelectedPart(tmdbId)
-    ) {
-      return;
-    }
-
-    if (selectedParts.includes(tmdbId)) {
-      setSelectedParts((parts) => parts.filter((partId) => partId !== tmdbId));
-    } else {
-      setSelectedParts((parts) => [...parts, tmdbId]);
-    }
-  };
-
-  const unrequestedParts = getAllParts().filter(
-    (tmdbId) => !getAllRequestedParts().includes(tmdbId)
+  const includeSpecials = settings.currentSettings.enableSpecialEpisodes;
+  const selectionsFor = (id: string) =>
+    requestableSelections(
+      details?.[id],
+      effectiveIs4k,
+      includeSpecials,
+      catalogs?.[id]
+    );
+  const canRequestPart = (part: CuratedCollectionMember) =>
+    part.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] !==
+      MediaStatus.BLOCKLISTED && selectionsFor(part.id).length > 0;
+  const requestableParts = (data?.parts ?? []).filter(canRequestPart);
+  const selectedRequestableParts = requestableParts.filter((part) =>
+    selectedParts.includes(part.id)
   );
+  const selectedSeasonCount = selectedRequestableParts.reduce(
+    (count, part) => count + selectionsFor(part.id).length,
+    0
+  );
+  const remaining = (quota?.tv.remaining ?? 0) - selectedSeasonCount;
+  const quotaLimit = !!quota?.tv.limit && !requestOverrides?.ignoreQuota;
+  const canSelectAll =
+    !quotaLimit ||
+    requestableParts.reduce(
+      (count, part) => count + selectionsFor(part.id).length,
+      0
+    ) <= (quota?.tv.remaining ?? 0);
+  const allSelected =
+    requestableParts.length > 0 &&
+    requestableParts.every((part) => selectedParts.includes(part.id));
 
-  const toggleAllParts = (): void => {
-    // If the user has a quota and not enough requests for all parts, block toggleAllParts
-    if (
-      quota?.movie.limit &&
-      (quota?.movie.remaining ?? 0) < unrequestedParts.length
-    ) {
-      return;
-    }
-
-    if (
-      data &&
-      selectedParts.length >= 0 &&
-      selectedParts.length < unrequestedParts.length
-    ) {
-      setSelectedParts(unrequestedParts);
-    } else {
-      setSelectedParts([]);
+  const togglePart = (part: CuratedCollectionMember) => {
+    if (!canRequestPart(part)) return;
+    if (selectedParts.includes(part.id)) {
+      setSelectedParts((current) => current.filter((id) => id !== part.id));
+    } else if (!quotaLimit || selectionsFor(part.id).length <= remaining) {
+      setSelectedParts((current) => [...current, part.id]);
     }
   };
-
-  const isAllParts = (): boolean => {
-    if (!data) {
-      return false;
-    }
-
-    return (
-      selectedParts.length ===
-      getAllParts().filter((part) => !getAllRequestedParts().includes(part))
-        .length
+  const toggleAllParts = () => {
+    if (!canSelectAll) return;
+    setSelectedParts(
+      allSelected ? [] : requestableParts.map((part) => part.id)
     );
   };
 
   useEffect(() => {
-    if (onUpdating) {
-      onUpdating(isUpdating);
-    }
+    onUpdating?.(isUpdating);
   }, [isUpdating, onUpdating]);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -195,29 +303,58 @@ const CollectionRequestModal = ({
     };
   }, []);
 
+  const quotaRestricted =
+    !!quota?.tv.restricted && !requestOverrides?.ignoreQuota;
+  const requestDisabled =
+    !data ||
+    !quota ||
+    selectedRequestableParts.length === 0 ||
+    isUpdating ||
+    quotaRestricted ||
+    (quotaLimit && remaining < 0) ||
+    !details ||
+    (!catalogs && !catalogsError);
+  const requestDisabledReason = isUpdating
+    ? intl.formatMessage(globalMessages.requesting)
+    : selectedRequestableParts.length === 0
+      ? intl.formatMessage(messages.selectItemsToRequest)
+      : quotaRestricted || (quotaLimit && remaining < 0)
+        ? intl.formatMessage(messages.quotaRestricted)
+        : undefined;
   const sendRequest = useCallback(async () => {
-    if (submissionActiveRef.current) {
-      return;
-    }
+    if (submissionActiveRef.current || requestDisabled) return;
     submissionActiveRef.current = true;
     setIsUpdating(true);
-
     try {
-      const parts =
-        data?.parts.filter((part) => selectedParts.includes(part.id)) ?? [];
       const outcomes = await mapWithConcurrency(
-        parts,
-        COLLECTION_REQUEST_CONCURRENCY,
+        selectedRequestableParts,
+        5,
         async (part) => {
+          const detail = details?.[part.id];
+          const selections = requestableSelections(
+            detail,
+            effectiveIs4k,
+            includeSpecials,
+            catalogs?.[part.id]
+          );
+          if (!detail?.externalIds.tvdbId || selections.length === 0) {
+            return { id: part.id, succeeded: false } as const;
+          }
           try {
             await axios.post<MediaRequest>('/api/v1/request', {
-              mediaId: part.id,
-              mediaType: 'movie',
+              mediaId: detail.id,
+              tvdbId: detail.externalIds.tvdbId,
+              mediaType: 'tv',
               is4k: effectiveIs4k,
+              seasons: selections.map((selection) => selection.seasonNumber),
+              seasonRequests: settings.currentSettings.partialRequestsEnabled
+                ? selections
+                : undefined,
               ignoreQuota: requestOverrides?.ignoreQuota,
               serverId: requestOverrides?.server,
               profileId: requestOverrides?.profile,
               rootFolder: requestOverrides?.folder,
+              languageProfileId: requestOverrides?.language,
               userId: requestOverrides?.user?.id,
               tags: requestOverrides?.tags,
             });
@@ -227,68 +364,36 @@ const CollectionRequestModal = ({
           }
         }
       );
-      const succeededIds = new Set(
-        outcomes
-          .filter((outcome) => outcome.succeeded)
-          .map((outcome) => outcome.id)
-      );
+      const successes = outcomes.filter((outcome) => outcome.succeeded);
       const failedIds = outcomes
         .filter((outcome) => !outcome.succeeded)
         .map((outcome) => outcome.id);
-      const failedCount = outcomes.length - succeededIds.size;
-
-      if (succeededIds.size > 0) {
+      if (successes.length > 0) {
         void mutate('/api/v1/request/count').catch(() => undefined);
-      }
-
-      if (succeededIds.size > 0 && failedCount > 0) {
         await revalidateCollection().catch(() => undefined);
-        if (mountedRef.current) {
-          setSelectedParts(failedIds);
-        }
       }
-
-      if (
-        mountedRef.current &&
-        onComplete &&
-        succeededIds.size > 0 &&
-        failedCount === 0
-      ) {
-        const coveredIds = new Set(
-          getCoveredCollectionPartIds(data?.parts ?? [], effectiveIs4k)
-        );
-        succeededIds.forEach((id) => coveredIds.add(id));
-        const requestableCollectionIds = (data?.parts ?? [])
-          .filter(
-            (part) =>
-              part.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] !==
-              MediaStatus.BLOCKLISTED
-          )
-          .map((part) => part.id);
-        onComplete(
-          requestableCollectionIds.every((id) => coveredIds.has(id))
-            ? MediaStatus.UNKNOWN
-            : MediaStatus.PARTIALLY_AVAILABLE,
-          effectiveIs4k
-        );
-      }
-
       if (mountedRef.current) {
-        if (failedCount === 0) {
+        if (failedIds.length > 0) setSelectedParts(failedIds);
+        if (successes.length > 0 && failedIds.length === 0) {
+          onComplete?.(MediaStatus.PARTIALLY_AVAILABLE, effectiveIs4k);
+        }
+        if (failedIds.length === 0) {
           addToast(
             <span>
               {intl.formatMessage(messages.requestSuccess, {
                 title: data?.name,
-                strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+                strong: (message: React.ReactNode) => (
+                  <strong>{message}</strong>
+                ),
               })}
             </span>,
             { appearance: 'success', autoDismiss: true }
           );
-        } else if (succeededIds.size > 0) {
+        } else if (successes.length > 0) {
           addToast(
             intl.formatMessage(messages.requestpartial, {
-              created: succeededIds.size,
-              failed: failedCount,
+              created: successes.length,
+              failed: failedIds.length,
             }),
             { appearance: 'warning' }
           );
@@ -299,72 +404,45 @@ const CollectionRequestModal = ({
           });
         }
       }
-    } catch {
-      if (mountedRef.current) {
-        addToast(intl.formatMessage(messages.requesterror), {
-          appearance: 'error',
-          autoDismiss: true,
-        });
-      }
     } finally {
       submissionActiveRef.current = false;
-      if (mountedRef.current) {
-        setIsUpdating(false);
-      }
+      if (mountedRef.current) setIsUpdating(false);
     }
   }, [
-    data?.parts,
-    data?.name,
-    onComplete,
     addToast,
-    intl,
-    selectedParts,
+    catalogs,
+    data?.name,
+    details,
     effectiveIs4k,
-    requestOverrides,
+    includeSpecials,
+    intl,
+    onComplete,
     revalidateCollection,
+    requestDisabled,
+    requestOverrides,
+    selectedRequestableParts,
+    settings.currentSettings.partialRequestsEnabled,
   ]);
 
   const blocklistVisibility = hasPermission(
     [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
     { type: 'or' }
   );
-  const visibleParts = orderCollectionPartsOldestFirst(
-    data?.parts ?? []
-  ).filter(
+  const visibleParts = (data?.parts ?? []).filter(
     (part) =>
       blocklistVisibility ||
-      getCollectionPartRequestPresentation(part, effectiveIs4k) !==
-        'blocklisted'
+      part.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] !==
+        MediaStatus.BLOCKLISTED
   );
   const columnSize = Math.ceil(visibleParts.length / 2);
-  const visiblePartColumns = [
+  const columns = [
     visibleParts.slice(0, columnSize),
     visibleParts.slice(columnSize),
-  ].filter((parts) => parts.length > 0);
-  const selectAllDisabled =
-    unrequestedParts.length === 0 ||
-    (!!quota?.movie.limit &&
-      (quota.movie.remaining ?? 0) < unrequestedParts.length);
-  const quotaRestricted =
-    !!quota?.movie.restricted && !requestOverrides?.ignoreQuota;
-  const requestDisabled =
-    !data ||
-    !quota ||
-    selectedParts.length === 0 ||
-    isUpdating ||
-    quotaRestricted;
-  const requestDisabledReason = isUpdating
-    ? intl.formatMessage(globalMessages.requesting)
-    : selectedParts.length === 0
-      ? intl.formatMessage(messages.selectItemsToRequest)
-      : quotaRestricted
-        ? intl.formatMessage(messages.quotaRestricted)
-        : undefined;
+  ].filter((column) => column.length > 0);
   const canUseAdvancedOptions = hasPermission(
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
-
   const getAvailabilityMessage = (status?: MediaStatus) => {
     switch (status) {
       case MediaStatus.AVAILABLE:
@@ -404,15 +482,18 @@ const CollectionRequestModal = ({
       <RequestMediaCard
         artwork={
           data?.backdropPath
-            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            ? 'https://image.tmdb.org/t/p/original' + data.backdropPath
             : getTmdbPosterImageUrl(data?.posterPath, 'original')
         }
         artworkType="tmdb"
       >
-        {((!data && !error) || (!quota && !quotaError)) && (
+        {((!data && !error) ||
+          (!details && !detailsError) ||
+          (!catalogs && !catalogsError) ||
+          (!quota && !quotaError)) && (
           <p role="status">{intl.formatMessage(globalMessages.loading)}</p>
         )}
-        {(error || quotaError) && (
+        {(error || catalogsError || quotaError) && (
           <p role="alert">{intl.formatMessage(globalMessages.error)}</p>
         )}
         {data && (
@@ -420,35 +501,38 @@ const CollectionRequestModal = ({
             collection={{
               id: data.id,
               name: data.name,
-              posterPath: data.posterPath ?? undefined,
+              posterPath: data.posterPath,
             }}
+            kind="tv"
           />
         )}
-        {(quota?.movie.limit ?? 0) > 0 && (
+        {(quota?.tv.limit ?? 0) > 0 && (
           <QuotaDisplay
-            mediaType="movie"
-            quota={quota?.movie}
+            mediaType="tv"
+            quota={quota?.tv}
             userOverride={
               requestOverrides?.user && requestOverrides.user.id !== user?.id
                 ? requestOverrides.user.id
                 : undefined
             }
-            remaining={currentlyRemaining}
+            remaining={remaining}
           />
         )}
-
+        {detailsError && (
+          <p role="alert">{intl.formatMessage(messages.detailsUnavailable)}</p>
+        )}
         <div className="card-spacing-before card:grid-cols-2 grid grid-cols-1 items-start gap-2">
-          {visiblePartColumns.map((columnParts, columnIndex) => (
+          {columns.map((columnParts, columnIndex) => (
             <section
-              key={`collection-column-${columnIndex}`}
+              key={'collection-column-' + columnIndex}
               className="refreshed-inset-surface overflow-hidden rounded-lg border border-gray-700 p-2"
             >
               <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 border-b px-1 pb-2">
                 {columnIndex === 0 ? (
                   <SelectionCircle
-                    disabled={selectAllDisabled}
+                    disabled={requestableParts.length === 0 || !canSelectAll}
                     onClick={toggleAllParts}
-                    selected={isAllParts() && unrequestedParts.length > 0}
+                    selected={allSelected}
                     label={intl.formatMessage(messages.selectAll)}
                   />
                 ) : (
@@ -456,33 +540,28 @@ const CollectionRequestModal = ({
                 )}
                 <span aria-hidden="true" />
                 <span className="text-left">
-                  {intl.formatMessage(globalMessages.movie)}
+                  {intl.formatMessage(globalMessages.tvshow)}
                 </span>
               </div>
               <div className="scrollable-card -mr-3 max-h-[228px] space-y-0.5 overflow-y-auto pt-1 pr-3">
                 {columnParts.map((part) => {
-                  const presentation = getCollectionPartRequestPresentation(
-                    part,
-                    effectiveIs4k
-                  );
-                  const selected = isSelectedPart(part.id);
-                  const quotaBlocked =
-                    !!quota?.movie.limit &&
-                    currentlyRemaining <= 0 &&
-                    !selected;
+                  const selected =
+                    selectedParts.includes(part.id) && canRequestPart(part);
                   const selectionDisabled =
-                    presentation !== 'ready' || quotaBlocked;
+                    !canRequestPart(part) ||
+                    (quotaLimit &&
+                      !selected &&
+                      selectionsFor(part.id).length > remaining);
                   const hdStatus = part.mediaInfo?.status;
                   const ultraHdStatus = part.mediaInfo?.status4k;
-
                   return (
                     <div
-                      key={`part-${part.id}`}
+                      key={'part-' + part.id}
                       className="refreshed-inset-surface grid min-h-[54px] grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 rounded-lg border border-gray-700 px-2"
                     >
                       <SelectionCircle
                         disabled={selectionDisabled}
-                        onClick={() => togglePart(part.id)}
+                        onClick={() => togglePart(part)}
                         selected={selected}
                         label={intl.formatMessage(messages.selection)}
                       />
@@ -526,6 +605,12 @@ const CollectionRequestModal = ({
                             </AvailabilityValue>
                           </dd>
                         </dl>
+                        {!details?.[part.id]?.externalIds.tvdbId &&
+                          details?.[part.id] && (
+                            <div className="text-xs text-amber-300">
+                              {intl.formatMessage(messages.missingTvdb)}
+                            </div>
+                          )}
                       </div>
                     </div>
                   );
@@ -534,10 +619,9 @@ const CollectionRequestModal = ({
             </section>
           ))}
         </div>
-
         {canUseAdvancedOptions && (
           <AdvancedRequester
-            type="movie"
+            type="tv"
             is4k={effectiveIs4k}
             quota={quota}
             expanded={advancedOptionsOpen}
@@ -545,10 +629,9 @@ const CollectionRequestModal = ({
             rootFolderTable
             allow4kServerSelection
             requestedByPortal={requestedByPortal}
-            onChange={(overrides) => setRequestOverrides(overrides)}
+            onChange={setRequestOverrides}
           />
         )}
-
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
           <div className="mr-auto flex items-center gap-2">
             {canUseAdvancedOptions && (
@@ -593,4 +676,4 @@ const CollectionRequestModal = ({
   );
 };
 
-export default CollectionRequestModal;
+export default TvCollectionRequestModal;
