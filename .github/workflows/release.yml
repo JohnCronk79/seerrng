@@ -94,10 +94,12 @@ jobs:
 
       - name: Add curated release notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           release_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
-          previous_tag="$(git describe --tags --match 'v[0-9]*' --abbrev=0 "${release_sha}^")"
+          previous_tag="$(scripts/latest-published-release-tag.sh)"
           node scripts/assemble-release-notes.mjs \
             --previous-tag "$previous_tag" \
             --head "$release_sha" \
