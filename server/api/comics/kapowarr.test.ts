@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
-import KapowarrAPI from '@server/api/comics/kapowarr';
+import KapowarrAPI, {
+  KapowarrTaskRunningError,
+} from '@server/api/comics/kapowarr';
 
 type MockableKapowarr = {
   get: (
@@ -10,6 +12,12 @@ type MockableKapowarr = {
     ttl?: number
   ) => Promise<unknown>;
   post: (endpoint: string, data?: Record<string, unknown>) => Promise<unknown>;
+  request: (
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    endpoint: string,
+    data?: unknown,
+    config?: { params?: Record<string, unknown> }
+  ) => Promise<unknown>;
 };
 
 const mockGet = (implementation: (endpoint: string) => Promise<unknown>) =>
@@ -28,6 +36,20 @@ const mockPost = (
   mock.method(
     KapowarrAPI.prototype as unknown as MockableKapowarr,
     'post',
+    implementation
+  );
+
+const mockRequest = (
+  implementation: (
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    endpoint: string,
+    data?: unknown,
+    config?: { params?: Record<string, unknown> }
+  ) => Promise<unknown>
+) =>
+  mock.method(
+    KapowarrAPI.prototype as unknown as MockableKapowarr,
+    'request',
     implementation
   );
 
@@ -191,5 +213,66 @@ describe('KapowarrAPI', () => {
 
     assert.strictEqual(volume.id, 2);
     assert.strictEqual(volume.title, 'Existing Volume');
+  });
+
+  it('removeVolume sends delete_folder as a literal string', async () => {
+    const requestMock = mockRequest(async () => ({ error: null, result: {} }));
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    await api.removeVolume(2, true);
+
+    assert.deepStrictEqual(requestMock.mock.calls[0].arguments, [
+      'DELETE',
+      '/api/volumes/2',
+      undefined,
+      { params: { delete_folder: 'true' } },
+    ]);
+  });
+
+  it('defaults delete_folder to false', async () => {
+    const requestMock = mockRequest(async () => ({ error: null, result: {} }));
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    await api.removeVolume(2);
+
+    assert.deepStrictEqual(requestMock.mock.calls[0].arguments[3], {
+      params: { delete_folder: 'false' },
+    });
+  });
+
+  it('surfaces a queued-task conflict as KapowarrTaskRunningError', async () => {
+    // Confirmed live and from source: Kapowarr refuses to delete a volume
+    // while it has a queued or running task, even one that isn't actively
+    // running yet.
+    mockRequest(async () => {
+      const error = new Error(
+        'Request failed with status code 400'
+      ) as Error & {
+        isAxiosError: boolean;
+        response: { status: number; data: unknown };
+      };
+      error.isAxiosError = true;
+      error.response = {
+        status: 400,
+        data: { error: 'TaskForVolumeRunning', result: { volume_id: 2 } },
+      };
+      throw error;
+    });
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    await assert.rejects(
+      () => api.removeVolume(2),
+      (error: Error) =>
+        error instanceof KapowarrTaskRunningError && error.volumeId === 2
+    );
   });
 });

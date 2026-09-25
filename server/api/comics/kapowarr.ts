@@ -32,6 +32,17 @@ interface KapowarrEnvelope<T> {
   result: T;
 }
 
+// Confirmed live and from source (backend/base/custom_exceptions.py): Kapowarr
+// refuses to delete a volume while it has a queued or running task (even a
+// merely-queued, not-yet-running one), returning 400 with this error code
+// rather than deleting anyway.
+export class KapowarrTaskRunningError extends Error {
+  constructor(public readonly volumeId: number) {
+    super(`Kapowarr has a queued or running task for volume ${volumeId}.`);
+    this.name = 'KapowarrTaskRunningError';
+  }
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -232,6 +243,27 @@ class KapowarrAPI extends ExternalAPI {
       throw new Error('Kapowarr did not return the created volume.');
     }
     return volume;
+  }
+
+  // Confirmed live against a running Kapowarr instance: DELETE /volumes/<id>
+  // takes delete_folder as the literal string "true"/"false", not a JSON
+  // boolean (confirmed from source's extract_key parsing).
+  public async removeVolume(id: number, deleteFolder = false): Promise<void> {
+    try {
+      await this.request('DELETE', `/api/volumes/${id}`, undefined, {
+        params: { delete_folder: deleteFolder ? 'true' : 'false' },
+      });
+    } catch (error) {
+      if (
+        axios.isAxiosError(error) &&
+        error.response?.status === 400 &&
+        isRecord(error.response.data) &&
+        error.response.data.error === 'TaskForVolumeRunning'
+      ) {
+        throw new KapowarrTaskRunningError(id);
+      }
+      throw error;
+    }
   }
 }
 

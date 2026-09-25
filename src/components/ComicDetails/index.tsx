@@ -2,6 +2,8 @@ import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
+import Tooltip from '@app/components/Common/Tooltip';
+import IssueBlock from '@app/components/IssueBlock';
 import AvailabilityValue, {
   getMediaAvailabilityTone,
 } from '@app/components/MediaDetails/AvailabilityValue';
@@ -14,19 +16,33 @@ import defineMessages from '@app/utils/defineMessages';
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
+  CogIcon,
+  ExclamationTriangleIcon,
   InformationCircleIcon,
 } from '@heroicons/react/24/solid';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import { IssueStatus } from '@server/constants/issue';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { ComicDetails as ComicDetailsType } from '@server/models/Comic';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
+  ssr: false,
+});
+const ExternalMediaManageSlideOver = dynamic(
+  () => import('@app/components/ExternalMediaManageSlideOver'),
+  { ssr: false }
+);
+const IssueModal = dynamic(() => import('@app/components/IssueModal'), {
   ssr: false,
 });
 
@@ -38,6 +54,9 @@ const messages = defineMessages('components.ComicDetails', {
   viewrequest: 'View Request',
   viewOnComicVine: 'View on ComicVine',
   notAvailable: 'Not available',
+  manage: 'Manage Comic',
+  reportissue: 'Report an Issue',
+  openissues: 'Open Issues',
 });
 
 const ComicDetails = () => {
@@ -47,6 +66,8 @@ const ComicDetails = () => {
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [editRequest, setEditRequest] =
     useState<NonFunctionProperties<MediaRequest>>();
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [showManager, setShowManager] = useState(router.query.manage === '1');
   const comicId =
     typeof router.query.comicId === 'string' ? router.query.comicId : '';
 
@@ -57,6 +78,10 @@ const ComicDetails = () => {
   } = useSWR<ComicDetailsType>(
     comicId ? `/api/v1/comic/${encodeApiPathSegment(comicId)}` : null
   );
+
+  useEffect(() => {
+    setShowManager(router.query.manage === '1');
+  }, [router.query.manage]);
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -91,10 +116,51 @@ const ComicDetails = () => {
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     !activeRequest;
   const notAvailable = intl.formatMessage(messages.notAvailable);
+  const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
+  const isManageAvailable = Boolean(
+    data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
+  );
+  const canUseReportIssue = hasPermission(
+    [Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES],
+    { type: 'or' }
+  );
+  const isReportIssueAvailable =
+    !!data.mediaInfo?.id &&
+    (data.mediaInfo.status === MediaStatus.AVAILABLE ||
+      data.mediaInfo.status === MediaStatus.PARTIALLY_AVAILABLE);
+  const openIssues =
+    data.mediaInfo?.issues?.filter(
+      (issue) => issue.status === IssueStatus.OPEN
+    ) ?? [];
 
   return (
     <>
       <PageTitle title={data.title} />
+      {showManager && canUseManage && isManageAvailable && (
+        <ExternalMediaManageSlideOver
+          data={data}
+          mediaType={MediaType.COMIC}
+          onClose={() => {
+            setShowManager(false);
+            router.push({
+              pathname: router.pathname,
+              query: { comicId },
+            });
+          }}
+          revalidate={() => revalidate()}
+          show={showManager}
+        />
+      )}
+      {showIssueModal && (
+        <IssueModal
+          show={showIssueModal}
+          mediaType="comic"
+          mediaId={data.mediaInfo?.id}
+          title={data.title}
+          backdrop={data.posterPath}
+          onCancel={() => setShowIssueModal(false)}
+        />
+      )}
       {showRequestModal && (
         <RequestModal
           comicId={data.id}
@@ -175,6 +241,57 @@ const ComicDetails = () => {
             </div>
 
             <div className="media-primary-action-row">
+              {canUseManage && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    isManageAvailable
+                      ? messages.manage
+                      : globalMessages.manageUnavailable
+                  )}
+                >
+                  <Button
+                    buttonType="manage"
+                    buttonSize="sm"
+                    onClick={() => setShowManager(true)}
+                    disabled={!isManageAvailable}
+                    disabledReason={intl.formatMessage(
+                      globalMessages.manageUnavailable
+                    )}
+                    className="relative"
+                    aria-label={intl.formatMessage(messages.manage)}
+                  >
+                    <CogIcon className="!mr-0" />
+                    {openIssues.length > 0 && (
+                      <>
+                        <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-600" />
+                        <span className="absolute -top-1 -right-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
+                      </>
+                    )}
+                  </Button>
+                </Tooltip>
+              )}
+              {canUseReportIssue && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    isReportIssueAvailable
+                      ? messages.reportissue
+                      : globalMessages.reportIssueUnavailable
+                  )}
+                >
+                  <Button
+                    buttonType="reportIssue"
+                    buttonSize="sm"
+                    onClick={() => setShowIssueModal(true)}
+                    disabled={!isReportIssueAvailable}
+                    disabledReason={intl.formatMessage(
+                      globalMessages.reportIssueUnavailable
+                    )}
+                    aria-label={intl.formatMessage(messages.reportissue)}
+                  >
+                    <ExclamationTriangleIcon />
+                  </Button>
+                </Tooltip>
+              )}
               {data.siteDetailUrl && (
                 <a
                   href={data.siteDetailUrl}
@@ -224,6 +341,26 @@ const ComicDetails = () => {
                   intl.formatMessage(messages.overviewUnavailable)}
               </p>
             </section>
+            {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
+              type: 'or',
+            }) &&
+              openIssues.length > 0 && (
+                <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+                  <h2 className="media-inset-heading px-3 py-2">
+                    {intl.formatMessage(messages.openissues)}
+                  </h2>
+                  <ul className="border-t border-gray-700">
+                    {openIssues.map((issue) => (
+                      <li
+                        key={`comic-issue-${issue.id}`}
+                        className="border-b border-gray-700 last:border-b-0"
+                      >
+                        <IssueBlock issue={issue} />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
           </div>
         </article>
         <div className="extra-bottom-space relative" />

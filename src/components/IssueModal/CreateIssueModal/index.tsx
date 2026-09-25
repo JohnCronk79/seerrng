@@ -18,6 +18,7 @@ import { MediaStatus } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -49,7 +50,8 @@ const messages = defineMessages('components.IssueModal.CreateIssueModal', {
   submitissue: 'Submit Issue',
 });
 
-type IssueMediaDetails = MovieDetails | TvDetails | MusicDetails | BookDetails;
+type IssueMediaDetails =
+  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
 
 const isMusic = (media: IssueMediaDetails): media is MusicDetails => {
   return (media as MusicDetails).mediaType === 'album';
@@ -59,8 +61,12 @@ const isBook = (media: IssueMediaDetails): media is BookDetails => {
   return (media as BookDetails).mediaType === 'book';
 };
 
+const isComic = (media: IssueMediaDetails): media is ComicDetails => {
+  return (media as ComicDetails).mediaType === 'comic';
+};
+
 const isMovie = (movie: IssueMediaDetails): movie is MovieDetails => {
-  if (isMusic(movie) || isBook(movie)) {
+  if (isMusic(movie) || isBook(movie) || isComic(movie)) {
     return false;
   }
 
@@ -68,7 +74,7 @@ const isMovie = (movie: IssueMediaDetails): movie is MovieDetails => {
 };
 
 interface CreateIssueModalProps {
-  mediaType: 'movie' | 'tv' | 'music' | 'book';
+  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic';
   tmdbId?: number;
   mediaId?: number;
   title?: string;
@@ -104,7 +110,7 @@ const CreateIssueModal = ({
     (data
       ? isMusic(data)
         ? (data.artistBackdrop ?? data.artistThumb ?? data.posterPath)
-        : isBook(data)
+        : isBook(data) || isComic(data)
           ? data.posterPath
           : data.backdropPath
             ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
@@ -115,7 +121,7 @@ const CreateIssueModal = ({
   const resolvedTitle =
     title ??
     (data
-      ? isMovie(data) || isMusic(data) || isBook(data)
+      ? isMovie(data) || isMusic(data) || isBook(data) || isComic(data)
         ? data.title
         : data.name
       : undefined);
@@ -327,7 +333,8 @@ const CreateIssueModal = ({
               data &&
               !isMovie(data) &&
               !isMusic(data) &&
-              !isBook(data) && (
+              !isBook(data) &&
+              !isComic(data) && (
                 <>
                   <SeriesEpisodeSelector
                     tvId={data.id}

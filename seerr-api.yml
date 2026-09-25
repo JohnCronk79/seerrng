@@ -11708,7 +11708,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [all, movie, tv, music, book]
+            enum: [all, movie, tv, music, book, comic]
             default: all
         - in: query
           name: issueType
