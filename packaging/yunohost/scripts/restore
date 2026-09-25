@@ -4,9 +4,19 @@ source ../settings/scripts/_common.sh
 
 ynh_script_progression "Restoring SeerrNG files..."
 ynh_restore
+
+if [[ -d "$YNH_APP_BACKUP_DIR/data" ]]; then
+	install -d -o "$app" -g "$app" -m 0700 "$data_dir"
+	rsync --archive --delete "$YNH_APP_BACKUP_DIR/data/" "$data_dir/"
+elif [[ -f "$data_dir/settings.json" || -f "$data_dir/db/db.sqlite3" ]]; then
+	ynh_print_warn "Restoring legacy SeerrNG backup with the previously registered data directory."
+else
+	ynh_die --message="SeerrNG data snapshot is missing from this backup."
+fi
 chown -R "$app:$app" "$install_dir" "$data_dir"
 
 ynh_script_progression "Restoring SeerrNG service and reverse proxy configuration..."
+seerrng_seed_settings
 seerrng_prepare_service
 
 ynh_script_progression "Starting SeerrNG..."

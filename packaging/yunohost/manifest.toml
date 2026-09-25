@@ -67,3 +67,6 @@ ram.runtime = "512M"
 
   [resources.nodejs]
   version = "22"
+
+  [resources.apt]
+  packages = "rsync"
