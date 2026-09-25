@@ -69,4 +69,3 @@ export const getSeriesWatchStatus = (
     ...(includeEpisodes ? { seasons } : {}),
   };
 };
-

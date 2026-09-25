@@ -7,6 +7,7 @@ import CollectionNavigation from '@app/components/CollectionDetails/CollectionNa
 import CachedImage from '@app/components/Common/CachedImage';
 import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import Tooltip from '@app/components/Common/Tooltip';
+import WatchedBadge from '@app/components/Common/WatchedBadge';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import DetailDisclosureButton from '@app/components/MediaDetails/DetailDisclosureButton';
 import ExpandableCreditList from '@app/components/MediaDetails/ExpandableCreditList';
@@ -18,6 +19,7 @@ import MediaSlider from '@app/components/MediaSlider';
 import useDetailDisclosurePins from '@app/hooks/useDetailDisclosurePins';
 import useLocale from '@app/hooks/useLocale';
 import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
+import useWatchStatus from '@app/hooks/useWatchStatus';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { resolveCanonicalPlaybackSelection } from '@app/utils/playbackSelection';
@@ -39,6 +41,7 @@ const messages = defineMessages('components.TvDetails.Layout', {
   seriesType: 'Series Type',
   hd: 'HD',
   ultraHd: '4K',
+  watched: 'Watched',
   overview: 'Overview',
   overviewUnavailable: 'Overview unavailable',
   viewCast: 'Cast',
@@ -116,6 +119,12 @@ const SeriesDetailsLayout = ({
 }: SeriesDetailsLayoutProps) => {
   const intl = useIntl();
   const { locale } = useLocale();
+  const { data: watchedStatus } = useWatchStatus(
+    'tv',
+    data.id,
+    Boolean(data.mediaInfo),
+    true
+  );
   const { pins, togglePinned } = useDetailDisclosurePins('tv');
   const [showDetails, setShowDetails] = useState(false);
   useEffect(() => {
@@ -371,6 +380,24 @@ const SeriesDetailsLayout = ({
                         : unavailable}
                     </dd>
                   </dl>
+                  {!!watchedStatus?.availableCount && (
+                    <div className="detail-summary-footer detail-watched-row">
+                      <span className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.watched)}:
+                      </span>
+                      <WatchedBadge
+                        status={watchedStatus}
+                        showUnwatched
+                        incompleteLibrary={
+                          data.mediaInfo?.status ===
+                            MediaStatus.PARTIALLY_AVAILABLE ||
+                          (data.mediaInfo?.status !== MediaStatus.AVAILABLE &&
+                            data.mediaInfo?.status4k ===
+                              MediaStatus.PARTIALLY_AVAILABLE)
+                        }
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="media-detail-column-divider flex min-w-0 flex-col text-xs leading-4">
@@ -411,6 +438,7 @@ const SeriesDetailsLayout = ({
             tvId={data.id}
             seasons={visibleSeasons}
             catalog={playbackCatalog}
+            watchedStatus={watchedStatus}
             selectedItemIds={selectedPlaybackItemIds}
             onSelectionChange={setSelectedPlaybackItemIds}
           />

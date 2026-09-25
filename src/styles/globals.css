@@ -801,6 +801,14 @@
     overflow-wrap: anywhere;
   }
 
+  .detail-watched-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--card-spacing);
+    text-align: left;
+  }
+
   .association-detail-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -2515,6 +2523,113 @@
     height: var(--action-control-content-height);
     margin: 0;
     flex-shrink: 0;
+  }
+
+  /* Poster controls can change independently of page action buttons. */
+  .poster-control {
+    @apply inline-flex items-center text-xs;
+    box-sizing: border-box;
+    height: var(--poster-control-height);
+    min-height: var(--poster-control-height);
+    max-height: var(--poster-control-height);
+    padding-block: 0;
+    line-height: var(--poster-control-content-height);
+    column-gap: var(--poster-control-gap);
+  }
+
+  .poster-control svg {
+    width: var(--poster-control-content-height);
+    height: var(--poster-control-content-height);
+    flex: none;
+  }
+
+  .poster-control-icon,
+  .title-card-shell .app-button.app-button-icon-only {
+    @apply inline-flex items-center justify-center;
+    box-sizing: border-box;
+    width: var(--poster-control-height);
+    min-width: var(--poster-control-height);
+    height: var(--poster-control-height);
+    min-height: var(--poster-control-height);
+    max-height: var(--poster-control-height);
+    padding: 0 !important;
+  }
+
+  .poster-control-icon svg,
+  .title-card-shell .app-button.app-button-icon-only svg {
+    width: var(--poster-control-content-height);
+    height: var(--poster-control-content-height);
+    margin: 0;
+  }
+
+  .watched-status-badge {
+    @apply inline-flex items-center justify-center rounded-md border border-gray-500 bg-black text-white;
+    box-sizing: border-box;
+    height: var(--poster-control-height);
+    min-height: var(--poster-control-height);
+    padding-inline: 4px;
+    column-gap: var(--poster-control-gap);
+    font-size: 12px;
+    line-height: var(--poster-control-content-height);
+    white-space: nowrap;
+  }
+
+  .watched-status-logo {
+    width: auto;
+    height: var(--poster-control-content-height);
+    max-width: 38px;
+    flex: none;
+  }
+
+  .watched-status-icon {
+    width: var(--poster-control-content-height);
+    height: var(--poster-control-content-height);
+    flex: none;
+  }
+
+  .season-watch-grid {
+    grid-template-columns: 2rem minmax(5.5rem, 1fr) 4rem 2.5rem 2.5rem;
+  }
+
+  .episode-watch-grid {
+    grid-template-columns: 2rem 4.5rem minmax(0, 1fr) 2.5rem 2.5rem;
+  }
+
+  .watched-status-cell {
+    @apply inline-flex items-center justify-center text-xs text-white;
+    min-width: 2.5rem;
+  }
+
+  .auth-login-page {
+    padding-top: calc(1.5rem + env(safe-area-inset-top));
+    padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+  }
+
+  .auth-login-brand {
+    margin-top: 1rem;
+  }
+
+  .auth-login-form {
+    margin-top: 1.5rem;
+  }
+
+  .auth-backdrop-title {
+    position: absolute;
+    right: 1rem;
+    bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 1;
+    max-width: min(32rem, calc(100vw - 2rem));
+    overflow-wrap: anywhere;
+    text-align: right;
+    filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.95))
+      drop-shadow(0 2px 3px rgb(0 0 0 / 0.8));
+    pointer-events: none;
+  }
+
+  @media (max-width: 480px) {
+    .auth-login-page {
+      padding-bottom: calc(11rem + env(safe-area-inset-bottom));
+    }
   }
 
   /* Login retains its original roomy controls, independently of media actions. */

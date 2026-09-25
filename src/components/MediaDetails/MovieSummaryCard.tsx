@@ -1,9 +1,11 @@
 import CachedImage from '@app/components/Common/CachedImage';
+import WatchedBadge from '@app/components/Common/WatchedBadge';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { MediaStatus } from '@server/constants/media';
 import type { MovieDetails } from '@server/models/Movie';
+import type { WatchStatusResponse } from '@server/models/WatchStatus';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useIntl } from 'react-intl';
@@ -21,6 +23,7 @@ const messages = defineMessages('components.MovieSummaryCard', {
   notAvailable: 'Not Available',
   minutes: '{minutes} minutes',
   ratings: 'Ratings',
+  watched: 'Watched',
 });
 
 export type MovieSummaryData = Pick<
@@ -64,6 +67,7 @@ const MovieSummaryCard = ({
   ratings,
   standalone = false,
   availabilityFooter,
+  watchedStatus,
   onSelect,
   artwork,
 }: {
@@ -75,6 +79,7 @@ const MovieSummaryCard = ({
   ratings?: ReactNode;
   standalone?: boolean;
   availabilityFooter?: ReactNode;
+  watchedStatus?: WatchStatusResponse;
   onSelect?: () => void;
   artwork?: ReactNode;
 }) => {
@@ -274,6 +279,14 @@ const MovieSummaryCard = ({
                 </>
               )}
             </dl>
+            {!!watchedStatus?.availableCount && (
+              <div className="detail-summary-footer detail-watched-row">
+                <span className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.watched)}:
+                </span>
+                <WatchedBadge status={watchedStatus} showUnwatched />
+              </div>
+            )}
             {availabilityFooter && (
               <div className="detail-summary-footer">{availabilityFooter}</div>
             )}
