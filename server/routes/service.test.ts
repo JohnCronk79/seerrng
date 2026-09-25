@@ -22,7 +22,9 @@ import { Permission } from '@server/lib/permissions';
 import { runWithServarrServiceAdmission } from '@server/lib/serviceAdmission';
 import type {
   AllSettings,
+  KapowarrSettings,
   LidarrSettings,
+  MylarSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -160,6 +162,43 @@ function makeLidarr(overrides: Partial<LidarrSettings> = {}): LidarrSettings {
   };
 }
 
+function makeMylar(overrides: Partial<MylarSettings> = {}): MylarSettings {
+  return {
+    id: 0,
+    name: 'Mylar3',
+    hostname: 'localhost',
+    port: 8090,
+    apiKey: 'test-key',
+    useSsl: false,
+    baseUrl: '',
+    isDefault: true,
+    tags: [],
+    syncEnabled: true,
+    preventSearch: false,
+    ...overrides,
+  };
+}
+
+function makeKapowarr(
+  overrides: Partial<KapowarrSettings> = {}
+): KapowarrSettings {
+  return {
+    id: 0,
+    name: 'Kapowarr',
+    hostname: 'localhost',
+    port: 5656,
+    apiKey: 'test-key',
+    useSsl: false,
+    baseUrl: '',
+    isDefault: true,
+    tags: [],
+    syncEnabled: true,
+    preventSearch: false,
+    rootFolder: '/comics',
+    ...overrides,
+  };
+}
+
 function makeRadarr(overrides: Partial<RadarrSettings> = {}): RadarrSettings {
   return {
     ...baseServerSettings,
@@ -235,6 +274,8 @@ beforeEach(() => {
   settings.sonarr = [];
   settings.lidarr = [];
   settings.readarr = [];
+  settings.mylar = [];
+  settings.kapowarr = [];
   mock.method(settings, 'save', async () => undefined);
 });
 
@@ -1229,6 +1270,32 @@ describe('Lidarr settings routes', () => {
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(apiKeyUsed, 'stored-key');
+  });
+});
+
+describe('GET /service/comic', () => {
+  it('combines Mylar3 and Kapowarr instances into one list', async () => {
+    getSettings().mylar = [
+      makeMylar({ id: 1, name: 'Mylar3', isDefault: true }),
+    ];
+    getSettings().kapowarr = [
+      makeKapowarr({ id: 2, name: 'Kapowarr', isDefault: false }),
+    ];
+
+    const res = await request(app).get('/service/comic');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, [
+      { id: 1, name: 'Mylar3', isDefault: true, backendType: 'mylar' },
+      { id: 2, name: 'Kapowarr', isDefault: false, backendType: 'kapowarr' },
+    ]);
+  });
+
+  it('returns an empty list when no comics backend is configured', async () => {
+    const res = await request(app).get('/service/comic');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, []);
   });
 });
 

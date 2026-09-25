@@ -1369,6 +1369,25 @@ components:
           type: string
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+    ComicServiceOption:
+      type: object
+      required:
+        - id
+        - name
+        - isDefault
+        - backendType
+      properties:
+        id:
+          type: number
+          example: 1
+        name:
+          type: string
+          example: Mylar3
+        isDefault:
+          type: boolean
+        backendType:
+          type: string
+          enum: [mylar, kapowarr]
     MagazineIssueReference:
       type: object
       required:
@@ -9461,6 +9480,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServarrServiceDetails'
+  /service/comic:
+    get:
+      summary: Get Mylar3/Kapowarr comic service summaries
+      tags:
+        - service
+      responses:
+        '200':
+          description: Comic services returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ComicServiceOption'
   /service/readarr:
     get:
       summary: Get Bookshelf service summaries

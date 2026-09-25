@@ -32,3 +32,13 @@ export interface ServiceCommonServerWithDetails {
   languageProfiles?: LanguageProfile[];
   tags: Tag[];
 }
+
+// Comics don't share Servarr's quality-profile/root-folder concept, so this
+// is deliberately a much smaller shape than ServiceCommonServer rather than
+// a forced fit into it.
+export interface ComicServiceOption {
+  id: number;
+  name: string;
+  isDefault: boolean;
+  backendType: 'mylar' | 'kapowarr';
+}

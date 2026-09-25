@@ -31,6 +31,7 @@ import {
 } from '@server/constants/media';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MusicDetails } from '@server/models/Music';
 import axios from 'axios';
 import { Fragment } from 'react';
@@ -47,6 +48,8 @@ const messages = defineMessages('components.ExternalMediaManageSlideOver', {
     '* This will irreversibly remove all local data for this {mediaType}, including any requests.',
   manageModalRemoveMediaWarning:
     '* This will remove this {mediaType} from {arr}, including all files.',
+  magazineRemoveWarning:
+    '* This removes the magazine and issue records from LazyLibrarian and SeerrNG. Files on disk are left untouched.',
   openarr: 'Open in {arr}',
   openarrFormat: 'Open {format} in {arr}',
   removearr: 'Remove from {arr}',
@@ -58,9 +61,11 @@ const messages = defineMessages('components.ExternalMediaManageSlideOver', {
   music: 'music',
   book: 'book',
   comic: 'comic',
+  magazine: 'magazine',
   musicTitle: 'Music',
   bookTitle: 'Book',
   comicTitle: 'Comic',
+  magazineTitle: 'Magazine',
 });
 
 const filterDuplicateDownloads = (
@@ -76,8 +81,9 @@ const filterDuplicateDownloads = (
 
 type ExternalMediaManageSlideOverProps = {
   show?: boolean;
-  mediaType: MediaType.MUSIC | MediaType.BOOK | MediaType.COMIC;
-  data: MusicDetails | BookDetails | ComicDetails;
+  mediaType:
+    MediaType.MUSIC | MediaType.BOOK | MediaType.COMIC | MediaType.MAGAZINE;
+  data: MusicDetails | BookDetails | ComicDetails | MagazineDetails;
   onClose: () => void;
   revalidate: () => void;
 };
@@ -106,26 +112,34 @@ const ExternalMediaManageSlideOver = ({
         ? mediaInfo?.comicServiceType === 'kapowarr'
           ? 'Kapowarr'
           : 'Mylar3'
-        : 'Bookshelf';
+        : mediaType === MediaType.MAGAZINE
+          ? 'LazyLibrarian'
+          : 'Bookshelf';
   const externalId =
     mediaType === MediaType.MUSIC
       ? normalizeMusicBrainzId((data as MusicDetails).mbId)
       : mediaType === MediaType.COMIC
         ? data.id
-        : normalizeOpenLibraryWorkId(data.id);
+        : mediaType === MediaType.MAGAZINE
+          ? (data as MagazineDetails).id
+          : normalizeOpenLibraryWorkId(data.id);
   const mediaLabel = intl.formatMessage(
     mediaType === MediaType.MUSIC
       ? messages.music
       : mediaType === MediaType.COMIC
         ? messages.comic
-        : messages.book
+        : mediaType === MediaType.MAGAZINE
+          ? messages.magazine
+          : messages.book
   );
   const mediaTitleLabel = intl.formatMessage(
     mediaType === MediaType.MUSIC
       ? messages.musicTitle
       : mediaType === MediaType.COMIC
         ? messages.comicTitle
-        : messages.bookTitle
+        : mediaType === MediaType.MAGAZINE
+          ? messages.magazineTitle
+          : messages.bookTitle
   );
   const manageBackdrop =
     mediaType === MediaType.MUSIC
@@ -267,7 +281,9 @@ const ExternalMediaManageSlideOver = ({
                   ? 'music'
                   : mediaType === MediaType.COMIC
                     ? 'comic'
-                    : 'book'
+                    : mediaType === MediaType.MAGAZINE
+                      ? 'magazine'
+                      : 'book'
               }
               embedded
               rightDetails={[
@@ -486,11 +502,15 @@ const ExternalMediaManageSlideOver = ({
                           </ConfirmButton>
                           <div className="mt-1 text-xs text-gray-400">
                             {intl.formatMessage(
-                              messages.manageModalRemoveMediaWarning,
-                              {
-                                mediaType: mediaLabel,
-                                arr: arrName,
-                              }
+                              mediaType === MediaType.MAGAZINE
+                                ? messages.magazineRemoveWarning
+                                : messages.manageModalRemoveMediaWarning,
+                              mediaType === MediaType.MAGAZINE
+                                ? undefined
+                                : {
+                                    mediaType: mediaLabel,
+                                    arr: arrName,
+                                  }
                             )}
                           </div>
                         </div>

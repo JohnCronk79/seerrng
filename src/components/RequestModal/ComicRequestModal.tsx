@@ -13,8 +13,9 @@ import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
+import type { ComicServiceOption } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
-import { hasAutoApprovePermission } from '@server/lib/permissions';
+import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { ComicDetails } from '@server/models/Comic';
 import axios from 'axios';
 import { useCallback, useEffect, useState } from 'react';
@@ -39,6 +40,8 @@ const messages = defineMessages('components.RequestModal.Comic', {
   publisher: 'Publisher',
   issueCount: 'Issues',
   status: 'Status',
+  service: 'Service',
+  defaultService: 'Default ({name})',
   approval: 'Approval',
   requested: 'Requested',
   readyToRequest: 'Ready to Request',
@@ -47,6 +50,7 @@ const messages = defineMessages('components.RequestModal.Comic', {
 
 interface ComicRequestModalProps {
   comicId: string;
+  initialServerId?: number;
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus) => void;
   onUpdating?: (isUpdating: boolean) => void;
@@ -55,6 +59,7 @@ interface ComicRequestModalProps {
 
 const ComicRequestModal = ({
   comicId,
+  initialServerId,
   onCancel,
   onComplete,
   onUpdating,
@@ -62,14 +67,20 @@ const ComicRequestModal = ({
 }: ComicRequestModalProps) => {
   const intl = useIntl();
   const { addToast } = useToasts();
-  const { user } = useUser();
+  const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedServerId, setSelectedServerId] = useState<number | undefined>(
+    initialServerId
+  );
   const { data, error } = useSWR<ComicDetails>(
     `/api/v1/comic/${encodeApiPathSegment(comicId)}`,
     { revalidateOnMount: true }
   );
   const { data: quota } = useSWR<QuotaResponse>(
     user ? `/api/v1/user/${user.id}/quota` : null
+  );
+  const { data: comicServices } = useSWR<ComicServiceOption[]>(
+    '/api/v1/service/comic'
   );
 
   useEffect(() => {
@@ -85,7 +96,15 @@ const ComicRequestModal = ({
       request.status === MediaRequestStatus.APPROVED
   );
   const requestCovered = isAvailable || isRequested;
-  const serviceUnavailable = false; // The server rejects the request instead; no client-side service list to check against without advanced options.
+  const serviceUnavailable = !!comicServices && comicServices.length === 0;
+  const canUseAdvancedOptions = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
+    { type: 'or' }
+  );
+  const selectedService = comicServices?.find(
+    (service) => service.id === selectedServerId
+  );
+  const fallbackService = comicServices?.find((service) => service.isDefault);
 
   const sendRequest = useCallback(async () => {
     if (requestCovered) {
@@ -98,6 +117,9 @@ const ComicRequestModal = ({
       const response = await axios.post<MediaRequest>('/api/v1/request', {
         mediaId: comicId,
         mediaType: 'comic',
+        ...(selectedServerId !== undefined
+          ? { serverId: selectedServerId }
+          : {}),
       });
 
       mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
@@ -143,7 +165,15 @@ const ComicRequestModal = ({
     } finally {
       setIsUpdating(false);
     }
-  }, [addToast, comicId, data?.title, intl, onComplete, requestCovered]);
+  }, [
+    addToast,
+    comicId,
+    data?.title,
+    intl,
+    onComplete,
+    requestCovered,
+    selectedServerId,
+  ]);
 
   const cancelRequest = async () => {
     setIsUpdating(true);
@@ -291,6 +321,12 @@ const ComicRequestModal = ({
                 )}
               </dd>
               <dt className="font-medium text-gray-100">
+                {intl.formatMessage(messages.service)}:
+              </dt>
+              <dd className="m-0 truncate">
+                {selectedService?.name ?? fallbackService?.name ?? notAvailable}
+              </dd>
+              <dt className="font-medium text-gray-100">
                 {intl.formatMessage(messages.approval)}:
               </dt>
               <dd className="m-0 min-w-0">
@@ -305,6 +341,32 @@ const ComicRequestModal = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+          {canUseAdvancedOptions &&
+            comicServices &&
+            comicServices.length > 1 && (
+              <select
+                className="request-form-control compact-control mr-auto rounded-md border px-2 text-[11px] font-medium"
+                value={selectedServerId ?? ''}
+                onChange={(e) =>
+                  setSelectedServerId(
+                    e.target.value === '' ? undefined : Number(e.target.value)
+                  )
+                }
+              >
+                <option value="">
+                  {fallbackService
+                    ? intl.formatMessage(messages.defaultService, {
+                        name: fallbackService.name,
+                      })
+                    : notAvailable}
+                </option>
+                {comicServices.map((service) => (
+                  <option key={service.id} value={service.id}>
+                    {service.name}
+                  </option>
+                ))}
+              </select>
+            )}
           <button
             type="button"
             onClick={onCancel}
