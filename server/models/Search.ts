@@ -18,7 +18,9 @@ import {
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import type { AuthorResult, BookResult } from '@server/models/Book';
+import type { ComicResult } from '@server/models/Comic';
 export type { AuthorResult, BookResult } from '@server/models/Book';
+export type { ComicResult } from '@server/models/Comic';
 export type { MagazineResult } from '@server/models/Magazine';
 export type MediaType =
   | 'tv'
@@ -142,7 +144,8 @@ export type Results =
   | ArtistResult
   | AlbumResult
   | BookResult
-  | AuthorResult;
+  | AuthorResult
+  | ComicResult;
 
 export const mapMovieResult = (
   movieResult: TmdbMovieResult,
@@ -267,6 +270,7 @@ const isTmdbMovie = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is TmdbMovieResult => {
   return 'media_type' in result && result.media_type === 'movie';
 };
@@ -281,6 +285,7 @@ const isTmdbTv = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is TmdbTvResult => {
   return 'media_type' in result && result.media_type === 'tv';
 };
@@ -295,6 +300,7 @@ const isTmdbPerson = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is TmdbPersonResult => {
   return 'media_type' in result && result.media_type === 'person';
 };
@@ -309,6 +315,7 @@ const isTmdbCollection = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is TmdbCollectionResult => {
   return 'media_type' in result && result.media_type === 'collection';
 };
@@ -323,6 +330,7 @@ const isMbArtist = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is MbArtistResult => {
   return 'media_type' in result && result.media_type === 'artist';
 };
@@ -337,6 +345,7 @@ const isMbAlbum = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is MbAlbumResult => {
   return 'media_type' in result && result.media_type === 'album';
 };
@@ -351,6 +360,7 @@ const isBookResult = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is BookResult => {
   return 'mediaType' in result && result.mediaType === 'book';
 };
@@ -365,8 +375,23 @@ const isAuthorResult = (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
 ): result is AuthorResult =>
   'mediaType' in result && result.mediaType === 'author';
+
+const isComicResult = (
+  result:
+    | TmdbMovieResult
+    | TmdbTvResult
+    | TmdbPersonResult
+    | TmdbCollectionResult
+    | MbArtistResult
+    | MbAlbumResult
+    | BookResult
+    | AuthorResult
+    | ComicResult
+): result is ComicResult =>
+  'mediaType' in result && result.mediaType === 'comic';
 
 export const mapSearchResults = async (
   results: (
@@ -378,6 +403,7 @@ export const mapSearchResults = async (
     | MbAlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
   )[],
   media?: Media[]
 ): Promise<Results[]> =>
@@ -416,6 +442,8 @@ export const mapSearchResults = async (
       } else if (isBookResult(result)) {
         return result;
       } else if (isAuthorResult(result)) {
+        return result;
+      } else if (isComicResult(result)) {
         return result;
       }
 

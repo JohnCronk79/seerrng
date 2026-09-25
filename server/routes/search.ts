@@ -1,3 +1,4 @@
+import ComicVineAPI from '@server/api/comicvine';
 import CoverArtArchive from '@server/api/coverartarchive';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
@@ -12,6 +13,7 @@ import {
   findBookMediaForBookResults,
   findBookMediaForSearchDocs,
 } from '@server/lib/bookMediaMatcher';
+import { findComicMediaByComicVineIds } from '@server/lib/comicMediaMatcher';
 import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
@@ -32,6 +34,7 @@ import {
   mapOpenLibrarySearchDoc,
   type AuthorResult,
 } from '@server/models/Book';
+import { mapComicVineVolumeResult } from '@server/models/Comic';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import {
@@ -109,6 +112,7 @@ const searchTypes = [
   'book',
   'author',
   'music',
+  'comic',
 ] as const;
 type SearchType = (typeof searchTypes)[number];
 const bookFormats = ['ebook', 'audiobook'] as const;
@@ -267,6 +271,8 @@ searchRoutes.get('/', async (req, res, next) => {
         (server) => (server.serviceType ?? 'ebook') === bookFormat
       )
     : settings.readarr.length > 0;
+  const comicVineApiKey = getSettings().main.comicVineApiKey;
+  const comicsEnabled = !!comicVineApiKey;
 
   if (
     (typeFilter === 'album' ||
@@ -283,6 +289,15 @@ searchRoutes.get('/', async (req, res, next) => {
   }
 
   if ((typeFilter === 'book' || typeFilter === 'author') && !booksEnabled) {
+    return res.status(200).json({
+      page,
+      totalPages: 1,
+      totalResults: 0,
+      results: [],
+    });
+  }
+
+  if (typeFilter === 'comic' && !comicsEnabled) {
     return res.status(200).json({
       page,
       totalPages: 1,
@@ -308,6 +323,9 @@ searchRoutes.get('/', async (req, res, next) => {
     } else {
       const musicbrainz = new MusicBrainz();
       const openLibrary = new OpenLibraryAPI();
+      const comicVine = comicVineApiKey
+        ? new ComicVineAPI(comicVineApiKey)
+        : undefined;
       const theAudioDb = new TheAudioDb();
       const coverArtArchive = new CoverArtArchive();
       const personMapper = new TmdbPersonMapper();
@@ -325,6 +343,7 @@ searchRoutes.get('/', async (req, res, next) => {
         typeFilter === 'music';
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
       const shouldSearchAuthors = !typeFilter || typeFilter === 'author';
+      const shouldSearchComics = !typeFilter || typeFilter === 'comic';
       const providerNames = [
         'TMDB',
         'MusicBrainz albums',
@@ -333,6 +352,7 @@ searchRoutes.get('/', async (req, res, next) => {
         'Bookshelf books',
         'Open Library authors',
         'Bookshelf authors',
+        'ComicVine',
       ];
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
@@ -390,6 +410,21 @@ searchRoutes.get('/', async (req, res, next) => {
         shouldSearchAuthors && booksEnabled
           ? searchBookshelfAuthors(getSettings().readarr, queryString)
           : Promise.resolve([]),
+        shouldSearchComics && comicsEnabled && comicVine
+          ? comicVine.searchVolumes({
+              query: queryString,
+              page,
+              limit: 20,
+            })
+          : Promise.resolve({
+              error: 'OK',
+              limit: 20,
+              offset: 0,
+              number_of_page_results: 0,
+              number_of_total_results: 0,
+              status_code: 1,
+              results: [],
+            }),
       ];
       type SearchProviderResult = {
         index: number;
@@ -413,6 +448,9 @@ searchRoutes.get('/', async (req, res, next) => {
       >;
       type BookshelfAuthorSearchResults = Awaited<
         ReturnType<typeof searchBookshelfAuthors>
+      >;
+      type ComicSearchResults = Awaited<
+        ReturnType<ComicVineAPI['searchVolumes']>
       >;
 
       const providerResponses =
@@ -506,6 +544,19 @@ searchRoutes.get('/', async (req, res, next) => {
             'The author catalogs timed out or are unavailable. Please try again.',
         });
       }
+      const comicProviderResponse = providerResults.get(7);
+      if (
+        typeFilter === 'comic' &&
+        shouldSearchComics &&
+        comicsEnabled &&
+        (!comicProviderResponse || comicProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'ComicVine, the service used for comic searches, timed out or is unavailable. Please try again.',
+        });
+      }
 
       if (providerResponses.timedOut) {
         logger.debug('Global search provider deadline exceeded', {
@@ -559,6 +610,18 @@ searchRoutes.get('/', async (req, res, next) => {
       });
       const rawBookshelfAuthorResults =
         getProviderValue<BookshelfAuthorSearchResults>(6, []);
+      const rawComicResults = getProviderValue<ComicSearchResults>(7, {
+        error: 'OK',
+        limit: 20,
+        offset: 0,
+        number_of_page_results: 0,
+        number_of_total_results: 0,
+        status_code: 1,
+        results: [],
+      });
+      const comicVolumes = capSearchProviderResults<
+        ComicSearchResults['results'][number]
+      >(rawComicResults.results);
       const bookResults = {
         ...rawBookResults,
         docs: capSearchProviderResults<BookSearchResults['docs'][number]>(
@@ -778,7 +841,8 @@ searchRoutes.get('/', async (req, res, next) => {
         bookResults.numFound +
         bookshelfBookResults.length +
         rawAuthorResults.numFound +
-        rawBookshelfAuthorResults.length;
+        rawBookshelfAuthorResults.length +
+        rawComicResults.number_of_total_results;
       const totalPages = Math.max(
         tmdbResults.total_pages,
         Math.ceil(totalItems / 20)
@@ -795,12 +859,21 @@ searchRoutes.get('/', async (req, res, next) => {
         )
       );
 
+      const comicMediaMap = await findComicMediaByComicVineIds(
+        comicVolumes.map((volume) => volume.id),
+        req.user
+      );
+      const mappedComicResults = comicVolumes.map((volume) =>
+        mapComicVineVolumeResult(volume, comicMediaMap.get(volume.id))
+      );
+
       const combinedResults = [
         ...tmdbResults.results,
         ...musicResults,
         ...mappedBookResults,
         ...bookshelfBookResults,
         ...authorResults,
+        ...mappedComicResults,
       ];
 
       results = {
@@ -920,7 +993,8 @@ searchRoutes.get('/', async (req, res, next) => {
         !('mediaType' in result) ||
         (((result.mediaType !== 'album' && result.mediaType !== 'artist') ||
           musicEnabled) &&
-          (result.mediaType !== 'book' || booksEnabled))
+          (result.mediaType !== 'book' || booksEnabled) &&
+          (result.mediaType !== 'comic' || comicsEnabled))
     );
 
     const filteredResults = typeFilter

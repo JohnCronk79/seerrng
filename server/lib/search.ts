@@ -25,6 +25,7 @@ import {
   mapOpenLibrarySearchDoc,
   mapOpenLibraryWork,
 } from '@server/models/Book';
+import type { ComicResult } from '@server/models/Comic';
 import {
   mapMovieDetailsToResult,
   mapPersonDetailsToResult,
@@ -49,6 +50,7 @@ export type CombinedSearchResponse = {
     | TmdbCollectionResult
     | BookResult
     | AuthorResult
+    | ComicResult
   )[];
 };
 interface SearchProvider {
