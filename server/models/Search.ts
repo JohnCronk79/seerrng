@@ -27,7 +27,8 @@ export type MediaType =
   | 'artist'
   | 'album'
   | 'book'
-  | 'author';
+  | 'author'
+  | 'comic';
 
 interface TmdbSearchResult {
   id: number;

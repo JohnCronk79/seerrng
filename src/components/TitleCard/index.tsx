@@ -423,12 +423,14 @@ const TitleCard = ({
   const isAlbum = mediaType === 'album';
   const isArtist = mediaType === 'artist';
   const isBook = mediaType === 'book';
+  const isComic = mediaType === 'comic';
   const canonicalId = normalizeExternalTitleId(mediaType, id);
   const videoMediaType =
     mediaType === 'movie' || mediaType === 'collection' || mediaType === 'tv';
   const numericId = typeof id === 'number' ? id : Number(id);
   const canUseVideoActions = videoMediaType && Number.isFinite(numericId);
-  const canUseRequestActions = canUseVideoActions || isAlbum || isBook;
+  const canUseRequestActions =
+    canUseVideoActions || isAlbum || isBook || isComic;
   const canUseWatchlistActions = canUseVideoActions || isAlbum || isBook;
   const detailHref =
     mediaType === 'movie'
@@ -446,8 +448,13 @@ const TitleCard = ({
                     ? { format: preferredBookFormat }
                     : undefined,
                 }
-              : `/artist/${encodeApiPathSegment(canonicalId)}`;
+              : mediaType === 'comic'
+                ? `/comic/${encodeApiPathSegment(canonicalId)}`
+                : `/artist/${encodeApiPathSegment(canonicalId)}`;
   const displayImage = getTmdbPosterImageUrl(image);
+  // ComicVine artwork is served from its own CDN hosts and isn't yet routed
+  // through our image cache proxy (deliberate scope cut - see comics plan);
+  // 'tmdb' is a safe no-op default since the proxy leaves non-tmdb URLs as-is.
   const imageCacheType =
     isResolvedImageUrl(displayImage) && isBook
       ? 'book'
@@ -463,7 +470,9 @@ const TitleCard = ({
         ? Permission.REQUEST_TV
         : isAlbum
           ? Permission.REQUEST_MUSIC
-          : Permission.REQUEST_BOOK,
+          : isComic
+            ? Permission.REQUEST_COMIC
+            : Permission.REQUEST_BOOK,
   ];
 
   if (mediaType === 'movie') {
@@ -585,6 +594,16 @@ const TitleCard = ({
               initialBookFormat={preferredBookFormat}
               show={showRequestModal}
               type="book"
+              onComplete={requestComplete}
+              onUpdating={requestUpdating}
+              onCancel={closeModal}
+            />
+          )}
+          {isComic && typeof canonicalId === 'string' && (
+            <RequestModal
+              comicId={canonicalId}
+              show={showRequestModal}
+              type="comic"
               onComplete={requestComplete}
               onUpdating={requestUpdating}
               onCancel={closeModal}

@@ -16,6 +16,7 @@ import {
   MusicalNoteIcon,
   SparklesIcon,
   SpeakerWaveIcon,
+  Square3Stack3DIcon,
   TvIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
@@ -29,6 +30,7 @@ import {
   MusicalNoteIcon as FilledMusicalNoteIcon,
   SparklesIcon as FilledSparklesIcon,
   SpeakerWaveIcon as FilledSpeakerWaveIcon,
+  Square3Stack3DIcon as FilledSquare3Stack3DIcon,
   TvIcon as FilledTvIcon,
   UsersIcon as FilledUsersIcon,
   XMarkIcon,
@@ -143,6 +145,13 @@ const MobileMenu = ({
         svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
         svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
         activeRegExp: /^\/discover\/audiobooks$/,
+      },
+      {
+        href: '/discover/comics',
+        content: intl.formatMessage(menuMessages.browsecomics),
+        svgIcon: <Square3Stack3DIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSquare3Stack3DIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/comics(?:\/.*)?|comic\/)/,
       },
       {
         href: '/requests',
