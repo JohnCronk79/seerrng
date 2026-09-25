@@ -30,6 +30,39 @@ const FormatRequestControl = ({
     return null;
   }
 
+  if (options.length === 1) {
+    const [option] = options;
+    const button = (
+      <button
+        type="button"
+        data-testid="format-request-control"
+        disabled={option.disabled}
+        title={option.disabled ? option.disabledReason : undefined}
+        onClick={option.onClick}
+        className={`format-request-control format-request-control-single ${className ?? ''}`}
+      >
+        <span className="format-request-single-label">
+          <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+          {intl.formatMessage(messages.request)}
+          <span
+            className="font-semibold"
+            data-testid={`format-request-option-${option.id}`}
+          >
+            {option.label}
+          </span>
+        </span>
+      </button>
+    );
+
+    return option.disabled && option.disabledReason ? (
+      <Tooltip content={option.disabledReason}>
+        <span className="inline-flex">{button}</span>
+      </Tooltip>
+    ) : (
+      button
+    );
+  }
+
   return (
     <div
       className={`format-request-control ${className ?? ''}`}

@@ -49,6 +49,35 @@ describe('Movie Details', () => {
     cy.get('[data-testid=format-request-option-4k]').should('not.exist');
   });
 
+  it('opens a single-quality request from anywhere on the request button', () => {
+    cy.loginAsAdmin();
+    cy.intercept('GET', '/api/v1/settings/public', (request) => {
+      request.continue((response) => {
+        response.body.movie4kEnabled = false;
+      });
+    });
+    cy.intercept('GET', '/api/v1/service/radarr', [
+      {
+        id: 1,
+        name: 'Test Radarr',
+        is4k: false,
+        isDefault: true,
+        activeProfileId: 1,
+        activeDirectory: '/movies',
+        activeTags: [],
+      },
+    ]);
+    cy.visit('/movie/438148');
+
+    cy.get('[data-testid=format-request-control]')
+      .should('be.visible')
+      .and('be.enabled')
+      .click('left');
+
+    cy.get('[role="dialog"]').should('be.visible');
+    cy.get('[role="dialog"]').should('contain.text', 'Movie · HD');
+  });
+
   it('keeps unavailable management visible but disabled with an explanation', () => {
     cy.loginAsAdmin();
     cy.visit('/movie/438148?manage=1');
