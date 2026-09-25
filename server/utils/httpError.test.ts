@@ -61,6 +61,7 @@ describe('HTTP error utilities', () => {
       errorMessage: 'upstream unavailable',
       errorCode: 'ECONNRESET',
       status: 503,
+      upstreamMessage: 'Service Unavailable',
     });
     assert.equal(isTransientHttpError(error), true);
   });
