@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,11 +11,26 @@ const ONE_DAY_STATIC_CACHE = `public, max-age=${ONE_DAY}, stale-while-revalidate
 const THIRTY_DAY_STATIC_CACHE = `public, max-age=${THIRTY_DAYS}, stale-while-revalidate=${THIRTY_DAYS}, stale-if-error=${ONE_DAY}`;
 
 const nextConfig: NextConfig = {
+  ...(process.env.NODE_ENV === 'development' &&
+  (process.env.WATCHPACK_POLLING === 'true' ||
+    process.env.SEERR_DEV_WEBPACK === 'true')
+    ? {
+        distDir: '.next-webpack-dev',
+        assetPrefix: '/__seerr_live_dev',
+      }
+    : {}),
+  ...(process.env.NODE_ENV === 'development' &&
+  process.env.SEERR_DEV_ALLOWED_ORIGIN
+    ? { allowedDevOrigins: [process.env.SEERR_DEV_ALLOWED_ORIGIN] }
+    : {}),
   outputFileTracingRoot: projectRoot,
   env: {
     commitTag: process.env.COMMIT_TAG || 'local',
   },
   async headers() {
+    if (process.env.NODE_ENV === 'development') {
+      return [];
+    }
     return [
       {
         source:
@@ -99,4 +115,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Keep the analyzer development-only. Production images and release assets
+// install only `dependencies` but still load this config at runtime.
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? createRequire(import.meta.url)('@next/bundle-analyzer')({
+        enabled: true,
+      })
+    : (config: NextConfig) => config;
+
+export default withBundleAnalyzer(nextConfig);

@@ -91,7 +91,7 @@ Run these against a real Bookshelf instance:
     when one side already succeeded.
 
 When testing **Request Bibliography**, include an environment where one Bookshelf
-service ID is `0`. Ebook, audiobook, and both-format bulk requests must accept
+service ID is `0`. Book, audiobook, and both-format bulk requests must accept
 that service override and dispatch to the correct Bookshelf instance.
 
 ## Identity Checks
@@ -115,7 +115,7 @@ An alpha build is ready for wider tester use when:
 
 - Music requests can be created, approved, scanned, retried, and removed against
   a real Lidarr instance.
-- Ebook requests can be created, approved, scanned, retried, and removed against
+- Book requests can be created, approved, scanned, retried, and removed against
   a real Bookshelf instance.
 - Audiobook and both-format book requests behave correctly when separate
   Bookshelf defaults are configured.

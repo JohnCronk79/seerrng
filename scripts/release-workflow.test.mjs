@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const rootDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -26,6 +26,7 @@ test('release package channels wait for the reusable release asset build', () =>
   assert.equal(assetBuild.uses, './.github/workflows/release-assets.yml');
   assert.equal(assetBuild.needs, 'verify');
   assert.equal(assetBuild.with.tag, '${{ inputs.tag || github.ref_name }}');
+  assert.equal(assetBuild.permissions.actions, 'read');
   assert.deepEqual(packageDispatch.needs, ['verify', 'build-release-assets']);
   assert.equal(packageDispatch['timeout-minutes'], 120);
   assert.match(dispatchScript, /--ref main/u);
@@ -66,6 +67,17 @@ test('release package channels wait for the reusable release asset build', () =>
     discordStep.run,
     /DISCORD_RELEASE_WEBHOOK is required to complete a release/u
   );
+  assert.match(
+    discordStep.run,
+    /curl --fail --silent --show-error/u,
+    'Discord delivery must fail the release when the webhook returns HTTP error'
+  );
+});
+
+test('release asset publication can download artifacts from the same run', () => {
+  const assets = readWorkflow('release-assets.yml');
+
+  assert.equal(assets.jobs.publish.permissions.actions, 'read');
 });
 
 test('package workflows build the requested tag and reject tags outside main', () => {
@@ -148,11 +160,27 @@ test('multi-architecture publishers perform the real build once and verify the i
     'publish',
     'preflight-deploy',
   ]);
+  assert.equal(
+    ci.jobs['preflight-deploy'].outputs.ready,
+    '${{ steps.verify-storage.outputs.ready }}'
+  );
   assert.match(
     ci.jobs['preflight-deploy'].steps.find(
-      (step) => step.name === 'Verify deployment storage is mounted read-write'
+      (step) =>
+        step.name === 'Verify deployment storage and determine readiness'
     ).run,
-    /refusing deployment until the host is repaired/u
+    /live deployment will remain skipped until the host is repaired/u
+  );
+  assert.match(
+    ci.jobs['preflight-deploy'].steps.find(
+      (step) =>
+        step.name === 'Verify deployment storage and determine readiness'
+    ).run,
+    /ready=false/u
+  );
+  assert.equal(
+    ci.jobs['deploy-main'].if,
+    "github.ref == 'refs/heads/main' && needs.preflight-deploy.outputs.ready == 'true'"
   );
   assert.match(
     ci.jobs.publish.steps.find(
@@ -291,10 +319,14 @@ test('tag preparation keeps Helm metadata aligned with the application release',
   assert.match(syncStep.run, /chart_patch=\$\(\(10#\$chart_patch \+ 1\)\)/u);
   assert.match(syncStep.run, /charts\/seerr-chart\/README\.md/u);
   assert.match(syncStep.run, /next_chart_version/u);
+  const commitStep = createTag.steps.find(
+    (step) => step.name === 'Commit updated files'
+  );
   assert.match(
-    createTag.steps.find((step) => step.name === 'Commit updated files').run,
+    commitStep.run,
     /git add CHANGELOG\.md package\.json charts\/seerr-chart\/Chart\.yaml charts\/seerr-chart\/README\.md/u
   );
+  assert.match(commitStep.run, /release-note: none/u);
 });
 
 test('release notes flow into the draft release and Discord announcement', () => {

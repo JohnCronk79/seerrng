@@ -1,16 +1,23 @@
 import animeList from '@server/api/animelist';
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
+import MusicBrainz from '@server/api/musicbrainz';
+import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexAPI, {
   MAX_PLEX_LIBRARY_ITEMS,
   type PlexLibraryItem,
   type PlexMetadata,
 } from '@server/api/plexapi';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
   TmdbTvDetails,
 } from '@server/api/themoviedb/interfaces';
+import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
+import { classifyAudioPlaybackFormats } from '@server/lib/audioPlaybackFormat';
+import { resolveOpenLibraryIdentifiersForPlexAudiobook } from '@server/lib/bookIdentifierResolver';
 import cacheManager from '@server/lib/cache';
 import {
   ConfigurationAuthorityChangedError,
@@ -19,6 +26,11 @@ import {
   runWithConfigurationSnapshot,
   type ConfigurationAuthoritySnapshot,
 } from '@server/lib/configurationAdmission';
+import {
+  isValidMusicBrainzResourceId,
+  normalizeMusicBrainzId,
+} from '@server/lib/externalIds';
+import { normalizeValidIsbn } from '@server/lib/isbn';
 import {
   MediaServerUserAuthorityChangedError,
   captureMediaServerUserAuthority,
@@ -87,6 +99,28 @@ export const preparePlexLibraryPageItems = (
       )
     : [];
 
+export const dedupePlexRecentlyAddedItems = (
+  items: PlexLibraryItem[],
+  libraryType: Library['type']
+): PlexLibraryItem[] =>
+  uniqWith(items, (mediaA, mediaB) => {
+    // Plex album records use parentRatingKey for the artist, so grouping
+    // albums by parent would drop every later album by the same artist.
+    if (libraryType === 'music' || libraryType === 'book') {
+      return mediaA.ratingKey === mediaB.ratingKey;
+    }
+
+    if (mediaA.grandparentRatingKey && mediaB.grandparentRatingKey) {
+      return mediaA.grandparentRatingKey === mediaB.grandparentRatingKey;
+    }
+
+    if (mediaA.parentRatingKey && mediaB.parentRatingKey) {
+      return mediaA.parentRatingKey === mediaB.parentRatingKey;
+    }
+
+    return mediaA.ratingKey === mediaB.ratingKey;
+  });
+
 export const getPlexGuidCacheKey = (
   plex: Pick<PlexSettings, 'machineId' | 'ip' | 'port' | 'useSsl'>,
   ratingKey: string
@@ -112,6 +146,8 @@ export class PlexScanner
   private libraries: Library[];
   private currentLibrary: Library;
   private isRecentOnly = false;
+  private musicbrainz = new MusicBrainz();
+  private openLibrary = new OpenLibraryAPI();
   private configurationSnapshot: ConfigurationAuthoritySnapshot;
   private plexSettingsSnapshot: PlexSettings;
   private ownerAuthoritySnapshot: MediaServerUserAuthoritySnapshot;
@@ -119,6 +155,42 @@ export class PlexScanner
   public constructor(isRecentOnly = false) {
     super('Plex Scan', { bundleSize: PLEX_SCAN_PAGE_SIZE });
     this.isRecentOnly = isRecentOnly;
+  }
+
+  /** Refresh one already verified collection member without starting a library scan. */
+  public async refreshCollectionMember(
+    id: string,
+    kind: 'tv' | 'music'
+  ): Promise<void> {
+    if (!/^\d+$/.test(id)) throw new Error('Invalid collection member');
+    const settings = getSettings();
+    this.enable4kShow = true;
+    this.configurationSnapshot = captureConfigurationAuthority(
+      'plex',
+      settings
+    );
+    this.plexSettingsSnapshot = structuredClone(settings.plex);
+    this.ownerAuthoritySnapshot = await captureMediaServerUserAuthority(
+      1,
+      'plex'
+    );
+    if (!this.ownerAuthoritySnapshot.plexToken)
+      throw new Error('Media server owner unavailable');
+    this.plexClient = new PlexAPI({
+      plexToken: this.ownerAuthoritySnapshot.plexToken,
+      plexSettings: this.plexSettingsSnapshot,
+      timeout: 8000,
+    });
+    const item = await this.withConfigurationSnapshot(() =>
+      this.plexClient.getMetadata(id)
+    );
+    if (
+      item.ratingKey !== id ||
+      item.type !== (kind === 'tv' ? 'show' : 'album')
+    )
+      throw new Error('Collection member identity changed');
+    if (kind === 'tv') await this.processPlexShow(item);
+    else await this.processPlexAlbum(item);
   }
 
   public status(): SyncStatus {
@@ -172,9 +244,6 @@ export class PlexScanner
 
       if (this.isRecentOnly) {
         for (const library of this.libraries) {
-          if (library.type === 'music') {
-            continue;
-          }
           const libraryType = library.type;
           this.currentLibrary = library;
           this.log(
@@ -195,20 +264,8 @@ export class PlexScanner
             )
           );
 
-          // Bundle items up by rating keys
-          this.items = uniqWith(libraryItems, (mediaA, mediaB) => {
-            if (mediaA.grandparentRatingKey && mediaB.grandparentRatingKey) {
-              return (
-                mediaA.grandparentRatingKey === mediaB.grandparentRatingKey
-              );
-            }
-
-            if (mediaA.parentRatingKey && mediaB.parentRatingKey) {
-              return mediaA.parentRatingKey === mediaB.parentRatingKey;
-            }
-
-            return mediaA.ratingKey === mediaB.ratingKey;
-          });
+          // Bundle items up by rating keys.
+          this.items = dedupePlexRecentlyAddedItems(libraryItems, libraryType);
 
           await this.loop(this.processItem.bind(this), { sessionId });
 
@@ -266,6 +323,7 @@ export class PlexScanner
       this.plexClient.getLibraryContents(library.id, {
         size: this.protectedBundleSize,
         offset: start,
+        libraryType: library.type,
       })
     );
 
@@ -322,6 +380,12 @@ export class PlexScanner
         plexitem.type === 'season'
       ) {
         await this.processPlexShow(plexitem);
+      } else if (plexitem.type === 'album') {
+        if (this.currentLibrary?.type === 'book') {
+          await this.processPlexAudiobookAlbum(plexitem);
+        } else {
+          await this.processPlexAlbum(plexitem);
+        }
       }
     } catch (e) {
       if (
@@ -399,9 +463,9 @@ export class PlexScanner
       ? await getMetadataProvider('anime')
       : await getMetadataProvider('tv');
 
-    if (!(metadataProvider instanceof TheMovieDb)) {
+    if (!isTheMovieDbProvider(metadataProvider)) {
       tvShow = await metadataProvider.getTvShow({
-        tvId: Number(tmdbId),
+        tvId: Number(tvShow.id),
       });
     }
 
@@ -496,6 +560,137 @@ export class PlexScanner
         outerMutationGuard: (callback) => this.withOwnerAuthority(callback),
       }
     );
+  }
+
+  // Plex's music agent (unlike its movie/tv agents) puts a matched external
+  // ID directly on the item's singular `guid` field, e.g.
+  // "mbid://<release-id>" -- observed on a live server, it does not
+  // populate the `Guid[]` array the way movie/show agents do. We check
+  // both: the singular field as the primary (observed) case, `Guid[]` as a
+  // defensive fallback in case an agent variant does populate it.
+  private extractPlexGuidValue(
+    plexitem: Pick<PlexLibraryItem, 'guid' | 'Guid'>,
+    scheme: string
+  ): string | undefined {
+    if (plexitem.guid.startsWith(scheme)) {
+      return plexitem.guid.slice(scheme.length);
+    }
+    const match = plexitem.Guid?.find((guid) => guid.id.startsWith(scheme));
+    return match?.id.slice(scheme.length);
+  }
+
+  private async getMusicBrainzReleaseGroupIdFromPlexAlbum(
+    plexitem: PlexLibraryItem
+  ): Promise<string | undefined> {
+    const rawMbid = this.extractPlexGuidValue(plexitem, 'mbid://');
+    if (!rawMbid) {
+      return undefined;
+    }
+
+    const rawId = normalizeMusicBrainzId(rawMbid);
+    if (!isValidMusicBrainzResourceId(rawId)) {
+      return undefined;
+    }
+
+    // Plex tags albums with a MusicBrainz ID but does not distinguish a
+    // release from a release-group. Try it as a release-group first; if
+    // MusicBrainz doesn't recognize it as one, resolve it as a release ID
+    // (mirrors the same fallback the Jellyfin scanner uses).
+    try {
+      await this.musicbrainz.getReleaseGroupDetails({
+        releaseGroupId: rawId,
+      });
+      return rawId;
+    } catch {
+      // Not a release-group ID -- fall through to resolve as a release ID.
+    }
+
+    const resolvedReleaseGroupId = normalizeMusicBrainzId(
+      (await this.musicbrainz.getReleaseGroup({ releaseId: rawId })) ?? ''
+    );
+    return isValidMusicBrainzResourceId(resolvedReleaseGroupId)
+      ? resolvedReleaseGroupId
+      : undefined;
+  }
+
+  private async processPlexAlbum(plexitem: PlexLibraryItem) {
+    const mbId = await this.getMusicBrainzReleaseGroupIdFromPlexAlbum(plexitem);
+    if (!mbId) {
+      this.log(
+        'No MusicBrainz release group ID found for this album. Skipping',
+        'debug',
+        { ratingKey: plexitem.ratingKey, title: plexitem.title }
+      );
+      return;
+    }
+
+    let audioFormats = classifyAudioPlaybackFormats(
+      plexitem.Media.flatMap((media) => [media.audioCodec, media.container])
+    );
+    if (audioFormats.length === 0) {
+      try {
+        const tracks = await this.plexClient.getChildrenMetadata(
+          plexitem.ratingKey
+        );
+        audioFormats = classifyAudioPlaybackFormats(
+          tracks.flatMap((track) =>
+            track.Media.flatMap((media) => [media.audioCodec, media.container])
+          )
+        );
+      } catch (error) {
+        this.log('Unable to classify Plex album playback format', 'warn', {
+          ratingKey: plexitem.ratingKey,
+          errorMessage:
+            error instanceof Error ? error.message : 'Unknown provider error',
+        });
+      }
+    }
+
+    await this.processMusic(mbId, {
+      mediaAddedAt: new Date(plexitem.addedAt * 1000),
+      ratingKey: plexitem.ratingKey,
+      audioFormats,
+      title: plexitem.title,
+      mutationGuard: (callback) => this.withConfigurationSnapshot(callback),
+      outerMutationGuard: (callback) => this.withOwnerAuthority(callback),
+    });
+  }
+
+  private async processPlexAudiobookAlbum(plexitem: PlexLibraryItem) {
+    const author = plexitem.parentTitle;
+    const title = plexitem.title;
+
+    const rawIsbn = normalizeValidIsbn(
+      this.extractPlexGuidValue(plexitem, 'isbn://')
+    );
+
+    const resolved = rawIsbn
+      ? [{ provider: MediaIdentifierProvider.ISBN, value: rawIsbn }]
+      : await resolveOpenLibraryIdentifiersForPlexAudiobook(
+          title,
+          author,
+          this.openLibrary
+        );
+
+    const [primary, ...secondaryIdentifiers] = resolved;
+    if (!primary) {
+      this.log(
+        'Unable to resolve a book identifier for this Plex audiobook. Skipping',
+        'debug',
+        { ratingKey: plexitem.ratingKey, title, author }
+      );
+      return;
+    }
+
+    await this.processBook(primary.provider, primary.value, {
+      mediaAddedAt: new Date(plexitem.addedAt * 1000),
+      ratingKey: plexitem.ratingKey,
+      title,
+      bookServiceType: 'audiobook',
+      secondaryIdentifiers,
+      mutationGuard: (callback) => this.withConfigurationSnapshot(callback),
+      outerMutationGuard: (callback) => this.withOwnerAuthority(callback),
+    });
   }
 
   private async getMediaIds(plexitem: PlexLibraryItem): Promise<MediaIds> {

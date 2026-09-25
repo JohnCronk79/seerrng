@@ -5,9 +5,13 @@ import { describe, it } from 'node:test';
 import request from 'supertest';
 import { getSessionTransportOptions } from './sessionCookie';
 
-const createApp = (development = false) => {
+const createApp = (development = false, allowHttpAuth = true) => {
   const app = express();
-  const sessionTransportOptions = getSessionTransportOptions(development, true);
+  const sessionTransportOptions = getSessionTransportOptions(
+    development,
+    true,
+    allowHttpAuth
+  );
   app.use(
     session({
       secret: '01234567890123456789012345678901',
@@ -15,7 +19,6 @@ const createApp = (development = false) => {
       saveUninitialized: false,
       cookie: {
         ...sessionTransportOptions.cookie,
-        secure: true,
       },
       proxy: sessionTransportOptions.proxy,
     })
@@ -28,9 +31,12 @@ const createApp = (development = false) => {
 };
 
 describe('getSessionTransportOptions', () => {
-  it('requires HTTPS for session cookies', () => {
-    assert.equal(getSessionTransportOptions(false, true).cookie.secure, true);
-    assert.equal(getSessionTransportOptions(false, false).cookie.secure, true);
+  it('uses transport-aware cookies by default', () => {
+    assert.equal(getSessionTransportOptions(false, true).cookie.secure, 'auto');
+    assert.equal(
+      getSessionTransportOptions(false, false, false).cookie.secure,
+      true
+    );
     assert.equal(getSessionTransportOptions(false, true).proxy, true);
   });
 
@@ -46,7 +52,10 @@ describe('getSessionTransportOptions', () => {
   });
 
   it('keeps the remaining cookie protections in development and production', () => {
-    assert.equal(getSessionTransportOptions(true, true).cookie.secure, true);
+    assert.equal(
+      getSessionTransportOptions(true, true, false).cookie.secure,
+      true
+    );
     assert.equal(
       getSessionTransportOptions(true, true).cookie.sameSite,
       'strict'
@@ -55,17 +64,24 @@ describe('getSessionTransportOptions', () => {
       getSessionTransportOptions(true, false).cookie.sameSite,
       'lax'
     );
-    assert.equal(getSessionTransportOptions(true, true).cookie.httpOnly, true);
     assert.equal(
-      getSessionTransportOptions(true, true).cookie.maxAge,
+      getSessionTransportOptions(true, true, false).cookie.httpOnly,
+      true
+    );
+    assert.equal(
+      getSessionTransportOptions(true, true, false).cookie.maxAge,
       30 * 24 * 60 * 60 * 1_000
     );
-    assert.equal(getSessionTransportOptions(true, true).proxy, false);
+    assert.equal(getSessionTransportOptions(true, true, false).proxy, false);
   });
 
-  it('does not issue a session cookie over HTTP', async () => {
+  it('issues a non-Secure session cookie over default HTTP', async () => {
     const directResponse = await request(createApp()).get('/');
-    assert.equal(directResponse.headers['set-cookie'], undefined);
+    // codeql[js/clear-text-cookie]
+    assert.doesNotMatch(
+      directResponse.get('Set-Cookie')?.[0] ?? '',
+      /; Secure(?:;|$)/
+    );
 
     const response = await request(createApp())
       .get('/')
@@ -74,38 +90,8 @@ describe('getSessionTransportOptions', () => {
     assert.match(response.get('Set-Cookie')?.[0] ?? '', /; Secure(?:;|$)/);
   });
 
-  it('issues a non-Secure cookie only when the HTTP fallback is enabled', async () => {
-    const response = await request(createApp(false)).get('/');
+  it('does not issue a session cookie when HTTPS-only mode is selected', async () => {
+    const response = await request(createApp(false, false)).get('/');
     assert.equal(response.headers['set-cookie'], undefined);
-
-    const fallbackApp = express();
-    const sessionTransportOptions = getSessionTransportOptions(
-      false,
-      true,
-      true
-    );
-    fallbackApp.use(
-      session({
-        secret: '01234567890123456789012345678901',
-        resave: false,
-        saveUninitialized: false,
-        cookie: sessionTransportOptions.cookie,
-        proxy: sessionTransportOptions.proxy,
-      })
-    );
-    fallbackApp.get('/', (req, res) => {
-      req.session.userId = 1;
-      res.json({ ok: true });
-    });
-
-    // This test intentionally exercises the explicitly opted-in HTTP fallback
-    // with synthetic session data; production defaults remain HTTPS-only.
-    // codeql[js/clear-text-cookie]
-    const fallbackResponse = await request(fallbackApp).get('/');
-    assert.match(fallbackResponse.get('Set-Cookie')?.[0] ?? '', /HttpOnly/);
-    assert.doesNotMatch(
-      fallbackResponse.get('Set-Cookie')?.[0] ?? '',
-      /; Secure(?:;|$)/
-    );
   });
 });

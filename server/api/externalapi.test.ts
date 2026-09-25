@@ -6,6 +6,7 @@ import {
   waitForBackgroundTasks,
 } from '@server/utils/backgroundTasks';
 import type { AxiosAdapter, AxiosRequestConfig } from 'axios';
+import axios from 'axios';
 import NodeCache from 'node-cache';
 import ExternalAPI, {
   DEFAULT_EXTERNAL_API_MAX_BODY_LENGTH,
@@ -390,6 +391,49 @@ describe('ExternalAPI redirect handling', () => {
       }),
       (error: NodeJS.ErrnoException) => error.code === 'EACCES'
     );
+  });
+});
+
+describe('ExternalAPI transient GET handling', () => {
+  it('retries a transient provider failure before returning an error', async () => {
+    const api = new TestExternalAPI('https://service.example', {});
+    let calls = 0;
+    api.setAdapter(async (config) => {
+      calls += 1;
+      if (calls === 1) {
+        throw new axios.AxiosError('socket reset', 'ECONNRESET', config);
+      }
+
+      return {
+        config,
+        data: { ok: true },
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      };
+    });
+
+    assert.deepStrictEqual(await api.getForTest('/status'), { ok: true });
+    assert.equal(calls, 2);
+  });
+
+  it('still surfaces a persistent transient provider failure', async () => {
+    const api = new TestExternalAPI('https://service.example', {});
+    let calls = 0;
+    api.setAdapter(async (config) => {
+      calls += 1;
+      throw new axios.AxiosError(
+        'upstream unavailable',
+        'ERR_BAD_RESPONSE',
+        config
+      );
+    });
+
+    await assert.rejects(
+      () => api.getForTest('/status'),
+      /upstream unavailable/
+    );
+    assert.equal(calls, 2);
   });
 });
 

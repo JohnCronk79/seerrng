@@ -202,7 +202,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1050 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status, MediaStatus.PROCESSING);
       assert.strictEqual(updated.seasons[0].status, MediaStatus.PROCESSING);
@@ -232,7 +232,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1000 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status, MediaStatus.UNKNOWN);
       assert.strictEqual(updated.seasons[0].status, MediaStatus.UNKNOWN);
@@ -262,7 +262,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1001 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
     });
@@ -312,7 +312,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status, MediaStatus.PROCESSING);
     });
@@ -346,7 +346,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1003 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status, MediaStatus.UNKNOWN);
 
@@ -421,13 +421,13 @@ describe('Sonarr Scanner', () => {
 
       const updatedOrphan = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1010 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updatedOrphan.status, MediaStatus.UNKNOWN);
 
       const updatedExisting = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.notStrictEqual(updatedExisting.status, MediaStatus.UNKNOWN);
     });
@@ -480,7 +480,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1030 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       assert.strictEqual(updated.status4k, MediaStatus.UNKNOWN);
       assert.strictEqual(updated.seasons[0].status4k, MediaStatus.UNKNOWN);
@@ -516,7 +516,7 @@ describe('Sonarr Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1031 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
       const s1 = updated.seasons.find((s) => s.seasonNumber === 1);
       const s2 = updated.seasons.find((s) => s.seasonNumber === 2);

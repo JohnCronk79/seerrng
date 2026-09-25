@@ -6,7 +6,7 @@ import { AddUserPasswordChangedAt1781500000000 } from './1781500000000-AddUserPa
 
 test('SQLite password credential-version migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

@@ -7,7 +7,12 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
-import { isMusicDestinationAvailable } from '@app/components/RequestModal/requestAvailability';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -64,8 +69,11 @@ const messages = defineMessages('components.RequestModal.Music', {
   artist: 'Artist',
   albumType: 'Album Type',
   trackCount: 'Track Count',
+  entireAlbum: 'This request includes the entire album.',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
+  requested: 'Requested',
   readyToRequest: 'Ready to Request',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
@@ -73,6 +81,7 @@ const messages = defineMessages('components.RequestModal.Music', {
 
 interface MusicRequestModalProps {
   mbId: string;
+  initialServerId?: number;
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus) => void;
   onUpdating?: (isUpdating: boolean) => void;
@@ -81,6 +90,7 @@ interface MusicRequestModalProps {
 
 const MusicRequestModal = ({
   mbId,
+  initialServerId,
   onCancel,
   onComplete,
   onUpdating,
@@ -91,8 +101,10 @@ const MusicRequestModal = ({
   const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
   const [requestOverrides, setRequestOverrides] =
-    useState<RequestOverrides | null>(null);
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+    useState<RequestOverrides | null>(
+      initialServerId !== undefined ? { server: initialServerId } : null
+    );
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const normalizedMbId = normalizeMusicBrainzId(mbId);
@@ -105,16 +117,45 @@ const MusicRequestModal = ({
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
   );
-  const selectedMusicServerId =
-    requestOverrides?.server ??
-    musicServices?.find((service) => service.isDefault)?.id;
+  const selectedService = musicServices?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = musicServices?.find((server) => server.isDefault);
+  const selectedDestination = createRequestDestination(
+    'lidarr',
+    'music',
+    selectedService ?? fallbackService,
+    requestOverrides
+  );
   const selectedDestinationAvailable =
     !editRequest &&
-    isMusicDestinationAvailable(
+    isRequestDestinationAvailable(
       data?.mediaInfo,
-      selectedMusicServerId,
-      data?.availableServices
+      selectedDestination,
+      data?.availableServices?.map((service) => service.serverId)
     );
+  const selectedDestinationRequested =
+    !editRequest &&
+    isRequestDestinationRequested(
+      data?.mediaInfo?.requests,
+      selectedDestination
+    );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'music'
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
   const { data: quota } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id ||
@@ -126,15 +167,17 @@ const MusicRequestModal = ({
   );
 
   useEffect(() => {
-    setRequestOverrides(null);
-  }, [editRequest?.id, mbId]);
+    setRequestOverrides(
+      initialServerId !== undefined ? { server: initialServerId } : null
+    );
+  }, [editRequest?.id, initialServerId, mbId]);
 
   useEffect(() => {
     onUpdating?.(isUpdating);
   }, [isUpdating, onUpdating]);
 
   const sendRequest = useCallback(async () => {
-    if (selectedDestinationAvailable) {
+    if (selectedDestinationCovered) {
       return;
     }
 
@@ -186,11 +229,19 @@ const MusicRequestModal = ({
           { appearance: 'success', autoDismiss: true }
         );
       }
-    } catch {
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+    } catch (error) {
+      const responseMessage = axios.isAxiosError<{ message?: unknown }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      addToast(
+        typeof responseMessage === 'string' && responseMessage.length > 0
+          ? responseMessage
+          : intl.formatMessage(messages.requesterror),
+        {
+          appearance: 'error',
+          autoDismiss: true,
+        }
+      );
     } finally {
       setIsUpdating(false);
     }
@@ -202,7 +253,7 @@ const MusicRequestModal = ({
     normalizedMbId,
     onComplete,
     requestOverrides,
-    selectedDestinationAvailable,
+    selectedDestinationCovered,
   ]);
 
   const hasAutoApprove = hasAutoApprovePermission(
@@ -214,10 +265,6 @@ const MusicRequestModal = ({
     [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
     { type: 'or' }
   );
-  const selectedService = musicServices?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const fallbackService = musicServices?.find((server) => server.isDefault);
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const releaseDate = data?.releaseDate
     ? intl.formatDate(new Date(`${data.releaseDate}T00:00:00`), {
@@ -337,6 +384,14 @@ const MusicRequestModal = ({
               : cancelRequest()
         }
         okDisabled={isUpdating || serviceUnavailable}
+        okButtonProps={{
+          buttonIcon:
+            !hasPermission(Permission.MANAGE_REQUESTS) &&
+            !hasPermission(Permission.REQUEST_ADVANCED)
+              ? 'cancel'
+              : undefined,
+        }}
+        secondaryButtonProps={{ buttonIcon: 'cancel' }}
         okText={
           hasPermission(Permission.MANAGE_REQUESTS)
             ? intl.formatMessage(messages.approve)
@@ -372,37 +427,49 @@ const MusicRequestModal = ({
         }
         secondaryButtonType="danger"
         cancelText={intl.formatMessage(messages.close)}
-        backdrop={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
+        cancelButtonType="danger"
+        alignTop
+        actionButtonSize="standard"
+        dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        {serviceUnavailable && (
-          <div className="mb-4">
-            <Alert
-              title={intl.formatMessage(messages.noLidarrServer)}
-              type="warning"
-            />
+        <RequestMediaCard
+          artwork={
+            data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath
+          }
+          artworkType="music"
+        >
+          {serviceUnavailable && (
+            <div className="mb-4">
+              <Alert
+                title={intl.formatMessage(messages.noLidarrServer)}
+                type="warning"
+              />
+            </div>
+          )}
+          <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
           </div>
-        )}
-        {isOwner
-          ? intl.formatMessage(messages.pendingapproval)
-          : intl.formatMessage(messages.requestfrom, {
-              username: editRequest.requestedBy.displayName,
-            })}
-        {(hasPermission(Permission.REQUEST_ADVANCED) ||
-          hasPermission(Permission.MANAGE_REQUESTS)) && (
-          <AdvancedRequester
-            type="music"
-            is4k={false}
-            requestUser={editRequest.requestedBy}
-            defaultOverrides={{
-              folder: editRequest.rootFolder,
-              metadataProfile: editRequest.metadataProfileId,
-              profile: editRequest.profileId,
-              server: editRequest.serverId,
-              tags: editRequest.tags,
-            }}
-            onChange={(overrides) => setRequestOverrides(overrides)}
-          />
-        )}
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="music"
+              is4k={false}
+              requestUser={editRequest.requestedBy}
+              defaultOverrides={{
+                folder: editRequest.rootFolder,
+                metadataProfile: editRequest.metadataProfileId,
+                profile: editRequest.profileId,
+                server: editRequest.serverId,
+                tags: editRequest.tags,
+              }}
+              onChange={(overrides) => setRequestOverrides(overrides)}
+            />
+          )}
+        </RequestMediaCard>
       </Modal>
     );
   }
@@ -417,14 +484,14 @@ const MusicRequestModal = ({
       alignTop
       okDisabled={
         isUpdating ||
-        selectedDestinationAvailable ||
+        selectedDestinationCovered ||
         quota?.music?.restricted ||
         serviceUnavailable
       }
       title={intl.formatMessage(messages.requestmusic)}
       okText={requestButtonLabel}
       okButtonType="primary"
-      dialogClass="sm:max-w-5xl"
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
       {serviceUnavailable && (
         <div className="mt-6">
@@ -449,8 +516,8 @@ const MusicRequestModal = ({
         artwork={data?.artistBackdrop ?? data?.artistThumb ?? data?.posterPath}
         artworkType="music"
       >
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+        <div className="refreshed-inset-surface detail-summary-card grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
             <CachedImage
               type="music"
               src={data?.posterPath || '/images/seerr_poster_not_found.png'}
@@ -462,38 +529,36 @@ const MusicRequestModal = ({
           </div>
 
           <div className="flex min-w-0 flex-col">
-            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+            <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
               {data?.title}
               {releaseYear ? ` (${releaseYear})` : ''}
             </h3>
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
-              <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows detail-paired-columns refreshed-detail-text grid min-w-0 content-start text-xs">
+                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                     Music · Album
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                     {intl.formatMessage(messages.releaseDate)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                     {releaseDate}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                     {intl.formatMessage(messages.runtime)}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                     {runtimeMinutes > 0
                       ? `${intl.formatNumber(runtimeMinutes)} minutes`
                       : notAvailable}
                   </dd>
 
-                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                     <dt className="font-medium text-gray-100">
                       {intl.formatMessage(messages.artist)}:
                     </dt>
@@ -516,16 +581,16 @@ const MusicRequestModal = ({
                     </dd>
                   </div>
 
-                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
-                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                     {genres || notAvailable}
                   </dd>
                 </dl>
               </div>
 
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="media-detail-rows media-detail-column-divider refreshed-detail-text grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.status)}:
                 </dt>
@@ -533,7 +598,9 @@ const MusicRequestModal = ({
                   {intl.formatMessage(
                     selectedDestinationAvailable
                       ? globalMessages.available
-                      : messages.readyToRequest
+                      : selectedDestinationRequested
+                        ? messages.requested
+                        : messages.readyToRequest
                   )}
                 </dd>
                 <dt className="font-medium text-gray-100">
@@ -544,18 +611,40 @@ const MusicRequestModal = ({
                     fallbackService?.name ??
                     notAvailable}
                 </dd>
+                <dt className="font-medium text-gray-100">
+                  {intl.formatMessage(messages.approval)}:
+                </dt>
+                <dd className="m-0 min-w-0">
+                  <RequestFooterStatus
+                    available={selectedDestinationAvailable}
+                    requested={selectedDestinationRequested}
+                    hasAutoApprove={hasAutoApprove}
+                  />
+                </dd>
               </dl>
             </div>
           </div>
         </div>
 
-        {data?.tracks.length ? <AlbumTrackList tracks={data.tracks} /> : null}
+        {data?.tracks.length ? (
+          <>
+            <p className="refreshed-detail-text-muted mt-2 text-xs">
+              {intl.formatMessage(messages.entireAlbum)}
+            </p>
+            <AlbumTrackList tracks={data.tracks} albumRequest />
+          </>
+        ) : null}
 
         {canUseAdvancedOptions && (
           <AdvancedRequester
             type="music"
             is4k={false}
             expanded={advancedOptionsOpen}
+            defaultOverrides={
+              initialServerId !== undefined
+                ? { server: initialServerId }
+                : undefined
+            }
             panelOnly
             rootFolderTable
             requestedByPortal={requestedByPortal}
@@ -568,7 +657,7 @@ const MusicRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="app-button app-button-manage button-standard"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -583,20 +672,16 @@ const MusicRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
-            className="flex h-[22px] items-center"
+            className="compact-control flex items-center"
             ref={setRequestedByPortal}
           />
           <button
             type="button"
             onClick={onCancel}
             data-testid="modal-cancel-button"
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="app-button app-button-danger button-standard"
           >
             <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {intl.formatMessage(globalMessages.cancel)}
@@ -607,11 +692,11 @@ const MusicRequestModal = ({
             data-testid="modal-ok-button"
             disabled={
               isUpdating ||
-              selectedDestinationAvailable ||
+              selectedDestinationCovered ||
               quota?.music?.restricted ||
               serviceUnavailable
             }
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="app-button app-button-success button-standard"
           >
             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
             {requestButtonLabel}

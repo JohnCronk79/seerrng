@@ -16,10 +16,7 @@ import type { ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 
 export type IssueMediaDetails =
-  | MovieDetails
-  | TvDetails
-  | MusicDetails
-  | BookDetails;
+  MovieDetails | TvDetails | MusicDetails | BookDetails;
 
 export type IssueSummaryDetail = {
   label?: string;
@@ -65,6 +62,7 @@ interface IssueMediaSummaryProps {
   artwork?: string;
   rightDetails: IssueSummaryDetail[];
   footer?: ReactNode;
+  embedded?: boolean;
 }
 
 const IssueMediaSummary = ({
@@ -75,6 +73,7 @@ const IssueMediaSummary = ({
   artwork,
   rightDetails,
   footer,
+  embedded = false,
 }: IssueMediaSummaryProps) => {
   const intl = useIntl();
   const unavailable = 'Not available';
@@ -244,8 +243,10 @@ const IssueMediaSummary = ({
             : undefined);
 
   return (
-    <article className="refreshed-card-surface relative rounded-xl border border-gray-700 p-3 text-gray-400 shadow-lg shadow-gray-950/20">
-      {artworkSrc && (
+    <article
+      className={`${embedded ? 'refreshed-inset-surface' : 'refreshed-card-surface shadow-lg shadow-gray-950/20'} relative rounded-xl border border-gray-700 p-3`}
+    >
+      {!embedded && artworkSrc && (
         <div
           className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl"
           aria-hidden
@@ -264,8 +265,10 @@ const IssueMediaSummary = ({
         </div>
       )}
       <div className="relative z-10">
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+        <div
+          className={`${embedded ? '' : 'refreshed-inset-surface detail-summary-card'} grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]`}
+        >
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
             <CachedImage
               type={posterType}
               src={posterSrc}
@@ -280,21 +283,21 @@ const IssueMediaSummary = ({
             {resolvedHref ? (
               <Link
                 href={resolvedHref}
-                className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline"
+                className="detail-summary-title block truncate text-lg font-semibold leading-5 text-white hover:underline"
               >
                 {title}
                 {releaseYear ? ` (${releaseYear})` : ''}
               </Link>
             ) : (
-              <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
+              <h3 className="detail-summary-title truncate text-lg font-semibold leading-5 text-white">
                 {title}
                 {releaseYear ? ` (${releaseYear})` : ''}
               </h3>
             )}
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
-              <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows detail-paired-columns grid min-w-0 content-start text-xs">
                   <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
                     Media &amp; Format:
                   </dt>
@@ -314,8 +317,7 @@ const IssueMediaSummary = ({
                     {runtime}
                   </dd>
 
-                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                  <div className="media-detail-rows media-detail-column-divider col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1">
                     {secondaryRows.slice(0, 3).map((row) => (
                       <div className="contents" key={row.label}>
                         <dt className="font-medium text-gray-100">
@@ -328,16 +330,16 @@ const IssueMediaSummary = ({
                     ))}
                   </div>
 
-                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
                     Genres:
                   </dt>
-                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                  <dd className="m-0 line-clamp-2 min-w-0 break-words card:col-span-3 card:col-start-3 card:row-start-4">
                     {genres.length > 0 ? linkedValues(genres) : unavailable}
                   </dd>
                 </dl>
               </div>
 
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+              <dl className="media-detail-rows media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 {rightDetails.map((detail, index) => (
                   <div className="contents" key={`${detail.label}-${index}`}>
                     <dt

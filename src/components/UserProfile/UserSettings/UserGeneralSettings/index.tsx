@@ -292,7 +292,7 @@ const UserGeneralSettings = () => {
                 <label className="text-label">
                   {intl.formatMessage(messages.accounttype)}
                 </label>
-                <div className="mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     {user?.userType === UserType.PLEX ? (
                       <Badge badgeType="warning">
@@ -322,7 +322,7 @@ const UserGeneralSettings = () => {
                 <label className="text-label">
                   {intl.formatMessage(messages.role)}
                 </label>
-                <div className="mb-1 text-sm font-medium leading-5 text-gray-400 sm:mt-2">
+                <div className="mb-1 text-sm leading-5 font-medium text-gray-400 sm:mt-2">
                   <div className="flex max-w-lg items-center">
                     {user?.id === 1
                       ? intl.formatMessage(messages.owner)

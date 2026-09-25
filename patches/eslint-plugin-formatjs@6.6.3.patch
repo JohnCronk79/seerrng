@@ -1,0 +1,14 @@
+diff --git a/index.js b/index.js
+index bd62ea040d4fa37e57338c28d22251d15683180f..ef401ec0bb683125e0387498e6ec2d6327f5e9d9 100644
+--- a/index.js
++++ b/index.js
+@@ -1,7 +1,7 @@
+ import { TYPE, isArgumentElement, isDateElement, isLiteralElement, isNumberElement, isPluralElement, isSelectElement, isTagElement, isTimeElement, parse } from "@formatjs/icu-messageformat-parser";
+ import { interpolateName } from "@formatjs/ts-transformer";
+-import * as emojiPresentationRegex from "@unicode/unicode-17.0.0/Binary_Property/Emoji_Presentation/regex.js";
+-import * as emojiPropertyRegex from "@unicode/unicode-17.0.0/Binary_Property/Emoji/regex.js";
++import * as emojiPresentationRegex from "@unicode/unicode-17.0.0/Binary_Property/Emoji_Presentation/regex.mjs";
++import * as emojiPropertyRegex from "@unicode/unicode-17.0.0/Binary_Property/Emoji/regex.mjs";
+ import * as picomatchNs from "picomatch";
+ import MagicString from "magic-string";
+ //#region \0rolldown/runtime.js

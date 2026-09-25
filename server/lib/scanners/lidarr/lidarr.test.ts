@@ -6,6 +6,7 @@ import LidarrAPI from '@server/api/servarr/lidarr';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { getLidarrAlbumMediaStatus } from '@server/lib/musicAvailability';
 import type { LidarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
@@ -250,6 +251,114 @@ describe('Lidarr Scanner', () => {
     assert.strictEqual(media.status, MediaStatus.AVAILABLE);
     assert.strictEqual(media.serviceId, 0);
     assert.strictEqual(media.externalServiceId, 526);
+  });
+
+  it('stores local album metadata during a Lidarr scan', async () => {
+    configureLidarr([
+      { syncEnabled: true, name: 'Lidarr MP3', activeProfileName: 'MP3' },
+    ]);
+    getAlbumsImpl = async () => [
+      fakeLidarrAlbum({
+        id: 527,
+        title: 'Fast Local Album',
+        foreignAlbumId: 'fast-local-release-group',
+        artistName: 'Local Artist',
+        releaseDate: '2025-06-07',
+        genres: ['Rock', 'Alternative'],
+        albumType: 'Album',
+      }),
+    ];
+
+    await lidarrScanner.run();
+
+    const media = await getRepository(Media).findOneOrFail({
+      where: {
+        mbId: 'fast-local-release-group',
+        mediaType: MediaType.MUSIC,
+      },
+    });
+    const metadata = await getRepository(MediaSearchMetadata).findOneOrFail({
+      where: { mediaId: media.id },
+    });
+
+    assert.strictEqual(metadata.title, 'Fast Local Album');
+    assert.strictEqual(metadata.artist, 'Local Artist');
+    assert.strictEqual(metadata.releaseDate, '2025-06-07');
+    assert.strictEqual(metadata.genres, 'Rock, Alternative');
+    assert.strictEqual(metadata.albumType, 'Album');
+    assert.strictEqual(metadata.provider, 'Lidarr MP3');
+  });
+
+  it('preserves availability from multiple Lidarr destinations', async () => {
+    const mediaRepository = getRepository(Media);
+    let scanNumber = 0;
+
+    configureLidarr([
+      { id: 0, hostname: 'lidarr-mp3', activeProfileName: 'MP3' },
+      { id: 1, hostname: 'lidarr-flac', activeProfileName: 'FLAC' },
+    ]);
+    getAlbumsImpl = async () => [
+      fakeLidarrAlbum({
+        id: 700 + scanNumber++,
+        title: 'Dual Format Album',
+        foreignAlbumId: 'dual-format-release-group',
+      }),
+    ];
+
+    await lidarrScanner.run();
+
+    const media = await mediaRepository.findOneOrFail({
+      where: {
+        mbId: 'dual-format-release-group',
+        mediaType: MediaType.MUSIC,
+      },
+    });
+    assert.deepStrictEqual(media.availableMusicServiceIds, [0, 1]);
+    assert.strictEqual(media.serviceId, 1);
+  });
+
+  it('removes stale destination availability after every enabled service is scanned', async () => {
+    const mediaRepository = getRepository(Media);
+    let scanNumber = 0;
+    await mediaRepository.save(
+      new Media({
+        tmdbId: 0,
+        mbId: 'single-format-release-group',
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 1,
+        externalServiceId: 801,
+        availableMusicServiceIds: [0, 1],
+      })
+    );
+
+    configureLidarr([
+      { id: 0, hostname: 'lidarr-mp3', activeProfileName: 'MP3' },
+      { id: 1, hostname: 'lidarr-flac', activeProfileName: 'FLAC' },
+    ]);
+    getAlbumsImpl = async () => {
+      scanNumber += 1;
+      return scanNumber === 1
+        ? []
+        : [
+            fakeLidarrAlbum({
+              id: 801,
+              title: 'Single Format Album',
+              foreignAlbumId: 'single-format-release-group',
+            }),
+          ];
+    };
+
+    await lidarrScanner.run();
+
+    const media = await mediaRepository.findOneOrFail({
+      where: {
+        mbId: 'single-format-release-group',
+        mediaType: MediaType.MUSIC,
+      },
+    });
+    assert.deepStrictEqual(media.availableMusicServiceIds, [1]);
   });
 
   it('normalizes MusicBrainz release group IDs before saving scanned albums', async () => {

@@ -87,7 +87,7 @@ let activeRuntime: TlsRuntimeInfo = {
   mode: 'disabled',
   httpPort: 5055,
   httpsPort: null,
-  httpAuthAllowed: false,
+  httpAuthAllowed: true,
   redirectsHttpToHttps: false,
   hosts: [],
   caDownloadAvailable: false,
@@ -653,17 +653,24 @@ const resolveTlsSettings = (
       ? environment.SEERR_TLS_MODE
       : settings?.mode
   );
-  const httpAuthAllowed = parseTlsBoolean(
-    'SEERR_ALLOW_HTTP_AUTH',
-    hasEnvironmentValue(environment, 'SEERR_ALLOW_HTTP_AUTH')
-      ? environment.SEERR_ALLOW_HTTP_AUTH
+  const httpAuthSetting = hasEnvironmentValue(
+    environment,
+    'SEERR_ALLOW_HTTP_AUTH'
+  )
+    ? environment.SEERR_ALLOW_HTTP_AUTH
+    : hasEnvironmentValue(environment, 'SEERR_TLS_MODE') && mode !== 'disabled'
+      ? undefined
       : settings?.allowHttpAuth === undefined
         ? undefined
-        : String(settings.allowHttpAuth)
+        : String(settings.allowHttpAuth);
+  const httpAuthAllowed = parseTlsBoolean(
+    'SEERR_ALLOW_HTTP_AUTH',
+    httpAuthSetting,
+    mode === 'disabled'
   );
   if (mode !== 'disabled' && httpAuthAllowed) {
     throw new Error(
-      'HTTP authentication cannot be enabled together with TLS. Choose built-in HTTPS or the explicit insecure HTTP fallback.'
+      'HTTP authentication cannot be enabled together with TLS. Choose built-in HTTPS or disable TLS.'
     );
   }
 

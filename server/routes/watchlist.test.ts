@@ -637,7 +637,7 @@ describe('DELETE /watchlist/:mediaId', () => {
 
     assert.strictEqual(res.status, 204);
     assert.strictEqual(
-      await watchlistRepository.exist({
+      await watchlistRepository.exists({
         where: {
           mediaType: MediaType.MUSIC,
           mbId: 'delete-release-group-id',
@@ -670,7 +670,7 @@ describe('DELETE /watchlist/:mediaId', () => {
 
     assert.strictEqual(res.status, 204);
     assert.strictEqual(
-      await watchlistRepository.exist({
+      await watchlistRepository.exists({
         where: {
           mediaType: MediaType.BOOK,
           externalId: 'OLdeleteW',

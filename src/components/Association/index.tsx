@@ -95,14 +95,14 @@ const AssociationExplorer = () => {
   const effectiveView = isGraphAvailable ? view : 'wall';
 
   return (
-    <>
+    <div className="discover-home">
       <PageTitle
         title={intl.formatMessage(messages.title, {
           title: graph.root.title,
         })}
       />
-      <div className="mb-6 mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="min-w-0 break-words text-2xl font-bold text-white">
+      <div className="mt-2 mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="min-w-0 text-2xl font-bold break-words text-white">
           {intl.formatMessage(messages.title, { title: graph.root.title })}
         </h1>
         <div className="flex flex-shrink-0 flex-wrap gap-2">
@@ -132,7 +132,7 @@ const AssociationExplorer = () => {
       ) : (
         <AssociationGraph graph={graph} />
       )}
-    </>
+    </div>
   );
 };
 

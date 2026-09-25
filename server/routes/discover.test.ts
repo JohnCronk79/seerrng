@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, it, mock } from 'node:test';
 
+import CoverArtArchive from '@server/api/coverartarchive';
 import ExternalAPI from '@server/api/externalapi';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexTvAPI from '@server/api/plextv';
+import RadarrAPI from '@server/api/servarr/radarr';
 import TheMovieDb from '@server/api/themoviedb';
-import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { UserType } from '@server/constants/user';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
@@ -15,9 +21,11 @@ import MediaIdentifier, {
   MediaIdentifierProvider,
 } from '@server/entity/MediaIdentifier';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
-import { getSettings } from '@server/lib/settings';
+import { getSettings, type RadarrSettings } from '@server/lib/settings';
+import logger from '@server/logger';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
 import { settlePromisesWithin } from '@server/utils/concurrency';
@@ -74,6 +82,28 @@ afterEach(() => {
 });
 
 setupTestDb();
+
+const createRadarrSettings = (id: number, is4k: boolean): RadarrSettings => ({
+  id,
+  name: is4k ? 'Radarr-4K' : 'Radarr-HD',
+  hostname: 'radarr.test',
+  port: is4k ? 7879 : 7878,
+  apiKey: 'radarr-key',
+  useSsl: false,
+  baseUrl: '',
+  activeProfileId: 1,
+  activeProfileName: is4k ? 'Ultra-HD 4K' : 'HD-1080p',
+  activeDirectory: is4k ? '/movies/4k' : '/movies/hd',
+  tags: [],
+  is4k,
+  isDefault: true,
+  externalUrl: '',
+  syncEnabled: true,
+  preventSearch: false,
+  tagRequests: false,
+  overrideRule: [],
+  minimumAvailability: 'released',
+});
 
 describe('genre slider provider bounds', () => {
   it('bounds external music and book discovery fan-out', () => {
@@ -146,6 +176,199 @@ async function login(email = 'admin@seerr.dev') {
 }
 
 describe('GET /discover/movies', () => {
+  it('discovers locally available movies without contacting TMDB', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 456789,
+        mediaType: MediaType.MOVIE,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 1,
+        externalServiceId: 77,
+      })
+    );
+    const metadataRepository = getRepository(MediaSearchMetadata);
+    await metadataRepository.save(
+      metadataRepository.create({
+        mediaId: media.id,
+        title: 'Local HD Movie',
+        releaseDate: '2025',
+        genres: 'Adventure',
+        runtime: '105 minutes',
+        searchText: 'local hd movie adventure',
+      })
+    );
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for local availability');
+    });
+
+    const agent = await login();
+    const res = await agent.get('/discover/movies?availability=hd');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.totalResults, 1);
+    assert.strictEqual(res.body.results[0].id, 456789);
+    assert.strictEqual(res.body.results[0].title, 'Local HD Movie');
+    assert.match(res.body.results[0].posterPath, /\/movie\/456789\/cover/);
+    assert.strictEqual(
+      (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
+      0
+    );
+  });
+
+  it('uses current Radarr file state and metadata for quality availability', async (t) => {
+    const settings = getSettings();
+    const priorRadarr = settings.radarr;
+    settings.radarr = [createRadarrSettings(41, true)];
+    await getRepository(Media).save([
+      new Media({
+        tmdbId: 710001,
+        mediaType: MediaType.MOVIE,
+        status4k: MediaStatus.AVAILABLE,
+      }),
+      new Media({
+        tmdbId: 710002,
+        mediaType: MediaType.MOVIE,
+        status4k: MediaStatus.UNKNOWN,
+      }),
+    ]);
+    const liveMovies = [
+      {
+        id: 81,
+        title: 'Monitored Without File',
+        originalTitle: 'Monitored Without File',
+        year: 2025,
+        overview: '',
+        studio: '',
+        runtime: 90,
+        certification: '',
+        genres: [],
+        ratings: { votes: 0, value: 0 },
+        isAvailable: false,
+        monitored: true,
+        tmdbId: 710001,
+        imdbId: '',
+        titleSlug: 'monitored-without-file',
+        folderName: 'Monitored Without File',
+        path: '/movies/4k/Monitored Without File',
+        profileId: 1,
+        qualityProfileId: 1,
+        added: '2026-01-01',
+        hasFile: false,
+        tags: [],
+      },
+      {
+        id: 82,
+        title: 'Current 4K File',
+        originalTitle: 'Current 4K File',
+        year: 2026,
+        overview: 'Available from Radarr.',
+        studio: 'Test Studio',
+        runtime: 101,
+        certification: '',
+        genres: ['Adventure'],
+        ratings: { votes: 12, value: 7.5 },
+        isAvailable: true,
+        monitored: true,
+        tmdbId: 710002,
+        imdbId: 'tt710002',
+        titleSlug: 'current-4k-file',
+        folderName: 'Current 4K File',
+        path: '/movies/4k/Current 4K File',
+        profileId: 1,
+        qualityProfileId: 1,
+        added: '2026-01-02',
+        hasFile: true,
+        tags: [],
+      },
+    ];
+    Object.defineProperty(RadarrAPI.prototype, 'getMovies', {
+      configurable: true,
+      get: () => async () => liveMovies,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (RadarrAPI.prototype as Partial<RadarrAPI>).getMovies;
+    });
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for Radarr availability');
+    });
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/discover/movies?availability=4k');
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.totalResults, 1);
+      assert.strictEqual(res.body.results[0].id, 710002);
+      assert.strictEqual(res.body.results[0].title, 'Current 4K File');
+      assert.match(
+        res.body.results[0].posterPath,
+        /serviceId=41&externalServiceId=82&is4k=true/
+      );
+      assert.strictEqual(
+        res.body.results[0].mediaInfo.status4k,
+        MediaStatus.AVAILABLE
+      );
+      assert.strictEqual(
+        (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
+        0
+      );
+    } finally {
+      settings.radarr = priorRadarr;
+    }
+  });
+
+  it('falls back to indexed movie availability when Radarr is unavailable', async (t) => {
+    const settings = getSettings();
+    const priorRadarr = settings.radarr;
+    settings.radarr = [createRadarrSettings(42, false)];
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 710003,
+        mediaType: MediaType.MOVIE,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const metadataRepository = getRepository(MediaSearchMetadata);
+    await metadataRepository.save(
+      metadataRepository.create({
+        mediaId: media.id,
+        title: 'Indexed HD Movie',
+        releaseDate: '2026',
+        genres: 'Adventure',
+        runtime: '99 minutes',
+        searchText: 'indexed hd movie adventure',
+      })
+    );
+    Object.defineProperty(RadarrAPI.prototype, 'getMovies', {
+      configurable: true,
+      get: () => async () => {
+        throw new Error('Radarr is unavailable');
+      },
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (RadarrAPI.prototype as Partial<RadarrAPI>).getMovies;
+    });
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/discover/movies?availability=hd');
+
+      assert.strictEqual(res.status, 200);
+      assert.ok(
+        res.body.results.some(
+          (result: { id: number; title: string }) =>
+            result.id === 710003 && result.title === 'Indexed HD Movie'
+        )
+      );
+    } finally {
+      settings.radarr = priorRadarr;
+    }
+  });
+
   it('rejects malformed movie genre IDs before provider lookup', async () => {
     mockPrivate(ExternalAPI.prototype, 'get', async () => {
       throw new Error('TMDB should not be called for malformed genre IDs');
@@ -714,6 +937,51 @@ describe('GET /discover/tv', () => {
     assert.strictEqual(res.status, 404);
   });
 
+  it('discovers locally available 4K series without depending on TMDB page order', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 987654,
+        mediaType: MediaType.TV,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.PARTIALLY_AVAILABLE,
+      })
+    );
+    const metadataRepository = getRepository(MediaSearchMetadata);
+    await metadataRepository.save(
+      metadataRepository.create({
+        mediaId: media.id,
+        title: 'Local 4K Series',
+        alternateTitle: 'Local 4K Series',
+        releaseDate: '2026-01-01',
+        genres: 'Drama',
+        runtime: '48 minutes',
+        searchText: 'local 4k series drama',
+      })
+    );
+    const tmdbGet = mockPrivate(ExternalAPI.prototype, 'get', async () => {
+      throw new Error('TMDB must not be called for local availability');
+    });
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/discover/tv?availability=4k');
+
+      assert.strictEqual(res.status, 200);
+      assert.ok(
+        res.body.results.some(
+          (result: { id: number; name: string }) =>
+            result.id === 987654 && result.name === 'Local 4K Series'
+        )
+      );
+      assert.ok(
+        (tmdbGet as { mock: { callCount: () => number } }).mock.callCount() ===
+          0
+      );
+    } finally {
+      await getRepository(Media).remove(media);
+    }
+  });
+
   it('forwards a linked production country to TMDB series discovery', async () => {
     mockPrivate(
       ExternalAPI.prototype,
@@ -1103,6 +1371,204 @@ describe('GET /discover/tv', () => {
 });
 
 describe('GET /discover/music', () => {
+  it('uses the scanned local catalog for music availability filters', async () => {
+    const settings = getSettings();
+    const previousLidarr = settings.lidarr;
+    settings.lidarr = [
+      {
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as (typeof settings.lidarr)[number],
+      {
+        id: 1,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as (typeof settings.lidarr)[number],
+    ];
+
+    const searchAlbum = mock.method(MusicBrainz.prototype, 'searchAlbum');
+    const getTopAlbums = mock.method(ListenBrainzAPI.prototype, 'getTopAlbums');
+    const getFreshReleases = mock.method(
+      ListenBrainzAPI.prototype,
+      'getFreshReleases'
+    );
+
+    try {
+      const mediaRepository = getRepository(Media);
+      const [mp3Album, flacAlbum] = await mediaRepository.save([
+        new Media({
+          tmdbId: 0,
+          mbId: '11111111-1111-4111-8111-111111111111',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 0,
+          availableMusicServiceIds: [0],
+        }),
+        new Media({
+          tmdbId: 0,
+          mbId: '22222222-2222-4222-8222-222222222222',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 1,
+          availableMusicServiceIds: [1],
+        }),
+      ]);
+      const metadataRepository = getRepository(MediaSearchMetadata);
+      await metadataRepository.save([
+        metadataRepository.create({
+          mediaId: mp3Album.id,
+          title: 'Fast MP3 Album',
+          artist: 'Local Artist',
+          releaseDate: '2025-06-07',
+          genres: 'Rock, Alternative',
+          albumType: 'Album',
+          searchText: 'fast mp3 album local artist rock alternative',
+        }),
+        metadataRepository.create({
+          mediaId: flacAlbum.id,
+          title: 'FLAC Only Album',
+          artist: 'Other Artist',
+          releaseDate: '2024-01-02',
+          genres: 'Pop',
+          albumType: 'Album',
+          searchText: 'flac only album other artist pop',
+        }),
+      ]);
+
+      const agent = await login();
+      const res = await agent
+        .get('/discover/music')
+        .query({ availability: 'mp3' });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.totalResults, 1);
+      assert.strictEqual(res.body.results[0].title, 'Fast MP3 Album');
+      assert.strictEqual(
+        res.body.results[0]['artist-credit'][0].name,
+        'Local Artist'
+      );
+      assert.deepStrictEqual(res.body.results[0].availableQualities, ['MP3']);
+      assert.strictEqual(searchAlbum.mock.callCount(), 0);
+      assert.strictEqual(getTopAlbums.mock.callCount(), 0);
+      assert.strictEqual(getFreshReleases.mock.callCount(), 0);
+      const secondarySearch = mock.method(
+        MusicBrainz.prototype,
+        'searchAlbumWithTotal',
+        async ({ query }: { query: string }) => {
+          assert.match(query, /secondarytype:"Live"/);
+          assert.match(query, /rgid:"11111111-1111-4111-8111-111111111111"/);
+          assert.doesNotMatch(query, /22222222-2222-4222-8222-222222222222/);
+          return { results: [{ id: mp3Album.mbId }], totalResults: 1 };
+        }
+      );
+      const live = await agent
+        .get('/discover/music')
+        .query({ availability: 'mp3', releaseType: 'Live' });
+      assert.strictEqual(live.status, 200);
+      assert.strictEqual(live.body.totalResults, 1);
+      assert.strictEqual(live.body.results[0].title, 'Fast MP3 Album');
+      assert.strictEqual(secondarySearch.mock.callCount(), 1);
+    } finally {
+      settings.lidarr = previousLidarr;
+    }
+  });
+
+  for (const sortBy of ['popular.week', 'release_date.desc']) {
+    it(`reuses detail cover URLs for ${sortBy} without additional artwork lookups`, async () => {
+      const releaseMbid = '55f7c1d9-b4f4-4c8d-a578-7d98687c4e45';
+      const albumId = 'f5093c06-23e3-404f-aeaa-40f72885ee3a';
+      const archive = new CoverArtArchive();
+      Object.defineProperty(archive, 'fetchReleaseGroupMetadata', {
+        value: async () => ({
+          release: `/release/${releaseMbid}`,
+          images: [{ id: 123, front: true, approved: true }],
+        }),
+      });
+      const detailArtwork = await archive.getCoverArt(albumId);
+      const getCoverArt = mock.method(
+        CoverArtArchive.prototype,
+        'getCoverArt',
+        async () => {
+          throw new Error('Discovery must not look up additional artwork');
+        }
+      );
+      const cases = [
+        {
+          imageId: 123,
+          releaseMbid,
+          expected: `https://archive.org/download/mbid-${releaseMbid}/mbid-${releaseMbid}-123_thumb250.jpg`,
+        },
+        ...[undefined, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(
+          (imageId) => ({
+            imageId,
+            releaseMbid,
+            expected: `https://coverartarchive.org/release/${releaseMbid}/front-250`,
+          })
+        ),
+        {
+          imageId: 123,
+          releaseMbid: 'release-not-a-uuid',
+          expected:
+            'https://coverartarchive.org/release/release-not-a-uuid/front-250',
+        },
+        { imageId: 123, releaseMbid: '', expected: undefined },
+      ];
+      const albums = cases.map((entry, index) => ({
+        artist_mbids: [`artist-cover-${index}`],
+        artist_name: `Cover Artist ${index}`,
+        caa_id: entry.imageId as number,
+        caa_release_mbid: entry.releaseMbid,
+        listen_count: 100 - index,
+        release_group_mbid: index === 0 ? albumId : `album-cover-${index}`,
+        release_group_name: `Cover Album ${index}`,
+      }));
+      mock.method(ListenBrainzAPI.prototype, 'getTopAlbums', async () => ({
+        payload: {
+          count: albums.length,
+          from_ts: 0,
+          last_updated: 0,
+          offset: 0,
+          range: 'week',
+          release_groups: albums,
+          to_ts: 0,
+        },
+      }));
+      mock.method(ListenBrainzAPI.prototype, 'getFreshReleases', async () => ({
+        payload: {
+          releases: albums.map((album) => ({
+            ...album,
+            artist_credit_name: album.artist_name,
+            release_date: '2026-05-01',
+            release_group_primary_type: 'Album',
+            release_group_secondary_type: '',
+            release_mbid: album.caa_release_mbid,
+            release_name: album.release_group_name,
+            release_tags: [],
+          })),
+        },
+      }));
+
+      const agent = await login();
+      const res = await agent.get('/discover/music').query({ sortBy });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.results.length, cases.length);
+      for (const [index, entry] of cases.entries()) {
+        const album = res.body.results.find(
+          (result: { title: string }) => result.title === `Cover Album ${index}`
+        );
+        assert.equal(album?.posterPath, entry.expected);
+      }
+      assert.equal(
+        res.body.results.find((result: { id: string }) => result.id === albumId)
+          ?.posterPath,
+        detailArtwork.images[0]?.thumbnails[250]
+      );
+      assert.equal(getCoverArt.mock.callCount(), 0);
+    });
+  }
+
   it('rejects oversized music discovery queries before provider lookup', async () => {
     const searchAlbum = mock.method(MusicBrainz.prototype, 'searchAlbum');
     const getFreshReleases = mock.method(
@@ -1209,7 +1675,7 @@ describe('GET /discover/music', () => {
     );
     const searchAlbumMock = mock.method(
       MusicBrainz.prototype,
-      'searchAlbum',
+      'searchAlbumWithTotal',
       async ({
         query,
         limit,
@@ -1219,9 +1685,9 @@ describe('GET /discover/music', () => {
         limit?: number;
         offset?: number;
       }) => {
-        assert.strictEqual(query, 'kind AND of AND blue');
-        assert.strictEqual(limit, 100);
-        assert.strictEqual(offset, 0);
+        assert.match(query, /releasegroup:kind/);
+        assert.strictEqual(limit, 20);
+        assert.strictEqual(offset, 20);
 
         const fillerAlbum = {
           id: 'musicbrainz-release-group-filler',
@@ -1248,36 +1714,39 @@ describe('GET /discover/music', () => {
           releasedate: '1958',
         };
 
-        return [
-          ...Array.from({ length: 20 }, (_, index) => ({
-            ...fillerAlbum,
-            id: `${fillerAlbum.id}-${index}`,
-          })),
-          {
-            id: 'musicbrainz-release-group-id',
-            score: 100,
-            media_type: 'album',
-            title: 'Kind of Blue',
-            'primary-type': 'Album',
-            'primary-type-id': '',
-            'type-id': '',
-            'first-release-date': '1959',
-            'artist-credit': [
-              {
-                name: 'Miles Davis',
-                artist: {
-                  id: 'artist-id',
+        return {
+          totalResults: 21,
+          results: [
+            ...Array.from({ length: 20 }, (_, index) => ({
+              ...fillerAlbum,
+              id: `${fillerAlbum.id}-${index}`,
+            })),
+            {
+              id: 'musicbrainz-release-group-id',
+              score: 100,
+              media_type: 'album',
+              title: 'Kind of Blue',
+              'primary-type': 'Album',
+              'primary-type-id': '',
+              'type-id': '',
+              'first-release-date': '1959',
+              'artist-credit': [
+                {
                   name: 'Miles Davis',
-                  'sort-name': 'Davis, Miles',
+                  artist: {
+                    id: 'artist-id',
+                    name: 'Miles Davis',
+                    'sort-name': 'Davis, Miles',
+                  },
                 },
-              },
-            ],
-            posterPath: undefined,
-            count: 1,
-            releases: [],
-            releasedate: '1959',
-          },
-        ];
+              ],
+              posterPath: undefined,
+              count: 1,
+              releases: [],
+              releasedate: '1959',
+            },
+          ].slice(offset, offset! + limit!),
+        };
       }
     );
 
@@ -1296,9 +1765,9 @@ describe('GET /discover/music', () => {
   it('drops broad music results that do not contain every keyword', async () => {
     mock.method(
       MusicBrainz.prototype,
-      'searchAlbum',
+      'searchAlbumWithTotal',
       async ({ query }: { query: string }) => {
-        assert.strictEqual(query, 'microsoft AND windows');
+        assert.match(query, /releasegroup:microsoft/);
 
         const album = {
           score: 100,
@@ -1314,38 +1783,41 @@ describe('GET /discover/music', () => {
           tags: [],
         };
 
-        return [
-          {
-            ...album,
-            id: 'relevant-album',
-            title: 'Microsoft Windows Sounds',
-            'artist-credit': [
-              {
-                name: 'System Artist',
-                artist: {
-                  id: 'system-artist',
+        return {
+          totalResults: 2,
+          results: [
+            {
+              ...album,
+              id: 'relevant-album',
+              title: 'Microsoft Windows Sounds',
+              'artist-credit': [
+                {
                   name: 'System Artist',
-                  'sort-name': 'System Artist',
+                  artist: {
+                    id: 'system-artist',
+                    name: 'System Artist',
+                    'sort-name': 'System Artist',
+                  },
                 },
-              },
-            ],
-          },
-          {
-            ...album,
-            id: 'broad-album',
-            title: 'Windows at Night',
-            'artist-credit': [
-              {
-                name: 'Novel Band',
-                artist: {
-                  id: 'novel-band',
+              ],
+            },
+            {
+              ...album,
+              id: 'broad-album',
+              title: 'Windows at Night',
+              'artist-credit': [
+                {
                   name: 'Novel Band',
-                  'sort-name': 'Novel Band',
+                  artist: {
+                    id: 'novel-band',
+                    name: 'Novel Band',
+                    'sort-name': 'Novel Band',
+                  },
                 },
-              },
-            ],
-          },
-        ];
+              ],
+            },
+          ],
+        };
       }
     );
 
@@ -1357,6 +1829,77 @@ describe('GET /discover/music', () => {
       res.body.results.map((result: { title: string }) => result.title),
       ['Microsoft Windows Sounds']
     );
+  });
+
+  it('exposes every scanned Lidarr quality for discovery filtering', async () => {
+    const settings = getSettings();
+    const previousLidarr = settings.lidarr;
+    settings.lidarr = [
+      {
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as (typeof settings.lidarr)[number],
+      {
+        id: 2,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as (typeof settings.lidarr)[number],
+    ];
+
+    try {
+      await getRepository(Media).save(
+        new Media({
+          tmdbId: 0,
+          mbId: 'quality-available-album',
+          mediaType: MediaType.MUSIC,
+          status: MediaStatus.AVAILABLE,
+          serviceId: 2,
+          availableMusicServiceIds: [0, 2],
+        })
+      );
+      mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
+        totalResults: 1,
+        results: [
+          {
+            id: 'quality-available-album',
+            title: 'Quality Available Album',
+            score: 100,
+            media_type: 'album',
+            'primary-type': 'Album',
+            'primary-type-id': '',
+            'type-id': '',
+            'first-release-date': '2026',
+            posterPath: undefined,
+            count: 1,
+            releases: [],
+            releasedate: '2026',
+            tags: [],
+            'artist-credit': [
+              {
+                name: 'Quality Artist',
+                artist: {
+                  id: 'quality-artist',
+                  name: 'Quality Artist',
+                  'sort-name': 'Quality Artist',
+                },
+              },
+            ],
+          },
+        ],
+      }));
+
+      const agent = await login();
+      const res = await agent.get('/discover/music?query=quality%20available');
+
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.results[0].availableQualities, [
+        'MP3',
+        'FLAC',
+      ]);
+    } finally {
+      settings.lidarr = previousLidarr;
+    }
   });
 
   it('pages and sorts music discovery results', async () => {
@@ -1438,43 +1981,39 @@ describe('GET /discover/music', () => {
   });
 
   it('applies release type, genre, and year filters to music searches', async () => {
-    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => [
-      {
-        id: 'matching-album',
-        score: 100,
-        media_type: 'album',
-        title: 'Matching Album',
-        'primary-type': 'Album',
-        'primary-type-id': '',
-        'type-id': '',
-        'first-release-date': '2024-06-01',
-        'artist-credit': [],
-        posterPath: undefined,
-        count: 1,
-        releases: [],
-        releasedate: '2024-06-01',
-        tags: [
-          { count: 5, name: 'jazz' },
-          { count: 4, name: 'blue' },
-        ],
-      },
-      {
-        id: 'wrong-year-album',
-        score: 90,
-        media_type: 'album',
-        title: 'Wrong Year Album',
-        'primary-type': 'Album',
-        'primary-type-id': '',
-        'type-id': '',
-        'first-release-date': '2023-06-01',
-        'artist-credit': [],
-        posterPath: undefined,
-        count: 1,
-        releases: [],
-        releasedate: '2023-06-01',
-        tags: [{ count: 5, name: 'jazz' }],
-      },
-    ]);
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        assert.match(query, /primarytype:"Album"/);
+        assert.match(query, /tag:"jazz"/);
+        assert.match(query, /firstreleasedate:\[2024-01-01 TO 2024-12-31\]/);
+        return {
+          totalResults: 1,
+          results: [
+            {
+              id: 'matching-album',
+              score: 100,
+              media_type: 'album',
+              title: 'Matching Album',
+              'primary-type': 'Album',
+              'primary-type-id': '',
+              'type-id': '',
+              'first-release-date': '2024-06-01',
+              'artist-credit': [],
+              posterPath: undefined,
+              count: 1,
+              releases: [],
+              releasedate: '2024-06-01',
+              tags: [
+                { count: 5, name: 'jazz' },
+                { count: 4, name: 'blue' },
+              ],
+            },
+          ],
+        };
+      }
+    );
 
     const agent = await login();
     const res = await agent.get('/discover/music').query({
@@ -1489,6 +2028,57 @@ describe('GET /discover/music', () => {
     assert.deepStrictEqual(
       res.body.results.map((result: { title: string }) => result.title),
       ['Matching Album']
+    );
+  });
+
+  it('returns all-time ListenBrainz top albums for most-listened music discovery', async () => {
+    const topAlbumsMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getTopAlbums',
+      async ({ range }: { range: string }) => {
+        assert.strictEqual(range, 'all_time');
+
+        return {
+          payload: {
+            count: 2,
+            from_ts: 0,
+            last_updated: 0,
+            offset: 0,
+            range,
+            to_ts: 0,
+            release_groups: [
+              {
+                artist_mbids: ['artist-most-listened'],
+                artist_name: 'Most Listened Artist',
+                caa_id: 1,
+                caa_release_mbid: 'release-most-listened',
+                listen_count: 900,
+                release_group_mbid: 'album-most-listened',
+                release_group_name: 'Most Listened Album',
+              },
+              {
+                artist_mbids: ['artist-second'],
+                artist_name: 'Second Artist',
+                caa_id: 2,
+                caa_release_mbid: 'release-second',
+                listen_count: 800,
+                release_group_mbid: 'album-second',
+                release_group_name: 'Second Album',
+              },
+            ],
+          },
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/music?sortBy=listen_count.desc');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(topAlbumsMock.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['Most Listened Album', 'Second Album']
     );
   });
 
@@ -1815,9 +2405,7 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get(
-      '/discover/music?sortBy=ranked&releaseType=Album'
-    );
+    const res = await agent.get('/discover/music?sortBy=ranked&days=14');
 
     assert.strictEqual(res.status, 200);
     assert.deepStrictEqual(
@@ -1891,9 +2479,7 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get(
-      '/discover/music?sortBy=ranked&releaseType=Album'
-    );
+    const res = await agent.get('/discover/music?sortBy=ranked&days=14');
 
     assert.strictEqual(res.status, 200);
     const titles = res.body.results
@@ -2373,9 +2959,7 @@ describe('GET /discover/music', () => {
     }));
 
     const agent = await login();
-    const res = await agent.get(
-      '/discover/music?sortBy=unsupported&releaseType=Album'
-    );
+    const res = await agent.get('/discover/music?sortBy=unsupported&days=14');
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(topAlbumsMock.mock.callCount(), 0);
@@ -2446,18 +3030,16 @@ describe('GET /discover/music', () => {
     assert.deepStrictEqual(res.body.results, []);
   });
 
-  it('returns an empty result set when MusicBrainz search is unavailable', async () => {
-    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => {
+  it('returns a retryable error when MusicBrainz search is unavailable', async () => {
+    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => {
       throw new Error('provider unavailable');
     });
 
     const agent = await login();
     const res = await agent.get('/discover/music?query=kind%20of%20blue');
 
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.page, 1);
-    assert.strictEqual(res.body.totalResults, 0);
-    assert.deepStrictEqual(res.body.results, []);
+    assert.strictEqual(res.status, 503);
+    assert.match(res.body.message, /temporarily unavailable/);
   });
 
   it('only exposes the current user watchlist state on music results', async () => {
@@ -2528,7 +3110,7 @@ describe('GET /discover/music', () => {
     ]);
 
     const agent = await login('friend@seerr.dev');
-    const res = await agent.get('/discover/music?releaseType=Album');
+    const res = await agent.get('/discover/music?days=14');
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.results[0].mediaInfo.watchlists.length, 0);
@@ -2551,6 +3133,36 @@ describe('GET /discover/music', () => {
 });
 
 describe('GET /discover/books', () => {
+  it('sends the author constraint to the provider together with the genre and keyword', async () => {
+    const searchBooks = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ query }) => {
+        assert.match(query, /author:"stephen"/);
+        assert.match(query, /author:"king"/);
+        assert.match(query, /subject:horror/);
+        assert.match(query, /title:"shining"/);
+        return { numFound: 0, start: 0, docs: [] };
+      }
+    );
+    const agent = await login();
+    const response = await agent
+      .get('/discover/books')
+      .query({ author: 'Stephen King', query: 'Shining', subject: 'horror' });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(searchBooks.mock.callCount(), 1);
+  });
+
+  it('rejects oversized author searches before provider lookup', async () => {
+    const searchBooks = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+    const agent = await login();
+    const response = await agent
+      .get('/discover/books')
+      .query({ author: 'x'.repeat(257) });
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(searchBooks.mock.callCount(), 0);
+  });
+
   it('keeps completed book subject results when another subject stalls', async () => {
     const result = await settlePromisesWithin(
       [
@@ -2589,6 +3201,17 @@ describe('GET /discover/books', () => {
     assert.strictEqual(searchBooks.mock.callCount(), 0);
   });
 
+  it('rejects unsupported book formats before provider lookup', async () => {
+    const searchBooks = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+
+    const agent = await login();
+    const res = await agent.get('/discover/books').query({ format: 'print' });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Format must be valid/);
+    assert.strictEqual(searchBooks.mock.callCount(), 0);
+  });
+
   it('uses the selected subject when browsing without a search query', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,
@@ -2604,7 +3227,7 @@ describe('GET /discover/books', () => {
       }) => {
         assert.strictEqual(query, 'subject:science_fiction');
         assert.strictEqual(page, 2);
-        assert.strictEqual(limit, 20);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 0,
@@ -2661,9 +3284,14 @@ describe('GET /discover/books', () => {
         assert.strictEqual(sort, 'rating');
 
         return {
-          numFound: 0,
+          numFound: 1,
           start: 0,
-          docs: [],
+          docs: [
+            {
+              key: '/works/OL-rating-sort',
+              title: 'Rating Sort Book',
+            },
+          ],
         };
       }
     );
@@ -2693,7 +3321,7 @@ describe('GET /discover/books', () => {
           '(title:"alpha" OR author:"alpha") AND (title:"beta" OR author:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
         );
         assert.strictEqual(page, 1);
-        assert.strictEqual(limit, 100);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 2,
@@ -2770,6 +3398,84 @@ describe('GET /discover/books', () => {
     );
   });
 
+  it('supports ascending recommended book order', async () => {
+    const searchBooksMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ sort }: { sort?: string }) => {
+        assert.strictEqual(sort, 'random');
+
+        return {
+          numFound: 2,
+          start: 0,
+          docs: [
+            {
+              key: '/works/OL-high-signal',
+              title: 'High Signal',
+              ratings_average: 4.8,
+              ratings_count: 10000,
+              edition_count: 100,
+            },
+            {
+              key: '/works/OL-low-signal',
+              title: 'Low Signal',
+              ratings_average: 1,
+              ratings_count: 1,
+              edition_count: 1,
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/books?sortBy=ranked.asc');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(searchBooksMock.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['Low Signal', 'High Signal']
+    );
+  });
+
+  it('supports ascending book edition order within the provider result window', async () => {
+    const searchBooksMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async ({ sort }: { sort?: string }) => {
+        assert.strictEqual(sort, 'editions');
+
+        return {
+          numFound: 2,
+          start: 0,
+          docs: [
+            {
+              key: '/works/OL-many-editions',
+              title: 'Many Editions',
+              edition_count: 100,
+            },
+            {
+              key: '/works/OL-few-editions',
+              title: 'Few Editions',
+              edition_count: 1,
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/books?sortBy=editions.asc');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(searchBooksMock.mock.callCount(), 1);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['Few Editions', 'Many Editions']
+    );
+  });
+
   it('keeps relevant book search order and drops hidden metadata-only matches', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,
@@ -2779,7 +3485,7 @@ describe('GET /discover/books', () => {
           query,
           '(title:"microsoft" OR author:"microsoft") AND (title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
         );
-        assert.strictEqual(limit, 100);
+        assert.strictEqual(limit, 50);
 
         return {
           numFound: 3,
@@ -2926,13 +3632,15 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('blends multiple subjects for the default recommended book feed', async () => {
+  it('uses one broad query for the default all-books feed', async () => {
     const seenQueries: string[] = [];
+    const seenLimits: (number | undefined)[] = [];
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
-      async ({ query }: { query: string; limit?: number }) => {
+      async ({ query, limit }: { query: string; limit?: number }) => {
         seenQueries.push(query);
+        seenLimits.push(limit);
 
         return {
           numFound: 1,
@@ -2956,13 +3664,9 @@ describe('GET /discover/books', () => {
     const res = await agent.get('/discover/books?sortBy=ranked');
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(seenQueries.length, 5);
-    assert.strictEqual(new Set(seenQueries).size, 5);
-    assert.strictEqual(
-      seenQueries.every((query) => query.startsWith('subject:')),
-      true
-    );
-    assert.strictEqual(res.body.results.length > 1, true);
+    assert.deepStrictEqual(seenQueries, ['*:*']);
+    assert.deepStrictEqual(seenLimits, [50]);
+    assert.strictEqual(res.body.results.length, 1);
   });
 
   it('accepts shuffle seeds for ranked book discovery', async () => {
@@ -3028,7 +3732,7 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('diversifies the default recommended book feed by author', async () => {
+  it('keeps distinct books from the broad default feed', async () => {
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
@@ -3088,13 +3792,12 @@ describe('GET /discover/books', () => {
     const res = await agent.get('/discover/books?sortBy=ranked');
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.results.length, 20);
+    assert.strictEqual(res.body.results.length, 4);
     assert.strictEqual(
-      res.body.results
-        .slice(0, 4)
-        .filter((result: { author: string }) => result.author === 'Author One')
-        .length,
-      2
+      res.body.results.filter(
+        (result: { author: string }) => result.author === 'Author One'
+      ).length,
+      3
     );
     assert.strictEqual(
       res.body.results.some(
@@ -3104,56 +3807,48 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('uses available subjects for the default book feed when one subject fails', async () => {
-    mock.method(
-      OpenLibraryAPI.prototype,
-      'searchBooks',
-      async ({ query }: { query: string }) => {
-        if (query === 'subject:fiction') {
-          throw new Error('subject unavailable');
-        }
-
-        return {
-          numFound: 1,
-          start: 0,
-          docs: [
-            {
-              key: `/works/${query.replace(/[^a-z_]/g, '')}`,
-              title: query,
-              cover_i: 1,
-              edition_count: 10,
-              ratings_average: 4,
-              ratings_count: 10,
-              want_to_read_count: 10,
-            },
-          ],
-        };
-      }
-    );
-
-    const agent = await login();
-    const res = await agent.get('/discover/books?sortBy=ranked');
-
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.results.length > 1, true);
-    assert.strictEqual(
-      res.body.results.some(
-        (result: { title: string }) => result.title === 'subject:fiction'
-      ),
-      false
-    );
-  });
-
-  it('reports when Open Library is unavailable', async () => {
+  it('reports one sanitized structured context when Open Library is unavailable', async () => {
+    const errorLog = mock.method(logger, 'error', () => undefined);
     mock.method(OpenLibraryAPI.prototype, 'searchBooks', async () => {
       throw new Error('provider unavailable');
     });
 
     const agent = await login();
-    const res = await agent.get('/discover/books?page=3');
+    const res = await agent.get('/discover/books').query({
+      page: 3,
+      format: 'audiobook',
+      query: 'space opera',
+      sortBy: 'rating',
+      subject: 'science_fiction',
+      firstPublishYear: '2024',
+      language: 'eng',
+      minRating: '4.5',
+    });
 
     assert.strictEqual(res.status, 503);
     assert.match(res.body.message, /Open Library.*unavailable/i);
+    assert.strictEqual(errorLog.mock.callCount(), 1);
+    const [, logContext] = errorLog.mock.calls[0].arguments as unknown as [
+      string,
+      Record<string, unknown>,
+    ];
+    const { errorStack, ...stableLogContext } = logContext;
+    assert.strictEqual(typeof errorStack, 'string');
+    assert.deepStrictEqual(stableLogContext, {
+      label: 'Discover Books',
+      errorMessage: 'provider unavailable',
+      discoveryContext: {
+        format: 'audiobook',
+        keyword: 'space opera',
+        page: 3,
+        pageSize: 50,
+        sort: 'rating',
+        genre: 'science_fiction',
+        firstPublishYear: '2024',
+        language: 'eng',
+        minRating: 4.5,
+      },
+    });
   });
 
   it('reports provider failure instead of an empty default book feed', async () => {
@@ -3171,6 +3866,7 @@ describe('GET /discover/books', () => {
   });
 
   it('reports when a single Open Library request stalls', async () => {
+    const errorLog = mock.method(logger, 'error', () => undefined);
     mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
@@ -3182,6 +3878,7 @@ describe('GET /discover/books', () => {
 
     assert.strictEqual(res.status, 503);
     assert.match(res.body.message, /Open Library.*timed out/i);
+    assert.strictEqual(errorLog.mock.callCount(), 1);
   });
 
   it('only exposes the current user watchlist state on book results', async () => {

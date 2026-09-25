@@ -1,3 +1,4 @@
+import { getCoverArtArchiveThumbnailUrl } from '@server/api/coverartarchive/urls';
 import { DEFAULT_EXTERNAL_API_TIMEOUT_MS } from '@server/api/externalapi';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import type {
@@ -10,6 +11,7 @@ import MusicBrainz from '@server/api/musicbrainz';
 import type { MbAlbumResult } from '@server/api/musicbrainz/interfaces';
 import type { OpenLibrarySearchDoc } from '@server/api/openlibrary';
 import OpenLibraryAPI from '@server/api/openlibrary';
+import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SortOptions } from '@server/api/themoviedb';
 import TheMovieDb, { SortOptionsIterable } from '@server/api/themoviedb';
 import type {
@@ -20,10 +22,15 @@ import type {
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
 import { MAX_DISCOVER_KEYWORD_IDS } from '@server/constants/discover';
-import { MediaType } from '@server/constants/media';
+import { MediaStatus, MediaType } from '@server/constants/media';
+import {
+  MUSIC_PRIMARY_TYPES,
+  musicReleaseTypeField,
+} from '@server/constants/musicReleaseTypes';
 import { getRepository } from '@server/datasource';
 import type MediaEntity from '@server/entity/Media';
 import Media from '@server/entity/Media';
+import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import type {
   GenreSliderItem,
@@ -34,9 +41,16 @@ import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { extractImageCacheUrls } from '@server/lib/imageCacheUrls';
 import { enqueueImageCacheWarm } from '@server/lib/imageCacheWarmer';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
+import {
+  getAvailableMusicQualities,
+  getMusicQualityStatuses,
+} from '@server/lib/musicQualityAvailability';
+import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
+import type { RadarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import {
   clampNumber,
@@ -51,6 +65,7 @@ import {
   isUserSessionCredentialVersionCurrent,
   runUserSecurityMutation,
 } from '@server/lib/userSecurityMutation';
+import { filterVideoSearchResults } from '@server/lib/videoSearchFilters';
 import { getCombinedWatchlist } from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
@@ -61,17 +76,21 @@ import {
   mapMovieResult,
   mapPersonResult,
   mapTvResult,
+  type AlbumResult,
 } from '@server/models/Search';
 import { mapNetwork } from '@server/models/Tv';
 import {
   mapWithConcurrency,
   settlePromisesWithin,
 } from '@server/utils/concurrency';
+import {
+  buildMusicAlbumSearchQuery,
+  parseMusicSearchFilters,
+} from '@server/utils/musicSearchFilters';
 import { parsePositiveInt } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
   matchesAllSearchTerms,
-  toBooleanAndQuery,
   toFieldedBooleanAndQuery,
 } from '@server/utils/searchTerms';
 import { isCollection, isMovie, isPerson } from '@server/utils/typeHelpers';
@@ -223,6 +242,7 @@ const getErrorLogFields = (error: unknown) => ({
 const getDiscoverLogQuery = (query: Record<string, unknown>) => ({
   page: query.page,
   sortBy: query.sortBy,
+  format: query.format,
   search: query.search,
   query: query.query,
   genre: query.genre,
@@ -420,6 +440,247 @@ const getRelatedMusicMediaMap = async (
   );
 };
 
+const mapDiscoverAlbumResult = (
+  album: MbAlbumResult,
+  relatedMediaMap: Map<string, MediaEntity>
+) => {
+  const media = getRelatedMusicMedia(relatedMediaMap, album.id);
+  const services = getSettings().lidarr;
+  const availableQualities = getAvailableMusicQualities(
+    media,
+    media?.requests ?? [],
+    services
+  );
+
+  return {
+    ...mapAlbumResult(album, media),
+    availableQualities,
+    qualityStatuses: getMusicQualityStatuses(
+      media,
+      media?.requests ?? [],
+      services
+    ),
+  };
+};
+
+const normalizeLocalAlbumType = (
+  value?: string | null
+): AlbumResult['primary-type'] => {
+  const normalized = value?.trim().toLocaleLowerCase();
+
+  return (
+    MUSIC_PRIMARY_TYPES.find((type) => type.toLowerCase() === normalized) ??
+    'Album'
+  );
+};
+
+const getLocalAvailableMusic = async ({
+  availability,
+  page,
+  itemsPerPage,
+  query,
+  artist,
+  genreFilter,
+  releaseTypeFilter,
+  releaseDateGte,
+  releaseDateLte,
+  sortByValue,
+  user,
+}: {
+  availability: 'mp3' | 'flac';
+  page: number;
+  itemsPerPage: number;
+  query: string;
+  artist?: string;
+  genreFilter: string[];
+  releaseTypeFilter: string[];
+  releaseDateGte?: string;
+  releaseDateLte?: string;
+  sortByValue: string;
+  user?: User;
+}) => {
+  const media = await getRepository(Media).find({
+    where: { mediaType: MediaType.MUSIC },
+  });
+  await hydrateMediaSummaryRelations(media, user);
+
+  const metadata = media.length
+    ? await getRepository(MediaSearchMetadata).find({
+        where: { mediaId: In(media.map((item) => item.id)) },
+      })
+    : [];
+  const metadataByMediaId = new Map(
+    metadata.map((item) => [item.mediaId, item])
+  );
+  const settings = getSettings();
+  const requestedQuality = availability.toLocaleUpperCase();
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
+
+  // Scanned local metadata only stores the primary type. Resolve secondary
+  // membership in bounded catalogue batches, before local pagination.
+  const secondaryTypes = releaseTypeFilter.filter(
+    (type) => musicReleaseTypeField(type) === 'secondarytype'
+  );
+  const secondaryMatches = new Set<string>();
+  if (secondaryTypes.length) {
+    const ids = media
+      .filter((item) =>
+        getAvailableMusicQualities(
+          item,
+          item.requests ?? [],
+          settings.lidarr
+        ).includes(requestedQuality as 'MP3' | 'FLAC')
+      )
+      .map((item) => item.mbId)
+      .filter(
+        (id): id is string =>
+          !!id && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)
+      );
+    const batches = Array.from(
+      { length: Math.ceil(ids.length / 100) },
+      (_, index) => ids.slice(index * 100, index * 100 + 100)
+    );
+    const api = new MusicBrainz();
+    const results = await mapWithConcurrency(batches, 2, (batch) =>
+      api.searchAlbumWithTotal({
+        query: `(${batch.map((id) => `rgid:"${id}"`).join(' OR ')}) AND ${buildMusicAlbumSearchQuery('', { releaseType: secondaryTypes.join(',') })}`,
+        limit: 100,
+        offset: 0,
+      })
+    );
+    for (const result of results)
+      for (const album of result.results) secondaryMatches.add(album.id);
+  }
+
+  const matches = media
+    .map((item) => {
+      const searchMetadata = metadataByMediaId.get(item.id);
+      const availableQualities = getAvailableMusicQualities(
+        item,
+        item.requests ?? [],
+        settings.lidarr
+      );
+      const genres = (searchMetadata?.genres ?? '')
+        .split(',')
+        .map((genre) => genre.trim())
+        .filter(Boolean);
+      const releaseDate = searchMetadata?.releaseDate ?? '';
+      const albumType = normalizeLocalAlbumType(searchMetadata?.albumType);
+
+      return {
+        item,
+        searchMetadata,
+        availableQualities,
+        genres,
+        releaseDate,
+        albumType,
+      };
+    })
+    .filter(
+      ({
+        item,
+        searchMetadata,
+        availableQualities,
+        genres,
+        releaseDate,
+        albumType,
+      }) =>
+        Boolean(searchMetadata?.title) &&
+        (!artist || matchesAllSearchTerms([searchMetadata?.artist], artist)) &&
+        availableQualities.includes(requestedQuality as 'MP3' | 'FLAC') &&
+        (!query ||
+          matchesAllSearchTerms(
+            [searchMetadata?.title, searchMetadata?.artist, ...genres],
+            query
+          )) &&
+        (!releaseTypeFilter.length ||
+          releaseTypeFilter.some((type) =>
+            musicReleaseTypeField(type) === 'secondarytype'
+              ? secondaryMatches.has(item.mbId ?? '')
+              : type.toLocaleLowerCase() === albumType.toLocaleLowerCase()
+          )) &&
+        (!genreFilter.length ||
+          genreFilter.some((filterGenre) =>
+            genres.some(
+              (genre) =>
+                genre.toLocaleLowerCase() === filterGenre.toLocaleLowerCase()
+            )
+          )) &&
+        (!releaseDateGte || releaseDate >= releaseDateGte) &&
+        (!releaseDateLte || releaseDate <= releaseDateLte)
+    )
+    .sort((left, right) => {
+      if (sortByBase === 'release_date') {
+        const comparison = left.releaseDate.localeCompare(right.releaseDate);
+        return sortAscending ? comparison : -comparison;
+      }
+
+      const leftAdded =
+        left.item.mediaAddedAt?.getTime() ?? left.item.updatedAt.getTime();
+      const rightAdded =
+        right.item.mediaAddedAt?.getTime() ?? right.item.updatedAt.getTime();
+      const comparison =
+        rightAdded - leftAdded ||
+        (left.searchMetadata?.title ?? '').localeCompare(
+          right.searchMetadata?.title ?? ''
+        );
+
+      return sortAscending ? -comparison : comparison;
+    });
+
+  const offset = (page - 1) * itemsPerPage;
+  const pagedMatches = matches.slice(offset, offset + itemsPerPage);
+
+  return {
+    page,
+    totalPages: Math.max(1, Math.ceil(matches.length / itemsPerPage)),
+    totalResults: matches.length,
+    results: pagedMatches.map(
+      ({
+        item,
+        searchMetadata,
+        availableQualities,
+        releaseDate,
+        albumType,
+      }) => ({
+        ...mapAlbumResult(
+          {
+            id: item.mbId as string,
+            score: 0,
+            media_type: 'album',
+            title: searchMetadata?.title as string,
+            'primary-type': albumType,
+            'first-release-date': releaseDate,
+            posterPath: `https://coverartarchive.org/release-group/${encodeURIComponent(
+              item.mbId as string
+            )}/front-250`,
+            'artist-credit': searchMetadata?.artist
+              ? [
+                  {
+                    name: searchMetadata.artist,
+                    artist: {
+                      id: '',
+                      name: searchMetadata.artist,
+                      'sort-name': searchMetadata.artist,
+                    },
+                  },
+                ]
+              : [],
+          },
+          item
+        ),
+        availableQualities,
+        qualityStatuses: getMusicQualityStatuses(
+          item,
+          item.requests ?? [],
+          settings.lidarr
+        ),
+      })
+    ),
+  };
+};
+
 const scoreMusicRelease = (release: LbRelease): number => {
   const listenScore = Math.log10((release.listen_count ?? 0) + 1) * 40;
   const recencyScore = getRecencyScore(release.release_date);
@@ -469,33 +730,6 @@ const scoreBookDoc = (doc: OpenLibrarySearchDoc): number => {
   );
 };
 
-const getBookAuthorDiversityKey = (doc: OpenLibrarySearchDoc): string =>
-  doc.author_key?.[0] ?? doc.author_name?.[0] ?? doc.key;
-
-const diversifyBookDocsByAuthor = (
-  docs: OpenLibrarySearchDoc[],
-  limit: number,
-  maxPerAuthor = 2
-): OpenLibrarySearchDoc[] => {
-  const selectedDocs: OpenLibrarySearchDoc[] = [];
-  const skippedDocs: OpenLibrarySearchDoc[] = [];
-  const authorCounts = new Map<string, number>();
-
-  docs.forEach((doc) => {
-    const authorKey = getBookAuthorDiversityKey(doc);
-    const authorCount = authorCounts.get(authorKey) ?? 0;
-
-    if (authorCount < maxPerAuthor) {
-      selectedDocs.push(doc);
-      authorCounts.set(authorKey, authorCount + 1);
-    } else {
-      skippedDocs.push(doc);
-    }
-  });
-
-  return [...selectedDocs, ...skippedDocs].slice(0, limit);
-};
-
 const mapTopAlbumRelease = (releaseGroup: LbReleaseGroup): MbAlbumResult => ({
   id: releaseGroup.release_group_mbid,
   score: releaseGroup.listen_count ?? 0,
@@ -513,9 +747,14 @@ const mapTopAlbumRelease = (releaseGroup: LbReleaseGroup): MbAlbumResult => ({
       },
     },
   ],
-  posterPath: releaseGroup.caa_release_mbid
-    ? `https://coverartarchive.org/release/${releaseGroup.caa_release_mbid}/front-250`
-    : undefined,
+  posterPath:
+    getCoverArtArchiveThumbnailUrl(
+      releaseGroup.caa_release_mbid,
+      releaseGroup.caa_id
+    ) ??
+    (releaseGroup.caa_release_mbid
+      ? `https://coverartarchive.org/release/${releaseGroup.caa_release_mbid}/front-250`
+      : undefined),
 });
 
 const mapFreshReleaseAlbum = (release: LbRelease): MbAlbumResult => ({
@@ -539,9 +778,11 @@ const mapFreshReleaseAlbum = (release: LbRelease): MbAlbumResult => ({
       },
     },
   ],
-  posterPath: release.caa_release_mbid
-    ? `https://coverartarchive.org/release/${release.caa_release_mbid}/front-250`
-    : undefined,
+  posterPath:
+    getCoverArtArchiveThumbnailUrl(release.caa_release_mbid, release.caa_id) ??
+    (release.caa_release_mbid
+      ? `https://coverartarchive.org/release/${release.caa_release_mbid}/front-250`
+      : undefined),
 });
 
 const mergeMusicAlbumMetadata = (
@@ -600,32 +841,11 @@ const diversifyMusicAlbumsByArtist = (
   return [...selectedAlbums, ...skippedAlbums].slice(0, limit);
 };
 
-const defaultBookDiscoverySubjects = [
-  'fiction',
-  'fantasy',
-  'science_fiction',
-  'mystery',
-  'biography',
-  'romance',
-  'history',
-  'thriller',
-  'literary_fiction',
-  'historical_fiction',
-  'horror',
-  'young_adult',
-  'memoir',
-  'science',
-  'philosophy',
-  'poetry',
-];
-
-const DEFAULT_BOOK_DISCOVERY_SUBJECT_LIMIT = 5;
 // Open Library requests can legitimately take up to
 // DEFAULT_EXTERNAL_API_TIMEOUT_MS to complete. These race timeouts must stay
 // above that, or they cut off in-flight requests before the HTTP client
 // itself would give up, turning a slow-but-working provider into a hard
 // failure (see: books discovery going empty under provider latency).
-const BOOK_DISCOVERY_BLEND_TIMEOUT_MS = DEFAULT_EXTERNAL_API_TIMEOUT_MS + 2_000;
 const MUSIC_DISCOVERY_BLEND_TIMEOUT_MS = 5_000;
 const OPENLIBRARY_SINGLE_REQUEST_TIMEOUT_MS =
   DEFAULT_EXTERNAL_API_TIMEOUT_MS + 2_000;
@@ -656,16 +876,22 @@ const rotateItems = <T>(items: T[], offset: number): T[] => [
 
 const musicSortOptions = new Set([
   'ranked',
+  'ranked.asc',
   'popular.week',
+  'popular.week.asc',
   'popular.month',
+  'popular.month.asc',
   'popular.year',
+  'popular.year.asc',
   'listen_count.desc',
+  'listen_count.asc',
   'release_date.desc',
   'release_date.asc',
 ]);
 
 const bookSortOptions = new Set([
   'ranked',
+  'ranked.asc',
   'newest',
   'oldest',
   'random',
@@ -673,6 +899,7 @@ const bookSortOptions = new Set([
   'rating.desc',
   'rating.asc',
   'editions',
+  'editions.asc',
 ]);
 
 const tmdbSortOptions = new Set<string>(SortOptionsIterable);
@@ -706,6 +933,7 @@ const QueryFilterOptions = z.object({
   page: optionalTmdbQueryString(16),
   sortBy: optionalTmdbQueryString(64),
   search: optionalTmdbQueryString(),
+  availability: z.enum(['hd', '4k']).optional(),
   primaryReleaseDateGte: optionalTmdbDateString,
   primaryReleaseDateLte: optionalTmdbDateString,
   firstAirDateGte: optionalTmdbDateString,
@@ -739,6 +967,467 @@ const ApiQuerySchema = QueryFilterOptions.omit({
   certificationMode: true,
 });
 const SEEDED_DISCOVERY_SHUFFLE_WINDOW = 80;
+const AVAILABLE_MEDIA_STATUSES = [
+  MediaStatus.PARTIALLY_AVAILABLE,
+  MediaStatus.AVAILABLE,
+];
+
+const splitNumericFilter = (value?: string): number[] =>
+  value
+    ? value
+        .split(/[|,]/)
+        .map(Number)
+        .filter((item) => Number.isSafeInteger(item))
+    : [];
+
+const LOCAL_MOVIE_GENRES = new Map([
+  [28, 'Action'],
+  [12, 'Adventure'],
+  [16, 'Animation'],
+  [35, 'Comedy'],
+  [80, 'Crime'],
+  [99, 'Documentary'],
+  [18, 'Drama'],
+  [10751, 'Family'],
+  [14, 'Fantasy'],
+  [36, 'History'],
+  [27, 'Horror'],
+  [10402, 'Music'],
+  [9648, 'Mystery'],
+  [10749, 'Romance'],
+  [878, 'Science Fiction'],
+  [10770, 'TV Movie'],
+  [53, 'Thriller'],
+  [10752, 'War'],
+  [37, 'Western'],
+]);
+const LOCAL_TV_GENRES = new Map([
+  [10759, 'Action & Adventure'],
+  [16, 'Animation'],
+  [35, 'Comedy'],
+  [80, 'Crime'],
+  [99, 'Documentary'],
+  [18, 'Drama'],
+  [10751, 'Family'],
+  [10762, 'Kids'],
+  [9648, 'Mystery'],
+  [10763, 'News'],
+  [10764, 'Reality'],
+  [10765, 'Sci-Fi & Fantasy'],
+  [10766, 'Soap'],
+  [10767, 'Talk'],
+  [10768, 'War & Politics'],
+  [37, 'Western'],
+]);
+
+const getLocalVideoGenreIds = (
+  mediaType: MediaType.MOVIE | MediaType.TV,
+  genres: string[]
+): number[] => {
+  const normalizedGenres = new Set(genres.map(normalizeDiscoverTitle));
+  const genreMap =
+    mediaType === MediaType.MOVIE ? LOCAL_MOVIE_GENRES : LOCAL_TV_GENRES;
+
+  return [...genreMap.entries()]
+    .filter(([, name]) => normalizedGenres.has(normalizeDiscoverTitle(name)))
+    .map(([id]) => id);
+};
+
+const parseLocalRuntime = (runtime?: string | null): number | undefined => {
+  const value = runtime?.match(/\d+(?:\.\d+)?/)?.[0];
+  const parsed = value ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+type LiveRadarrMovie = {
+  movie: RadarrMovie;
+  server: RadarrSettings;
+};
+
+type LiveRadarrMovieAvailability = {
+  hd: Map<number, LiveRadarrMovie>;
+  isHdAuthoritative: boolean;
+  is4k: Map<number, LiveRadarrMovie>;
+  is4kAuthoritative: boolean;
+};
+
+const getLiveRadarrMovieAvailability =
+  async (): Promise<LiveRadarrMovieAvailability> => {
+    const servers = getExternalRuntimeConfig().radarr.filter(
+      (server) => server.syncEnabled
+    );
+    const hdServers = servers.filter((server) => !server.is4k);
+    const servers4k = servers.filter((server) => server.is4k);
+    const result: LiveRadarrMovieAvailability = {
+      hd: new Map(),
+      isHdAuthoritative: hdServers.length > 0,
+      is4k: new Map(),
+      is4kAuthoritative: servers4k.length > 0,
+    };
+
+    await Promise.all(
+      servers.map(async (server) => {
+        const movies = await runWithServarrServiceSnapshot(
+          'radarr',
+          server,
+          async (current) =>
+            new RadarrAPI({
+              apiKey: current.apiKey,
+              url: RadarrAPI.buildUrl(current, '/api/v3'),
+            }).getMovies()
+        );
+        const destination = server.is4k ? result.is4k : result.hd;
+
+        for (const movie of movies) {
+          if (movie.hasFile && !destination.has(movie.tmdbId)) {
+            destination.set(movie.tmdbId, { movie, server });
+          }
+        }
+      })
+    );
+
+    return result;
+  };
+
+const clearStaleAvailableStatus = (
+  status: MediaStatus | undefined
+): MediaStatus =>
+  status === MediaStatus.AVAILABLE || status === MediaStatus.PARTIALLY_AVAILABLE
+    ? MediaStatus.UNKNOWN
+    : (status ?? MediaStatus.UNKNOWN);
+
+const getLiveAvailableMovieDiscoverResponse = async ({
+  quality,
+  page,
+  query,
+  user,
+}: {
+  quality: 'hd' | '4k';
+  page: number;
+  query: FilterOptions;
+  user?: User;
+}) => {
+  const availability = await getLiveRadarrMovieAvailability();
+  const isRequestedQualityAuthoritative =
+    quality === '4k'
+      ? availability.is4kAuthoritative
+      : availability.isHdAuthoritative;
+
+  if (!isRequestedQualityAuthoritative) {
+    return undefined;
+  }
+
+  const requestedMovies =
+    quality === '4k' ? availability.is4k : availability.hd;
+  const requestedGenreIds = splitNumericFilter(query.genre);
+
+  const movies = [...requestedMovies.values()]
+    .map(({ movie, server }) => {
+      const genreIds = getLocalVideoGenreIds(
+        MediaType.MOVIE,
+        movie.genres ?? []
+      );
+      const releaseDate = movie.year ? String(movie.year) : '';
+      const runtime = movie.runtime;
+
+      return {
+        movie,
+        server,
+        genreIds,
+        releaseDate,
+        runtime,
+      };
+    })
+    .filter(
+      ({ movie, genreIds, releaseDate, runtime }) =>
+        (!query.search ||
+          matchesAllSearchTerms(
+            [movie.title, movie.originalTitle, movie.overview],
+            query.search
+          )) &&
+        (!requestedGenreIds.length ||
+          requestedGenreIds.every((genreId) => genreIds.includes(genreId))) &&
+        (!query.primaryReleaseDateGte ||
+          releaseDate >= query.primaryReleaseDateGte) &&
+        (!query.primaryReleaseDateLte ||
+          releaseDate <= query.primaryReleaseDateLte) &&
+        (!query.withRuntimeGte ||
+          (runtime ?? 0) >= Number(query.withRuntimeGte)) &&
+        (!query.withRuntimeLte ||
+          (runtime ?? Number.POSITIVE_INFINITY) <= Number(query.withRuntimeLte))
+    )
+    .sort((left, right) => {
+      const sortOption = getValidatedTmdbSort(query.sortBy);
+      const ascending = sortOption.endsWith('.asc');
+      const direction = ascending ? 1 : -1;
+
+      if (
+        sortOption.startsWith('release_date') ||
+        sortOption.startsWith('primary_release_date')
+      ) {
+        return left.releaseDate.localeCompare(right.releaseDate) * direction;
+      }
+      if (sortOption.startsWith('original_title')) {
+        return (
+          (left.movie.originalTitle || left.movie.title).localeCompare(
+            right.movie.originalTitle || right.movie.title
+          ) * direction
+        );
+      }
+      if (sortOption.startsWith('vote_average')) {
+        return (
+          ((left.movie.ratings?.value ?? 0) -
+            (right.movie.ratings?.value ?? 0)) *
+          direction
+        );
+      }
+
+      return left.movie.title.localeCompare(right.movie.title);
+    });
+
+  const itemsPerPage = 20;
+  const pageStart = (page - 1) * itemsPerPage;
+  const pageItems = movies.slice(pageStart, pageStart + itemsPerPage);
+  const pageTmdbIds = pageItems.map(({ movie }) => movie.tmdbId);
+  const persistedMedia = pageTmdbIds.length
+    ? await getRepository(Media).find({
+        where: { mediaType: MediaType.MOVIE, tmdbId: In(pageTmdbIds) },
+      })
+    : [];
+  await hydrateMediaSummaryRelations(persistedMedia, user);
+  const mediaByTmdbId = new Map(
+    persistedMedia.map((media) => [media.tmdbId, media])
+  );
+
+  return {
+    page,
+    totalPages: Math.max(1, Math.ceil(movies.length / itemsPerPage)),
+    totalResults: movies.length,
+    results: pageItems.map(({ movie, server, genreIds, releaseDate }) => {
+      const persisted = mediaByTmdbId.get(movie.tmdbId);
+      const hdMovie = availability.hd.get(movie.tmdbId);
+      const movie4k = availability.is4k.get(movie.tmdbId);
+      const media = new Media({
+        ...persisted,
+        mediaType: MediaType.MOVIE,
+        tmdbId: movie.tmdbId,
+        status: availability.isHdAuthoritative
+          ? hdMovie
+            ? MediaStatus.AVAILABLE
+            : clearStaleAvailableStatus(persisted?.status)
+          : (persisted?.status ?? MediaStatus.UNKNOWN),
+        status4k: availability.is4kAuthoritative
+          ? movie4k
+            ? MediaStatus.AVAILABLE
+            : clearStaleAvailableStatus(persisted?.status4k)
+          : (persisted?.status4k ?? MediaStatus.UNKNOWN),
+        serviceId: hdMovie?.server.id ?? persisted?.serviceId,
+        externalServiceId: hdMovie?.movie.id ?? persisted?.externalServiceId,
+        serviceId4k: movie4k?.server.id ?? persisted?.serviceId4k,
+        externalServiceId4k:
+          movie4k?.movie.id ?? persisted?.externalServiceId4k,
+      });
+
+      return mapMovieResult(
+        {
+          id: movie.tmdbId,
+          media_type: 'movie',
+          title: movie.title,
+          original_title: movie.originalTitle || movie.title,
+          release_date: releaseDate,
+          adult: false,
+          video: false,
+          popularity: 0,
+          poster_path: `/api/v1/movie/${movie.tmdbId}/cover?serviceId=${server.id}&externalServiceId=${movie.id}&is4k=${server.is4k}`,
+          backdrop_path: undefined,
+          vote_count: movie.ratings?.votes ?? 0,
+          vote_average: movie.ratings?.value ?? 0,
+          genre_ids: genreIds,
+          overview: movie.overview ?? '',
+          original_language: '',
+        },
+        media
+      );
+    }),
+  };
+};
+
+const getLocalAvailableVideoDiscoverResponse = async ({
+  mediaType,
+  quality,
+  page,
+  query,
+  user,
+}: {
+  mediaType: MediaType.MOVIE | MediaType.TV;
+  quality: 'hd' | '4k';
+  page: number;
+  query: FilterOptions;
+  user?: User;
+}) => {
+  if (mediaType === MediaType.MOVIE) {
+    try {
+      const liveResponse = await getLiveAvailableMovieDiscoverResponse({
+        quality,
+        page,
+        query,
+        user,
+      });
+      if (liveResponse) {
+        return liveResponse;
+      }
+    } catch (e) {
+      logger.warn(
+        'Unable to retrieve live Radarr availability; using indexed movie availability',
+        {
+          label: 'API',
+          quality,
+          errorMessage: e.message,
+        }
+      );
+    }
+  }
+
+  const statusField = quality === '4k' ? 'status4k' : 'status';
+  const mediaItems = await getRepository(Media)
+    .createQueryBuilder('media')
+    .where('media.mediaType = :mediaType', { mediaType })
+    .andWhere(`media.${statusField} IN (:...availableStatuses)`, {
+      availableStatuses: AVAILABLE_MEDIA_STATUSES,
+    })
+    .orderBy('media.updatedAt', 'DESC')
+    .getMany();
+  await hydrateMediaSummaryRelations(mediaItems, user);
+
+  const metadata = mediaItems.length
+    ? await getRepository(MediaSearchMetadata).find({
+        where: { mediaId: In(mediaItems.map((item) => item.id)) },
+      })
+    : [];
+  const metadataByMediaId = new Map(
+    metadata.map((item) => [item.mediaId, item])
+  );
+  const requestedGenreIds = splitNumericFilter(query.genre);
+
+  const localItems = mediaItems
+    .map((media) => {
+      const itemMetadata = metadataByMediaId.get(media.id);
+      const title =
+        itemMetadata?.title ??
+        media.externalServiceSlug?.replace(/[-_]+/g, ' ') ??
+        `${mediaType === MediaType.MOVIE ? 'Movie' : 'Series'} ${media.tmdbId}`;
+      const genres = (itemMetadata?.genres ?? '')
+        .split(',')
+        .map((genre) => genre.trim())
+        .filter(Boolean);
+      const genreIds = getLocalVideoGenreIds(mediaType, genres);
+      const releaseDate = itemMetadata?.releaseDate ?? '';
+      const runtime = parseLocalRuntime(itemMetadata?.runtime);
+
+      return {
+        media,
+        metadata: itemMetadata,
+        title,
+        genreIds,
+        releaseDate,
+        runtime,
+      };
+    })
+    .filter(
+      ({ metadata, title, genreIds, releaseDate, runtime }) =>
+        (!query.search ||
+          matchesAllSearchTerms(
+            [title, metadata?.alternateTitle, metadata?.searchText],
+            query.search
+          )) &&
+        (!requestedGenreIds.length ||
+          requestedGenreIds.every((genreId) => genreIds.includes(genreId))) &&
+        (!query.primaryReleaseDateGte ||
+          releaseDate >= query.primaryReleaseDateGte) &&
+        (!query.primaryReleaseDateLte ||
+          releaseDate <= query.primaryReleaseDateLte) &&
+        (!query.firstAirDateGte || releaseDate >= query.firstAirDateGte) &&
+        (!query.firstAirDateLte || releaseDate <= query.firstAirDateLte) &&
+        (!query.withRuntimeGte ||
+          (runtime ?? 0) >= Number(query.withRuntimeGte)) &&
+        (!query.withRuntimeLte ||
+          (runtime ?? Number.POSITIVE_INFINITY) <= Number(query.withRuntimeLte))
+    )
+    .sort((left, right) => {
+      const sortOption = getValidatedTmdbSort(query.sortBy);
+      const ascending = sortOption.endsWith('.asc');
+      const direction = ascending ? 1 : -1;
+
+      if (
+        sortOption.startsWith('release_date') ||
+        sortOption.startsWith('primary_release_date') ||
+        sortOption.startsWith('first_air_date')
+      ) {
+        return left.releaseDate.localeCompare(right.releaseDate) * direction;
+      }
+      if (sortOption.startsWith('original_title')) {
+        return (
+          (left.metadata?.alternateTitle ?? left.title).localeCompare(
+            right.metadata?.alternateTitle ?? right.title
+          ) * direction
+        );
+      }
+
+      return right.media.updatedAt.getTime() - left.media.updatedAt.getTime();
+    });
+
+  const itemsPerPage = 20;
+  const pageStart = (page - 1) * itemsPerPage;
+  const pageItems = localItems.slice(pageStart, pageStart + itemsPerPage);
+
+  return {
+    page,
+    totalPages: Math.max(1, Math.ceil(localItems.length / itemsPerPage)),
+    totalResults: localItems.length,
+    results: pageItems.map(
+      ({ media, metadata: itemMetadata, title, genreIds, releaseDate }) => {
+        const common = {
+          id: media.tmdbId,
+          popularity: 0,
+          poster_path: `/api/v1/${
+            mediaType === MediaType.MOVIE ? 'movie' : 'tv'
+          }/${media.tmdbId}/cover?mediaId=${media.id}&is4k=${quality === '4k'}`,
+          backdrop_path: undefined,
+          vote_count: 0,
+          vote_average: 0,
+          genre_ids: genreIds,
+          overview: '',
+          original_language: '',
+        };
+
+        return mediaType === MediaType.MOVIE
+          ? mapMovieResult(
+              {
+                ...common,
+                media_type: 'movie',
+                title,
+                original_title: itemMetadata?.alternateTitle ?? title,
+                release_date: releaseDate,
+                adult: false,
+                video: false,
+              },
+              media
+            )
+          : mapTvResult(
+              {
+                ...common,
+                media_type: 'tv',
+                name: title,
+                original_name: itemMetadata?.alternateTitle ?? title,
+                origin_country: [],
+                first_air_date: releaseDate,
+              },
+              media
+            );
+      }
+    ),
+  };
+};
 
 const shuffleRankedWindow = <T>(
   rankedResults: T[],
@@ -802,6 +1491,17 @@ discoverRoutes.get('/movies', async (req, res, next) => {
     const excludeKeywords = parsedExcludeKeywords.value;
 
     const page = parsePositiveInt(query.page, 1, 500);
+    if (query.availability) {
+      return res.status(200).json(
+        await getLocalAvailableVideoDiscoverResponse({
+          mediaType: MediaType.MOVIE,
+          quality: query.availability,
+          page,
+          query,
+          user: req.user,
+        })
+      );
+    }
     const data = query.search
       ? await tmdb.searchMovies({
           query: query.search,
@@ -837,6 +1537,13 @@ discoverRoutes.get('/movies', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    data.results = await filterVideoSearchResults(
+      tmdb,
+      'movie',
+      data.results,
+      query,
+      req.locale
+    );
     const providerResults =
       query.search || query.sortBy
         ? data.results
@@ -1214,6 +1921,17 @@ discoverRoutes.get('/tv', async (req, res, next) => {
     const excludeKeywords = parsedExcludeKeywords.value;
 
     const page = parsePositiveInt(query.page, 1, 500);
+    if (query.availability) {
+      return res.status(200).json(
+        await getLocalAvailableVideoDiscoverResponse({
+          mediaType: MediaType.TV,
+          quality: query.availability,
+          page,
+          query,
+          user: req.user,
+        })
+      );
+    }
     const data = query.search
       ? await tmdb.searchTvShows({
           query: query.search,
@@ -1250,6 +1968,13 @@ discoverRoutes.get('/tv', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    data.results = await filterVideoSearchResults(
+      tmdb,
+      'tv',
+      data.results,
+      query,
+      req.locale
+    );
     const providerResults =
       query.search || query.sortBy
         ? data.results
@@ -1859,6 +2584,12 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
 );
 
 discoverRoutes.get('/music', async (req, res) => {
+  const parsedMusicFilters = parseMusicSearchFilters(req.query);
+  if ('error' in parsedMusicFilters)
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedMusicFilters.error });
+  const musicFilters = parsedMusicFilters.value;
   const listenBrainz = new ListenBrainzAPI();
   const musicBrainz = new MusicBrainz();
   const itemsPerPage = 20;
@@ -1866,7 +2597,8 @@ discoverRoutes.get('/music', async (req, res) => {
   const days = parsePositiveInt(req.query.days, 14, 365);
   const hasCustomDays = typeof req.query.days === 'string';
   const sortByValue = getValidatedSort(req.query.sortBy, musicSortOptions);
-  const sortAscending = sortByValue === 'release_date.asc';
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
   const parsedGenre = parseOptionalDiscoverString(
     req.query.genre,
     'Genre',
@@ -1878,6 +2610,14 @@ discoverRoutes.get('/music', async (req, res) => {
     MAX_DISCOVER_FILTER_LENGTH
   );
   const parsedQuery = parseOptionalDiscoverString(req.query.query, 'Query');
+  const parsedAvailability = parseOptionalAllowedString(
+    req.query.availability,
+    {
+      fieldName: 'Availability',
+      allowedValues: ['mp3', 'flac'] as const,
+      maxLength: 4,
+    }
+  );
   const parsedShuffleSeed = parseOptionalDiscoverString(
     req.query.shuffleSeed,
     'Shuffle seed',
@@ -1902,6 +2642,11 @@ discoverRoutes.get('/music', async (req, res) => {
   }
   if ('error' in parsedQuery) {
     return res.status(400).json({ status: 400, message: parsedQuery.error });
+  }
+  if ('error' in parsedAvailability) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedAvailability.error });
   }
   if ('error' in parsedShuffleSeed) {
     return res
@@ -1932,63 +2677,77 @@ discoverRoutes.get('/music', async (req, res) => {
         .filter(Boolean)
     : [];
   const query = parsedQuery.value ?? '';
-  const providerSearchQuery = toBooleanAndQuery(query);
   const shuffleSeed = parsedShuffleSeed.value;
   const releaseDateGte = parsedReleaseDateGte.value;
   const releaseDateLte = parsedReleaseDateLte.value;
 
   try {
-    if (query) {
-      const providerWindow = getProviderWindow(page, itemsPerPage);
-      const albumWindow = await musicBrainz.searchAlbum({
-        query: providerSearchQuery,
-        limit: providerWindow.limit,
-        offset: providerWindow.offset,
-      });
-      const filteredAlbums = albumWindow.filter((album) => {
-        const releaseDate = album['first-release-date'] ?? '';
-        const albumGenres = (album.tags ?? []).map((tag) =>
-          tag.name.toLocaleLowerCase()
-        );
-
-        return (
-          matchesAllSearchTerms(
-            [
-              album.title,
-              ...album['artist-credit'].flatMap((credit) => [
-                credit.name,
-                credit.artist.name,
-                credit.artist['sort-name'],
-              ]),
-              ...albumGenres,
-            ],
-            query
-          ) &&
-          (!releaseTypeFilter.length ||
-            releaseTypeFilter.includes(album['primary-type'])) &&
-          (!genreFilter.length ||
-            genreFilter.some((genre) =>
-              albumGenres.includes(genre.toLocaleLowerCase())
-            )) &&
-          (!releaseDateGte || releaseDate >= releaseDateGte) &&
-          (!releaseDateLte || releaseDate <= releaseDateLte)
-        );
-      });
-      const albums = dedupeMusicAlbums(
-        filteredAlbums.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+    if (parsedAvailability.value) {
+      return res.status(200).json(
+        await getLocalAvailableMusic({
+          availability: parsedAvailability.value,
+          page,
+          itemsPerPage,
+          query,
+          artist: musicFilters.artist,
+          genreFilter,
+          releaseTypeFilter,
+          releaseDateGte,
+          releaseDateLte,
+          sortByValue,
+          user: req.user,
+        })
       );
-      const relatedMediaMap = await getRelatedMusicMediaMap(
+    }
+
+    if (
+      query ||
+      musicFilters.artistId ||
+      musicFilters.artist ||
+      releaseDateGte ||
+      releaseDateLte ||
+      releaseTypeFilter.length
+    ) {
+      const response = await musicBrainz.searchAlbumWithTotal({
+        query: buildMusicAlbumSearchQuery(query, musicFilters),
+        limit: itemsPerPage,
+        offset: (page - 1) * itemsPerPage,
+      });
+      const albums = dedupeMusicAlbums(response.results)
+        .filter(
+          (album) =>
+            !query ||
+            matchesAllSearchTerms(
+              [
+                album.title,
+                ...album['artist-credit'].map((credit) => credit.name),
+                ...(album.tags ?? []).map((tag) => tag.name),
+              ],
+              query
+            )
+        )
+        .sort((a, b) => {
+          if (sortByBase === 'release_date') {
+            const comparison = (a['first-release-date'] ?? '').localeCompare(
+              b['first-release-date'] ?? ''
+            );
+            return sortAscending ? comparison : -comparison;
+          }
+          const comparison = scoreMusicAlbum(b) - scoreMusicAlbum(a);
+          return sortAscending ? -comparison : comparison;
+        });
+      const related = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
       );
-
       return res.status(200).json({
         page,
-        totalPages: albums.length === itemsPerPage ? page + 1 : page,
-        totalResults: getUnknownTotalResults(page, albums.length, itemsPerPage),
-        results: albums.map((album) =>
-          mapAlbumResult(album, getRelatedMusicMedia(relatedMediaMap, album.id))
+        totalPages: Math.max(
+          1,
+          Math.ceil(response.totalResults / itemsPerPage)
         ),
+        totalResults: response.totalResults,
+        results: albums.map((album) => mapDiscoverAlbumResult(album, related)),
       });
     }
 
@@ -2006,12 +2765,13 @@ discoverRoutes.get('/music', async (req, res) => {
           offset: providerWindow.offset,
         });
       const sortedAlbums = dedupeMusicAlbums(releaseGroups).sort((a, b) => {
-        if (sortByValue === 'ranked') {
+        if (sortByBase === 'ranked') {
           return scoreMusicAlbum(b) - scoreMusicAlbum(a);
         }
 
-        if (sortByValue === 'listen_count.desc') {
-          return (b.score ?? 0) - (a.score ?? 0);
+        if (sortByBase === 'listen_count' || sortByBase.startsWith('popular')) {
+          const comparison = (b.score ?? 0) - (a.score ?? 0);
+          return sortAscending ? -comparison : comparison;
         }
 
         const left = a['first-release-date'] ?? '';
@@ -2021,20 +2781,24 @@ discoverRoutes.get('/music', async (req, res) => {
           : right.localeCompare(left);
       });
       const albums =
-        sortByValue === 'ranked'
-          ? diversifyMusicAlbumsByArtist(
-              shuffleRankedWindow(
-                rankByQualityScore(
-                  sortedAlbums,
-                  scoreMusicAlbum,
-                  0.08,
-                  4,
+        sortByBase === 'ranked'
+          ? (() => {
+              const rankedAlbums = diversifyMusicAlbumsByArtist(
+                shuffleRankedWindow(
+                  rankByQualityScore(
+                    sortedAlbums,
+                    scoreMusicAlbum,
+                    0.08,
+                    4,
+                    shuffleSeed
+                  ),
                   shuffleSeed
                 ),
-                shuffleSeed
-              ),
-              providerWindow.sliceEnd
-            ).slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+                providerWindow.sliceEnd
+              ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+
+              return sortAscending ? rankedAlbums.reverse() : rankedAlbums;
+            })()
           : sortedAlbums.slice(
               providerWindow.sliceStart,
               providerWindow.sliceEnd
@@ -2049,7 +2813,7 @@ discoverRoutes.get('/music', async (req, res) => {
         totalPages: Math.max(1, Math.ceil(totalCount / itemsPerPage)),
         totalResults: totalCount,
         results: albums.map((album) =>
-          mapAlbumResult(album, getRelatedMusicMedia(relatedMediaMap, album.id))
+          mapDiscoverAlbumResult(album, relatedMediaMap)
         ),
       });
     }
@@ -2057,24 +2821,30 @@ discoverRoutes.get('/music', async (req, res) => {
     const providerWindow = getProviderWindow(page, itemsPerPage);
     const hasReleaseDateFilter = Boolean(releaseDateGte || releaseDateLte);
 
-    if (!genreFilter.length && sortByValue.startsWith('popular')) {
+    if (
+      !genreFilter.length &&
+      (sortByBase.startsWith('popular') || sortByBase === 'listen_count')
+    ) {
       const range =
-        sortByValue === 'popular.week'
-          ? 'week'
-          : sortByValue === 'popular.year'
-            ? 'year'
-            : 'month';
+        sortByBase === 'listen_count'
+          ? 'all_time'
+          : sortByBase === 'popular.week'
+            ? 'week'
+            : sortByBase === 'popular.year'
+              ? 'year'
+              : 'month';
       const topAlbums = await listenBrainz.getTopAlbums({
         range,
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
-      const albums = diversifyMusicAlbumsByArtist(
+      const chartAlbums = diversifyMusicAlbumsByArtist(
         dedupeMusicAlbums(
           topAlbums.payload.release_groups.map(mapTopAlbumRelease)
         ),
         providerWindow.sliceEnd
       ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+      const albums = sortAscending ? chartAlbums.reverse() : chartAlbums;
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
@@ -2088,13 +2858,13 @@ discoverRoutes.get('/music', async (req, res) => {
         ),
         totalResults: topAlbums.payload.count,
         results: albums.map((album) =>
-          mapAlbumResult(album, getRelatedMusicMedia(relatedMediaMap, album.id))
+          mapDiscoverAlbumResult(album, relatedMediaMap)
         ),
       });
     }
 
     if (
-      sortByValue === 'ranked' &&
+      sortByBase === 'ranked' &&
       !releaseTypeFilter.length &&
       !hasReleaseDateFilter &&
       !hasCustomDays
@@ -2118,11 +2888,9 @@ discoverRoutes.get('/music', async (req, res) => {
         MUSIC_DISCOVERY_BLEND_TIMEOUT_MS
       );
       const topAlbumsResult = primaryResults.results[0] as
-        | PromiseSettledResult<LbTopAlbumsResponse>
-        | undefined;
+        PromiseSettledResult<LbTopAlbumsResponse> | undefined;
       const freshReleasesResult = primaryResults.results[1] as
-        | PromiseSettledResult<LbFreshReleasesResponse>
-        | undefined;
+        PromiseSettledResult<LbFreshReleasesResponse> | undefined;
       const topAlbums =
         topAlbumsResult?.status === 'fulfilled'
           ? topAlbumsResult.value.payload.release_groups
@@ -2193,7 +2961,7 @@ discoverRoutes.get('/music', async (req, res) => {
             );
           });
 
-        const fallbackAlbums = diversifyMusicAlbumsByArtist(
+        const rankedFallbackAlbums = diversifyMusicAlbumsByArtist(
           shuffleRankedWindow(
             rankByQualityScore(
               [...fallbackAlbumsById.values()].sort(
@@ -2208,6 +2976,9 @@ discoverRoutes.get('/music', async (req, res) => {
           ),
           providerWindow.sliceEnd
         ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+        const fallbackAlbums = sortAscending
+          ? rankedFallbackAlbums.reverse()
+          : rankedFallbackAlbums;
 
         if (!fallbackAlbums.length) {
           return res.status(200).json(emptyDiscoverResponse(page));
@@ -2227,10 +2998,7 @@ discoverRoutes.get('/music', async (req, res) => {
             itemsPerPage
           ),
           results: fallbackAlbums.map((album) =>
-            mapAlbumResult(
-              album,
-              getRelatedMusicMedia(fallbackRelatedMediaMap, album.id)
-            )
+            mapDiscoverAlbumResult(album, fallbackRelatedMediaMap)
           ),
         });
       }
@@ -2275,7 +3043,7 @@ discoverRoutes.get('/music', async (req, res) => {
         );
       });
 
-      const albums = diversifyMusicAlbumsByArtist(
+      const rankedAlbums = diversifyMusicAlbumsByArtist(
         shuffleRankedWindow(
           rankByQualityScore(
             [...albumsById.values()].sort(
@@ -2290,6 +3058,7 @@ discoverRoutes.get('/music', async (req, res) => {
         ),
         providerWindow.sliceEnd
       ).slice(providerWindow.sliceStart, providerWindow.sliceEnd);
+      const albums = sortAscending ? rankedAlbums.reverse() : rankedAlbums;
       const relatedMediaMap = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
@@ -2300,7 +3069,7 @@ discoverRoutes.get('/music', async (req, res) => {
         totalPages: albums.length === itemsPerPage ? page + 1 : 1,
         totalResults: getUnknownTotalResults(page, albums.length, itemsPerPage),
         results: albums.map((album) =>
-          mapAlbumResult(album, getRelatedMusicMedia(relatedMediaMap, album.id))
+          mapDiscoverAlbumResult(album, relatedMediaMap)
         ),
       });
     }
@@ -2310,6 +3079,7 @@ discoverRoutes.get('/music', async (req, res) => {
       freshReleases = await listenBrainz.getFreshReleases({
         days,
         sort: 'release_date',
+        order: sortByBase === 'release_date' && !sortAscending ? 'desc' : 'asc',
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
@@ -2327,6 +3097,7 @@ discoverRoutes.get('/music', async (req, res) => {
       freshReleases = await listenBrainz.getFreshReleases({
         days: 7,
         sort: 'release_date',
+        order: sortByBase === 'release_date' && !sortAscending ? 'desc' : 'asc',
         offset: providerWindow.offset,
         count: providerWindow.limit,
       });
@@ -2342,12 +3113,14 @@ discoverRoutes.get('/music', async (req, res) => {
             )
         )
     ).sort((a, b) => {
-      if (sortByValue === 'ranked') {
-        return scoreMusicRelease(b) - scoreMusicRelease(a);
+      if (sortByBase === 'ranked') {
+        const comparison = scoreMusicRelease(b) - scoreMusicRelease(a);
+        return sortAscending ? -comparison : comparison;
       }
 
-      if (sortByValue === 'listen_count.desc') {
-        return (b.listen_count ?? 0) - (a.listen_count ?? 0);
+      if (sortByBase === 'listen_count' || sortByBase.startsWith('popular')) {
+        const comparison = (b.listen_count ?? 0) - (a.listen_count ?? 0);
+        return sortAscending ? -comparison : comparison;
       }
 
       const left = a.release_date ?? '';
@@ -2357,31 +3130,35 @@ discoverRoutes.get('/music', async (req, res) => {
         : right.localeCompare(left);
     });
     const releases =
-      sortByValue === 'ranked'
-        ? diversifyMusicAlbumsByArtist(
-            shuffleRankedWindow(
-              rankByQualityScore(
-                sortedReleases.map(mapFreshReleaseAlbum),
-                scoreMusicAlbum,
-                0.08,
-                4,
+      sortByBase === 'ranked'
+        ? (() => {
+            const rankedReleases = diversifyMusicAlbumsByArtist(
+              shuffleRankedWindow(
+                rankByQualityScore(
+                  sortedReleases.map(mapFreshReleaseAlbum),
+                  scoreMusicAlbum,
+                  0.08,
+                  4,
+                  shuffleSeed
+                ),
                 shuffleSeed
               ),
-              shuffleSeed
-            ),
-            providerWindow.sliceEnd
-          )
-            .slice(providerWindow.sliceStart, providerWindow.sliceEnd)
-            .map((album) => {
-              const release = sortedReleases.find(
-                (sortedRelease) =>
-                  getMusicBrainzIdKey(sortedRelease.release_group_mbid) ===
-                  getMusicBrainzIdKey(album.id)
-              );
+              providerWindow.sliceEnd
+            )
+              .slice(providerWindow.sliceStart, providerWindow.sliceEnd)
+              .map((album) => {
+                const release = sortedReleases.find(
+                  (sortedRelease) =>
+                    getMusicBrainzIdKey(sortedRelease.release_group_mbid) ===
+                    getMusicBrainzIdKey(album.id)
+                );
 
-              return release;
-            })
-            .filter((release): release is LbRelease => !!release)
+                return release;
+              })
+              .filter((release): release is LbRelease => !!release);
+
+            return sortAscending ? rankedReleases.reverse() : rankedReleases;
+          })()
         : sortedReleases.slice(
             providerWindow.sliceStart,
             providerWindow.sliceEnd
@@ -2392,15 +3169,15 @@ discoverRoutes.get('/music', async (req, res) => {
     );
 
     const results = releases.map((release) =>
-      mapAlbumResult(
+      mapDiscoverAlbumResult(
         {
           ...mapFreshReleaseAlbum(release),
           score:
-            sortByValue === 'ranked'
+            sortByBase === 'ranked'
               ? scoreMusicRelease(release)
               : (release.listen_count ?? 0),
         },
-        getRelatedMusicMedia(relatedMediaMap, release.release_group_mbid)
+        relatedMediaMap
       )
     );
 
@@ -2416,15 +3193,32 @@ discoverRoutes.get('/music', async (req, res) => {
       ...getErrorLogFields(e),
       requestQuery: getDiscoverLogQuery(req.query),
     });
+    if (query || Object.values(musicFilters).some(Boolean)) {
+      return res.status(503).json({
+        status: 503,
+        message: 'Music search is temporarily unavailable. Please try again.',
+      });
+    }
     return res.status(200).json(emptyDiscoverResponse(page));
   }
 });
 
 discoverRoutes.get('/books', async (req, res) => {
   const openLibrary = new OpenLibraryAPI();
-  const itemsPerPage = 20;
+  const itemsPerPage = 50;
   const page = parsePositiveInt(req.query.page, 1, 500);
-  const sortByValue = getValidatedSort(req.query.sortBy, bookSortOptions);
+  const requestedSortBy =
+    typeof req.query.sortBy === 'string' &&
+    bookSortOptions.has(req.query.sortBy)
+      ? req.query.sortBy
+      : undefined;
+  const parsedFormat = req.query.format
+    ? parseOptionalAllowedString(req.query.format, {
+        fieldName: 'Format',
+        allowedValues: ['ebook', 'audiobook'] as const,
+        maxLength: 16,
+      })
+    : ({ value: undefined } as { value?: 'ebook' | 'audiobook' });
   const parsedSubject = parseOptionalDiscoverString(
     req.query.subject,
     'Subject',
@@ -2433,6 +3227,10 @@ discoverRoutes.get('/books', async (req, res) => {
   const parsedSearchQuery = parseOptionalDiscoverString(
     req.query.query,
     'Query'
+  );
+  const parsedAuthorQuery = parseOptionalDiscoverString(
+    req.query.author,
+    'Author'
   );
   const parsedFirstPublishYear = parseOptionalDiscoverString(
     req.query.firstPublishYear,
@@ -2455,6 +3253,9 @@ discoverRoutes.get('/books', async (req, res) => {
     128
   );
 
+  if ('error' in parsedFormat) {
+    return res.status(400).json({ status: 400, message: parsedFormat.error });
+  }
   if ('error' in parsedSubject) {
     return res.status(400).json({ status: 400, message: parsedSubject.error });
   }
@@ -2462,6 +3263,11 @@ discoverRoutes.get('/books', async (req, res) => {
     return res
       .status(400)
       .json({ status: 400, message: parsedSearchQuery.error });
+  }
+  if ('error' in parsedAuthorQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedAuthorQuery.error });
   }
   if ('error' in parsedFirstPublishYear) {
     return res
@@ -2482,10 +3288,14 @@ discoverRoutes.get('/books', async (req, res) => {
       .json({ status: 400, message: parsedShuffleSeed.error });
   }
 
-  const subjectQuery = parsedSubject.value ?? '';
+  const rawSearchQuery = parsedSearchQuery.value ?? '';
+  const authorQuery = parsedAuthorQuery.value ?? '';
+  const legacySubjectQuery = rawSearchQuery
+    .match(/^subject:(.+)$/i)?.[1]
+    ?.trim();
+  const subjectQuery = parsedSubject.value ?? legacySubjectQuery ?? '';
   const hasSubjectFilter = !!subjectQuery;
-  const subject = hasSubjectFilter ? subjectQuery : 'fiction';
-  const searchQuery = parsedSearchQuery.value ?? '';
+  const searchQuery = legacySubjectQuery ? '' : rawSearchQuery;
   const firstPublishYear = parsedFirstPublishYear.value ?? '';
   const language = parsedLanguage.value ?? '';
   const parsedRatingNumber = parsedMinRating.value
@@ -2522,14 +3332,38 @@ discoverRoutes.get('/books', async (req, res) => {
   }
   const shuffleSeed = parsedShuffleSeed.value;
   const hasSearchQuery = !!searchQuery;
+  const sortByValue = requestedSortBy ?? (hasSearchQuery ? 'newest' : 'ranked');
+  const sortAscending = sortByValue.endsWith('.asc');
+  const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
+  const bookDiscoveryContext = {
+    format:
+      parsedFormat.value === 'audiobook'
+        ? 'audiobook'
+        : parsedFormat.value === 'ebook'
+          ? 'book'
+          : 'all',
+    keyword: searchQuery || undefined,
+    page,
+    pageSize: itemsPerPage,
+    sort: sortByValue,
+    genre: subjectQuery || undefined,
+    firstPublishYear: firstPublishYear || undefined,
+    language: language || undefined,
+    minRating: parsedRatingNumber,
+  };
   const queryParts = [
     hasSearchQuery
       ? toFieldedBooleanAndQuery(searchQuery, ['title', 'author'])
-      : `subject:${subject}`,
+      : hasSubjectFilter
+        ? `subject:${subjectQuery}`
+        : '*:*',
   ];
 
   if (hasSearchQuery && hasSubjectFilter) {
-    queryParts.push(`subject:${subject}`);
+    queryParts.push(`subject:${subjectQuery}`);
+  }
+  if (authorQuery) {
+    queryParts.push(toFieldedBooleanAndQuery(authorQuery, ['author']));
   }
   if (language) {
     queryParts.push(`language:${language}`);
@@ -2544,7 +3378,7 @@ discoverRoutes.get('/books', async (req, res) => {
     parsedRatingNumber !== undefined ||
     firstPublishYear === 'before-1970';
   const providerWindow = needsLocalFiltering
-    ? getProviderWindow(page, itemsPerPage)
+    ? getProviderWindow(page, itemsPerPage, itemsPerPage)
     : undefined;
   const providerPage = providerWindow
     ? Math.floor(providerWindow.offset / providerWindow.limit) + 1
@@ -2553,134 +3387,50 @@ discoverRoutes.get('/books', async (req, res) => {
 
   try {
     const openLibrarySort =
-      sortByValue === 'newest'
-        ? 'new'
-        : sortByValue === 'oldest'
-          ? 'old'
-          : sortByValue === 'random'
-            ? 'random'
-            : sortByValue === 'rating' ||
-                sortByValue === 'rating.desc' ||
-                sortByValue === 'rating.asc'
-              ? 'rating'
-              : sortByValue === 'editions'
-                ? 'editions'
-                : undefined;
-    const shouldBlendDefaultSubjects =
-      !hasSearchQuery && !hasSubjectFilter && sortByValue === 'ranked';
-    const books = shouldBlendDefaultSubjects
-      ? await settlePromisesWithin(
-          rotateItems(
-            defaultBookDiscoverySubjects,
-            getDailyRotationOffset(defaultBookDiscoverySubjects.length)
-          )
-            .slice(0, DEFAULT_BOOK_DISCOVERY_SUBJECT_LIMIT)
-            .map((defaultSubject) =>
-              openLibrary.searchBooks({
-                query: `subject:${defaultSubject}`,
-                page: providerPage,
-                limit: providerLimit,
-              })
-            ),
-          BOOK_DISCOVERY_BLEND_TIMEOUT_MS
-        ).then(({ results, timedOut }) => {
-          const responses = results.flatMap((result) =>
-            result.status === 'fulfilled' ? [result.value] : []
-          );
+      sortByBase === 'ranked' &&
+      !hasSearchQuery &&
+      !hasSubjectFilter &&
+      !authorQuery
+        ? 'random'
+        : sortByValue === 'newest'
+          ? 'new'
+          : sortByValue === 'oldest'
+            ? 'old'
+            : sortByValue === 'random'
+              ? 'random'
+              : sortByBase === 'rating'
+                ? 'rating'
+                : sortByBase === 'editions'
+                  ? 'editions'
+                  : undefined;
+    const books = await settlePromisesWithin(
+      [
+        openLibrary.searchBooks({
+          query,
+          page: providerPage,
+          limit: providerLimit,
+          sort: openLibrarySort,
+        }),
+      ],
+      OPENLIBRARY_SINGLE_REQUEST_TIMEOUT_MS
+    ).then(({ results, timedOut }) => {
+      if (timedOut) {
+        throw new Error('Open Library book discovery request timed out.');
+      }
 
-          if (timedOut) {
-            logger.warn('Book discovery blend timed out', {
-              label: 'Discover Books',
-              completedSubjects: responses.length,
-              requestQuery: getDiscoverLogQuery(req.query),
-            });
-          }
+      const result = results[0];
+      if (!result) {
+        throw new Error('Open Library book discovery request timed out.');
+      }
+      if (result.status === 'rejected') {
+        throw result.reason;
+      }
 
-          if (
-            !responses.length ||
-            !responses.some((response) => response.docs.length > 0)
-          ) {
-            throw new Error('No usable book discovery results were available');
-          }
-
-          const rejectedCount = results.filter(
-            (result) => result.status === 'rejected'
-          ).length;
-
-          if (rejectedCount > 0) {
-            logger.warn('Some book discovery subjects failed during blend', {
-              label: 'Discover Books',
-              failedSubjects: rejectedCount,
-              requestQuery: getDiscoverLogQuery(req.query),
-            });
-          }
-
-          const docsByKey = new Map<string, OpenLibrarySearchDoc>();
-
-          responses
-            .flatMap((response) => response.docs)
-            .forEach((doc) => {
-              const existingDoc = docsByKey.get(doc.key);
-
-              if (
-                !existingDoc ||
-                scoreBookDoc(doc) > scoreBookDoc(existingDoc)
-              ) {
-                docsByKey.set(doc.key, doc);
-              }
-            });
-
-          return {
-            numFound: responses.reduce(
-              (total, response) => total + response.numFound,
-              0
-            ),
-            start: 0,
-            docs: diversifyBookDocsByAuthor(
-              shuffleRankedWindow(
-                rankByQualityScore(
-                  [...docsByKey.values()].sort(
-                    (a, b) => scoreBookDoc(b) - scoreBookDoc(a)
-                  ),
-                  scoreBookDoc,
-                  0.08,
-                  4,
-                  shuffleSeed
-                ),
-                shuffleSeed
-              ),
-              itemsPerPage
-            ),
-          };
-        })
-      : await settlePromisesWithin(
-          [
-            openLibrary.searchBooks({
-              query,
-              page: providerPage,
-              limit: providerLimit,
-              sort: openLibrarySort,
-            }),
-          ],
-          OPENLIBRARY_SINGLE_REQUEST_TIMEOUT_MS
-        ).then(({ results, timedOut }) => {
-          if (timedOut) {
-            logger.warn('Book discovery request timed out', {
-              label: 'Discover Books',
-              requestQuery: getDiscoverLogQuery(req.query),
-            });
-          }
-
-          const result = results[0];
-          if (!result) {
-            throw new Error('Open Library book discovery request timed out.');
-          }
-          if (result.status === 'rejected') {
-            throw result.reason;
-          }
-
-          return result.value;
-        });
+      return result.value;
+    });
+    if (query === '*:*' && books.numFound === 0 && books.docs.length === 0) {
+      throw new Error('Open Library returned an empty default discovery feed.');
+    }
     const dedupedDocs = dedupeBookDocs(books.docs).filter((doc) => {
       if (
         hasSearchQuery &&
@@ -2708,8 +3458,8 @@ discoverRoutes.get('/books', async (req, res) => {
 
       return true;
     });
-    const sortedDocs =
-      sortByValue === 'ranked' && !hasSearchQuery && !shouldBlendDefaultSubjects
+    const rankedDocs =
+      sortByBase === 'ranked' && !hasSearchQuery
         ? shuffleRankedWindow(
             rankByQualityScore(
               [...dedupedDocs].sort(
@@ -2722,16 +3472,26 @@ discoverRoutes.get('/books', async (req, res) => {
             ),
             shuffleSeed
           )
-        : sortByValue === 'rating.asc'
-          ? [...dedupedDocs].sort(
-              (a, b) =>
-                (a.ratings_average ?? Number.POSITIVE_INFINITY) -
-                (b.ratings_average ?? Number.POSITIVE_INFINITY)
-            )
-          : dedupedDocs;
+        : undefined;
+    const sortedDocs = rankedDocs
+      ? sortAscending
+        ? [...rankedDocs].reverse()
+        : rankedDocs
+      : sortByValue === 'rating.asc'
+        ? [...dedupedDocs].sort(
+            (a, b) =>
+              (a.ratings_average ?? Number.POSITIVE_INFINITY) -
+              (b.ratings_average ?? Number.POSITIVE_INFINITY)
+          )
+        : sortByBase === 'editions' && sortAscending
+          ? [...dedupedDocs].reverse()
+          : sortByBase === 'random'
+            ? shuffleRankedWindow(dedupedDocs, shuffleSeed, dedupedDocs.length)
+            : dedupedDocs;
     const pagedDocs = providerWindow
       ? sortedDocs.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
       : sortedDocs;
+    const providerHasMore = providerPage * providerLimit < books.numFound;
     const ids = pagedDocs.map((doc) => normalizeOpenLibraryWorkId(doc.key));
     const mediaByOpenLibraryId = await findBookMediaByOpenLibraryIds(
       ids,
@@ -2741,12 +3501,14 @@ discoverRoutes.get('/books', async (req, res) => {
     return res.status(200).json({
       page,
       totalPages: needsLocalFiltering
-        ? pagedDocs.length === itemsPerPage
+        ? providerHasMore
           ? page + 1
           : page
         : Math.max(Math.ceil(books.numFound / itemsPerPage), 1),
       totalResults: needsLocalFiltering
-        ? getUnknownTotalResults(page, pagedDocs.length, itemsPerPage)
+        ? providerHasMore
+          ? page * itemsPerPage + 1
+          : (page - 1) * itemsPerPage + pagedDocs.length
         : books.numFound,
       results: pagedDocs.map((doc) => ({
         ...mapOpenLibrarySearchDoc(
@@ -2760,7 +3522,7 @@ discoverRoutes.get('/books', async (req, res) => {
     logger.error('Failed to fetch book discovery results', {
       label: 'Discover Books',
       ...getErrorLogFields(e),
-      requestQuery: getDiscoverLogQuery(req.query),
+      discoveryContext: bookDiscoveryContext,
     });
     return res.status(503).json({
       status: 503,
@@ -2781,7 +3543,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
       return await runUserSecurityMutation(req.user!.id, async () => {
         const activeUser = await userRepository.findOne({
           where: { id: req.user!.id },
-          select: ['id', 'plexToken', 'passwordChangedAt'],
+          select: { id: true, plexToken: true, passwordChangedAt: true },
         });
         if (
           !activeUser ||

@@ -12,7 +12,6 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import {
-  ArrowUturnLeftIcon,
   Bars3Icon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -205,7 +204,7 @@ const DiscoverSliderEdit = ({
           className={`absolute -bottom-2 left-0 w-full border-t-4 border-indigo-500`}
         />
       )}
-      <div className="flex w-full flex-col rounded-t-lg border-l border-r border-t border-gray-800 bg-gray-900 p-4 text-gray-400 md:flex-row md:items-center md:space-x-2">
+      <div className="flex w-full flex-col rounded-t-lg border-t border-r border-l border-gray-800 bg-gray-900 p-4 text-gray-400 md:flex-row md:items-center md:space-x-2">
         <div
           className={`${slider.data ? 'mb-4' : 'mb-0'} flex space-x-2 md:mb-0`}
         >
@@ -282,11 +281,11 @@ const DiscoverSliderEdit = ({
                 <Button
                   buttonType="default"
                   buttonSize="sm"
+                  buttonIcon="cancel"
                   onClick={() => {
                     setIsEditing(false);
                   }}
                 >
-                  <ArrowUturnLeftIcon />
                   <span>{intl.formatMessage(globalMessages.cancel)}</span>
                 </Button>
               )}
@@ -303,9 +302,11 @@ const DiscoverSliderEdit = ({
               </Button>
             </>
           )}
-          <div className="absolute right-14 top-4 flex px-2 md:relative md:right-0 md:top-0">
+          <div className="absolute top-4 right-14 flex px-2 md:relative md:top-0 md:right-0">
             <button
               data-testid="discover-slider-move-up"
+              aria-label="Move this Discover section up"
+              data-disabled-reason="This section cannot be moved any higher."
               className={'hover:text-white disabled:text-gray-800'}
               onClick={() =>
                 onPositionUpdate(Number(slider.id), Position.Above, true)
@@ -316,6 +317,8 @@ const DiscoverSliderEdit = ({
             </button>
             <button
               data-testid="discover-slider-move-down"
+              aria-label="Move this Discover section down"
+              data-disabled-reason="This section cannot be moved any lower."
               className={'hover:text-white disabled:text-gray-800'}
               onClick={() =>
                 onPositionUpdate(Number(slider.id), Position.Below, true)
@@ -325,7 +328,7 @@ const DiscoverSliderEdit = ({
               <ChevronDownIcon className="h-7 w-7 md:h-6 md:w-6" />
             </button>
           </div>
-          <div className="absolute right-4 top-4 flex-1 text-right md:relative md:right-0 md:top-0">
+          <div className="absolute top-4 right-4 flex-1 text-right md:relative md:top-0 md:right-0">
             <Tooltip content={intl.formatMessage(messages.enable)}>
               <div>
                 <SlideCheckbox

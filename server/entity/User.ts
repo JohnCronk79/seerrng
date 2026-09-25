@@ -349,13 +349,17 @@ export class User {
   }
 
   public async preparePasswordResetDelivery(
-    claimRepository: Repository<User> = getRepository(User)
+    claimRepository: Repository<User> = getRepository(User),
+    options: { allowPending?: boolean } = {}
   ): Promise<(() => Promise<boolean>) | undefined> {
     const settings = getSettings();
     if (
       !settings.main.applicationUrl ||
       !settings.notifications.agents.email.enabled
     ) {
+      return undefined;
+    }
+    if (this.resetPasswordDeliveryPending && !options.allowPending) {
       return undefined;
     }
     const previousResetPasswordGuid = this.resetPasswordGuid;
@@ -399,11 +403,17 @@ export class User {
         return undefined;
       }
       claimedNewToken = true;
-    } else {
-      const deliveryClaim = await claimRepository.update(
-        { id: this.id, resetPasswordGuid: guid },
-        { resetPasswordDeliveryPending: true }
-      );
+    } else if (!this.resetPasswordDeliveryPending || !options.allowPending) {
+      const deliveryClaim = await claimRepository
+        .createQueryBuilder()
+        .update(User)
+        .set({ resetPasswordDeliveryPending: true })
+        .where('"id" = :id', { id: this.id })
+        .andWhere('"resetPasswordGuid" = :guid', { guid })
+        .andWhere('"resetPasswordDeliveryPending" = :pending', {
+          pending: false,
+        })
+        .execute();
       if (deliveryClaim.affected !== 1) {
         return undefined;
       }

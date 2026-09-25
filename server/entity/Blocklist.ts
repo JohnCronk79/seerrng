@@ -216,7 +216,7 @@ export class Blocklist implements BlocklistItem {
     });
 
     const mediaRepository = em.getRepository(Media);
-    let media: Media | null = null;
+    let media: Media | null;
 
     if (blocklistRequest.mediaType === 'music' && blocklistRequest.externalId) {
       media = await mediaRepository.findOne({
@@ -261,8 +261,6 @@ export class Blocklist implements BlocklistItem {
       blocklist.isMediaPlaceholder = true;
     }
 
-    await blocklistRepository.save(blocklist);
-
     if (!media) {
       media = new Media({
         tmdbId,
@@ -285,7 +283,6 @@ export class Blocklist implements BlocklistItem {
                 }),
               ]
             : undefined,
-        blocklist: Promise.resolve(blocklist),
       });
 
       await mediaRepository.save(media);
@@ -296,5 +293,10 @@ export class Blocklist implements BlocklistItem {
 
       await mediaRepository.save(media);
     }
+
+    // Blocklist owns the one-to-one join column. Assigning the inverse
+    // Media.blocklist relation alone does not persist the association.
+    blocklist.media = media;
+    await blocklistRepository.save(blocklist);
   }
 }

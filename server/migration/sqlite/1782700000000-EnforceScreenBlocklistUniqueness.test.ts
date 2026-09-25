@@ -5,7 +5,7 @@ import { EnforceScreenBlocklistUniqueness1782700000000 } from './1782700000000-E
 
 test('SQLite screen-blocklist uniqueness migration preserves manual ownership and media', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

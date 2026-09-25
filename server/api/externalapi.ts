@@ -1,6 +1,8 @@
+import { recordCacheHit, recordExternalApiCall } from '@server/lib/metrics';
 import logger from '@server/logger';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import { proxyRequestInterceptor } from '@server/utils/customProxyAgent';
+import { withTransientHttpRetry } from '@server/utils/httpError';
 import {
   createSafeHttpRequestOptions,
   createSafeHttpUrl,
@@ -77,8 +79,9 @@ export interface ExternalAPIOptions {
   maxContentLength?: number;
   maxBodyLength?: number;
   rateLimit?: {
-    maxRPS: number;
+    maxRPS?: number;
     maxRequests: number;
+    perMilliseconds?: number;
   };
   // Some callers (e.g. JellyfinAPI) build their base URL from structured
   // settings where an unset hostname is a normal "not yet configured" state,
@@ -345,6 +348,7 @@ class ExternalAPI {
       this.axios = rateLimit(this.axios, {
         maxRequests: options.rateLimit.maxRequests,
         maxRPS: options.rateLimit.maxRPS,
+        perMilliseconds: options.rateLimit.perMilliseconds,
       });
     }
 
@@ -373,6 +377,7 @@ class ExternalAPI {
     data?: unknown,
     config?: AxiosRequestConfig
   ): Promise<AxiosResponse<T>> {
+    recordExternalApiCall(method);
     const normalizedEndpoint = normalizeExternalApiRequestTarget(
       endpoint,
       config?.baseURL ?? this.baseUrl,
@@ -397,7 +402,13 @@ class ExternalAPI {
 
     switch (method) {
       case 'GET':
-        return this.axios.get<T>(requestTarget, config);
+        // Servarr and other provider APIs can briefly refuse or time out a
+        // read while they are starting, refreshing, or applying configuration.
+        // Reads are safe to repeat, so absorb one transient transport/server
+        // failure before the caller turns it into a user-facing error.
+        return withTransientHttpRetry(() =>
+          this.axios.get<T>(requestTarget, config)
+        );
       case 'POST':
         return this.axios.post<T>(requestTarget, data, config);
       case 'PUT':
@@ -422,6 +433,7 @@ class ExternalAPI {
       const cachedItem = this.cache?.get<T>(cacheKey);
       if (cachedItem !== undefined) {
         if (!isUsableResponse || isUsableResponse(cachedItem)) {
+          recordCacheHit('external-api');
           return cachedItem;
         }
         this.cache?.del(cacheKey);
@@ -466,6 +478,7 @@ class ExternalAPI {
     if (cacheable) {
       const cachedItem = this.cache?.get<T>(cacheKey);
       if (cachedItem !== undefined) {
+        recordCacheHit('external-api');
         return cachedItem;
       }
     }
@@ -491,6 +504,7 @@ class ExternalAPI {
     const cachedItem = ttl === 0 ? undefined : this.cache?.get<T>(cacheKey);
 
     if (cachedItem !== undefined) {
+      recordCacheHit('external-api');
       const keyTtl = this.cache?.getTtl(cacheKey) ?? 0;
 
       // If the item has passed our rolling check, fetch again in background
@@ -560,8 +574,7 @@ class ExternalAPI {
       : Symbol(pendingKey);
     if (coalesce) {
       const pendingRequest = ExternalAPI.pendingRequests.get(requestKey) as
-        | Promise<T>
-        | undefined;
+        Promise<T> | undefined;
       if (pendingRequest) {
         return pendingRequest;
       }

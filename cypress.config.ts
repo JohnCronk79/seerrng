@@ -1,9 +1,27 @@
 import { defineConfig } from 'cypress';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 export default defineConfig({
   projectId: 'onnqy3',
+  expose: {
+    RUN_LIVE_AUTH_AUDIT: process.env.RUN_LIVE_AUTH_AUDIT === 'true',
+    SEED_DATABASE: process.env.SEED_DATABASE === 'true',
+  },
   e2e: {
     baseUrl: 'http://localhost:5055',
+    setupNodeEvents(on) {
+      on('task', {
+        async seedDatabase() {
+          await execFileAsync('pnpm', ['cypress:prepare'], {
+            env: process.env,
+          });
+          return null;
+        },
+      });
+    },
     video: true,
   },
   env: {

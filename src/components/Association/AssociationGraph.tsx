@@ -18,18 +18,33 @@ import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { nodeHref, nodeImage, nodeImageType, nodeTitle } from './helpers';
 
-const EDGE_COLOR: Record<AssociationEdgeType, string> = {
-  similar: '#6366f1',
-  recommended: '#22d3ee',
-  'shared-person': '#f59e0b',
-  'shared-genre': '#64748b',
-};
-
 const EDGE_LABEL: Record<AssociationEdgeType, string> = {
   similar: 'Similar',
   recommended: 'Recommended',
   'shared-person': 'Shared person',
   'shared-genre': 'Weak connection',
+};
+
+const EDGE_CLASS: Record<
+  AssociationEdgeType,
+  { edge: string; swatch: string }
+> = {
+  similar: {
+    edge: 'association-edge-similar',
+    swatch: 'association-edge-swatch-similar',
+  },
+  recommended: {
+    edge: 'association-edge-recommended',
+    swatch: 'association-edge-swatch-recommended',
+  },
+  'shared-person': {
+    edge: 'association-edge-shared-person',
+    swatch: 'association-edge-swatch-shared-person',
+  },
+  'shared-genre': {
+    edge: 'association-edge-shared-genre',
+    swatch: 'association-edge-swatch-shared-genre',
+  },
 };
 
 const MEDIA_TONE: Record<string, string> = {
@@ -95,7 +110,7 @@ const GraphNode = ({ data }: { data: GraphNodeData }) => (
       {data.label}
     </span>
     {!data.isRoot && data.mediaType && (
-      <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-current">
+      <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-current uppercase">
         {data.mediaType === 'album' ? 'music' : data.mediaType}
       </span>
     )}
@@ -176,7 +191,7 @@ const AssociationGraph = ({ graph }: { graph: GraphData }) => {
         source: 'root',
         target: id,
         animated: edge.type === 'shared-person',
-        style: { stroke: EDGE_COLOR[edge.type], strokeWidth: 2 },
+        className: EDGE_CLASS[edge.type].edge,
       });
     });
 
@@ -186,16 +201,13 @@ const AssociationGraph = ({ graph }: { graph: GraphData }) => {
   return (
     <div className="relative h-[70vh] min-h-[28rem] w-full overflow-hidden rounded-lg border border-gray-700 bg-gray-900">
       <div
-        className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-950/90 px-3 py-2 text-xs text-gray-300 shadow-xl"
+        className="absolute top-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-950/90 px-3 py-2 text-xs text-gray-300 shadow-xl"
         data-testid="association-graph-legend"
       >
         {Object.entries(EDGE_LABEL).map(([type, label]) => (
           <span key={type} className="flex items-center gap-1.5">
             <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{
-                backgroundColor: EDGE_COLOR[type as AssociationEdgeType],
-              }}
+              className={`${EDGE_CLASS[type as AssociationEdgeType].swatch} h-2.5 w-2.5 rounded-full`}
             />
             {label}
           </span>
@@ -229,7 +241,7 @@ const AssociationGraph = ({ graph }: { graph: GraphData }) => {
         <Controls showInteractive={false} />
       </ReactFlow>
       {selected && !selected.isRoot && (
-        <div className="absolute bottom-3 left-3 right-3 z-10 rounded-lg border border-gray-700 bg-gray-950/95 p-3 text-sm shadow-xl sm:left-auto sm:w-80">
+        <div className="absolute right-3 bottom-3 left-3 z-10 rounded-lg border border-gray-700 bg-gray-950/95 p-3 text-sm shadow-xl sm:left-auto sm:w-80">
           <div className="flex items-start gap-3">
             {selected.image && (
               <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded bg-gray-800">

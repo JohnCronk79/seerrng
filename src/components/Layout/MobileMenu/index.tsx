@@ -15,6 +15,7 @@ import {
   FilmIcon,
   MusicalNoteIcon,
   SparklesIcon,
+  SpeakerWaveIcon,
   TvIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
@@ -27,6 +28,7 @@ import {
   FilmIcon as FilledFilmIcon,
   MusicalNoteIcon as FilledMusicalNoteIcon,
   SparklesIcon as FilledSparklesIcon,
+  SpeakerWaveIcon as FilledSpeakerWaveIcon,
   TvIcon as FilledTvIcon,
   UsersIcon as FilledUsersIcon,
   XMarkIcon,
@@ -136,11 +138,18 @@ const MobileMenu = ({
         activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
       },
       {
-        href: '/requests/status',
-        content: intl.formatMessage(menuMessages.requeststatus),
+        href: '/discover/audiobooks',
+        content: intl.formatMessage(menuMessages.browseaudiobooks),
+        svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
+        activeRegExp: /^\/discover\/audiobooks$/,
+      },
+      {
+        href: '/requests',
+        content: intl.formatMessage(menuMessages.requests),
         svgIcon: <ClockIcon className="h-6 w-6" />,
         svgIconSelected: <FilledClockIcon className="h-6 w-6" />,
-        activeRegExp: /^\/requests\/status/,
+        activeRegExp: /^\/requests\/?$/,
       },
       {
         href: '/blocklist',
@@ -238,8 +247,8 @@ const MobileMenu = ({
               key={`mobile-menu-link-${link.href}`}
               href={link.href}
               prefetch={false}
-              className={`flex items-center ${
-                isActive ? 'text-indigo-500' : ''
+              className={`main-menu-link flex items-center px-2 py-2 ${
+                isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
               }`}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -276,7 +285,7 @@ const MobileMenu = ({
           );
         })}
       </Transition>
-      <div className="padding-bottom-safe border-t border-gray-600 bg-gray-800/90 backdrop-blur">
+      <div className="app-mobile-menu-surface padding-bottom-safe border-t border-gray-600 backdrop-blur">
         <div className="flex h-full items-center justify-between px-6 py-4 text-gray-100">
           {filteredLinks
             .slice(0, filteredLinks.length === 5 ? 5 : 4)
@@ -291,8 +300,8 @@ const MobileMenu = ({
                   aria-label={
                     typeof link.content === 'string' ? link.content : undefined
                   }
-                  className={`relative flex flex-col items-center space-y-1 ${
-                    isActive ? 'text-indigo-500' : ''
+                  className={`main-menu-link relative flex flex-col items-center space-y-1 p-2 ${
+                    isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
                   }`}
                 >
                   {cloneElement(
@@ -325,8 +334,8 @@ const MobileMenu = ({
             })}
           {filteredLinks.length > 4 && filteredLinks.length !== 5 && (
             <button
-              className={`flex flex-col items-center space-y-1 ${
-                isOpen ? 'text-indigo-500' : ''
+              className={`main-menu-link flex flex-col items-center space-y-1 p-2 ${
+                isOpen ? 'sidebar-link-selected' : 'sidebar-link-idle'
               }`}
               onClick={() => toggle()}
               aria-label={isOpen ? 'Close menu' : 'More navigation'}

@@ -7,7 +7,7 @@ import { PreserveBlocklistMediaStatus1781900000000 } from './1781900000000-Prese
 describe('PreserveBlocklistMediaStatus1781900000000', () => {
   it('adds and removes reversible blocklist metadata columns', async () => {
     const dataSource = new DataSource({
-      type: 'sqlite',
+      type: 'better-sqlite3',
       database: ':memory:',
     });
     await dataSource.initialize();

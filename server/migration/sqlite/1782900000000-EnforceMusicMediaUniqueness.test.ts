@@ -5,7 +5,7 @@ import { EnforceMusicMediaUniqueness1782900000000 } from './1782900000000-Enforc
 
 test('SQLite music-media uniqueness migration merges duplicate relationships', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

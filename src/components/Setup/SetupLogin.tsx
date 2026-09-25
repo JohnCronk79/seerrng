@@ -11,7 +11,7 @@ import { FormattedMessage } from 'react-intl';
 const messages = defineMessages('components.Setup', {
   welcome: 'Welcome to Seerr',
   signinMessage: 'Get started by signing in',
-  signinToAccount: 'Sign in to your account',
+  signinHeading: 'Sign in to your account',
   signinWithJellyfin: 'Enter your Jellyfin details',
   signinWithEmby: 'Enter your Emby details',
   signinWithPlex: 'Enter your Plex details',
@@ -22,12 +22,14 @@ interface LoginWithMediaServerProps {
   serverType: MediaServerType;
   onCancel: () => void;
   onComplete: () => void;
+  onSetupConfigured?: () => void;
 }
 
 const SetupLogin: React.FC<LoginWithMediaServerProps> = ({
   serverType,
   onCancel,
   onComplete,
+  onSetupConfigured,
 }) => {
   const [authToken, setAuthToken] = useState<string | undefined>(undefined);
   const [mediaServerType, setMediaServerType] = useState<MediaServerType>(
@@ -81,7 +83,7 @@ const SetupLogin: React.FC<LoginWithMediaServerProps> = ({
   return (
     <div className="p-4">
       <div className="mb-2 flex justify-center text-xl font-bold">
-        <FormattedMessage {...messages.signinToAccount} />
+        <FormattedMessage {...messages.signinHeading} />
       </div>
       <div className="mb-2 flex justify-center pb-6 text-sm">
         {serverType === MediaServerType.JELLYFIN ? (
@@ -115,6 +117,7 @@ const SetupLogin: React.FC<LoginWithMediaServerProps> = ({
           revalidate={revalidate}
           serverType={serverType}
           onCancel={onCancel}
+          onSetupConfigured={onSetupConfigured}
         />
       )}
       {serverType === MediaServerType.EMBY && (
@@ -122,6 +125,7 @@ const SetupLogin: React.FC<LoginWithMediaServerProps> = ({
           revalidate={revalidate}
           serverType={serverType}
           onCancel={onCancel}
+          onSetupConfigured={onSetupConfigured}
         />
       )}
     </div>

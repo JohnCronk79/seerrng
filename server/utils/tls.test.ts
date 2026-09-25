@@ -28,6 +28,12 @@ describe('TLS configuration parsing', () => {
     assert.equal(parseTlsBoolean('FLAG', '1'), true);
     assert.throws(() => parseTlsMode('automatic'), /SEERR_TLS_MODE/);
     assert.throws(() => parseTlsBoolean('FLAG', 'yes'), /true.*false/);
+
+    assert.equal(
+      getTlsConfigurationStatus(undefined, { NODE_ENV: 'test' })
+        .httpAuthAllowed,
+      true
+    );
   });
 
   it('rejects redirect hosts that are not explicitly in the TLS SAN list', () => {
@@ -147,9 +153,7 @@ describe('built-in local TLS material', () => {
       for (const file of ['ca.crt', 'ca.key', 'server.crt', 'server.key']) {
         const stat = await fs.stat(path.join(directory, file));
         assert.equal(stat.isFile(), true);
-        if (process.platform !== 'win32') {
-          assert.equal(stat.mode & 0o077, 0);
-        }
+        assert.equal(stat.mode & 0o077, 0);
       }
 
       const caCertificate = new X509Certificate(

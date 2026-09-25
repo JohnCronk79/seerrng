@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, it, mock } from 'node:test';
 
+import CoverArtArchive from '@server/api/coverartarchive';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import TheAudioDb from '@server/api/theaudiodb';
@@ -350,6 +351,72 @@ describe('GET /music/:id', () => {
     assert.deepStrictEqual(res.body.tracks[0].artists, []);
   });
 
+  it('includes release labels when MusicBrainz exposes them', async () => {
+    const releaseId = '00000000-0000-0000-0000-000000000001';
+    mock.method(ListenBrainzAPI.prototype, 'getAlbum', async () => ({
+      caa_release_mbid: releaseId,
+      recordings_release_mbid: '',
+      release_group_mbid: 'release-group-id',
+      type: 'Album',
+      release_group_metadata: {
+        release_group: {
+          name: 'Labelled Album',
+          date: '2024-01-01',
+          caa_id: 0,
+          caa_release_mbid: '',
+          rels: [],
+          type: 'Album',
+        },
+        release: {
+          caa_id: 0,
+          caa_release_mbid: releaseId,
+          date: '2024-01-01',
+          name: 'Labelled Album',
+          rels: [],
+          type: 'Album',
+        },
+        artist: {
+          name: 'Labelled Artist',
+          artist_credit_id: 0,
+          artists: [],
+        },
+        tag: { artist: [], release_group: [] },
+      },
+      listening_stats: {
+        artist_mbids: [],
+        artist_name: 'Labelled Artist',
+        caa_id: 0,
+        caa_release_mbid: releaseId,
+        from_ts: 0,
+        last_updated: 0,
+        listeners: [],
+        release_group_mbid: 'release-group-id',
+        release_group_name: 'Labelled Album',
+        stats_range: '',
+        to_ts: 0,
+        total_listen_count: 0,
+        total_user_count: 0,
+      },
+      mediums: [],
+    }));
+    mock.method(MusicBrainz.prototype, 'getReleaseLabels', async () => [
+      'Example Records',
+      'Example Records Publishing',
+    ]);
+    mock.method(CoverArtArchive.prototype, 'getCoverArt', async () => ({
+      images: [],
+    }));
+
+    const agent = await login();
+    const res = await agent.get('/music/release-group-id');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      res.body.recordLabel,
+      'Example Records, Example Records Publishing'
+    );
+  });
+
   it('falls back to MusicBrainz when ListenBrainz has no album detail page', async () => {
     mock.method(ListenBrainzAPI.prototype, 'getAlbum', async () => {
       throw new Error('[ListenBrainz] Failed to fetch album details: 404');
@@ -390,6 +457,43 @@ describe('GET /music/:id', () => {
     assert.deepStrictEqual(res.body.tags.releaseGroup, [
       { count: 5, genreMbid: '', tag: 'jazz' },
     ]);
+  });
+
+  it('returns the normalized MusicBrainz release-group rating and vote count', async () => {
+    mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () =>
+        ({
+          id: 'release-group-id',
+          score: 100,
+          media_type: 'album',
+          title: 'Rated Album',
+          'primary-type': 'Album',
+          'first-release-date': '2024-02-03',
+          'artist-credit': [],
+          posterPath: undefined,
+          'type-id': '',
+          'primary-type-id': '',
+          count: 0,
+          releases: [],
+          releasedate: '2024-02-03',
+          rating: { value: 4.25, 'votes-count': 32 },
+        }) as Awaited<ReturnType<MusicBrainz['getReleaseGroupDetails']>>
+    );
+
+    const agent = await login();
+    const res = await agent.get('/music/release-group-id/rating');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, {
+      rating: {
+        score: 8.5,
+        votes: 32,
+        url: 'https://musicbrainz.org/release-group/release-group-id',
+        source: 'musicbrainz',
+      },
+    });
   });
 
   it('returns 404 when neither music detail provider has the album', async () => {

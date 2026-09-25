@@ -146,9 +146,9 @@ const Slider = ({
     <div className="relative" data-testid="media-slider">
       <div className="absolute right-0 -mt-10 flex gap-1 text-gray-400">
         <Button
-          buttonType="ghost"
+          buttonType="success"
           buttonSize="sm"
-          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
+          className="h-8 w-8 p-0 disabled:text-gray-600"
           onClick={() => slide(Direction.LEFT)}
           disabled={scrollPos.isStart}
           disabledReason={intl.formatMessage(globalMessages.noPreviousItems)}
@@ -158,9 +158,9 @@ const Slider = ({
           <ChevronLeftIcon className="h-4 w-4" />
         </Button>
         <Button
-          buttonType="ghost"
+          buttonType="success"
           buttonSize="sm"
-          className="h-8 w-8 border-gray-600 bg-gray-900/70 p-0 text-gray-300 hover:border-gray-400 hover:bg-gray-900/70 hover:text-white disabled:text-gray-600"
+          className="h-8 w-8 p-0 disabled:text-gray-600"
           onClick={() => slide(Direction.RIGHT)}
           disabled={scrollPos.isEnd}
           disabledReason={intl.formatMessage(globalMessages.noNextItems)}
@@ -171,8 +171,10 @@ const Slider = ({
         </Button>
       </div>
       <div
-        className={`hide-scrollbar relative -my-2 -ml-4 -mr-4 overflow-y-auto overflow-x-scroll overscroll-x-contain whitespace-nowrap px-2 py-2 ${
-          compact ? 'min-h-[5.5rem]' : 'min-h-[13.5rem] md:min-h-[17rem]'
+        className={`slider-track hide-scrollbar relative -my-2 -mr-4 -ml-4 overflow-x-scroll overflow-y-auto overscroll-x-contain px-2 py-2 whitespace-nowrap ${
+          compact
+            ? 'slider-track-compact min-h-[5.5rem]'
+            : 'min-h-[13.5rem] md:min-h-[17rem]'
         }`}
         ref={containerRef}
         onScroll={onScroll}
@@ -195,7 +197,7 @@ const Slider = ({
             </div>
           ))}
         {isEmpty && (
-          <div className="mb-16 mt-16 text-center font-medium text-gray-300">
+          <div className="mt-16 mb-16 text-center font-medium text-gray-300">
             {emptyMessage
               ? emptyMessage
               : intl.formatMessage(globalMessages.noresults)}

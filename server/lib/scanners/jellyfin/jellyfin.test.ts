@@ -5,19 +5,24 @@ import type {
 } from '@server/api/jellyfin';
 import JellyfinAPI from '@server/api/jellyfin';
 import MusicBrainz from '@server/api/musicbrainz';
+import type { TvShowProvider } from '@server/api/provider';
 import TheMovieDb from '@server/api/themoviedb';
 import type {
   TmdbTvDetails,
   TmdbTvSeasonResult,
 } from '@server/api/themoviedb/interfaces';
+import Tvdb from '@server/api/tvdb';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import type { Library } from '@server/lib/settings';
-import { getSettings } from '@server/lib/settings';
+import {
+  getSettings,
+  MetadataProviderType,
+  type Library,
+} from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -43,6 +48,9 @@ let getEpisodesImpl: (
   seriesID: string,
   seasonID: string
 ) => Promise<JellyfinLibraryItem[]> = async () => [];
+let getAudioChildrenWithMediaInfoImpl: (
+  parentId: string
+) => Promise<JellyfinLibraryItemExtended[]> = async () => [];
 let getReleaseGroupImpl: (
   releaseId: string
 ) => Promise<string | null> = async () => null;
@@ -75,6 +83,15 @@ Object.defineProperty(JellyfinAPI.prototype, 'getEpisodes', {
   get() {
     return async (seriesID: string, seasonID: string) =>
       getEpisodesImpl(seriesID, seasonID);
+  },
+  set() {},
+  configurable: true,
+});
+
+Object.defineProperty(JellyfinAPI.prototype, 'getAudioChildrenWithMediaInfo', {
+  get() {
+    return async (parentId: string) =>
+      getAudioChildrenWithMediaInfoImpl(parentId);
   },
   set() {},
   configurable: true,
@@ -115,6 +132,18 @@ Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
 import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 
 setupTestDb();
+
+// BaseScanner constructs its TMDB client during module evaluation, before the
+// prototype getter above is installed. Override that retained instance too so
+// the fixture remains deterministic under both Node and Vitest loaders.
+Object.defineProperty((jellyfinFullScanner as any).tmdb, 'getTvShow', {
+  get() {
+    return async (args: { tvId: number; language?: string }) =>
+      getTvShowImpl(args);
+  },
+  set() {},
+  configurable: true,
+});
 
 // --- Helpers ---
 
@@ -246,6 +275,10 @@ function configureJellyfinWithLibrary(
     apiKey: 'test-api-key',
     libraries,
   };
+  settings.metadataSettings = {
+    ...settings.metadataSettings,
+    tv: MetadataProviderType.TMDB,
+  };
 }
 
 describe('Jellyfin Scanner', () => {
@@ -254,6 +287,7 @@ describe('Jellyfin Scanner', () => {
     getItemDataImpl = async () => undefined;
     getSeasonsImpl = async () => [];
     getEpisodesImpl = async () => [];
+    getAudioChildrenWithMediaInfoImpl = async () => [];
     getReleaseGroupImpl = async () => null;
     getTvShowImpl = async () => fakeTmdbShow(1);
 
@@ -261,6 +295,43 @@ describe('Jellyfin Scanner', () => {
       jellyfinUserId: 'admin-user-id',
       jellyfinDeviceId: 'admin-device-id',
     });
+  });
+
+  it('passes the resolved TMDB id to a TVDB-only provider', async () => {
+    const resolvedTmdbId = 987;
+    const requestedIds: number[] = [];
+    const tvdbProvider: TvShowProvider = {
+      getTvShow: async ({ tvId }) => {
+        requestedIds.push(tvId);
+        return fakeTmdbShow(resolvedTmdbId);
+      },
+      getTvSeason: async () => {
+        throw new Error('not used');
+      },
+      getShowByTvdbId: async () => {
+        throw new Error('not used');
+      },
+    };
+    const originalGetInstance = Tvdb.getInstance;
+
+    configureJellyfinWithLibrary();
+    getTvShowImpl = async () => fakeTmdbShow(resolvedTmdbId);
+    getSettings().metadataSettings.tv = MetadataProviderType.TVDB;
+    Object.defineProperty(Tvdb, 'getInstance', {
+      value: async () => tvdbProvider,
+      configurable: true,
+    });
+
+    try {
+      await (jellyfinFullScanner as any).getTvShow({ tmdbId: 123 });
+    } finally {
+      Object.defineProperty(Tvdb, 'getInstance', {
+        value: originalGetInstance,
+        configurable: true,
+      });
+    }
+
+    assert.deepStrictEqual(requestedIds, [resolvedTmdbId]);
   });
 
   it('marks Jellyfin music albums available using their release-group ID', async () => {
@@ -309,6 +380,45 @@ describe('Jellyfin Scanner', () => {
       where: { mbId: releaseGroupId, mediaType: MediaType.MUSIC },
     });
     assert.strictEqual(media.status, MediaStatus.AVAILABLE);
+  });
+
+  it('retains separate MP3 and FLAC album identifiers for the same release group', async () => {
+    const releaseGroupId = 'jellyfin-audio-variants';
+    configureJellyfinWithLibrary([
+      { id: 'mp3', name: 'MP3', enabled: true, type: 'music' },
+      { id: 'flac', name: 'FLAC', enabled: true, type: 'music' },
+    ]);
+    getLibraryContentsImpl = async (libraryId) => [
+      fakeJellyfinMusicAlbumItem(`${libraryId}-album`),
+    ];
+    getItemDataImpl = async (itemId) => ({
+      ...fakeJellyfinMusicAlbumItem(itemId),
+      ProviderIds: { MusicBrainzReleaseGroup: releaseGroupId },
+      MediaSources: [
+        {
+          Protocol: 'File',
+          Id: `${itemId}-source`,
+          Path: `/music/${itemId}`,
+          Type: 'Default',
+          VideoType: 'None',
+          MediaStreams: [
+            {
+              Codec: itemId.startsWith('flac') ? 'flac' : 'mp3',
+              Type: 'Audio',
+              DisplayTitle: 'Audio',
+            },
+          ],
+        },
+      ],
+    });
+
+    await jellyfinFullScanner.run();
+
+    const media = await getRepository(Media).findOneOrFail({
+      where: { mbId: releaseGroupId, mediaType: MediaType.MUSIC },
+    });
+    assert.strictEqual(media.jellyfinMediaIdMp3, 'mp3-album');
+    assert.strictEqual(media.jellyfinMediaIdFlac, 'flac-album');
   });
 
   describe('empty TMDB season handling', () => {
@@ -405,7 +515,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5000 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -483,7 +593,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5001 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -560,7 +670,7 @@ describe('Jellyfin Scanner', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 5002 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(

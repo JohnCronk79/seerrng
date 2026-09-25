@@ -1,12 +1,11 @@
-import Slider from '@app/components/Slider';
+import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import type {
   AssociationEdge,
   AssociationGraph,
 } from '@app/hooks/useAssociations';
 import defineMessages from '@app/utils/defineMessages';
-import Link from 'next/link';
 import { useIntl } from 'react-intl';
-import AssociationCard from './AssociationCard';
+import AssociationDetailCard from './AssociationDetailCard';
 
 const messages = defineMessages('components.Association', {
   similar: 'More like this',
@@ -101,27 +100,14 @@ const AssociationWall = ({ graph }: { graph: AssociationGraph }) => {
               <span>{section.title}</span>
             </div>
           </div>
-          <Slider
-            sliderKey={`assoc-${section.key}`}
-            isLoading={false}
-            isEmpty={false}
-            items={edges.map((edge) => (
-              <div
+          <ThreeItemScroll label={section.title}>
+            {edges.map((edge) => (
+              <AssociationDetailCard
                 key={`${edge.node.mediaType}:${edge.node.id}`}
-                className="space-y-2"
-              >
-                <AssociationCard node={edge.node} />
-                <Link
-                  href={`/associations/${edge.node.mediaType}/${encodeURIComponent(
-                    String(edge.node.id)
-                  )}`}
-                  className="block text-center text-xs font-semibold text-indigo-400 transition hover:text-indigo-300"
-                >
-                  Explore connections
-                </Link>
-              </div>
+                edge={edge}
+              />
             ))}
-          />
+          </ThreeItemScroll>
         </div>
       ))}
     </div>

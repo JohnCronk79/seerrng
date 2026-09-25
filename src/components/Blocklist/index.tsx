@@ -10,7 +10,15 @@ import MediaTypeBadge, {
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
+import {
+  CompactSelect,
+  FilterResetButton,
+  getFilterToggleButtonClass,
+  type CompactSelectOption,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
 import {
@@ -27,12 +35,11 @@ import {
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import {
+  ArchiveBoxXMarkIcon,
   BarsArrowDownIcon,
   BarsArrowUpIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
   TagIcon,
-  TrashIcon,
 } from '@heroicons/react/24/outline';
 import type {
   BlocklistItem,
@@ -52,6 +59,7 @@ import useSWR from 'swr';
 
 const messages = defineMessages('components.Blocklist', {
   taskFilters: 'Task Filters',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   clearFilters: 'Clear Filters',
   all: 'All Blocklisted',
@@ -89,6 +97,7 @@ const messages = defineMessages('components.Blocklist', {
   blocklistedOn: 'Blocked On',
   source: 'Source',
   manualSource: 'Manual',
+  manualSourceTooltip: 'Someone explicitly blocked this title in Seerr.',
   unavailable: 'Not available',
   removeTooltip: 'Remove this item from the blocklist.',
   removeFailed: 'Unable to remove this item from the blocklist.',
@@ -292,6 +301,12 @@ const Blocklist = () => {
   const [currentFilter, setCurrentFilter] = useState<Filter>(Filter.ALL);
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'blocklist',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book'],
+    restore: setMediaFilter,
+  });
   const [sort, setSort] = useState<'date' | 'title' | 'mediaType'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const router = useRouter();
@@ -344,6 +359,13 @@ const Blocklist = () => {
       count: data?.counts.blocklistedTags ?? 0,
     },
   ];
+  const timeFrameOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.allTime), value: 'all' },
+    { label: intl.formatMessage(messages.sevenDays), value: '7d' },
+    { label: intl.formatMessage(messages.fourteenDays), value: '14d' },
+    { label: intl.formatMessage(messages.thirtyDays), value: '30d' },
+    { label: intl.formatMessage(messages.sixMonths), value: '6m' },
+  ];
   const updateSort = (nextSort: typeof sort) => {
     setSortDirection(
       sort === nextSort
@@ -361,35 +383,42 @@ const Blocklist = () => {
     setCurrentFilter(Filter.ALL);
     setTimeFrame('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setSearchFilter('');
+    setSort('date');
+    setSortDirection('desc');
     resetPage();
   };
 
   return (
     <>
       <PageTitle title={intl.formatMessage(globalMessages.blocklist)} />
-      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+      <h2 className="mt-8 text-2xl leading-7 font-bold text-gray-100 sm:text-4xl sm:leading-9">
         <span className="text-overseerr">
           {intl.formatMessage(globalMessages.blocklist)}
         </span>
       </h2>
 
       <section
-        className="mb-5 mt-4"
+        className="app-filter-section-gap mt-4"
         aria-label={intl.formatMessage(messages.taskFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={
+              currentFilter === Filter.ALL &&
+              timeFrame === 'all' &&
+              mediaFilter === 'all' &&
+              !searchFilter &&
+              sort === 'date' &&
+              sortDirection === 'desc'
+            }
             onClick={clearFilters}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          >
-            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           {filterOptions.map((option) => (
             <button
               key={option.value}
@@ -399,14 +428,12 @@ const Blocklist = () => {
                 setCurrentFilter(option.value);
                 resetPage();
               }}
-              className={`inline-flex h-8 items-center whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+              className={getFilterToggleButtonClass(
                 currentFilter === option.value
-                  ? 'border-indigo-400 bg-indigo-500 text-white'
-                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-              }`}
+              )}
             >
               {intl.formatMessage(option.label)}
-              <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-100">
+              <span className="ml-2 rounded-full bg-gray-950/40 px-1.5 py-0.5 text-[10px] leading-none font-semibold text-gray-100">
                 {option.count}
               </span>
             </button>
@@ -415,13 +442,14 @@ const Blocklist = () => {
       </section>
 
       <section
-        className="mb-5"
-        aria-label={intl.formatMessage(messages.filters)}
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.mediaFilters)}
       >
         <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.filters)}
+          {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -437,57 +465,40 @@ const Blocklist = () => {
               aria-pressed={mediaFilter === value}
               onClick={() => {
                 setMediaFilter(value);
+                mediaPin.remember(value);
                 resetPage();
               }}
-              className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-                mediaFilter === value
-                  ? 'border-indigo-400 bg-indigo-500 text-white'
-                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-              }`}
+              className={getFilterToggleButtonClass(mediaFilter === value)}
             >
               {intl.formatMessage(label)}
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex h-8 flex-shrink-0 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+      </section>
+
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.filters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <CompactSelect
+            label={intl.formatMessage(messages.timePeriod)}
+            value={timeFrame}
+            options={timeFrameOptions}
+            onChange={(value) => {
+              setTimeFrame(value as TimeFrame);
+              resetPage();
+            }}
+          />
+          <label className="discover-filter-control w-72 flex-none self-center">
             <span
-              className={`inline-flex flex-shrink-0 items-center justify-center whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
-              }`}
-            >
-              {intl.formatMessage(messages.timePeriod)}
-            </span>
-            <select
-              value={timeFrame}
-              onChange={(event) => {
-                setTimeFrame(event.target.value as TimeFrame);
-                resetPage();
-              }}
-              className="w-28 border-0 bg-gray-900/70 px-1.5 py-1 text-xs font-medium text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-              aria-label={intl.formatMessage(messages.timePeriod)}
-            >
-              <option value="all">
-                {intl.formatMessage(messages.allTime)}
-              </option>
-              <option value="7d">
-                {intl.formatMessage(messages.sevenDays)}
-              </option>
-              <option value="14d">
-                {intl.formatMessage(messages.fourteenDays)}
-              </option>
-              <option value="30d">
-                {intl.formatMessage(messages.thirtyDays)}
-              </option>
-              <option value="6m">
-                {intl.formatMessage(messages.sixMonths)}
-              </option>
-            </select>
-          </label>
-          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                searchFilter.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                searchFilter.trim()
+                  ? 'discover-filter-control-label-active'
+                  : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -502,13 +513,13 @@ const Blocklist = () => {
               }}
               placeholder={intl.formatMessage(messages.searchPlaceholder)}
               aria-label={intl.formatMessage(messages.searchPlaceholder)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
         </div>
       </section>
 
-      <section className="mb-5">
+      <section className="app-filter-section-gap">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.sortBy)}
         </div>
@@ -531,7 +542,7 @@ const Blocklist = () => {
                 type="button"
                 aria-pressed={active}
                 onClick={() => updateSort(value)}
-                className={`inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+                className={getFilterToggleButtonClass(active)}
               >
                 {intl.formatMessage(label)}
                 <DirectionIcon className="h-4 w-4" />
@@ -544,11 +555,11 @@ const Blocklist = () => {
       {!data ? (
         <LoadingSpinner />
       ) : data.results.length === 0 ? (
-        <div className="refreshed-card-surface flex min-h-16 w-full items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-sm text-gray-400">
+        <div className="refreshed-card-surface flex min-h-16 w-full items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-sm">
           {intl.formatMessage(messages.noResults)}
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="card-stack">
           {data.results.map((item) => (
             <BlocklistedItem
               key={`${item.mediaType}-${item.externalId ?? item.tmdbId}`}
@@ -716,7 +727,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
       <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
         <Link
           href={mediaHref}
-          className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition hover:ring-indigo-400 sm:h-[120px] sm:w-20"
+          className="detail-card-poster relative block overflow-hidden rounded-lg ring-1 ring-gray-600 transition hover:ring-indigo-400"
         >
           <CachedImage
             type={posterType}
@@ -726,7 +737,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
             sizes="(min-width: 640px) 80px, 64px"
             className="object-cover"
           />
-          <span className="pointer-events-none absolute left-1/2 top-1 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
+          <span className="pointer-events-none absolute top-1 left-1/2 z-10 w-[calc(100%-0.375rem)] -translate-x-1/2">
             <MediaTypeBadge
               mediaType={getMediaTypeBadgeType(item.mediaType) ?? 'movie'}
               variant="compact"
@@ -738,18 +749,18 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
         <div className="flex min-w-0 flex-col">
           <Link
             href={mediaHref}
-            className="-mt-0.5 block truncate text-lg font-semibold leading-5 text-white hover:underline"
+            className="detail-summary-title block truncate text-lg leading-5 font-semibold text-white hover:underline"
           >
             {displayTitle}
             {year ? ` (${year})` : ''}
           </Link>
-          <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 card:grid-cols-3">
-            <div className="min-w-0 card:col-span-2 card:pr-3">
-              <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+          <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1">
+            <div className="detail-paired-column-span min-w-0">
+              <dl className="media-detail-rows refreshed-detail-text detail-paired-columns grid min-w-0 content-start text-xs">
+                <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                   {intl.formatMessage(messages.mediaAndFormat)}:
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                   {item.mediaType === 'tv'
                     ? 'Series'
                     : item.mediaType === 'music'
@@ -758,7 +769,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                         ? 'Book'
                         : 'Movie'}
                 </dd>
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                   {intl.formatMessage(
                     title && isBook(title)
                       ? messages.firstPublished
@@ -766,20 +777,19 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                   )}
                   :
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                   {releaseDate || unavailable}
                 </dd>
-                <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                   {intl.formatMessage(
                     title && isBook(title) ? messages.pages : messages.runtime
                   )}
                   :
                 </dt>
-                <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                   {title ? getRuntime(title, unavailable) : unavailable}
                 </dd>
-                <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
+                <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                   {secondaryDetails.map((detail) => (
                     <div className="contents" key={detail.label}>
                       <dt className="font-medium text-gray-100">
@@ -792,7 +802,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                             {value.href ? (
                               <Link
                                 href={value.href}
-                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {value.name}
                               </Link>
@@ -805,17 +815,17 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                     </div>
                   ))}
                 </div>
-                <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                   {intl.formatMessage(messages.genres)}:
                 </dt>
-                <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
+                <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                   {genres.length > 0
                     ? genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
                           <Link
                             href={genre.href}
-                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                           >
                             {genre.name}
                           </Link>
@@ -826,7 +836,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
               </dl>
             </div>
 
-            <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
+            <dl className="media-detail-rows refreshed-detail-text media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
               <dt className="font-medium text-gray-100">
                 {intl.formatMessage(messages.blocklistedBy)}:
               </dt>
@@ -864,40 +874,48 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                 {item.blocklistedTags ? (
                   <BlocklistedTagsBadge data={item} compact />
                 ) : (
-                  <Badge
-                    badgeType="dark"
-                    className={compactBlocklistSourceBadgeClass}
+                  <Tooltip
+                    content={intl.formatMessage(messages.manualSourceTooltip)}
                   >
-                    <TagIcon
-                      className="h-2.5 w-2.5 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">
-                      {intl.formatMessage(messages.manualSource)}
+                    <span className="inline-flex max-w-full" tabIndex={0}>
+                      <Badge
+                        badgeType="dark"
+                        className={compactBlocklistSourceBadgeClass}
+                      >
+                        <TagIcon
+                          className="h-2.5 w-2.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">
+                          {intl.formatMessage(messages.manualSource)}
+                        </span>
+                      </Badge>
                     </span>
-                  </Badge>
+                  </Tooltip>
                 )}
               </dd>
+              {hasPermission(Permission.MANAGE_BLOCKLIST) && (
+                <dd className="col-span-2 m-0 flex min-w-0 justify-end">
+                  <Tooltip content={intl.formatMessage(messages.removeTooltip)}>
+                    <button
+                      type="button"
+                      disabled={isUpdating}
+                      onClick={() => void removeFromBlocklist()}
+                      className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
+                    >
+                      <ArchiveBoxXMarkIcon
+                        className="h-3.5 w-3.5"
+                        aria-hidden="true"
+                      />
+                      {intl.formatMessage(globalMessages.removefromBlocklist)}
+                    </button>
+                  </Tooltip>
+                </dd>
+              )}
             </dl>
           </div>
         </div>
       </div>
-
-      {hasPermission(Permission.MANAGE_BLOCKLIST) && (
-        <div className="relative z-10 mt-[5px] flex justify-end">
-          <Tooltip content={intl.formatMessage(messages.removeTooltip)}>
-            <button
-              type="button"
-              disabled={isUpdating}
-              onClick={() => void removeFromBlocklist()}
-              className="inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-40"
-            >
-              <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              {intl.formatMessage(globalMessages.removefromBlocklist)}
-            </button>
-          </Tooltip>
-        </div>
-      )}
     </article>
   );
 };

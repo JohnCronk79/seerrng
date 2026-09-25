@@ -101,9 +101,9 @@ Before proceeding, choose which installation method best suits your server:
   ### 4. Access Seerr
 
   Open the WebUI at `http://<your-unraid-ip>:5055` and follow the setup wizard.
-  For persistent sign-in, choose built-in HTTPS in the first-run transport
-  section, use an HTTPS reverse proxy, or explicitly acknowledge the trusted-LAN
-  HTTP fallback.
+  Direct HTTP sign-in works by default with a warning. For encrypted sign-in,
+  choose built-in HTTPS in the first-run transport section or use an HTTPS
+  reverse proxy. Set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
 
   </TabItem>
   <TabItem value="unraid-default" label="Unraid Default">
@@ -174,9 +174,9 @@ Before proceeding, choose which installation method best suits your server:
   ### 4. Access Seerr
 
   Open the WebUI at `http://<your-unraid-ip>:5055` and follow the setup wizard.
-  For persistent sign-in, choose built-in HTTPS in the first-run transport
-  section, use an HTTPS reverse proxy, or explicitly acknowledge the trusted-LAN
-  HTTP fallback.
+  Direct HTTP sign-in works by default with a warning. For encrypted sign-in,
+  choose built-in HTTPS in the first-run transport section or use an HTTPS
+  reverse proxy. Set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
 
   </TabItem>
 </Tabs>

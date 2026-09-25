@@ -11,19 +11,16 @@ import type {
   TmdbTvDetails,
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
-import { MediaType as MainMediaType } from '@server/constants/media';
+import {
+  MediaType as MainMediaType,
+  type MediaStatus,
+} from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import type { BookResult } from '@server/models/Book';
 export type { BookResult } from '@server/models/Book';
 export type MediaType =
-  | 'tv'
-  | 'movie'
-  | 'person'
-  | 'collection'
-  | 'artist'
-  | 'album'
-  | 'book';
+  'tv' | 'movie' | 'person' | 'collection' | 'artist' | 'album' | 'book';
 
 interface TmdbSearchResult {
   id: number;
@@ -106,7 +103,7 @@ export interface ArtistResult extends MbSearchResult {
 export interface AlbumResult extends MbSearchResult {
   mediaType: 'album';
   title: string;
-  'primary-type': 'Album' | 'Single' | 'EP';
+  'primary-type': MbAlbumResult['primary-type'];
   'first-release-date': string;
   releaseDate?: string;
   'artist-credit': {
@@ -119,6 +116,11 @@ export interface AlbumResult extends MbSearchResult {
   }[];
   posterPath?: string;
   needsCoverArt?: boolean;
+  availableQualities?: ('MP3' | 'FLAC')[];
+  qualityStatuses?: {
+    quality: 'MP3' | 'FLAC';
+    status: MediaStatus;
+  }[];
   mediaInfo?: Media;
 }
 

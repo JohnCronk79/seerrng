@@ -211,7 +211,7 @@ const JellyfinImportModal: React.FC<JellyfinImportProps> = ({
                             />
                           </span>
                         </th>
-                        <th className="bg-gray-500 px-1 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
+                        <th className="bg-gray-500 px-1 py-3 text-left text-xs leading-4 font-medium tracking-wider text-gray-200 uppercase md:px-6">
                           {intl.formatMessage(messages.user)}
                         </th>
                       </tr>
@@ -226,7 +226,7 @@ const JellyfinImportModal: React.FC<JellyfinImportProps> = ({
                         )
                         .map((user) => (
                           <tr key={`user-${user.id}`}>
-                            <td className="whitespace-nowrap px-4 py-4 text-sm font-medium leading-5 text-gray-100">
+                            <td className="px-4 py-4 text-sm leading-5 font-medium whitespace-nowrap text-gray-100">
                               <span
                                 role="checkbox"
                                 tabIndex={0}
@@ -257,7 +257,7 @@ const JellyfinImportModal: React.FC<JellyfinImportProps> = ({
                                 />
                               </span>
                             </td>
-                            <td className="whitespace-nowrap px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6">
+                            <td className="px-1 py-4 text-sm leading-5 font-medium whitespace-nowrap text-gray-100 md:px-6">
                               <div className="flex items-center">
                                 <CachedImage
                                   type="avatar"
@@ -268,7 +268,7 @@ const JellyfinImportModal: React.FC<JellyfinImportProps> = ({
                                   height={40}
                                 />
                                 <div className="ml-4">
-                                  <div className="text-base font-bold leading-5">
+                                  <div className="text-base leading-5 font-bold">
                                     {user.username}
                                   </div>
                                   {/* {user.username &&

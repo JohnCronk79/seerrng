@@ -18,11 +18,9 @@
     "emitDecoratorMetadata": true,
     "useUnknownInCatchVariables": false,
     "incremental": true,
-    "baseUrl": "src",
-    "downlevelIteration": true,
     "paths": {
-      "@server/*": ["../server/*"],
-      "@app/*": ["*"]
+      "@server/*": ["./server/*"],
+      "@app/*": ["./src/*"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx"],

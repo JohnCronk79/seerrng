@@ -5,7 +5,7 @@ import { AddNotificationOutbox1782200000000 } from './1782200000000-AddNotificat
 
 test('SQLite notification outbox migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

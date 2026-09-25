@@ -5,7 +5,9 @@ import { User } from '@server/entity/User';
 import type { AllSettings } from '@server/lib/settings';
 import { getHostname } from '@server/utils/getHostname';
 
-const migrateApiTokens = async (settings: any): Promise<AllSettings> => {
+const migrateApiTokens = async (
+  settings: AllSettings
+): Promise<AllSettings> => {
   const mediaServerType = settings.main.mediaServerType;
   if (
     !settings.jellyfin?.apiKey &&
@@ -15,7 +17,12 @@ const migrateApiTokens = async (settings: any): Promise<AllSettings> => {
     const userRepository = getRepository(User);
     const admin = await userRepository.findOne({
       where: { id: 1 },
-      select: ['id', 'jellyfinAuthToken', 'jellyfinUserId', 'jellyfinDeviceId'],
+      select: {
+        id: true,
+        jellyfinAuthToken: true,
+        jellyfinUserId: true,
+        jellyfinDeviceId: true,
+      },
       order: { id: 'ASC' },
     });
     if (!admin) {

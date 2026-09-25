@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import SeriesSeasonEpisodeSelector from '@app/components/Common/SeriesSeasonEpisodeSelector';
@@ -7,6 +8,13 @@ import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatus';
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
+import {
+  canPromotePendingDestinationRequests,
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+  isVideoQualityAvailable,
+} from '@app/components/RequestModal/requestAvailability';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
@@ -67,7 +75,9 @@ const messages = defineMessages('components.RequestModal', {
   network: 'Network',
   status: 'Status',
   service: 'Service',
+  approval: 'Approval',
   readyToRequest: 'Ready to Request',
+  requested: 'Requested',
   notAvailable: 'Not Available',
   advancedOptions: 'Advanced Options',
 });
@@ -111,14 +121,10 @@ const TvRequestModal = ({
   const selectedSeasons = seasonSelections.map(
     (selection) => selection.seasonNumber
   );
-  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true);
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const effectiveIs4k = requestOverrides?.is4k ?? is4k;
-  const selectedDestinationAvailable =
-    !editRequest &&
-    data?.mediaInfo?.[effectiveIs4k ? 'status4k' : 'status'] ===
-      MediaStatus.AVAILABLE;
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -144,6 +150,45 @@ const TvRequestModal = ({
       revalidateOnFocus: false,
     }
   );
+  const selectedService = sonarrServers?.find(
+    (server) => server.id === requestOverrides?.server
+  );
+  const fallbackService = sonarrServers?.find(
+    (server) => server.isDefault && server.is4k === effectiveIs4k
+  );
+  const selectedDestination = createRequestDestination(
+    'sonarr',
+    effectiveIs4k ? '4k' : 'standard',
+    selectedService ?? fallbackService,
+    requestOverrides
+  );
+  const selectedDestinationAvailable =
+    !editRequest &&
+    (isVideoQualityAvailable(data?.mediaInfo, 'tv', effectiveIs4k) ||
+      isRequestDestinationAvailable(data?.mediaInfo, selectedDestination));
+  const selectedDestinationRequested =
+    !editRequest &&
+    isRequestDestinationRequested(
+      data?.mediaInfo?.requests,
+      selectedDestination
+    );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove: hasAutoApprovePermission(
+          user?.permissions ?? 0,
+          'tv',
+          effectiveIs4k
+        ),
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
 
   const currentlyRemaining =
     (quota?.tv.remaining ?? 0) -
@@ -221,7 +266,7 @@ const TvRequestModal = ({
   };
 
   const sendRequest = async () => {
-    if (selectedDestinationAvailable) {
+    if (selectedDestinationCovered) {
       return;
     }
 
@@ -377,12 +422,6 @@ const TvRequestModal = ({
   );
   const isAnime =
     data?.keywords.some((keyword) => keyword.id === ANIME_KEYWORD_ID) ?? false;
-  const selectedService = sonarrServers?.find(
-    (server) => server.id === requestOverrides?.server
-  );
-  const fallbackService = sonarrServers?.find(
-    (server) => server.isDefault && server.is4k === effectiveIs4k
-  );
   const notAvailable = intl.formatMessage(messages.notAvailable);
   const firstAirDate = data?.firstAirDate
     ? intl.formatDate(new Date(`${data.firstAirDate}T00:00:00`), {
@@ -435,7 +474,7 @@ const TvRequestModal = ({
             );
   const requestDisabled = editRequest
     ? false
-    : selectedDestinationAvailable ||
+    : selectedDestinationCovered ||
       (!settings.currentSettings.partialRequestsEnabled &&
         quota?.tv.limit &&
         unrequestedSeasons.length > quota.tv.limit &&
@@ -484,6 +523,10 @@ const TvRequestModal = ({
             : messages.requestseriestitle
       )}
       okText={requestButtonLabel}
+      okButtonProps={{
+        buttonIcon:
+          editRequest && selectedSeasons.length === 0 ? 'cancel' : undefined,
+      }}
       okDisabled={requestDisabled}
       okButtonType={
         editRequest
@@ -502,38 +545,10 @@ const TvRequestModal = ({
             ? intl.formatMessage(globalMessages.back)
             : intl.formatMessage(globalMessages.cancel)
       }
-      dialogClass="sm:max-w-5xl"
+      cancelButtonType={editRequest ? 'danger' : 'default'}
+      actionButtonSize={editRequest ? 'standard' : 'sm'}
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
-      {editRequest
-        ? isOwner
-          ? intl.formatMessage(messages.pendingapproval)
-          : intl.formatMessage(messages.requestfrom, {
-              username: editRequest?.requestedBy.displayName,
-            })
-        : null}
-      {(quota?.tv.limit ?? 0) > 0 && (
-        <QuotaDisplay
-          mediaType="tv"
-          quota={quota?.tv}
-          remaining={
-            !settings.currentSettings.partialRequestsEnabled &&
-            unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
-              ? 0
-              : currentlyRemaining
-          }
-          userOverride={
-            requestOverrides?.user && requestOverrides.user.id !== user?.id
-              ? requestOverrides?.user?.id
-              : undefined
-          }
-          overLimit={
-            !settings.currentSettings.partialRequestsEnabled &&
-            unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
-              ? unrequestedSeasons.length
-              : undefined
-          }
-        />
-      )}
       <RequestMediaCard
         artwork={
           data?.backdropPath
@@ -542,101 +557,146 @@ const TvRequestModal = ({
         }
         artworkType="tmdb"
       >
-        <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
-          <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
-            <CachedImage
-              type="tmdb"
-              src={
-                getTmdbPosterImageUrl(data?.posterPath) ||
-                '/images/seerr_poster_not_found.png'
-              }
-              alt=""
-              fill
-              sizes="(min-width: 640px) 80px, 64px"
-              className="object-cover"
-            />
+        {editRequest && (
+          <div className="refreshed-inset-surface card-spacing-after rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
           </div>
+        )}
+        {(quota?.tv.limit ?? 0) > 0 && (
+          <QuotaDisplay
+            mediaType="tv"
+            quota={quota?.tv}
+            remaining={
+              !settings.currentSettings.partialRequestsEnabled &&
+              unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
+                ? 0
+                : currentlyRemaining
+            }
+            userOverride={
+              requestOverrides?.user && requestOverrides.user.id !== user?.id
+                ? requestOverrides?.user?.id
+                : undefined
+            }
+            overLimit={
+              !settings.currentSettings.partialRequestsEnabled &&
+              unrequestedSeasons.length > (quota?.tv.remaining ?? 0)
+                ? unrequestedSeasons.length
+                : undefined
+            }
+          />
+        )}
+        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+          <div className="grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+            <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
+              <CachedImage
+                type="tmdb"
+                src={
+                  getTmdbPosterImageUrl(data?.posterPath) ||
+                  '/images/seerr_poster_not_found.png'
+                }
+                alt=""
+                fill
+                sizes="(min-width: 640px) 80px, 64px"
+                className="object-cover"
+              />
+            </div>
 
-          <div className="flex min-w-0 flex-col">
-            <h3 className="-mt-0.5 truncate text-lg font-semibold leading-5 text-white">
-              {data?.name}
-              {releaseYear ? ` (${releaseYear})` : ''}
-            </h3>
+            <div className="flex min-w-0 flex-col">
+              <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
+                {data?.name}
+                {releaseYear ? ` (${releaseYear})` : ''}
+              </h3>
 
-            <div className="mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch card:grid-cols-3">
-              <div className="min-w-0 card:col-span-2 card:pr-3">
-                <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4 text-gray-400 card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0">
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
-                    {intl.formatMessage(messages.mediaAndFormat)}:
-                  </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
-                    Series · {effectiveIs4k ? '4K' : 'HD'}
-                  </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
-                    {intl.formatMessage(messages.releaseDate)}:
-                  </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
-                    {firstAirDate}
-                  </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
-                    {intl.formatMessage(messages.runtime)}:
-                  </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
-                    {runtime
-                      ? `${intl.formatNumber(runtime)} minutes`
-                      : notAvailable}
-                  </dd>
-                  <div className="hidden bg-gray-600 card:col-start-5 card:row-span-3 card:row-start-1 card:block" />
-                  <div className="col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0">
-                    {featuredCrew.map((person) => (
-                      <div
-                        className="contents"
-                        key={`${person.job}-${person.id}`}
-                      >
-                        <dt className="font-medium text-gray-100">
-                          {person.job}:
-                        </dt>
-                        <dd className="m-0 truncate">{person.name}</dd>
-                      </div>
-                    ))}
-                    <dt className="font-medium text-gray-100">
-                      {intl.formatMessage(messages.network)}:
+              <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+                <div className="detail-paired-column-span min-w-0">
+                  <dl className="media-detail-rows refreshed-detail-text-muted detail-paired-columns grid min-w-0 content-start text-xs">
+                    <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
+                      {intl.formatMessage(messages.mediaAndFormat)}:
                     </dt>
-                    <dd className="m-0 truncate">{network}</dd>
-                  </div>
-                  <dt className="mt-0.5 font-medium text-gray-100 card:col-start-1 card:row-start-4">
-                    {intl.formatMessage(messages.genres)}:
+                    <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
+                      Series · {effectiveIs4k ? '4K' : 'HD'}
+                    </dd>
+                    <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
+                      {intl.formatMessage(messages.releaseDate)}:
+                    </dt>
+                    <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
+                      {firstAirDate}
+                    </dd>
+                    <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
+                      {intl.formatMessage(messages.runtime)}:
+                    </dt>
+                    <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
+                      {runtime
+                        ? `${intl.formatNumber(runtime)} minutes`
+                        : notAvailable}
+                    </dd>
+                    <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
+                      {featuredCrew.map((person) => (
+                        <div
+                          className="contents"
+                          key={`${person.job}-${person.id}`}
+                        >
+                          <dt className="font-medium text-gray-100">
+                            {person.job}:
+                          </dt>
+                          <dd className="m-0 truncate">{person.name}</dd>
+                        </div>
+                      ))}
+                      <dt className="font-medium text-gray-100">
+                        {intl.formatMessage(messages.network)}:
+                      </dt>
+                      <dd className="m-0 truncate">{network}</dd>
+                    </div>
+                    <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
+                      {intl.formatMessage(messages.genres)}:
+                    </dt>
+                    <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
+                      {data?.genres?.length
+                        ? data.genres
+                            .slice(0, 3)
+                            .map((genre) => genre.name)
+                            .join(', ')
+                        : notAvailable}
+                    </dd>
+                  </dl>
+                </div>
+                <dl className="media-detail-rows refreshed-detail-text-muted media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.status)}:
                   </dt>
-                  <dd className="m-0 mt-0.5 line-clamp-2 min-w-0 break-words card:col-span-5 card:col-start-3 card:row-start-4">
-                    {data?.genres?.length
-                      ? data.genres
-                          .slice(0, 3)
-                          .map((genre) => genre.name)
-                          .join(', ')
-                      : notAvailable}
+                  <dd className="m-0 truncate">
+                    {intl.formatMessage(
+                      selectedDestinationAvailable
+                        ? globalMessages.available
+                        : selectedDestinationRequested
+                          ? messages.requested
+                          : messages.readyToRequest
+                    )}
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.service)}:
+                  </dt>
+                  <dd className="m-0 truncate">
+                    {selectedService?.name ??
+                      fallbackService?.name ??
+                      notAvailable}
+                  </dd>
+                  <dt className="font-medium text-gray-100">
+                    {intl.formatMessage(messages.approval)}:
+                  </dt>
+                  <dd className="m-0 min-w-0">
+                    <RequestFooterStatus
+                      available={selectedDestinationAvailable}
+                      requested={selectedDestinationRequested}
+                      hasAutoApprove={hasAutoApprove}
+                    />
                   </dd>
                 </dl>
               </div>
-              <dl className="mt-2 grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2 text-xs leading-4 text-gray-400 card:relative card:mt-0 card:border-t-0 card:pl-3 card:pt-0 card:before:absolute card:before:bottom-1 card:before:left-0 card:before:top-0 card:before:w-px card:before:bg-gray-600">
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.status)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {intl.formatMessage(
-                    selectedDestinationAvailable
-                      ? globalMessages.available
-                      : messages.readyToRequest
-                  )}
-                </dd>
-                <dt className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.service)}:
-                </dt>
-                <dd className="m-0 truncate">
-                  {selectedService?.name ??
-                    fallbackService?.name ??
-                    notAvailable}
-                </dd>
-              </dl>
             </div>
           </div>
         </div>
@@ -700,7 +760,7 @@ const TvRequestModal = ({
             {canUseAdvancedOptions && (
               <button
                 type="button"
-                className="inline-flex h-[22px] items-center gap-1.5 rounded-md border border-gray-600 bg-gray-900 px-2 text-[11px] font-medium text-gray-300 transition hover:border-indigo-400 hover:bg-indigo-500/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                className="app-button app-button-manage button-standard"
                 aria-expanded={advancedOptionsOpen}
                 onClick={() => setAdvancedOptionsOpen((open) => !open)}
               >
@@ -715,36 +775,38 @@ const TvRequestModal = ({
                 />
               </button>
             )}
-            <RequestFooterStatus
-              available={selectedDestinationAvailable}
-              hasAutoApprove={hasAutoApprove}
-            />
           </div>
           <div
-            className="flex h-[22px] items-center"
+            className="compact-control flex items-center"
             ref={setRequestedByPortal}
           />
-          <button
+          <Button
             type="button"
             onClick={closeAction}
             data-testid="modal-cancel-button"
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold leading-none text-red-200 transition hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            buttonType="danger"
+            buttonSize="standard"
           >
-            <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            <XMarkIcon aria-hidden="true" />
             {editRequest
               ? intl.formatMessage(globalMessages.close)
               : intl.formatMessage(globalMessages.cancel)}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             disabled={requestDisabled}
             onClick={() => void submitAction()}
             data-testid="modal-ok-button"
-            className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold leading-none text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+            buttonType="success"
+            buttonSize="standard"
           >
-            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {editRequest && selectedSeasons.length === 0 ? (
+              <XMarkIcon aria-hidden="true" />
+            ) : (
+              <ArrowDownTrayIcon aria-hidden="true" />
+            )}
             {requestButtonLabel}
-          </button>
+          </Button>
         </div>
       </RequestMediaCard>
     </Modal>

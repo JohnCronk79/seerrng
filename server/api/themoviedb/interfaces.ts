@@ -59,10 +59,7 @@ interface TmdbPaginatedResponse {
 
 export interface TmdbSearchMultiResponse extends TmdbPaginatedResponse {
   results: (
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
+    TmdbMovieResult | TmdbTvResult | TmdbPersonResult | TmdbCollectionResult
   )[];
 }
 
@@ -140,6 +137,7 @@ export interface TmdbProductionCompany {
 
 export interface TmdbMovieDetails {
   id: number;
+  origin_country?: string[];
   imdb_id?: string;
   adult: boolean;
   backdrop_path?: string;

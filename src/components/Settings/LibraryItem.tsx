@@ -1,59 +1,79 @@
-import { CheckIcon, XMarkIcon } from '@heroicons/react/24/solid';
+import MediaTypeBadge, {
+  getMediaTypeBadgeType,
+} from '@app/components/Common/MediaTypeBadge';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
+import globalMessages from '@app/i18n/globalMessages';
+import { ArrowsRightLeftIcon } from '@heroicons/react/24/outline';
+import { useIntl } from 'react-intl';
 
 interface LibraryItemProps {
   isEnabled?: boolean;
   name: string;
+  /** Library content type, e.g. 'movie' | 'show' | 'music' | 'book'. */
+  type?: string;
+  typeLabel?: string;
   onToggle: () => void;
+  /**
+   * Shown as a small reclassify control when set. Used for Plex 'artist'
+   * libraries, where music vs. audiobook can't be told apart automatically.
+   */
+  reclassify?: { label: string; onReclassify: () => void };
 }
 
-const LibraryItem = ({ isEnabled, name, onToggle }: LibraryItemProps) => {
+const LibraryItem = ({
+  isEnabled,
+  name,
+  type,
+  typeLabel,
+  onToggle,
+  reclassify,
+}: LibraryItemProps) => {
+  const intl = useIntl();
+  // Library.type uses 'show' where MediaTypeBadgeType uses 'tv'. A Music
+  // library isn't a single Album -- it keeps the Album badge's icon/tone
+  // but overrides the label via MediaTypeBadge's `label` prop.
+  const badgeType = getMediaTypeBadgeType(
+    type === 'show' ? 'tv' : (type ?? '')
+  );
+
   return (
-    <li className="col-span-1 flex rounded-md shadow-sm">
-      <div className="flex flex-1 items-center justify-between truncate rounded-md border-b border-r border-t border-gray-700 bg-gray-600">
-        <div className="flex-1 cursor-default truncate px-4 py-6 text-sm leading-5">
-          {name}
-        </div>
-        <div className="flex-shrink-0 pr-2">
-          <span
-            role="checkbox"
-            tabIndex={0}
-            aria-checked={isEnabled}
-            onClick={() => onToggle()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onToggle();
+    <li className="settings-library-card col-span-1 flex shadow-sm">
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+        <div className="settings-library-card-content">
+          {badgeType && (
+            <MediaTypeBadge
+              mediaType={badgeType}
+              variant="compact"
+              label={
+                typeLabel ??
+                (type === 'music'
+                  ? intl.formatMessage(globalMessages.music)
+                  : undefined)
               }
-            }}
-            className={`${
-              isEnabled ? 'bg-indigo-600' : 'bg-gray-700'
-            } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring`}
-          >
-            <span
-              aria-hidden="true"
-              className={`${
-                isEnabled ? 'translate-x-5' : 'translate-x-0'
-              } relative inline-block h-5 w-5 rounded-full bg-white shadow transition duration-200 ease-in-out`}
+            />
+          )}
+          <span className="truncate">{name}</span>
+          {reclassify && (
+            <button
+              type="button"
+              title={reclassify.label}
+              aria-label={reclassify.label}
+              onClick={(e) => {
+                e.stopPropagation();
+                reclassify.onReclassify();
+              }}
+              className="app-button app-button-default compact-control ml-1 w-5 shrink-0 p-0"
             >
-              <span
-                className={`${
-                  isEnabled
-                    ? 'opacity-0 duration-100 ease-out'
-                    : 'opacity-100 duration-200 ease-in'
-                } absolute inset-0 flex h-full w-full items-center justify-center transition-opacity`}
-              >
-                <XMarkIcon className="h-3 w-3 text-gray-400" />
-              </span>
-              <span
-                className={`${
-                  isEnabled
-                    ? 'opacity-100 duration-200 ease-in'
-                    : 'opacity-0 duration-100 ease-out'
-                } absolute inset-0 flex h-full w-full items-center justify-center transition-opacity`}
-              >
-                <CheckIcon className="h-3 w-3 text-indigo-600" />
-              </span>
-            </span>
-          </span>
+              <ArrowsRightLeftIcon className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          <SelectionCircle
+            selected={Boolean(isEnabled)}
+            label={name}
+            onClick={onToggle}
+          />
         </div>
       </div>
     </li>

@@ -16,6 +16,7 @@ import {
   FilmIcon,
   MusicalNoteIcon,
   SparklesIcon,
+  SpeakerWaveIcon,
   TvIcon,
   UsersIcon,
   XMarkIcon,
@@ -31,12 +32,12 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   browsemovies: 'Movies',
   browsemusic: 'Music',
   browsebooks: 'Books',
+  browseaudiobooks: 'Audiobooks',
   browsetv: 'Series',
   requests: 'Requests',
-  requeststatus: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
-  users: 'Users',
+  users: 'User List',
   settings: 'Settings',
 });
 
@@ -92,10 +93,16 @@ const SidebarLinks: SidebarLinkProps[] = [
     activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
   },
   {
-    href: '/requests/status',
-    messagesKey: 'requeststatus',
+    href: '/discover/audiobooks',
+    messagesKey: 'browseaudiobooks',
+    svgIcon: <SpeakerWaveIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/discover\/audiobooks$/,
+  },
+  {
+    href: '/requests',
+    messagesKey: 'requests',
     svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/requests\/status/,
+    activeRegExp: /^\/requests\/?$/,
   },
   {
     href: '/blocklist',
@@ -250,8 +257,8 @@ const Sidebar = ({
                             tabIndex={0}
                             className={`flex items-center rounded-md px-2 py-2 text-base font-medium leading-6 text-white transition duration-150 ease-in-out focus:outline-none ${
                               router.pathname.match(sidebarLink.activeRegExp)
-                                ? 'bg-gradient-to-br from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500'
-                                : 'sidebar-link-idle'
+                                ? 'main-menu-link sidebar-link-selected'
+                                : 'main-menu-link sidebar-link-idle'
                             } `}
                             data-testid={`${sidebarLink.dataTestId}-mobile`}
                           >
@@ -306,8 +313,8 @@ const Sidebar = ({
                       prefetch={false}
                       className={`group flex items-center rounded-md px-2 py-2 text-lg font-medium leading-6 text-white transition duration-150 ease-in-out focus:outline-none ${
                         router.pathname.match(sidebarLink.activeRegExp)
-                          ? 'bg-gradient-to-br from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500'
-                          : 'sidebar-link-idle'
+                          ? 'main-menu-link sidebar-link-selected'
+                          : 'main-menu-link sidebar-link-idle'
                       } `}
                       data-testid={sidebarLink.dataTestId}
                     >

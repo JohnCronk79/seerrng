@@ -118,7 +118,7 @@ const ProfileHeader = ({ user, isSettingsPage }: ProfileHeaderProps) => {
   }
 
   return (
-    <div className="relative z-40 mb-12 mt-6 lg:flex lg:items-end lg:justify-between lg:space-x-5">
+    <div className="relative z-40 mt-6 mb-12 lg:flex lg:items-end lg:justify-between lg:space-x-5">
       <div className="flex items-end justify-items-end space-x-5">
         <div className="flex-shrink-0">
           <div className="relative">
@@ -147,7 +147,7 @@ const ProfileHeader = ({ user, isSettingsPage }: ProfileHeaderProps) => {
                 />
                 <button
                   type="button"
-                  className="absolute -bottom-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full border border-gray-600 bg-gray-900/90 px-2 py-0.5 text-xs font-medium text-gray-200 shadow transition hover:border-indigo-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-wait disabled:opacity-70"
+                  className="app-button app-button-default absolute -bottom-2 left-1/2 -translate-x-1/2 gap-1 rounded-full px-2 py-0.5 text-xs shadow disabled:cursor-wait disabled:opacity-70"
                   aria-label={intl.formatMessage(messages.editAvatarLabel)}
                   disabled={isUploadingAvatar}
                   onClick={() => avatarInputRef.current?.click()}
@@ -194,7 +194,7 @@ const ProfileHeader = ({ user, isSettingsPage }: ProfileHeaderProps) => {
           </p>
         </div>
       </div>
-      <div className="mt-6 flex flex-col-reverse justify-stretch space-y-4 space-y-reverse lg:flex-row lg:justify-end lg:space-x-3 lg:space-y-0 lg:space-x-reverse">
+      <div className="mt-6 flex flex-col-reverse justify-stretch space-y-4 space-y-reverse lg:flex-row lg:justify-end lg:space-y-0 lg:space-x-3 lg:space-x-reverse">
         {(loggedInUser?.id === user.id ||
           (user.id !== 1 && hasPermission(Permission.MANAGE_USERS))) &&
         !isSettingsPage ? (

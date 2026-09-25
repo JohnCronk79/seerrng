@@ -10,11 +10,19 @@ import { User } from '@server/entity/User';
 import { ALL_NOTIFICATIONS, UserSettings } from '@server/entity/UserSettings';
 import type {
   CardTextVisibility,
+  DetailDisclosureMediaType,
   UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosureResponse,
   UserSettingsGeneralResponse,
   UserSettingsLinkedAccount,
   UserSettingsLinkedAccountResponse,
   UserSettingsNotificationsResponse,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import {
+  mediaFilterScopes,
+  mediaFilterValues,
+  type MediaFilterScope,
+  type MediaFilterValue,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import {
   getAuthAccountAdmissionResource,
@@ -68,6 +76,52 @@ import { IsNull, Not, Raw, type FindOptionsWhere } from 'typeorm';
 import { canMakePermissionsChange, isUniqueConstraintError } from '.';
 
 const userSettingsRoutes = Router({ mergeParams: true });
+
+userSettingsRoutes.post<{ id: string; scope: string }>(
+  '/media-filter-pins/:scope',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const scope = req.params.scope as MediaFilterScope;
+    const value = req.body?.value;
+    if (
+      !mediaFilterScopes.includes(scope) ||
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'value') ||
+      (value !== null && !mediaFilterValues.includes(value))
+    ) {
+      return next({ status: 400, message: 'Invalid media filter pin.' });
+    }
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!canModifyUser(user, actor))
+            return next({ status: 403, message: 'Access denied.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          const pins = { ...user.settings.mediaFilterPins };
+          if (value === null) delete pins[scope];
+          else pins[scope] = value as MediaFilterValue;
+          user.settings.mediaFilterPins = pins;
+          await repository.save(user);
+          return res.status(200).json(pins);
+        }
+      );
+    } catch (error) {
+      next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save media filter pin.',
+      });
+    }
+  }
+);
 const MAX_USER_SETTINGS_ID_VALUE = 1_000_000_000;
 const MAX_LINKED_ACCOUNT_TOKEN_LENGTH = 4096;
 const MAX_LINKED_ACCOUNT_USERNAME_LENGTH = 512;
@@ -191,6 +245,82 @@ const parseCardTextVisibilityBody = (
     }
 
     value[key] = fieldValue;
+  }
+
+  return { value };
+};
+
+const serializeDetailDisclosurePins = (
+  settings?: UserSettings
+): UserSettingsDetailDisclosureResponse => ({
+  cast: settings?.detailDisclosureCastPinned === true,
+  crew: settings?.detailDisclosureCrewPinned === true,
+  artists: settings?.detailDisclosureArtistsPinned === true,
+  subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
+});
+
+const detailDisclosureMediaTypes: DetailDisclosureMediaType[] = [
+  'movie',
+  'tv',
+  'music',
+  'book',
+];
+
+const isDetailDisclosureMediaType = (
+  value: string
+): value is DetailDisclosureMediaType =>
+  detailDisclosureMediaTypes.includes(value as DetailDisclosureMediaType);
+
+const serializeScopedDetailDisclosurePins = (
+  settings: UserSettings | undefined,
+  mediaType: DetailDisclosureMediaType
+): UserSettingsDetailDisclosureResponse => {
+  const legacyPins: UserSettingsDetailDisclosureResponse = {
+    details: false,
+    ...(mediaType === 'movie' ? { collection: false } : {}),
+    cast:
+      mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
+    crew:
+      mediaType === 'movie' && settings?.detailDisclosureCrewPinned === true,
+    artists:
+      mediaType === 'music' && settings?.detailDisclosureArtistsPinned === true,
+    subjectTags:
+      mediaType === 'movie' &&
+      settings?.detailDisclosureSubjectTagsPinned === true,
+  };
+
+  return {
+    ...legacyPins,
+    ...settings?.detailDisclosurePins?.[mediaType],
+  };
+};
+
+const parseDetailDisclosurePinsBody = (
+  body: unknown,
+  includeCollection = false,
+  includeDetails = false
+): { value: UserSettingsDetailDisclosureResponse } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const value: UserSettingsDetailDisclosureResponse = {};
+  const keys = ['cast', 'crew', 'artists', 'subjectTags'] as const;
+  const allowedKeys: (keyof UserSettingsDetailDisclosureResponse)[] = [
+    ...keys,
+    ...(includeDetails ? (['details'] as const) : []),
+    ...(includeCollection ? (['collection'] as const) : []),
+  ];
+  for (const key of allowedKeys) {
+    if (!hasOwn(parsedBody.value, key)) {
+      continue;
+    }
+    if (typeof parsedBody.value[key] !== 'boolean') {
+      return { error: `${key} must be a boolean.` };
+    }
+    value[key] = parsedBody.value[key];
   }
 
   return { value };
@@ -843,6 +973,145 @@ userSettingsRoutes.post<
   }
 });
 
+userSettingsRoutes.get<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(user.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+    const parsedBody = parseDetailDisclosurePinsBody(
+      req.body,
+      mediaType === 'movie',
+      true
+    );
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+          if (!canModifyUser(user, actor)) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's settings.",
+            });
+          }
+          if (!user.settings) {
+            user.settings = new UserSettings({ user });
+          }
+
+          const currentPins = serializeScopedDetailDisclosurePins(
+            user.settings,
+            mediaType
+          );
+          const nextPins = {
+            ...user.settings.detailDisclosurePins,
+          };
+          const updatedPins = { ...currentPins, ...parsedBody.value };
+          switch (mediaType) {
+            case 'movie':
+              nextPins.movie = updatedPins;
+              break;
+            case 'tv':
+              nextPins.tv = updatedPins;
+              break;
+            case 'music':
+              nextPins.music = updatedPins;
+              break;
+            case 'book':
+              nextPins.book = updatedPins;
+              break;
+          }
+          user.settings.detailDisclosurePins = nextPins;
+
+          const savedUser = await userRepository.save(user);
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(savedUser.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: "You do not have permission to modify this user's settings.",
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
 userSettingsRoutes.get<{ id: string }, UserSettingsCardTextResponse>(
   '/card-text',
   isOwnProfileOrAdmin(),
@@ -953,6 +1222,119 @@ userSettingsRoutes.post<
   }
 });
 
+userSettingsRoutes.get<{ id: string }, UserSettingsDetailDisclosureResponse>(
+  '/detail-disclosures',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(serializeDetailDisclosurePins(user.settings));
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>('/detail-disclosures', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseDetailDisclosurePinsBody(req.body);
+
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
+  }
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    return await runUserSecurityMutationWithActor(
+      req.user!.id,
+      userId,
+      Permission.MANAGE_USERS,
+      async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUser(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's settings.",
+          });
+        }
+
+        if (!user.settings) {
+          user.settings = new UserSettings({ user });
+        }
+
+        const body = parsedBody.value;
+        if (body.cast !== undefined) {
+          user.settings.detailDisclosureCastPinned = body.cast;
+        }
+        if (body.crew !== undefined) {
+          user.settings.detailDisclosureCrewPinned = body.crew;
+        }
+        if (body.artists !== undefined) {
+          user.settings.detailDisclosureArtistsPinned = body.artists;
+        }
+        if (body.subjectTags !== undefined) {
+          user.settings.detailDisclosureSubjectTagsPinned = body.subjectTags;
+        }
+
+        const savedUser = await userRepository.save(user);
+        return res
+          .status(200)
+          .json(serializeDetailDisclosurePins(savedUser.settings));
+      }
+    );
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    next({ status: 500, message: e.message });
+  }
+});
+
 userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
   '/password',
   isOwnProfileOrAdmin(),
@@ -972,7 +1354,7 @@ userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
         async () => {
           const user = await userRepository.findOne({
             where: { id: userId },
-            select: ['id', 'password'],
+            select: { id: true, password: true },
           });
 
           if (!user) {
@@ -1024,7 +1406,7 @@ userSettingsRoutes.post<
         });
 
         const userWithPassword = await userRepository.findOne({
-          select: ['id', 'password'],
+          select: { id: true, password: true },
           where: { id: userId },
         });
 
@@ -1174,7 +1556,9 @@ userSettingsRoutes.post<{ authToken: string }>(
                 .status(409)
                 .json({ message: 'Media server configuration changed.' });
             }
-            if (await userRepository.exist({ where: { plexId: account.id } })) {
+            if (
+              await userRepository.exists({ where: { plexId: account.id } })
+            ) {
               return res.status(422).json({
                 message: 'This Plex account is already linked to a Seerr user',
               });
@@ -1369,7 +1753,7 @@ userSettingsRoutes.post<{ username: string; password: string }>(
                 .json({ message: 'Media server configuration changed.' });
             }
             if (
-              await userRepository.exist({
+              await userRepository.exists({
                 where: { jellyfinUserId },
               })
             ) {
@@ -1671,7 +2055,7 @@ userSettingsRoutes.post<{ secret: string }>(
       const account = await jellyfinServer.authenticateQuickConnect(secret);
 
       if (
-        await userRepository.exist({
+        await userRepository.exists({
           where: { jellyfinUserId: account.User.Id },
         })
       ) {

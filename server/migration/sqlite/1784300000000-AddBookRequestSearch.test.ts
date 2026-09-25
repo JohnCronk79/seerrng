@@ -5,7 +5,7 @@ import { AddBookRequestSearch1784300000000 } from './1784300000000-AddBookReques
 
 test('SQLite book request search migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();
