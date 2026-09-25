@@ -3494,6 +3494,65 @@ components:
         - serverType
         - is4k
         - groups
+    WatchEpisodeStatus:
+      type: object
+      properties:
+        seasonNumber:
+          type: integer
+          minimum: 0
+        episodeNumber:
+          type: integer
+          minimum: 0
+        watched:
+          type: boolean
+      required:
+        - seasonNumber
+        - episodeNumber
+        - watched
+    WatchSeasonStatus:
+      type: object
+      properties:
+        seasonNumber:
+          type: integer
+          minimum: 0
+        availableCount:
+          type: integer
+          minimum: 0
+        watchedCount:
+          type: integer
+          minimum: 0
+        episodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchEpisodeStatus'
+      required:
+        - seasonNumber
+        - availableCount
+        - watchedCount
+        - episodes
+    WatchStatusResponse:
+      type: object
+      properties:
+        serverType:
+          type: integer
+        availableCount:
+          type: integer
+          minimum: 0
+        watchedCount:
+          type: integer
+          minimum: 0
+        unwatchedCount:
+          type: integer
+          minimum: 0
+        seasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchSeasonStatus'
+      required:
+        - serverType
+        - availableCount
+        - watchedCount
+        - unwatchedCount
     PlaybackCommand:
       type: object
       properties:
@@ -12386,6 +12445,45 @@ paths:
                   $ref: '#/components/schemas/PlaybackDevice'
         '502':
           description: Playback devices could not be retrieved.
+  /playback/watched/{mediaType}/{tmdbId}:
+    get:
+      summary: Get the current user's watched status for a movie or series
+      tags:
+        - playback
+      parameters:
+        - in: path
+          name: mediaType
+          required: true
+          schema:
+            type: string
+            enum:
+              - movie
+              - tv
+        - in: path
+          name: tmdbId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+        - in: query
+          name: details
+          required: false
+          schema:
+            type: string
+            enum:
+              - '1'
+      responses:
+        '200':
+          description: Watched status for the current user and available media-server items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchStatusResponse'
+        '404':
+          description: The media type or TMDB ID is invalid.
+        '502':
+          description: Watched status could not be retrieved from the media server.
   /playback/media/{mediaId}:
     get:
       summary: Get the playable catalog for a media item
