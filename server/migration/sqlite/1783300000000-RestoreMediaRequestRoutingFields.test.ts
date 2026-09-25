@@ -6,7 +6,7 @@ import { RestoreMediaRequestRoutingFields1783300000000 } from './1783300000000-R
 
 test('SQLite media-request routing-field repair is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

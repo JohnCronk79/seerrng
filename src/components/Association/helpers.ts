@@ -49,7 +49,7 @@ export const nodeImage = (node: AssociationNode): string | undefined => {
   switch (node.mediaType) {
     case 'movie':
     case 'tv':
-      return getTmdbPosterImageUrl(node.posterPath, 'w300_and_h450_face');
+      return getTmdbPosterImageUrl(node.posterPath);
     case 'album':
       return node.posterPath ?? undefined;
     case 'artist':
@@ -57,9 +57,27 @@ export const nodeImage = (node: AssociationNode): string | undefined => {
     case 'book':
       return node.posterPath;
     case 'person':
-      return node.profilePath
-        ? `https://image.tmdb.org/t/p/w300_and_h450_face${node.profilePath}`
-        : undefined;
+      return getTmdbPosterImageUrl(node.profilePath, 'w600_and_h900_bestv2');
+    default:
+      return undefined;
+  }
+};
+
+export const nodeBackdrop = (node: AssociationNode): string | undefined => {
+  switch (node.mediaType) {
+    case 'movie':
+    case 'tv':
+      return node.backdropPath
+        ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces${node.backdropPath}`
+        : getTmdbPosterImageUrl(node.posterPath);
+    case 'album':
+      return node.posterPath ?? undefined;
+    case 'artist':
+      return node.artistBackdrop ?? node.artistThumb ?? undefined;
+    case 'book':
+      return node.posterPath;
+    case 'person':
+      return getTmdbPosterImageUrl(node.profilePath, 'w600_and_h900_bestv2');
     default:
       return undefined;
   }

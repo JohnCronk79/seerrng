@@ -185,6 +185,17 @@
     "csrfProtection": false,
     "trustProxy": false,
     "forceIpv4First": false,
+    "tls": {
+      "mode": "disabled",
+      "httpsPort": 5056,
+      "hosts": "localhost,127.0.0.1,::1",
+      "certificateFile": "",
+      "keyFile": "",
+      "caFile": "",
+      "redirectHttpToHttps": false,
+      "allowHttpAuth": true,
+      "httpAuthAcknowledged": true
+    },
     "dnsServers": "",
     "proxy": {
       "enabled": false,

@@ -5,12 +5,53 @@ import type {
 
 export type CardTextVisibility = 'always' | 'hover';
 
+export const mediaFilterScopes = [
+  'books',
+  'trending',
+  'search',
+  'blocklist',
+  'issues',
+  'requests',
+] as const;
+export type MediaFilterScope = (typeof mediaFilterScopes)[number];
+export const mediaFilterValues = [
+  'all',
+  'movie',
+  'tv',
+  'music',
+  'book',
+  'ebook',
+  'audiobook',
+] as const;
+export type MediaFilterValue = (typeof mediaFilterValues)[number];
+export type UserMediaFilterPins = Partial<
+  Record<MediaFilterScope, MediaFilterValue>
+>;
+
 export interface UserSettingsCardTextResponse {
   movie?: CardTextVisibility;
   tv?: CardTextVisibility;
   album?: CardTextVisibility;
   book?: CardTextVisibility;
 }
+
+export type DetailDisclosurePin =
+  'cast' | 'crew' | 'artists' | 'subjectTags' | 'collection' | 'details';
+
+export type DetailDisclosureMediaType = 'movie' | 'tv' | 'music' | 'book';
+
+export interface UserSettingsDetailDisclosureResponse {
+  details?: boolean;
+  collection?: boolean;
+  cast?: boolean;
+  crew?: boolean;
+  artists?: boolean;
+  subjectTags?: boolean;
+}
+
+export type UserSettingsDetailDisclosuresByMedia = Partial<
+  Record<DetailDisclosureMediaType, UserSettingsDetailDisclosureResponse>
+>;
 
 export interface UserSettingsGeneralResponse {
   username?: string;

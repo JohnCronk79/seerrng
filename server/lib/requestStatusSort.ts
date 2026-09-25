@@ -18,11 +18,13 @@ import type { RequestStatusPageItem } from '@server/lib/requestStatus';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { matchesAllSearchTerms } from '@server/utils/searchTerms';
 import { In } from 'typeorm';
+import { isIncompleteRequestStatus } from './requestStatusIncomplete';
 
 export const REQUEST_STATUS_SORT_FIELDS = [
   'added',
   'modified',
   'status',
+  'incomplete',
   'title',
   'director',
   'writer',
@@ -370,7 +372,7 @@ export const parseRequestStatusSort = (
 
 export const isMetadataRequestStatusSort = (
   field: RequestStatusSortField
-): boolean => !['added', 'modified', 'status'].includes(field);
+): boolean => !['added', 'modified', 'status', 'incomplete'].includes(field);
 
 const getSortValue = (
   item: RequestStatusPageItem,
@@ -384,6 +386,16 @@ const getSortValue = (
       return item.request.updatedAt.getTime();
     case 'status':
       return STATUS_ORDER.indexOf(item.status.stage);
+    case 'incomplete':
+      return isIncompleteRequestStatus(
+        item.status.stage,
+        item.request.type,
+        item.request.is4k
+          ? item.request.media?.status4k
+          : item.request.media?.status
+      )
+        ? 1
+        : 0;
     case 'title':
       return metadata.title;
     case 'director':

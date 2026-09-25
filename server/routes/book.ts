@@ -193,13 +193,15 @@ bookRoutes.get('/:id', async (req, res, next) => {
         size: 0,
         entries: [],
       })),
-      getRepository(Watchlist).exist({
-        where: {
-          externalId: bookId,
-          mediaType: MediaType.BOOK,
-          requestedBy: { id: req.user?.id },
-        },
-      }),
+      req.user
+        ? getRepository(Watchlist).exists({
+            where: {
+              externalId: bookId,
+              mediaType: MediaType.BOOK,
+              requestedBy: { id: req.user.id },
+            },
+          })
+        : false,
     ]);
 
     const media = await findBookMediaForWork(

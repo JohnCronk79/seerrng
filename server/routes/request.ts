@@ -112,6 +112,7 @@ const requestMediaTypeFilters = [
 ] as const;
 const requestStatusFilters = [
   'all',
+  'recent',
   'approved',
   'processing',
   'pending',
@@ -127,6 +128,7 @@ const requestTimelineStatusFilters = [
   'processing',
   'deleted',
   'active',
+  'incomplete',
   'attention',
   'completed',
   ...Object.values(RequestStatusStage),
@@ -350,8 +352,7 @@ const parseRequestStatusAction = (
 };
 
 type RequestOptionValidationResult<T> =
-  | { value: T }
-  | { error: { status: number; message: string } };
+  { value: T } | { error: { status: number; message: string } };
 
 const parseOptionalRequestOptionId = (
   value: unknown,
@@ -1371,6 +1372,15 @@ requestRoutes.get<
         break;
       case 'deleted':
         mediaStatusFilter = [MediaStatus.DELETED];
+        break;
+      case 'recent':
+        mediaStatusFilter = [
+          MediaStatus.UNKNOWN,
+          MediaStatus.PENDING,
+          MediaStatus.PROCESSING,
+          MediaStatus.PARTIALLY_AVAILABLE,
+          MediaStatus.AVAILABLE,
+        ];
         break;
       default:
         mediaStatusFilter = [
@@ -2895,8 +2905,7 @@ requestRoutes.put<{ requestId: string }>(
                     const requestedSeasons =
                       body.seasons === 'all' ? undefined : body.seasons;
                     const requestedSelections:
-                      | SeasonEpisodeSelection[]
-                      | undefined =
+                      SeasonEpisodeSelection[] | undefined =
                       body.seasonRequests?.length &&
                       body.seasonRequests.length > 0
                         ? body.seasonRequests

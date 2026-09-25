@@ -70,7 +70,7 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   removemediaerror: 'Something went wrong while removing the media.',
   profileName: 'Profile',
   bookFormat: 'Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   both: 'Both',
   partialBookService: 'Partial Bookshelf link',
@@ -248,7 +248,7 @@ const RequestItemError = ({
   return (
     <div className="flex h-64 w-full flex-col justify-center rounded-xl bg-gray-800 py-4 text-gray-400 shadow-md ring-1 ring-red-500 xl:h-28 xl:flex-row">
       <div className="flex w-full flex-col justify-between overflow-hidden sm:flex-row">
-        <div className="flex w-full flex-col justify-center overflow-hidden pl-4 pr-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
+        <div className="flex w-full flex-col justify-center overflow-hidden pr-4 pl-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
           <div className="flex text-lg font-bold text-white xl:text-xl">
             {intl.formatMessage(messages.mediaerror, {
               mediaType: intl.formatMessage(
@@ -309,7 +309,7 @@ const RequestItemError = ({
             </>
           )}
         </div>
-        <div className="ml-4 mt-4 flex w-full flex-col justify-center overflow-hidden pr-4 text-sm sm:ml-2 sm:mt-0 xl:flex-1 xl:pr-0">
+        <div className="mt-4 ml-4 flex w-full flex-col justify-center overflow-hidden pr-4 text-sm sm:mt-0 sm:ml-2 xl:flex-1 xl:pr-0">
           {requestData && (
             <>
               <div className="card-field">
@@ -471,7 +471,7 @@ const RequestItemError = ({
           )}
         </div>
       </div>
-      <div className="z-10 mt-4 flex w-full flex-col justify-center pl-4 pr-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
+      <div className="z-10 mt-4 flex w-full flex-col justify-center pr-4 pl-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
         {hasPermission(Permission.MANAGE_REQUESTS) && requestData?.media.id && (
           <Button
             className="w-full"
@@ -679,20 +679,14 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
               type="tmdb"
               src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
               alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              className="object-cover"
               fill
             />
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundImage:
-                  'linear-gradient(90deg, rgba(31, 41, 55, 0.47) 0%, rgba(31, 41, 55, 1) 100%)',
-              }}
-            />
+            <div className="request-card-artwork-gradient" />
           </div>
         )}
         <div className="relative flex w-full flex-col justify-between overflow-hidden sm:flex-row">
-          <div className="relative z-10 flex w-full items-center overflow-hidden pl-4 pr-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
+          <div className="relative z-10 flex w-full items-center overflow-hidden pr-4 pl-4 sm:pr-0 xl:w-7/12 2xl:w-2/3">
             <Link
               href={getRequestDetailHref(requestData)}
               className="relative h-auto w-12 flex-shrink-0 scale-100 transform-gpu overflow-hidden rounded-md transition duration-300 hover:scale-105"
@@ -710,7 +704,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 }
                 alt=""
                 sizes="100vw"
-                style={{ width: '100%', height: 'auto', objectFit: 'cover' }}
+                className="h-auto w-full object-cover"
                 width={600}
                 height={900}
               />
@@ -781,7 +775,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 )}
             </div>
           </div>
-          <div className="z-10 ml-4 mt-4 flex w-full flex-col justify-center gap-1 overflow-hidden pr-4 text-sm sm:ml-2 sm:mt-0 xl:flex-1 xl:pr-0">
+          <div className="z-10 mt-4 ml-4 flex w-full flex-col justify-center gap-1 overflow-hidden pr-4 text-sm sm:mt-0 sm:ml-2 xl:flex-1 xl:pr-0">
             <div className="card-field">
               <span className="card-field-name">
                 {intl.formatMessage(globalMessages.status)}
@@ -1004,7 +998,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
             )}
           </div>
         </div>
-        <div className="z-10 mt-4 flex w-full flex-col justify-center space-y-2 pl-4 pr-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
+        <div className="z-10 mt-4 flex w-full flex-col justify-center space-y-2 pr-4 pl-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
           {requestData.status === MediaRequestStatus.FAILED &&
             hasPermission(Permission.MANAGE_REQUESTS) && (
               <Button

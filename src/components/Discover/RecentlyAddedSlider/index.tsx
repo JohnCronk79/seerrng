@@ -2,6 +2,9 @@ import Slider from '@app/components/Slider';
 import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import useDiscoverRowSnapshot from '@app/hooks/useDiscoverRowSnapshot';
 import { Permission, useUser } from '@app/hooks/useUser';
+import useWarmImageCache, {
+  MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+} from '@app/hooks/useWarmImageCache';
 import defineMessages from '@app/utils/defineMessages';
 import type { MediaResultsResponse } from '@server/interfaces/api/mediaInterfaces';
 import { useMemo } from 'react';
@@ -48,6 +51,11 @@ const RecentlyAddedSlider = () => {
         )),
     [media?.results]
   );
+
+  useWarmImageCache(media?.results, {
+    maxUrls: MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+    posterOnly: true,
+  });
 
   if (
     !hasPermission([Permission.MANAGE_REQUESTS, Permission.RECENT_VIEW], {

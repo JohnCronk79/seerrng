@@ -1,17 +1,21 @@
 import Alert from '@app/components/Common/Alert';
-import Badge from '@app/components/Common/Badge';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
-import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
-import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
-import { getCoveredCollectionPartIds } from '@app/utils/collectionRequestState';
+import { orderCollectionPartsOldestFirst } from '@app/utils/collectionPlaybackSelection';
+import {
+  getCollectionPartRequestPresentation,
+  getCoveredCollectionPartIds,
+} from '@app/utils/collectionRequestState';
 import { mapWithConcurrency } from '@app/utils/concurrency';
 import defineMessages from '@app/utils/defineMessages';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
+import { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
@@ -32,6 +36,13 @@ const messages = defineMessages('components.RequestModal', {
   requestmovies: 'Request {count} {count, plural, one {Movie} other {Movies}}',
   requestmovies4k:
     'Request {count} {count, plural, one {Movie} other {Movies}} in 4K',
+  selection: 'Select this movie to request',
+  selectAll: 'Select every movie that is ready to request',
+  status: 'Status',
+  readyToRequest: 'Ready to Request',
+  requested: 'Requested',
+  available: 'Available',
+  blocklisted: 'Blocklisted',
 });
 
 const COLLECTION_REQUEST_CONCURRENCY = 5;
@@ -52,8 +63,6 @@ const CollectionRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
-  const [requestOverrides, setRequestOverrides] =
-    useState<RequestOverrides | null>(null);
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
   const mountedRef = useRef(true);
   const submissionActiveRef = useRef(false);
@@ -68,10 +77,7 @@ const CollectionRequestModal = ({
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const { data: quota } = useSWR<QuotaResponse>(
-    user &&
-      (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
-      ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
-      : null
+    user ? `/api/v1/user/${user.id}/quota` : null
   );
 
   const currentlyRemaining =
@@ -151,18 +157,6 @@ const CollectionRequestModal = ({
     );
   };
 
-  const getPartRequest = (tmdbId: number): MediaRequest | undefined => {
-    const part = (data?.parts ?? []).find((part) => part.id === tmdbId);
-
-    return (part?.mediaInfo?.requests ?? []).find(
-      (request) =>
-        request.is4k === is4k &&
-        request.status !== MediaRequestStatus.DECLINED &&
-        request.status !== MediaRequestStatus.FAILED &&
-        request.status !== MediaRequestStatus.COMPLETED
-    );
-  };
-
   useEffect(() => {
     if (onUpdating) {
       onUpdating(isUpdating);
@@ -184,17 +178,6 @@ const CollectionRequestModal = ({
     setIsUpdating(true);
 
     try {
-      let overrideParams = {};
-      if (requestOverrides) {
-        overrideParams = {
-          serverId: requestOverrides.server,
-          profileId: requestOverrides.profile,
-          rootFolder: requestOverrides.folder,
-          userId: requestOverrides.user?.id,
-          tags: requestOverrides.tags,
-        };
-      }
-
       const parts =
         data?.parts.filter((part) => selectedParts.includes(part.id)) ?? [];
       const outcomes = await mapWithConcurrency(
@@ -206,7 +189,6 @@ const CollectionRequestModal = ({
               mediaId: part.id,
               mediaType: 'movie',
               is4k,
-              ...overrideParams,
             });
             return { id: part.id, succeeded: true } as const;
           } catch {
@@ -300,7 +282,6 @@ const CollectionRequestModal = ({
       }
     }
   }, [
-    requestOverrides,
     data?.parts,
     data?.name,
     onComplete,
@@ -324,6 +305,17 @@ const CollectionRequestModal = ({
     [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
     { type: 'or' }
   );
+  const visibleParts = orderCollectionPartsOldestFirst(
+    data?.parts ?? []
+  ).filter(
+    (part) =>
+      blocklistVisibility ||
+      getCollectionPartRequestPresentation(part, is4k) !== 'blocklisted'
+  );
+  const selectAllDisabled =
+    unrequestedParts.length === 0 ||
+    (!!quota?.movie.limit &&
+      (quota.movie.remaining ?? 0) < unrequestedParts.length);
 
   return (
     <Modal
@@ -350,8 +342,9 @@ const CollectionRequestModal = ({
               )
       }
       okDisabled={selectedParts.length === 0 || isUpdating}
-      okButtonType={'primary'}
-      backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+      cancelButtonType="danger"
+      okButtonType="success"
+      dialogClass="request-modal-site-surface sm:max-w-5xl"
     >
       {hasAutoApprove && !quota?.movie.restricted && (
         <div className="mt-6">
@@ -366,230 +359,129 @@ const CollectionRequestModal = ({
           mediaType="movie"
           quota={quota?.movie}
           remaining={currentlyRemaining}
-          userOverride={
-            requestOverrides?.user && requestOverrides.user.id !== user?.id
-              ? requestOverrides?.user?.id
-              : undefined
-          }
         />
       )}
-      <div className="flex flex-col">
-        <div className="-mx-4 sm:mx-0">
-          <div className="inline-block min-w-full py-2 align-middle">
-            <div className="overflow-hidden border border-gray-700 backdrop-blur sm:rounded-lg">
-              <table className="min-w-full">
-                <thead>
-                  <tr>
-                    <th className="w-16 bg-gray-700/80 px-4 py-3">
-                      <span
-                        role="checkbox"
-                        tabIndex={0}
-                        aria-checked={isAllParts()}
-                        onClick={() => toggleAllParts()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === 'Space') {
-                            toggleAllParts();
-                          }
-                        }}
-                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                          quota?.movie.limit &&
-                          (quota.movie.remaining ?? 0) < unrequestedParts.length
-                            ? 'opacity-50'
-                            : ''
-                        }`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllParts() ? 'bg-indigo-500' : 'bg-gray-800'
-                          } absolute mx-auto h-4 w-9 rounded-full transition-colors duration-200 ease-in-out`}
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllParts() ? 'translate-x-5' : 'translate-x-0'
-                          } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
-                        />
-                      </span>
-                    </th>
-                    <th className="bg-gray-700/80 px-1 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
-                      {intl.formatMessage(globalMessages.movie)}
-                    </th>
-                    <th className="bg-gray-700/80 px-2 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
-                      {intl.formatMessage(globalMessages.status)}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700">
-                  {data?.parts
-                    .filter((part) => {
-                      if (!blocklistVisibility)
-                        return (
-                          part.mediaInfo?.status !== MediaStatus.BLOCKLISTED
-                        );
-                      return part;
-                    })
-                    .map((part) => {
-                      const partRequest = getPartRequest(part.id);
-                      const partMedia =
-                        part.mediaInfo &&
-                        part.mediaInfo[is4k ? 'status4k' : 'status'] !==
-                          MediaStatus.UNKNOWN &&
-                        part.mediaInfo[is4k ? 'status4k' : 'status'] !==
-                          MediaStatus.DELETED
-                          ? part.mediaInfo
-                          : undefined;
-
-                      return (
-                        <tr key={`part-${part.id}`}>
-                          <td
-                            className={`whitespace-nowrap px-4 py-4 text-sm font-medium leading-5 text-gray-100 ${
-                              partMedia?.status === MediaStatus.BLOCKLISTED &&
-                              'pointer-events-none opacity-50'
-                            }`}
-                          >
-                            <span
-                              role="checkbox"
-                              tabIndex={0}
-                              aria-checked={
-                                (!!partMedia &&
-                                  partMedia.status !==
-                                    MediaStatus.BLOCKLISTED) ||
-                                isSelectedPart(part.id)
-                              }
-                              onClick={() => togglePart(part.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === 'Space') {
-                                  togglePart(part.id);
-                                }
-                              }}
-                              className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                                (!!partMedia &&
-                                  partMedia.status !==
-                                    MediaStatus.BLOCKLISTED) ||
-                                partRequest ||
-                                (quota?.movie.limit &&
-                                  currentlyRemaining <= 0 &&
-                                  !isSelectedPart(part.id))
-                                  ? 'opacity-50'
-                                  : ''
-                              }`}
-                            >
-                              <span
-                                aria-hidden="true"
-                                className={`${
-                                  (!!partMedia &&
-                                    partMedia.status !==
-                                      MediaStatus.BLOCKLISTED) ||
-                                  partRequest ||
-                                  isSelectedPart(part.id)
-                                    ? 'bg-indigo-500'
-                                    : 'bg-gray-700'
-                                } absolute mx-auto h-4 w-9 rounded-full transition-colors duration-200 ease-in-out`}
-                              />
-                              <span
-                                aria-hidden="true"
-                                className={`${
-                                  (!!partMedia &&
-                                    partMedia.status !==
-                                      MediaStatus.BLOCKLISTED) ||
-                                  partRequest ||
-                                  isSelectedPart(part.id)
-                                    ? 'translate-x-5'
-                                    : 'translate-x-0'
-                                } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
-                              />
-                            </span>
-                          </td>
-                          <td
-                            className={`flex items-center px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6 ${
-                              partMedia?.status === MediaStatus.BLOCKLISTED &&
-                              'pointer-events-none opacity-50'
-                            }`}
-                          >
-                            <div className="relative h-auto w-10 flex-shrink-0 overflow-hidden rounded-md">
-                              <CachedImage
-                                type="tmdb"
-                                src={
-                                  part.posterPath
-                                    ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${part.posterPath}`
-                                    : '/images/seerr_poster_not_found.png'
-                                }
-                                alt=""
-                                sizes="100vw"
-                                style={{
-                                  width: '100%',
-                                  height: 'auto',
-                                  objectFit: 'cover',
-                                }}
-                                width={600}
-                                height={900}
-                              />
-                            </div>
-                            <div className="flex flex-col justify-center pl-2">
-                              <div className="text-xs font-medium">
-                                {part.releaseDate?.slice(0, 4)}
-                              </div>
-                              <div className="text-base font-bold">
-                                {part.title}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="whitespace-nowrap py-4 pr-2 text-sm leading-5 text-gray-200 md:px-6">
-                            {!partMedia && !partRequest && (
-                              <Badge>
-                                {intl.formatMessage(
-                                  globalMessages.notrequested
-                                )}
-                              </Badge>
-                            )}
-                            {!partMedia &&
-                              partRequest?.status ===
-                                MediaRequestStatus.PENDING && (
-                                <Badge badgeType="warning">
-                                  {intl.formatMessage(globalMessages.pending)}
-                                </Badge>
-                              )}
-                            {((!partMedia &&
-                              partRequest?.status ===
-                                MediaRequestStatus.APPROVED) ||
-                              partMedia?.[is4k ? 'status4k' : 'status'] ===
-                                MediaStatus.PROCESSING) && (
-                              <Badge badgeType="primary">
-                                {intl.formatMessage(globalMessages.requested)}
-                              </Badge>
-                            )}
-                            {partMedia?.[is4k ? 'status4k' : 'status'] ===
-                              MediaStatus.AVAILABLE && (
-                              <Badge badgeType="success">
-                                {intl.formatMessage(globalMessages.available)}
-                              </Badge>
-                            )}
-                            {partMedia?.status === MediaStatus.BLOCKLISTED && (
-                              <Badge badgeType="danger">
-                                {intl.formatMessage(globalMessages.blocklisted)}
-                              </Badge>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+      <RequestMediaCard
+        artwork={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+            : getTmdbPosterImageUrl(data?.posterPath, 'original')
+        }
+        artworkType="tmdb"
+      >
+        <div className="refreshed-inset-surface detail-summary-card grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+          <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
+            <CachedImage
+              type="tmdb"
+              src={
+                getTmdbPosterImageUrl(data?.posterPath) ||
+                '/images/seerr_poster_not_found.png'
+              }
+              alt=""
+              fill
+              sizes="(min-width: 640px) 80px, 64px"
+              className="object-cover"
+            />
+          </div>
+          <div className="min-w-0">
+            <h3 className="detail-summary-title truncate text-lg font-semibold leading-5 text-white">
+              {data?.name}
+            </h3>
+            <p className="refreshed-detail-text detail-card-heading-spacing text-xs">
+              {intl.formatMessage(messages.requestmovies, {
+                count: visibleParts.length,
+              })}
+            </p>
           </div>
         </div>
-      </div>
-      {(hasPermission(Permission.REQUEST_ADVANCED) ||
-        hasPermission(Permission.MANAGE_REQUESTS)) && (
-        <AdvancedRequester
-          type="movie"
-          is4k={is4k}
-          onChange={(overrides) => {
-            setRequestOverrides(overrides);
-          }}
-        />
-      )}
+
+        <section className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700 p-2">
+          <div className="request-divider-dark grid grid-cols-[2rem_minmax(0,1fr)_8rem] items-center gap-x-2 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
+            <SelectionCircle
+              disabled={selectAllDisabled}
+              onClick={toggleAllParts}
+              selected={isAllParts() && unrequestedParts.length > 0}
+              label={intl.formatMessage(messages.selectAll)}
+            />
+            <span>{intl.formatMessage(globalMessages.movie)}</span>
+            <span>{intl.formatMessage(messages.status)}</span>
+          </div>
+          <div className="scrollable-card -mr-3 max-h-[312px] space-y-1 overflow-y-auto pr-3 pt-1">
+            {visibleParts.map((part) => {
+              const presentation = getCollectionPartRequestPresentation(
+                part,
+                is4k
+              );
+              const selected = isSelectedPart(part.id);
+              const quotaBlocked =
+                !!quota?.movie.limit && currentlyRemaining <= 0 && !selected;
+              const selectionDisabled =
+                presentation !== 'ready' || quotaBlocked;
+              const statusLabel =
+                presentation === 'available'
+                  ? messages.available
+                  : presentation === 'requested'
+                    ? messages.requested
+                    : presentation === 'blocklisted'
+                      ? messages.blocklisted
+                      : messages.readyToRequest;
+              const statusTone =
+                presentation === 'available'
+                  ? 'text-green-400'
+                  : presentation === 'ready'
+                    ? 'text-yellow-300'
+                    : presentation === 'blocklisted'
+                      ? 'text-red-400'
+                      : 'text-indigo-300';
+
+              return (
+                <div
+                  key={`part-${part.id}`}
+                  className="refreshed-inset-surface grid min-h-[58px] grid-cols-[2rem_40px_minmax(0,1fr)_8rem] items-center gap-x-2 rounded-lg border border-gray-700 px-2 py-1.5"
+                >
+                  <SelectionCircle
+                    disabled={selectionDisabled}
+                    onClick={() => togglePart(part.id)}
+                    selected={selected}
+                    label={intl.formatMessage(messages.selection)}
+                  />
+                  <div className="relative h-[52px] w-10 overflow-hidden rounded-md ring-1 ring-gray-700">
+                    <CachedImage
+                      type="tmdb"
+                      src={
+                        part.posterPath
+                          ? getTmdbPosterImageUrl(part.posterPath)
+                          : '/images/seerr_poster_not_found.png'
+                      }
+                      alt=""
+                      fill
+                      sizes="40px"
+                      className="object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-gray-100">
+                      {part.title}
+                    </div>
+                    <div className="refreshed-detail-text text-xs">
+                      {part.releaseDate?.slice(0, 4) || '—'} ·{' '}
+                      {is4k ? '4K' : 'HD'}
+                    </div>
+                  </div>
+                  <dl className="grid min-w-0 grid-cols-1 text-xs leading-4">
+                    <dt className="font-medium text-gray-100">
+                      {intl.formatMessage(messages.status)}:
+                    </dt>
+                    <dd className={`m-0 truncate font-medium ${statusTone}`}>
+                      {intl.formatMessage(statusLabel)}
+                    </dd>
+                  </dl>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </RequestMediaCard>
     </Modal>
   );
 };

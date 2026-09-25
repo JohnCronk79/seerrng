@@ -2,8 +2,20 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
+import {
+  CompactSelect,
+  FilterResetButton,
+  getFilterToggleButtonClass,
+  type CompactSelectOption,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import { BOOK_GENRES } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import { tvNetworks } from '@app/components/Discover/NetworkSlider';
+import { studios } from '@app/components/Discover/StudioSlider';
+import FocusedIssue from '@app/components/IssueList/FocusedIssue';
 import IssueItem from '@app/components/IssueList/IssueItem';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import {
   getPositiveQueryParamNumber,
@@ -16,8 +28,8 @@ import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
 } from '@heroicons/react/24/outline';
+import type { TmdbGenre } from '@server/api/themoviedb/interfaces';
 import type { IssueResultsResponse } from '@server/interfaces/api/issueInterfaces';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -28,6 +40,7 @@ const messages = defineMessages('components.IssueList', {
   issues: 'Issues',
   allIssues: 'All Issues',
   taskFilters: 'Task Filters',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   clearFilters: 'Clear Filters',
   sortBy: 'Sort By',
@@ -48,6 +61,16 @@ const messages = defineMessages('components.IssueList', {
   music: 'Music',
   books: 'Books',
   issueType: 'Issue Type',
+  releaseDate: 'Release Date',
+  releaseYear: 'Release Year',
+  firstPublished: 'First Published',
+  genres: 'Genres',
+  studio: 'Studio',
+  network: 'Network',
+  albumType: 'Album Type',
+  album: 'Album',
+  ep: 'EP',
+  single: 'Single',
   any: 'Any',
   audio: 'Audio',
   video: 'Video',
@@ -63,19 +86,28 @@ type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
 type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book';
 type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 
-const controlClass = (active: boolean) =>
-  `inline-flex h-8 items-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${active ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`;
-
 const IssueList = () => {
   const intl = useIntl();
   const router = useRouter();
-  const [filter, setFilter] = useState<Filter>('open');
+  const focusedIssueId = getPositiveQueryParamNumber(router.query.issue);
+  const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('added');
   const [direction, setDirection] = useState<Direction>('desc');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'issues',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book'],
+    restore: setMediaFilter,
+  });
   const [issueTypeFilter, setIssueTypeFilter] =
     useState<IssueTypeFilter>('all');
+  const [releaseYearFilter, setReleaseYearFilter] = useState('any');
+  const [genreFilter, setGenreFilter] = useState('');
+  const [studioFilter, setStudioFilter] = useState('');
+  const [networkFilter, setNetworkFilter] = useState('');
+  const [albumTypeFilter, setAlbumTypeFilter] = useState('');
   const [pageSize, setPageSize] = useState(10);
   const [search, debouncedSearch, setSearch] = useDebouncedState('');
   const page = getPositiveQueryParamNumber(router.query.page, 1) ?? 1;
@@ -91,6 +123,21 @@ const IssueList = () => {
     mediaType: mediaFilter,
     issueType: issueTypeFilter,
   });
+  if (mediaFilter !== 'all') {
+    if (releaseYearFilter !== 'any') {
+      params.set('releaseYear', releaseYearFilter);
+    }
+    if (genreFilter) params.set('genre', genreFilter);
+    if (mediaFilter === 'movie' && studioFilter) {
+      params.set('studio', studioFilter);
+    }
+    if (mediaFilter === 'tv' && networkFilter) {
+      params.set('network', networkFilter);
+    }
+    if (mediaFilter === 'music' && albumTypeFilter) {
+      params.set('albumType', albumTypeFilter);
+    }
+  }
   if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
   const { data, error, isValidating } = useSWR<IssueResultsResponse>(
     `/api/v1/issue?${params.toString()}`
@@ -100,11 +147,23 @@ const IssueList = () => {
       (search.trim() !== debouncedSearch.trim() || isValidating),
     'issues-keyword'
   );
+  const { data: availableGenres } = useSWR<TmdbGenre[]>(
+    mediaFilter === 'movie' || mediaFilter === 'tv'
+      ? `/api/v1/genres/${mediaFilter}`
+      : null
+  );
 
   if (!data && !error) return <LoadingSpinner />;
   if (!data) return <ErrorPage statusCode={500} />;
 
   const resetPage = () => page !== 1 && updateQueryParams('page', '1');
+  const clearMediaSpecificFilters = () => {
+    setReleaseYearFilter('any');
+    setGenreFilter('');
+    setStudioFilter('');
+    setNetworkFilter('');
+    setAlbumTypeFilter('');
+  };
   const changePage = (nextPage: number) => {
     updateQueryParams('page', String(nextPage));
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -120,33 +179,100 @@ const IssueList = () => {
     setFilter('all');
     setTimeFrame('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setIssueTypeFilter('all');
+    clearMediaSpecificFilters();
     setSearch('');
+    setSort('added');
+    setDirection('desc');
     resetPage();
   };
   const totalPages = Math.max(data.pageInfo.pages, 1);
+  const currentYear = new Date().getFullYear();
+  const yearOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.any), value: 'any' },
+    ...Array.from({ length: currentYear - 1969 }, (_, index) => {
+      const year = currentYear - index;
+      return { label: year.toString(), value: year.toString() };
+    }),
+    { label: '<1970', value: 'before-1970' },
+  ];
+  const genreOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.any), value: '' },
+    ...(mediaFilter === 'movie' || mediaFilter === 'tv'
+      ? (availableGenres ?? []).map((genre) => ({
+          label: genre.name,
+          value: genre.name.toLocaleLowerCase(),
+        }))
+      : mediaFilter === 'music'
+        ? [
+            'Alternative',
+            'Classical',
+            'Country',
+            'Electronic',
+            'Hip-Hop',
+            'Jazz',
+            'Metal',
+            'Pop',
+            'Rock',
+          ].map((genre) => ({
+            label: genre,
+            value: genre.toLocaleLowerCase(),
+          }))
+        : BOOK_GENRES.map(([, label]) => ({
+            label,
+            value: label.toLocaleLowerCase(),
+          }))),
+  ];
+  const issueTypeOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.any), value: 'all' },
+    { label: intl.formatMessage(messages.audio), value: 'audio' },
+    { label: intl.formatMessage(messages.video), value: 'video' },
+    { label: intl.formatMessage(messages.subtitle), value: 'subtitle' },
+    { label: intl.formatMessage(messages.other), value: 'other' },
+  ];
+  const timeFrameOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.allTime), value: 'all' },
+    { label: intl.formatMessage(messages.sevenDays), value: '7d' },
+    { label: intl.formatMessage(messages.fourteenDays), value: '14d' },
+    { label: intl.formatMessage(messages.thirtyDays), value: '30d' },
+    { label: intl.formatMessage(messages.sixMonths), value: '6m' },
+  ];
 
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.issues)} />
-      <h2 className="mt-8 text-2xl font-bold leading-7 text-gray-100 sm:text-4xl sm:leading-9">
+      <h2 className="mt-8 text-2xl leading-7 font-bold text-gray-100 sm:text-4xl sm:leading-9">
         <span className="text-overseerr">
           {intl.formatMessage(messages.issues)}
         </span>
       </h2>
-      <section className="mb-3 mt-4">
+      {focusedIssueId && (
+        <FocusedIssue key={focusedIssueId} issueId={focusedIssueId} />
+      )}
+      <section className="app-filter-section-gap mt-4">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={
+              filter === 'all' &&
+              timeFrame === 'all' &&
+              mediaFilter === 'all' &&
+              issueTypeFilter === 'all' &&
+              releaseYearFilter === 'any' &&
+              !genreFilter &&
+              !studioFilter &&
+              !networkFilter &&
+              !albumTypeFilter &&
+              !search &&
+              sort === 'added' &&
+              direction === 'desc'
+            }
             onClick={clearFilters}
-            className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-gray-600 bg-gray-900/70 px-[9px] text-xs font-medium text-gray-300 transition hover:border-gray-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          >
-            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           {(
             [
               ['all', messages.allIssues, data.counts?.all ?? 0],
@@ -162,7 +288,7 @@ const IssueList = () => {
                 setFilter(value);
                 resetPage();
               }}
-              className={controlClass(filter === value)}
+              className={getFilterToggleButtonClass(filter === value)}
             >
               {intl.formatMessage(label)}
               <span className="rounded-full bg-black/25 px-1.5 text-[10px]">
@@ -170,13 +296,26 @@ const IssueList = () => {
               </span>
             </button>
           ))}
+          <CompactSelect
+            label={intl.formatMessage(messages.issueType)}
+            value={issueTypeFilter}
+            options={issueTypeOptions}
+            onChange={(value) => {
+              setIssueTypeFilter(value as IssueTypeFilter);
+              resetPage();
+            }}
+          />
         </div>
       </section>
-      <section className="mb-5">
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.mediaFilters)}
+      >
         <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.filters)}
+          {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -192,84 +331,38 @@ const IssueList = () => {
               aria-pressed={mediaFilter === value}
               onClick={() => {
                 setMediaFilter(value);
+                mediaPin.remember(value);
+                clearMediaSpecificFilters();
                 resetPage();
               }}
-              className={controlClass(mediaFilter === value)}
+              className={getFilterToggleButtonClass(mediaFilter === value)}
             >
               {intl.formatMessage(label)}
             </button>
           ))}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
+      </section>
+      <section
+        className="app-filter-section-gap"
+        aria-label={intl.formatMessage(messages.filters)}
+      >
+        <div className="mb-2 text-sm text-gray-300">
+          {intl.formatMessage(messages.filters)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <CompactSelect
+            label={intl.formatMessage(messages.timePeriod)}
+            value={timeFrame}
+            options={timeFrameOptions}
+            onChange={(value) => {
+              setTimeFrame(value as TimeFrame);
+              resetPage();
+            }}
+          />
+          <label className="discover-filter-control w-72 flex-none self-center">
             <span
-              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                issueTypeFilter !== 'all' ? 'bg-indigo-500/35 text-white' : ''
-              }`}
-            >
-              {intl.formatMessage(messages.issueType)}
-            </span>
-            <select
-              value={issueTypeFilter}
-              onChange={(event) => {
-                setIssueTypeFilter(event.target.value as IssueTypeFilter);
-                resetPage();
-              }}
-              className="w-24 border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-              aria-label={intl.formatMessage(messages.issueType)}
-            >
-              {(
-                [
-                  ['all', messages.any],
-                  ['audio', messages.audio],
-                  ['video', messages.video],
-                  ['subtitle', messages.subtitle],
-                  ['other', messages.other],
-                ] as const
-              ).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {intl.formatMessage(label)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-flex h-8 self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span
-              className={`inline-flex items-center rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                timeFrame !== 'all' ? 'bg-indigo-500/35 text-white' : ''
-              }`}
-            >
-              {intl.formatMessage(messages.timePeriod)}
-            </span>
-            <select
-              value={timeFrame}
-              onChange={(event) => {
-                setTimeFrame(event.target.value as TimeFrame);
-                resetPage();
-              }}
-              className="border-0 bg-gray-900/70 px-1.5 py-1 text-xs text-gray-300 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
-            >
-              <option value="all">
-                {intl.formatMessage(messages.allTime)}
-              </option>
-              <option value="7d">
-                {intl.formatMessage(messages.sevenDays)}
-              </option>
-              <option value="14d">
-                {intl.formatMessage(messages.fourteenDays)}
-              </option>
-              <option value="30d">
-                {intl.formatMessage(messages.thirtyDays)}
-              </option>
-              <option value="6m">
-                {intl.formatMessage(messages.sixMonths)}
-              </option>
-            </select>
-          </label>
-          <label className="inline-flex h-8 w-72 max-w-full flex-none self-center overflow-hidden rounded-md border border-gray-600 bg-gray-900/70">
-            <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                search.trim() ? 'bg-indigo-500/35 text-white' : ''
+              className={`discover-filter-control-label gap-1 ${
+                search.trim() ? 'discover-filter-control-label-active' : ''
               }`}
             >
               <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -284,12 +377,90 @@ const IssueList = () => {
               }}
               placeholder={intl.formatMessage(messages.searchIssues)}
               aria-label={intl.formatMessage(messages.searchIssues)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
+          {mediaFilter !== 'all' && (
+            <>
+              <CompactSelect
+                label={intl.formatMessage(
+                  mediaFilter === 'music'
+                    ? messages.releaseYear
+                    : mediaFilter === 'book'
+                      ? messages.firstPublished
+                      : messages.releaseDate
+                )}
+                value={releaseYearFilter}
+                options={yearOptions}
+                onChange={(value) => {
+                  setReleaseYearFilter(value);
+                  resetPage();
+                }}
+              />
+              <CompactSelect
+                label={intl.formatMessage(messages.genres)}
+                value={genreFilter}
+                options={genreOptions}
+                onChange={(value) => {
+                  setGenreFilter(value);
+                  resetPage();
+                }}
+              />
+            </>
+          )}
+          {mediaFilter === 'movie' && (
+            <CompactSelect
+              label={intl.formatMessage(messages.studio)}
+              value={studioFilter}
+              options={[
+                { label: intl.formatMessage(messages.any), value: '' },
+                ...studios.map((studio) => ({
+                  label: studio.name,
+                  value: studio.name.toLocaleLowerCase(),
+                })),
+              ]}
+              onChange={(value) => {
+                setStudioFilter(value);
+                resetPage();
+              }}
+            />
+          )}
+          {mediaFilter === 'tv' && (
+            <CompactSelect
+              label={intl.formatMessage(messages.network)}
+              value={networkFilter}
+              options={[
+                { label: intl.formatMessage(messages.any), value: '' },
+                ...tvNetworks.map((network) => ({
+                  label: network.name,
+                  value: network.name.toLocaleLowerCase(),
+                })),
+              ]}
+              onChange={(value) => {
+                setNetworkFilter(value);
+                resetPage();
+              }}
+            />
+          )}
+          {mediaFilter === 'music' && (
+            <CompactSelect
+              label={intl.formatMessage(messages.albumType)}
+              value={albumTypeFilter}
+              options={[
+                { label: intl.formatMessage(messages.any), value: '' },
+                { label: intl.formatMessage(messages.album), value: 'album' },
+                { label: intl.formatMessage(messages.ep), value: 'ep' },
+                { label: intl.formatMessage(messages.single), value: 'single' },
+              ]}
+              onChange={(value) => {
+                setAlbumTypeFilter(value);
+                resetPage();
+              }}
+            />
+          )}
         </div>
       </section>
-      <section className="mb-5">
+      <section className="app-filter-section-gap">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.sortBy)}
         </div>
@@ -312,7 +483,7 @@ const IssueList = () => {
                 type="button"
                 aria-pressed={active}
                 onClick={() => updateSort(value)}
-                className={controlClass(active)}
+                className={getFilterToggleButtonClass(active)}
               >
                 {intl.formatMessage(label)}
                 <Icon className="h-4 w-4" />
@@ -321,14 +492,16 @@ const IssueList = () => {
           })}
         </div>
       </section>
-      {data.results.map((issue) => (
-        <div className="py-2" key={`issue-item-${issue.id}`}>
-          <IssueItem issue={issue} />
-        </div>
-      ))}
+      <div className="card-stack card-spacing-before">
+        {data.results
+          .filter((issue) => issue.id !== focusedIssueId)
+          .map((issue) => (
+            <IssueItem key={`issue-item-${issue.id}`} issue={issue} />
+          ))}
+      </div>
       {data.results.length === 0 && (
         <div className="refreshed-card-surface flex min-h-16 w-full flex-col items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-white">
-          <span className="text-sm text-gray-400">
+          <span className="refreshed-detail-text text-sm">
             {intl.formatMessage(globalMessages.noresults)}
           </span>
           {filter !== 'all' && (

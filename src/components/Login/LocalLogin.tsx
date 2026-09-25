@@ -22,7 +22,9 @@ const messages = defineMessages('components.Login', {
   jellyfinLocalLoginHint:
     "If you haven't set an email address in your profile, use your {mediaServerName} username instead.",
   loginerror: 'Something went wrong while trying to sign in.',
-  credentialerror: 'The email address or password is incorrect.',
+  sessionerror:
+    'Sign-in succeeded, but SeerrNG could not establish a browser session. Use HTTPS or enable authenticated HTTP sessions, then try again.',
+  emailCredentialError: 'The email address or password is incorrect.',
   tipEmailHasTrailingWhitespace: 'The email ends with whitespace',
   signingin: 'Signing In…',
   signin: 'Sign In',
@@ -30,7 +32,7 @@ const messages = defineMessages('components.Login', {
 });
 
 interface LocalLoginProps {
-  revalidate: () => void;
+  revalidate: () => Promise<unknown>;
 }
 
 const LocalLogin = ({ revalidate }: LocalLoginProps) => {
@@ -65,16 +67,20 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
             email: values.email,
             password: values.password,
           });
+          if (!(await revalidate())) {
+            throw new Error('browser-session-not-established');
+          }
         } catch (e) {
           setLoginError(
             intl.formatMessage(
-              axios.isAxiosError(e) && e.response?.status === 403
-                ? messages.credentialerror
-                : messages.loginerror
+              e instanceof Error &&
+                e.message === 'browser-session-not-established'
+                ? messages.sessionerror
+                : axios.isAxiosError(e) && e.response?.status === 403
+                  ? messages.emailCredentialError
+                  : messages.loginerror
             )
           );
-        } finally {
-          revalidate();
         }
       }}
     >
@@ -89,7 +95,7 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
                   })}
                 </h2>
 
-                <div className="mb-4 mt-1">
+                <div className="mt-1 mb-4">
                   <div className="form-input-field">
                     <Field
                       id="email"
@@ -130,7 +136,7 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
                     </div>
                   )}
                 </div>
-                <div className="mb-2 mt-1">
+                <div className="mt-1 mb-2">
                   <div className="form-input-field">
                     <SensitiveInput
                       as="field"
@@ -164,7 +170,7 @@ const LocalLogin = ({ revalidate }: LocalLoginProps) => {
                   </div>
                 </div>
                 {loginError && (
-                  <div className="mb-2 mt-1 sm:col-span-2 sm:mt-0">
+                  <div className="mt-1 mb-2 sm:col-span-2 sm:mt-0">
                     <div className="error">{loginError}</div>
                   </div>
                 )}

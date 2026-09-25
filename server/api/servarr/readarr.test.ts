@@ -84,6 +84,16 @@ const writeJson = (
   response.end(JSON.stringify(body));
 };
 
+const writeRawJson = (
+  response: ServerResponse,
+  status: number,
+  body: string
+): void => {
+  response.statusCode = status;
+  response.setHeader('content-type', 'application/json');
+  response.end(body);
+};
+
 describe('ReadarrAPI.getEditions', () => {
   afterEach(() => {
     mock.restoreAll();
@@ -322,6 +332,11 @@ describe('ReadarrAPI media type requests', () => {
       apiKey: 'key',
       mediaType: 'audiobook',
     });
+    mock.method(
+      api as unknown as { ensureProvider: () => Promise<void> },
+      'ensureProvider',
+      async () => undefined
+    );
     const getMock = mock.method(
       ReadarrAPI.prototype as unknown as MockableReadarr,
       'get',
@@ -613,6 +628,241 @@ describe('ReadarrAPI.addBook', () => {
 });
 
 describe('ReadarrAPI Chaptarr compatibility', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('adds a book without fetching an oversized unfiltered library', async () => {
+    const requests: string[] = [];
+    const oversizedLibrary = JSON.stringify(
+      Array.from({ length: 20_000 }, (_, id) => ({
+        id: id + 1,
+        title: `Library Book ${id + 1}`,
+        foreignBookId: `hc:${id + 1}`,
+        overview: 'x'.repeat(900),
+        editions: [],
+      }))
+    );
+    assert.ok(Buffer.byteLength(oversizedLibrary) > 16 * 1024 * 1024);
+
+    const scopedBases = [
+      '/readarr/hc/ebook/api/v1',
+      '/readarr/gr/ebook/api/v1',
+    ];
+    const addedBook = {
+      ...bookOptions,
+      id: 42,
+      title: 'Large Library Book',
+      mediaType: 'ebook' as const,
+      monitored: true,
+      ebookMonitored: true,
+    };
+    const server = createServer((request, response) => {
+      void (async () => {
+        const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+        const scopedBase = scopedBases.find((base) =>
+          parsedUrl.pathname.startsWith(base)
+        );
+        await readJsonBody(request);
+        requests.push(`${request.method ?? 'GET'} ${parsedUrl.pathname}`);
+
+        if (parsedUrl.pathname === '/api/v1/system/status') {
+          writeJson(response, 200, {
+            appName: 'Chaptarr',
+            version: '0.9.936.0',
+            urlBase: '',
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/config/hardcover') {
+          writeJson(response, 200, { enabled: false });
+          return;
+        }
+
+        if (
+          request.method === 'GET' &&
+          scopedBase &&
+          parsedUrl.pathname === `${scopedBase}/book`
+        ) {
+          writeRawJson(response, 200, oversizedLibrary);
+          return;
+        }
+
+        if (
+          request.method === 'POST' &&
+          scopedBase &&
+          parsedUrl.pathname === `${scopedBase}/book`
+        ) {
+          writeJson(response, 201, 42);
+          return;
+        }
+
+        if (
+          request.method === 'GET' &&
+          scopedBase &&
+          parsedUrl.pathname === `${scopedBase}/book/42`
+        ) {
+          writeJson(response, 200, addedBook);
+          return;
+        }
+
+        writeJson(response, 404, { message: 'not found' });
+      })().catch(() => writeJson(response, 500, { message: 'handler failed' }));
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'key',
+        mediaType: 'ebook',
+      });
+
+      const result = await api.addBook({
+        ...bookOptions,
+        title: 'Large Library Book',
+        mediaType: 'ebook',
+      });
+
+      assert.strictEqual(result.id, 42);
+      assert.ok(!requests.includes('GET /readarr/gr/ebook/api/v1/book'));
+      assert.ok(!requests.includes('GET /readarr/hc/ebook/api/v1/book'));
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
+  it('uses a lookup-provided local ID for an existing Chaptarr book', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'ebook',
+    });
+    const internalApi = api as unknown as {
+      detectedSystemStatus?: { appName?: string; version?: string };
+    };
+    internalApi.detectedSystemStatus = {
+      appName: 'Chaptarr',
+      version: '0.9.936.0',
+    };
+    mock.method(
+      api as unknown as { ensureProvider: () => Promise<void> },
+      'ensureProvider',
+      async () => undefined
+    );
+    const getBookMock = mock.method(api, 'getBook', async () =>
+      existingBook({
+        id: 42,
+        mediaType: 'ebook',
+        monitored: true,
+        ebookMonitored: true,
+      })
+    );
+    const searchBookMock = mock.method(
+      api,
+      'searchBook',
+      async () => undefined
+    );
+
+    const result = await api.addBook({
+      ...bookOptions,
+      id: 42,
+      mediaType: 'ebook',
+    });
+
+    assert.strictEqual(result.id, 42);
+    assert.strictEqual(getBookMock.mock.calls.length, 1);
+    assert.strictEqual(searchBookMock.mock.calls.length, 1);
+  });
+
+  it('paginates Chaptarr library scans with bounded requests', async () => {
+    const pageQueries: URLSearchParams[] = [];
+    const pages = [
+      [
+        existingBook({ id: 1, foreignBookId: 'hc:1' }),
+        existingBook({ id: 2, foreignBookId: 'hc:2' }),
+      ],
+      [existingBook({ id: 3, foreignBookId: 'hc:3' })],
+    ];
+    const scopedBase = '/readarr/gr/ebook/api/v1';
+    const server = createServer((request, response) => {
+      void (async () => {
+        const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+        await readJsonBody(request);
+
+        if (parsedUrl.pathname === '/api/v1/system/status') {
+          writeJson(response, 200, {
+            appName: 'Chaptarr',
+            version: '0.9.936.0',
+            urlBase: '',
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/config/hardcover') {
+          writeJson(response, 200, { enabled: false });
+          return;
+        }
+
+        if (
+          request.method === 'GET' &&
+          parsedUrl.pathname === `${scopedBase}/book/paged`
+        ) {
+          pageQueries.push(parsedUrl.searchParams);
+          const offset = Number(parsedUrl.searchParams.get('offset'));
+          const page = pages[offset / 2] ?? [];
+          writeJson(response, 200, {
+            records: page,
+            totalCount: 3,
+            offset,
+            pageSize: 2,
+          });
+          return;
+        }
+
+        writeJson(response, 500, { message: 'unexpected request' });
+      })().catch(() => writeJson(response, 500, { message: 'handler failed' }));
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'key',
+        mediaType: 'ebook',
+      });
+
+      const books = await api.getBooks();
+
+      assert.deepStrictEqual(
+        books.map((book) => book.id),
+        [1, 2, 3]
+      );
+      assert.deepStrictEqual(
+        pageQueries.map((query) => query.get('offset')),
+        ['0', '2']
+      );
+      for (const query of pageQueries) {
+        assert.strictEqual(query.get('pageSize'), '500');
+        assert.strictEqual(query.get('includeUnmonitored'), 'true');
+        assert.strictEqual(query.get('mediaType'), 'ebook');
+      }
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
   it('uses the format facade, falls back to native lookup, and repairs monitoring/search state', async () => {
     const requests: {
       method: string;
@@ -797,7 +1047,6 @@ describe('ReadarrAPI Chaptarr compatibility', () => {
       assert.deepStrictEqual(scopedPaths, [
         '/readarr/gr/ebook/api/v1/book/lookup',
         '/readarr/hc/ebook/api/v1/book/lookup',
-        '/readarr/gr/ebook/api/v1/book',
         '/readarr/gr/ebook/api/v1/book',
         '/readarr/gr/ebook/api/v1/book/42',
         '/readarr/gr/ebook/api/v1/book/42',
@@ -1017,6 +1266,12 @@ describe('ReadarrAPI Chaptarr compatibility', () => {
       assert.strictEqual(
         (post.body as Record<string, unknown>).ebookMonitored,
         true
+      );
+      assert.ok(
+        !requests.some(
+          ({ method, path }) =>
+            method === 'GET' && path === '/readarr/gr/ebook/api/v1/book'
+        )
       );
       const update = requests.find(
         ({ method, path }) =>

@@ -2,6 +2,7 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import NotificationTypeSelector from '@app/components/NotificationTypeSelector';
+import Field from '@app/components/Settings/SettingsField';
 import { availableLanguages } from '@app/context/LanguageContext';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
@@ -10,7 +11,7 @@ import { isValidURL } from '@app/utils/urlValidationHelper';
 import { ArrowDownOnSquareIcon, BeakerIcon } from '@heroicons/react/24/outline';
 import type { NotificationAgentNtfy } from '@server/lib/settings';
 import axios from 'axios';
-import { Field, Form, Formik } from 'formik';
+import { Form, Formik } from 'formik';
 import { useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -278,7 +279,7 @@ const NotificationsNtfy = () => {
               </div>
             </div>
             {values.authMethodUsernamePassword && (
-              <div className="ml-4 mr-2">
+              <div className="mr-2 ml-4">
                 <div className="form-row">
                   <label htmlFor="username" className="text-label">
                     {intl.formatMessage(messages.username)}
@@ -324,7 +325,7 @@ const NotificationsNtfy = () => {
               </div>
             </div>
             {values.authMethodToken && (
-              <div className="form-row ml-4 mr-2">
+              <div className="form-row mr-2 ml-4">
                 <label htmlFor="token" className="text-label">
                   {intl.formatMessage(messages.token)}
                 </label>

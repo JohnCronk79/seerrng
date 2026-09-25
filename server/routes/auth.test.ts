@@ -1154,6 +1154,60 @@ describe('POST /auth/jellyfin', () => {
     assert.strictEqual(settings.jellyfin.apiKey, 'bootstrap-api-key');
   });
 
+  it('keeps the initial Jellyfin setup session available to the next request', async (t) => {
+    const userRepository = getRepository(User);
+    await userRepository.clear();
+    const settings = getSettings();
+    settings.main.mediaServerType = MediaServerType.NOT_CONFIGURED;
+    settings.jellyfin.ip = '';
+    const loginMock = mock.method(JellyfinAPI.prototype, 'login', async () => ({
+      User: {
+        Id: 'aabbccddeeff00112233445566778899',
+        Name: 'session-jellyfin-owner',
+        ServerId: 'session-server',
+        ServerName: 'Session Server',
+        Configuration: { GroupedFolders: [] },
+        Policy: { IsAdministrator: true },
+      },
+      AccessToken: 'session-access-token',
+    }));
+    const tokenMock = mock.method(
+      JellyfinAPI.prototype,
+      'createApiToken',
+      async () => 'session-api-key'
+    );
+    const nameMock = mock.method(
+      JellyfinAPI.prototype,
+      'getServerName',
+      async () => 'Session Server'
+    );
+    t.after(() => {
+      loginMock.mock.restore();
+      tokenMock.mock.restore();
+      nameMock.mock.restore();
+    });
+
+    const agent = request.agent(app);
+    const response = await agent.post('/auth/jellyfin').send({
+      username: 'session-jellyfin-owner',
+      password: 'bootstrap-password',
+      email: 'session-jellyfin-owner@seerr.dev',
+      hostname: '127.0.0.1',
+      port: 8096,
+      useSsl: false,
+      serverType: MediaServerType.JELLYFIN,
+    });
+
+    assert.strictEqual(response.status, 200);
+    const authenticated = await agent.get('/auth/me');
+    assert.strictEqual(authenticated.status, 200);
+    assert.strictEqual(authenticated.body.id, 1);
+    assert.strictEqual(
+      authenticated.body.jellyfinUsername,
+      'session-jellyfin-owner'
+    );
+  });
+
   it('admits only one concurrent Jellyfin bootstrap configuration', async (t) => {
     const userRepository = getRepository(User);
     await userRepository.clear();
@@ -2063,7 +2117,11 @@ describe('POST /auth/reset-password', () => {
     assert.strictEqual(res.status, 200);
     const persisted = await userRepo.findOneOrFail({
       where: { id: user.id },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
     assert.strictEqual(
       persisted.resetPasswordGuid,
@@ -2076,25 +2134,61 @@ describe('POST /auth/reset-password', () => {
   });
 
   it('sends only one valid link for concurrent reset requests', async () => {
-    const responses = await Promise.all([
-      request(app)
-        .post('/auth/reset-password')
-        .send({ email: 'admin@seerr.dev' }),
-      request(app)
-        .post('/auth/reset-password')
-        .send({ email: 'admin@seerr.dev' }),
+    let deliveryStarted!: () => void;
+    const deliveryStartedPromise = new Promise<void>((resolve) => {
+      deliveryStarted = resolve;
+    });
+    let releaseDelivery: (() => void) | undefined;
+    emailMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDelivery = resolve;
+          deliveryStarted();
+        })
+    );
+
+    const firstResponsePromise = request(app)
+      .post('/auth/reset-password')
+      .send({ email: 'admin@seerr.dev' });
+    let startTimeout: NodeJS.Timeout | undefined;
+    const startResult = await Promise.race([
+      deliveryStartedPromise.then(() => ({ deliveryStarted: true as const })),
+      firstResponsePromise.then((response) => ({ response })),
+      new Promise<{ timedOut: true }>((resolve) => {
+        startTimeout = setTimeout(() => resolve({ timedOut: true }), 2_000);
+      }),
     ]);
+    if (startTimeout) clearTimeout(startTimeout);
+    if ('response' in startResult) {
+      throw new Error(
+        `Reset response arrived before SMTP delivery: ${startResult.response.status} ${JSON.stringify(startResult.response.body)}`
+      );
+    }
+    assert.ok(
+      'deliveryStarted' in startResult,
+      'SMTP delivery did not start within 2 seconds'
+    );
+    const secondResponse = await request(app)
+      .post('/auth/reset-password')
+      .send({ email: 'admin@seerr.dev' });
+
+    assert.strictEqual(secondResponse.status, 200);
+    assert.strictEqual(emailMock.callCount(), 1);
+
+    releaseDelivery?.();
+    const firstResponse = await firstResponsePromise;
     await waitForPendingPasswordResetDeliveries();
 
-    assert.deepEqual(
-      responses.map((response) => response.status),
-      [200, 200]
-    );
+    assert.strictEqual(firstResponse.status, 200);
     assert.strictEqual(emailMock.callCount(), 1);
 
     const user = await getRepository(User).findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
     assert.ok(user.resetPasswordGuid);
     assert.ok(user.recoveryLinkExpirationDate);
@@ -2108,7 +2202,11 @@ describe('POST /auth/reset-password', () => {
     await waitForPendingPasswordResetDeliveries();
     const first = await userRepository.findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
 
     await request(app)
@@ -2117,7 +2215,11 @@ describe('POST /auth/reset-password', () => {
     await waitForPendingPasswordResetDeliveries();
     const second = await userRepository.findOneOrFail({
       where: { id: first.id },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
 
     assert.ok(first.resetPasswordGuid);
@@ -2313,7 +2415,7 @@ describe('POST /auth/reset-password/:guid', () => {
 
     const persisted = await getRepository(User).findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'password'],
+      select: { id: true, password: true },
     });
     const matchingPasswords = await Promise.all(
       passwords.map((password) => persisted.passwordMatch(password))

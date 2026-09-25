@@ -7,8 +7,7 @@ export const SCHEDULED_JOB_LEASE_MS = 5 * 60 * 1000;
 const MAX_SCHEDULED_JOB_NAME_LENGTH = 128;
 
 export type ScheduledJobLeaseResult<T> =
-  | { acquired: false }
-  | { acquired: true; value: T };
+  { acquired: false } | { acquired: true; value: T };
 
 export class ScheduledJobLeaseManager {
   private validateName(name: string): void {

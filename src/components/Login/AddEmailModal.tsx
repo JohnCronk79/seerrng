@@ -15,7 +15,7 @@ const messages = defineMessages('components.Login', {
   title: 'Add Email',
   description:
     'Add a valid email address to complete your profile. This will be used for notifications and local sign-in.',
-  email: 'Email address',
+  email: 'Email Address',
   emailAlreadyTaken: 'This email is already in use.',
   validationEmailRequired: 'You must provide an email',
   validationEmailFormat: 'Invalid email',
@@ -110,7 +110,7 @@ const AddEmailModal: React.FC<AddEmailModalProps> = ({ onClose, onSave }) => {
             <label htmlFor="email" className="text-label">
               {intl.formatMessage(messages.email)}
             </label>
-            <div className="mb-2 mt-1 sm:col-span-2 sm:mt-0">
+            <div className="mt-1 mb-2 sm:col-span-2 sm:mt-0">
               <div className="flex rounded-md shadow-sm">
                 <Field
                   id="email"

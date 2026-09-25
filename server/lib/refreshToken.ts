@@ -14,7 +14,7 @@ class RefreshToken {
     await runUserSecurityMutation(user.id, async () => {
       const activeUser = await getRepository(User).findOne({
         where: { id: user.id },
-        select: ['id', 'plexToken'],
+        select: { id: true, plexToken: true },
       });
       if (!activeUser?.plexToken) {
         logger.warn('Skipping user refresh token for user without plex token', {

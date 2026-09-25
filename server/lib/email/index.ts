@@ -2,8 +2,8 @@ import type { NotificationAgentEmail } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import Email from 'email-templates';
 import net from 'node:net';
+import type { SMTPTransportOptions } from 'nodemailer';
 import nodemailer from 'nodemailer';
-import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { URL } from 'url';
 import { openpgpEncrypt } from './openpgpEncrypt';
 
@@ -13,7 +13,7 @@ export const EMAIL_TRANSPORT_TIMEOUT_OPTIONS = {
   socketTimeout: 30_000,
 } as const;
 
-const getSocket: SMTPTransport.Options['getSocket'] = (options, callback) => {
+const getSocket: SMTPTransportOptions['getSocket'] = (options, callback) => {
   if (!options.host || typeof options.port !== 'number') {
     callback(new Error('SMTP host and port are required'), undefined);
     return;
@@ -95,7 +95,12 @@ class PreparedEmail extends Email {
         },
       },
       send: true,
-      transport: transport,
+      // email-templates still types its transport union against the older
+      // @types/nodemailer Mail shape. Nodemailer 10 ships its own compatible
+      // runtime/types, so keep this cast at the external type boundary.
+      transport: transport as unknown as NonNullable<
+        Email.EmailConfig['transport']
+      >,
       preview: false,
     });
   }

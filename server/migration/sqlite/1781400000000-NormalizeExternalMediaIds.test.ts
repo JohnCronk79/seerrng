@@ -5,7 +5,7 @@ import { NormalizeExternalMediaIds1781400000000 } from './1781400000000-Normaliz
 
 const createDataSource = () =>
   new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   });
 

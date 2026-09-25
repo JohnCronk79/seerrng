@@ -7,14 +7,18 @@ import axios from 'axios';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import { isBrowserTransportReady } from './Setup/transportReadiness';
 
 const messages = defineMessages('components.TransportSecurityNotice', {
   httpsRequiredTitle: 'HTTPS is required for browser sign-in',
   httpsRequiredDescription:
-    'This page is reachable over HTTP, but SeerrNG will not create a persistent login session there. Use an HTTPS reverse proxy or enable built-in TLS before signing in.',
+    'This page is reachable over HTTP, but direct HTTP sign-in is disabled. Use an HTTPS reverse proxy, enable built-in TLS, or enable authenticated HTTP sessions on a trusted LAN before signing in.',
+  proxyHttpsTitle: 'HTTPS is active through your reverse proxy',
+  proxyHttpsDescription:
+    'This browser connection is encrypted, so you can continue setup. The built-in HTTPS listener remains disabled because your reverse proxy provides transport security.',
   insecureTitle: 'Insecure HTTP sign-in is enabled',
   insecureDescription:
-    'SEERR_ALLOW_HTTP_AUTH is enabled. Anyone who can observe this network traffic could steal a session cookie. Use this only on a trusted LAN and prefer HTTPS whenever possible.',
+    'Direct HTTP browser sign-in is enabled while built-in TLS is disabled. Anyone who can observe this network traffic could steal a session cookie. Use this only on a trusted LAN and prefer HTTPS whenever possible.',
   selfSignedTitle: 'Trust the SeerrNG local CA before signing in',
   selfSignedDescription:
     'Built-in HTTPS is active with a locally generated certificate. Download and install the local CA on each trusted device, then open the HTTPS URL again.',
@@ -27,7 +31,7 @@ const messages = defineMessages('components.TransportSecurityNotice', {
   configuredHosts: 'Configured TLS hosts: {hosts}',
   firstRunTitle: 'Choose browser transport before the first login',
   firstRunDescription:
-    'HTTPS is recommended for new installations. Choose self-signed HTTPS, provide a certificate, or explicitly acknowledge the risk of HTTP authentication. The server must be restarted before the choice becomes active.',
+    'HTTPS is recommended for new installations. Direct HTTP sign-in is enabled by default when built-in HTTPS is disabled, but carries a session interception risk. Choose self-signed HTTPS, provide a certificate, or acknowledge that risk before saving the HTTP option. The server must be restarted before the choice becomes active.',
   tlsMode: 'HTTPS mode',
   modeDisabled: 'Leave HTTPS disabled',
   modeSelfSigned: 'Generate a local self-signed certificate',
@@ -44,7 +48,10 @@ const messages = defineMessages('components.TransportSecurityNotice', {
   saveTransport: 'Save transport choice',
   savingTransport: 'Saving…',
   transportSaved:
-    'Transport choice saved. Restart SeerrNG, then open the displayed HTTPS address or continue over HTTP if you explicitly enabled it.',
+    'Transport choice saved. Restart SeerrNG, then open the displayed HTTPS address or continue over HTTP when direct HTTP sign-in is enabled.',
+  restartRequiredTitle: 'Restart SeerrNG before signing in',
+  restartRequiredDescription:
+    'The browser transport choice was saved but is not active yet. Restart SeerrNG and reload this page before signing in or configuring a media server.',
   transportSaveFailed: 'The transport choice could not be saved.',
   environmentManaged:
     'Transport is controlled by environment variables ({variables}). Change those variables instead of using this setup control.',
@@ -52,16 +59,23 @@ const messages = defineMessages('components.TransportSecurityNotice', {
 
 type SetupTlsMode = 'disabled' | 'self-signed' | 'provided';
 
+interface TransportSecurityNoticeProps {
+  onReadinessChange?: (ready: boolean) => void;
+}
+
 const formatHost = (host: string): string =>
   host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 
-const TransportSecurityNotice = () => {
+const TransportSecurityNotice = ({
+  onReadinessChange,
+}: TransportSecurityNoticeProps) => {
   const intl = useIntl();
   const { addToast } = useToasts();
   const { data } = useSWR<TlsStatusResponse>('/api/v1/status/tls', {
     revalidateOnFocus: false,
     refreshInterval: 0,
   });
+  const [browserUsesHttps, setBrowserUsesHttps] = useState(false);
   const [setupMode, setSetupMode] = useState<SetupTlsMode>('disabled');
   const [setupHttpsPort, setSetupHttpsPort] = useState('5056');
   const [setupHosts, setSetupHosts] = useState('localhost,127.0.0.1,::1');
@@ -69,10 +83,14 @@ const TransportSecurityNotice = () => {
   const [setupKeyFile, setSetupKeyFile] = useState('');
   const [setupCaFile, setSetupCaFile] = useState('');
   const [setupRedirectHttp, setSetupRedirectHttp] = useState(false);
-  const [setupAllowHttp, setSetupAllowHttp] = useState(false);
+  const [setupAllowHttp, setSetupAllowHttp] = useState(true);
   const [setupAcknowledgeHttp, setSetupAcknowledgeHttp] = useState(false);
   const [setupSaving, setSetupSaving] = useState(false);
   const [setupSaved, setSetupSaved] = useState(false);
+
+  useEffect(() => {
+    setBrowserUsesHttps(window.location.protocol === 'https:');
+  }, []);
 
   useEffect(() => {
     if (!data) return;
@@ -83,7 +101,16 @@ const TransportSecurityNotice = () => {
     }
     setSetupRedirectHttp(data.configuredRedirectsHttpToHttps);
     setSetupAllowHttp(data.configuredHttpAuthAllowed);
+    setSetupAcknowledgeHttp(data.configuredHttpAuthAllowed);
   }, [data]);
+
+  const transportReady = data
+    ? isBrowserTransportReady(data, browserUsesHttps)
+    : false;
+
+  useEffect(() => {
+    onReadinessChange?.(transportReady);
+  }, [onReadinessChange, transportReady]);
 
   if (!data) {
     return null;
@@ -138,9 +165,14 @@ const TransportSecurityNotice = () => {
             <span>{intl.formatMessage(messages.tlsMode)}</span>
             <select
               value={setupMode}
-              onChange={(event) =>
-                setSetupMode(event.target.value as SetupTlsMode)
-              }
+              onChange={(event) => {
+                const nextMode = event.target.value as SetupTlsMode;
+                setSetupMode(nextMode);
+                if (nextMode !== 'disabled') {
+                  setSetupAllowHttp(false);
+                  setSetupAcknowledgeHttp(false);
+                }
+              }}
             >
               <option value="disabled">
                 {intl.formatMessage(messages.modeDisabled)}
@@ -270,6 +302,27 @@ const TransportSecurityNotice = () => {
       : data.hosts.map(
           (host) => `https://${formatHost(host)}:${data.httpsPort}`
         );
+
+  if (data.pendingRestart && !browserUsesHttps) {
+    return (
+      <Alert
+        type="warning"
+        title={intl.formatMessage(messages.restartRequiredTitle)}
+      >
+        {intl.formatMessage(messages.restartRequiredDescription)}
+        {setupControls}
+      </Alert>
+    );
+  }
+
+  if (data.mode === 'disabled' && !data.httpAuthAllowed && browserUsesHttps) {
+    return (
+      <Alert type="info" title={intl.formatMessage(messages.proxyHttpsTitle)}>
+        {intl.formatMessage(messages.proxyHttpsDescription)}
+        {setupControls}
+      </Alert>
+    );
+  }
 
   if (data.mode === 'disabled' && !data.httpAuthAllowed) {
     return (

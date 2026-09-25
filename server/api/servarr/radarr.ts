@@ -18,6 +18,10 @@ const number = (value: unknown): number =>
 const integer = (value: unknown): number =>
   Number.isSafeInteger(value) ? (value as number) : 0;
 const boolean = (value: unknown): boolean => value === true;
+const textArray = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : []).flatMap((item) =>
+    typeof item === 'string' ? [text(item)] : []
+  );
 const optionalText = (value: unknown): string | undefined => {
   const normalized = text(value);
   return normalized || undefined;
@@ -73,10 +77,22 @@ export const sanitizeRadarrMovie = (
         qualityCutoffNotMet: boolean(value.movieFile.qualityCutoffNotMet),
       }
     : undefined;
+  const ratings = isRecord(value.ratings) ? value.ratings : {};
 
   return {
     id: id > 0 ? id : 0,
     title,
+    originalTitle: text(value.originalTitle),
+    year: integer(value.year),
+    overview: text(value.overview),
+    studio: text(value.studio),
+    runtime: integer(value.runtime),
+    certification: text(value.certification),
+    genres: textArray(value.genres),
+    ratings: {
+      votes: integer(ratings.votes),
+      value: number(ratings.value),
+    },
     isAvailable: boolean(value.isAvailable),
     monitored: boolean(value.monitored),
     tmdbId,
@@ -91,6 +107,18 @@ export const sanitizeRadarrMovie = (
     tags: (Array.isArray(value.tags) ? value.tags : [])
       .slice(0, MAX_RADARR_TAGS)
       .filter((tag): tag is number => Number.isSafeInteger(tag) && tag >= 0),
+    images: (Array.isArray(value.images) ? value.images : []).flatMap(
+      (image) =>
+        isRecord(image)
+          ? [
+              {
+                coverType: optionalText(image.coverType),
+                url: optionalText(image.url),
+                remoteUrl: optionalText(image.remoteUrl),
+              },
+            ]
+          : []
+    ),
     movieFile,
   };
 };
@@ -123,6 +151,17 @@ export interface RadarrMovieOptions {
 export interface RadarrMovie {
   id: number;
   title: string;
+  originalTitle?: string;
+  year?: number;
+  overview?: string;
+  studio?: string;
+  runtime?: number;
+  certification?: string;
+  genres?: string[];
+  ratings?: {
+    votes: number;
+    value: number;
+  };
   isAvailable: boolean;
   monitored: boolean;
   tmdbId: number;
@@ -220,17 +259,42 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     }
   }
 
-  public getMovies = async (): Promise<RadarrMovie[]> => {
+  public getMovies = async ({
+    strict = false,
+    tmdbId,
+  }: { strict?: boolean; tmdbId?: number } = {}): Promise<RadarrMovie[]> => {
     try {
-      const response = await this.request<RadarrMovie[]>('GET', '/movie');
+      const response = await this.request<RadarrMovie[]>(
+        'GET',
+        '/movie',
+        undefined,
+        tmdbId ? { params: { tmdbId } } : undefined
+      );
 
-      return sanitizeServarrRecordArray<Record<string, unknown>>(
+      const movies = sanitizeServarrRecordArray<Record<string, unknown>>(
         response.data,
         MAX_SERVARR_LIBRARY_RESULTS
       ).flatMap((movie) => {
         const normalized = sanitizeRadarrMovie(movie);
         return normalized ? [normalized] : [];
       });
+      if (
+        strict &&
+        (!Array.isArray(response.data) ||
+          movies.length !== response.data.length ||
+          movies.some(
+            (movie) =>
+              !Number.isSafeInteger(movie.tmdbId) ||
+              movie.tmdbId <= 0 ||
+              !Number.isSafeInteger(movie.id) ||
+              movie.id <= 0
+          ))
+      ) {
+        throw new Error(
+          'Incomplete or invalid Radarr inventory; deletion reconciliation is not safe.'
+        );
+      }
+      return movies;
     } catch (e) {
       throw new Error(`[Radarr] Failed to retrieve movies: ${e.message}`, {
         cause: e,
@@ -609,6 +673,14 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       throw e;
     }
   };
+
+  public async removeMovieById(id: number): Promise<void> {
+    if (!Number.isSafeInteger(id) || id <= 0)
+      throw new Error('Invalid movie ID.');
+    await this.request('DELETE', `/movie/${id}`, undefined, {
+      params: { deleteFiles: true, addImportExclusion: false },
+    });
+  }
 
   public clearCache = ({
     tmdbId,

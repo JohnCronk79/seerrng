@@ -15,8 +15,8 @@ const migrateTransportSecuritySettings = (settings: any): AllSettings => {
       keyFile: '',
       caFile: '',
       redirectHttpToHttps: false,
-      allowHttpAuth: false,
-      httpAuthAcknowledged: false,
+      allowHttpAuth: true,
+      httpAuthAcknowledged: true,
     },
   };
 

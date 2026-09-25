@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/no-require-imports, no-console -- This validator is a CommonJS command-line tool. */
 
+const fs = require('node:fs');
 const path = require('node:path');
 const {
   readRepositoryFiles,
@@ -8,22 +9,49 @@ const {
 } = require('./check-current-batch-contract-lib.js');
 
 const root = path.resolve(__dirname, '..');
+const collectSourceFiles = (directory) =>
+  fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return collectSourceFiles(fullPath);
+    }
+    return /\.(?:ts|tsx)$/.test(entry.name)
+      ? [path.relative(root, fullPath).split(path.sep).join('/')]
+      : [];
+  });
 const fileNames = [
   'docs/maintainers/current-batch-acceptance-ledger.md',
   'docs/maintainers/ui-style-standard.md',
+  'docs/maintainers/site-visual-audit-2026-09-11.md',
+  '.dockerignore',
   'prettier-scope.txt',
   '.github/workflows/ci.yml',
   'package.json',
   'bin/run-prettier.mjs',
+  'bin/check-refreshed-ui-style.js',
+  'bin/check-refreshed-ui-style-lib.js',
+  'bin/check-refreshed-ui-style-lib.test.mjs',
   'bin/run-cypress-start.mjs',
+  'scripts/check-container-security.test.mjs',
   'seerr-api.yml',
   'src/styles/globals.css',
   'src/components/Common/Button/index.tsx',
   'src/components/Common/ButtonWithDropdown/index.tsx',
   'src/components/RequestButton/index.tsx',
+  'src/components/Common/Dropdown/index.tsx',
+  'src/components/Common/MediaServerPlayButton/index.tsx',
+  'src/components/Common/PlayOnDeviceButton/index.tsx',
+  'src/components/Common/Modal/index.tsx',
+  'src/components/Common/PaginationFooter/index.tsx',
+  'src/components/Common/SelectionCircle/index.tsx',
+  'src/components/BlocklistConfirmationModal/index.tsx',
   'src/components/MediaDetails/ExpandableCreditList.tsx',
   'src/components/MediaDetails/DetailDisclosureButton.tsx',
+  'src/components/MediaDetails/MediaDetailArtwork.tsx',
+  'src/components/MediaDetails/MediaQualitySelect.tsx',
   'src/components/MediaDetails/SeriesSeasonEpisodeBrowser.tsx',
+  'src/components/MediaDetails/AlbumTrackList.tsx',
+  'src/components/MediaDetails/PlaybackTrackList.tsx',
   'src/components/MovieDetails/index.tsx',
   'src/components/MovieDetails/MovieDetailsLayout.tsx',
   'src/components/TvDetails/index.tsx',
@@ -32,6 +60,15 @@ const fileNames = [
   'src/components/MusicDetails/MusicDetailsLayout.tsx',
   'src/components/BookDetails/index.tsx',
   'src/components/BookDetails/BookDetailsLayout.tsx',
+  'src/components/CollectionDetails/index.tsx',
+  'src/components/CollectionDetails/CollectionAssociationsButton.tsx',
+  'src/components/CollectionDetails/CollectionMetadataDisclosures.tsx',
+  'src/components/CollectionDetails/CollectionPlayOnDeviceButton.tsx',
+  'src/components/Association/AssociationPopover.tsx',
+  'src/components/Association/AssociationWall.tsx',
+  'src/components/Association/AssociationDetailCard.tsx',
+  'src/components/Association/helpers.ts',
+  'src/components/Common/FormatRequestControl/index.tsx',
   'src/components/RequestModal/MovieRequestModal.tsx',
   'src/components/RequestModal/TvRequestModal.tsx',
   'src/components/RequestModal/MusicRequestModal.tsx',
@@ -40,7 +77,8 @@ const fileNames = [
   'src/components/Blocklist/index.tsx',
   'src/components/IssueList/index.tsx',
   'src/components/IssueList/IssueItem/index.tsx',
-  'src/components/IssueDetails/index.tsx',
+  'src/components/IssueDetails/IssueDiscussion.tsx',
+  'src/components/IssueList/FocusedIssue.tsx',
   'src/components/IssueDetails/IssueMediaSummary.tsx',
   'src/components/IssueModal/CreateIssueModal/index.tsx',
   'src/components/IssueModal/constants.ts',
@@ -51,13 +89,32 @@ const fileNames = [
   'src/components/UserProfile/ProfileHeader/index.tsx',
   'src/components/Common/CachedImage/index.tsx',
   'src/components/Discover/FilterPanel/index.tsx',
+  'src/components/Discover/AvailabilityQualityControl/index.tsx',
   'src/components/Discover/index.tsx',
   'src/components/Discover/DiscoverMovies/index.tsx',
   'src/components/Discover/DiscoverTv/index.tsx',
   'src/components/Discover/DiscoverMusic/index.tsx',
   'src/components/Discover/DiscoverBooks/index.tsx',
+  'src/pages/discover/books/index.tsx',
   'src/hooks/useUpdateQueryParams.ts',
+  'src/hooks/useDiscover.ts',
   'src/hooks/useUpdateQueryParams.test.ts',
+  'src/hooks/useSearchInput.ts',
+  'src/hooks/useSearchInput.utils.ts',
+  'src/hooks/useSearchInput.test.ts',
+  'src/hooks/useDetailDisclosurePins.ts',
+  'src/hooks/detailDisclosurePinsMutation.ts',
+  'src/hooks/detailDisclosurePinsMutation.test.ts',
+  'src/components/Layout/SearchInput/index.tsx',
+  'src/utils/bookMarkdown.ts',
+  'src/utils/availabilityQuality.ts',
+  'src/utils/availabilityQuality.test.ts',
+  'src/utils/bookMarkdown.test.ts',
+  'src/utils/collectionPlaybackSelection.ts',
+  'src/utils/collectionRatings.ts',
+  'src/utils/collectionPlaybackSelection.test.ts',
+  'src/utils/collectionRequestState.ts',
+  'src/utils/collectionRequestState.test.ts',
   'src/components/Slider/index.tsx',
   'src/components/RequestModal/RequestMediaCard.tsx',
   'src/components/RequestModal/requestAvailability.test.ts',
@@ -66,13 +123,31 @@ const fileNames = [
   'src/components/IssueList/IssueItem/issueAffectedSummary.test.ts',
   'cypress/e2e/movie-details.cy.ts',
   'cypress/e2e/tv-details.cy.ts',
+  'cypress/e2e/library-discover-parity.cy.ts',
+  'server/routes/request.ts',
   'server/routes/request.test.ts',
+  'server/routes/issue.ts',
+  'server/routes/issue.test.ts',
+  'server/routes/user.test.ts',
+  'server/routes/user/usersettings.ts',
+  'server/entity/UserSettings.ts',
+  'server/interfaces/api/userSettingsInterfaces.ts',
+  'server/entity/MediaRequest.ts',
   'server/lib/requestStatus.test.ts',
   'server/lib/bookRequestSearch.test.ts',
   'server/lib/downloadtracker.test.ts',
   'server/lib/scanners/lidarr/lidarr.test.ts',
+  'server/lib/musicQualityAvailability.ts',
+  'server/lib/musicQualityAvailability.test.ts',
+  'server/lib/musicTrackAvailability.ts',
+  'server/lib/musicTrackAvailability.test.ts',
+  'server/lib/scanners/readarr/readarr.test.ts',
+  'server/routes/media.test.ts',
   'server/routes/discover.test.ts',
   'server/routes/discover.ts',
+  'server/routes/movie.test.ts',
+  'server/routes/movie.ts',
+  'server/models/Search.ts',
   'server/routes/search.ts',
   'server/routes/search.test.ts',
   'server/middleware/apiResponseCache.ts',
@@ -89,10 +164,50 @@ const fileNames = [
   'server/lib/imageproxy.ts',
   'server/lib/imageproxy.test.ts',
   'server/routes/userAvatar.openapi.test.ts',
+  'server/routes/workflow.openapi.test.ts',
+  'server/routes/playback.ts',
+  'server/routes/index.ts',
+  'server/entity/Media.ts',
+  'server/lib/audioPlaybackFormat.ts',
+  'server/lib/audioPlaybackFormat.test.ts',
+  'server/lib/playbackMediaRoot.ts',
+  'server/lib/playbackMediaRoot.test.ts',
+  'server/lib/playbackSelection.ts',
+  'server/lib/playbackSelection.test.ts',
+  'server/lib/plexPlaylistUrl.ts',
+  'server/lib/plexPlaylistUrl.test.ts',
+  'server/api/plexapi.ts',
+  'server/migration/sqlite/1784800000000-AddAudioPlaybackVariants.ts',
+  'server/migration/postgres/1784800000000-AddAudioPlaybackVariants.ts',
+  'server/migration/sqlite/1785000000000-AddDetailDisclosurePins.ts',
+  'server/migration/sqlite/1785000000000-AddDetailDisclosurePins.test.ts',
+  'server/migration/postgres/1785000000000-AddDetailDisclosurePins.ts',
+  'server/migration/postgres/1785000000000-AddDetailDisclosurePins.test.ts',
+  'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.ts',
+  'server/migration/sqlite/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
+  'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.ts',
+  'server/migration/postgres/1785100000000-AddDetailDisclosureArtistsPin.test.ts',
+  'server/migration/sqlite/1785200000000-AddScopedDetailDisclosurePins.ts',
+  'server/migration/sqlite/1785200000000-AddScopedDetailDisclosurePins.test.ts',
+  'server/migration/postgres/1785200000000-AddScopedDetailDisclosurePins.ts',
+  'server/migration/postgres/1785200000000-AddScopedDetailDisclosurePins.test.ts',
+  'server/routes/music.ts',
+  'server/models/Music.ts',
+  'server/api/servarr/lidarr.test.ts',
+  'server/api/servarr/lidarr.ts',
+];
+
+const contractFileNames = [
+  ...new Set([
+    ...fileNames,
+    ...collectSourceFiles(path.join(root, 'src', 'components')),
+    'src/i18n/globalMessages.ts',
+    'src/i18n/locale/en.json',
+  ]),
 ];
 
 const errors = validateCurrentBatchContract(
-  readRepositoryFiles(root, fileNames)
+  readRepositoryFiles(root, contractFileNames)
 );
 
 if (errors.length > 0) {
@@ -101,6 +216,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `Current batch contract check passed (${fileNames.length} files).`
+    `Current batch contract check passed (${contractFileNames.length} files).`
   );
 }

@@ -2,10 +2,13 @@ import cacheManager from '@server/lib/cache';
 import logger from '@server/logger';
 import ExternalAPI from './externalapi';
 
-const SEERR_REPO = '/repos/snapetech/seerrng';
+const SEERRNG_REPO = '/repos/snapetech/seerrng';
 
 interface GitHubRelease {
   name: string;
+  tag_name: string;
+  prerelease: boolean;
+  draft: boolean;
 }
 
 interface GithubCommit {
@@ -29,20 +32,28 @@ export const sanitizeGithubReleases = (
 ): GitHubRelease[] =>
   (Array.isArray(value) ? value : [])
     .slice(0, clampTake(take))
-    .flatMap((release) =>
-      release &&
-      typeof release === 'object' &&
-      typeof (release as Record<string, unknown>).name === 'string'
-        ? [
-            {
-              name: ((release as Record<string, unknown>).name as string).slice(
-                0,
-                MAX_GITHUB_TEXT_LENGTH
-              ),
-            },
-          ]
-        : []
-    );
+    .flatMap((release) => {
+      if (!release || typeof release !== 'object') {
+        return [];
+      }
+
+      const rawRelease = release as Record<string, unknown>;
+      if (
+        typeof rawRelease.name !== 'string' ||
+        typeof rawRelease.tag_name !== 'string'
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          name: rawRelease.name.slice(0, MAX_GITHUB_TEXT_LENGTH),
+          tag_name: rawRelease.tag_name.slice(0, 128),
+          prerelease: rawRelease.prerelease === true,
+          draft: rawRelease.draft === true,
+        },
+      ];
+    });
 
 export const sanitizeGithubCommits = (
   value: unknown,
@@ -97,7 +108,7 @@ class GithubAPI extends ExternalAPI {
   } = {}): Promise<GitHubRelease[]> {
     try {
       const boundedTake = clampTake(take);
-      const data = await this.get<unknown>(`${SEERR_REPO}/releases`, {
+      const data = await this.get<unknown>(`${SEERRNG_REPO}/releases`, {
         params: {
           per_page: boundedTake,
         },
@@ -122,7 +133,7 @@ class GithubAPI extends ExternalAPI {
   } = {}): Promise<GithubCommit[]> {
     try {
       const boundedTake = clampTake(take);
-      const data = await this.get<unknown>(`${SEERR_REPO}/commits`, {
+      const data = await this.get<unknown>(`${SEERRNG_REPO}/commits`, {
         params: {
           per_page: boundedTake,
           branch:

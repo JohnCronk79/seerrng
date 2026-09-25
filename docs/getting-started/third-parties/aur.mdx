@@ -35,10 +35,10 @@ import TabItem from '@theme/TabItem';
 
 :::info
 After installing Seerr, configure it by visiting the web UI at
-`http://[address]:5055` and completing the setup steps. Direct HTTP login is
-not persistent by default. Use the first-run transport choice for [built-in
-HTTPS](/using-seerr/advanced/built-in-tls), an HTTPS reverse proxy, or explicitly
-acknowledge and enable the trusted-LAN HTTP fallback.
+`http://[address]:5055` and completing the setup steps. Direct HTTP login works
+by default with a warning. Use the first-run transport choice for [built-in
+HTTPS](/using-seerr/advanced/built-in-tls) or an HTTPS reverse proxy for
+encrypted sessions; set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
 :::
 
 :::tip

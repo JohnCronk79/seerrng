@@ -5,6 +5,7 @@ import express from 'express';
 import request from 'supertest';
 import securityHeaders, {
   SECURITY_RESPONSE_HEADERS,
+  STRICT_TRANSPORT_SECURITY_HEADER,
   buildContentSecurityPolicy,
 } from './securityHeaders';
 
@@ -20,6 +21,10 @@ describe('security response headers', () => {
     for (const [name, value] of Object.entries(SECURITY_RESPONSE_HEADERS)) {
       assert.strictEqual(response.headers[name.toLowerCase()], value);
     }
+    assert.strictEqual(
+      response.headers['strict-transport-security'],
+      undefined
+    );
     assert.match(response.headers['content-security-policy'], /base-uri/);
     assert.match(
       response.headers['content-security-policy'],
@@ -48,6 +53,27 @@ describe('security response headers', () => {
     assert.match(response.headers['content-security-policy'], /form-action/);
     assert.match(response.headers['content-security-policy'], /object-src/);
     assert.strictEqual(response.headers['x-powered-by'], undefined);
+  });
+
+  it('only sends HSTS for secure requests', async () => {
+    const app = express();
+    app.set('trust proxy', 1);
+    app.use(securityHeaders);
+    app.get('/', (_req, res) => res.json({ ok: true }));
+
+    const httpResponse = await request(app).get('/');
+    assert.strictEqual(
+      httpResponse.headers['strict-transport-security'],
+      undefined
+    );
+
+    const httpsResponse = await request(app)
+      .get('/')
+      .set('X-Forwarded-Proto', 'https');
+    assert.strictEqual(
+      httpsResponse.headers['strict-transport-security'],
+      STRICT_TRANSPORT_SECURITY_HEADER
+    );
   });
 
   it('allows development hot reload transports only outside production', () => {

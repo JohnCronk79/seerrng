@@ -1,0 +1,29 @@
+diff --git a/index.js b/index.js
+index 709991da99b8b5cd9c5f4d81774d874da087a20c..cbecc8fb9187b02771eaf0e1143f04f34575b173 100644
+--- a/index.js
++++ b/index.js
+@@ -3,1 +3,11 @@
++function getCwd(context) {
++  return typeof context.getCwd === "function" ? context.getCwd() : context.cwd;
++}
++
++function getFilename(context) {
++  return typeof context.getFilename === "function"
++    ? context.getFilename()
++    : context.filename;
++}
++
+ function isParentFolder(relativeFilePath, context, rootDir) {
+@@ -4,2 +14,2 @@
+-  const absoluteRootPath = path.join(context.getCwd(), rootDir);
+-  const absoluteFilePath = path.join(path.dirname(context.getFilename()), relativeFilePath)
++  const absoluteRootPath = path.join(getCwd(context), rootDir);
++  const absoluteFilePath = path.join(path.dirname(getFilename(context)), relativeFilePath)
+@@ -10,1 +20,1 @@
+-      context.getFilename().startsWith(absoluteRootPath))
++      getFilename(context).startsWith(absoluteRootPath))
+@@ -34,2 +44,2 @@
+-        path.join(context.getCwd(), rootDir),
+-        path.join(path.dirname(context.getFilename()), relativePath)
++        path.join(getCwd(context), rootDir),
++        path.join(path.dirname(getFilename(context)), relativePath)

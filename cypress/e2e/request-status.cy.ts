@@ -6,17 +6,19 @@ describe('Request Status', () => {
   it('opens on all requests and lets users choose a history window', () => {
     cy.visit('/requests/status');
 
-    cy.get('select[aria-label="Time Period"]')
+    cy.get('button[aria-label="Time Period"]')
       .should('be.visible')
-      .and('have.value', 'all');
+      .and('contain', 'All time')
+      .click();
 
-    cy.get('select[aria-label="Time Period"]').select('14d');
+    cy.contains('[role=option]', 'Last 14 days').click();
     cy.location('search').should('contain', 'timeFrame=14d');
 
-    cy.get('select[aria-label="Time Period"]').select('all');
+    cy.get('button[aria-label="Time Period"]').click();
+    cy.contains('[role=option]', 'All time').click();
     cy.location('search').should('not.contain', 'timeFrame=');
 
-    cy.contains('button', 'Ebooks').should('be.visible');
+    cy.contains('button', 'Books').should('be.visible');
     cy.contains('button', 'Audiobooks').click();
     cy.location('search').should('contain', 'mediaType=audiobook');
     cy.contains('Showing requests for').should('be.visible');

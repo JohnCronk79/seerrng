@@ -4,15 +4,18 @@ import type {
   JellyfinLibraryItemExtended,
 } from '@server/api/jellyfin';
 import JellyfinAPI from '@server/api/jellyfin';
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
 import MusicBrainz from '@server/api/musicbrainz';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
   TmdbTvDetails,
 } from '@server/api/themoviedb/interfaces';
 import { MediaServerType } from '@server/constants/server';
+import { classifyAudioPlaybackFormats } from '@server/lib/audioPlaybackFormat';
 import {
   ConfigurationAuthorityChangedError,
   captureConfigurationAuthority,
@@ -63,6 +66,45 @@ export class JellyfinScanner
   constructor({ isRecentOnly }: { isRecentOnly?: boolean } = {}) {
     super('Jellyfin Sync');
     this.isRecentOnly = isRecentOnly ?? false;
+  }
+
+  /** Refresh a verified collection member, never enumerate or clean up a library. */
+  public async refreshCollectionMember(
+    id: string,
+    kind: 'tv' | 'music'
+  ): Promise<void> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(id))
+      throw new Error('Invalid collection member');
+    const settings = getSettings();
+    this.enable4kShow = true;
+    this.configurationSnapshot = captureConfigurationAuthority(
+      'jellyfin',
+      settings
+    );
+    this.jellyfinSettingsSnapshot = structuredClone(settings.jellyfin);
+    this.ownerAuthoritySnapshot = await captureMediaServerUserAuthority(
+      1,
+      'jellyfin'
+    );
+    if (!this.ownerAuthoritySnapshot.jellyfinUserId)
+      throw new Error('Media server owner unavailable');
+    this.jfClient = new JellyfinAPI(
+      getHostname(this.jellyfinSettingsSnapshot),
+      this.jellyfinSettingsSnapshot.apiKey,
+      this.ownerAuthoritySnapshot.jellyfinDeviceId
+    );
+    this.jfClient.setUserId(this.ownerAuthoritySnapshot.jellyfinUserId);
+    this.processedAnidbSeason = new Map();
+    const item = await this.withConfigurationSnapshot(() =>
+      this.jfClient.getItemData(id)
+    );
+    if (
+      item?.Id !== id ||
+      item.Type !== (kind === 'tv' ? 'Series' : 'MusicAlbum')
+    )
+      throw new Error('Collection member identity changed');
+    if (kind === 'tv') await this.processJellyfinShow(item);
+    else await this.processJellyfinMusic(item);
   }
 
   private async extractMovieIds(jellyfinitem: JellyfinLibraryItem): Promise<{
@@ -235,9 +277,9 @@ export class JellyfinScanner
       ? await getMetadataProvider('anime')
       : await getMetadataProvider('tv');
 
-    if (!(metadataProvider instanceof TheMovieDb)) {
+    if (!isTheMovieDbProvider(metadataProvider)) {
       tvShow = await metadataProvider.getTvShow({
-        tvId: Number(tmdbId),
+        tvId: Number(tvShow.id),
       });
     }
 
@@ -528,11 +570,48 @@ export class JellyfinScanner
         return;
       }
 
+      let audioFormats = classifyAudioPlaybackFormats(
+        (metadata.MediaSources ?? []).flatMap((source) =>
+          source.MediaStreams.filter((stream) => stream.Type === 'Audio').map(
+            (stream) => stream.Codec
+          )
+        )
+      );
+      if (audioFormats.length === 0) {
+        try {
+          const tracks = await this.jfClient.getAudioChildrenWithMediaInfo(
+            metadata.Id
+          );
+          audioFormats = classifyAudioPlaybackFormats(
+            tracks.flatMap((track) =>
+              (track.MediaSources ?? []).flatMap((source) =>
+                source.MediaStreams.filter(
+                  (stream) => stream.Type === 'Audio'
+                ).map((stream) => stream.Codec)
+              )
+            )
+          );
+        } catch (error) {
+          this.log(
+            'Unable to classify Jellyfin/Emby album playback format',
+            'warn',
+            {
+              jellyfinItemId: metadata.Id,
+              errorMessage:
+                error instanceof Error
+                  ? error.message
+                  : 'Unknown provider error',
+            }
+          );
+        }
+      }
+
       await this.processMusic(mbId, {
         mediaAddedAt: metadata.DateCreated
           ? new Date(metadata.DateCreated)
           : undefined,
         jellyfinMediaId: metadata.Id,
+        audioFormats,
         title: metadata.Name,
         mutationGuard: (callback) => this.withConfigurationSnapshot(callback),
         outerMutationGuard: (callback) => this.withOwnerAuthority(callback),
@@ -615,6 +694,12 @@ export class JellyfinScanner
 
       if (this.isRecentOnly) {
         for (const library of this.libraries) {
+          // Jellyfin has no book-library concept -- 'book' only exists on
+          // the shared settings type for Plex's audiobook classification.
+          if (library.type === 'book') {
+            continue;
+          }
+          const libraryType = library.type;
           this.currentLibrary = library;
           // Reset AniDB season tracking per library
           this.processedAnidbSeason = new Map();
@@ -623,7 +708,7 @@ export class JellyfinScanner
             'info'
           );
           const libraryItems = await this.withConfigurationSnapshot(() =>
-            this.jfClient.getRecentlyAdded(library.id, library.type)
+            this.jfClient.getRecentlyAdded(library.id, libraryType)
           );
 
           // Bundle items up by rating keys
@@ -643,12 +728,16 @@ export class JellyfinScanner
         }
       } else {
         for (const library of this.libraries) {
+          if (library.type === 'book') {
+            continue;
+          }
+          const libraryType = library.type;
           this.currentLibrary = library;
           // Reset AniDB season tracking per library
           this.processedAnidbSeason = new Map();
           this.log(`Beginning to process library: ${library.name}`, 'info');
           this.items = await this.withConfigurationSnapshot(() =>
-            this.jfClient.getLibraryContents(library.id, library.type)
+            this.jfClient.getLibraryContents(library.id, libraryType)
           );
           await this.loop(this.processItem.bind(this), { sessionId });
         }

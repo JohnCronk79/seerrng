@@ -2,11 +2,15 @@ import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
+import PlayOnDeviceButton from '@app/components/Common/PlayOnDeviceButton';
 import Tooltip from '@app/components/Common/Tooltip';
 import MovieDetailsLayout from '@app/components/MovieDetails/MovieDetailsLayout';
 import RequestButton from '@app/components/RequestButton';
+import usePlaybackCatalog from '@app/hooks/usePlaybackCatalog';
 import useSettings from '@app/hooks/useSettings';
+import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -24,7 +28,6 @@ import {
   StarIcon,
 } from '@heroicons/react/24/outline';
 import type { RatingResponse } from '@server/api/ratings';
-import { IssueStatus } from '@server/constants/issue';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import type { MovieDetails as MovieDetailsType } from '@server/models/Movie';
 import axios from 'axios';
@@ -105,6 +108,16 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   const { data: ratingData } = useSWR<RatingResponse>(
     movieId ? `/api/v1/movie/${movieId}/ratingscombined` : null
   );
+  const canUse4kPlayback =
+    settings.currentSettings.movie4kEnabled &&
+    hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_MOVIE], {
+      type: 'or',
+    });
+  const { data: playbackCatalog } = usePlaybackCatalog(data?.mediaInfo?.id);
+  const { data: playbackCatalog4k } = usePlaybackCatalog(
+    canUse4kPlayback ? data?.mediaInfo?.id : undefined,
+    true
+  );
   const sortedCrew = useMemo(
     () => sortCrewPriority(data?.credits.crew ?? []),
     [data]
@@ -115,7 +128,10 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       setShowManager(true);
       void router.replace({
         pathname: router.pathname,
-        query: { movieId: router.query.movieId },
+        query: {
+          movieId: router.query.movieId,
+          ...(router.query.issues === '1' ? { issues: '1' } : {}),
+        },
       });
     }
   }, [router, router.query.manage]);
@@ -124,6 +140,17 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     () => setShowBlocklistModal(false),
     []
   );
+  const {
+    isBlocklisted,
+    checking: checkingBlocklist,
+    error: blocklistError,
+    setBlocklisted,
+  } = useTitleBlocklist(
+    movieId,
+    MediaType.MOVIE,
+    data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
+  );
+
   if (!data && !error) {
     return <LoadingSpinner />;
   }
@@ -222,6 +249,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         title: data.title,
         user: user?.id,
       });
+      await setBlocklisted(true);
       addToast(
         <span>
           {intl.formatMessage(globalMessages.blocklistSuccess, {
@@ -234,6 +262,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       await revalidate();
     } catch (e) {
       if (axios.isAxiosError(e) && e.response?.status === 412) {
+        await setBlocklisted(true);
         addToast(
           <span>
             {intl.formatMessage(globalMessages.blocklistDuplicateError, {
@@ -257,7 +286,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
 
   const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
   const isBlocklistAvailable =
-    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
+    !isBlocklisted && !checkingBlocklist && !blocklistError;
   const canUseReportIssue = hasPermission(
     [Permission.CREATE_ISSUES, Permission.MANAGE_ISSUES],
     { type: 'or' }
@@ -277,6 +306,37 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       data.mediaInfo.status !== MediaStatus.UNKNOWN ||
       data.mediaInfo.status4k !== MediaStatus.UNKNOWN)
   );
+  const canPlayMedia = hasPermission(
+    [Permission.REQUEST, Permission.REQUEST_MOVIE],
+    { type: 'or' }
+  );
+  const playbackActions = canPlayMedia
+    ? (is4k: boolean) => {
+        const selectedCatalog = is4k ? playbackCatalog4k : playbackCatalog;
+        const selectedItem = selectedCatalog?.rootItem;
+
+        return (
+          <>
+            <MediaServerPlayButton
+              context="movie"
+              mediaUrl={is4k ? undefined : data.mediaInfo?.mediaUrl}
+              mediaUrl4k={is4k ? data.mediaInfo?.mediaUrl4k : undefined}
+              iOSPlexUrl={is4k ? undefined : data.mediaInfo?.iOSPlexUrl}
+              iOSPlexUrl4k={is4k ? data.mediaInfo?.iOSPlexUrl4k : undefined}
+              mediaId={data.mediaInfo?.id}
+              itemIds={selectedItem ? [selectedItem.id] : []}
+              defaultIs4k={is4k}
+              include4k={is4k}
+            />
+            <PlayOnDeviceButton
+              mediaId={data.mediaInfo?.id}
+              itemIds={selectedItem ? [selectedItem.id] : []}
+              is4k={is4k}
+            />
+          </>
+        );
+      }
+    : undefined;
 
   const primaryActions = (
     <>
@@ -321,18 +381,8 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
             className="relative"
             aria-label={intl.formatMessage(messages.managemovie)}
           >
-            <CogIcon className="!mr-0" />
-            {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
-              type: 'or',
-            }) &&
-              (data.mediaInfo?.issues.filter(
-                (issue) => issue.status === IssueStatus.OPEN
-              ).length ?? 0) > 0 && (
-                <>
-                  <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
-                  <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-                </>
-              )}
+            <CogIcon />
+            <span>{intl.formatMessage(globalMessages.manage)}</span>
           </Button>
         </Tooltip>
       )}
@@ -355,6 +405,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
             aria-label={intl.formatMessage(messages.reportissue)}
           >
             <ExclamationTriangleIcon />
+            <span>{intl.formatMessage(globalMessages.reportIssue)}</span>
           </Button>
         </Tooltip>
       )}
@@ -368,18 +419,14 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
           buttonSize="sm"
         >
           <FilmIcon />
-          <span className="ml-1.5">
-            {intl.formatMessage(messages.watchtrailer)}
-          </span>
+          <span>{intl.formatMessage(messages.watchtrailer)}</span>
         </Button>
       )}
       <AssociationBadge mediaType="movie" id={data.id} variant="button" />
-      <span className="ml-auto hidden sm:block" aria-hidden="true" />
       <RequestButton
         buttonSize="sm"
         buttonType="detailRequest"
         className="ml-0"
-        separateButtons
         mediaType="movie"
         media={data.mediaInfo}
         tmdbId={data.id}
@@ -480,6 +527,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        playbackActions={playbackActions}
       />
     </>
   );

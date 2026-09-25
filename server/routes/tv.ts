@@ -132,15 +132,15 @@ tvRoutes.get('/:id', async (req, res, next) => {
     });
     const media = await Media.getMedia(tv.id, MediaType.TV, req.user);
 
-    const onUserWatchlist = await getRepository(Watchlist).exist({
-      where: {
-        tmdbId: tvId,
-        mediaType: MediaType.TV,
-        requestedBy: {
-          id: req.user?.id,
-        },
-      },
-    });
+    const onUserWatchlist = req.user
+      ? await getRepository(Watchlist).exists({
+          where: {
+            tmdbId: tvId,
+            mediaType: MediaType.TV,
+            requestedBy: { id: req.user.id },
+          },
+        })
+      : false;
 
     const data = mapTvDetails(tv, media, onUserWatchlist);
 

@@ -77,11 +77,11 @@ const IssueAffectedEpisodes = ({ issue, tvId }: IssueAffectedEpisodesProps) => {
   const legacyEntireSeries = isLegacyEntireSeriesIssue(issue);
 
   return (
-    <section className="refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+    <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3">
       <h4 className="mb-2 text-xs font-semibold text-gray-200">
         Affected Episodes
       </h4>
-      <div className="grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-x-3 border-b border-gray-600 px-1 pb-2 text-xs font-semibold text-gray-200">
+      <div className="request-divider-dark grid grid-cols-[7rem_7rem_minmax(0,1fr)] gap-x-3 border-b px-1 pb-2 text-xs font-semibold text-gray-200">
         <span>Season</span>
         <span>Episode</span>
         <span>Title</span>
@@ -91,12 +91,12 @@ const IssueAffectedEpisodes = ({ issue, tvId }: IssueAffectedEpisodesProps) => {
           <LoadingSpinner />
         </div>
       ) : (
-        <div className="max-h-56 overflow-y-auto pr-1">
+        <div className="scrollable-card -mr-3 max-h-56 overflow-y-auto pr-3">
           {legacyEntireSeries ? (
             <div className="grid min-h-7 grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-x-3 px-1 text-xs">
               <span className="font-medium text-gray-200">All Seasons</span>
-              <span className="text-gray-400">All</span>
-              <span className="text-gray-400">Entire Series</span>
+              <span className="refreshed-detail-text">All</span>
+              <span className="refreshed-detail-text">Entire Series</span>
             </div>
           ) : error ? (
             <div className="px-1 py-2 text-xs text-red-300">
@@ -109,12 +109,16 @@ const IssueAffectedEpisodes = ({ issue, tvId }: IssueAffectedEpisodesProps) => {
                 className="grid min-h-7 grid-cols-[7rem_7rem_minmax(0,1fr)] items-center gap-x-3 px-1 text-xs"
               >
                 <span className="font-medium text-gray-200">{row.season}</span>
-                <span className="text-gray-400">{row.episode}</span>
-                <span className="truncate text-gray-400">{row.title}</span>
+                <span className="refreshed-detail-text">{row.episode}</span>
+                <span className="refreshed-detail-text truncate">
+                  {row.title}
+                </span>
               </div>
             ))
           ) : (
-            <div className="px-1 py-2 text-xs text-gray-400">None Selected</div>
+            <div className="refreshed-detail-text-muted px-1 py-2 text-xs">
+              None Selected
+            </div>
           )}
         </div>
       )}

@@ -251,7 +251,7 @@ const OverrideRuleModal = ({
               }
             >
               <div className="mb-6">
-                <h3 className="text-lg font-bold leading-8 text-gray-100">
+                <h3 className="text-lg leading-8 font-bold text-gray-100">
                   {intl.formatMessage(messages.service)}
                 </h3>
                 <p className="description">
@@ -354,7 +354,7 @@ const OverrideRuleModal = ({
                       )}
                   </div>
                 </div>
-                <h3 className="text-lg font-bold leading-8 text-gray-100">
+                <h3 className="text-lg leading-8 font-bold text-gray-100">
                   {intl.formatMessage(messages.conditions)}
                 </h3>
                 <p className="description">
@@ -476,7 +476,7 @@ const OverrideRuleModal = ({
                       )}
                   </div>
                 </div>
-                <h3 className="mt-4 text-lg font-bold leading-8 text-gray-100">
+                <h3 className="mt-4 text-lg leading-8 font-bold text-gray-100">
                   {intl.formatMessage(messages.settings)}
                 </h3>
                 <p className="description">

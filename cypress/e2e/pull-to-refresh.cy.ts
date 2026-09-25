@@ -1,6 +1,6 @@
 describe('Pull To Refresh', () => {
   beforeEach(() => {
-    cy.login(Cypress.env('ADMIN_EMAIL'), Cypress.env('ADMIN_PASSWORD'));
+    cy.loginAsAdmin();
     cy.viewport(390, 844);
     cy.visitMobile('/');
   });
@@ -17,7 +17,7 @@ describe('Pull To Refresh', () => {
 
     cy.wait('@apiCall').then((interception) => {
       assert.isNotNull(
-        interception.response.body,
+        interception.response?.body,
         'API was called and received data'
       );
     });

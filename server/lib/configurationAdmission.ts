@@ -4,10 +4,7 @@ import AsyncLock from '@server/utils/asyncLock';
 import { createHash } from 'node:crypto';
 
 export type ConfigurationAdmissionSection =
-  | 'jellyfin'
-  | 'oidc'
-  | 'plex'
-  | 'tautulli';
+  'jellyfin' | 'oidc' | 'plex' | 'tautulli';
 
 const configurationAdmissionLock = new AsyncLock();
 

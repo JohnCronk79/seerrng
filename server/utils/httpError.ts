@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { type AxiosError } from 'axios';
 
 export type HttpErrorDetails = {
   errorMessage: string;
@@ -6,12 +6,109 @@ export type HttpErrorDetails = {
   status?: number;
 };
 
+type ErrorWithCause = {
+  cause?: unknown;
+};
+
+const findAxiosError = (error: unknown): AxiosError | undefined => {
+  let current = error;
+  const seen = new Set<object>();
+
+  for (
+    let depth = 0;
+    current !== undefined && current !== null && depth < 8;
+    depth++
+  ) {
+    if (axios.isAxiosError(current)) {
+      return current;
+    }
+
+    if (typeof current !== 'object') {
+      return undefined;
+    }
+    if (seen.has(current)) {
+      return undefined;
+    }
+    seen.add(current);
+    current = (current as ErrorWithCause).cause;
+  }
+
+  return undefined;
+};
+
+const getRetryAfterHeader = (error: unknown): string | undefined => {
+  let current = error;
+  const seen = new Set<object>();
+
+  for (
+    let depth = 0;
+    current !== undefined && current !== null && depth < 8;
+    depth++
+  ) {
+    if (typeof current !== 'object') {
+      return undefined;
+    }
+    if (seen.has(current)) {
+      return undefined;
+    }
+    seen.add(current);
+
+    const response = (
+      current as {
+        response?: {
+          headers?: Record<string, unknown> & {
+            get?: (name: string) => unknown;
+          };
+        };
+      }
+    ).response;
+    const headers = response?.headers;
+    const header =
+      headers?.['retry-after'] ??
+      headers?.['Retry-After'] ??
+      headers?.get?.('retry-after');
+    if (Array.isArray(header)) {
+      return typeof header[0] === 'string' ? header[0] : undefined;
+    }
+    if (typeof header === 'string') {
+      return header;
+    }
+
+    current = (current as ErrorWithCause).cause;
+  }
+
+  return undefined;
+};
+
+export const getRetryAfterMs = (error: unknown): number | undefined => {
+  const value = getRetryAfterHeader(error)?.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return seconds >= 0 ? Math.min(seconds * 1000, 10_000) : undefined;
+  }
+
+  const date = Date.parse(value);
+  return Number.isNaN(date)
+    ? undefined
+    : Math.min(Math.max(date - Date.now(), 0), 10_000);
+};
+
 export const getHttpErrorDetails = (error: unknown): HttpErrorDetails => {
-  if (axios.isAxiosError(error)) {
+  const axiosError = findAxiosError(error);
+  if (axiosError) {
     return {
-      errorMessage: error.message || error.name || 'Unknown HTTP error',
-      ...(error.code ? { errorCode: error.code } : {}),
-      ...(error.response?.status ? { status: error.response.status } : {}),
+      errorMessage:
+        error instanceof Error
+          ? error.message || error.name || 'Unknown HTTP error'
+          : axiosError.message || axiosError.name || 'Unknown HTTP error',
+      ...(axiosError.code ? { errorCode: axiosError.code } : {}),
+      ...(axiosError.response?.status
+        ? { status: axiosError.response.status }
+        : {}),
     };
   }
 
@@ -100,11 +197,12 @@ export const hasHttpStatus = (
 };
 
 export const isTransientHttpError = (error: unknown): boolean => {
-  if (!axios.isAxiosError(error)) {
+  const axiosError = findAxiosError(error);
+  if (!axiosError) {
     return false;
   }
 
-  const status = error.response?.status;
+  const status = axiosError.response?.status;
 
   return (
     status === undefined || status === 408 || status === 429 || status >= 500
@@ -135,7 +233,10 @@ export const withTransientHttpRetry = async <T>(
 
       attempt += 1;
       onRetry?.(error, attempt);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const retryDelay =
+        getRetryAfterMs(error) ??
+        Math.min(Math.max(delayMs, 0) * 2 ** (attempt - 2), 10_000);
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
     }
   }
 };

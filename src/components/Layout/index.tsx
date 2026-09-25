@@ -6,19 +6,29 @@ import ThemePicker from '@app/components/Layout/ThemePicker';
 import UserDropdown from '@app/components/Layout/UserDropdown';
 import UserWarnings from '@app/components/Layout/UserWarnings';
 import useLocale from '@app/hooks/useLocale';
+import useSearchActivity from '@app/hooks/useSearchActivity';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
+import defineMessages from '@app/utils/defineMessages';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { ArrowLeftIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/solid';
 import type { AvailableLocale } from '@server/types/languages';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
+import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 type LayoutProps = {
   children: React.ReactNode;
 };
 
+const messages = defineMessages('components.Layout', {
+  searching: 'Searching',
+});
+
 const Layout = ({ children }: LayoutProps) => {
+  const intl = useIntl();
+  const isSearching = useSearchActivity();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const isScrolledRef = useRef(false);
@@ -156,10 +166,6 @@ const Layout = ({ children }: LayoutProps) => {
           className={`searchbar fixed left-0 right-0 top-0 z-10 flex flex-shrink-0 transition duration-300 ${
             isScrolled ? 'app-searchbar-scrolled' : 'bg-transparent'
           } lg:left-64`}
-          style={{
-            backdropFilter: isScrolled ? 'blur(5px)' : undefined,
-            WebkitBackdropFilter: isScrolled ? 'blur(5px)' : undefined,
-          }}
         >
           <div className="flex flex-1 items-center justify-between px-4 md:pl-4 md:pr-4">
             <button
@@ -177,6 +183,7 @@ const Layout = ({ children }: LayoutProps) => {
                 isScrolled ? 'opacity-90' : 'opacity-70'
               } pwa-only transition duration-300 hover:text-white focus:text-white focus:outline-none`}
               onClick={() => router.back()}
+              aria-label="Go back to the previous page"
             >
               <ArrowLeftIcon className="w-7" />
             </button>
@@ -194,7 +201,21 @@ const Layout = ({ children }: LayoutProps) => {
           <div className="mb-6">
             <div className="max-w-8xl mx-auto px-4">
               <UserWarnings />
-              {children}
+              <div className="global-search-progress-region">
+                <div
+                  className="global-search-progress-indicator"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {isSearching && (
+                    <>
+                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
+                      <span>{intl.formatMessage(messages.searching)}</span>
+                    </>
+                  )}
+                </div>
+                {children}
+              </div>
             </div>
           </div>
         </main>

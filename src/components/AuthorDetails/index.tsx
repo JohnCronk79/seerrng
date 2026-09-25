@@ -72,7 +72,7 @@ const AuthorDetails = () => {
           onComplete={() => mutate()}
         />
       )}
-      <div className="relative z-10 mb-10 mt-4 flex flex-col items-center gap-6 text-gray-300 lg:flex-row lg:items-start">
+      <div className="relative z-10 mt-4 mb-10 flex flex-col items-center gap-6 text-gray-300 lg:flex-row lg:items-start">
         {data.posterPath && (
           <div className="relative h-36 w-36 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-gray-700 lg:h-44 lg:w-44">
             <CachedImage
@@ -85,7 +85,7 @@ const AuthorDetails = () => {
           </div>
         )}
         <div className="min-w-0 text-center lg:text-left">
-          <h1 className="break-words text-3xl font-bold text-white lg:text-5xl">
+          <h1 className="text-3xl font-bold break-words text-white lg:text-5xl">
             {data.name}
           </h1>
           <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-2 text-sm lg:justify-start">
@@ -101,7 +101,7 @@ const AuthorDetails = () => {
             )}
           </div>
           {data.biography && (
-            <p className="mt-4 max-w-4xl whitespace-pre-line text-sm leading-6 lg:text-base">
+            <p className="mt-4 max-w-4xl text-sm leading-6 whitespace-pre-line lg:text-base">
               {data.biography}
             </p>
           )}

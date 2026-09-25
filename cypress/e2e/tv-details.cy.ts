@@ -10,7 +10,7 @@ describe('TV Details', () => {
     );
   });
 
-  it('shows standard and 4K requests as adjacent individual buttons', () => {
+  it('shows standard and 4K requests in one segmented control', () => {
     cy.loginAsAdmin();
     cy.intercept('GET', '/api/v1/settings/public', (request) => {
       request.continue((response) => {
@@ -19,11 +19,12 @@ describe('TV Details', () => {
     });
     cy.visit('/tv/66732');
 
-    cy.get('[data-testid=request-action-request]').should('be.visible');
-    cy.get('[data-testid=request-action-request4k]')
+    cy.get('[data-testid=format-request-control]').should('be.visible');
+    cy.get('[data-testid=format-request-option-standard]').should('be.visible');
+    cy.get('[data-testid=format-request-option-4k]')
       .should('be.visible')
       .then(($fourKButton) => {
-        cy.get('[data-testid=request-action-request]').then(
+        cy.get('[data-testid=format-request-option-standard]').then(
           ($standardButton) => {
             expect(
               $fourKButton[0].getBoundingClientRect().left

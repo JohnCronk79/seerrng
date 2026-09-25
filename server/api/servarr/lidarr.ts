@@ -262,6 +262,11 @@ export interface LidarrAlbum {
   id: number;
   mbId: string;
   title: string;
+  artistName?: string;
+  artist?: {
+    artistName?: string;
+    foreignArtistId?: string;
+  };
   monitored: boolean;
   artistId: number;
   foreignAlbumId: string;
@@ -269,6 +274,12 @@ export interface LidarrAlbum {
   profileId: number;
   duration: number;
   albumType: string;
+  releaseDate?: string;
+  genres?: string[];
+  images?: LidarrImage[];
+  remoteCover?: string;
+  added?: string;
+  ratings?: LidarrRating;
   lastSearchTime?: string;
   statistics: {
     trackFileCount: number;
@@ -277,6 +288,18 @@ export interface LidarrAlbum {
     sizeOnDisk: number;
     percentOfTracks: number;
   };
+}
+
+export interface LidarrTrack {
+  id: number;
+  albumId: number;
+  title: string;
+  trackNumber: string;
+  absoluteTrackNumber: number;
+  mediumNumber: number;
+  hasFile: boolean;
+  trackFileId: number;
+  foreignRecordingId: string;
 }
 
 export interface SearchCommand extends Record<string, unknown> {
@@ -301,7 +324,9 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       const data = await this.get<LidarrAlbum[]>('/album', undefined, cacheTtl);
       return sanitizeServarrRecordArray<LidarrAlbum>(data);
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to retrieve albums: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to retrieve albums: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -318,7 +343,8 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       return sanitizeServarrRecordArray<LidarrAlbum>(data);
     } catch (e) {
       throw new Error(
-        `[Lidarr] Failed to retrieve artist albums: ${e.message}`
+        `[Lidarr] Failed to retrieve artist albums: ${e.message}`,
+        { cause: e }
       );
     }
   }
@@ -335,7 +361,57 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       );
       return data;
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to retrieve album: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to retrieve album: ${e.message}`, {
+        cause: e,
+      });
+    }
+  }
+
+  public async getTracks(
+    { albumId }: { albumId: number },
+    cacheTtl?: number
+  ): Promise<LidarrTrack[]> {
+    try {
+      const data = await this.get<LidarrTrack[]>(
+        '/track',
+        { params: { albumId } },
+        cacheTtl
+      );
+      return sanitizeServarrRecordArray<LidarrTrack>(data).flatMap((track) => {
+        if (
+          !Number.isSafeInteger(track.id) ||
+          !Number.isSafeInteger(track.albumId) ||
+          typeof track.title !== 'string' ||
+          typeof track.trackNumber !== 'string' ||
+          !Number.isFinite(track.absoluteTrackNumber) ||
+          !Number.isFinite(track.mediumNumber) ||
+          typeof track.hasFile !== 'boolean' ||
+          !Number.isSafeInteger(track.trackFileId) ||
+          typeof track.foreignRecordingId !== 'string'
+        ) {
+          return [];
+        }
+
+        return [
+          {
+            id: track.id,
+            albumId: track.albumId,
+            title: track.title.slice(0, 512),
+            trackNumber: track.trackNumber.slice(0, 64),
+            absoluteTrackNumber: track.absoluteTrackNumber,
+            mediumNumber: track.mediumNumber,
+            hasFile: track.hasFile,
+            trackFileId: track.trackFileId,
+            foreignRecordingId: normalizeMusicBrainzId(
+              track.foreignRecordingId
+            ),
+          },
+        ];
+      });
+    } catch (e) {
+      throw new Error(`[Lidarr] Failed to retrieve tracks: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -349,7 +425,9 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       });
       logger.info(`[Lidarr] Removed album ${albumId}`);
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to remove album: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to remove album: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -363,7 +441,9 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       });
       logger.info(`[Lidarr] Removed empty artist ${artistId}`);
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to remove artist: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to remove artist: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -381,7 +461,9 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
         MAX_SERVARR_LOOKUP_RESULTS
       );
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to search album: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to search album: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -468,7 +550,9 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       });
       return data;
     } catch (e) {
-      throw new Error(`[Lidarr] Failed to add album: ${e.message}`);
+      throw new Error(`[Lidarr] Failed to add album: ${e.message}`, {
+        cause: e,
+      });
     }
   }
 
@@ -489,7 +573,8 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       );
     } catch (e) {
       throw new Error(
-        `[Lidarr] Failed to search album by MusicBrainz ID: ${e.message}`
+        `[Lidarr] Failed to search album by MusicBrainz ID: ${e.message}`,
+        { cause: e }
       );
     }
   }
@@ -500,7 +585,8 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
       return sanitizeServarrProfiles(data);
     } catch (e) {
       throw new Error(
-        `[Lidarr] Failed to retrieve metadata profiles: ${e.message}`
+        `[Lidarr] Failed to retrieve metadata profiles: ${e.message}`,
+        { cause: e }
       );
     }
   }

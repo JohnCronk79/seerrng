@@ -36,7 +36,7 @@ Confidence: high.
 | Surface | Current pin/source |
 | --- | --- |
 | Root app `packageManager` | `pnpm@10.24.0` |
-| Root app engines | Node `^22.19.0`, pnpm `^10.0.0` |
+| Root app engines | Node `^22.22.2`, pnpm `^10.0.0` |
 | Docs app `packageManager` | `pnpm@10.24.0` |
 | Docs app engines | Node `>=22.0` |
 | Duplicate detector `packageManager` | `pnpm@10.24.0` |

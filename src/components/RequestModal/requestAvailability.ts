@@ -1,78 +1,130 @@
+import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
-import type { MediaRequestServiceTarget } from '@server/entity/MediaRequest';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
+import {
+  getActiveRequestForDestination,
+  hasTrackedAvailableDestination,
+  isDestinationAvailableInTargets,
+  isDestinationCoveredByActiveRequest,
+  type RequestDestination,
+  type StoredRequestDestination,
+} from '@server/lib/requestDestination';
 
-interface MusicAvailabilityRequest {
-  serviceTargets?: MediaRequestServiceTarget[] | null;
-}
-
-interface MusicAvailabilityMedia {
+interface DestinationAvailabilityMedia {
   status?: MediaStatus;
+  status4k?: MediaStatus;
   serviceId?: number | null;
-  requests?: MusicAvailabilityRequest[];
+  serviceId4k?: number | null;
+  requests?: StoredRequestDestination[];
 }
 
-interface MusicAvailabilityService {
-  serverId: number;
-}
-
-interface BookAvailabilityRequest {
-  status: MediaRequestStatus;
-  bookFormat?: 'ebook' | 'audiobook' | 'both' | null;
-}
-
-export const isBookFormatCoveredByActiveRequest = (
-  requests: BookAvailabilityRequest[] | null | undefined,
-  selectedFormat: 'ebook' | 'audiobook' | 'both'
+// Availability is quality-specific; a partial series must still allow its
+// missing episodes to be requested.
+export const isVideoQualityAvailable = (
+  media: DestinationAvailabilityMedia | null | undefined,
+  mediaType: 'movie' | 'tv',
+  is4k = false
 ): boolean => {
-  const activeRequests = (requests ?? []).filter(
-    (request) =>
-      request.status !== MediaRequestStatus.DECLINED &&
-      request.status !== MediaRequestStatus.FAILED &&
-      request.status !== MediaRequestStatus.COMPLETED
+  const status = is4k ? media?.status4k : media?.status;
+  return (
+    status === MediaStatus.AVAILABLE ||
+    (mediaType === 'movie' && status === MediaStatus.PARTIALLY_AVAILABLE)
   );
-
-  return activeRequests.some((request) => {
-    const requestFormat = request.bookFormat ?? 'ebook';
-
-    if (selectedFormat === 'both') {
-      return true;
-    }
-
-    return requestFormat === selectedFormat || requestFormat === 'both';
-  });
 };
 
-export const isMusicDestinationAvailable = (
-  media: MusicAvailabilityMedia | null | undefined,
-  selectedServerId: number | null | undefined,
-  availableServices: MusicAvailabilityService[] = []
+export const createRequestDestination = (
+  serviceType: RequestDestination['serviceType'],
+  format: RequestDestination['format'],
+  service: ServiceCommonServer | null | undefined,
+  overrides: RequestOverrides | null | undefined
+): RequestDestination | null => {
+  const serverId = overrides?.server ?? service?.id;
+  if (serverId == null) {
+    return null;
+  }
+
+  return {
+    serviceType,
+    format,
+    serverId,
+    profileId: overrides?.profile ?? service?.activeProfileId ?? null,
+    metadataProfileId:
+      overrides?.metadataProfile ?? service?.activeMetadataProfileId ?? null,
+    languageProfileId:
+      overrides?.language ?? service?.activeLanguageProfileId ?? null,
+    rootFolder: overrides?.folder ?? service?.activeDirectory ?? null,
+  };
+};
+
+export const isRequestDestinationAvailable = (
+  media: DestinationAvailabilityMedia | null | undefined,
+  selected: RequestDestination | null | undefined,
+  legacyAvailableServerIds: number[] = []
 ): boolean => {
-  if (!media) {
+  if (!media || !selected) {
     return false;
   }
 
-  const availableTargets = (media.requests ?? []).flatMap(
-    (request) =>
-      request.serviceTargets?.filter(
-        (target) =>
-          target.serviceType === 'lidarr' &&
-          target.format === 'music' &&
-          target.status === MediaStatus.AVAILABLE
-      ) ?? []
-  );
-  const hasKnownServer =
-    media.serviceId != null ||
-    availableTargets.length > 0 ||
-    availableServices.length > 0;
-
-  if (selectedServerId == null || !hasKnownServer) {
-    return media.status === MediaStatus.AVAILABLE;
+  if (isDestinationAvailableInTargets(media.requests, selected)) {
+    return true;
+  }
+  if (hasTrackedAvailableDestination(media.requests, selected)) {
+    return false;
   }
 
+  const status = selected.format === '4k' ? media.status4k : media.status;
+  if (status !== MediaStatus.AVAILABLE) {
+    return false;
+  }
+
+  const legacyServerId =
+    selected.format === '4k' ? media.serviceId4k : media.serviceId;
   return (
-    (media.status === MediaStatus.AVAILABLE &&
-      media.serviceId === selectedServerId) ||
-    availableTargets.some((target) => target.serverId === selectedServerId) ||
-    availableServices.some((service) => service.serverId === selectedServerId)
+    legacyServerId == null ||
+    legacyServerId === selected.serverId ||
+    legacyAvailableServerIds.includes(selected.serverId as number)
   );
 };
+
+export const isRequestDestinationRequested = (
+  requests: StoredRequestDestination[] | null | undefined,
+  selected: RequestDestination | null | undefined
+): boolean =>
+  selected ? isDestinationCoveredByActiveRequest(requests, selected) : false;
+
+export const canPromotePendingDestinationRequests = (
+  requests: StoredRequestDestination[] | null | undefined,
+  selected: (RequestDestination | null)[],
+  actor: {
+    canManageRequests: boolean;
+    hasAutoApprove: boolean;
+  }
+): boolean => {
+  const targets = selected.filter(
+    (target): target is RequestDestination => !!target
+  );
+  if (targets.length === 0) {
+    return false;
+  }
+
+  const matches = targets.map((target) =>
+    getActiveRequestForDestination(requests, target)
+  );
+  const firstMatch = matches[0];
+  if (
+    !firstMatch ||
+    firstMatch.status !== MediaRequestStatus.PENDING ||
+    matches.some((match) => match?.id !== firstMatch.id)
+  ) {
+    return false;
+  }
+
+  return actor.canManageRequests || actor.hasAutoApprove;
+};
+
+export const areAllRequestDestinationsCovered = (
+  targets: (RequestDestination | null)[],
+  predicate: (target: RequestDestination) => boolean
+): boolean =>
+  targets.length > 0 &&
+  targets.every((target) => !!target && predicate(target));

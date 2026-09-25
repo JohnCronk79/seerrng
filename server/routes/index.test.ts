@@ -27,6 +27,7 @@ import router, {
   EXTERNAL_METADATA_RATE_LIMIT,
   PUBLIC_BACKDROPS_RATE_LIMIT,
   getCommitUpdateStatus,
+  getReleaseUpdateStatus,
 } from './index';
 
 let app: Express;
@@ -88,6 +89,15 @@ describe('Public endpoint resource boundaries', () => {
     assert.strictEqual(unavailable.text, '');
   });
 
+  it('honors an explicit false version-check query value', async () => {
+    const response = await request(app).get(
+      '/api/v1/status?checkUpdateAvailable=false'
+    );
+
+    assert.strictEqual(response.status, 200);
+    assert.equal('updateAvailable' in response.body, false);
+  });
+
   it('reports active and saved transport state without exposing certificate paths', async () => {
     const settings = getSettings();
     const originalTls = structuredClone(settings.network.tls);
@@ -95,6 +105,8 @@ describe('Public endpoint resource boundaries', () => {
       ...originalTls,
       mode: 'self-signed',
       redirectHttpToHttps: false,
+      allowHttpAuth: false,
+      httpAuthAcknowledged: false,
     };
 
     try {
@@ -196,6 +208,51 @@ describe('commit update status', () => {
     assert.deepEqual(
       getCommitUpdateStatus([commit('a'), commit('b')], 'older'),
       { updateAvailable: true, commitsBehind: 2 }
+    );
+  });
+});
+
+describe('stable release update status', () => {
+  const release = (
+    tag_name: string,
+    options: { prerelease?: boolean; draft?: boolean } = {}
+  ) => ({
+    tag_name,
+    prerelease: options.prerelease ?? false,
+    draft: options.draft ?? false,
+  });
+
+  it('does not flag a fork build that is newer than its public release feed', () => {
+    assert.equal(getReleaseUpdateStatus([release('v3.17.0')], '3.18.0'), false);
+  });
+
+  it('flags a semver-newer stable fork release', () => {
+    assert.equal(
+      getReleaseUpdateStatus(
+        [release('v3.18.0'), release('v3.19.0')],
+        '3.18.0'
+      ),
+      true
+    );
+  });
+
+  it('ignores prerelease and draft releases', () => {
+    assert.equal(
+      getReleaseUpdateStatus(
+        [
+          release('v4.0.0-rc.1', { prerelease: true }),
+          release('v4.0.0', { draft: true }),
+        ],
+        '3.18.0'
+      ),
+      false
+    );
+  });
+
+  it('ignores invalid installed versions and release tags', () => {
+    assert.equal(
+      getReleaseUpdateStatus([release('not-a-version')], 'main-abc123'),
+      false
     );
   });
 });

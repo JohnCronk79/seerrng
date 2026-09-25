@@ -681,7 +681,7 @@
   "components.RequestModal.pendingapproval": "Din förfrågan väntar på godkännande.",
   "components.RequestList.RequestItem.cancelRequest": "Avbryt förfrågan",
   "components.NotificationTypeSelector.notificationTypes": "Meddelandetyper",
-  "components.Layout.VersionStatus.streamstable": "Seerr stable",
+  "components.Layout.VersionStatus.streamstable": "SeerrNG stable",
   "components.Layout.VersionStatus.streamdevelop": "Seerr develop",
   "components.Layout.VersionStatus.outofdate": "Föråldrad",
   "components.Layout.VersionStatus.commitsbehind": "{commitsBehind} {commitsBehind, plural, one {ändring} other {ändringar}} efter",

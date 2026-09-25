@@ -11,9 +11,9 @@ describe('TVDB Integration', () => {
   const SELECTORS = {
     sidebarToggle: '[data-testid=sidebar-toggle]',
     sidebarSettingsMobile: '[data-testid=sidebar-menu-settings-mobile]',
-    settingsNavDesktop: 'nav[data-testid="settings-nav-desktop"]',
-    metadataTestButton: 'button[type="button"]:contains("Test")',
-    metadataSaveButton: '[data-testid="metadata-save-button"]',
+    settingsNav: 'nav[aria-label="Tabs"]',
+    metadataTestButton: '[data-testid="metadata-test-button"]',
+    metadataSaveButton: '[data-testid="settings-save-button"]',
     tmdbStatus: '[data-testid="tmdb-status"]',
     tvdbStatus: '[data-testid="tvdb-status"]',
     tvMetadataProviderSelector: '[data-testid="tv-metadata-provider-selector"]',
@@ -33,7 +33,7 @@ describe('TVDB Integration', () => {
     cy.get(SELECTORS.sidebarToggle).click();
     cy.get(SELECTORS.sidebarSettingsMobile).click();
     cy.get(
-      `${SELECTORS.settingsNavDesktop} a[href="${ROUTES.metadataSettings}"]`
+      `${SELECTORS.settingsNav} a[href="${ROUTES.metadataSettings}"]`
     ).click();
   };
 
@@ -41,11 +41,16 @@ describe('TVDB Integration', () => {
     cy.intercept('POST', '/api/v1/settings/metadatas/test').as(
       'testConnection'
     );
-    cy.get(SELECTORS.metadataTestButton).click();
+    cy.get(SELECTORS.metadataTestButton)
+      .scrollIntoView()
+      .should('be.visible')
+      .click();
     return cy.wait('@testConnection');
   };
 
-  const saveMetadataSettings = (customBody = null) => {
+  const saveMetadataSettings = (
+    customBody: Record<string, string> | null = null
+  ) => {
     if (customBody) {
       cy.intercept('PUT', '/api/v1/settings/metadatas', (req) => {
         req.body = customBody;
@@ -61,7 +66,7 @@ describe('TVDB Integration', () => {
 
   beforeEach(() => {
     // Perform login
-    cy.login(Cypress.env('ADMIN_EMAIL'), Cypress.env('ADMIN_PASSWORD'));
+    cy.loginAsAdmin();
 
     // Navigate to Metadata settings
     navigateToMetadataSettings();
@@ -77,6 +82,9 @@ describe('TVDB Integration', () => {
 
     // Test the connection
     testAndVerifyMetadataConnection().then(({ response }) => {
+      if (!response) {
+        throw new Error('TVDB test connection did not return a response');
+      }
       expect(response.statusCode).to.equal(200);
       // Check TVDB connection status
       cy.get(SELECTORS.tvdbStatus).should('contain', 'Operational');
@@ -87,6 +95,9 @@ describe('TVDB Integration', () => {
       anime: 'tvdb',
       tv: 'tvdb',
     }).then(({ response }) => {
+      if (!response) {
+        throw new Error('Metadata settings save did not return a response');
+      }
       expect(response.statusCode).to.equal(200);
       expect(response.body.tv).to.equal('tvdb');
     });
