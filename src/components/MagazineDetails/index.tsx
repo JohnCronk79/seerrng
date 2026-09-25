@@ -192,7 +192,7 @@ const MagazineDetails = () => {
                           {issue.id}
                         </div>
                         {issue.date && (
-                          <div className="text-xs text-gray-400">
+                          <div className="refreshed-detail-text-muted text-xs">
                             {intl.formatMessage(messages.issueDate)}:{' '}
                             {issue.date}
                           </div>

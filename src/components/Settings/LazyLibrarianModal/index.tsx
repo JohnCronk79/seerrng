@@ -8,7 +8,7 @@ import { isValidURL } from '@app/utils/urlValidationHelper';
 import { Transition } from '@headlessui/react';
 import type { LazyLibrarianSettings } from '@server/lib/settings';
 import axios from 'axios';
-import { Field, Formik } from 'formik';
+import { Formik } from 'formik';
 import { useCallback, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import * as Yup from 'yup';
@@ -276,7 +276,7 @@ const LazyLibrarianModal = ({
               </label>
               <div className="form-input-area">
                 <div className="form-input-field">
-                  <Field id="name" name="name" type="text" />
+                  <SettingsField id="name" name="name" type="text" />
                 </div>
                 {errors.name &&
                   touched.name &&
@@ -295,7 +295,7 @@ const LazyLibrarianModal = ({
                   <span className="protocol">
                     {values.ssl ? 'https://' : 'http://'}
                   </span>
-                  <Field
+                  <SettingsField
                     id="hostname"
                     name="hostname"
                     type="text"
@@ -343,7 +343,7 @@ const LazyLibrarianModal = ({
                 {intl.formatMessage(messages.ssl)}
               </label>
               <div className="form-input-area">
-                <Field
+                <SettingsField
                   type="checkbox"
                   id="ssl"
                   name="ssl"
@@ -388,7 +388,7 @@ const LazyLibrarianModal = ({
               </label>
               <div className="form-input-area">
                 <div className="form-input-field">
-                  <Field
+                  <SettingsField
                     id="baseUrl"
                     name="baseUrl"
                     type="text"
@@ -414,7 +414,11 @@ const LazyLibrarianModal = ({
               </label>
               <div className="form-input-area">
                 <div className="form-input-field">
-                  <Field id="externalUrl" name="externalUrl" type="text" />
+                  <SettingsField
+                    id="externalUrl"
+                    name="externalUrl"
+                    type="text"
+                  />
                 </div>
                 {errors.externalUrl &&
                   touched.externalUrl &&
