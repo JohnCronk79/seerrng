@@ -96,6 +96,37 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.26.1](https://github.com/snapetech/seerrng/compare/v3.26.0..v3.26.1) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Comics:** Comics now have their own Discover and details pages, reachable from the sidebar, so you can search ComicVine and request comics without leaving the browser.
+  - **Action required:** Add a ComicVine API key in Settings > General to enable comic discovery.
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+- **Comics:** Admins can now add and manage Mylar3 and Kapowarr servers from Settings, and comics already in those libraries sync in automatically so they show as available without a new request.
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+#### Fixed
+
+- **Comics:** Comic discovery, detail, and server settings screens now include their required English labels and status text in release builds, so production images package the new comics workflows correctly.
+- **Release Pipeline:** Release notes now include all changes since the latest published release, even when newer tags are still drafts. This keeps fixes and features from failed or delayed releases visible in the next GitHub release and Discord announcement.
+- **Metadata:** Provider failures behind movie and discovery errors now retain the upstream status, provider message, and error code in server logs. TMDB rejections also show the credential source without exposing the key, helping operators distinguish authentication failures from network outages.
+- **Metadata:** SeerrNG now checks TMDB authentication after startup and logs whether it succeeded, which credential source was used, or the upstream HTTP/network failure code. A rejected override is visible without exposing the key; the bundled key remains the default.
+  - **Action required:** If startup logs report HTTP 401, remove or correct the TMDB credential override.
+
+### 🐛 Bug Fixes
+- *(i18n)* Include comic messages in release catalogs - ([6b20fa6](https://github.com/snapetech/seerrng/commit/6b20fa62136910b337b3e8205ec089e655ea6272))
+
 ## [3.26.0](https://github.com/snapetech/seerrng/compare/v3.25.0..v3.26.0) - 2026-09-25
 
 ### User-facing changes
