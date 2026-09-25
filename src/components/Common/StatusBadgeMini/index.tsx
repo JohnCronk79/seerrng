@@ -138,8 +138,8 @@ const StatusBadgeMini = memo(
             </>
           ) : (
             <>
-              <span className="h-3.5 w-3.5 shrink-0">{indicatorIcon}</span>
               <span>{quality}</span>
+              <span className="h-3.5 w-3.5 shrink-0">{indicatorIcon}</span>
             </>
           )}
         </div>

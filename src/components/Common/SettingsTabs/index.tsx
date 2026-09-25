@@ -80,7 +80,7 @@ const SettingsTabs = ({
   settingsRoutes: SettingsRoute[];
 }) => {
   const router = useRouter();
-  const { user: currentUser } = useUser();
+  const { presentationPermissions } = useUser();
 
   return (
     <>
@@ -109,7 +109,7 @@ const SettingsTabs = ({
                 (route.requiredPermission
                   ? hasPermission(
                       route.requiredPermission,
-                      currentUser?.permissions ?? 0,
+                      presentationPermissions,
                       route.permissionType
                     )
                   : true)
@@ -152,7 +152,7 @@ const SettingsTabs = ({
                   (route.requiredPermission
                     ? hasPermission(
                         route.requiredPermission,
-                        currentUser?.permissions ?? 0,
+                        presentationPermissions,
                         route.permissionType
                       )
                     : true)
@@ -181,7 +181,7 @@ const SettingsTabs = ({
                   (route.requiredPermission
                     ? hasPermission(
                         route.requiredPermission,
-                        currentUser?.permissions ?? 0,
+                        presentationPermissions,
                         route.permissionType
                       )
                     : true)

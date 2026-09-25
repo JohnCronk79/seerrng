@@ -1,5 +1,6 @@
 import ArtistCard from '@app/components/ArtistCard';
 import AuthorCard from '@app/components/AuthorCard';
+import Button from '@app/components/Common/Button';
 import PersonCard from '@app/components/PersonCard';
 import TitleCard from '@app/components/TitleCard';
 import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
@@ -10,6 +11,7 @@ import useWarmImageCache, {
   MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
 } from '@app/hooks/useWarmImageCache';
 import globalMessages from '@app/i18n/globalMessages';
+import defineMessages from '@app/utils/defineMessages';
 import {
   canRequestMissingBookFormat,
   isBookInProgress,
@@ -48,9 +50,14 @@ type ListViewProps = {
   onScrollBottom: () => void;
   mutateParent?: () => void;
   preferredBookFormat?: 'ebook' | 'audiobook';
+  showAllBookFormats?: boolean;
   emptyMessage?: React.ReactNode;
   emptyClassName?: string;
 };
+
+const messages = defineMessages('components.ListView', {
+  continueSearch: 'Continue Search',
+});
 
 const ListView = ({
   items,
@@ -61,6 +68,7 @@ const ListView = ({
   plexItems,
   mutateParent,
   preferredBookFormat,
+  showAllBookFormats = false,
   emptyMessage,
   emptyClassName,
 }: ListViewProps) => {
@@ -139,6 +147,7 @@ const ListView = ({
                 summary={title.overview}
                 title={title.title}
                 userScore={title.voteAverage}
+                voteCount={title.voteCount}
                 year={title.releaseDate}
                 mediaType={title.mediaType}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -162,6 +171,7 @@ const ListView = ({
                 summary={title.overview}
                 title={title.name}
                 userScore={title.voteAverage}
+                voteCount={title.voteCount}
                 year={title.firstAirDate}
                 mediaType={title.mediaType}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -251,6 +261,8 @@ const ListView = ({
                 status={title.mediaInfo?.status}
                 title={title.title}
                 artist={title.author}
+                bookRatingAverage={title.ratingsAverage}
+                bookRatingCount={title.ratingsCount}
                 year={title.firstPublishYear?.toString()}
                 mediaType={title.mediaType}
                 inProgress={isBookInProgress(title)}
@@ -258,6 +270,7 @@ const ListView = ({
                 canExpand
                 showText={visibility.book === 'always'}
                 preferredBookFormat={preferredBookFormat}
+                showAllBookFormats={showAllBookFormats}
               />
             );
             break;
@@ -277,6 +290,7 @@ const ListView = ({
       visibility.movie,
       visibility.tv,
       preferredBookFormat,
+      showAllBookFormats,
     ]
   );
   const hasRenderableItems =
@@ -299,6 +313,11 @@ const ListView = ({
 
   return (
     <>
+      {!hasRenderableItems && !isLoading && !isReachingEnd && (
+        <Button onClick={onScrollBottom}>
+          {intl.formatMessage(messages.continueSearch)}
+        </Button>
+      )}
       {effectiveIsEmpty && (
         <div
           className={twMerge(

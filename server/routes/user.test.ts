@@ -2478,6 +2478,7 @@ describe('User route input validation', () => {
 
     assert.strictEqual(movieSave.status, 200);
     assert.deepStrictEqual(movieSave.body, {
+      collection: false,
       cast: true,
       crew: false,
       artists: false,
@@ -2502,6 +2503,7 @@ describe('User route input validation', () => {
       where: { id: 1 },
     });
     assert.deepStrictEqual(user.settings?.detailDisclosurePins?.movie, {
+      collection: false,
       cast: true,
       crew: false,
       artists: false,
@@ -2513,6 +2515,51 @@ describe('User route input validation', () => {
       artists: false,
       subjectTags: false,
     });
+  });
+
+  it('persists the movie collection pin without changing cast or other media pins', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const initial = await agent.get(
+      '/user/1/settings/detail-disclosures/movie'
+    );
+    assert.strictEqual(initial.body.collection, false);
+    await agent
+      .post('/user/1/settings/detail-disclosures/movie')
+      .send({ cast: true });
+    const saved = await agent
+      .post('/user/1/settings/detail-disclosures/movie')
+      .send({ collection: true });
+    assert.strictEqual(saved.status, 200);
+    assert.strictEqual(saved.body.collection, true);
+    assert.strictEqual(saved.body.cast, true);
+    const fetched = await agent.get(
+      '/user/1/settings/detail-disclosures/movie'
+    );
+    assert.deepStrictEqual(fetched.body, saved.body);
+    const tv = await agent.get('/user/1/settings/detail-disclosures/tv');
+    assert.strictEqual(tv.body.collection, undefined);
+    const invalid = await agent
+      .post('/user/1/settings/detail-disclosures/movie')
+      .send({ collection: 'true' });
+    assert.strictEqual(invalid.status, 400);
+    const unpinned = await agent
+      .post('/user/1/settings/detail-disclosures/movie')
+      .send({ collection: false });
+    assert.strictEqual(unpinned.body.collection, false);
+    assert.strictEqual(unpinned.body.cast, true);
+    const user = await getRepository(User).findOneOrFail({ where: { id: 1 } });
+    assert.strictEqual(
+      user.settings?.detailDisclosurePins?.movie?.collection,
+      false
+    );
+  });
+
+  it('does not allow another user to change the movie collection pin', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent
+      .post('/user/1/settings/detail-disclosures/movie')
+      .send({ collection: true });
+    assert.strictEqual(response.status, 403);
   });
 
   it('saves card text visibility through main user settings without clearing other media types', async () => {

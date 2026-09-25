@@ -1,6 +1,10 @@
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
-import SelectionCircle from '@app/components/Common/SelectionCircle';
+import SelectionCircle, {
+  selectFromRow,
+  selectFromRowKey,
+} from '@app/components/Common/SelectionCircle';
 import Tooltip from '@app/components/Common/Tooltip';
+import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import {
   CheckCircleIcon,
@@ -136,20 +140,31 @@ const SeriesSeasonEpisodeBrowser = ({
   }: {
     available: boolean;
     partial?: boolean;
-  }) => (
-    <span className="media-availability-cell">
-      {available ? (
-        <CheckCircleIcon
-          className={`h-4 w-4 ${
-            partial ? 'text-emerald-600' : 'text-green-400'
-          }`}
-          aria-hidden
-        />
-      ) : (
-        <XCircleIcon className="h-4 w-4 text-red-400" aria-hidden />
-      )}
-    </span>
-  );
+  }) => {
+    const label = intl.formatMessage(
+      available
+        ? partial
+          ? globalMessages.partiallyavailable
+          : globalMessages.available
+        : globalMessages.notavailable
+    );
+    return (
+      <Tooltip content={label}>
+        <span className="media-availability-cell" aria-label={label}>
+          {available ? (
+            <CheckCircleIcon
+              className={`h-4 w-4 ${
+                partial ? 'text-emerald-600' : 'text-green-400'
+              }`}
+              aria-hidden
+            />
+          ) : (
+            <XCircleIcon className="h-4 w-4 text-red-400" aria-hidden />
+          )}
+        </span>
+      </Tooltip>
+    );
+  };
 
   return (
     <div className="mt-[5px] grid min-w-0 gap-2 sm:grid-cols-[max-content_minmax(0,1fr)]">
@@ -170,7 +185,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2"
+          className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2 pb-1"
           data-testid="season-list"
         >
           {visibleSeasons.length === 0 && (
@@ -195,13 +210,33 @@ const SeriesSeasonEpisodeBrowser = ({
             return (
               <div
                 key={season.seasonNumber}
-                className={`grid w-full grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 rounded px-1 py-1 ${
+                className={`selectable-table-row season-focus-row grid w-full grid-cols-[2rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 rounded px-1 py-1 ${
                   activeSeason === season.seasonNumber ? 'bg-indigo-500/15' : ''
                 }`}
+                data-active={activeSeason === season.seasonNumber}
+                data-selectable="true"
+                role="button"
+                tabIndex={0}
+                aria-label={`Season ${season.seasonNumber}`}
+                onClick={(event) => {
+                  selectFromRow(event, () => {
+                    setActiveSeason(season.seasonNumber);
+                    if (available) toggleSeason(season.seasonNumber);
+                  });
+                }}
+                onKeyDown={(event) => {
+                  selectFromRowKey(event, () => {
+                    setActiveSeason(season.seasonNumber);
+                    if (available) toggleSeason(season.seasonNumber);
+                  });
+                }}
               >
                 <SelectionCircle
                   disabled={!available}
-                  onClick={() => toggleSeason(season.seasonNumber)}
+                  onClick={() => {
+                    setActiveSeason(season.seasonNumber);
+                    toggleSeason(season.seasonNumber);
+                  }}
                   selected={allSelected}
                   partial={partiallySelected}
                   label={intl.formatMessage(
@@ -212,9 +247,12 @@ const SeriesSeasonEpisodeBrowser = ({
                 />
                 <button
                   type="button"
-                  onClick={() => setActiveSeason(season.seasonNumber)}
+                  onClick={() => {
+                    setActiveSeason(season.seasonNumber);
+                    if (available) toggleSeason(season.seasonNumber);
+                  }}
                   aria-pressed={activeSeason === season.seasonNumber}
-                  className="truncate rounded text-left text-xs font-medium text-gray-100 transition hover:text-white focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                  className="truncate rounded text-left text-xs font-medium text-gray-100 transition hover:text-white focus:outline-none"
                 >
                   {season.seasonNumber === 0
                     ? intl.formatMessage(messages.specials)
@@ -252,7 +290,7 @@ const SeriesSeasonEpisodeBrowser = ({
           <AvailabilityHeading />
         </div>
         <div
-          className="scrollable-card -mr-2 max-h-[214px] space-y-0.5 overflow-y-auto pt-1 pr-2"
+          className="scrollable-card -mr-2 max-h-[133px] space-y-0.5 overflow-y-auto pt-1 pr-2"
           data-testid="episode-list"
         >
           {!data && !error && activeSeason >= 0 && (
@@ -281,7 +319,19 @@ const SeriesSeasonEpisodeBrowser = ({
             return (
               <div
                 key={episode.id}
-                className="grid w-full grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 rounded px-1 py-1"
+                className="selectable-table-row grid w-full grid-cols-[2rem_4.5rem_minmax(0,1fr)_2.5rem] items-center gap-x-2 rounded px-1 py-1"
+                data-selectable={available}
+                role={available ? 'button' : undefined}
+                tabIndex={available ? 0 : undefined}
+                aria-label={`Select episode ${episode.episodeNumber}`}
+                onClick={(event) => {
+                  if (playableItem)
+                    selectFromRow(event, () => toggleEpisode(playableItem.id));
+                }}
+                onKeyDown={(event) => {
+                  if (playableItem)
+                    selectFromRowKey(event, () => toggleEpisode(playableItem.id));
+                }}
               >
                 <SelectionCircle
                   disabled={!playableItem}

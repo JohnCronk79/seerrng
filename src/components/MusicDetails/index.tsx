@@ -8,7 +8,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
 import MusicDetailsLayout from '@app/components/MusicDetails/MusicDetailsLayout';
-import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
+import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -20,7 +20,6 @@ import {
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import {
-  ArrowDownTrayIcon,
   CogIcon,
   ExclamationTriangleIcon,
   EyeSlashIcon,
@@ -75,7 +74,6 @@ const messages = defineMessages('components.MusicDetails', {
   removefromwatchlist: 'Remove From Watchlist',
   addtowatchlist: 'Add To Watchlist',
   viewrequest: 'View Request',
-  requestdiscography: 'Request Discography',
   selectToPlay: 'No playable tracks are currently available.',
   mp3Available: 'The MP3 version is already available.',
   flacAvailable: 'The FLAC version is already available.',
@@ -92,7 +90,6 @@ const MusicDetails = () => {
   const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [showBulkRequestModal, setShowBulkRequestModal] = useState(false);
   const [editRequest, setEditRequest] =
     useState<NonFunctionProperties<MediaRequest>>();
   const [showIssueModal, setShowIssueModal] = useState(false);
@@ -120,7 +117,11 @@ const MusicDetails = () => {
     normalizedRouteMusicId
       ? `/api/v1/music/${encodeApiPathSegment(normalizedRouteMusicId)}/rating`
       : null,
-    { shouldRetryOnError: false }
+    {
+      refreshInterval: (data) => (data?.failedSources?.length ? 60000 : 0),
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
   );
   const { data: musicServices } = useSWR<ServiceCommonServer[]>(
     '/api/v1/service/lidarr'
@@ -134,6 +135,17 @@ const MusicDetails = () => {
     setToggleWatchlist(!data?.onUserWatchlist);
   }, [data?.onUserWatchlist]);
 
+  const {
+    isBlocklisted,
+    checking: checkingBlocklist,
+    error: blocklistError,
+    setBlocklisted,
+  } = useTitleBlocklist(
+    normalizedRouteMusicId,
+    MediaType.MUSIC,
+    data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
+  );
+
   if (!data && !error) {
     return <LoadingSpinner />;
   }
@@ -144,7 +156,6 @@ const MusicDetails = () => {
 
   const musicBrainzId = normalizeMusicBrainzId(data.mbId);
   const albumId = normalizeMusicBrainzId(data.id);
-  const artistId = normalizeMusicBrainzId(data.artist.id);
 
   const canRequest = hasPermission(
     [Permission.REQUEST, Permission.REQUEST_MUSIC],
@@ -214,7 +225,8 @@ const MusicDetails = () => {
       disabled:
         !service ||
         data.mediaInfo?.status === MediaStatus.BLOCKLISTED ||
-        (!canChooseAlternateTarget && (available || requested)),
+        !!available ||
+        (!canChooseAlternateTarget && requested),
       disabledReason: !service
         ? intl.formatMessage(
             format === 'mp3'
@@ -244,7 +256,7 @@ const MusicDetails = () => {
     !!data.mediaInfo?.id && data.mediaInfo.status === MediaStatus.AVAILABLE;
   const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
   const isBlocklistAvailable =
-    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
+    !isBlocklisted && !checkingBlocklist && !blocklistError;
   const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
   const isManageAvailable = Boolean(
     data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
@@ -267,6 +279,7 @@ const MusicDetails = () => {
         mediaType: MediaType.MUSIC,
         title: data.title,
       });
+      await setBlocklisted(true);
 
       addToast(
         <span>
@@ -401,13 +414,8 @@ const MusicDetails = () => {
             className="relative"
             aria-label={intl.formatMessage(messages.manage)}
           >
-            <CogIcon className="!mr-0" />
-            {openIssues.length > 0 && (
-              <>
-                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-600" />
-                <span className="absolute -top-1 -right-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-              </>
-            )}
+            <CogIcon />
+            <span>{intl.formatMessage(globalMessages.manage)}</span>
           </Button>
         </Tooltip>
       )}
@@ -430,20 +438,11 @@ const MusicDetails = () => {
             aria-label={intl.formatMessage(messages.reportissue)}
           >
             <ExclamationTriangleIcon />
+            <span>{intl.formatMessage(globalMessages.reportIssue)}</span>
           </Button>
         </Tooltip>
       )}
       <AssociationBadge mediaType="album" id={albumId} variant="button" />
-      {canRequest && artistId && (
-        <Button
-          buttonType="bulkRequest"
-          buttonSize="sm"
-          onClick={() => setShowBulkRequestModal(true)}
-        >
-          <ArrowDownTrayIcon />
-          <span>{intl.formatMessage(messages.requestdiscography)}</span>
-        </Button>
-      )}
       {activeMusicRequest && (
         <Button
           buttonType="ghost"
@@ -501,7 +500,7 @@ const MusicDetails = () => {
     hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
       type: 'or',
     }) && openIssues.length > 0 ? (
-      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+      <section className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
         <h2 className="media-inset-heading px-3 py-2">
           {intl.formatMessage(messages.openissues)}
         </h2>
@@ -573,16 +572,6 @@ const MusicDetails = () => {
             setShowRequestModal(false);
             revalidate();
           }}
-        />
-      )}
-      {showBulkRequestModal && data.artist.id && (
-        <BulkRequestModal
-          show={showBulkRequestModal}
-          mediaType="music"
-          artistId={artistId}
-          title={data.artist.name}
-          onCancel={() => setShowBulkRequestModal(false)}
-          onComplete={() => revalidate()}
         />
       )}
       <MusicDetailsLayout

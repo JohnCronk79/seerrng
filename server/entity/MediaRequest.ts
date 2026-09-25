@@ -20,6 +20,10 @@ import OverrideRule from '@server/entity/OverrideRule';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import {
+  getBookOverrideMetadata,
+  getMusicOverrideMetadata,
+} from '@server/lib/catalogOverrideMetadata';
+import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryEditionId,
   normalizeOpenLibraryWorkId,
@@ -34,6 +38,7 @@ import {
 import type { Notification } from '@server/lib/notifications';
 import notificationManager from '@server/lib/notifications';
 import {
+  evaluateRequesterOverrideRules,
   getOverrideRuleProfileId,
   getOverrideRuleTagIds,
   overrideRuleMatchesUser,
@@ -890,7 +895,7 @@ export class MediaRequest {
       }
 
       const useAdvancedOptions = canUseAdvancedRequestOptions(user);
-      const useOverrides = !useAdvancedOptions;
+      const useOverrides = !user.hasPermission(Permission.MANAGE_REQUESTS);
 
       const defaultLidarr = settings.lidarr.find((lidarr) => lidarr.isDefault);
       const requestedServerId = useAdvancedOptions
@@ -936,27 +941,22 @@ export class MediaRequest {
         const overrideRules = await getRepository(OverrideRule).find({
           where: { lidarrServiceId: serverId },
         });
-        const prioritizedRule = selectMostSpecificOverrideRule(
-          overrideRules.filter((rule) =>
-            overrideRuleMatchesUser(rule, requestUser.id)
-          ),
-          ['users']
-        );
-
-        if (prioritizedRule?.rootFolder) {
-          rootFolder = prioritizedRule.rootFolder;
-        }
-        const overrideProfileId = prioritizedRule
-          ? getOverrideRuleProfileId(prioritizedRule)
-          : undefined;
-        if (overrideProfileId !== undefined) {
-          profileId = overrideProfileId;
-        }
-        const overrideTags = prioritizedRule
-          ? getOverrideRuleTagIds(prioritizedRule)
-          : [];
-        if (overrideTags.length > 0) {
-          tags = [...new Set([...(tags || []), ...overrideTags])];
+        if (overrideRules.length > 0) {
+          const metadata = overrideRules.some(
+            (rule) => rule.genre || rule.language || rule.keywords
+          )
+            ? await getMusicOverrideMetadata(musicMbId)
+            : {};
+          const override = await evaluateRequesterOverrideRules({
+            serviceField: 'lidarrServiceId',
+            serviceId: serverId,
+            requestUser,
+            tags,
+            metadata,
+          });
+          rootFolder = override.rootFolder ?? rootFolder;
+          profileId = override.profileId ?? profileId;
+          tags = override.tags ?? tags;
         }
       }
 
@@ -1208,19 +1208,55 @@ export class MediaRequest {
       }
 
       const selectedReadarr = requestedServer ?? defaultReadarr;
+      const useBookOverrides = !user.hasPermission(Permission.MANAGE_REQUESTS);
+      let bookRuleMetadata:
+        Awaited<ReturnType<typeof getBookOverrideMetadata>> | undefined;
+      const getBookOverride = async (service: ReadarrSettings) => {
+        if (!useBookOverrides) return undefined;
+        const rules = await getRepository(OverrideRule).find({
+          where: { readarrServiceId: service.id },
+        });
+        if (!rules.length) return undefined;
+        if (
+          rules.some((rule) => rule.genre || rule.language || rule.keywords)
+        ) {
+          bookRuleMetadata ??= await getBookOverrideMetadata(
+            openLibraryId,
+            settings.readarr
+          );
+        }
+        return evaluateRequesterOverrideRules({
+          serviceField: 'readarrServiceId',
+          serviceId: service.id,
+          requestUser,
+          tags: useAdvancedOptions
+            ? (requestBody.tags ?? service.tags)
+            : service.tags,
+          metadata: bookRuleMetadata,
+        });
+      };
+      const selectedBookOverride = selectedReadarr
+        ? await getBookOverride(selectedReadarr)
+        : undefined;
+      const audiobookOverride =
+        requestedBookFormat === 'both' && defaultAudiobookReadarr
+          ? await getBookOverride(defaultAudiobookReadarr)
+          : undefined;
 
       const createBookTarget = (
         service: ReadarrSettings,
         format: 'ebook' | 'audiobook',
-        allowOverrides: boolean
+        allowOverrides: boolean,
+        ruleOverride?: Awaited<ReturnType<typeof getBookOverride>>
       ): MediaRequestServiceTarget => ({
         serviceType: 'readarr',
         format,
         serverId: service.id,
         profileId:
-          allowOverrides && useAdvancedOptions
+          ruleOverride?.profileId ??
+          (allowOverrides && useAdvancedOptions
             ? (requestBody.profileId ?? service.activeProfileId)
-            : service.activeProfileId,
+            : service.activeProfileId),
         metadataProfileId:
           allowOverrides &&
           useAdvancedOptions &&
@@ -1228,24 +1264,33 @@ export class MediaRequest {
             ? requestBody.metadataProfileId
             : (service.activeMetadataProfileId ?? null),
         rootFolder:
-          allowOverrides && useAdvancedOptions
+          ruleOverride?.rootFolder ??
+          (allowOverrides && useAdvancedOptions
             ? (requestBody.rootFolder ?? service.activeDirectory)
-            : service.activeDirectory,
+            : service.activeDirectory),
         tags:
-          allowOverrides && useAdvancedOptions
+          ruleOverride?.tags ??
+          (allowOverrides && useAdvancedOptions
             ? (requestBody.tags ?? service.tags ?? null)
-            : (service.tags ?? null),
+            : (service.tags ?? null)),
         status: MediaStatus.PENDING,
       });
       const bookTargets: MediaRequestServiceTarget[] = [];
       if (requestedBookFormat === 'both') {
         const ebookService = requestedServer ?? defaultEbookReadarr;
         if (ebookService) {
-          bookTargets.push(createBookTarget(ebookService, 'ebook', true));
+          bookTargets.push(
+            createBookTarget(ebookService, 'ebook', true, selectedBookOverride)
+          );
         }
         if (defaultAudiobookReadarr) {
           bookTargets.push(
-            createBookTarget(defaultAudiobookReadarr, 'audiobook', false)
+            createBookTarget(
+              defaultAudiobookReadarr,
+              'audiobook',
+              false,
+              audiobookOverride
+            )
           );
         }
       } else if (selectedReadarr) {
@@ -1253,7 +1298,8 @@ export class MediaRequest {
           createBookTarget(
             selectedReadarr,
             requestedBookFormat === 'audiobook' ? 'audiobook' : 'ebook',
-            true
+            true,
+            selectedBookOverride
           )
         );
       }
@@ -1352,19 +1398,25 @@ export class MediaRequest {
         modifiedBy: autoApproved ? user : undefined,
         is4k: false,
         serverId: selectedReadarr?.id,
-        profileId: useAdvancedOptions
-          ? (requestBody.profileId ?? selectedReadarr?.activeProfileId)
-          : selectedReadarr?.activeProfileId,
+        profileId:
+          selectedBookOverride?.profileId ??
+          (useAdvancedOptions
+            ? (requestBody.profileId ?? selectedReadarr?.activeProfileId)
+            : selectedReadarr?.activeProfileId),
         metadataProfileId:
           useAdvancedOptions && requestBody.metadataProfileId !== undefined
             ? requestBody.metadataProfileId
             : selectedReadarr?.activeMetadataProfileId,
-        rootFolder: useAdvancedOptions
-          ? (requestBody.rootFolder ?? selectedReadarr?.activeDirectory)
-          : selectedReadarr?.activeDirectory,
-        tags: useAdvancedOptions
-          ? (requestBody.tags ?? selectedReadarr?.tags)
-          : selectedReadarr?.tags,
+        rootFolder:
+          selectedBookOverride?.rootFolder ??
+          (useAdvancedOptions
+            ? (requestBody.rootFolder ?? selectedReadarr?.activeDirectory)
+            : selectedReadarr?.activeDirectory),
+        tags:
+          selectedBookOverride?.tags ??
+          (useAdvancedOptions
+            ? (requestBody.tags ?? selectedReadarr?.tags)
+            : selectedReadarr?.tags),
         serviceTargets: uncoveredBookTargets,
         bookFormat: requestedBookFormat,
         preferredEditionId: requestBody.preferredEditionId,
@@ -1825,18 +1877,14 @@ export class MediaRequest {
 
     if (useOverrides) {
       const overrideRuleRepository = getRepository(OverrideRule);
-      const defaultServiceId =
-        requestBody.mediaType === MediaType.MOVIE
-          ? defaultRadarr?.id
-          : defaultSonarr?.id;
       const overrideRules =
-        defaultServiceId == null
+        serverId == null
           ? []
           : await overrideRuleRepository.find({
               where:
                 requestBody.mediaType === MediaType.MOVIE
-                  ? { radarrServiceId: defaultServiceId }
-                  : { sonarrServiceId: defaultServiceId },
+                  ? { radarrServiceId: serverId }
+                  : { sonarrServiceId: serverId },
             });
 
       const appliedOverrideRules = overrideRules.filter((rule) => {

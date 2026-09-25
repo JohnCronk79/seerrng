@@ -36,6 +36,8 @@ const messages = defineMessages('components.Settings.SettingsMain', {
     'Configure global and default settings for Seerr.',
   apikey: 'API Key',
   apikeyCopied: 'Copied API key to clipboard.',
+  regenerateApiKey:
+    'Generate a new API key. Apps using the current key will need the new key to connect.',
   applicationTitle: 'Application Title',
   applicationurl: 'Application URL',
   discoverRegion: 'Discover Region',
@@ -303,6 +305,9 @@ const SettingsMain = () => {
                               e.preventDefault();
                               regenerate();
                             }}
+                            aria-label={intl.formatMessage(
+                              messages.regenerateApiKey
+                            )}
                             className="input-action"
                             type="button"
                           >

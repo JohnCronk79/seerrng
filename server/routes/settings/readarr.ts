@@ -178,6 +178,7 @@ readarrRoutes.post<
       const profiles = await readarr.getProfiles();
       const metadataProfiles = await readarr.getMetadataProfiles();
       const folders = await readarr.getRootFolders();
+      const tags = await readarr.getTags();
       const provider = classifyBookshelfProvider(development?.metadataSource);
 
       return res.status(200).json({
@@ -187,7 +188,7 @@ readarrRoutes.post<
           id: folder.id,
           path: folder.path,
         })),
-        tags: [],
+        tags,
         urlBase,
         provider,
         providerNotice: getBookshelfProviderNotice(provider),

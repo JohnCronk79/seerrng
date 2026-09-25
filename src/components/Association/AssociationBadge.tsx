@@ -8,14 +8,12 @@ import useAssociations, {
 } from '@app/hooks/useAssociations';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
-import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import AssociationPopover from './AssociationPopover';
 
 const messages = defineMessages('components.Association', {
   associations: 'Associations',
-  browseMore: 'Browse More...',
 });
 
 interface AssociationBadgeProps {
@@ -33,7 +31,6 @@ const AssociationBadge = ({
   hideWhenEmpty = false,
 }: AssociationBadgeProps) => {
   const intl = useIntl();
-  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const associationType: AssociationMediaType | null =
     toAssociationMediaType(mediaType);
@@ -119,15 +116,7 @@ const AssociationBadge = ({
         <Modal
           title={associationLabel}
           onCancel={() => setIsOpen(false)}
-          onOk={() => {
-            setIsOpen(false);
-            void router.push(
-              `/associations/${associationType}/${encodeURIComponent(String(id))}`
-            );
-          }}
-          okText={intl.formatMessage(messages.browseMore)}
           cancelButtonType="danger"
-          okButtonType="success"
           actionButtonSize="standard"
           dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-4xl"
         >

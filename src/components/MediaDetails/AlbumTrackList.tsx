@@ -1,5 +1,9 @@
-import SelectionCircle from '@app/components/Common/SelectionCircle';
+import SelectionCircle, {
+  selectFromRow,
+  selectFromRowKey,
+} from '@app/components/Common/SelectionCircle';
 import Tooltip from '@app/components/Common/Tooltip';
+import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import {
   CheckCircleIcon,
@@ -17,6 +21,7 @@ const messages = defineMessages('components.MediaDetails.AlbumTrackList', {
   notAvailable: 'Not available',
   noTracks: 'No Tracks Available',
   selection: 'Select items to play',
+  includedInAlbumRequest: 'Included in the album request',
   availabilityLegend: 'Green check: available. Red X: not available.',
 });
 
@@ -27,6 +32,7 @@ interface AlbumTrackListProps {
   availableRecordingIds?: string[];
   selectedItemIds?: string[];
   onSelectionChange?: (itemIds: string[]) => void;
+  albumRequest?: boolean;
 }
 
 const AlbumTrackList = ({
@@ -36,6 +42,7 @@ const AlbumTrackList = ({
   availableRecordingIds,
   selectedItemIds = [],
   onSelectionChange,
+  albumRequest = false,
 }: AlbumTrackListProps) => {
   const intl = useIntl();
   const notAvailable = intl.formatMessage(messages.notAvailable);
@@ -61,6 +68,9 @@ const AlbumTrackList = ({
   const allSelected =
     selectableItems.length > 0 &&
     selectableItems.every((item) => selection.has(item.id));
+  const gridColumns = albumRequest
+    ? 'grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem]'
+    : 'grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem]';
   const toggleAllTracks = () => {
     if (!onSelectionChange || selectableItems.length === 0) {
       return;
@@ -100,15 +110,22 @@ const AlbumTrackList = ({
       </span>
     </Tooltip>
   );
-  const AvailabilityIcon = ({ available }: { available: boolean }) => (
-    <span className="media-availability-cell">
-      {available ? (
-        <CheckCircleIcon className="h-4 w-4 text-green-400" aria-hidden />
-      ) : (
-        <XCircleIcon className="h-4 w-4 text-red-400" aria-hidden />
-      )}
-    </span>
-  );
+  const AvailabilityIcon = ({ available }: { available: boolean }) => {
+    const label = intl.formatMessage(
+      available ? globalMessages.available : globalMessages.notavailable
+    );
+    return (
+      <Tooltip content={label}>
+        <span className="media-availability-cell" aria-label={label}>
+          {available ? (
+            <CheckCircleIcon className="h-4 w-4 text-green-400" aria-hidden />
+          ) : (
+            <XCircleIcon className="h-4 w-4 text-red-400" aria-hidden />
+          )}
+        </span>
+      </Tooltip>
+    );
+  };
 
   if (tracks.length === 0) {
     return (
@@ -160,7 +177,7 @@ const AlbumTrackList = ({
       {layouts.map(({ columns, className }) => (
         <div
           key={`${columns.length}-${className}`}
-          className={`scrollable-card mt-2 max-h-[214px] gap-2 overflow-y-auto ${className}`}
+          className={`scrollable-card mt-2 max-h-[168px] gap-2 overflow-y-auto ${className}`}
         >
           {columns.map((columnTracks, columnIndex) => {
             return (
@@ -168,13 +185,19 @@ const AlbumTrackList = ({
                 key={`track-column-${columnIndex}`}
                 className="refreshed-inset-surface rounded-lg border border-gray-700 p-2"
               >
-                <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 border-b px-1 pb-2">
+                <div
+                  className={`media-inset-table-heading request-divider-dark grid ${gridColumns} items-center gap-x-2 border-b px-1 pb-2`}
+                >
                   {columnIndex === 0 ? (
                     <SelectionCircle
-                      disabled={selectableItems.length === 0}
+                      disabled={albumRequest || selectableItems.length === 0}
                       onClick={toggleAllTracks}
-                      selected={allSelected}
-                      label={intl.formatMessage(messages.selection)}
+                      selected={albumRequest || allSelected}
+                      label={intl.formatMessage(
+                        albumRequest
+                          ? messages.includedInAlbumRequest
+                          : messages.selection
+                      )}
                     />
                   ) : (
                     <span aria-hidden="true" />
@@ -188,7 +211,7 @@ const AlbumTrackList = ({
                   <span className="text-center">
                     {intl.formatMessage(messages.runtime)}
                   </span>
-                  <AvailabilityHeading />
+                  {!albumRequest && <AvailabilityHeading />}
                 </div>
                 <div className="space-y-0.5 pt-1">
                   {columnTracks.map((track, trackIndex) => {
@@ -201,15 +224,37 @@ const AlbumTrackList = ({
                     return (
                       <div
                         key={`${track.recordingMbid || track.name}-${track.position}-${trackIndex}`}
-                        className="grid min-h-[24px] grid-cols-[2rem_2.25rem_minmax(0,1fr)_4rem_2.5rem] items-center gap-x-2 px-1"
+                        className={`selectable-table-row grid min-h-[24px] ${gridColumns} items-center gap-x-2 px-1`}
+                        data-selectable={!albumRequest && !!selectableId}
+                        role={!albumRequest && selectableId ? 'button' : undefined}
+                        tabIndex={!albumRequest && selectableId ? 0 : undefined}
+                        aria-label={
+                          !albumRequest && selectableId
+                            ? `Select ${track.name || notAvailable}`
+                            : undefined
+                        }
+                        onClick={(event) => {
+                          if (!albumRequest && selectableId) {
+                            selectFromRow(event, () => toggleTrack(selectableId));
+                          }
+                        }}
+                        onKeyDown={(event) => {
+                          if (!albumRequest && selectableId) {
+                            selectFromRowKey(event, () => toggleTrack(selectableId));
+                          }
+                        }}
                       >
                         <SelectionCircle
-                          disabled={!selectableId}
+                          disabled={albumRequest || !selectableId}
                           onClick={() =>
                             selectableId && toggleTrack(selectableId)
                           }
-                          selected={selected}
-                          label={intl.formatMessage(messages.selection)}
+                          selected={albumRequest || selected}
+                          label={intl.formatMessage(
+                            albumRequest
+                              ? messages.includedInAlbumRequest
+                              : messages.selection
+                          )}
                         />
                         <span className="text-xs font-medium text-gray-100">
                           {position}
@@ -220,7 +265,9 @@ const AlbumTrackList = ({
                         <span className="refreshed-detail-text text-center text-xs">
                           {formatRuntime(track.length)}
                         </span>
-                        <AvailabilityIcon available={available} />
+                        {!albumRequest && (
+                          <AvailabilityIcon available={available} />
+                        )}
                       </div>
                     );
                   })}

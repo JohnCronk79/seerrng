@@ -77,8 +77,8 @@ describe('Narrow-window media audit', () => {
     assertNoHorizontalOverflow();
   });
 
-  it('keeps Request Status and its action controls within a phone viewport', () => {
-    cy.visit('/requests/status');
+  it('keeps Requests and its action controls within a phone viewport', () => {
+    cy.visit('/requests');
     cy.contains('button', 'Clear Filters').should('be.visible');
     assertNoHorizontalOverflow();
   });

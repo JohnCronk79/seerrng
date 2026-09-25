@@ -261,6 +261,9 @@ export const mapBookshelfBook = (
   const image = result.images?.find(
     (entry) => entry.coverType?.toLowerCase() === 'cover'
   );
+  const subjects = [...(result.genres ?? []), ...(result.subjects ?? [])]
+    .map((subject) => subject.trim())
+    .filter(Boolean);
   return {
     id: makeBookshelfBookId(serviceId, result.foreignBookId),
     provider: 'bookshelf',
@@ -284,6 +287,10 @@ export const mapBookshelfBook = (
     isbnCandidates,
     editionId:
       result.foreignEditionId ?? result.editions?.[0]?.foreignEditionId,
+    subjects: subjects.length ? [...new Set(subjects)] : undefined,
+    languages: result.languages?.length ? result.languages : undefined,
+    ratingsAverage: result.ratingsAverage,
+    ratingsCount: result.ratingsCount,
     series,
     audiobookDuration,
     narrators: narrators?.length ? [...new Set(narrators)] : undefined,

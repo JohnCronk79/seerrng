@@ -875,6 +875,27 @@ class JellyfinAPI extends ExternalAPI {
     }
   }
 
+  // Unlike the legacy availability lookup, never turn a server error or a
+  // malformed response into an empty (apparently deleted) item.
+  public async getItemDataForDeletionCheck(
+    id: string
+  ): Promise<JellyfinLibraryItemExtended | undefined> {
+    const response = await this.get<JellyfinItemsReponse>('/Items', {
+      params: {
+        ids: id,
+        fields: 'ProviderIds,MediaSources,Width,Height,IsHD,DateCreated',
+      },
+    });
+    if (!Array.isArray(response?.Items))
+      throw new Error('Invalid media-server item response');
+    if (!response.Items.length) return undefined;
+    const item = sanitizeJellyfinLibraryItem(response.Items[0], true) as
+      JellyfinLibraryItemExtended | undefined;
+    if (!item || item.Id !== id)
+      throw new Error('Unverified media-server item identity');
+    return item;
+  }
+
   public async getItemData(
     id: string
   ): Promise<JellyfinLibraryItemExtended | undefined> {

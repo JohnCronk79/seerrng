@@ -13,12 +13,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { formatBytes } from '@app/utils/numberHelpers';
 import { Transition } from '@headlessui/react';
-import {
-  NoSymbolIcon,
-  PlayIcon,
-  StopIcon,
-  TrashIcon,
-} from '@heroicons/react/24/outline';
+import { NoSymbolIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { CheckIcon, PencilIcon } from '@heroicons/react/24/solid';
 import { MediaServerType } from '@server/constants/server';
 import type {
@@ -610,8 +605,8 @@ const SettingsJobs = () => {
                         buttonType="danger"
                         buttonSize="standard"
                         onClick={() => cancelJob(job)}
+                        buttonIcon="cancel"
                       >
-                        <StopIcon />
                         <span>{intl.formatMessage(messages.canceljob)}</span>
                       </Button>
                     ) : (

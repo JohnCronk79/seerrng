@@ -64,7 +64,7 @@ const ServiceWorkerSetup = () => {
     const registerServiceWorker = async () => {
       try {
         const registration = await navigator.serviceWorker.register(
-          versionedAsset('/sw.js')
+          versionedAsset('/sw.js?cache-policy=live-media-details-v3')
         );
         if (!lifecycle.isActive()) {
           return;

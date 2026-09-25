@@ -1,5 +1,35 @@
 import { CheckIcon } from '@heroicons/react/24/solid';
-import type { FocusEventHandler } from 'react';
+import type { FocusEventHandler, KeyboardEvent, MouseEvent } from 'react';
+
+export const selectFromRow = (
+  event: MouseEvent<HTMLElement>,
+  onSelect: () => void
+) => {
+  const target = event.target;
+  if (
+    target instanceof Element &&
+    target.closest(
+      'a, button, input, select, textarea, [role="button"], [data-no-row-select]'
+    )
+  ) {
+    return;
+  }
+  onSelect();
+};
+
+export const selectFromRowKey = (
+  event: KeyboardEvent<HTMLElement>,
+  onSelect: () => void
+) => {
+  if (
+    event.target !== event.currentTarget ||
+    (event.key !== 'Enter' && event.key !== ' ')
+  ) {
+    return;
+  }
+  event.preventDefault();
+  onSelect();
+};
 
 interface SelectionCircleProps {
   selected: boolean;
@@ -27,7 +57,10 @@ const SelectionCircle = ({
     id={id}
     name={name}
     disabled={disabled}
-    onClick={onClick}
+    onClick={(event) => {
+      event.stopPropagation();
+      onClick();
+    }}
     onBlur={onBlur}
     aria-label={label}
     aria-pressed={partial ? 'mixed' : selected}

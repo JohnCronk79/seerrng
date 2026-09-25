@@ -1008,8 +1008,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 onClick={() => retryRequest()}
               >
                 <ArrowPathIcon
-                  className={isRetrying ? 'animate-spin' : ''}
-                  style={{ animationDirection: 'reverse' }}
+                  className={isRetrying ? 'icon-spin-reverse animate-spin' : ''}
                 />
                 <span>
                   {intl.formatMessage(

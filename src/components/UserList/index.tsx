@@ -6,7 +6,9 @@ import Header from '@app/components/Common/Header';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
-import SelectionCircle from '@app/components/Common/SelectionCircle';
+import SelectionCircle, {
+  selectFromRow,
+} from '@app/components/Common/SelectionCircle';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import {
   CompactSelect,
@@ -369,6 +371,7 @@ const UserList = () => {
           }
           okDisabled={isDeleting}
           okButtonType="danger"
+          okButtonProps={{ buttonIcon: 'delete' }}
           onCancel={() =>
             setDeleteModal({ isOpen: false, user: deleteModal.user })
           }
@@ -683,7 +686,7 @@ const UserList = () => {
           })}
         </div>
 
-        <div className="refreshed-inset-surface mt-5 overflow-hidden rounded-lg border border-gray-700">
+        <div className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
           <div className="user-list-table-scroll scrollable-card overflow-auto">
             <table className="app-data-table user-list-data-table">
               <thead className="app-data-table-head">
@@ -726,8 +729,14 @@ const UserList = () => {
                   return (
                     <tr
                       key={`user-list-${user.id}`}
-                      className="app-data-table-row"
+                      className="app-data-table-row selectable-table-row"
                       data-testid="user-list-row"
+                      data-selectable={isUserPermsEditable(user.id)}
+                      onClick={(event) => {
+                        if (isUserPermsEditable(user.id)) {
+                          selectFromRow(event, () => toggleUser(user.id));
+                        }
+                      }}
                     >
                       <td className="app-data-table-cell user-list-select-column">
                         {isUserPermsEditable(user.id) && (

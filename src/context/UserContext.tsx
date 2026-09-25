@@ -1,3 +1,4 @@
+import { ViewAsProvider } from '@app/context/ViewAsContext';
 import type { User } from '@app/hooks/useUser';
 import { useUser } from '@app/hooks/useUser';
 import { isAuthenticationError } from '@app/utils/auth';
@@ -16,7 +17,7 @@ interface UserContextProps {
  * the login page if their session ever becomes invalid.
  */
 export const UserContext = ({ initialUser, children }: UserContextProps) => {
-  const { loading, error, revalidate } = useUser({
+  const { user, loading, error, revalidate } = useUser({
     initialData: initialUser,
   });
   const router = useRouter();
@@ -44,5 +45,5 @@ export const UserContext = ({ initialUser, children }: UserContextProps) => {
     }
   }, [router, loading, error]);
 
-  return <>{children}</>;
+  return <ViewAsProvider viewer={user}>{children}</ViewAsProvider>;
 };

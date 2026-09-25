@@ -515,6 +515,93 @@ describe('GET /discover/movies', () => {
     );
   });
 
+  it('searches movie and series keywords on their main discovery pages', async () => {
+    mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
+      if (endpoint === '/search/keyword') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [{ id: 987, name: 'time travel' }],
+        };
+      }
+
+      if (endpoint === '/search/movie' || endpoint === '/search/tv') {
+        return { page: 1, total_pages: 1, total_results: 0, results: [] };
+      }
+
+      if (endpoint === '/discover/movie') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [
+            {
+              id: 91,
+              media_type: 'movie',
+              title: 'A Different Title',
+              original_title: 'A Different Title',
+              release_date: '2026-01-01',
+              adult: false,
+              video: false,
+              popularity: 20,
+              poster_path: undefined,
+              backdrop_path: undefined,
+              vote_count: 100,
+              vote_average: 7,
+              genre_ids: [],
+              overview: '',
+              original_language: 'en',
+            },
+          ],
+        };
+      }
+
+      if (endpoint === '/discover/tv') {
+        return {
+          page: 1,
+          total_pages: 1,
+          total_results: 1,
+          results: [
+            {
+              id: 92,
+              media_type: 'tv',
+              name: 'Another Different Title',
+              original_name: 'Another Different Title',
+              origin_country: ['US'],
+              first_air_date: '2026-01-01',
+              popularity: 20,
+              poster_path: undefined,
+              backdrop_path: undefined,
+              vote_count: 100,
+              vote_average: 7,
+              genre_ids: [],
+              overview: '',
+              original_language: 'en',
+            },
+          ],
+        };
+      }
+
+      throw new Error('Unexpected TMDB endpoint: ' + String(endpoint));
+    });
+
+    const agent = await login();
+    const movie = await agent.get('/discover/movies?search=time%20travel');
+    const series = await agent.get('/discover/tv?search=time%20travel');
+
+    assert.strictEqual(movie.status, 200);
+    assert.strictEqual(series.status, 200);
+    assert.deepStrictEqual(
+      movie.body.results.map((result: { title: string }) => result.title),
+      ['A Different Title']
+    );
+    assert.deepStrictEqual(
+      series.body.results.map((result: { name: string }) => result.name),
+      ['Another Different Title']
+    );
+  });
+
   it('drops broad movie search results that do not contain every keyword', async () => {
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
       assert.strictEqual(endpoint, '/search/movie');
@@ -1741,6 +1828,58 @@ describe('GET /discover/music', () => {
     assert.strictEqual(searchAlbumMock.mock.callCount(), 1);
     assert.strictEqual(res.body.page, 2);
     assert.strictEqual(res.body.results[0].title, 'Kind of Blue');
+  });
+
+  it('finds music by an album tag when title and artist differ', async () => {
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        assert.strictEqual(
+          query,
+          '(releasegroup:ambient OR artist:ambient OR tag:ambient)'
+        );
+        return {
+          totalResults: 1,
+          results: [
+            {
+              id: 'ambient-tagged-album',
+              score: 100,
+              media_type: 'album',
+              title: 'A Different Album',
+              'primary-type': 'Album',
+              'primary-type-id': '',
+              'type-id': '',
+              'first-release-date': '2024',
+              'artist-credit': [
+                {
+                  name: 'Different Artist',
+                  artist: {
+                    id: 'different-artist',
+                    name: 'Different Artist',
+                    'sort-name': 'Different Artist',
+                  },
+                },
+              ],
+              tags: [{ name: 'ambient', count: 1 }],
+              posterPath: undefined,
+              count: 1,
+              releases: [],
+              releasedate: '2024',
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/music?query=ambient');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(
+      res.body.results.map((result: { title: string }) => result.title),
+      ['A Different Album']
+    );
   });
 
   it('drops broad music results that do not contain every keyword', async () => {
@@ -3313,7 +3452,7 @@ describe('GET /discover/books', () => {
       }) => {
         assert.strictEqual(
           query,
-          '(title:"alpha" OR author:"alpha") AND (title:"beta" OR author:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
+          '(title:"alpha" OR author:"alpha" OR subject:"alpha") AND (title:"beta" OR author:"beta" OR subject:"beta") AND subject:science_fiction AND language:eng AND first_publish_year:2024'
         );
         assert.strictEqual(page, 1);
         assert.strictEqual(limit, 50);
@@ -3471,14 +3610,14 @@ describe('GET /discover/books', () => {
     );
   });
 
-  it('keeps relevant book search order and drops hidden metadata-only matches', async () => {
+  it('includes book subject tags and drops hidden metadata-only matches', async () => {
     const searchBooksMock = mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
       async ({ query, limit }: { query: string; limit?: number }) => {
         assert.strictEqual(
           query,
-          '(title:"microsoft" OR author:"microsoft") AND (title:"windows" OR author:"windows") AND (title:"11" OR author:"11")'
+          '(title:"microsoft" OR author:"microsoft" OR subject:"microsoft") AND (title:"windows" OR author:"windows" OR subject:"windows") AND (title:"11" OR author:"11" OR subject:"11")'
         );
         assert.strictEqual(limit, 50);
 
@@ -3519,7 +3658,7 @@ describe('GET /discover/books', () => {
     assert.strictEqual(searchBooksMock.mock.callCount(), 1);
     assert.deepStrictEqual(
       res.body.results.map((result: { title: string }) => result.title),
-      ['The Microsoft Windows 11 Reference']
+      ['Windows 11 Guide', 'The Microsoft Windows 11 Reference']
     );
   });
 

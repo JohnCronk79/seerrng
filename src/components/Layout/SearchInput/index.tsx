@@ -28,7 +28,7 @@ const SearchInput = () => {
 
   return (
     <div className="flex min-w-0 flex-1 items-center">
-      <div className="flex w-full max-w-2xl min-w-0">
+      <div className="flex w-full min-w-0 max-w-2xl">
         <label htmlFor="search_field" className="sr-only">
           Search
         </label>
@@ -50,8 +50,9 @@ const SearchInput = () => {
           />
           {hasSearchValue && (
             <button
-              className="absolute inset-y-0 right-2 m-auto h-7 w-7 border-none p-1 text-gray-400 transition outline-none hover:text-white focus:border-none focus:outline-none"
+              className="absolute inset-y-0 right-2 m-auto h-7 w-7 border-none p-1 text-gray-400 outline-none transition hover:text-white focus:border-none focus:outline-none"
               onClick={() => clear()}
+              aria-label="Clear the search text"
             >
               <XCircleIcon className="h-5 w-5" />
             </button>

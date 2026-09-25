@@ -57,7 +57,7 @@ const DropdownItems = ({
     <MenuItems
       transition
       className={[
-        'absolute right-0 z-40 mt-2 -mr-1 w-56 origin-top-right rounded-md p-1 shadow-lg transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0',
+        'absolute top-full right-0 z-40 mt-2 -mr-1 w-56 origin-top-right rounded-md p-1 shadow-lg transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0',
         dropdownType === 'ghost'
           ? 'border border-gray-700 bg-gray-800/80 backdrop-blur'
           : dropdownType === 'playback'
@@ -98,15 +98,17 @@ const Dropdown = ({
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <Menu as="div" className="relative z-10">
+    <Menu as="div" className="relative z-10 inline-flex">
       <MenuButton
         type="button"
         className={[
-          `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center gap-2 rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
-          buttonType === 'ghost'
-            ? 'border-gray-600 bg-transparent text-white hover:border-gray-200 focus:border-gray-100 active:border-gray-100'
-            : buttonType === 'playback'
-              ? 'border-gray-500 bg-black text-gray-400 hover:border-white hover:text-white focus:border-white active:border-white active:text-white'
+          buttonType === 'playback'
+            ? `app-button app-button-playback playback-dropdown-trigger ${buttonSize === 'sm' ? 'button-sm' : 'button-md'}`
+            : `${buttonSize === 'sm' ? 'button-sm' : 'button-md'} inline-flex items-center rounded-md border leading-5 font-medium transition duration-150 ease-in-out hover:z-20 focus:z-20 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:brightness-50 disabled:grayscale`,
+          buttonType === 'playback'
+            ? ''
+            : buttonType === 'ghost'
+              ? 'border-gray-600 bg-transparent text-white hover:border-gray-200 focus:border-gray-100 active:border-gray-100'
               : buttonType === 'detailRequest'
                 ? 'focus:ring-green border-green-500/90 bg-green-950/35 text-green-300 hover:border-green-300 hover:bg-green-900/55 hover:text-green-100 focus:border-green-300 active:border-green-400 active:bg-green-900/70'
                 : buttonType === 'success'
@@ -116,7 +118,8 @@ const Dropdown = ({
         ].join(' ')}
         ref={buttonRef}
         disabled={!children}
-        title={!children ? disabledReason : title}
+        data-button-help={title}
+        data-disabled-reason={!children ? disabledReason : undefined}
         {...props}
       >
         <span className="inline-flex min-w-0 items-center">{text}</span>

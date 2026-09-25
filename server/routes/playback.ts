@@ -7,6 +7,8 @@ import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { classifyAudioPlaybackFormats } from '@server/lib/audioPlaybackFormat';
+import { resolveCollectionQualityCatalog } from '@server/lib/collectionPlaybackQuality';
 import { Permission } from '@server/lib/permissions';
 import { getPlaybackMediaRootId } from '@server/lib/playbackMediaRoot';
 import {
@@ -126,7 +128,7 @@ const getPlexPlaybackTargets = async (
   return [...targets.values()];
 };
 
-const requestPermissions: Record<MediaType, Permission[]> = {
+const requestPermissions: Partial<Record<MediaType, Permission[]>> = {
   [MediaType.MOVIE]: [Permission.REQUEST, Permission.REQUEST_MOVIE],
   [MediaType.TV]: [Permission.REQUEST, Permission.REQUEST_TV],
   [MediaType.MUSIC]: [Permission.REQUEST, Permission.REQUEST_MUSIC],
@@ -134,8 +136,10 @@ const requestPermissions: Record<MediaType, Permission[]> = {
 };
 
 const canUsePlayback = (user: User, mediaType: MediaType, is4k = false) => {
+  const permissions = requestPermissions[mediaType];
   if (
-    !user.hasPermission(requestPermissions[mediaType], {
+    !permissions ||
+    !user.hasPermission(permissions, {
       type: 'or',
     })
   ) {
@@ -196,7 +200,8 @@ const toPlaybackItem = (
 const createPlexCatalog = async (
   media: Media,
   plexToken: string,
-  is4k: boolean
+  is4k: boolean,
+  strictQuality = false
 ): Promise<PlaybackCatalogResponse> => {
   const rootId = getPlaybackMediaRootId(media, MediaServerType.PLEX, is4k);
   const settings = getSettings();
@@ -228,6 +233,13 @@ const createPlexCatalog = async (
       async (season) => {
         const episodes = (await plex.getChildrenMetadata(season.ratingKey))
           .filter((item) => item.type === 'episode')
+          .filter(
+            (item) =>
+              !strictQuality ||
+              (item.Media ?? []).some(
+                (variant) => (variant.videoResolution === '4k') === is4k
+              )
+          )
           .map((episode) =>
             toPlaybackItem(
               {
@@ -254,6 +266,13 @@ const createPlexCatalog = async (
       root.type === 'track' ? [root] : await plex.getChildrenMetadata(rootId);
     const tracks = trackMetadata
       .filter((item) => item.type === 'track')
+      .filter(
+        (item) =>
+          !strictQuality ||
+          classifyAudioPlaybackFormats(
+            (item.Media ?? []).map((variant) => variant.audioCodec ?? '')
+          ).includes(is4k ? 'flac' : 'mp3')
+      )
       .map((track) =>
         toPlaybackItem(
           {
@@ -286,7 +305,8 @@ const createPlexCatalog = async (
 const createJellyfinCatalog = async (
   media: Media,
   user: User,
-  is4k: boolean
+  is4k: boolean,
+  strictQuality = false
 ): Promise<PlaybackCatalogResponse> => {
   const settings = getSettings();
   const rootId = getPlaybackMediaRootId(
@@ -329,8 +349,24 @@ const createJellyfinCatalog = async (
       seasons,
       5,
       async (season) => {
-        const episodes = (await jellyfin.getEpisodes(rootId, season.Id)).map(
-          (episode) =>
+        const episodes = (
+          await jellyfin.getEpisodes(rootId, season.Id, {
+            includeMediaInfo: true,
+          })
+        )
+          .filter(
+            (item) =>
+              !strictQuality ||
+              item.MediaSources?.some((source) =>
+                source.MediaStreams.some(
+                  (stream) =>
+                    stream.Type === 'Video' &&
+                    typeof stream.Width === 'number' &&
+                    stream.Width > 2000 === is4k
+                )
+              )
+          )
+          .map((episode) =>
             toPlaybackItem(
               {
                 id: episode.Id,
@@ -340,7 +376,7 @@ const createJellyfinCatalog = async (
               },
               'episode'
             )
-        );
+          );
         return {
           id: season.Id,
           title: season.Name,
@@ -355,18 +391,34 @@ const createJellyfinCatalog = async (
     const trackMetadata =
       root.Type === 'Audio' || root.Type === 'AudioBook'
         ? [root]
-        : await jellyfin.getChildren(rootId);
-    const tracks = trackMetadata.map((track) =>
-      toPlaybackItem(
-        {
-          id: track.Id,
-          title: track.Name,
-          index: track.IndexNumber,
-          parentIndex: track.ParentIndexNumber,
-        },
-        'track'
+        : strictQuality
+          ? await jellyfin.getAudioChildrenWithMediaInfo(rootId)
+          : await jellyfin.getChildren(rootId);
+    const tracks = trackMetadata
+      .filter(
+        (track) =>
+          !strictQuality ||
+          ('MediaSources' in track &&
+            Array.isArray(track.MediaSources) &&
+            classifyAudioPlaybackFormats(
+              track.MediaSources.flatMap((source) =>
+                source.MediaStreams.map(
+                  (stream: { Codec?: string }) => stream.Codec ?? ''
+                )
+              )
+            ).includes(is4k ? 'flac' : 'mp3'))
       )
-    );
+      .map((track) =>
+        toPlaybackItem(
+          {
+            id: track.Id,
+            title: track.Name,
+            index: track.IndexNumber,
+            parentIndex: track.ParentIndexNumber,
+          },
+          'track'
+        )
+      );
     groups.push({
       id: root.Id,
       title: root.Name,
@@ -388,17 +440,18 @@ const createJellyfinCatalog = async (
 const createCatalog = async (
   media: Media,
   user: User,
-  is4k: boolean
+  is4k: boolean,
+  strictQuality = false
 ): Promise<PlaybackCatalogResponse> => {
   const mediaServerType = getSettings().main.mediaServerType;
   if (mediaServerType === MediaServerType.PLEX && user.plexToken) {
-    return createPlexCatalog(media, user.plexToken, is4k);
+    return createPlexCatalog(media, user.plexToken, is4k, strictQuality);
   }
   if (
     mediaServerType === MediaServerType.JELLYFIN ||
     mediaServerType === MediaServerType.EMBY
   ) {
-    return createJellyfinCatalog(media, user, is4k);
+    return createJellyfinCatalog(media, user, is4k, strictQuality);
   }
   return {
     mediaId: media.id,
@@ -430,26 +483,21 @@ const resolvePlaylistItemIds = async (
 
 const createCollectionCatalog = async (
   media: Media,
-  user: User
+  user: User,
+  is4k: boolean
 ): Promise<PlaybackCatalogResponse> => {
-  const mediaServerType = getSettings().main.mediaServerType;
-  if (
-    mediaServerType !== MediaServerType.PLEX &&
-    canUsePlayback(user, MediaType.MOVIE, true)
-  ) {
-    const highQualityCatalog = await createCatalog(media, user, true);
-    if (highQualityCatalog.rootItem) {
-      return highQualityCatalog;
+  if (media.mediaType === MediaType.MUSIC)
+    return createCatalog(media, user, is4k, true);
+  return (
+    (await resolveCollectionQualityCatalog(media, is4k, (quality) =>
+      createCatalog(media, user, quality, true)
+    )) ?? {
+      mediaId: media.id,
+      serverType: getSettings().main.mediaServerType,
+      is4k,
+      groups: [],
     }
-  }
-  const standardCatalog = await createCatalog(media, user, false);
-  if (
-    standardCatalog.rootItem ||
-    !canUsePlayback(user, MediaType.MOVIE, true)
-  ) {
-    return standardCatalog;
-  }
-  return createCatalog(media, user, true);
+  );
 };
 
 const replaceCurrentSelectionPlaylist = async (
@@ -805,7 +853,12 @@ playbackRoutes.post('/media/:mediaId/playlist', async (req, res, next) => {
 });
 
 playbackRoutes.post('/collection/play', async (req, res, next) => {
-  const body = req.body as { deviceId?: unknown; mediaIds?: unknown };
+  const body = req.body as {
+    deviceId?: unknown;
+    mediaIds?: unknown;
+    is4k?: unknown;
+  };
+  const is4k = body.is4k === true;
   const deviceId =
     typeof body.deviceId === 'string' ? body.deviceId.slice(0, 512) : '';
   const requestedMediaIds = Array.isArray(body.mediaIds)
@@ -825,11 +878,6 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
 
   try {
     const user = await loadPlaybackUser(req.user!.id);
-    if (!canUsePlayback(user, MediaType.MOVIE)) {
-      return res
-        .status(403)
-        .json({ status: 403, message: 'Playback is not permitted.' });
-    }
     const uniqueMediaIds = [...new Set(requestedMediaIds)];
     const mediaItems = await getRepository(Media).find({
       where: { id: In(uniqueMediaIds) },
@@ -837,23 +885,39 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
     const mediaById = new Map(mediaItems.map((media) => [media.id, media]));
     if (
       mediaItems.length !== uniqueMediaIds.length ||
-      mediaItems.some((media) => media.mediaType !== MediaType.MOVIE)
+      mediaItems.some(
+        (media) =>
+          ![MediaType.MOVIE, MediaType.TV, MediaType.MUSIC].includes(
+            media.mediaType
+          )
+      ) ||
+      new Set(mediaItems.map((media) => media.mediaType)).size !== 1
     ) {
       return res.status(400).json({
         status: 400,
         message: 'The collection selection is not playable.',
       });
     }
+    if (
+      mediaItems.some((media) => !canUsePlayback(user, media.mediaType, is4k))
+    )
+      return res.status(403).json({ message: 'Playback is not permitted.' });
+    const playbackType =
+      mediaItems[0].mediaType === MediaType.MUSIC ? 'audio' : 'video';
     const catalogs = await mapWithConcurrency(uniqueMediaIds, 5, (mediaId) =>
-      createCollectionCatalog(mediaById.get(mediaId)!, user)
+      createCollectionCatalog(mediaById.get(mediaId)!, user, is4k)
     );
     const itemIds = catalogs.flatMap((catalog) =>
-      catalog.rootItem ? [catalog.rootItem.id] : []
+      catalog.rootItem
+        ? [catalog.rootItem.id]
+        : catalog.groups.flatMap((group) =>
+            group.items.filter((item) => item.available).map((item) => item.id)
+          )
     );
-    if (itemIds.length !== uniqueMediaIds.length) {
+    if (itemIds.length === 0 || itemIds.length > 5000) {
       return res.status(400).json({
         status: 400,
-        message: 'Every selected collection item must be available.',
+        message: 'No selected collection items are available in this quality.',
       });
     }
 
@@ -877,7 +941,7 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
       });
       const queue = await plex.createPlayQueue(
         itemIds,
-        'video',
+        playbackType,
         machineIdentifier
       );
       await new PlexCompanionAPI({
@@ -889,7 +953,7 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
         machineIdentifier,
         ratingKey: queue.selectedItemId,
         playQueueId: queue.playQueueId,
-        mediaType: 'video',
+        mediaType: playbackType,
       });
     } else if (
       (settings.main.mediaServerType === MediaServerType.JELLYFIN ||
@@ -928,7 +992,8 @@ playbackRoutes.post('/collection/play', async (req, res, next) => {
 });
 
 playbackRoutes.post('/collection/playlist', async (req, res, next) => {
-  const body = req.body as { mediaIds?: unknown };
+  const body = req.body as { mediaIds?: unknown; is4k?: unknown };
+  const is4k = body.is4k === true;
   const requestedMediaIds = Array.isArray(body.mediaIds)
     ? body.mediaIds
         .slice(0, MAX_PLAYBACK_ITEMS)
@@ -946,11 +1011,6 @@ playbackRoutes.post('/collection/playlist', async (req, res, next) => {
 
   try {
     const user = await loadPlaybackUser(req.user!.id);
-    if (!canUsePlayback(user, MediaType.MOVIE)) {
-      return res
-        .status(403)
-        .json({ status: 403, message: 'Playback is not permitted.' });
-    }
     const uniqueMediaIds = [...new Set(requestedMediaIds)];
     const mediaItems = await getRepository(Media).find({
       where: { id: In(uniqueMediaIds) },
@@ -958,30 +1018,46 @@ playbackRoutes.post('/collection/playlist', async (req, res, next) => {
     const mediaById = new Map(mediaItems.map((media) => [media.id, media]));
     if (
       mediaItems.length !== uniqueMediaIds.length ||
-      mediaItems.some((media) => media.mediaType !== MediaType.MOVIE)
+      mediaItems.some(
+        (media) =>
+          ![MediaType.MOVIE, MediaType.TV, MediaType.MUSIC].includes(
+            media.mediaType
+          )
+      ) ||
+      new Set(mediaItems.map((media) => media.mediaType)).size !== 1
     ) {
       return res.status(400).json({
         status: 400,
         message: 'The collection selection is not playable.',
       });
     }
+    if (
+      mediaItems.some((media) => !canUsePlayback(user, media.mediaType, is4k))
+    )
+      return res.status(403).json({ message: 'Playback is not permitted.' });
+    const playbackType =
+      mediaItems[0].mediaType === MediaType.MUSIC ? 'audio' : 'video';
     const catalogs = await mapWithConcurrency(uniqueMediaIds, 5, (mediaId) =>
-      createCollectionCatalog(mediaById.get(mediaId)!, user)
+      createCollectionCatalog(mediaById.get(mediaId)!, user, is4k)
     );
     const itemIds = catalogs.flatMap((catalog) =>
-      catalog.rootItem ? [catalog.rootItem.id] : []
+      catalog.rootItem
+        ? [catalog.rootItem.id]
+        : catalog.groups.flatMap((group) =>
+            group.items.filter((item) => item.available).map((item) => item.id)
+          )
     );
-    if (itemIds.length !== uniqueMediaIds.length) {
+    if (itemIds.length === 0 || itemIds.length > 5000) {
       return res.status(400).json({
         status: 400,
-        message: 'Every selected collection item must be available.',
+        message: 'No selected collection items are available in this quality.',
       });
     }
 
     const playlist = await replaceCurrentSelectionPlaylist(
       user,
       itemIds,
-      'video'
+      playbackType
     );
     if (!playlist) {
       return res

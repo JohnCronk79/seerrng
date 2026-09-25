@@ -32,7 +32,7 @@ const ThemePicker = () => {
         transition
         className="absolute right-0 z-50 mt-2 w-80 origin-top-right rounded-md shadow-lg transition duration-100 ease-out data-closed:scale-95 data-closed:opacity-0"
       >
-        <div className="rounded-md bg-gray-800/95 p-3 ring-1 ring-gray-700 backdrop-blur">
+        <div className="app-theme-picker-surface rounded-md p-3 ring-1 ring-gray-700 backdrop-blur">
           <Menu.Item
             as="button"
             type="button"
@@ -41,9 +41,9 @@ const ThemePicker = () => {
           >
             <span className="flex items-center">
               {mode === 'dark' ? (
-                <MoonIcon className="mr-2 h-5 w-5" />
+                <MoonIcon className="h-5 w-5" />
               ) : (
-                <SunIcon className="mr-2 h-5 w-5" />
+                <SunIcon className="h-5 w-5" />
               )}
               {mode === 'dark'
                 ? intl.formatMessage(messages.darkMode)
@@ -60,8 +60,9 @@ const ThemePicker = () => {
                 as="button"
                 type="button"
                 onClick={() => setPalette(themePalette.id)}
+                data-palette-option={themePalette.id}
                 className={({ active }) =>
-                  `flex min-w-0 items-center rounded border px-2 py-2 text-left text-sm font-medium transition ${
+                  `theme-palette-option flex min-w-0 items-center rounded border px-2 py-2 text-left text-sm font-medium transition ${
                     palette === themePalette.id
                       ? 'border-indigo-500 bg-indigo-600/20 text-gray-100'
                       : active
@@ -70,21 +71,23 @@ const ThemePicker = () => {
                   }`
                 }
               >
-                <span className="mr-2 flex shrink-0 -space-x-1">
-                  {themePalette.swatches.map((swatch) => (
-                    <span
-                      key={`${themePalette.id}-${swatch}`}
-                      data-theme-swatch
-                      className="h-4 w-4 rounded-full border border-gray-950/30"
-                      style={{ backgroundColor: swatch }}
-                    />
-                  ))}
+                <span className="flex shrink-0 -space-x-1">
+                  {Array.from(
+                    { length: themePalette.swatchCount ?? 3 },
+                    (_, index) => (
+                      <span
+                        key={`${themePalette.id}-${index}`}
+                        data-theme-swatch
+                        className="theme-palette-swatch h-4 w-4 rounded-full border border-gray-950/30"
+                      />
+                    )
+                  )}
                 </span>
                 <span className="min-w-0 flex-1 truncate">
                   {themePalette.name}
                 </span>
                 {palette === themePalette.id && (
-                  <CheckIcon className="ml-2 h-4 w-4 shrink-0 text-indigo-400" />
+                  <CheckIcon className="h-4 w-4 shrink-0 text-indigo-400" />
                 )}
               </Menu.Item>
             ))}

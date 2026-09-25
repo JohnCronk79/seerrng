@@ -14,8 +14,8 @@ import { Router } from 'express';
 const comicRoutes = Router();
 
 comicRoutes.get('/:id', async (req, res, next) => {
-  const comicVineId = parsePositiveInt(req.params.id);
-  if (comicVineId === undefined) {
+  const comicVineId = parsePositiveInt(req.params.id, 0);
+  if (comicVineId === 0) {
     return res.status(404).json({ status: 404, message: 'Comic not found' });
   }
 

@@ -35,6 +35,7 @@ const createHarness = () => {
   const cacheStores = new Map<string, MemoryCache>();
   const networkResponses: (Response | Error)[] = [];
   const networkRequests: string[] = [];
+  const networkRequestCacheModes: RequestCache[] = [];
   let now = Date.UTC(2026, 8, 9);
   const shownNotifications: { subject: string; options: unknown }[] = [];
   const openedWindows: string[] = [];
@@ -81,6 +82,7 @@ const createHarness = () => {
       encodeURIComponent,
       fetch: async (request: Request) => {
         networkRequests.push(request.url);
+        networkRequestCacheModes.push(request.cache);
         const nextResponse = networkResponses.shift();
         if (nextResponse instanceof Error) {
           throw nextResponse;
@@ -172,10 +174,18 @@ const createHarness = () => {
     dispatchPush,
     fetchRequest,
     networkRequests,
+    networkRequestCacheModes,
     networkResponses,
     now: () => now,
     openedWindows,
     seedCache: (name: string) => caches.open(name),
+    cacheKeys: async (name: string) =>
+      (await cacheStores.get(name)?.keys()) ?? [],
+    seedCachedResponse: async (
+      name: string,
+      request: Request,
+      response: Response
+    ) => (await caches.open(name)).put(request, response),
     setUser,
     shownNotifications,
   };
@@ -215,6 +225,49 @@ describe('service worker runtime cache', () => {
     );
 
     assert.equal(response, undefined);
+  });
+
+  it('does not cache or fall back to cached request-bearing media details', async () => {
+    const paths = [
+      '/api/v1/movie/550',
+      '/api/v1/tv/157732',
+      '/api/v1/collection/123',
+      '/api/v1/music/artist-id',
+      '/api/v1/book/OL1W',
+    ];
+
+    for (const requestPath of paths) {
+      const harness = createHarness();
+      const request = new Request('https://seerr.test' + requestPath);
+      await harness.setUser(1);
+
+      harness.networkResponses.push(new Response('current'));
+      assert.equal(
+        await (await harness.fetchRequest(request))?.text(),
+        'current'
+      );
+      assert.deepEqual(await harness.cacheKeys('seerrng-data-v2'), []);
+
+      harness.networkResponses.push(new Error('offline'));
+      await assert.rejects(() => harness.fetchRequest(request), /offline/);
+      assert.deepEqual(harness.networkRequestCacheModes, [
+        'no-store',
+        'no-store',
+      ]);
+    }
+  });
+
+  it('purges previously cached request-bearing media details on activation', async () => {
+    const harness = createHarness();
+    await harness.seedCachedResponse(
+      'seerrng-data-v2',
+      new Request('https://seerr.test/api/v1/tv/157732?cached-user=1'),
+      new Response('deleted request')
+    );
+
+    await harness.activate();
+
+    assert.deepEqual(await harness.cacheKeys('seerrng-data-v2'), []);
   });
 
   it('never classifies file-like API routes as shared static assets', async () => {
