@@ -94,6 +94,48 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.26.0](https://github.com/snapetech/seerrng/compare/v3.25.0..v3.26.0) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Comics:** Comics now have their own Discover and details pages, reachable from the sidebar, so you can search ComicVine and request comics without leaving the browser.
+  - **Action required:** Add a ComicVine API key in Settings > General to enable comic discovery.
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+- **Comics:** Admins can now add and manage Mylar3 and Kapowarr servers from Settings, and comics already in those libraries sync in automatically so they show as available without a new request.
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+#### Fixed
+
+- **Release Pipeline:** Release notes now include all changes since the latest published release, even when newer tags are still drafts. This keeps fixes and features from failed or delayed releases visible in the next GitHub release and Discord announcement.
+- **Metadata:** Provider failures behind movie and discovery errors now retain the upstream status, provider message, and error code in server logs. TMDB rejections also show the credential source without exposing the key, helping operators distinguish authentication failures from network outages.
+- **Metadata:** SeerrNG now checks TMDB authentication after startup and logs whether it succeeded, which credential source was used, or the upstream HTTP/network failure code. A rejected override is visible without exposing the key; the bundled key remains the default.
+  - **Action required:** If startup logs report HTTP 401, remove or correct the TMDB credential override.
+
+### 🚀 Features
+- *(comics)* Add Comics Discover and details pages - ([92586dc](https://github.com/snapetech/seerrng/commit/92586dc3cf79dbd3fa37a979bce32040331cc5aa))
+- *(comics)* Sync existing libraries and add settings UI for Mylar3/Kapowarr - ([25f9a8c](https://github.com/snapetech/seerrng/commit/25f9a8cd5be4524c6b90f234c9009da61c479408))
+
+### 🐛 Bug Fixes
+- *(api)* Preserve upstream failure diagnostics - ([8640a10](https://github.com/snapetech/seerrng/commit/8640a10494184d40b9a63b4ca8bb2af3bd39e106))
+- *(release)* Carry draft release notes forward - ([87e9b7f](https://github.com/snapetech/seerrng/commit/87e9b7f4bf1246d1b4f363e03760c3a591649e14))
+- *(server)* Repair server type-check, dev boot, and pnpm dev startup - ([f8cf2ee](https://github.com/snapetech/seerrng/commit/f8cf2eeee4b94d59b7f47760dda4c2e0958b8513))
+- *(tmdb)* Report authentication and connectivity failures - ([8e68d49](https://github.com/snapetech/seerrng/commit/8e68d49a9890e78c8167b11eeb7718ce0b126872))
+
+### 📖 Documentation
+- *(release-notes)* Document Comics Discover and details pages - ([37f4106](https://github.com/snapetech/seerrng/commit/37f4106e68a6c707f477f76f404d8778346b9429))
+- *(release-notes)* Remove duplicate network note - ([094a521](https://github.com/snapetech/seerrng/commit/094a521715bd5da47b3a3f5e4bba57e96a53fbf5))
+- *(release-notes)* Document comics settings UI and library sync - ([8ec368d](https://github.com/snapetech/seerrng/commit/8ec368d5022fcf505b963631ab3eca2621d4c97b))
+
 ## [3.25.0](https://github.com/snapetech/seerrng/compare/v3.24.2..v3.25.0) - 2026-09-25
 
 ### User-facing changes
