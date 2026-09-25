@@ -9,6 +9,7 @@ import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import PlexTvAPI from '@server/api/plextv';
 import RadarrAPI from '@server/api/servarr/radarr';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import TheMovieDb from '@server/api/themoviedb';
 import {
   MediaRequestStatus,
@@ -25,7 +26,11 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
-import { getSettings, type RadarrSettings } from '@server/lib/settings';
+import {
+  getSettings,
+  type RadarrSettings,
+  type ReadarrSettings,
+} from '@server/lib/settings';
 import logger from '@server/logger';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
@@ -3259,6 +3264,82 @@ describe('GET /discover/music', () => {
 });
 
 describe('GET /discover/books', () => {
+  it('searches populated audiobook narrator metadata while retaining the author filter', async () => {
+    getSettings().readarr = [
+      {
+        id: 0,
+        hostname: 'bookshelf.test',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const getBooks = mock.method(ReadarrAPI.prototype, 'getBooks', async () => [
+      {
+        id: 1,
+        title: 'First Story',
+        foreignBookId: 'hardcover:first',
+        author: { authorName: 'Writer One' },
+        narrators: ['Alice Reader'],
+      },
+      {
+        id: 2,
+        title: 'Second Story',
+        foreignBookId: 'hardcover:second',
+        author: { authorName: 'Writer Two' },
+        narrators: ['Alice Reader'],
+      },
+      {
+        id: 3,
+        title: 'Third Story',
+        foreignBookId: 'hardcover:third',
+        author: { authorName: 'Writer One' },
+      },
+    ]);
+
+    try {
+      const agent = await login();
+      const result = await agent.get('/discover/books').query({
+        format: 'audiobook',
+        narrator: 'Alice',
+        author: 'Writer One',
+      });
+      assert.strictEqual(result.status, 200);
+      assert.deepStrictEqual(
+        result.body.results.map((book: { title: string }) => book.title),
+        ['First Story']
+      );
+      assert.deepStrictEqual(result.body.results[0].narrators, [
+        'Alice Reader',
+      ]);
+      assert.strictEqual(getBooks.mock.callCount(), 1);
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+    } finally {
+      getSettings().readarr = [];
+    }
+  });
+
+  it('limits narrator search to audiobook format', async () => {
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const agent = await login();
+    const result = await agent.get('/discover/books').query({
+      format: 'ebook',
+      narrator: 'Alice',
+    });
+    assert.strictEqual(result.status, 400);
+    assert.match(result.body.message, /audiobook format/);
+    assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+  });
+
   it('keeps completed book subject results when another subject stalls', async () => {
     const result = await settlePromisesWithin(
       [

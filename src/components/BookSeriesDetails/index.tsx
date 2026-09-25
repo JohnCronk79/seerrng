@@ -1,9 +1,8 @@
-import AuthorWorkCard, {
-  getBookFormatState,
-} from '@app/components/AuthorDetails/AuthorWorkCard';
+import AuthorWorkCard from '@app/components/AuthorDetails/AuthorWorkCard';
 import BookSeriesSummaryCard from '@app/components/BookSeriesDetails/BookSeriesSummaryCard';
 import CollectionAssociationsButton from '@app/components/CollectionDetails/CollectionAssociationsButton';
 import Alert from '@app/components/Common/Alert';
+import Button from '@app/components/Common/Button';
 import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
@@ -19,19 +18,13 @@ import {
   BOOK_GENRES,
   BOOK_LANGUAGES,
 } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
-import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
-import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { Permission, useUser } from '@app/hooks/useUser';
 import ErrorPage from '@app/pages/_error';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  BookOpenIcon,
-  SpeakerWaveIcon,
-  Squares2X2Icon,
-} from '@heroicons/react/24/outline';
+import { CheckCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type {
   BookResult,
@@ -43,12 +36,15 @@ import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.BookSeriesDetails', {
-  collection: 'Collection',
   requestCollection: 'Request Collection',
-  mediaType: 'Media Type',
-  allBooks: 'All Books',
   books: 'Books',
   audiobooks: 'Audiobooks',
+  selectAll: 'Select All',
+  selectNone: 'Clear Selection',
+  selectAllHelp: 'Select every book shown in this collection.',
+  selectNoneHelp: 'Clear the collection request selection.',
+  noSelection: 'Select at least one book to request.',
+  selectedCount: '{selected} of {total} books selected',
   clearFilters: 'Clear Filters',
   firstPublished: 'First Published',
   genres: 'Genres',
@@ -57,9 +53,6 @@ const messages = defineMessages('components.BookSeriesDetails', {
   any: 'Any',
   empty: 'No books match the current filters.',
 });
-
-type DisplayFormat = 'all' | 'ebook' | 'audiobook';
-const displayFormats: readonly DisplayFormat[] = ['all', 'ebook', 'audiobook'];
 
 const normalizeSeriesTitle = (title: string) =>
   title
@@ -100,17 +93,11 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
   const [requestFormat, setRequestFormat] = useState<'ebook' | 'audiobook'>(
     'ebook'
   );
-  const [displayFormat, setDisplayFormat] = useState<DisplayFormat>('all');
+  const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
   const [firstPublished, setFirstPublished] = useState('');
   const [genre, setGenre] = useState('');
   const [rating, setRating] = useState('');
   const [language, setLanguage] = useState('');
-  const pin = useMediaFilterPin<DisplayFormat>({
-    scope: 'books',
-    selected: displayFormat,
-    values: displayFormats,
-    restore: setDisplayFormat,
-  });
   const { data, error, mutate } = useSWR<BookSeriesDetailsType>(
     seriesId ? `/api/v1/series/${encodeApiPathSegment(seriesId)}` : null,
     { fallbackData: series }
@@ -126,13 +113,6 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
   const visibleBooks = useMemo(
     () =>
       sortedBooks.filter((book) => {
-        if (displayFormat !== 'all') {
-          const ebook = getBookFormatState(book, 'ebook') !== 'unavailable';
-          const audio = getBookFormatState(book, 'audiobook') !== 'unavailable';
-          if (displayFormat === 'ebook' ? !ebook && audio : !audio && ebook) {
-            return false;
-          }
-        }
         if (
           firstPublished &&
           (firstPublished === 'before-1970'
@@ -153,11 +133,26 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
         if (language && !book.languages?.includes(language)) return false;
         return true;
       }),
-    [displayFormat, firstPublished, genre, language, rating, sortedBooks]
+    [firstPublished, genre, language, rating, sortedBooks]
+  );
+  const visibleIds = useMemo(
+    () => visibleBooks.map((book) => book.id),
+    [visibleBooks]
+  );
+  const selectedVisibleIds = useMemo(
+    () =>
+      selectedIds === null
+        ? visibleIds
+        : selectedIds.filter((id) => visibleIds.includes(id)),
+    [selectedIds, visibleIds]
+  );
+  const selectedBooks = useMemo(
+    () => visibleBooks.filter((book) => selectedVisibleIds.includes(book.id)),
+    [selectedVisibleIds, visibleBooks]
   );
   const bulkItems = useMemo(
     () =>
-      sortedBooks.map((book) => ({
+      selectedBooks.map((book) => ({
         id: book.id,
         title: book.title,
         year: book.firstPublishYear,
@@ -171,8 +166,16 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
         languages: book.languages,
         ratingsAverage: book.ratingsAverage,
       })),
-    [sortedBooks]
+    [selectedBooks]
   );
+  const toggleBook = (id: string) => {
+    setSelectedIds((current) => {
+      const selection = current ?? visibleIds;
+      return selection.includes(id)
+        ? selection.filter((value) => value !== id)
+        : [...selection, id];
+    });
+  };
 
   if (!data && !error) return <LoadingSpinner />;
   if (!data) return <ErrorPage statusCode={404} />;
@@ -241,46 +244,7 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
             initialData={data}
             standalone
           />
-          <div className="media-primary-action-row">
-            <nav
-              aria-label={intl.formatMessage(messages.mediaType)}
-              className="flex flex-wrap gap-2"
-            >
-              {displayFormats.map((value) => {
-                const label = intl.formatMessage(
-                  value === 'all'
-                    ? messages.allBooks
-                    : value === 'ebook'
-                      ? messages.books
-                      : messages.audiobooks
-                );
-                const Icon =
-                  value === 'all'
-                    ? Squares2X2Icon
-                    : value === 'ebook'
-                      ? BookOpenIcon
-                      : SpeakerWaveIcon;
-                return (
-                  <MediaFilterOption
-                    key={value}
-                    pin={pin}
-                    value={value}
-                    label={label}
-                    selected={displayFormat === value}
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={displayFormat === value}
-                      onClick={() => setDisplayFormat(value)}
-                      className="flex h-full items-center gap-1.5 px-2"
-                    >
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                      <span>{label}</span>
-                    </button>
-                  </MediaFilterOption>
-                );
-              })}
-            </nav>
+          <div className="media-primary-action-row music-collection-primary-action-row">
             <CollectionAssociationsButton
               parts={sortedBooks}
               mediaType="book"
@@ -296,7 +260,11 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
                 ).map(([value, label, enabled]) => ({
                   id: value,
                   label: intl.formatMessage(label),
-                  disabled: !enabled,
+                  disabled: !enabled || selectedBooks.length === 0,
+                  disabledReason:
+                    selectedBooks.length === 0
+                      ? intl.formatMessage(messages.noSelection)
+                      : undefined,
                   onClick: () => {
                     setRequestFormat(value);
                     setShowRequest(true);
@@ -304,6 +272,30 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
                 }))}
               />
             )}
+          </div>
+          <div className="media-detail-disclosure-row music-collection-action-row">
+            <Button
+              buttonType="association"
+              title={intl.formatMessage(messages.selectAllHelp)}
+              onClick={() => setSelectedIds(visibleIds)}
+            >
+              <CheckCircleIcon />
+              <span>{intl.formatMessage(messages.selectAll)}</span>
+            </Button>
+            <Button
+              buttonType="association"
+              title={intl.formatMessage(messages.selectNoneHelp)}
+              onClick={() => setSelectedIds([])}
+            >
+              <XMarkIcon />
+              <span>{intl.formatMessage(messages.selectNone)}</span>
+            </Button>
+            <span className="self-center text-sm text-gray-300" role="status">
+              {intl.formatMessage(messages.selectedCount, {
+                selected: selectedBooks.length,
+                total: visibleBooks.length,
+              })}
+            </span>
           </div>
           <div className="card-spacing-before flex flex-wrap gap-2">
             <FilterResetButton
@@ -343,19 +335,15 @@ const BookSeriesDetails = ({ series }: { series?: BookSeriesDetailsType }) => {
             />
           </div>
           <section className="card-spacing-before">
-            <h2 className="slider-title">
-              {intl.formatMessage(messages.collection)}
-              <span className="ml-2 text-sm text-gray-400">
-                ({visibleBooks.length})
-              </span>
-            </h2>
             {visibleBooks.length > 0 ? (
-              <ThreeItemScroll label={intl.formatMessage(messages.collection)}>
+              <ThreeItemScroll label={data.title}>
                 {visibleBooks.map((book) => (
                   <AuthorWorkCard
                     key={book.id}
                     work={book}
                     author={book.author ?? ''}
+                    selected={selectedVisibleIds.includes(book.id)}
+                    onToggle={() => toggleBook(book.id)}
                   />
                 ))}
               </ThreeItemScroll>

@@ -18,7 +18,10 @@ describe('Bookshelf catalog identities', () => {
       serviceId: 27,
       foreignBookId: 'googlebooks:volume/a+b=',
     });
-    expect(parseBookshelfBookId('bookshelf:0:YWJj')).toBeUndefined();
+    expect(parseBookshelfBookId('bookshelf:0:YWJj')).toEqual({
+      serviceId: 0,
+      foreignBookId: 'abc',
+    });
     expect(parseBookshelfBookId('bookshelf:27:!bad')).toBeUndefined();
     const authorId = makeBookshelfAuthorId(
       27,

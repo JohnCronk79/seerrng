@@ -6,12 +6,13 @@ export const selectFromRow = (
   onSelect: () => void
 ) => {
   const target = event.target;
-  if (
-    target instanceof Element &&
-    target.closest(
-      'a, button, input, select, textarea, [role="button"], [data-no-row-select]'
-    )
-  ) {
+  const interactiveTarget =
+    target instanceof Element
+      ? target.closest(
+          'a, button, input, select, textarea, [role="button"], [data-no-row-select]'
+        )
+      : null;
+  if (interactiveTarget && interactiveTarget !== event.currentTarget) {
     return;
   }
   onSelect();

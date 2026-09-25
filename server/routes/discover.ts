@@ -86,6 +86,7 @@ import {
   type AlbumResult,
 } from '@server/models/Search';
 import { mapNetwork } from '@server/models/Tv';
+import { searchBookshelfNarrators } from '@server/utils/bookshelfCatalog';
 import {
   mapWithConcurrency,
   settlePromisesWithin,
@@ -3319,6 +3320,10 @@ discoverRoutes.get('/books', async (req, res) => {
     req.query.author,
     'Author'
   );
+  const parsedNarratorQuery = parseOptionalDiscoverString(
+    req.query.narrator,
+    'Narrator'
+  );
   const parsedFirstPublishYear = parseOptionalDiscoverString(
     req.query.firstPublishYear,
     'First publish year',
@@ -3356,6 +3361,11 @@ discoverRoutes.get('/books', async (req, res) => {
       .status(400)
       .json({ status: 400, message: parsedAuthorQuery.error });
   }
+  if ('error' in parsedNarratorQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedNarratorQuery.error });
+  }
   if ('error' in parsedFirstPublishYear) {
     return res
       .status(400)
@@ -3377,6 +3387,13 @@ discoverRoutes.get('/books', async (req, res) => {
 
   const rawSearchQuery = parsedSearchQuery.value ?? '';
   const authorQuery = parsedAuthorQuery.value ?? '';
+  const narratorQuery = parsedNarratorQuery.value ?? '';
+  if (narratorQuery && parsedFormat.value !== 'audiobook') {
+    return res.status(400).json({
+      status: 400,
+      message: 'Narrator Search requires the audiobook format.',
+    });
+  }
   const legacySubjectQuery = rawSearchQuery
     .match(/^subject:(.+)$/i)?.[1]
     ?.trim();
@@ -3430,6 +3447,7 @@ discoverRoutes.get('/books', async (req, res) => {
           ? 'book'
           : 'all',
     keyword: searchQuery || undefined,
+    ...(narratorQuery ? { narrator: narratorQuery } : {}),
     page,
     pageSize: itemsPerPage,
     sort: sortByValue,
@@ -3474,6 +3492,67 @@ discoverRoutes.get('/books', async (req, res) => {
     ? Math.floor(providerWindow.offset / providerWindow.limit) + 1
     : page;
   const providerLimit = providerWindow?.limit ?? itemsPerPage;
+
+  if (narratorQuery) {
+    try {
+      const books = (
+        await searchBookshelfNarrators(getSettings().readarr, narratorQuery)
+      )
+        .filter(
+          (book) =>
+            (!searchQuery ||
+              matchesAllSearchTerms(
+                [book.title, book.author, ...(book.subjects ?? [])],
+                searchQuery
+              )) &&
+            (!authorQuery ||
+              matchesAllSearchTerms([book.author], authorQuery)) &&
+            (!subjectQuery ||
+              matchesAllSearchTerms(book.subjects ?? [], subjectQuery)) &&
+            (!language || book.languages?.includes(language)) &&
+            (parsedRatingNumber === undefined ||
+              (book.ratingsAverage ?? 0) >= parsedRatingNumber) &&
+            (!firstPublishYear ||
+              (firstPublishYear === 'before-1970'
+                ? (book.firstPublishYear ?? Number.POSITIVE_INFINITY) < 1970
+                : book.firstPublishYear === Number(firstPublishYear)))
+        )
+        .sort((left, right) => {
+          const comparison =
+            sortByBase === 'rating'
+              ? (right.ratingsAverage ?? -1) - (left.ratingsAverage ?? -1)
+              : sortByBase === 'editions'
+                ? (right.isbnCandidates?.length ?? 0) -
+                  (left.isbnCandidates?.length ?? 0)
+                : sortByValue === 'newest' || sortByValue === 'oldest'
+                  ? (right.firstPublishYear ?? -1) -
+                    (left.firstPublishYear ?? -1)
+                  : 0;
+          return (
+            (sortAscending || sortByValue === 'oldest'
+              ? -comparison
+              : comparison) || left.title.localeCompare(right.title)
+          );
+        });
+      const offset = (page - 1) * itemsPerPage;
+      return res.status(200).json({
+        page,
+        totalPages: Math.max(Math.ceil(books.length / itemsPerPage), 1),
+        totalResults: books.length,
+        results: books.slice(offset, offset + itemsPerPage),
+      });
+    } catch (error) {
+      logger.error('Failed to search audiobook narrators', {
+        label: 'Discover Books',
+        ...getErrorLogFields(error),
+        discoveryContext: bookDiscoveryContext,
+      });
+      return res.status(503).json({
+        status: 503,
+        message: 'The audiobook catalog is unavailable. Please try again.',
+      });
+    }
+  }
 
   try {
     const openLibrarySort =

@@ -16,6 +16,7 @@ import useDiscover from '@app/hooks/useDiscover';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
 import defineMessages from '@app/utils/defineMessages';
+import { stableSearchResults } from '@app/utils/stableSearchResults';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { DetailDisclosureMediaType } from '@server/interfaces/api/userSettingsInterfaces';
 import type {
@@ -28,7 +29,7 @@ import type {
   TvResult,
 } from '@server/models/Search';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
 import ContextualSearchFilters from './ContextualSearchFilters';
 import {
@@ -107,6 +108,9 @@ type SearchResult =
   | ArtistResult
   | BookResult
   | AuthorResult;
+
+const getSearchResultKey = (result: SearchResult) =>
+  `${result.mediaType}:${result.id}`;
 
 type SortOption = {
   field: SortField;
@@ -368,6 +372,10 @@ const Search = () => {
         return {
           query: combinedQuery,
           author: getRoutedString('author'),
+          narrator:
+            category.key === 'audiobook'
+              ? getRoutedString('narrator')
+              : undefined,
           subject: getRoutedString('subject'),
           firstPublishYear: getRoutedString('firstPublishYear'),
           language: getRoutedString('language'),
@@ -509,12 +517,36 @@ const Search = () => {
       );
     });
   }, [sortField, sortOrder, visibleTitles]);
+  const orderKey = `${router.asPath}|${searchEndpoint}|${sortField}:${sortOrder}`;
+  const previousOrder = useRef<{ key: string; ids: string[] }>({
+    key: '',
+    ids: [],
+  });
+  const stableTitles = useMemo(
+    () =>
+      previousOrder.current.key === orderKey
+        ? stableSearchResults(
+            sortedTitles,
+            previousOrder.current.ids,
+            getSearchResultKey
+          )
+        : sortedTitles,
+    [orderKey, sortedTitles]
+  );
+  useEffect(() => {
+    if (stableTitles.length > 0 || previousOrder.current.key !== orderKey) {
+      previousOrder.current = {
+        key: orderKey,
+        ids: stableTitles.map(getSearchResultKey),
+      };
+    }
+  }, [orderKey, stableTitles]);
   const isShowingEmptyState =
     isSearchReady &&
     !isLoadingInitialData &&
     !isLoadingMore &&
     isReachingEnd &&
-    sortedTitles.length === 0;
+    stableTitles.length === 0;
   const providerErrorMessage = (
     error as { response?: { data?: { message?: string } } } | undefined
   )?.response?.data?.message;
@@ -588,7 +620,7 @@ const Search = () => {
               >
                 <button
                   type="button"
-                  className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                  className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
                   aria-pressed={isSelected}
                   onClick={() => {
                     const nextQuery = getSearchCategoryQuery(router.query, {
@@ -699,13 +731,13 @@ const Search = () => {
           })}
         </div>
       </PinnedFilterSection>
-      {error && sortedTitles.length === 0 ? (
+      {error && stableTitles.length === 0 ? (
         searchError
       ) : (
         <>
           {error && searchError}
           <ListView
-            items={sortedTitles}
+            items={stableTitles}
             preferredBookFormat={preferredBookFormat}
             emptyMessage={intl.formatMessage(messages.noResultsFound)}
             emptyClassName="mt-6"

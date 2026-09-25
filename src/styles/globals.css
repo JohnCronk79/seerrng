@@ -822,14 +822,6 @@
     overflow-wrap: anywhere;
   }
 
-  .detail-watched-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--card-spacing);
-    text-align: left;
-  }
-
   .association-detail-list {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -2514,6 +2506,7 @@
     border-color: rgb(129 140 248);
   }
 
+  .season-focus-row:focus-visible::after,
   .season-focus-row[data-active='true']:hover::after,
   .season-focus-row:has(button:focus-visible)::after {
     box-shadow: 0 0 0 1px rgb(129 140 248);
@@ -2624,12 +2617,56 @@
   .poster-control {
     @apply inline-flex items-center text-xs;
     box-sizing: border-box;
+    background-color: transparent;
+    backdrop-filter: blur(4px);
     height: var(--poster-control-height);
     min-height: var(--poster-control-height);
     max-height: var(--poster-control-height);
     padding-block: 0;
     line-height: var(--poster-control-content-height);
     column-gap: var(--poster-control-gap);
+  }
+
+  .poster-control.poster-control-type-movie,
+  .poster-control.poster-control-type-collection {
+    @apply border-blue-500/70 bg-blue-950/35 text-blue-50;
+  }
+
+  .poster-control.poster-control-type-tv {
+    @apply border-violet-300/90 bg-purple-950/35 text-purple-50;
+  }
+
+  .poster-control.poster-control-type-album {
+    @apply border-emerald-500/70 bg-emerald-950/35 text-emerald-50;
+  }
+
+  .poster-control.poster-control-type-artist {
+    @apply border-fuchsia-500/70 bg-fuchsia-950/35 text-fuchsia-50;
+  }
+
+  .poster-control.poster-control-type-book,
+  .poster-control.poster-control-book-format {
+    @apply border-amber-500/70 bg-amber-950/35 text-amber-50;
+  }
+
+  .poster-control.poster-control-available {
+    @apply border-green-500/90 bg-green-950/35 text-green-300;
+  }
+
+  .poster-control.poster-control-pending {
+    @apply border-yellow-500/90 bg-yellow-950/35 text-yellow-200;
+  }
+
+  .poster-control.poster-control-processing {
+    @apply border-indigo-500/90 bg-indigo-950/35 text-indigo-200;
+  }
+
+  .poster-control-icon.poster-control-association {
+    @apply border-cyan-500/90 bg-cyan-950/35 text-cyan-300 hover:border-cyan-300 hover:bg-cyan-900/55 hover:text-white focus:border-cyan-300 focus:ring-cyan-500 active:border-cyan-400 active:bg-cyan-900/70;
+  }
+
+  .poster-control-icon.poster-control-blocklist {
+    @apply border-red-500/90 bg-red-950/35 text-red-300 hover:border-red-300 hover:bg-red-900/55 hover:text-white focus:border-red-300 focus:ring-red-500 active:border-red-400 active:bg-red-900/70;
   }
 
   .poster-control svg {
@@ -2642,6 +2679,7 @@
   .title-card-shell .app-button.app-button-icon-only {
     @apply inline-flex items-center justify-center;
     box-sizing: border-box;
+    backdrop-filter: blur(4px);
     width: var(--poster-control-height);
     min-width: var(--poster-control-height);
     height: var(--poster-control-height);
@@ -2658,7 +2696,7 @@
   }
 
   .watched-status-badge {
-    @apply inline-flex items-center justify-center rounded-md border border-gray-500 bg-black text-white;
+    @apply inline-flex items-center justify-center rounded-md border border-gray-600 bg-black/35 text-white;
     box-sizing: border-box;
     height: var(--poster-control-height);
     min-height: var(--poster-control-height);
@@ -2669,10 +2707,28 @@
     white-space: nowrap;
   }
 
-  .watched-status-logo {
+  .watched-status-badge.detail-watched-button {
+    height: var(--action-control-height);
+    min-height: var(--action-control-height);
+    padding-inline: var(--action-control-padding-x);
+    column-gap: var(--button-content-gap);
+    line-height: var(--action-control-content-height);
+  }
+
+  .poster-control.detail-watched-button .watched-status-logo,
+  .detail-watched-button .watched-status-icon {
+    height: var(--action-control-content-height);
+  }
+
+  .detail-watched-button .watched-status-icon {
+    width: var(--action-control-content-height);
+  }
+
+  .watched-status-logo,
+  .poster-control .watched-status-logo {
     width: auto;
     height: var(--poster-control-content-height);
-    max-width: 38px;
+    max-width: none;
     flex: none;
   }
 

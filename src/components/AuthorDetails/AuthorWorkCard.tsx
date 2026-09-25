@@ -1,4 +1,5 @@
 import CachedImage from '@app/components/Common/CachedImage';
+import SelectionCircle from '@app/components/Common/SelectionCircle';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import { encodeApiPathSegment } from '@app/utils/apiPath';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
@@ -30,9 +31,13 @@ export const getBookFormatState = (
 export default function AuthorWorkCard({
   work,
   author,
+  selected,
+  onToggle,
 }: {
   work: BookResult;
   author: string;
+  selected?: boolean;
+  onToggle?: () => void;
 }) {
   const href = `/book/${encodeApiPathSegment(work.id)}`;
   const bookState = getBookFormatState(work, 'ebook');
@@ -56,7 +61,23 @@ export default function AuthorWorkCard({
   );
 
   return (
-    <article className="detail-summary-card movie-summary-card detail-item-surface">
+    <article
+      className={[
+        'detail-summary-card movie-summary-card detail-item-surface',
+        onToggle ? 'movie-summary-card-with-selection' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {onToggle && (
+        <div className="movie-summary-selection">
+          <SelectionCircle
+            label={`Select ${work.title} for this collection request`}
+            selected={!!selected}
+            onClick={onToggle}
+          />
+        </div>
+      )}
       <div className="collection-summary-poster">
         <CachedImage
           type="book"

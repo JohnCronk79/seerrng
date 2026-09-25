@@ -115,7 +115,7 @@ const DiscoverMediaTabs = ({ selected, basePath }: DiscoverMediaTabsProps) => {
                     : tab.href
                 }
                 aria-current={isSelected ? 'page' : undefined}
-                className="flex h-full items-center gap-1.5 px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                className="app-filter-segment-focus flex h-full items-center gap-1.5 px-2"
                 data-testid={`discover-media-tab-${tab.type}`}
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />

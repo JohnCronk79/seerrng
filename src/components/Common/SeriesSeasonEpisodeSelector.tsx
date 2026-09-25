@@ -299,21 +299,28 @@ const SeriesSeasonEpisodeSelector = ({
             return (
               <div
                 key={season.seasonNumber}
-                className={`selectable-table-row grid w-full grid-cols-[1.25rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 rounded px-1 py-1 hover:bg-indigo-500/15 ${
+                className={`selectable-table-row season-focus-row grid w-full grid-cols-[1.25rem_minmax(5.5rem,1fr)_4rem_2.5rem] items-center gap-x-2 rounded px-1 py-1 hover:bg-indigo-500/15 ${
                   activeSeason === season.seasonNumber ? 'bg-indigo-500/10' : ''
                 }`}
+                data-active={activeSeason === season.seasonNumber}
                 data-selectable={!disabled}
                 role={!disabled ? 'button' : undefined}
                 tabIndex={!disabled ? 0 : undefined}
                 aria-label={`Select season ${season.seasonNumber}`}
                 onClick={(event) => {
-                  if (!disabled) {
-                    selectFromRow(event, () => toggleSeason(season.seasonNumber));
-                  }
+                  selectFromRow(event, () => {
+                    if (disabled) {
+                      onActiveSeasonChange(season.seasonNumber);
+                    } else {
+                      toggleSeason(season.seasonNumber);
+                    }
+                  });
                 }}
                 onKeyDown={(event) => {
                   if (!disabled) {
-                    selectFromRowKey(event, () => toggleSeason(season.seasonNumber));
+                    selectFromRowKey(event, () =>
+                      toggleSeason(season.seasonNumber)
+                    );
                   }
                 }}
               >
@@ -330,17 +337,13 @@ const SeriesSeasonEpisodeSelector = ({
                   }`}
                   onClick={() => toggleSeason(season.seasonNumber)}
                 />
-                <button
-                  type="button"
-                  onClick={() => onActiveSeasonChange(season.seasonNumber)}
-                  className="truncate text-left text-xs font-medium text-gray-100 focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-                >
+                <span className="truncate text-left text-xs font-medium text-gray-100">
                   {season.seasonNumber === 0
                     ? intl.formatMessage(messages.specials)
                     : intl.formatMessage(messages.seasonNumber, {
                         number: season.seasonNumber,
                       })}
-                </button>
+                </span>
                 <span className="refreshed-detail-text text-center text-xs">
                   {season.episodeCount}
                 </span>
@@ -410,12 +413,16 @@ const SeriesSeasonEpisodeSelector = ({
                 aria-label={`Select episode ${episode.episodeNumber}`}
                 onClick={(event) => {
                   if (!disabled) {
-                    selectFromRow(event, () => toggleEpisode(episode.episodeNumber));
+                    selectFromRow(event, () =>
+                      toggleEpisode(episode.episodeNumber)
+                    );
                   }
                 }}
                 onKeyDown={(event) => {
                   if (!disabled) {
-                    selectFromRowKey(event, () => toggleEpisode(episode.episodeNumber));
+                    selectFromRowKey(event, () =>
+                      toggleEpisode(episode.episodeNumber)
+                    );
                   }
                 }}
               >

@@ -478,7 +478,7 @@ const Blocklist = () => {
                   setMediaFilter(value);
                   resetPage();
                 }}
-                className="app-control-shadow-exempt flex h-full items-center px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+                className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
               >
                 {intl.formatMessage(label)}
               </button>

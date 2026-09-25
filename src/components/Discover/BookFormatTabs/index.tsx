@@ -29,7 +29,12 @@ const getBookFormatHref = (
   const queryParams = new URLSearchParams();
 
   Object.entries(query).forEach(([key, value]) => {
-    if (key === 'page' || key === 'format') {
+    if (
+      key === 'page' ||
+      key === 'format' ||
+      (key === 'narrator' &&
+        (pathname !== '/discover/audiobooks' || queryFormat))
+    ) {
       return;
     }
 
@@ -147,7 +152,7 @@ const BookFormatTabs = ({
               )}
               aria-current={isSelected ? 'page' : undefined}
               data-testid={`book-format-tab-${tab.format}`}
-              className="flex h-full items-center gap-1.5 px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+              className="app-filter-segment-focus flex h-full items-center gap-1.5 px-2"
             >
               <Icon className="h-4 w-4" aria-hidden="true" />
               <span>{intl.formatMessage(tab.label)}</span>

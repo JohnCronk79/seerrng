@@ -310,21 +310,13 @@ const SeriesSeasonEpisodeBrowser = ({
                       : messages.selectSeasonEpisodes
                   )}
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveSeason(season.seasonNumber);
-                    if (available) toggleSeason(season.seasonNumber);
-                  }}
-                  aria-pressed={activeSeason === season.seasonNumber}
-                  className="truncate rounded text-left text-xs font-medium text-gray-100 transition hover:text-white focus:outline-none"
-                >
+                <span className="truncate text-left text-xs font-medium text-gray-100">
                   {season.seasonNumber === 0
                     ? intl.formatMessage(messages.specials)
                     : intl.formatMessage(messages.seasonNumber, {
                         number: season.seasonNumber,
                       })}
-                </button>
+                </span>
                 <span className="refreshed-detail-text text-center text-xs">
                   {season.episodeCount}
                 </span>

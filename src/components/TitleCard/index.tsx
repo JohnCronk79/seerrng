@@ -719,7 +719,7 @@ const TitleCard = ({
                   >
                     <Button
                       buttonType="ghost"
-                      className="z-40 rounded-full border-red-600/80 bg-red-950/75 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
+                      className="poster-control-icon poster-control-blocklist z-40 rounded-full"
                       buttonSize="sm"
                       iconOnly
                       aria-label={intl.formatMessage(

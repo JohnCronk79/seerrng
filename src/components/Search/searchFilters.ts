@@ -23,6 +23,7 @@ export const searchContextualFilterKeys = [
   'keywords',
   'minRating',
   'network',
+  'narrator',
   'primaryReleaseDateGte',
   'primaryReleaseDateLte',
   'releaseType',
