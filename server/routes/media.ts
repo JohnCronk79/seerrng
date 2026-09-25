@@ -62,7 +62,6 @@ const mediaListTypes = [
   MediaType.MUSIC,
   MediaType.BOOK,
   MediaType.COMIC,
-  MediaType.MAGAZINE,
 ] as const;
 const mediaFileFormats = ['ebook', 'audiobook', 'both'] as const;
 const mediaListPermissions: Permission[] = [

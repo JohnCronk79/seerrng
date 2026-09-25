@@ -42,7 +42,6 @@ const messages = defineMessages('components.Settings.SettingsUsers', {
   musicRequestLimitLabel: 'Global Music Request Limit',
   bookRequestLimitLabel: 'Global Book Request Limit',
   comicRequestLimitLabel: 'Global Comic Request Limit',
-  magazineRequestLimitLabel: 'Global Magazine Request Limit',
   defaultPermissions: 'Default Permissions',
   defaultPermissionsTip: 'Initial permissions assigned to new users',
   disabledMediaServerLoginWarning:
@@ -125,8 +124,6 @@ const SettingsUsers = () => {
             bookQuotaDays: data?.defaultQuotas.book.quotaDays ?? 7,
             comicQuotaLimit: data?.defaultQuotas.comic.quotaLimit ?? 0,
             comicQuotaDays: data?.defaultQuotas.comic.quotaDays ?? 7,
-            magazineQuotaLimit: data?.defaultQuotas.magazine.quotaLimit ?? 0,
-            magazineQuotaDays: data?.defaultQuotas.magazine.quotaDays ?? 7,
             defaultPermissions: data?.defaultPermissions ?? 0,
           }}
           validationSchema={schema}
@@ -158,10 +155,6 @@ const SettingsUsers = () => {
                     quotaLimit: values.comicQuotaLimit,
                     quotaDays: values.comicQuotaDays,
                   },
-                  magazine: {
-                    quotaLimit: values.magazineQuotaLimit,
-                    quotaDays: values.magazineQuotaDays,
-                  },
                 },
                 defaultPermissions: values.defaultPermissions,
               });
@@ -184,21 +177,6 @@ const SettingsUsers = () => {
           {({ isSubmitting, isValid, values, errors, setFieldValue }) => {
             return (
               <Form className="settings-group-content">
-                <div className="form-row">
-                  <label htmlFor="magazineRequestLimit" className="text-label">
-                    {intl.formatMessage(messages.magazineRequestLimitLabel)}
-                  </label>
-                  <div className="form-input-area">
-                    <QuotaSelector
-                      onChange={setFieldValue}
-                      dayFieldName="magazineQuotaDays"
-                      limitFieldName="magazineQuotaLimit"
-                      mediaType="magazine"
-                      defaultDays={values.magazineQuotaDays}
-                      defaultLimit={values.magazineQuotaLimit}
-                    />
-                  </div>
-                </div>
                 <div
                   role="group"
                   aria-labelledby="group-label"
