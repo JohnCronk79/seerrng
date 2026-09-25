@@ -51,11 +51,16 @@ jobs:
           set -euo pipefail
           body_file="$RUNNER_TEMP/pr-body.md"
           printf '%s' "$PR_BODY" > "$body_file"
+          validation_args=()
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            validation_args+=(--allow-mixed-push-batch)
+          fi
           node scripts/check-release-notes.mjs \
             --base "$BASE_SHA" \
             --head "$HEAD_SHA" \
             --pr-body "$body_file" \
-            --summary-file "$GITHUB_STEP_SUMMARY"
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            "${validation_args[@]}"
           node scripts/check-changelog-tags.mjs
 
   i18n:
