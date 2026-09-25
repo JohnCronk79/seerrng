@@ -21,6 +21,7 @@ import type {
 } from '@server/interfaces/api/userInterfaces';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -42,6 +43,7 @@ const messages = defineMessages('components.UserProfile', {
   musicrequests: 'Music Requests',
   bookrequests: 'Book Requests',
   comicrequests: 'Comic Requests',
+  magazinerequests: 'Magazine Requests',
   recentlywatched: 'Recently Watched',
   plexwatchlist: 'Watchlist',
   localWatchlist: "{username}'s Watchlist",
@@ -49,7 +51,12 @@ const messages = defineMessages('components.UserProfile', {
 });
 
 type MediaTitle =
-  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
 
 const hasBackdropPath = (
   media: MediaTitle
@@ -469,6 +476,10 @@ const UserProfile = () => {
               <QuotaSummaryCard
                 title={intl.formatMessage(messages.comicrequests)}
                 quota={quota.comic}
+              />
+              <QuotaSummaryCard
+                title={intl.formatMessage(messages.magazinerequests)}
+                quota={quota.magazine}
               />
             </dl>
           </div>

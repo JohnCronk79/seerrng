@@ -1046,6 +1046,25 @@ components:
         label:
           type: string
           example: A Label
+    QuotaStatus:
+      type: object
+      required: [used, restricted]
+      properties:
+        days:
+          type: number
+          example: 7
+        limit:
+          type: number
+          example: 10
+        used:
+          type: number
+          example: 6
+        remaining:
+          type: number
+          example: 4
+        restricted:
+          type: boolean
+          example: false
     PublicSettings:
       type: object
       required:
@@ -1060,6 +1079,10 @@ components:
           format: uuid
           description: Instance Plex OAuth client identifier
           example: 6919275e-142a-48d8-be6b-93594cbd4626
+        magazinesEnabled:
+          type: boolean
+          description: Whether a LazyLibrarian instance is configured.
+          example: true
     MovieResult:
       type: object
       required:
@@ -6624,41 +6647,17 @@ paths:
                 type: object
                 properties:
                   movie:
-                    type: object
-                    properties:
-                      days:
-                        type: number
-                        example: 7
-                      limit:
-                        type: number
-                        example: 10
-                      used:
-                        type: number
-                        example: 6
-                      remaining:
-                        type: number
-                        example: 4
-                      restricted:
-                        type: boolean
-                        example: false
+                    $ref: '#/components/schemas/QuotaStatus'
                   tv:
-                    type: object
-                    properties:
-                      days:
-                        type: number
-                        example: 7
-                      limit:
-                        type: number
-                        example: 10
-                      used:
-                        type: number
-                        example: 6
-                      remaining:
-                        type: number
-                        example: 4
-                      restricted:
-                        type: boolean
-                        example: false
+                    $ref: '#/components/schemas/QuotaStatus'
+                  music:
+                    $ref: '#/components/schemas/QuotaStatus'
+                  book:
+                    $ref: '#/components/schemas/QuotaStatus'
+                  comic:
+                    $ref: '#/components/schemas/QuotaStatus'
+                  magazine:
+                    $ref: '#/components/schemas/QuotaStatus'
   /blocklist:
     get:
       summary: Returns blocklisted items

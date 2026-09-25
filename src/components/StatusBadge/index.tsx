@@ -41,7 +41,7 @@ interface StatusBadgeProps {
   tmdbId?: number;
   mbId?: string;
   externalId?: string;
-  mediaType?: 'movie' | 'tv' | 'music' | 'book' | 'comic';
+  mediaType?: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   bookFormat?: RequestedBookFormat;
   title?: string | string[];
   statusLabelOverride?: string;
@@ -94,9 +94,11 @@ const StatusBadge = ({
                 ? Permission.REQUEST_BOOK
                 : mediaType === 'comic'
                   ? Permission.REQUEST_COMIC
-                  : mediaType === 'movie'
-                    ? Permission.REQUEST_MOVIE
-                    : Permission.REQUEST_TV,
+                  : mediaType === 'magazine'
+                    ? Permission.REQUEST_MAGAZINE
+                    : mediaType === 'movie'
+                      ? Permission.REQUEST_MOVIE
+                      : Permission.REQUEST_TV,
           ],
       {
         type: 'or',
@@ -105,6 +107,7 @@ const StatusBadge = ({
     mediaType !== 'music' &&
     mediaType !== 'book' &&
     mediaType !== 'comic' &&
+    mediaType !== 'magazine' &&
     (!is4k ||
       (mediaType === 'movie'
         ? settings.currentSettings.movie4kEnabled
@@ -143,6 +146,11 @@ const StatusBadge = ({
       mediaLinkDescription = intl.formatMessage(messages.managemedia, {
         mediaType: 'Comic',
       });
+    } else if (mediaType === 'magazine' && externalId) {
+      mediaLink = `/magazine/${encodeApiPathSegment(externalId)}?manage=1`;
+      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
+        mediaType: 'Magazine',
+      });
     } else if (mediaType && tmdbId) {
       mediaLink = `/${mediaType}/${tmdbId}?manage=1`;
       mediaLinkDescription = intl.formatMessage(messages.managemedia, {
@@ -160,9 +168,11 @@ const StatusBadge = ({
               ? 'Bookshelf'
               : mediaType === 'comic'
                 ? 'Comics'
-                : mediaType === 'movie'
-                  ? 'Radarr'
-                  : 'Sonarr',
+                : mediaType === 'magazine'
+                  ? 'LazyLibrarian'
+                  : mediaType === 'movie'
+                    ? 'Radarr'
+                    : 'Sonarr',
       });
     }
   }

@@ -13,17 +13,20 @@ const messages = defineMessages('components.QuotaSelector', {
     '{quotaLimit} <quotaUnits>{books} per {quotaDays} {days}</quotaUnits>',
   comicRequests:
     '{quotaLimit} <quotaUnits>{comics} per {quotaDays} {days}</quotaUnits>',
+  magazineRequests:
+    '{quotaLimit} <quotaUnits>{magazines} per {quotaDays} {days}</quotaUnits>',
   movies: '{count, plural, one {movie} other {movies}}',
   seasons: '{count, plural, one {season} other {seasons}}',
   albums: '{count, plural, one {album} other {albums}}',
   books: '{count, plural, one {book} other {books}}',
   comics: '{count, plural, one {comic} other {comics}}',
+  magazines: '{count, plural, one {magazine} other {magazines}}',
   days: '{count, plural, one {day} other {days}}',
   unlimited: 'Unlimited',
 });
 
 interface QuotaSelectorProps {
-  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic';
+  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   defaultDays?: number;
   defaultLimit?: number;
   dayOverride?: number;
@@ -70,7 +73,9 @@ const QuotaSelector = ({
               ? messages.bookRequests
               : mediaType === 'comic'
                 ? messages.comicRequests
-                : messages.tvRequests,
+                : mediaType === 'magazine'
+                  ? messages.magazineRequests
+                  : messages.tvRequests,
         {
           quotaLimit: (
             <select
@@ -111,6 +116,9 @@ const QuotaSelector = ({
           albums: intl.formatMessage(messages.albums, { count: quotaLimit }),
           books: intl.formatMessage(messages.books, { count: quotaLimit }),
           comics: intl.formatMessage(messages.comics, { count: quotaLimit }),
+          magazines: intl.formatMessage(messages.magazines, {
+            count: quotaLimit,
+          }),
           days: intl.formatMessage(messages.days, { count: quotaDays }),
           quotaUnits: function quotaUnits(msg) {
             return (
