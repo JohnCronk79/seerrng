@@ -31,9 +31,9 @@ const messages = defineMessages('components.Settings.SettingsNetwork', {
     'Reject cross-site state-changing browser requests (requires HTTPS)',
   csrfProtectionWarning:
     'Keep this enabled for browser-session security. Disable it only when a trusted external API client must make write requests and cannot send CSRF tokens.',
-  trustProxy: 'Enable Proxy Support',
+  trustProxy: 'Trust Reverse Proxy',
   trustProxyTip:
-    'Allow Seerr to correctly register client IP addresses behind a proxy',
+    'Enable when one trusted reverse proxy in front of SeerrNG sets X-Forwarded-For. SeerrNG will trust one proxy hop to identify client IP addresses. Keep this off if clients can connect directly, because they could forge forwarded headers.',
   proxyEnabled: 'HTTP(S) Proxy',
   proxyEnabledTip:
     'Send ALL outgoing HTTP/HTTPS requests through a proxy server (host/port). Does NOT enable HTTPS, SSL, or certificate configuration.',

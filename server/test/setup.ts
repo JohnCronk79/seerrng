@@ -88,6 +88,8 @@ Reflect.set(
       sonarr: settings.sonarr,
       lidarr: settings.lidarr,
       readarr: settings.readarr,
+      mylar: settings.mylar,
+      kapowarr: settings.kapowarr,
       notifications: settings.notifications,
       network: settings.network,
     };

@@ -100,6 +100,12 @@ const messages = defineMessages('components.Settings.SettingsMain', {
   youtubeApiKey: 'YouTube Data API Key',
   youtubeApiKeyTip:
     'A Google YouTube Data API v3 key is required for public YouTube playlists.',
+  comicsMetadata: 'Comics Metadata',
+  comicsMetadataDescription:
+    'Configure the metadata provider used to discover and request comics.',
+  comicVineApiKey: 'ComicVine API Key',
+  comicVineApiKeyTip:
+    'A free ComicVine API key is required for comic discovery and requests.',
 });
 
 const SettingsMain = () => {
@@ -203,6 +209,7 @@ const SettingsMain = () => {
           spotifyClientId: data?.spotifyClientId ?? '',
           spotifyClientSecret: data?.spotifyClientSecret ?? '',
           youtubeApiKey: data?.youtubeApiKey ?? '',
+          comicVineApiKey: data?.comicVineApiKey ?? '',
         }}
         enableReinitialize
         validationSchema={MainSettingsSchema}
@@ -230,6 +237,7 @@ const SettingsMain = () => {
               spotifyClientId: values.spotifyClientId,
               spotifyClientSecret: values.spotifyClientSecret,
               youtubeApiKey: values.youtubeApiKey,
+              comicVineApiKey: values.comicVineApiKey,
             });
             mutate('/api/v1/settings/public');
             mutate('/api/v1/status?checkUpdateAvailable=false');
@@ -700,6 +708,38 @@ const SettingsMain = () => {
                         onChange={(
                           event: React.ChangeEvent<HTMLInputElement>
                         ) => setFieldValue('youtubeApiKey', event.target.value)}
+                      />
+                    </div>
+                  </SettingsFormRow>
+                </div>
+              </section>
+              <section className="settings-group-card">
+                <h3 className="settings-group-heading">
+                  {intl.formatMessage(messages.comicsMetadata)}
+                </h3>
+                <p className="settings-group-description">
+                  {intl.formatMessage(messages.comicsMetadataDescription)}
+                </p>
+                <div className="settings-group-content">
+                  <SettingsFormRow
+                    htmlFor="comicVineApiKey"
+                    label={intl.formatMessage(messages.comicVineApiKey)}
+                    description={intl.formatMessage(
+                      messages.comicVineApiKeyTip
+                    )}
+                  >
+                    <div className="form-input-field">
+                      <SensitiveInput
+                        as="field"
+                        id="comicVineApiKey"
+                        name="comicVineApiKey"
+                        type="text"
+                        value={values.comicVineApiKey}
+                        onChange={(
+                          event: React.ChangeEvent<HTMLInputElement>
+                        ) =>
+                          setFieldValue('comicVineApiKey', event.target.value)
+                        }
                       />
                     </div>
                   </SettingsFormRow>

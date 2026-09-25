@@ -27,6 +27,10 @@ import {
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
 import {
+  cleanMagazineTitle,
+  normalizeMagazineTitle,
+} from '@server/lib/magazineIdentity';
+import {
   MediaServerUserAuthorityChangedError,
   assertMediaServerUserAuthorityCurrent,
   type MediaServerUserAuthoritySnapshot,
@@ -52,6 +56,8 @@ import {
   type ServarrServiceType,
 } from '@server/lib/serviceAdmission';
 import {
+  type KapowarrSettings,
+  type MylarSettings,
   type RadarrSettings,
   type ReadarrSettings,
   type SonarrSettings,
@@ -93,7 +99,8 @@ export class ServiceConfigurationError extends Error {}
 
 export type MediaRequestServiceTarget = {
   serviceType: ServarrServiceType;
-  format: 'standard' | '4k' | 'music' | 'ebook' | 'audiobook';
+  format:
+    'standard' | '4k' | 'music' | 'ebook' | 'audiobook' | 'comic' | 'magazine';
   serverId: number;
   profileId?: number | null;
   metadataProfileId?: number | null;
@@ -165,7 +172,9 @@ const getRequestMediaLockKey = (requestBody: MediaRequestBody): string =>
   [
     'request-media',
     requestBody.mediaType,
-    String(requestBody.mediaId).trim().toLowerCase(),
+    requestBody.mediaType === MediaType.MAGAZINE
+      ? normalizeMagazineTitle(String(requestBody.mediaId))
+      : String(requestBody.mediaId).trim().toLowerCase(),
   ].join(':');
 
 const canUseAdvancedRequestOptions = (user: User): boolean =>
@@ -205,6 +214,16 @@ export const hasMediaRequestPermission = (
       return user.hasPermission([Permission.REQUEST, Permission.REQUEST_BOOK], {
         type: 'or',
       });
+    case MediaType.COMIC:
+      return user.hasPermission(
+        [Permission.REQUEST, Permission.REQUEST_COMIC],
+        { type: 'or' }
+      );
+    case MediaType.MAGAZINE:
+      return user.hasPermission(
+        [Permission.REQUEST, Permission.REQUEST_MAGAZINE],
+        { type: 'or' }
+      );
   }
 };
 
@@ -499,9 +518,38 @@ export class MediaRequest {
       throw new RequestPermissionError(
         'You do not have permission to make book requests.'
       );
+    } else if (
+      requestBody.mediaType === MediaType.COMIC &&
+      !isManagedRequestForAnotherUser &&
+      !hasMediaRequestPermission(requestUser, requestBody.mediaType)
+    ) {
+      throw new RequestPermissionError(
+        'You do not have permission to make comic requests.'
+      );
+    } else if (
+      requestBody.mediaType === MediaType.MAGAZINE &&
+      !isManagedRequestForAnotherUser &&
+      !hasMediaRequestPermission(requestUser, requestBody.mediaType)
+    ) {
+      throw new RequestPermissionError(
+        'You do not have permission to make magazine requests.'
+      );
     }
 
-    if (canUseAdvancedRequestOptions(user) && requestBody.serverId != null) {
+    if (requestBody.mediaType === MediaType.MAGAZINE) {
+      const title = cleanMagazineTitle(String(requestBody.mediaId ?? ''));
+      if (!title) {
+        throw new Error('Magazine title must contain 1 to 256 characters.');
+      }
+      requestBody.mediaId = title;
+    }
+
+    if (
+      canUseAdvancedRequestOptions(user) &&
+      requestBody.serverId != null &&
+      requestBody.mediaType !== MediaType.COMIC &&
+      requestBody.mediaType !== MediaType.MAGAZINE
+    ) {
       const serviceName =
         requestBody.mediaType === MediaType.MOVIE
           ? 'Radarr'
@@ -560,6 +608,10 @@ export class MediaRequest {
           return quotas.music;
         case MediaType.BOOK:
           return quotas.book;
+        case MediaType.COMIC:
+          return quotas.comic;
+        case MediaType.MAGAZINE:
+          return quotas.magazine;
         default:
           return undefined;
       }
@@ -594,6 +646,16 @@ export class MediaRequest {
         quotas.book.restricted
       ) {
         throw new QuotaRestrictedError('Book Quota exceeded.');
+      } else if (
+        requestBody.mediaType === MediaType.COMIC &&
+        quotas.comic.restricted
+      ) {
+        throw new QuotaRestrictedError('Comic Quota exceeded.');
+      } else if (
+        requestBody.mediaType === MediaType.MAGAZINE &&
+        quotas.magazine.restricted
+      ) {
+        throw new QuotaRestrictedError('Magazine Quota exceeded.');
       }
     }
 
@@ -760,6 +822,35 @@ export class MediaRequest {
             ? requestBody.serverId
             : settings.lidarr.find(({ isDefault }) => isDefault)?.id
         );
+      } else if (requestBody.mediaType === MediaType.COMIC) {
+        const requestedServerId =
+          useAdvancedOptions && requestBody.serverId != null
+            ? requestBody.serverId
+            : undefined;
+        const requestedMylar =
+          requestedServerId != null
+            ? settings.mylar.find(({ id }) => id === requestedServerId)
+            : undefined;
+        const requestedKapowarr =
+          requestedServerId != null && !requestedMylar
+            ? settings.kapowarr.find(({ id }) => id === requestedServerId)
+            : undefined;
+
+        if (requestedMylar) {
+          addService('mylar', requestedMylar.id);
+        } else if (requestedKapowarr) {
+          addService('kapowarr', requestedKapowarr.id);
+        } else if (requestedServerId == null) {
+          const defaultMylar = settings.mylar.find((m) => m.isDefault);
+          const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+          if (defaultMylar) {
+            addService('mylar', defaultMylar.id);
+          } else if (defaultKapowarr) {
+            addService('kapowarr', defaultKapowarr.id);
+          }
+        }
+        // A requested serverId matching neither array locks nothing here;
+        // the creation block below raises the real ServiceConfigurationError.
       } else {
         const format = requestBody.format ?? 'ebook';
         if (format === 'both') {
@@ -1350,6 +1441,370 @@ export class MediaRequest {
           }
         }
 
+        request.media = savedMedia;
+        return saveRequestWithFreshMedia(manager, request);
+      });
+    }
+
+    if (requestBody.mediaType === MediaType.COMIC) {
+      const comicVineId = Number(requestBody.mediaId);
+      if (!Number.isSafeInteger(comicVineId) || comicVineId <= 0) {
+        throw new Error('Comic mediaId must be a valid ComicVine volume ID.');
+      }
+      const comicVineIdValue = String(comicVineId);
+
+      const blocklistedComic = await getRepository(Blocklist).findOne({
+        where: { externalId: comicVineIdValue, mediaType: MediaType.COMIC },
+      });
+      if (blocklistedComic) {
+        logger.warn('Request for comic blocked due to being blocklisted', {
+          comicVineId: comicVineIdValue,
+          label: 'Media Request',
+        });
+        throw new BlocklistedMediaError('This comic is blocklisted.');
+      }
+
+      const existingIdentifier = await mediaIdentifierRepository.findOne({
+        where: {
+          provider: MediaIdentifierProvider.COMICVINE,
+          value: comicVineIdValue,
+        },
+        relations: { media: true },
+        relationLoadStrategy: 'query',
+      });
+
+      let media = existingIdentifier?.media;
+
+      if (!media) {
+        media = new Media({
+          tmdbId: 0,
+          status: MediaStatus.PENDING,
+          status4k: MediaStatus.UNKNOWN,
+          mediaType: MediaType.COMIC,
+        });
+      } else if (media.status === MediaStatus.BLOCKLISTED) {
+        logger.warn('Request for comic blocked due to being blocklisted', {
+          comicVineId: comicVineIdValue,
+          label: 'Media Request',
+        });
+        throw new BlocklistedMediaError('This comic is blocklisted.');
+      } else if (
+        media.status === MediaStatus.UNKNOWN ||
+        media.status === MediaStatus.DELETED
+      ) {
+        media.status = MediaStatus.PENDING;
+      }
+
+      const useAdvancedOptions = canUseAdvancedRequestOptions(user);
+      const requestedServerId = useAdvancedOptions
+        ? requestBody.serverId
+        : undefined;
+
+      let comicBackendType: 'mylar' | 'kapowarr' | undefined;
+      let selectedServer: MylarSettings | KapowarrSettings | undefined;
+
+      if (requestedServerId != null) {
+        const requestedMylar = settings.mylar.find(
+          ({ id }) => id === requestedServerId
+        );
+        const requestedKapowarr = requestedMylar
+          ? undefined
+          : settings.kapowarr.find(({ id }) => id === requestedServerId);
+        if (!requestedMylar && !requestedKapowarr) {
+          throw new ServiceConfigurationError(
+            'Selected comics server does not exist.'
+          );
+        }
+        comicBackendType = requestedMylar ? 'mylar' : 'kapowarr';
+        selectedServer = requestedMylar ?? requestedKapowarr;
+      } else {
+        const defaultMylar = settings.mylar.find((m) => m.isDefault);
+        const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+        if (defaultMylar) {
+          comicBackendType = 'mylar';
+          selectedServer = defaultMylar;
+        } else if (defaultKapowarr) {
+          comicBackendType = 'kapowarr';
+          selectedServer = defaultKapowarr;
+        }
+      }
+
+      const serverId = selectedServer?.id;
+      const selectedDestination: RequestDestination | undefined =
+        serverId === undefined || comicBackendType === undefined
+          ? undefined
+          : {
+              serviceType: comicBackendType,
+              format: 'comic',
+              serverId,
+              rootFolder: selectedServer?.rootFolder ?? null,
+            };
+
+      const destinationRequests = media.id
+        ? await requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .where('request.media = :mediaId', { mediaId: media.id })
+            .getMany()
+        : [];
+
+      if (selectedDestination) {
+        const isLegacyDestinationAvailable =
+          !hasTrackedAvailableDestination(
+            destinationRequests,
+            selectedDestination
+          ) &&
+          media.status === MediaStatus.AVAILABLE &&
+          (media.serviceId == null || media.serviceId === serverId);
+
+        if (
+          isLegacyDestinationAvailable ||
+          isDestinationAvailableInTargets(
+            destinationRequests,
+            selectedDestination
+          )
+        ) {
+          throw new DuplicateMediaRequestError(
+            'This comic is already available at the selected destination.'
+          );
+        }
+
+        if (
+          isDestinationCoveredByActiveRequest(
+            destinationRequests,
+            selectedDestination
+          )
+        ) {
+          const promotablePendingRequest = findPromotablePendingRequest(
+            destinationRequests,
+            [selectedDestination],
+            user,
+            MediaType.COMIC
+          );
+          if (promotablePendingRequest) {
+            return promotePendingRequest(promotablePendingRequest, user);
+          }
+
+          throw new DuplicateMediaRequestError(
+            'Request for this comic already exists at the selected destination.'
+          );
+        }
+      } else if (
+        destinationRequests.some(
+          (request) =>
+            request.status === MediaRequestStatus.PENDING ||
+            request.status === MediaRequestStatus.APPROVED
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          'Request for this comic already exists.'
+        );
+      }
+
+      const autoApproved = hasAutoApprovePermission(
+        requestUser.permissions,
+        'comic'
+      );
+
+      const request = new MediaRequest({
+        type: MediaType.COMIC,
+        media,
+        requestedBy: requestUser,
+        status: autoApproved
+          ? MediaRequestStatus.APPROVED
+          : MediaRequestStatus.PENDING,
+        modifiedBy: autoApproved ? user : undefined,
+        is4k: false,
+        serverId,
+        rootFolder: selectedServer?.rootFolder,
+        serviceTargets:
+          serverId === undefined || comicBackendType === undefined
+            ? []
+            : [
+                {
+                  serviceType: comicBackendType,
+                  format: 'comic',
+                  serverId,
+                  rootFolder: selectedServer?.rootFolder ?? null,
+                  status: MediaStatus.PENDING,
+                },
+              ],
+        isAutoRequest: options.isAutoRequest ?? false,
+        ignoreQuota,
+      });
+
+      return dataSource.transaction(async (manager) => {
+        const savedMedia = await manager.getRepository(Media).save(media!);
+        if (!existingIdentifier) {
+          await manager.getRepository(MediaIdentifier).save(
+            new MediaIdentifier({
+              media: savedMedia,
+              provider: MediaIdentifierProvider.COMICVINE,
+              value: comicVineIdValue,
+              canonical: true,
+            })
+          );
+        }
+        request.media = savedMedia;
+        return saveRequestWithFreshMedia(manager, request);
+      });
+    }
+
+    if (requestBody.mediaType === MediaType.MAGAZINE) {
+      const title = cleanMagazineTitle(String(requestBody.mediaId));
+      const normalizedTitle = normalizeMagazineTitle(title);
+      const blocklistedMagazine = await getRepository(Blocklist).findOne({
+        where: { externalId: normalizedTitle, mediaType: MediaType.MAGAZINE },
+      });
+      if (blocklistedMagazine) {
+        throw new BlocklistedMediaError('This magazine is blocklisted.');
+      }
+
+      const existingIdentifier = await mediaIdentifierRepository.findOne({
+        where: {
+          provider: MediaIdentifierProvider.LAZYLIBRARIAN,
+          value: normalizedTitle,
+        },
+        relations: { media: true },
+        relationLoadStrategy: 'query',
+      });
+      let media = existingIdentifier?.media;
+      if (!media) {
+        media = new Media({
+          tmdbId: 0,
+          status: MediaStatus.PENDING,
+          status4k: MediaStatus.UNKNOWN,
+          mediaType: MediaType.MAGAZINE,
+          externalServiceSlug: title,
+        });
+      } else if (media.status === MediaStatus.BLOCKLISTED) {
+        throw new BlocklistedMediaError('This magazine is blocklisted.');
+      } else if (
+        media.status === MediaStatus.UNKNOWN ||
+        media.status === MediaStatus.DELETED
+      ) {
+        media.status = MediaStatus.PENDING;
+      }
+
+      const useAdvancedOptions = canUseAdvancedRequestOptions(user);
+      const requestedServerId = useAdvancedOptions
+        ? requestBody.serverId
+        : undefined;
+      const selectedServer =
+        requestedServerId == null
+          ? settings.lazylibrarian.find((service) => service.isDefault)
+          : settings.lazylibrarian.find(
+              (service) => service.id === requestedServerId
+            );
+      if (!selectedServer) {
+        throw new ServiceConfigurationError(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+
+      const selectedDestination: RequestDestination = {
+        serviceType: 'lazylibrarian',
+        format: 'magazine',
+        serverId: selectedServer.id,
+        rootFolder: null,
+      };
+      const destinationRequests = media.id
+        ? await requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .where('request.media = :mediaId', { mediaId: media.id })
+            .getMany()
+        : [];
+
+      const isLegacyDestinationAvailable =
+        !hasTrackedAvailableDestination(
+          destinationRequests,
+          selectedDestination
+        ) &&
+        media.status === MediaStatus.AVAILABLE &&
+        media.serviceId === selectedServer.id;
+      const isLegacyDestinationProcessing =
+        media.status === MediaStatus.PROCESSING &&
+        media.serviceId === selectedServer.id;
+      const isDestinationProcessing = destinationRequests.some((request) =>
+        (request.serviceTargets ?? []).some(
+          (target) =>
+            target.serviceType === 'lazylibrarian' &&
+            target.format === 'magazine' &&
+            target.serverId === selectedServer.id &&
+            target.status === MediaStatus.PROCESSING
+        )
+      );
+      if (
+        isLegacyDestinationAvailable ||
+        isLegacyDestinationProcessing ||
+        isDestinationProcessing ||
+        isDestinationAvailableInTargets(
+          destinationRequests,
+          selectedDestination
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          'This magazine is already available or being processed at the selected destination.'
+        );
+      }
+      if (
+        isDestinationCoveredByActiveRequest(
+          destinationRequests,
+          selectedDestination
+        )
+      ) {
+        const promotablePendingRequest = findPromotablePendingRequest(
+          destinationRequests,
+          [selectedDestination],
+          user,
+          MediaType.MAGAZINE
+        );
+        if (promotablePendingRequest) {
+          return promotePendingRequest(promotablePendingRequest, user);
+        }
+        throw new DuplicateMediaRequestError(
+          'A request for this magazine already exists.'
+        );
+      }
+
+      const autoApproved = hasAutoApprovePermission(
+        requestUser.permissions,
+        'magazine'
+      );
+      const request = new MediaRequest({
+        type: MediaType.MAGAZINE,
+        media,
+        requestedBy: requestUser,
+        status: autoApproved
+          ? MediaRequestStatus.APPROVED
+          : MediaRequestStatus.PENDING,
+        modifiedBy: autoApproved ? user : undefined,
+        is4k: false,
+        serverId: selectedServer.id,
+        serviceTargets: [
+          {
+            ...selectedDestination,
+            serverId: selectedServer.id,
+            status: MediaStatus.PENDING,
+          },
+        ],
+        isAutoRequest: options.isAutoRequest ?? false,
+        ignoreQuota,
+      });
+
+      return dataSource.transaction(async (manager) => {
+        const savedMedia = await manager.getRepository(Media).save(media!);
+        if (!existingIdentifier) {
+          await manager.getRepository(MediaIdentifier).save(
+            new MediaIdentifier({
+              media: savedMedia,
+              provider: MediaIdentifierProvider.LAZYLIBRARIAN,
+              value: normalizedTitle,
+              canonical: true,
+            })
+          );
+        }
         request.media = savedMedia;
         return saveRequestWithFreshMedia(manager, request);
       });

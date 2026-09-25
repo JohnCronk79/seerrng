@@ -8,6 +8,8 @@ import {
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -16,7 +18,12 @@ import type { ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 
 export type IssueMediaDetails =
-  MovieDetails | TvDetails | MusicDetails | BookDetails;
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
 
 export type IssueSummaryDetail = {
   label?: string;
@@ -32,9 +39,19 @@ export const isIssueMusic = (media: IssueMediaDetails): media is MusicDetails =>
 export const isIssueBook = (media: IssueMediaDetails): media is BookDetails =>
   (media as BookDetails).mediaType === 'book';
 
+export const isIssueComic = (media: IssueMediaDetails): media is ComicDetails =>
+  (media as ComicDetails).mediaType === 'comic';
+
+export const isIssueMagazine = (
+  media: IssueMediaDetails
+): media is MagazineDetails =>
+  (media as MagazineDetails).mediaType === 'magazine';
+
 export const isIssueMovie = (media: IssueMediaDetails): media is MovieDetails =>
   !isIssueMusic(media) &&
   !isIssueBook(media) &&
+  !isIssueComic(media) &&
+  !isIssueMagazine(media) &&
   (media as MovieDetails).title !== undefined;
 
 const linkedValues = (values: LinkedValue[]) =>
@@ -56,7 +73,7 @@ const linkedValues = (values: LinkedValue[]) =>
 
 interface IssueMediaSummaryProps {
   data: IssueMediaDetails;
-  mediaType: 'movie' | 'tv' | 'music' | 'book';
+  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   is4k?: boolean;
   mediaHref?: string;
   artwork?: string;
@@ -80,51 +97,70 @@ const IssueMediaSummary = ({
   const isMovie = isIssueMovie(data);
   const isMusic = isIssueMusic(data);
   const isBook = isIssueBook(data);
-  const title = isMovie || isMusic || isBook ? data.title : data.name;
+  const isComic = isIssueComic(data);
+  const isMagazine = isIssueMagazine(data);
+  const title =
+    isMovie || isMusic || isBook || isComic || isMagazine
+      ? data.title
+      : data.name;
   const releaseDate = isMovie
     ? data.releaseDate
     : isMusic
       ? data.releaseDate
       : isBook
         ? data.firstPublishYear?.toString()
-        : data.firstAirDate;
+        : isComic
+          ? data.startYear
+          : isMagazine
+            ? data.latestIssue
+            : data.firstAirDate;
   const releaseYear = releaseDate?.match(/^\d{4}/)?.[0];
   const runtime = isBook
     ? data.numberOfPages
       ? intl.formatNumber(data.numberOfPages)
       : unavailable
-    : isMusic
-      ? data.tracks.length > 0
-        ? `${intl.formatNumber(
-            Math.round(
-              data.tracks.reduce((total, track) => total + track.length, 0) /
-                60000
-            )
-          )} minutes`
+    : isMagazine
+      ? data.issueCount !== undefined
+        ? intl.formatNumber(data.issueCount)
         : unavailable
-      : isMovie
-        ? data.runtime
-          ? `${intl.formatNumber(data.runtime)} minutes`
+      : isMusic
+        ? data.tracks.length > 0
+          ? `${intl.formatNumber(
+              Math.round(
+                data.tracks.reduce((total, track) => total + track.length, 0) /
+                  60000
+              )
+            )} minutes`
           : unavailable
-        : data.episodeRunTime[0]
-          ? `${intl.formatNumber(data.episodeRunTime[0])} minutes`
-          : unavailable;
+        : isComic
+          ? data.issueCount
+            ? `${intl.formatNumber(data.issueCount)} issues`
+            : unavailable
+          : isMovie
+            ? data.runtime
+              ? `${intl.formatNumber(data.runtime)} minutes`
+              : unavailable
+            : data.episodeRunTime[0]
+              ? `${intl.formatNumber(data.episodeRunTime[0])} minutes`
+              : unavailable;
   const posterSrc =
-    isMusic || isBook
+    isMusic || isBook || isComic || isMagazine
       ? data.posterPath || '/images/seerr_poster_not_found.png'
       : getTmdbPosterImageUrl(data.posterPath) ||
         '/images/seerr_poster_not_found.png';
-  const posterType = isBook ? 'book' : isMusic ? 'music' : 'tmdb';
+  const posterType =
+    isBook || isComic || isMagazine ? 'book' : isMusic ? 'music' : 'tmdb';
   const artworkSrc =
     artwork ??
     (isMusic
       ? data.artistBackdrop || data.posterPath
-      : isBook
+      : isBook || isComic || isMagazine
         ? data.posterPath
         : data.backdropPath
           ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
           : posterSrc);
-  const artworkType = isBook ? 'book' : isMusic ? 'music' : 'tmdb';
+  const artworkType =
+    isBook || isComic || isMagazine ? 'book' : isMusic ? 'music' : 'tmdb';
   const mediaLabel = getIssueMediaAndFormatLabel(mediaType, is4k);
   const secondaryRows: SummaryRow[] = isMovie
     ? [
@@ -190,28 +226,37 @@ const IssueMediaSummary = ({
               values: [{ label: data.publisher ?? unavailable }],
             },
           ]
-        : [
-            {
-              label: 'Creator',
-              values:
-                data.createdBy.length > 0
-                  ? data.createdBy.slice(0, 2).map((person) => ({
-                      label: person.name,
-                      href: `/person/${person.id}`,
-                    }))
-                  : [{ label: unavailable }],
-            },
-            {
-              label: 'Network',
-              values:
-                data.networks.length > 0
-                  ? data.networks.slice(0, 2).map((network) => ({
-                      label: network.name,
-                      href: `/discover/tv/network/${network.id}`,
-                    }))
-                  : [{ label: unavailable }],
-            },
-          ];
+        : isMagazine
+          ? []
+          : isComic
+            ? [
+                {
+                  label: 'Publisher',
+                  values: [{ label: data.publisher ?? unavailable }],
+                },
+              ]
+            : [
+                {
+                  label: 'Creator',
+                  values:
+                    data.createdBy.length > 0
+                      ? data.createdBy.slice(0, 2).map((person) => ({
+                          label: person.name,
+                          href: `/person/${person.id}`,
+                        }))
+                      : [{ label: unavailable }],
+                },
+                {
+                  label: 'Network',
+                  values:
+                    data.networks.length > 0
+                      ? data.networks.slice(0, 2).map((network) => ({
+                          label: network.name,
+                          href: `/discover/tv/network/${network.id}`,
+                        }))
+                      : [{ label: unavailable }],
+                },
+              ];
   const genres: LinkedValue[] = isMusic
     ? (data.tags?.releaseGroup ?? []).slice(0, 3).map((genre) => ({
         label: genre.tag,
@@ -220,13 +265,19 @@ const IssueMediaSummary = ({
       ? (data.subjects ?? []).slice(0, 3).map((subject) => ({
           label: subject,
         }))
-      : data.genres.slice(0, 3).map((genre) => ({
-          label: genre.name,
-          href:
-            mediaType === 'movie'
-              ? `/discover/movies/genre/${genre.id}`
-              : `/discover/tv/genre/${genre.id}`,
-        }));
+      : isMagazine
+        ? []
+        : isComic
+          ? (data.aliases ?? []).slice(0, 3).map((alias) => ({
+              label: alias,
+            }))
+          : data.genres.slice(0, 3).map((genre) => ({
+              label: genre.name,
+              href:
+                mediaType === 'movie'
+                  ? `/discover/movies/genre/${genre.id}`
+                  : `/discover/tv/genre/${genre.id}`,
+            }));
   const bookWorkId = isBook
     ? normalizeOpenLibraryWorkId(data.id?.toString() ?? '')
     : undefined;
@@ -238,9 +289,13 @@ const IssueMediaSummary = ({
         ? `/tv/${data.id}`
         : mediaType === 'music' && isMusic
           ? `/music/${encodeApiPathSegment(data.id)}`
-          : bookWorkId
-            ? `/book/${encodeApiPathSegment(bookWorkId)}`
-            : undefined);
+          : isComic
+            ? `/comic/${encodeApiPathSegment(data.id)}`
+            : isMagazine
+              ? `/magazine/${encodeApiPathSegment(data.id)}`
+              : bookWorkId
+                ? `/book/${encodeApiPathSegment(bookWorkId)}`
+                : undefined);
 
   return (
     <article
@@ -303,13 +358,18 @@ const IssueMediaSummary = ({
                     {mediaLabel}
                   </dd>
                   <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
-                    {isBook ? 'First Published' : 'Release Date'}:
+                    {isBook
+                      ? 'First Published'
+                      : isMagazine
+                        ? 'Latest Issue'
+                        : 'Release Date'}
+                    :
                   </dt>
                   <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                     {releaseDate || unavailable}
                   </dd>
                   <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
-                    {isBook ? 'Pages' : 'Runtime'}:
+                    {isBook ? 'Pages' : isMagazine ? 'Issues' : 'Runtime'}:
                   </dt>
                   <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                     {runtime}

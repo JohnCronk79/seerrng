@@ -4,7 +4,9 @@ import { describe, it } from 'node:test';
 import {
   MAX_SERVARR_INSTANCES_PER_TYPE,
   assertServarrInstanceCapacity,
+  parseKapowarrSettings,
   parseLidarrSettings,
+  parseMylarSettings,
   parseSonarrSettings,
   preserveServarrConnectionSecret,
 } from './servarrSettings';
@@ -103,5 +105,67 @@ describe('Servarr settings validation', () => {
       }),
       { error: 'activeMetadataProfileId is invalid.' }
     );
+  });
+});
+
+const baseCollectorSettings = {
+  name: 'Comics Service',
+  hostname: 'comics.example',
+  port: 8090,
+  apiKey: 'api-key',
+  useSsl: false,
+  tags: [],
+  isDefault: true,
+  syncEnabled: true,
+  preventSearch: false,
+};
+
+describe('parseMylarSettings', () => {
+  it('accepts a valid instance without a root folder', () => {
+    const result = parseMylarSettings(baseCollectorSettings);
+    assert.ok('value' in result);
+    assert.strictEqual(result.value.rootFolder, undefined);
+  });
+
+  it('accepts an optional root folder', () => {
+    const result = parseMylarSettings({
+      ...baseCollectorSettings,
+      rootFolder: '/comics',
+    });
+    assert.ok('value' in result);
+    assert.strictEqual(result.value.rootFolder, '/comics');
+  });
+
+  it('rejects a missing required field', () => {
+    const withoutName = {
+      hostname: baseCollectorSettings.hostname,
+      port: baseCollectorSettings.port,
+      apiKey: baseCollectorSettings.apiKey,
+      useSsl: baseCollectorSettings.useSsl,
+      tags: baseCollectorSettings.tags,
+      isDefault: baseCollectorSettings.isDefault,
+      syncEnabled: baseCollectorSettings.syncEnabled,
+      preventSearch: baseCollectorSettings.preventSearch,
+    };
+    assert.deepStrictEqual(parseMylarSettings(withoutName), {
+      error: 'name must be a string.',
+    });
+  });
+});
+
+describe('parseKapowarrSettings', () => {
+  it('requires a root folder, unlike Mylar', () => {
+    assert.deepStrictEqual(parseKapowarrSettings(baseCollectorSettings), {
+      error: 'rootFolder must be a string.',
+    });
+  });
+
+  it('accepts a valid instance with a root folder', () => {
+    const result = parseKapowarrSettings({
+      ...baseCollectorSettings,
+      rootFolder: '/comics',
+    });
+    assert.ok('value' in result);
+    assert.strictEqual(result.value.rootFolder, '/comics');
   });
 });

@@ -142,6 +142,13 @@ const NotificationTypeSelector = ({
   const [allowedTypes, setAllowedTypes] = useState(enabledTypes);
 
   const availableTypes = useMemo(() => {
+    const isRequestTypeAutomaticallyApproved = (
+      requestPermissions: Permission[],
+      autoApprovePermissions: Permission[]
+    ) =>
+      !hasPermission(requestPermissions, { type: 'or' }) ||
+      hasPermission(autoApprovePermissions, { type: 'or' });
+
     const allRequestsAutoApproved =
       user &&
       // Has Manage Requests perm, which grants all Auto-Approve perms
@@ -157,60 +164,45 @@ const NotificationTypeSelector = ({
             Permission.REQUEST_4K_TV,
             Permission.REQUEST_MUSIC,
             Permission.REQUEST_BOOK,
+            Permission.REQUEST_COMIC,
+            Permission.REQUEST_MAGAZINE,
           ],
           { type: 'or' }
         ) ||
-        // Cannot submit non-4K movie requests OR has Auto-Approve perms for non-4K movies
-        ((!hasPermission([Permission.REQUEST, Permission.REQUEST_MOVIE], {
-          type: 'or',
-        }) ||
-          hasPermission(
-            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MOVIE],
-            { type: 'or' }
-          )) &&
-          // Cannot submit non-4K series requests OR has Auto-Approve perms for non-4K series
-          (!hasPermission([Permission.REQUEST, Permission.REQUEST_TV], {
-            type: 'or',
-          }) ||
-            hasPermission(
-              [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_TV],
-              { type: 'or' }
-            )) &&
-          // Cannot submit 4K movie requests OR has Auto-Approve perms for 4K movies
+        (isRequestTypeAutomaticallyApproved(
+          [Permission.REQUEST, Permission.REQUEST_MOVIE],
+          [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MOVIE]
+        ) &&
+          isRequestTypeAutomaticallyApproved(
+            [Permission.REQUEST, Permission.REQUEST_TV],
+            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_TV]
+          ) &&
           (!settings.currentSettings.movie4kEnabled ||
-            !hasPermission(
+            isRequestTypeAutomaticallyApproved(
               [Permission.REQUEST_4K, Permission.REQUEST_4K_MOVIE],
-              { type: 'or' }
-            ) ||
-            hasPermission(
-              [Permission.AUTO_APPROVE_4K, Permission.AUTO_APPROVE_4K_MOVIE],
-              { type: 'or' }
+              [Permission.AUTO_APPROVE_4K, Permission.AUTO_APPROVE_4K_MOVIE]
             )) &&
-          // Cannot submit 4K series requests OR has Auto-Approve perms for 4K series
           (!settings.currentSettings.series4kEnabled ||
-            !hasPermission([Permission.REQUEST_4K, Permission.REQUEST_4K_TV], {
-              type: 'or',
-            }) ||
-            hasPermission(
-              [Permission.AUTO_APPROVE_4K, Permission.AUTO_APPROVE_4K_TV],
-              { type: 'or' }
+            isRequestTypeAutomaticallyApproved(
+              [Permission.REQUEST_4K, Permission.REQUEST_4K_TV],
+              [Permission.AUTO_APPROVE_4K, Permission.AUTO_APPROVE_4K_TV]
             )) &&
-          // Cannot submit music requests OR has Auto-Approve perms for music
-          (!hasPermission([Permission.REQUEST, Permission.REQUEST_MUSIC], {
-            type: 'or',
-          }) ||
-            hasPermission(
-              [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MUSIC],
-              { type: 'or' }
-            )) &&
-          // Cannot submit book requests OR has Auto-Approve perms for books
-          (!hasPermission([Permission.REQUEST, Permission.REQUEST_BOOK], {
-            type: 'or',
-          }) ||
-            hasPermission(
-              [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_BOOK],
-              { type: 'or' }
-            ))));
+          isRequestTypeAutomaticallyApproved(
+            [Permission.REQUEST, Permission.REQUEST_MUSIC],
+            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MUSIC]
+          ) &&
+          isRequestTypeAutomaticallyApproved(
+            [Permission.REQUEST, Permission.REQUEST_BOOK],
+            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_BOOK]
+          ) &&
+          isRequestTypeAutomaticallyApproved(
+            [Permission.REQUEST, Permission.REQUEST_COMIC],
+            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_COMIC]
+          ) &&
+          isRequestTypeAutomaticallyApproved(
+            [Permission.REQUEST, Permission.REQUEST_MAGAZINE],
+            [Permission.AUTO_APPROVE, Permission.AUTO_APPROVE_MAGAZINE]
+          )));
 
     const types: NotificationItem[] = [
       {

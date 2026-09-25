@@ -34,6 +34,19 @@ describe('TV Details', () => {
           }
         );
       });
+    cy.get('[aria-label="Quality: HD"]').should('be.visible');
+  });
+
+  it('hides the playback quality selector when 4K is not configured', () => {
+    cy.loginAsAdmin();
+    cy.intercept('GET', '/api/v1/settings/public', (request) => {
+      request.continue((response) => {
+        response.body.series4kEnabled = false;
+      });
+    });
+    cy.visit('/tv/66732');
+
+    cy.get('[aria-label^="Quality:"]').should('not.exist');
   });
 
   it('shows seasons and expands episodes', () => {

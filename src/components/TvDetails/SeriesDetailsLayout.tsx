@@ -134,6 +134,13 @@ const SeriesDetailsLayout = ({
       ? '4k'
       : 'hd'
   );
+  const effectiveSelectedQuality =
+    show4kAvailability && selectedQuality === '4k' ? '4k' : 'hd';
+  useEffect(() => {
+    if (!show4kAvailability && selectedQuality !== 'hd') {
+      setSelectedQuality('hd');
+    }
+  }, [selectedQuality, show4kAvailability]);
   useEffect(() => {
     setShowCast(pins.cast);
   }, [pins.cast]);
@@ -154,7 +161,7 @@ const SeriesDetailsLayout = ({
     true
   );
   const playbackCatalog =
-    selectedQuality === '4k'
+    effectiveSelectedQuality === '4k'
       ? highQualityPlaybackCatalog
       : standardPlaybackCatalog;
   useEffect(() => {
@@ -423,26 +430,26 @@ const SeriesDetailsLayout = ({
             ratingData?.audienceScore !== undefined ||
             data.voteCount > 0) && (
             <div className="media-rating-row">
-              <MediaQualitySelect
-                value={selectedQuality}
-                options={[
-                  { label: 'HD', value: 'hd' },
-                  ...(show4kAvailability
-                    ? ([{ label: '4K', value: '4k' }] as const)
-                    : []),
-                ]}
-                onChange={setSelectedQuality}
-                label={intl.formatMessage(messages.quality)}
-              />
+              {show4kAvailability && (
+                <MediaQualitySelect
+                  value={effectiveSelectedQuality}
+                  options={[
+                    { label: 'HD', value: 'hd' },
+                    { label: '4K', value: '4k' },
+                  ]}
+                  onChange={setSelectedQuality}
+                  label={intl.formatMessage(messages.quality)}
+                />
+              )}
               {playbackActions?.(
                 effectivePlaybackItemIds,
-                selectedQuality === '4k'
+                effectiveSelectedQuality === '4k'
               )}
               {playbackActions && (
                 <PlayOnDeviceButton
                   mediaId={data.mediaInfo?.id}
                   itemIds={effectivePlaybackItemIds}
-                  is4k={selectedQuality === '4k'}
+                  is4k={effectiveSelectedQuality === '4k'}
                 />
               )}
               {ratingData?.criticsRating &&

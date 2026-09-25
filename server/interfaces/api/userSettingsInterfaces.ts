@@ -54,6 +54,8 @@ export interface UserSettingsGeneralResponse {
   musicQuotaDays?: number;
   bookQuotaLimit?: number;
   bookQuotaDays?: number;
+  comicQuotaLimit?: number;
+  comicQuotaDays?: number;
   globalMovieQuotaDays?: number;
   globalMovieQuotaLimit?: number;
   globalTvQuotaLimit?: number;

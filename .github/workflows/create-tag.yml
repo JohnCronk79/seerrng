@@ -119,9 +119,10 @@ jobs:
         env:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          previous_tag="$(git describe --tags --match 'v[0-9]*' --abbrev=0)"
+          previous_tag="$(scripts/latest-published-release-tag.sh)"
           current_changelog="${RUNNER_TEMP}/seerrng-current-changelog.md"
           git-cliff \
             -c .github/cliff.toml \

@@ -13,6 +13,7 @@ import {
 import logger from '@server/logger';
 import { In } from 'typeorm';
 import { getTmdbAuthHeaders, getTmdbAuthParams } from './auth';
+import { logTmdbRequestFailure } from './diagnostics';
 import type { TmdbSearchPersonResponse } from './interfaces';
 
 interface SearchPersonOptions {
@@ -114,6 +115,7 @@ class TmdbPersonMapper extends ExternalAPI {
     super('https://api.themoviedb.org/3', getTmdbAuthParams(), {
       headers: getTmdbAuthHeaders(),
       nodeCache: cacheManager.getCache('tmdb').data,
+      onRequestFailure: logTmdbRequestFailure,
       rateLimit: {
         maxRequests: 20,
         maxRPS: 50,

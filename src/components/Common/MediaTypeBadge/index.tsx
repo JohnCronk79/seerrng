@@ -4,7 +4,9 @@ import {
   BookOpenIcon,
   FilmIcon,
   MusicalNoteIcon,
+  NewspaperIcon,
   RectangleStackIcon,
+  Square3Stack3DIcon,
   TvIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -12,7 +14,14 @@ import { useIntl } from 'react-intl';
 import { twMerge } from 'tailwind-merge';
 
 export type MediaTypeBadgeType =
-  'movie' | 'tv' | 'collection' | 'album' | 'artist' | 'book';
+  | 'movie'
+  | 'tv'
+  | 'collection'
+  | 'album'
+  | 'artist'
+  | 'book'
+  | 'comic'
+  | 'magazine';
 
 export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
   movie: 'border-blue-500/70 bg-blue-700/35 text-blue-50',
@@ -21,6 +30,8 @@ export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
   album: 'border-emerald-500/70 bg-emerald-700/35 text-emerald-50',
   artist: 'border-fuchsia-500/70 bg-fuchsia-700/35 text-fuchsia-50',
   book: 'border-amber-500/70 bg-amber-700/35 text-amber-50',
+  comic: 'border-rose-500/70 bg-rose-700/35 text-rose-50',
+  magazine: 'border-cyan-400/70 bg-cyan-700/35 text-cyan-50',
 };
 
 export const getMediaTypeBadgeType = (
@@ -36,7 +47,9 @@ export const getMediaTypeBadgeType = (
     mediaType === 'collection' ||
     mediaType === 'album' ||
     mediaType === 'artist' ||
-    mediaType === 'book'
+    mediaType === 'book' ||
+    mediaType === 'comic' ||
+    mediaType === 'magazine'
   ) {
     return mediaType;
   }
@@ -88,6 +101,16 @@ const badgeConfig = {
     message: globalMessages.book,
     icon: BookOpenIcon,
     tone: mediaTypeBadgeTone.book,
+  },
+  comic: {
+    message: globalMessages.comic,
+    icon: Square3Stack3DIcon,
+    tone: mediaTypeBadgeTone.comic,
+  },
+  magazine: {
+    message: globalMessages.magazine,
+    icon: NewspaperIcon,
+    tone: mediaTypeBadgeTone.magazine,
   },
 } as const satisfies Record<
   MediaTypeBadgeType,

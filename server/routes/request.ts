@@ -48,6 +48,7 @@ import {
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
+import { cleanMagazineTitle } from '@server/lib/magazineIdentity';
 import { hydrateMediaRequestRelations } from '@server/lib/mediaRequestHydration';
 import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
@@ -111,6 +112,8 @@ const requestMediaTypeFilters = [
   'tv',
   'music',
   'book',
+  'comic',
+  'magazine',
 ] as const;
 const requestStatusFilters = [
   'all',
@@ -194,6 +197,10 @@ const canRemoveRequestFromService = (
             (!hasAudiobookLink || canRemoveAudiobook)
           : canRemoveEbook;
     }
+    case MediaType.COMIC:
+      return media.comicServiceType === 'kapowarr'
+        ? settings.kapowarr.some((server) => server.id === media.serviceId)
+        : settings.mylar.some((server) => server.id === media.serviceId);
     default:
       return false;
   }
@@ -785,6 +792,60 @@ const sanitizeMediaRequestBody = (
     }
   }
 
+  if (mediaType === MediaType.COMIC) {
+    const mediaId = parsePositiveRouteId(bodyObject.mediaId, maxRequestIdValue);
+    if (bodyObject.mediaId !== undefined && mediaId === undefined) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId must be a positive integer ComicVine volume ID.',
+        },
+      };
+    }
+    if (options.requireCreateIdentity && mediaId === undefined) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId is required for comic requests.',
+        },
+      };
+    }
+    if (mediaId !== undefined) {
+      bodyObject.mediaId = mediaId;
+    }
+  }
+
+  if (mediaType === MediaType.MAGAZINE) {
+    const parsedTitle = parseOptionalRequestString(
+      bodyObject.mediaId,
+      'mediaId',
+      256
+    );
+    if ('error' in parsedTitle) {
+      return parsedTitle;
+    }
+    if (options.requireCreateIdentity && !parsedTitle.value) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId is required for magazine requests.',
+        },
+      };
+    }
+    if (parsedTitle.value !== undefined) {
+      const title = cleanMagazineTitle(parsedTitle.value);
+      if (!title) {
+        return {
+          error: {
+            status: 400,
+            message: 'Magazine title must contain 1 to 256 characters.',
+          },
+        };
+      }
+      bodyObject.mediaId = title;
+    }
+  }
+
   const serverId = parseOptionalRequestOptionId(
     bodyObject.serverId,
     'serverId',
@@ -1219,6 +1280,46 @@ const validateExternalServiceConfiguration = (
     if (selectedReadarrServiceType !== requestedFormat) {
       throw new ServiceConfigurationError(
         `The selected Bookshelf server is configured for ${selectedReadarrServiceType} requests, not ${requestedFormat} requests.`
+      );
+    }
+  }
+
+  if (requestType === MediaType.COMIC) {
+    if (serverId === undefined || serverId === null) {
+      if (
+        !settings.mylar.some((mylar) => mylar.isDefault) &&
+        !settings.kapowarr.some((kapowarr) => kapowarr.isDefault)
+      ) {
+        throw new ServiceConfigurationError(
+          'No default Mylar or Kapowarr server is configured for comic requests.'
+        );
+      }
+      return;
+    }
+
+    if (
+      !settings.mylar.some((mylar) => mylar.id === serverId) &&
+      !settings.kapowarr.some((kapowarr) => kapowarr.id === serverId)
+    ) {
+      throw new ServiceConfigurationError(
+        'The selected comics server no longer exists.'
+      );
+    }
+  }
+
+  if (requestType === MediaType.MAGAZINE) {
+    if (serverId === undefined || serverId === null) {
+      if (!settings.lazylibrarian.some((service) => service.isDefault)) {
+        throw new ServiceConfigurationError(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+      return;
+    }
+
+    if (!settings.lazylibrarian.some((service) => service.id === serverId)) {
+      throw new ServiceConfigurationError(
+        'The selected LazyLibrarian server no longer exists.'
       );
     }
   }

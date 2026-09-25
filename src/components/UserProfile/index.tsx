@@ -15,10 +15,13 @@ import { ArrowRightCircleIcon } from '@heroicons/react/24/outline';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
 import type {
   QuotaResponse,
+  QuotaStatus,
   UserRequestsResponse,
   UserWatchDataResponse,
 } from '@server/interfaces/api/userInterfaces';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -39,18 +42,84 @@ const messages = defineMessages('components.UserProfile', {
   seriesrequest: 'Series Requests',
   musicrequests: 'Music Requests',
   bookrequests: 'Book Requests',
+  comicrequests: 'Comic Requests',
+  magazinerequests: 'Magazine Requests',
   recentlywatched: 'Recently Watched',
   plexwatchlist: 'Watchlist',
   localWatchlist: "{username}'s Watchlist",
   emptywatchlist: 'Items added to this watchlist will appear here.',
 });
 
-type MediaTitle = MovieDetails | TvDetails | MusicDetails | BookDetails;
+type MediaTitle =
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
 
 const hasBackdropPath = (
   media: MediaTitle
 ): media is MovieDetails | TvDetails => {
   return 'backdropPath' in media && !!media.backdropPath;
+};
+
+const QuotaSummaryCard = ({
+  title,
+  quota,
+}: {
+  title: string;
+  quota: QuotaStatus;
+}) => {
+  const intl = useIntl();
+  const label = quota.limit
+    ? intl.formatMessage(messages.pastdays, { type: title, days: quota.days })
+    : title;
+
+  return (
+    <div
+      className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+        quota.restricted
+          ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+          : 'ring-gray-700'
+      } sm:p-6`}
+    >
+      <dt
+        className={`truncate text-sm font-bold ${
+          quota.restricted ? 'text-red-500' : 'text-gray-300'
+        }`}
+      >
+        {label}
+      </dt>
+      <dd
+        className={`mt-1 flex items-center text-sm ${
+          quota.restricted ? 'text-red-500' : 'text-white'
+        }`}
+      >
+        {quota.limit ? (
+          <>
+            <ProgressCircle
+              progress={Math.round(
+                ((quota.remaining ?? 0) / quota.limit) * 100
+              )}
+              useHeatLevel
+              className="mr-2 h-8 w-8"
+            />
+            <span className="text-3xl font-semibold">
+              {intl.formatMessage(messages.limit, {
+                remaining: quota.remaining,
+                limit: quota.limit,
+              })}
+            </span>
+          </>
+        ) : (
+          <span className="text-3xl font-semibold">
+            {intl.formatMessage(messages.unlimited)}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
 };
 
 const UserProfile = () => {
@@ -404,6 +473,14 @@ const UserProfile = () => {
                   )}
                 </dd>
               </div>
+              <QuotaSummaryCard
+                title={intl.formatMessage(messages.comicrequests)}
+                quota={quota.comic}
+              />
+              <QuotaSummaryCard
+                title={intl.formatMessage(messages.magazinerequests)}
+                quota={quota.magazine}
+              />
             </dl>
           </div>
         )}

@@ -227,6 +227,12 @@ export class User {
   @Column({ nullable: true })
   public bookQuotaDays?: number;
 
+  @Column({ nullable: true })
+  public comicQuotaLimit?: number;
+
+  @Column({ nullable: true })
+  public comicQuotaDays?: number;
+
   @OneToOne(() => UserSettings, (settings) => settings.user, {
     cascade: true,
     eager: true,
@@ -634,6 +640,56 @@ export class User {
         })
       : 0;
 
+    const comicQuotaLimit = !canBypass
+      ? (this.comicQuotaLimit ?? defaultQuotas.comic.quotaLimit)
+      : 0;
+    const comicQuotaDays = this.comicQuotaDays ?? defaultQuotas.comic.quotaDays;
+
+    const comicDate = new Date();
+    if (comicQuotaDays) {
+      comicDate.setDate(comicDate.getDate() - comicQuotaDays);
+    }
+
+    const comicQuotaUsed = comicQuotaLimit
+      ? await requestRepository.count({
+          where: {
+            requestedBy: {
+              id: this.id,
+            },
+            ...(comicQuotaDays ? { createdAt: AfterDate(comicDate) } : {}),
+            type: MediaType.COMIC,
+            status: Not(
+              In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
+            ),
+            ignoreQuota: false,
+          },
+        })
+      : 0;
+
+    const magazineQuotaLimit = !canBypass
+      ? defaultQuotas.magazine.quotaLimit
+      : 0;
+    const magazineQuotaDays = defaultQuotas.magazine.quotaDays;
+    const magazineDate = new Date();
+    if (magazineQuotaDays) {
+      magazineDate.setDate(magazineDate.getDate() - magazineQuotaDays);
+    }
+    const magazineQuotaUsed = magazineQuotaLimit
+      ? await requestRepository.count({
+          where: {
+            requestedBy: { id: this.id },
+            ...(magazineQuotaDays
+              ? { createdAt: AfterDate(magazineDate) }
+              : {}),
+            type: MediaType.MAGAZINE,
+            status: Not(
+              In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
+            ),
+            ignoreQuota: false,
+          },
+        })
+      : 0;
+
     return {
       movie: {
         days: movieQuotaDays,
@@ -674,6 +730,28 @@ export class User {
           ? Math.max(0, bookQuotaLimit - bookQuotaUsed)
           : undefined,
         restricted: !!(bookQuotaLimit && bookQuotaLimit - bookQuotaUsed <= 0),
+      },
+      comic: {
+        days: comicQuotaDays,
+        limit: comicQuotaLimit,
+        used: comicQuotaUsed,
+        remaining: comicQuotaLimit
+          ? Math.max(0, comicQuotaLimit - comicQuotaUsed)
+          : undefined,
+        restricted: !!(
+          comicQuotaLimit && comicQuotaLimit - comicQuotaUsed <= 0
+        ),
+      },
+      magazine: {
+        days: magazineQuotaDays,
+        limit: magazineQuotaLimit,
+        used: magazineQuotaUsed,
+        remaining: magazineQuotaLimit
+          ? Math.max(0, magazineQuotaLimit - magazineQuotaUsed)
+          : undefined,
+        restricted: !!(
+          magazineQuotaLimit && magazineQuotaLimit - magazineQuotaUsed <= 0
+        ),
       },
     };
   }

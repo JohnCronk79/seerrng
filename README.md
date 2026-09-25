@@ -123,6 +123,7 @@ services:
     environment:
       LOG_LEVEL: info
       PORT: 5055
+      # Optional overrides; SeerrNG includes a default TMDB application key.
       TMDB_API_KEY: ${TMDB_API_KEY}
       TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN}
     ports:
@@ -394,8 +395,8 @@ Common runtime variables:
 | `PORT` | HTTP port. Defaults to `5055`. |
 | `LOG_LEVEL` | Server log level. |
 | `CONFIG_DIRECTORY` | Alternate config directory for non-container installs. |
-| `TMDB_API_KEY` | TMDB v3 API key. |
-| `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token. |
+| `TMDB_API_KEY` | Optional TMDB v3 API key override. SeerrNG uses its bundled application key when this is unset. |
+| `TMDB_READ_ACCESS_TOKEN` | Optional TMDB v4 bearer-token override. When set, it takes precedence over `TMDB_API_KEY`. |
 | `SEARCH_CREDIT_CONCURRENCY` | Maximum concurrent TMDB credit lookups per server process during movie/TV searches; defaults to `10` and is capped at `40`. |
 | `METRICS_ENABLED` | Enables the Prometheus `/metrics` endpoint when set to `true`. |
 | `METRICS_AUTH_TOKEN` | Long random bearer token required by `/metrics` when metrics are enabled. |

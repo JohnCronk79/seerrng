@@ -25,6 +25,13 @@ export const DEFAULT_EXTERNAL_API_MAX_CONTENT_LENGTH = 16 * 1024 * 1024;
 export const DEFAULT_EXTERNAL_API_MAX_BODY_LENGTH = 1024 * 1024;
 export const MAX_PENDING_EXTERNAL_API_REQUESTS = 256;
 
+export type ExternalAPIRequestFailure = {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  hostname: string;
+  path: string;
+  error: unknown;
+};
+
 const CACHE_KEY_DIGEST_PREFIX = ':sha256:';
 const MAX_CACHE_KEY_VALUES = 100_000;
 const MAX_CACHE_KEY_DEPTH = 64;
@@ -90,6 +97,7 @@ export interface ExternalAPIOptions {
   // not an admin-entered typo. For those, defer the failure to request time
   // instead of throwing during construction.
   allowUnconfiguredBaseUrl?: boolean;
+  onRequestFailure?: (failure: ExternalAPIRequestFailure) => void;
 }
 
 const getHttpOrigin = (
@@ -299,6 +307,7 @@ class ExternalAPI {
   private cacheScope: string;
   private cache?: CacheStore;
   private backgroundCacheRefreshEnabled: boolean;
+  private onRequestFailure?: ExternalAPIOptions['onRequestFailure'];
   private static pendingRequests = new Map<string | symbol, Promise<unknown>>();
 
   constructor(
@@ -373,6 +382,7 @@ class ExternalAPI {
       containsCredentialFields(params) ||
       containsCredentialFields(options.headers)
     );
+    this.onRequestFailure = options.onRequestFailure;
   }
 
   protected async request<T>(
@@ -404,21 +414,36 @@ class ExternalAPI {
 
     const requestTarget = stringifySafeHttpUrl(safeUrl);
 
-    switch (method) {
-      case 'GET':
-        // Servarr and other provider APIs can briefly refuse or time out a
-        // read while they are starting, refreshing, or applying configuration.
-        // Reads are safe to repeat, so absorb one transient transport/server
-        // failure before the caller turns it into a user-facing error.
-        return withTransientHttpRetry(() =>
-          this.axios.get<T>(requestTarget, config)
-        );
-      case 'POST':
-        return this.axios.post<T>(requestTarget, data, config);
-      case 'PUT':
-        return this.axios.put<T>(requestTarget, data, config);
-      case 'DELETE':
-        return this.axios.delete<T>(requestTarget, config);
+    try {
+      switch (method) {
+        case 'GET':
+          // Servarr and other provider APIs can briefly refuse or time out a
+          // read while they are starting, refreshing, or applying configuration.
+          // Reads are safe to repeat, so absorb one transient transport/server
+          // failure before the caller turns it into a user-facing error.
+          return await withTransientHttpRetry(() =>
+            this.axios.get<T>(requestTarget, config)
+          );
+        case 'POST':
+          return await this.axios.post<T>(requestTarget, data, config);
+        case 'PUT':
+          return await this.axios.put<T>(requestTarget, data, config);
+        case 'DELETE':
+          return await this.axios.delete<T>(requestTarget, config);
+      }
+    } catch (error) {
+      try {
+        this.onRequestFailure?.({
+          method,
+          hostname: safeUrl.hostname,
+          path: safeUrl.pathname,
+          error,
+        });
+      } catch {
+        // Diagnostics must not replace the original upstream request error.
+      }
+
+      throw error;
     }
   }
 

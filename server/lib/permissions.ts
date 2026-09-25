@@ -35,6 +35,12 @@ export enum Permission {
   AUTO_APPROVE_BOOK = 17179869184,
   REQUEST_BOOK = 34359738368,
   AUTO_REQUEST_BOOK = 68719476736,
+  AUTO_APPROVE_COMIC = 137438953472,
+  REQUEST_COMIC = 274877906944,
+  AUTO_REQUEST_COMIC = 549755813888,
+  AUTO_APPROVE_MAGAZINE = 1099511627776,
+  REQUEST_MAGAZINE = 2199023255552,
+  AUTO_REQUEST_MAGAZINE = 4398046511104,
 }
 
 export const MAX_PERMISSION_VALUE = Object.values(Permission)
@@ -103,7 +109,8 @@ export const hasPermission = (
   return !!(bigValue & BigInt(Permission.ADMIN)) || !!(bigValue & bigTotal);
 };
 
-export type RequestApprovalMediaType = 'movie' | 'tv' | 'music' | 'book';
+export type RequestApprovalMediaType =
+  'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
 
 export const hasAutoApprovePermission = (
   permissions: number,
@@ -121,7 +128,11 @@ export const hasAutoApprovePermission = (
           : Permission.AUTO_APPROVE_TV
         : mediaType === 'music'
           ? Permission.AUTO_APPROVE_MUSIC
-          : Permission.AUTO_APPROVE_BOOK;
+          : mediaType === 'comic'
+            ? Permission.AUTO_APPROVE_COMIC
+            : mediaType === 'magazine'
+              ? Permission.AUTO_APPROVE_MAGAZINE
+              : Permission.AUTO_APPROVE_BOOK;
   const generalPermission = is4k
     ? Permission.AUTO_APPROVE_4K
     : Permission.AUTO_APPROVE;

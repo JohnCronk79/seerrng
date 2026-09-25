@@ -6,6 +6,8 @@ import IssueAffectedEpisodes from '@app/components/IssueDetails/IssueAffectedEpi
 import IssueComment from '@app/components/IssueDetails/IssueComment';
 import IssueMediaSummary, {
   isIssueBook,
+  isIssueComic,
+  isIssueMagazine,
   isIssueMovie,
   isIssueMusic,
   type IssueMediaDetails,
@@ -80,6 +82,12 @@ const IssueDetails = () => {
   const normalizedBookId = bookId
     ? normalizeOpenLibraryWorkId(bookId)
     : undefined;
+  const comicId = issueData?.media.identifiers?.find(
+    (identifier) => identifier.provider === 'comicvine'
+  )?.value;
+  const magazineTitle = issueData?.media.identifiers?.find(
+    (identifier) => identifier.provider === 'lazylibrarian'
+  )?.value;
   const detailUrl =
     issueData?.media.mediaType === MediaType.MOVIE
       ? `/api/v1/movie/${issueData.media.tmdbId}`
@@ -89,7 +97,12 @@ const IssueDetails = () => {
           ? `/api/v1/music/${encodeApiPathSegment(musicId)}`
           : issueData?.media.mediaType === MediaType.BOOK && normalizedBookId
             ? `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}`
-            : null;
+            : issueData?.media.mediaType === MediaType.COMIC && comicId
+              ? `/api/v1/comic/${encodeApiPathSegment(comicId)}`
+              : issueData?.media.mediaType === MediaType.MAGAZINE &&
+                  magazineTitle
+                ? `/api/v1/magazine/${encodeApiPathSegment(magazineTitle)}`
+                : null;
   const { data, error } = useSWR<IssueMediaDetails>(detailUrl);
   if (issueData && !detailUrl) {
     return <ErrorPage statusCode={404} />;
@@ -111,7 +124,12 @@ const IssueDetails = () => {
   const isMovie = isIssueMovie(data);
   const isMusic = isIssueMusic(data);
   const isBook = isIssueBook(data);
-  const title = isMovie || isMusic || isBook ? data.title : data.name;
+  const isComic = isIssueComic(data);
+  const isMagazine = isIssueMagazine(data);
+  const title =
+    isMovie || isMusic || isBook || isComic || isMagazine
+      ? data.title
+      : data.name;
   const mediaHref =
     issueData.media.mediaType === MediaType.MOVIE
       ? `/movie/${issueData.media.tmdbId}`
@@ -119,12 +137,16 @@ const IssueDetails = () => {
         ? `/tv/${issueData.media.tmdbId}`
         : issueData.media.mediaType === MediaType.MUSIC && musicId
           ? `/music/${encodeApiPathSegment(musicId)}`
-          : normalizedBookId
-            ? `/book/${encodeApiPathSegment(normalizedBookId)}`
-            : '/';
+          : issueData.media.mediaType === MediaType.COMIC && comicId
+            ? `/comic/${encodeApiPathSegment(comicId)}`
+            : issueData.media.mediaType === MediaType.MAGAZINE && magazineTitle
+              ? `/magazine/${encodeApiPathSegment(magazineTitle)}`
+              : normalizedBookId
+                ? `/book/${encodeApiPathSegment(normalizedBookId)}`
+                : '/';
   const backdropPath = isMusic
     ? data.artistBackdrop
-    : isBook
+    : isBook || isComic || isMagazine
       ? data.posterPath
       : data.backdropPath
         ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
@@ -155,7 +177,11 @@ const IssueDetails = () => {
         ? 'Sonarr'
         : issueData.media.mediaType === MediaType.MUSIC
           ? 'Lidarr'
-          : 'Bookshelf';
+          : issueData.media.mediaType === MediaType.COMIC
+            ? 'Mylar/Kapowarr'
+            : issueData.media.mediaType === MediaType.MAGAZINE
+              ? 'LazyLibrarian'
+              : 'Bookshelf';
   const updateIssueStatus = async (status: 'open' | 'resolved') => {
     try {
       await axios.post(`/api/v1/issue/${issueData.id}/${status}`);
@@ -207,7 +233,13 @@ const IssueDetails = () => {
               aria-hidden
             >
               <CachedImage
-                type={isBook ? 'book' : isMusic ? 'music' : 'tmdb'}
+                type={
+                  isBook || isComic || isMagazine
+                    ? 'book'
+                    : isMusic
+                      ? 'music'
+                      : 'tmdb'
+                }
                 alt=""
                 src={backdropPath}
                 fill
@@ -269,7 +301,9 @@ const IssueDetails = () => {
             {issueData.media.mediaType === MediaType.TV &&
               !isMovie &&
               !isMusic &&
-              !isBook && (
+              !isBook &&
+              !isComic &&
+              !isMagazine && (
                 <IssueAffectedEpisodes issue={issueData} tvId={data.id} />
               )}
 

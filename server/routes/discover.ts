@@ -1,5 +1,7 @@
+import ComicVineAPI from '@server/api/comicvine';
 import { getCoverArtArchiveThumbnailUrl } from '@server/api/coverartarchive/urls';
 import { DEFAULT_EXTERNAL_API_TIMEOUT_MS } from '@server/api/externalapi';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import type {
   LbFreshReleasesResponse,
@@ -30,6 +32,9 @@ import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import type MediaEntity from '@server/entity/Media';
 import Media from '@server/entity/Media';
+import MediaIdentifier, {
+  MediaIdentifierProvider,
+} from '@server/entity/MediaIdentifier';
 import { MediaSearchMetadata } from '@server/entity/MediaSearchMetadata';
 import { User } from '@server/entity/User';
 import type {
@@ -37,6 +42,7 @@ import type {
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
 import { findBookMediaByOpenLibraryIds } from '@server/lib/bookMediaMatcher';
+import { findComicMediaByComicVineIds } from '@server/lib/comicMediaMatcher';
 import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
@@ -44,6 +50,7 @@ import {
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { extractImageCacheUrls } from '@server/lib/imageCacheUrls';
 import { enqueueImageCacheWarm } from '@server/lib/imageCacheWarmer';
+import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
 import { hydrateMediaSummaryRelations } from '@server/lib/mediaSummaryHydration';
 import {
   getAvailableMusicQualities,
@@ -68,6 +75,8 @@ import {
 import { getCombinedWatchlist } from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
+import { mapComicVineVolumeResult } from '@server/models/Comic';
+import { mapLazyLibrarianMagazine } from '@server/models/Magazine';
 import { mapProductionCompany } from '@server/models/Movie';
 import {
   mapAlbumResult,
@@ -82,6 +91,8 @@ import {
   mapWithConcurrency,
   settlePromisesWithin,
 } from '@server/utils/concurrency';
+import { filterEntityResponse } from '@server/utils/entityResponse';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { parsePositiveInt } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
@@ -231,7 +242,7 @@ const parseTmdbKeywordFilter = (
 };
 
 const getErrorLogFields = (error: unknown) => ({
-  errorMessage: error instanceof Error ? error.message : 'Unknown error',
+  ...getHttpErrorDetails(error),
   errorStack: error instanceof Error ? error.stack : undefined,
 });
 
@@ -1564,6 +1575,7 @@ discoverRoutes.get('/movies', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve popular movies.',
+      cause: e,
     });
   }
 });
@@ -1992,6 +2004,7 @@ discoverRoutes.get('/tv', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve popular series.',
+      cause: e,
     });
   }
 });
@@ -2374,6 +2387,7 @@ discoverRoutes.get('/trending', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve trending items.',
+      cause: e,
     });
   }
 });
@@ -2489,6 +2503,7 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
       return next({
         status: 500,
         message: 'Unable to retrieve movie genre slider.',
+        cause: e,
       });
     }
   }
@@ -2542,6 +2557,7 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
       return next({
         status: 500,
         message: 'Unable to retrieve series genre slider.',
+        cause: e,
       });
     }
   }
@@ -3485,6 +3501,169 @@ discoverRoutes.get('/books', async (req, res) => {
       status: 503,
       message:
         'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+    });
+  }
+});
+
+discoverRoutes.get('/comics', async (req, res) => {
+  const { comicVineApiKey } = getSettings().main;
+  if (!comicVineApiKey) {
+    return res
+      .status(200)
+      .json({ page: 1, totalPages: 0, totalResults: 0, results: [] });
+  }
+
+  const itemsPerPage = 20;
+  const page = parsePositiveInt(req.query.page, 1, 500);
+  const parsedSearchQuery = parseOptionalDiscoverString(
+    req.query.query,
+    'Query'
+  );
+  if ('error' in parsedSearchQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedSearchQuery.error });
+  }
+  const query = parsedSearchQuery.value || '*';
+
+  try {
+    const comicVine = new ComicVineAPI(comicVineApiKey);
+    const response = await comicVine.searchVolumes({
+      query,
+      page,
+      limit: itemsPerPage,
+    });
+    const mediaByComicVineId = await findComicMediaByComicVineIds(
+      response.results.map((volume) => volume.id),
+      req.user
+    );
+
+    return res.status(200).json({
+      page,
+      totalPages: Math.max(
+        Math.ceil(response.number_of_total_results / itemsPerPage),
+        1
+      ),
+      totalResults: response.number_of_total_results,
+      results: response.results.map((volume) =>
+        mapComicVineVolumeResult(volume, mediaByComicVineId.get(volume.id))
+      ),
+    });
+  } catch (e) {
+    logger.error('Failed to fetch comic discovery results', {
+      label: 'Discover Comics',
+      ...getErrorLogFields(e),
+    });
+    return res.status(503).json({
+      status: 503,
+      message:
+        'ComicVine, the service used for comic searches, timed out or is unavailable. Please try again.',
+    });
+  }
+});
+
+discoverRoutes.get('/magazines', async (req, res) => {
+  const settings = getExternalRuntimeConfig();
+  if (settings.lazylibrarian.length === 0) {
+    return res
+      .status(200)
+      .json({ page: 1, totalPages: 0, totalResults: 0, results: [] });
+  }
+
+  const parsedSearchQuery = parseOptionalDiscoverString(
+    req.query.query,
+    'Query',
+    256
+  );
+  if ('error' in parsedSearchQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedSearchQuery.error });
+  }
+  const query = parsedSearchQuery.value?.trim().toLowerCase() ?? '';
+  const page = parsePositiveInt(req.query.page, 1, 500);
+  const itemsPerPage = 20;
+
+  try {
+    const magazinesByTitle = new Map<
+      string,
+      Awaited<ReturnType<LazyLibrarianAPI['getMagazines']>>[number]
+    >();
+    for (const service of settings.lazylibrarian) {
+      const magazines = await runWithServarrServiceSnapshot(
+        'lazylibrarian',
+        service,
+        async (current) =>
+          new LazyLibrarianAPI({
+            url: LazyLibrarianAPI.buildUrl(current),
+            apiKey: current.apiKey,
+          }).getMagazines()
+      );
+      for (const magazine of magazines) {
+        const key = normalizeMagazineTitle(magazine.title);
+        if (key && !magazinesByTitle.has(key)) {
+          magazinesByTitle.set(key, magazine);
+        }
+      }
+    }
+
+    const matched = [...magazinesByTitle.entries()]
+      .filter(([key, magazine]) =>
+        query ? `${magazine.title.toLowerCase()} ${key}`.includes(query) : true
+      )
+      .sort((left, right) => left[1].title.localeCompare(right[1].title));
+    const pageItems = matched.slice(
+      (page - 1) * itemsPerPage,
+      page * itemsPerPage
+    );
+    const identifiers = pageItems.length
+      ? await getRepository(MediaIdentifier).find({
+          where: {
+            provider: MediaIdentifierProvider.LAZYLIBRARIAN,
+            value: In(pageItems.map(([key]) => key)),
+          },
+          relations: { media: true },
+          relationLoadStrategy: 'query',
+        })
+      : [];
+    const mediaByTitle = new Map(
+      identifiers
+        .filter(
+          (identifier) => identifier.media?.mediaType === MediaType.MAGAZINE
+        )
+        .map((identifier) => [identifier.value, identifier.media])
+    );
+    const hydratedMedia = await hydrateMediaSummaryRelations(
+      [...mediaByTitle.values()],
+      req.user
+    );
+    const hydratedById = new Map(
+      hydratedMedia.map((media) => [media.id, media])
+    );
+    const results = pageItems.map(([key, magazine]) =>
+      mapLazyLibrarianMagazine(
+        magazine,
+        [],
+        mediaByTitle.get(key)
+          ? hydratedById.get(mediaByTitle.get(key)!.id)
+          : undefined
+      )
+    );
+
+    return res.status(200).json({
+      page,
+      totalPages: Math.max(Math.ceil(matched.length / itemsPerPage), 1),
+      totalResults: matched.length,
+      results: filterEntityResponse(results, req.user),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch magazine discovery results', {
+      label: 'Discover Magazines',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(503).json({
+      status: 503,
+      message: 'LazyLibrarian is unavailable. Try again shortly.',
     });
   }
 });

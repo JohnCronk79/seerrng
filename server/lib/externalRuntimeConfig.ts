@@ -22,6 +22,9 @@ export type ExternalRuntimeConfig = Pick<
   | 'sonarr'
   | 'lidarr'
   | 'readarr'
+  | 'mylar'
+  | 'kapowarr'
+  | 'lazylibrarian'
   | 'notifications'
   | 'network'
 >;
@@ -102,6 +105,22 @@ const validate = (value: unknown): ExternalRuntimeConfig => {
     sonarr: normalizeServarrServices(root.sonarr, 'sonarr'),
     lidarr: normalizeServarrServices(root.lidarr, 'lidarr'),
     readarr: normalizeServarrServices(root.readarr, 'readarr'),
+    // Lenient unlike the four services above: SEERR_EXTERNAL_CONFIG is
+    // hand-maintained by whoever sets it (or predates this feature), and
+    // requiring these two new keys would break every existing config the
+    // moment this shipped.
+    mylar:
+      root.mylar === undefined
+        ? []
+        : normalizeServarrServices(root.mylar, 'mylar'),
+    kapowarr:
+      root.kapowarr === undefined
+        ? []
+        : normalizeServarrServices(root.kapowarr, 'kapowarr'),
+    lazylibrarian:
+      root.lazylibrarian === undefined
+        ? []
+        : normalizeServarrServices(root.lazylibrarian, 'lazylibrarian'),
   } as unknown as ExternalRuntimeConfig;
 };
 
@@ -133,6 +152,9 @@ const loadFromSettingsFile = (): ExternalRuntimeConfig | undefined => {
       sonarr: settings.sonarr ?? [],
       lidarr: settings.lidarr ?? [],
       readarr: settings.readarr ?? [],
+      mylar: settings.mylar ?? [],
+      kapowarr: settings.kapowarr ?? [],
+      lazylibrarian: settings.lazylibrarian ?? [],
       notifications: settings.notifications,
       network: settings.network,
     };

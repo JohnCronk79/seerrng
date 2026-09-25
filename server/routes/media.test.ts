@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { before, beforeEach, describe, it, mock } from 'node:test';
 
+import KapowarrAPI, {
+  KapowarrTaskRunningError,
+} from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -112,6 +116,16 @@ const removeArtistMock = mock.method(
 const removeMovieMock = mock.fn(async (movieId: number) => {
   void movieId;
 });
+const removeComicMock = mock.method(
+  MylarAPI.prototype,
+  'removeComic',
+  async () => undefined
+);
+const removeVolumeMock = mock.method(
+  KapowarrAPI.prototype,
+  'removeVolume',
+  async () => undefined
+);
 const removeSeriesMock = mock.fn(async (tvdbId: number) => {
   void tvdbId;
 });
@@ -237,6 +251,10 @@ beforeEach(() => {
   removeArtistMock.mock.mockImplementation(async () => undefined);
   removeMovieMock.mock.resetCalls();
   removeMovieMock.mock.mockImplementation(async () => undefined);
+  removeComicMock.mock.resetCalls();
+  removeComicMock.mock.mockImplementation(async () => undefined);
+  removeVolumeMock.mock.resetCalls();
+  removeVolumeMock.mock.mockImplementation(async () => undefined);
   removeSeriesMock.mock.resetCalls();
   removeSeriesMock.mock.mockImplementation(async () => undefined);
   getTvShowMock.mock.resetCalls();
@@ -393,6 +411,37 @@ beforeEach(() => {
       preventSearch: false,
       tagRequests: false,
       overrideRule: [],
+    },
+  ];
+  settings.mylar = [
+    {
+      id: 80,
+      name: 'Mylar3',
+      hostname: 'mylar.local',
+      port: 8090,
+      apiKey: 'mylar-key',
+      useSsl: false,
+      baseUrl: '',
+      isDefault: true,
+      tags: [],
+      syncEnabled: true,
+      preventSearch: false,
+    },
+  ];
+  settings.kapowarr = [
+    {
+      id: 90,
+      name: 'Kapowarr',
+      hostname: 'kapowarr.local',
+      port: 5656,
+      apiKey: 'kapowarr-key',
+      useSsl: false,
+      baseUrl: '',
+      isDefault: true,
+      tags: [],
+      syncEnabled: true,
+      preventSearch: false,
+      rootFolder: '/comics',
     },
   ];
 });
@@ -926,6 +975,90 @@ describe('DELETE /media/:id/file', () => {
     assert.strictEqual(updated.externalServiceId4k, 401);
     assert.strictEqual(updated.externalServiceSlug4k, 'movie-4k');
     assert.strictEqual(updated.ratingKey4k, '4k-key');
+  });
+
+  it('removes a comic from Mylar3 and clears its comic service links', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mediaType: MediaType.COMIC,
+        status: MediaStatus.AVAILABLE,
+        serviceId: 80,
+        externalServiceId: 5678,
+        externalServiceSlug: '5678',
+        comicServiceType: 'mylar',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/media/${media.id}/file`);
+
+    assert.strictEqual(res.status, 204);
+    assert.strictEqual(removeComicMock.mock.callCount(), 1);
+    assert.strictEqual(removeComicMock.mock.calls[0].arguments[0], '5678');
+    assert.strictEqual(removeVolumeMock.mock.callCount(), 0);
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.status, MediaStatus.DELETED);
+    assert.strictEqual(updated.serviceId, null);
+    assert.strictEqual(updated.externalServiceId, null);
+    assert.strictEqual(updated.externalServiceSlug, null);
+    assert.strictEqual(updated.comicServiceType, null);
+  });
+
+  it('removes a comic from Kapowarr using its internal volume id', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mediaType: MediaType.COMIC,
+        status: MediaStatus.AVAILABLE,
+        serviceId: 90,
+        externalServiceId: 1,
+        externalServiceSlug: '1',
+        comicServiceType: 'kapowarr',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/media/${media.id}/file`);
+
+    assert.strictEqual(res.status, 204);
+    assert.strictEqual(removeVolumeMock.mock.callCount(), 1);
+    assert.strictEqual(removeVolumeMock.mock.calls[0].arguments[0], 1);
+    assert.strictEqual(removeComicMock.mock.callCount(), 0);
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.status, MediaStatus.DELETED);
+    assert.strictEqual(updated.comicServiceType, null);
+  });
+
+  it('reports a clear error when Kapowarr has a queued task for the volume', async () => {
+    removeVolumeMock.mock.mockImplementationOnce(async () => {
+      throw new KapowarrTaskRunningError(1);
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mediaType: MediaType.COMIC,
+        status: MediaStatus.AVAILABLE,
+        serviceId: 90,
+        externalServiceId: 1,
+        externalServiceSlug: '1',
+        comicServiceType: 'kapowarr',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/media/${media.id}/file`);
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /queued or running task/);
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
   });
 
   it('persists 4K series deletion and season state without clearing standard links', async () => {

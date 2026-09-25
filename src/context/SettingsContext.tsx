@@ -22,6 +22,8 @@ const defaultSettings: PublicSettingsResponse = {
   series4kEnabled: false,
   musicEnabled: false,
   booksEnabled: false,
+  comicsEnabled: false,
+  magazinesEnabled: false,
   discoverRegion: '',
   streamingRegion: '',
   originalLanguage: '',
