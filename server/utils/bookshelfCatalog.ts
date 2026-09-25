@@ -11,6 +11,7 @@ import type {
   BookResult,
   BookSeriesDetails,
 } from '@server/models/Book';
+import { matchesAllSearchTerms } from '@server/utils/searchTerms';
 
 export const BOOKSHELF_BOOK_ID_PREFIX = 'bookshelf:';
 export const BOOKSHELF_AUTHOR_ID_PREFIX = 'bookshelf-author:';
@@ -112,7 +113,7 @@ export const parseBookshelfBookId = (
   const match = value.match(/^bookshelf:(\d{1,10}):([A-Za-z0-9_-]{1,2048})$/);
   if (!match) return undefined;
   const serviceId = Number(match[1]);
-  if (!Number.isSafeInteger(serviceId) || serviceId <= 0) return undefined;
+  if (!Number.isSafeInteger(serviceId) || serviceId < 0) return undefined;
   try {
     const foreignBookId = Buffer.from(match[2], 'base64url').toString('utf8');
     return foreignBookId && foreignBookId.length <= 1024
@@ -143,7 +144,7 @@ export const parseBookshelfAuthorId = (
   );
   if (!match) return undefined;
   const serviceId = Number(match[1]);
-  if (!Number.isSafeInteger(serviceId) || serviceId <= 0) return undefined;
+  if (!Number.isSafeInteger(serviceId) || serviceId < 0) return undefined;
   try {
     const payload = JSON.parse(
       Buffer.from(match[2], 'base64url').toString('utf8')
@@ -174,7 +175,7 @@ export const parseBookshelfSeriesId = (
   );
   if (!match) return undefined;
   const serviceId = Number(match[1]);
-  if (!Number.isSafeInteger(serviceId) || serviceId <= 0) return undefined;
+  if (!Number.isSafeInteger(serviceId) || serviceId < 0) return undefined;
   try {
     const title = Buffer.from(match[2], 'base64url').toString('utf8').trim();
     return title && title.length <= 512 ? { serviceId, title } : undefined;
@@ -461,6 +462,41 @@ export const searchBookshelfCatalogs = async (
       ? `isbn:${result.isbn13}`
       : `${result.id}:${result.title.toLowerCase()}`;
     if (!deduped.has(key)) deduped.set(key, result);
+  }
+  return [...deduped.values()];
+};
+
+export const searchBookshelfNarrators = async (
+  servers: ReadarrSettings[],
+  narrator: string
+): Promise<BookResult[]> => {
+  const audiobookServers = servers.filter(
+    (server) => server.serviceType === 'audiobook'
+  );
+  if (!audiobookServers.length) return [];
+
+  const responses = await Promise.allSettled(
+    audiobookServers.map(async (server) => {
+      const books = await getApi(server).getBooks();
+      return books
+        .filter((book) => book.foreignBookId)
+        .map((book) => mapBookshelfBook(book, server.id))
+        .filter(
+          (book) =>
+            book.narrators?.length &&
+            matchesAllSearchTerms(book.narrators, narrator)
+        );
+    })
+  );
+  if (responses.every((response) => response.status === 'rejected')) {
+    throw new Error('Configured audiobook catalogs are unavailable.');
+  }
+
+  const deduped = new Map<string, BookResult>();
+  for (const response of responses) {
+    if (response.status === 'fulfilled') {
+      for (const book of response.value) deduped.set(book.id, book);
+    }
   }
   return [...deduped.values()];
 };

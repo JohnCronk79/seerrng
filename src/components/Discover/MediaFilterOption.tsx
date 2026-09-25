@@ -34,7 +34,7 @@ export default function MediaFilterOption<T extends MediaFilterValue>({
     <span className={`${getFilterToggleButtonClass(selected)} !gap-0 !p-0`}>
       <button
         type="button"
-        className="app-control-shadow-exempt flex h-full items-center border-r border-current/30 px-2 focus:ring-2 focus:ring-indigo-400 focus:outline-none focus:ring-inset"
+        className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center border-r border-current/30 px-2"
         aria-label={pinLabel}
         title={pinLabel}
         aria-pressed={pinned}

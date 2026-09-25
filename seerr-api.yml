@@ -8726,7 +8726,7 @@ paths:
   /discover/books:
     get:
       summary: Discover books
-      description: Returns book discovery results from Open Library.
+      description: Returns book discovery results from Open Library, or audiobook narrator matches from configured Bookshelf catalogs.
       tags:
         - search
       parameters:
@@ -8748,6 +8748,12 @@ paths:
             type: string
             maxLength: 256
           description: Author terms sent to the book provider alongside the other search constraints.
+        - in: query
+          name: narrator
+          schema:
+            type: string
+            maxLength: 256
+          description: Audiobook-only narrator terms matched against populated Bookshelf narrator metadata. Only books in configured audiobook libraries can match.
         - in: query
           name: subject
           schema:

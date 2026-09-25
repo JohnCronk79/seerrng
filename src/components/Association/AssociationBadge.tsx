@@ -72,7 +72,7 @@ const AssociationBadge = ({
   const associationLabel = intl.formatMessage(messages.associations);
   const buttonClass =
     variant === 'card'
-      ? 'app-button app-button-association h-6 w-6 rounded-full p-0 shadow-md shadow-cyan-950/40 backdrop-blur'
+      ? 'app-button poster-control-icon poster-control-association rounded-full shadow-md shadow-cyan-950/40'
       : 'flex h-8 w-8 items-center justify-center rounded-full bg-gray-800 text-gray-300 ring-1 ring-gray-700 transition hover:text-white';
 
   const toggleAssociations = (event: React.MouseEvent) => {

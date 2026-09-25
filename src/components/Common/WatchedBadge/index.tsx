@@ -45,7 +45,10 @@ const WatchedBadge = ({
             } on ${serverName}`;
   return (
     <Tooltip content={label}>
-      <span className={`watched-status-badge ${className}`} aria-label={label}>
+      <span
+        className={`poster-control watched-status-badge ${className}`}
+        aria-label={label}
+      >
         <MediaServerIcon
           mediaServerType={status.serverType}
           className="watched-status-logo"

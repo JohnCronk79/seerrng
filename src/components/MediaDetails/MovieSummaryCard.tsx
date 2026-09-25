@@ -278,15 +278,21 @@ const MovieSummaryCard = ({
                   </dd>
                 </>
               )}
+              {!!watchedStatus?.availableCount && (
+                <>
+                  <dt className="card:row-start-5 font-medium text-gray-100">
+                    {intl.formatMessage(messages.watched)}:
+                  </dt>
+                  <dd className="card:row-start-5 m-0">
+                    <WatchedBadge
+                      status={watchedStatus}
+                      className="detail-watched-button"
+                      showUnwatched
+                    />
+                  </dd>
+                </>
+              )}
             </dl>
-            {!!watchedStatus?.availableCount && (
-              <div className="detail-summary-footer detail-watched-row">
-                <span className="font-medium text-gray-100">
-                  {intl.formatMessage(messages.watched)}:
-                </span>
-                <WatchedBadge status={watchedStatus} showUnwatched />
-              </div>
-            )}
             {availabilityFooter && (
               <div className="detail-summary-footer">{availabilityFooter}</div>
             )}

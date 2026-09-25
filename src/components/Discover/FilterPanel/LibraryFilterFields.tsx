@@ -19,6 +19,7 @@ const messages = defineMessages('components.Discover.LibraryFilterFields', {
   search: 'Search',
   searchMusic: 'Search Music',
   authorSearch: 'Author Search',
+  narratorSearch: 'Narrator Search',
   firstPublished: 'First Published',
   genres: 'Genres',
   rating: 'Rating',
@@ -52,6 +53,9 @@ type BookProps = BaseProps & {
   author: string;
   onAuthorChange: (value: string) => void;
   onAuthorSubmit: () => void;
+  narrator?: string;
+  onNarratorChange?: (value: string) => void;
+  onNarratorSubmit?: () => void;
   firstPublishYear: string;
   subject: string;
   minRating: string;
@@ -181,6 +185,18 @@ const LibraryFilterFields = (props: Props) => {
           onChange={props.onAuthorChange}
           onSubmit={props.onAuthorSubmit}
         />
+        {props.audiobook &&
+          props.onNarratorChange &&
+          props.onNarratorSubmit && (
+            <SearchControl
+              mediaType="book"
+              label={intl.formatMessage(messages.narratorSearch)}
+              placeholder={intl.formatMessage(messages.search)}
+              value={props.narrator ?? ''}
+              onChange={props.onNarratorChange}
+              onSubmit={props.onNarratorSubmit}
+            />
+          )}
         <CompactRatingSelect
           label={intl.formatMessage(messages.rating)}
           value={props.minRating}

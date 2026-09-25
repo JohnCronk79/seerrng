@@ -380,24 +380,6 @@ const SeriesDetailsLayout = ({
                         : unavailable}
                     </dd>
                   </dl>
-                  {!!watchedStatus?.availableCount && (
-                    <div className="detail-summary-footer detail-watched-row">
-                      <span className="font-medium text-gray-100">
-                        {intl.formatMessage(messages.watched)}:
-                      </span>
-                      <WatchedBadge
-                        status={watchedStatus}
-                        showUnwatched
-                        incompleteLibrary={
-                          data.mediaInfo?.status ===
-                            MediaStatus.PARTIALLY_AVAILABLE ||
-                          (data.mediaInfo?.status !== MediaStatus.AVAILABLE &&
-                            data.mediaInfo?.status4k ===
-                              MediaStatus.PARTIALLY_AVAILABLE)
-                        }
-                      />
-                    </div>
-                  )}
                 </div>
 
                 <div className="media-detail-column-divider flex min-w-0 flex-col text-xs leading-4">
@@ -425,6 +407,28 @@ const SeriesDetailsLayout = ({
                               unavailable
                             )}
                           </AvailabilityValue>
+                        </dd>
+                      </>
+                    )}
+                    {!!watchedStatus?.availableCount && (
+                      <>
+                        <dt className="card:row-start-5 font-medium text-gray-100">
+                          {intl.formatMessage(messages.watched)}:
+                        </dt>
+                        <dd className="card:row-start-5 m-0">
+                          <WatchedBadge
+                            status={watchedStatus}
+                            className="detail-watched-button"
+                            showUnwatched
+                            incompleteLibrary={
+                              data.mediaInfo?.status ===
+                                MediaStatus.PARTIALLY_AVAILABLE ||
+                              (data.mediaInfo?.status !==
+                                MediaStatus.AVAILABLE &&
+                                data.mediaInfo?.status4k ===
+                                  MediaStatus.PARTIALLY_AVAILABLE)
+                            }
+                          />
                         </dd>
                       </>
                     )}

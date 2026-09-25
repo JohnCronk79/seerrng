@@ -16,7 +16,8 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
@@ -383,7 +384,6 @@ const Blocklist = () => {
     setCurrentFilter(Filter.ALL);
     setTimeFrame('all');
     setMediaFilter('all');
-    mediaPin.remember('all');
     setSearchFilter('');
     setSort('date');
     setSortDirection('desc');
@@ -441,15 +441,20 @@ const Blocklist = () => {
         </div>
       </section>
 
-      <section
-        className="app-filter-section-gap"
-        aria-label={intl.formatMessage(messages.mediaFilters)}
+      <PinnedFilterSection
+        mediaType={
+          mediaFilter === 'tv'
+            ? 'tv'
+            : mediaFilter === 'music'
+              ? 'music'
+              : mediaFilter === 'book'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
       >
-        <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -459,22 +464,28 @@ const Blocklist = () => {
               ['book', messages.books],
             ] as const
           ).map(([value, label]) => (
-            <button
+            <MediaFilterOption
               key={value}
-              type="button"
-              aria-pressed={mediaFilter === value}
-              onClick={() => {
-                setMediaFilter(value);
-                mediaPin.remember(value);
-                resetPage();
-              }}
-              className={getFilterToggleButtonClass(mediaFilter === value)}
+              pin={mediaPin}
+              value={value}
+              label={intl.formatMessage(label)}
+              selected={mediaFilter === value}
             >
-              {intl.formatMessage(label)}
-            </button>
+              <button
+                type="button"
+                aria-pressed={mediaFilter === value}
+                onClick={() => {
+                  setMediaFilter(value);
+                  resetPage();
+                }}
+                className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
+              >
+                {intl.formatMessage(label)}
+              </button>
+            </MediaFilterOption>
           ))}
         </div>
-      </section>
+      </PinnedFilterSection>
 
       <section
         className="app-filter-section-gap"
@@ -495,7 +506,7 @@ const Blocklist = () => {
           />
           <label className="discover-filter-control w-72 flex-none self-center">
             <span
-              className={`discover-filter-control-label gap-1 ${
+              className={`discover-filter-control-label ${
                 searchFilter.trim()
                   ? 'discover-filter-control-label-active'
                   : ''
@@ -901,7 +912,7 @@ const BlocklistedItem = ({ item, revalidateList }: BlocklistedItemProps) => {
                       type="button"
                       disabled={isUpdating}
                       onClick={() => void removeFromBlocklist()}
-                      className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
+                      className="compact-control inline-flex items-center rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
                     >
                       <ArchiveBoxXMarkIcon
                         className="h-3.5 w-3.5"

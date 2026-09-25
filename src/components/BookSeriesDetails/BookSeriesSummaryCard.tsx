@@ -34,6 +34,9 @@ const BookSeriesSummaryCard = ({
   const href = `/series/${encodeApiPathSegment(seriesId)}`;
   const name = `${data?.title ?? title} Collection`;
   const posterPath = data?.books.find((book) => book.posterPath)?.posterPath;
+  const genres = [
+    ...new Set(data?.books.flatMap((book) => book.subjects ?? []) ?? []),
+  ].slice(0, 3);
   const poster = (
     <CachedImage
       type="book"
@@ -72,12 +75,14 @@ const BookSeriesSummaryCard = ({
               {intl.formatMessage(messages.overview)}:
             </dt>
             <dd className="collection-summary-overview-value">
-              {data?.description || '\u00a0'}
+              {data?.description || '—'}
             </dd>
             <dt className="collection-summary-genres-label">
               {intl.formatMessage(messages.genres)}:
             </dt>
-            <dd className="collection-summary-genres-value">{'\u00a0'}</dd>
+            <dd className="collection-summary-genres-value">
+              {genres.join(', ') || '—'}
+            </dd>
             <div className="collection-summary-size">
               <dt className="collection-summary-size-label">
                 {intl.formatMessage(messages.collectionSize)}:

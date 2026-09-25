@@ -18,7 +18,8 @@ import {
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
@@ -87,8 +88,8 @@ const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
 });
 
-const messages = defineMessages('components.RequestStatus', {
-  title: 'Request Status',
+const messages = defineMessages('components.Requests', {
+  title: 'Requests',
   manageRequests: 'Manage Requests',
   selectUser: 'Select User to View Requests',
   search: 'Keyword Search',
@@ -219,6 +220,7 @@ const messages = defineMessages('components.RequestStatus', {
   scrollProgressLeft: 'Scroll progress left',
   requestLifecycle: 'Request lifecycle',
   scrollProgressRight: 'Scroll progress right',
+  loadingTitle: 'Loading title…',
   unknownTitle: 'Unknown title',
 });
 
@@ -495,7 +497,7 @@ const getDetailHref = (item: RequestStatusItem): string | null => {
 const getTitle = (
   intl: ReturnType<typeof useIntl>,
   details: MediaDetails | undefined,
-  item: RequestStatusItem
+  isLoading: boolean
 ): string => {
   if (details) {
     if (isMusic(details) || isBook(details)) {
@@ -503,16 +505,9 @@ const getTitle = (
     }
     return 'title' in details ? details.title : details.name;
   }
-  if (item.request.type === 'music' && item.request.media.mbId) {
-    return item.request.media.mbId;
-  }
-  if (item.request.type === 'book') {
-    return getBookId(item) ?? intl.formatMessage(messages.unknownTitle);
-  }
-  if (item.request.type === 'comic') {
-    return getComicId(item) ?? intl.formatMessage(messages.unknownTitle);
-  }
-  return `${item.request.type.toUpperCase()} #${item.request.media.tmdbId}`;
+  return intl.formatMessage(
+    isLoading ? messages.loadingTitle : messages.unknownTitle
+  );
 };
 
 const getPoster = (
@@ -953,7 +948,7 @@ const RequestStatusCard = ({
   const [timelineHasOverflow, setTimelineHasOverflow] = useState(false);
   const detailsUrl = getDetailsUrl(item);
   const detailHref = getDetailHref(item);
-  const { data: details } = useSWR<MediaDetails>(detailsUrl);
+  const { data: details, error: detailsError } = useSWR<MediaDetails>(detailsUrl);
   const { data: detail, mutate: revalidateDetail } =
     useSWR<RequestStatusDetailResponse>(
       `/api/v1/request/status/${item.request.id}`,
@@ -1005,7 +1000,7 @@ const RequestStatusCard = ({
   const activeIndex = getLastTimelineIndex(currentStage, history);
   const poster = getPoster(details);
   const backdrop = getBackdrop(details);
-  const title = getTitle(intl, details, item);
+  const title = getTitle(intl, details, Boolean(detailsUrl && !detailsError));
   const mediaBadgeType = getMediaBadgeType(item) ?? 'movie';
   const StageIcon = stageIcon[currentStage] ?? InformationCircleIcon;
   const releaseDate = getReleaseDate(details, item);
@@ -1129,7 +1124,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.approveTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('approve')}
             >
@@ -1140,7 +1135,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.declineTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => void modifyPendingRequest('decline')}
             >
@@ -1151,7 +1146,7 @@ const RequestStatusCard = ({
           <Tooltip content={intl.formatMessage(messages.editTooltip)}>
             <button
               type="button"
-              className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
+              className="compact-control inline-flex items-center rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold text-amber-200 transition hover:border-amber-500 hover:text-white focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-40"
               disabled={isModifying}
               onClick={() => setShowEditModal(true)}
             >
@@ -1164,7 +1159,7 @@ const RequestStatusCard = ({
       <Tooltip content={intl.formatMessage(messages.retryTooltip)}>
         <button
           type="button"
-          className="compact-control inline-flex items-center gap-1 rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          className="compact-control inline-flex items-center rounded-md border border-amber-600/80 bg-amber-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-amber-300 transition hover:border-amber-400 hover:text-white focus:ring-2 focus:ring-amber-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!canRetry || isRetrying || isDeleting || isRemoving}
           onClick={() => void onRetry(item.request.id)}
         >
@@ -1568,7 +1563,7 @@ const RequestStatusCard = ({
           {actionControls}
           <button
             type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-800/45 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="compact-control inline-flex items-center rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-800/45 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
             aria-expanded={isHistoryOpen}
             onClick={() => onToggleHistory(item.request.id)}
           >
@@ -1634,9 +1629,11 @@ const RequestStatusCard = ({
   );
 };
 
-const RequestStatus = () => {
+const Requests = () => {
   const intl = useIntl();
   const router = useRouter();
+  const { cache: requestCache, mutate: prefetchRequestCache } = useSWRConfig();
+  const prefetchedDetails = useRef(new Set<string>());
   const { user: currentUser, hasPermission } = useUser();
   const { addToast } = useToasts();
   const isAdminView = hasPermission(Permission.MANAGE_REQUESTS);
@@ -1811,6 +1808,42 @@ const RequestStatus = () => {
       refreshInterval: 15000,
       revalidateOnFocus: true,
     });
+  const nextQuery = useMemo(() => {
+    if (!query || !data || page >= data.pageInfo.pages) return null;
+
+    const params = new URLSearchParams(query.split('?')[1]);
+    params.set('skip', String(page * pageSize));
+    return `/api/v1/request/status?${params.toString()}`;
+  }, [data, page, pageSize, query]);
+  const { data: nextPageData } = useSWR<RequestStatusResultsResponse>(
+    nextQuery,
+    {
+      keepPreviousData: false,
+      revalidateIfStale: false,
+      revalidateOnFocus: false,
+    }
+  );
+
+  useEffect(() => {
+    if (!nextPageData) return;
+
+    for (const item of nextPageData.results) {
+      const detailsUrl = getDetailsUrl(item);
+      if (
+        !detailsUrl ||
+        requestCache.get(detailsUrl)?.data ||
+        prefetchedDetails.current.has(detailsUrl)
+      ) {
+        continue;
+      }
+      prefetchedDetails.current.add(detailsUrl);
+      void prefetchRequestCache(
+        detailsUrl,
+        axios.get<MediaDetails>(detailsUrl).then((response) => response.data),
+        { revalidate: false, throwOnError: false }
+      );
+    }
+  }, [nextPageData, prefetchRequestCache, requestCache]);
   useSearchActivityReporter(
     Boolean(searchFilter.trim()) &&
       (searchFilter.trim() !== debouncedSearchFilter.trim() || isValidating),
@@ -1858,7 +1891,6 @@ const RequestStatus = () => {
   };
 
   const updateMediaFilter = (nextMediaFilter: MediaFilter) => {
-    mediaPin.remember(nextMediaFilter);
     const options = getSortOptions(nextMediaFilter);
     const keepsSort = options.some((option) => option.value === sort);
     const nextSort = keepsSort ? sort : 'added';
@@ -2054,7 +2086,7 @@ const RequestStatus = () => {
             onClick={() => void mutate()}
           >
             <ArrowPathIcon
-              className={`mr-1.5 h-4 w-4 ${isValidating ? 'animate-spin' : ''}`}
+              className={`h-4 w-4 ${isValidating ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
             {intl.formatMessage(
@@ -2121,7 +2153,6 @@ const RequestStatus = () => {
     setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
-    mediaPin.remember('all');
     setSort('added');
     setSortDirection('desc');
     setTimeFrame('all');
@@ -2285,30 +2316,40 @@ const RequestStatus = () => {
         </div>
       </section>
 
-      <section
-        className="app-filter-section-gap"
-        aria-label={intl.formatMessage(messages.mediaFilters)}
+      <PinnedFilterSection
+        mediaType={
+          mediaFilter === 'tv'
+            ? 'tv'
+            : mediaFilter === 'music'
+              ? 'music'
+              : mediaFilter === 'book' || mediaFilter === 'audiobook'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
       >
-        <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
-          <MediaFilterPin pin={mediaPin} />
           {mediaFilters.map((option) => (
-            <button
+            <MediaFilterOption
               key={option.value}
-              type="button"
-              aria-pressed={mediaFilter === option.value}
-              onClick={() => updateMediaFilter(option.value)}
-              className={getFilterToggleButtonClass(
-                mediaFilter === option.value
-              )}
+              pin={mediaPin}
+              value={option.value}
+              label={intl.formatMessage(messages[option.label])}
+              selected={mediaFilter === option.value}
             >
-              {intl.formatMessage(messages[option.label])}
-            </button>
+              <button
+                type="button"
+                aria-pressed={mediaFilter === option.value}
+                onClick={() => updateMediaFilter(option.value)}
+                className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
+              >
+                {intl.formatMessage(messages[option.label])}
+              </button>
+            </MediaFilterOption>
           ))}
         </div>
-      </section>
+      </PinnedFilterSection>
 
       <section
         className="app-filter-section-gap"
@@ -2326,7 +2367,7 @@ const RequestStatus = () => {
           />
           <label className="discover-filter-control w-72 flex-none self-center">
             <span
-              className={`discover-filter-control-label gap-1 ${
+              className={`discover-filter-control-label ${
                 searchFilter.trim()
                   ? 'discover-filter-control-label-active'
                   : ''
@@ -2459,4 +2500,4 @@ const RequestStatus = () => {
   );
 };
 
-export default RequestStatus;
+export default Requests;

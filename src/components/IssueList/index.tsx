@@ -9,8 +9,9 @@ import {
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import { BOOK_GENRES } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
-import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
 import { tvNetworks } from '@app/components/Discover/NetworkSlider';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import { studios } from '@app/components/Discover/StudioSlider';
 import FocusedIssue from '@app/components/IssueList/FocusedIssue';
 import IssueItem from '@app/components/IssueList/IssueItem';
@@ -179,7 +180,6 @@ const IssueList = () => {
     setFilter('all');
     setTimeFrame('all');
     setMediaFilter('all');
-    mediaPin.remember('all');
     setIssueTypeFilter('all');
     clearMediaSpecificFilters();
     setSearch('');
@@ -307,15 +307,20 @@ const IssueList = () => {
           />
         </div>
       </section>
-      <section
-        className="app-filter-section-gap"
-        aria-label={intl.formatMessage(messages.mediaFilters)}
+      <PinnedFilterSection
+        mediaType={
+          mediaFilter === 'tv'
+            ? 'tv'
+            : mediaFilter === 'music'
+              ? 'music'
+              : mediaFilter === 'book'
+                ? 'book'
+                : 'movie'
+        }
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
       >
-        <div className="mb-2 text-sm text-gray-300">
-          {intl.formatMessage(messages.mediaFilters)}
-        </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -325,23 +330,29 @@ const IssueList = () => {
               ['book', messages.books],
             ] as const
           ).map(([value, label]) => (
-            <button
+            <MediaFilterOption
               key={value}
-              type="button"
-              aria-pressed={mediaFilter === value}
-              onClick={() => {
-                setMediaFilter(value);
-                mediaPin.remember(value);
-                clearMediaSpecificFilters();
-                resetPage();
-              }}
-              className={getFilterToggleButtonClass(mediaFilter === value)}
+              pin={mediaPin}
+              value={value}
+              label={intl.formatMessage(label)}
+              selected={mediaFilter === value}
             >
-              {intl.formatMessage(label)}
-            </button>
+              <button
+                type="button"
+                aria-pressed={mediaFilter === value}
+                onClick={() => {
+                  setMediaFilter(value);
+                  clearMediaSpecificFilters();
+                  resetPage();
+                }}
+                className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
+              >
+                {intl.formatMessage(label)}
+              </button>
+            </MediaFilterOption>
           ))}
         </div>
-      </section>
+      </PinnedFilterSection>
       <section
         className="app-filter-section-gap"
         aria-label={intl.formatMessage(messages.filters)}
