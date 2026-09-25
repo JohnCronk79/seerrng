@@ -1,0 +1,18 @@
+#!/bin/bash
+
+source ../settings/scripts/_common.sh
+
+ynh_script_progression "Restoring SeerrNG files..."
+ynh_restore
+chown -R "$app:$app" "$install_dir" "$data_dir"
+
+ynh_script_progression "Restoring SeerrNG service and reverse proxy configuration..."
+seerrng_prepare_service
+
+ynh_script_progression "Starting SeerrNG..."
+ynh_systemctl --service="$app" --action="start" \
+	--line_match="Server ready on" \
+	--log_path="$data_dir/logs/seerr.log"
+seerrng_register_service
+
+ynh_script_progression "SeerrNG restoration completed"
