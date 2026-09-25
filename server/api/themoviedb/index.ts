@@ -5,6 +5,7 @@ import cacheManager from '@server/lib/cache';
 import { getSettings } from '@server/lib/settings';
 import { sortBy } from 'lodash';
 import { getTmdbAuthHeaders, getTmdbAuthParams } from './auth';
+import { logTmdbRequestFailure } from './diagnostics';
 import type {
   TmdbCollection,
   TmdbCompanySearchResponse,
@@ -855,6 +856,7 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     super('https://api.themoviedb.org/3', getTmdbAuthParams(), {
       headers: getTmdbAuthHeaders(),
       nodeCache: cacheManager.getCache('tmdb').data,
+      onRequestFailure: logTmdbRequestFailure,
       rateLimit: {
         maxRequests: 20,
         maxRPS: 50,
@@ -865,6 +867,18 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     this.originalLanguage = originalLanguage;
     this.includeAdult = getSettings().main?.includeAdult === true;
   }
+
+  public checkAuthentication = async (): Promise<void> => {
+    const result = await this.get<{ success?: boolean }>(
+      '/authentication',
+      { timeout: 5_000 },
+      0
+    );
+
+    if (result.success !== true) {
+      throw new Error('TMDB did not confirm application authentication.');
+    }
+  };
 
   public searchMulti = async ({
     query,

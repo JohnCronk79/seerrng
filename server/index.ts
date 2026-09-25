@@ -1,4 +1,6 @@
 import PlexAPI from '@server/api/plexapi';
+import TheMovieDb from '@server/api/themoviedb';
+import { getTmdbAuthSource } from '@server/api/themoviedb/auth';
 import dataSource, {
   enforceSqliteDatabasePermissions,
   getRepository,
@@ -54,7 +56,10 @@ import avatarproxy from '@server/routes/avatarproxy';
 import imageproxy from '@server/routes/imageproxy';
 import { appDataPermissions } from '@server/utils/appDataVolume';
 import { getAppVersion } from '@server/utils/appVersion';
-import { waitForBackgroundTasks } from '@server/utils/backgroundTasks';
+import {
+  trackBackgroundTask,
+  waitForBackgroundTasks,
+} from '@server/utils/backgroundTasks';
 import createCustomProxyAgent, {
   setForceIpv4First,
 } from '@server/utils/customProxyAgent';
@@ -504,6 +509,21 @@ Promise.resolve()
             httpsPort: tlsConfiguration.httpsPort,
           }
         );
+      }
+
+      if (process.env.NODE_ENV !== 'test' && !isE2eTest) {
+        trackBackgroundTask('TMDB authentication check', async () => {
+          try {
+            await new TheMovieDb().checkAuthentication();
+            logger.info('TMDB API authentication check succeeded', {
+              label: 'TMDB API',
+              credentialSource: getTmdbAuthSource(),
+            });
+          } catch {
+            // The TMDB client logs the sanitized upstream status/code and
+            // credential source for failures. Avoid a second generic log.
+          }
+        });
       }
 
       for (const target of listeners) {
