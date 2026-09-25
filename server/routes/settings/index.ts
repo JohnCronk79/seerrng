@@ -106,6 +106,7 @@ import path from 'path';
 import semver from 'semver';
 import { URL } from 'url';
 import kapowarrRoutes from './kapowarr';
+import lazyLibrarianRoutes from './lazylibrarian';
 import lidarrRoutes from './lidarr';
 import metadataRoutes from './metadata';
 import mylarRoutes from './mylar';
@@ -1098,7 +1099,14 @@ const parseMainSettingsBody = (
     const incomingDefaultQuotas = body.defaultQuotas as Record<string, unknown>;
     const defaultQuotas: Record<string, unknown> = {};
 
-    for (const mediaType of ['movie', 'tv', 'music', 'book'] as const) {
+    for (const mediaType of [
+      'movie',
+      'tv',
+      'music',
+      'book',
+      'comic',
+      'magazine',
+    ] as const) {
       if (incomingDefaultQuotas[mediaType] === undefined) {
         continue;
       }
@@ -1353,6 +1361,7 @@ settingsRoutes.use('/lidarr', lidarrRoutes);
 settingsRoutes.use('/readarr', readarrRoutes);
 settingsRoutes.use('/mylar', mylarRoutes);
 settingsRoutes.use('/kapowarr', kapowarrRoutes);
+settingsRoutes.use('/lazylibrarian', lazyLibrarianRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 

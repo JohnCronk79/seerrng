@@ -1111,6 +1111,23 @@ describe('Settings route input validation', () => {
     assert.strictEqual(saveMock.mock.callCount(), 0);
   });
 
+  it('accepts comic default quota settings', async () => {
+    const settings = getSettings();
+    const original = settings.main.defaultQuotas.comic.quotaLimit;
+
+    try {
+      const res = await request(app)
+        .post('/settings/main')
+        .send({ defaultQuotas: { comic: { quotaLimit: 3, quotaDays: 7 } } });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(settings.main.defaultQuotas.comic.quotaLimit, 3);
+      assert.strictEqual(settings.main.defaultQuotas.comic.quotaDays, 7);
+    } finally {
+      settings.main.defaultQuotas.comic.quotaLimit = original;
+    }
+  });
+
   it('rejects unsafe Tautulli external URLs before saving', async () => {
     const settings = getSettings();
     const saveMock = mock.method(settings, 'save', async () => undefined);

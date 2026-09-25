@@ -41,7 +41,7 @@ interface StatusBadgeProps {
   tmdbId?: number;
   mbId?: string;
   externalId?: string;
-  mediaType?: 'movie' | 'tv' | 'music' | 'book';
+  mediaType?: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   bookFormat?: RequestedBookFormat;
   title?: string | string[];
   statusLabelOverride?: string;
@@ -92,9 +92,13 @@ const StatusBadge = ({
               ? Permission.REQUEST_MUSIC
               : mediaType === 'book'
                 ? Permission.REQUEST_BOOK
-                : mediaType === 'movie'
-                  ? Permission.REQUEST_MOVIE
-                  : Permission.REQUEST_TV,
+                : mediaType === 'comic'
+                  ? Permission.REQUEST_COMIC
+                  : mediaType === 'magazine'
+                    ? Permission.REQUEST_MAGAZINE
+                    : mediaType === 'movie'
+                      ? Permission.REQUEST_MOVIE
+                      : Permission.REQUEST_TV,
           ],
       {
         type: 'or',
@@ -102,6 +106,8 @@ const StatusBadge = ({
     ) &&
     mediaType !== 'music' &&
     mediaType !== 'book' &&
+    mediaType !== 'comic' &&
+    mediaType !== 'magazine' &&
     (!is4k ||
       (mediaType === 'movie'
         ? settings.currentSettings.movie4kEnabled
@@ -135,6 +141,16 @@ const StatusBadge = ({
         : intl.formatMessage(messages.managemedia, {
             mediaType: 'Book',
           });
+    } else if (mediaType === 'comic' && externalId) {
+      mediaLink = `/comic/${encodeApiPathSegment(externalId)}?manage=1`;
+      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
+        mediaType: 'Comic',
+      });
+    } else if (mediaType === 'magazine' && externalId) {
+      mediaLink = `/magazine/${encodeApiPathSegment(externalId)}?manage=1`;
+      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
+        mediaType: 'Magazine',
+      });
     } else if (mediaType && tmdbId) {
       mediaLink = `/${mediaType}/${tmdbId}?manage=1`;
       mediaLinkDescription = intl.formatMessage(messages.managemedia, {
@@ -150,9 +166,13 @@ const StatusBadge = ({
             ? 'Lidarr'
             : mediaType === 'book'
               ? 'Bookshelf'
-              : mediaType === 'movie'
-                ? 'Radarr'
-                : 'Sonarr',
+              : mediaType === 'comic'
+                ? 'Comics'
+                : mediaType === 'magazine'
+                  ? 'LazyLibrarian'
+                  : mediaType === 'movie'
+                    ? 'Radarr'
+                    : 'Sonarr',
       });
     }
   }
