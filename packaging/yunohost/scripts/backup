@@ -4,16 +4,23 @@ source ../settings/scripts/_common.sh
 
 service_was_active=false
 
-restart_service_if_needed() {
+finish_backup() {
 	local exit_code=$?
 	trap - EXIT
 	if [[ "$service_was_active" == true ]]; then
 		ynh_systemctl --service="$app" --action="start" || exit_code=$?
 	fi
-	exit "$exit_code"
+	if [[ "$exit_code" == 0 ]]; then
+		true
+	else
+		false && true
+	fi
+	ynh_exit_properly
 }
 
-trap restart_service_if_needed EXIT
+# Keep the helper's exit handler in the chain so it still reports failures and
+# runs YunoHost cleanup after the service has been restarted.
+trap finish_backup EXIT
 
 if systemctl is-active --quiet "$app"; then
 	service_was_active=true
