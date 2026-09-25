@@ -131,6 +131,9 @@ const requestPermissions: Record<MediaType, Permission[]> = {
   [MediaType.TV]: [Permission.REQUEST, Permission.REQUEST_TV],
   [MediaType.MUSIC]: [Permission.REQUEST, Permission.REQUEST_MUSIC],
   [MediaType.BOOK]: [Permission.REQUEST, Permission.REQUEST_BOOK],
+  // Comics have no media-server playback surface (they're downloaded files,
+  // not streamed) - this is exhaustive-switch coverage, not a reachable path.
+  [MediaType.COMIC]: [Permission.REQUEST, Permission.REQUEST_COMIC],
 };
 
 const canUsePlayback = (user: User, mediaType: MediaType, is4k = false) => {

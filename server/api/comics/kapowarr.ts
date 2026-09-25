@@ -81,7 +81,13 @@ const sanitizeRootFolder = (value: unknown): KapowarrRootFolder | undefined => {
 };
 
 class KapowarrAPI extends ExternalAPI {
-  static buildUrl(settings: KapowarrSettings, path?: string): string {
+  static buildUrl(
+    settings: Pick<
+      KapowarrSettings,
+      'useSsl' | 'hostname' | 'port' | 'baseUrl'
+    >,
+    path?: string
+  ): string {
     return buildServiceUrl({
       useSsl: settings.useSsl,
       hostname: settings.hostname,
