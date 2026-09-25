@@ -7676,8 +7676,8 @@ paths:
                     type: number
   /search:
     get:
-      summary: Search for movies, TV shows, people, music, books, authors, and comics
-      description: Returns a list of movies, TV shows, people, music albums, artists, books, authors, and comics from TMDB, MusicBrainz, ListenBrainz, Open Library, configured Bookshelf services, and ComicVine.
+      summary: Search for movies, TV shows, people, music, books, authors, comics, and magazines
+      description: Returns movies, TV shows, people, music albums, artists, books, authors, and comics from TMDB, MusicBrainz, ListenBrainz, Open Library, configured Bookshelf services, and ComicVine, plus magazine titles from configured LazyLibrarian catalogs.
       tags:
         - search
       parameters:
@@ -7712,6 +7712,7 @@ paths:
               - author
               - music
               - comic
+              - magazine
             description: Filter results by media type. When omitted, all types are returned.
         - in: query
           name: format
@@ -7755,6 +7756,7 @@ paths:
                         - $ref: '#/components/schemas/BookResult'
                         - $ref: '#/components/schemas/AuthorResult'
                         - $ref: '#/components/schemas/ComicResult'
+                        - $ref: '#/components/schemas/MagazineResult'
   /search/keyword:
     get:
       summary: Search for keywords

@@ -1,7 +1,15 @@
 import type { ParsedUrlQuery } from 'querystring';
 
 export type SearchFilterCategory =
-  'all' | 'movie' | 'tv' | 'book' | 'audiobook' | 'music' | 'author';
+  | 'all'
+  | 'movie'
+  | 'tv'
+  | 'book'
+  | 'audiobook'
+  | 'music'
+  | 'author'
+  | 'comic'
+  | 'magazine';
 
 export const searchContextualFilterKeys = [
   'availability',
@@ -95,7 +103,12 @@ export const isSearchDataReady = ({
   query: string;
 }): boolean =>
   routerReady &&
-  (category === 'all' || category === 'author' ? Boolean(query) : true);
+  (category === 'all' ||
+  category === 'author' ||
+  category === 'comic' ||
+  category === 'magazine'
+    ? Boolean(query)
+    : true);
 
 export const getSearchCategoryQuery = (
   currentQuery: ParsedUrlQuery,

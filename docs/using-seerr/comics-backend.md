@@ -23,9 +23,13 @@ any key configured inside Mylar3 or Kapowarr themselves.
 3. In SeerrNG, open **Settings > General** and enter the key under **Comics
    Metadata > ComicVine API Key**.
 
-Until this key is configured, the Comics Discover page returns no results and
+Until this key is configured, the Comics Discover page returns no results,
 `GET /api/v1/discover/comics` responds with an empty result set rather than an
-error.
+error, and the Comics category in global Search has no catalog results.
+
+With a key configured, global Search includes a **Comics** category backed by
+ComicVine. Use the main search query to find volume titles; the category also
+lets you narrow matches by title, aliases, publisher, or start year.
 
 ## Choosing a backend
 
