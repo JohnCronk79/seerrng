@@ -2,21 +2,35 @@ import requestAdmissionCoordinator from '@server/lib/requestAdmission';
 import {
   getSettings,
   type DVRSettings,
+  type KapowarrSettings,
   type LidarrSettings,
+  type MylarSettings,
   type RadarrSettings,
   type ReadarrSettings,
   type SonarrSettings,
 } from '@server/lib/settings';
 import AsyncLock from '@server/utils/asyncLock';
 
-export type ServarrServiceType = 'radarr' | 'sonarr' | 'lidarr' | 'readarr';
+export type ServarrServiceType =
+  'radarr' | 'sonarr' | 'lidarr' | 'readarr' | 'mylar' | 'kapowarr';
 export interface ServarrServiceSettingsByType {
   radarr: RadarrSettings;
   sonarr: SonarrSettings;
   lidarr: LidarrSettings;
   readarr: ReadarrSettings;
+  mylar: MylarSettings;
+  kapowarr: KapowarrSettings;
 }
-type ServarrServiceAuthority = DVRSettings &
+// Picked down to the fields Servarr-family services (which fully satisfy
+// DVRSettings) share with the non-Servarr comics backends (Mylar/Kapowarr,
+// which only satisfy the smaller CollectorServiceSettings) - is4k and
+// serviceType stay Partial so services with no such concept (comics have
+// neither) still satisfy this type.
+type ServarrServiceAuthority = Pick<
+  DVRSettings,
+  'id' | 'hostname' | 'port' | 'useSsl' | 'baseUrl' | 'apiKey' | 'syncEnabled'
+> &
+  Partial<Pick<DVRSettings, 'is4k'>> &
   Partial<Pick<ReadarrSettings, 'serviceType'>>;
 
 export const hasSameServarrServiceAuthority = (

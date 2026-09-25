@@ -1164,6 +1164,44 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/BookResult'
+    ComicResult:
+      type: object
+      required:
+        - id
+        - mediaType
+        - title
+      properties:
+        id:
+          type: string
+          example: '1234'
+          description: ComicVine volume ID.
+        mediaType:
+          type: string
+          enum: [comic]
+        title:
+          type: string
+          example: Batman
+        aliases:
+          type: array
+          items:
+            type: string
+        publisher:
+          type: string
+          example: DC Comics
+        startYear:
+          type: string
+          example: '1940'
+        issueCount:
+          type: number
+          example: 904
+        posterPath:
+          type: string
+        deck:
+          type: string
+        siteDetailUrl:
+          type: string
+        mediaInfo:
+          $ref: '#/components/schemas/MediaInfo'
     AuthorResult:
       type: object
       properties:
@@ -7046,7 +7084,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [movie, tv, music, book]
+            enum: [movie, tv, music, book, comic]
       responses:
         '200':
           description: Category-scoped detail disclosure settings returned
@@ -7070,7 +7108,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [movie, tv, music, book]
+            enum: [movie, tv, music, book, comic]
       requestBody:
         required: true
         content:
@@ -8929,6 +8967,31 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/BookResult'
+  /comic/{comicId}:
+    get:
+      summary: Get comic details
+      description: Returns ComicVine volume details, merged with local availability if the volume is already tracked by a configured Mylar or Kapowarr instance.
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: comicId
+          description: ComicVine volume ID.
+          required: true
+          schema:
+            type: string
+            example: '1234'
+      responses:
+        '200':
+          description: Comic details returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComicResult'
+        '404':
+          description: Comic not found
+        '503':
+          description: ComicVine is not configured on this server
   /book/{bookId}:
     get:
       summary: Get book details
@@ -9426,7 +9489,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [movie, tv, music, book, all]
+            enum: [movie, tv, music, book, comic, all]
             nullable: true
             default: all
       responses:
@@ -9460,7 +9523,7 @@ paths:
               properties:
                 mediaType:
                   type: string
-                  enum: [movie, tv, music, book]
+                  enum: [movie, tv, music, book, comic]
                   example: movie
                 mediaId:
                   oneOf:
@@ -9662,7 +9725,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [movie, tv, music, book, all]
+            enum: [movie, tv, music, book, comic, all]
             default: all
         - in: query
           name: filter
@@ -9812,7 +9875,7 @@ paths:
               properties:
                 mediaType:
                   type: string
-                  enum: [movie, tv, music, book]
+                  enum: [movie, tv, music, book, comic]
                 seasons:
                   type: array
                   items:

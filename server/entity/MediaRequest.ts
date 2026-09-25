@@ -52,6 +52,8 @@ import {
   type ServarrServiceType,
 } from '@server/lib/serviceAdmission';
 import {
+  type KapowarrSettings,
+  type MylarSettings,
   type RadarrSettings,
   type ReadarrSettings,
   type SonarrSettings,
@@ -93,7 +95,7 @@ export class ServiceConfigurationError extends Error {}
 
 export type MediaRequestServiceTarget = {
   serviceType: ServarrServiceType;
-  format: 'standard' | '4k' | 'music' | 'ebook' | 'audiobook';
+  format: 'standard' | '4k' | 'music' | 'ebook' | 'audiobook' | 'comic';
   serverId: number;
   profileId?: number | null;
   metadataProfileId?: number | null;
@@ -205,6 +207,11 @@ export const hasMediaRequestPermission = (
       return user.hasPermission([Permission.REQUEST, Permission.REQUEST_BOOK], {
         type: 'or',
       });
+    case MediaType.COMIC:
+      return user.hasPermission(
+        [Permission.REQUEST, Permission.REQUEST_COMIC],
+        { type: 'or' }
+      );
   }
 };
 
@@ -499,9 +506,21 @@ export class MediaRequest {
       throw new RequestPermissionError(
         'You do not have permission to make book requests.'
       );
+    } else if (
+      requestBody.mediaType === MediaType.COMIC &&
+      !isManagedRequestForAnotherUser &&
+      !hasMediaRequestPermission(requestUser, requestBody.mediaType)
+    ) {
+      throw new RequestPermissionError(
+        'You do not have permission to make comic requests.'
+      );
     }
 
-    if (canUseAdvancedRequestOptions(user) && requestBody.serverId != null) {
+    if (
+      canUseAdvancedRequestOptions(user) &&
+      requestBody.serverId != null &&
+      requestBody.mediaType !== MediaType.COMIC
+    ) {
       const serviceName =
         requestBody.mediaType === MediaType.MOVIE
           ? 'Radarr'
@@ -560,6 +579,8 @@ export class MediaRequest {
           return quotas.music;
         case MediaType.BOOK:
           return quotas.book;
+        case MediaType.COMIC:
+          return quotas.comic;
         default:
           return undefined;
       }
@@ -594,6 +615,11 @@ export class MediaRequest {
         quotas.book.restricted
       ) {
         throw new QuotaRestrictedError('Book Quota exceeded.');
+      } else if (
+        requestBody.mediaType === MediaType.COMIC &&
+        quotas.comic.restricted
+      ) {
+        throw new QuotaRestrictedError('Comic Quota exceeded.');
       }
     }
 
@@ -760,6 +786,35 @@ export class MediaRequest {
             ? requestBody.serverId
             : settings.lidarr.find(({ isDefault }) => isDefault)?.id
         );
+      } else if (requestBody.mediaType === MediaType.COMIC) {
+        const requestedServerId =
+          useAdvancedOptions && requestBody.serverId != null
+            ? requestBody.serverId
+            : undefined;
+        const requestedMylar =
+          requestedServerId != null
+            ? settings.mylar.find(({ id }) => id === requestedServerId)
+            : undefined;
+        const requestedKapowarr =
+          requestedServerId != null && !requestedMylar
+            ? settings.kapowarr.find(({ id }) => id === requestedServerId)
+            : undefined;
+
+        if (requestedMylar) {
+          addService('mylar', requestedMylar.id);
+        } else if (requestedKapowarr) {
+          addService('kapowarr', requestedKapowarr.id);
+        } else if (requestedServerId == null) {
+          const defaultMylar = settings.mylar.find((m) => m.isDefault);
+          const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+          if (defaultMylar) {
+            addService('mylar', defaultMylar.id);
+          } else if (defaultKapowarr) {
+            addService('kapowarr', defaultKapowarr.id);
+          }
+        }
+        // A requested serverId matching neither array locks nothing here;
+        // the creation block below raises the real ServiceConfigurationError.
       } else {
         const format = requestBody.format ?? 'ebook';
         if (format === 'both') {
@@ -1350,6 +1405,210 @@ export class MediaRequest {
           }
         }
 
+        request.media = savedMedia;
+        return saveRequestWithFreshMedia(manager, request);
+      });
+    }
+
+    if (requestBody.mediaType === MediaType.COMIC) {
+      const comicVineId = Number(requestBody.mediaId);
+      if (!Number.isSafeInteger(comicVineId) || comicVineId <= 0) {
+        throw new Error('Comic mediaId must be a valid ComicVine volume ID.');
+      }
+      const comicVineIdValue = String(comicVineId);
+
+      const blocklistedComic = await getRepository(Blocklist).findOne({
+        where: { externalId: comicVineIdValue, mediaType: MediaType.COMIC },
+      });
+      if (blocklistedComic) {
+        logger.warn('Request for comic blocked due to being blocklisted', {
+          comicVineId: comicVineIdValue,
+          label: 'Media Request',
+        });
+        throw new BlocklistedMediaError('This comic is blocklisted.');
+      }
+
+      const existingIdentifier = await mediaIdentifierRepository.findOne({
+        where: {
+          provider: MediaIdentifierProvider.COMICVINE,
+          value: comicVineIdValue,
+        },
+        relations: { media: true },
+        relationLoadStrategy: 'query',
+      });
+
+      let media = existingIdentifier?.media;
+
+      if (!media) {
+        media = new Media({
+          tmdbId: 0,
+          status: MediaStatus.PENDING,
+          status4k: MediaStatus.UNKNOWN,
+          mediaType: MediaType.COMIC,
+        });
+      } else if (media.status === MediaStatus.BLOCKLISTED) {
+        logger.warn('Request for comic blocked due to being blocklisted', {
+          comicVineId: comicVineIdValue,
+          label: 'Media Request',
+        });
+        throw new BlocklistedMediaError('This comic is blocklisted.');
+      } else if (
+        media.status === MediaStatus.UNKNOWN ||
+        media.status === MediaStatus.DELETED
+      ) {
+        media.status = MediaStatus.PENDING;
+      }
+
+      const useAdvancedOptions = canUseAdvancedRequestOptions(user);
+      const requestedServerId = useAdvancedOptions
+        ? requestBody.serverId
+        : undefined;
+
+      let comicBackendType: 'mylar' | 'kapowarr' | undefined;
+      let selectedServer: MylarSettings | KapowarrSettings | undefined;
+
+      if (requestedServerId != null) {
+        const requestedMylar = settings.mylar.find(
+          ({ id }) => id === requestedServerId
+        );
+        const requestedKapowarr = requestedMylar
+          ? undefined
+          : settings.kapowarr.find(({ id }) => id === requestedServerId);
+        if (!requestedMylar && !requestedKapowarr) {
+          throw new ServiceConfigurationError(
+            'Selected comics server does not exist.'
+          );
+        }
+        comicBackendType = requestedMylar ? 'mylar' : 'kapowarr';
+        selectedServer = requestedMylar ?? requestedKapowarr;
+      } else {
+        const defaultMylar = settings.mylar.find((m) => m.isDefault);
+        const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+        if (defaultMylar) {
+          comicBackendType = 'mylar';
+          selectedServer = defaultMylar;
+        } else if (defaultKapowarr) {
+          comicBackendType = 'kapowarr';
+          selectedServer = defaultKapowarr;
+        }
+      }
+
+      const serverId = selectedServer?.id;
+      const selectedDestination: RequestDestination | undefined =
+        serverId === undefined || comicBackendType === undefined
+          ? undefined
+          : {
+              serviceType: comicBackendType,
+              format: 'comic',
+              serverId,
+              rootFolder: selectedServer?.rootFolder ?? null,
+            };
+
+      const destinationRequests = media.id
+        ? await requestRepository
+            .createQueryBuilder('request')
+            .leftJoinAndSelect('request.requestedBy', 'requestedBy')
+            .where('request.media = :mediaId', { mediaId: media.id })
+            .getMany()
+        : [];
+
+      if (selectedDestination) {
+        const isLegacyDestinationAvailable =
+          !hasTrackedAvailableDestination(
+            destinationRequests,
+            selectedDestination
+          ) &&
+          media.status === MediaStatus.AVAILABLE &&
+          (media.serviceId == null || media.serviceId === serverId);
+
+        if (
+          isLegacyDestinationAvailable ||
+          isDestinationAvailableInTargets(
+            destinationRequests,
+            selectedDestination
+          )
+        ) {
+          throw new DuplicateMediaRequestError(
+            'This comic is already available at the selected destination.'
+          );
+        }
+
+        if (
+          isDestinationCoveredByActiveRequest(
+            destinationRequests,
+            selectedDestination
+          )
+        ) {
+          const promotablePendingRequest = findPromotablePendingRequest(
+            destinationRequests,
+            [selectedDestination],
+            user,
+            MediaType.COMIC
+          );
+          if (promotablePendingRequest) {
+            return promotePendingRequest(promotablePendingRequest, user);
+          }
+
+          throw new DuplicateMediaRequestError(
+            'Request for this comic already exists at the selected destination.'
+          );
+        }
+      } else if (
+        destinationRequests.some(
+          (request) =>
+            request.status === MediaRequestStatus.PENDING ||
+            request.status === MediaRequestStatus.APPROVED
+        )
+      ) {
+        throw new DuplicateMediaRequestError(
+          'Request for this comic already exists.'
+        );
+      }
+
+      const autoApproved = hasAutoApprovePermission(
+        requestUser.permissions,
+        'comic'
+      );
+
+      const request = new MediaRequest({
+        type: MediaType.COMIC,
+        media,
+        requestedBy: requestUser,
+        status: autoApproved
+          ? MediaRequestStatus.APPROVED
+          : MediaRequestStatus.PENDING,
+        modifiedBy: autoApproved ? user : undefined,
+        is4k: false,
+        serverId,
+        rootFolder: selectedServer?.rootFolder,
+        serviceTargets:
+          serverId === undefined || comicBackendType === undefined
+            ? []
+            : [
+                {
+                  serviceType: comicBackendType,
+                  format: 'comic',
+                  serverId,
+                  rootFolder: selectedServer?.rootFolder ?? null,
+                  status: MediaStatus.PENDING,
+                },
+              ],
+        isAutoRequest: options.isAutoRequest ?? false,
+        ignoreQuota,
+      });
+
+      return dataSource.transaction(async (manager) => {
+        const savedMedia = await manager.getRepository(Media).save(media!);
+        if (!existingIdentifier) {
+          await manager.getRepository(MediaIdentifier).save(
+            new MediaIdentifier({
+              media: savedMedia,
+              provider: MediaIdentifierProvider.COMICVINE,
+              value: comicVineIdValue,
+              canonical: true,
+            })
+          );
+        }
         request.media = savedMedia;
         return saveRequestWithFreshMedia(manager, request);
       });

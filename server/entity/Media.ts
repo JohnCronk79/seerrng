@@ -1,3 +1,5 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -315,6 +317,14 @@ class Media {
   @Column({ nullable: true, type: 'varchar' })
   public audiobookExternalServiceSlug?: string | null;
 
+  // Comics reuse the generic serviceId/externalServiceId/externalServiceSlug
+  // columns above (like MOVIE/TV/MUSIC do) rather than needing their own set,
+  // since a comic only ever has one destination. This column exists purely to
+  // disambiguate which settings array serviceId indexes into, since comics
+  // can be fulfilled by either a Mylar or a Kapowarr instance.
+  @Column({ nullable: true, type: 'varchar' })
+  public comicServiceType?: 'mylar' | 'kapowarr' | null;
+
   @Column({ nullable: true, type: 'varchar' })
   public ratingKey?: string | null;
 
@@ -376,6 +386,7 @@ class Media {
     this.availableMusicServiceIds = null;
     this.externalServiceId = null;
     this.externalServiceSlug = null;
+    this.comicServiceType = null;
     this.ratingKey = null;
     this.jellyfinMediaId = null;
     this.ratingKeyMp3 = null;
@@ -559,6 +570,38 @@ class Media {
                 server,
                 `/book/${this.audiobookExternalServiceSlug}?mediaType=${mediaType}`
               );
+        }
+      }
+    }
+
+    if (this.mediaType === MediaType.COMIC) {
+      if (this.serviceId !== null && this.externalServiceSlug !== null) {
+        const settings = getSettings();
+
+        if (this.comicServiceType === 'kapowarr') {
+          const server = settings.kapowarr.find(
+            (kapowarr) => kapowarr.id === this.serviceId
+          );
+          if (server) {
+            this.serviceUrl = server.externalUrl
+              ? `${server.externalUrl}/volumes/${this.externalServiceSlug}`
+              : KapowarrAPI.buildUrl(
+                  server,
+                  `/volumes/${this.externalServiceSlug}`
+                );
+          }
+        } else {
+          const server = settings.mylar.find(
+            (mylar) => mylar.id === this.serviceId
+          );
+          if (server) {
+            this.serviceUrl = server.externalUrl
+              ? `${server.externalUrl}/comicDetails?ComicID=${this.externalServiceSlug}`
+              : MylarAPI.buildUrl(
+                  server,
+                  `/comicDetails?ComicID=${this.externalServiceSlug}`
+                );
+          }
         }
       }
     }

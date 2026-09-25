@@ -60,6 +60,7 @@ import type {
 } from '@server/interfaces/api/requestInterfaces';
 import type { RequestStatusSortField } from '@server/lib/requestStatusSort';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -231,7 +232,8 @@ const messages = defineMessages('components.RequestStatus', {
   unknownTitle: 'Unknown title',
 });
 
-type MediaDetails = MovieDetails | TvDetails | MusicDetails | BookDetails;
+type MediaDetails =
+  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
 type StatusStage =
   | 'requested'
   | 'approved'
@@ -450,9 +452,17 @@ const isMusic = (details: MediaDetails): details is MusicDetails =>
 const isBook = (details: MediaDetails): details is BookDetails =>
   (details as BookDetails).mediaType === 'book';
 
+const isComic = (details: MediaDetails): details is ComicDetails =>
+  (details as ComicDetails).mediaType === 'comic';
+
 const getBookId = (item: RequestStatusItem): string | undefined =>
   item.request.media.identifiers?.find(
     (identifier) => identifier.provider === 'openlibrary'
+  )?.value;
+
+const getComicId = (item: RequestStatusItem): string | undefined =>
+  item.request.media.identifiers?.find(
+    (identifier) => identifier.provider === 'comicvine'
   )?.value;
 
 const getDetailsUrl = (item: RequestStatusItem): string | null => {
@@ -462,6 +472,10 @@ const getDetailsUrl = (item: RequestStatusItem): string | null => {
   }
   if (request.type === 'music' && request.media.mbId) {
     return `/api/v1/music/${encodeApiPathSegment(normalizeMusicBrainzId(request.media.mbId))}`;
+  }
+  if (request.type === 'comic') {
+    const comicId = getComicId(item);
+    return comicId ? `/api/v1/comic/${encodeApiPathSegment(comicId)}` : null;
   }
   const bookId = getBookId(item);
   return bookId
@@ -476,6 +490,10 @@ const getDetailHref = (item: RequestStatusItem): string | null => {
   }
   if (request.type === 'music' && request.media.mbId) {
     return `/music/${encodeApiPathSegment(normalizeMusicBrainzId(request.media.mbId))}`;
+  }
+  if (request.type === 'comic') {
+    const comicId = getComicId(item);
+    return comicId ? `/comic/${encodeApiPathSegment(comicId)}` : null;
   }
   const bookId = getBookId(item);
   const bookFormat = getRequestedBookFormat(item.request.bookFormat);
@@ -500,6 +518,9 @@ const getTitle = (
   }
   if (item.request.type === 'book') {
     return getBookId(item) ?? intl.formatMessage(messages.unknownTitle);
+  }
+  if (item.request.type === 'comic') {
+    return getComicId(item) ?? intl.formatMessage(messages.unknownTitle);
   }
   return `${item.request.type.toUpperCase()} #${item.request.media.tmdbId}`;
 };
@@ -528,7 +549,7 @@ const getBackdrop = (
       details.artistBackdrop ?? details.artistThumb ?? details.posterPath;
     return src ? { src, type: 'music' } : undefined;
   }
-  if (isBook(details)) {
+  if (isBook(details) || isComic(details)) {
     return details.posterPath
       ? { src: details.posterPath, type: 'book' }
       : undefined;
@@ -1212,7 +1233,9 @@ const RequestStatusCard = ({
         <RequestModal
           show
           tmdbId={
-            item.request.type === 'music' || item.request.type === 'book'
+            item.request.type === 'music' ||
+            item.request.type === 'book' ||
+            item.request.type === 'comic'
               ? undefined
               : item.request.media.tmdbId
           }
@@ -1222,6 +1245,7 @@ const RequestStatusCard = ({
               : undefined
           }
           bookId={item.request.type === 'book' ? getBookId(item) : undefined}
+          comicId={item.request.type === 'comic' ? getComicId(item) : undefined}
           type={item.request.type}
           is4k={item.request.is4k}
           editRequest={item.request}

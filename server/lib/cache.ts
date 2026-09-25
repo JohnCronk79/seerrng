@@ -19,6 +19,7 @@ export type AvailableCacheIds =
   | 'listenbrainz'
   | 'coverartarchive'
   | 'openlibrary'
+  | 'comicvine'
   | 'wikidata'
   | 'tadb'
   | 'associations';
@@ -194,6 +195,10 @@ class CacheManager {
       checkPeriod: 60 * 30,
     }),
     openlibrary: new Cache('openlibrary', 'Open Library API', {
+      stdTtl: 43200,
+      checkPeriod: 60 * 30,
+    }),
+    comicvine: new Cache('comicvine', 'ComicVine API', {
       stdTtl: 43200,
       checkPeriod: 60 * 30,
     }),

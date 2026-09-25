@@ -1,3 +1,5 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import type { LidarrAlbumOptions } from '@server/api/servarr/lidarr';
 import LidarrAPI from '@server/api/servarr/lidarr';
@@ -104,6 +106,7 @@ export const READARR_FAILED_RETRY_DELAY_MS = 6 * 60 * 60 * 1_000;
 export const READARR_MAX_LOOKUP_RESULTS = 50;
 export const READARR_LOOKUP_HYDRATION_CONCURRENCY = 5;
 const activeReadarrDispatches = new Map<number, Promise<number | undefined>>();
+const activeComicDispatches = new Map<number, Promise<number | undefined>>();
 
 const saveRequestServiceTarget = async (
   request: MediaRequest,
@@ -163,6 +166,39 @@ const getRequestDispatchServiceSelection = (
         ? settings.lidarr.find(({ id }) => id === request.serverId)
         : settings.lidarr.find(({ isDefault }) => isDefault);
     return { serviceType: 'lidarr', serviceIds: uniqueIds([selected?.id]) };
+  }
+  if (request.type === MediaType.COMIC) {
+    const requestedMylar =
+      request.serverId !== null && request.serverId >= 0
+        ? settings.mylar.find(({ id }) => id === request.serverId)
+        : undefined;
+    const requestedKapowarr =
+      request.serverId !== null && request.serverId >= 0 && !requestedMylar
+        ? settings.kapowarr.find(({ id }) => id === request.serverId)
+        : undefined;
+    if (requestedMylar) {
+      return {
+        serviceType: 'mylar',
+        serviceIds: uniqueIds([requestedMylar.id]),
+      };
+    }
+    if (requestedKapowarr) {
+      return {
+        serviceType: 'kapowarr',
+        serviceIds: uniqueIds([requestedKapowarr.id]),
+      };
+    }
+    const defaultMylar = settings.mylar.find(({ isDefault }) => isDefault);
+    if (defaultMylar) {
+      return { serviceType: 'mylar', serviceIds: uniqueIds([defaultMylar.id]) };
+    }
+    const defaultKapowarr = settings.kapowarr.find(
+      ({ isDefault }) => isDefault
+    );
+    return {
+      serviceType: 'kapowarr',
+      serviceIds: uniqueIds([defaultKapowarr?.id]),
+    };
   }
 
   const format = request.bookFormat ?? 'ebook';
@@ -554,13 +590,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         const request = await getRepository(MediaRequest).findOne({
           where: { id: requestId },
         });
-        const isRetryableFailedBook =
-          request?.type === MediaType.BOOK &&
+        const isRetryableFailedRequest =
+          (request?.type === MediaType.BOOK ||
+            request?.type === MediaType.COMIC) &&
           request.status === MediaRequestStatus.FAILED;
         if (
           !request ||
           (request.status !== MediaRequestStatus.APPROVED &&
-            !isRetryableFailedBook)
+            !isRetryableFailedRequest)
         ) {
           return { delivered: true };
         }
@@ -656,6 +693,11 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       return { delivered };
     } else if (request.type === MediaType.BOOK) {
       const retryAfterMs = await this.sendToReadarr(request);
+      if (retryAfterMs !== undefined) {
+        return { delivered: false, retryAfterMs };
+      }
+    } else if (request.type === MediaType.COMIC) {
+      const retryAfterMs = await this.sendToComicBackend(request);
       if (retryAfterMs !== undefined) {
         return { delivered: false, retryAfterMs };
       }
@@ -2209,6 +2251,211 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
 
       logger.warn(
         'Something went wrong sending book request to Bookshelf; retaining the failed request in the durable dispatch queue.',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          retryAfterMs: READARR_FAILED_RETRY_DELAY_MS,
+          errorMessage: e instanceof Error ? e.message : String(e),
+        }
+      );
+
+      if (media && !wasAlreadyFailed) {
+        await MediaRequest.sendNotification(
+          entity,
+          media,
+          Notification.MEDIA_FAILED
+        );
+      }
+
+      return READARR_FAILED_RETRY_DELAY_MS;
+    }
+  }
+
+  public async sendToComicBackend(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    if (entity.type !== MediaType.COMIC) {
+      return;
+    }
+
+    if (
+      entity.status !== MediaRequestStatus.APPROVED &&
+      entity.status !== MediaRequestStatus.FAILED
+    ) {
+      return;
+    }
+
+    const activeDispatch = activeComicDispatches.get(entity.id);
+    if (activeDispatch) {
+      return activeDispatch;
+    }
+
+    const dispatch = this.dispatchComicRequest(entity);
+    const trackedDispatch = dispatch.finally(() => {
+      if (activeComicDispatches.get(entity.id) === trackedDispatch) {
+        activeComicDispatches.delete(entity.id);
+      }
+    });
+    activeComicDispatches.set(entity.id, trackedDispatch);
+
+    return trackedDispatch;
+  }
+
+  private async dispatchComicRequest(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    try {
+      const mediaRepository = getRepository(Media);
+      const settings = getExternalRuntimeConfig();
+
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+        relations: { identifiers: true },
+      });
+
+      if (!media) {
+        throw new Error('Comic media data not found');
+      }
+
+      if (
+        media.status === MediaStatus.AVAILABLE &&
+        media.serviceId !== null &&
+        media.externalServiceId !== null
+      ) {
+        logger.warn('Comic already exists, marking request as COMPLETED', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+
+        const requestRepository = getRepository(MediaRequest);
+        entity.status = MediaRequestStatus.COMPLETED;
+        await requestRepository.save(entity);
+        return;
+      }
+
+      const comicVineId = media.identifiers?.find(
+        (identifier) =>
+          identifier.provider === MediaIdentifierProvider.COMICVINE
+      )?.value;
+      if (!comicVineId) {
+        throw new Error('Comic request is missing a ComicVine identifier');
+      }
+
+      const selection = getRequestDispatchServiceSelection(entity);
+      const backendId = selection.serviceIds[0];
+      if (backendId === undefined) {
+        throw new Error(
+          `No default ${selection.serviceType === 'kapowarr' ? 'Kapowarr' : 'Mylar'} server is configured for comic requests`
+        );
+      }
+
+      let externalServiceId: number;
+      let externalServiceSlug: string;
+
+      if (selection.serviceType === 'kapowarr') {
+        const kapowarrSettings = settings.kapowarr.find(
+          ({ id }) => id === backendId
+        );
+        if (!kapowarrSettings) {
+          throw new Error('Selected Kapowarr server no longer exists');
+        }
+        if (!kapowarrSettings.rootFolder) {
+          throw new Error(
+            'Selected Kapowarr server has no root folder configured'
+          );
+        }
+
+        const kapowarr = new KapowarrAPI({
+          url: KapowarrAPI.buildUrl(kapowarrSettings),
+          apiKey: kapowarrSettings.apiKey,
+        });
+        const rootFolderId = await kapowarr.resolveRootFolderId(
+          kapowarrSettings.rootFolder
+        );
+        const volume = await kapowarr.addVolume({
+          comicVineId: Number(comicVineId),
+          rootFolderId,
+        });
+        externalServiceId = volume.id;
+        externalServiceSlug = String(volume.id);
+      } else {
+        const mylarSettings = settings.mylar.find(({ id }) => id === backendId);
+        if (!mylarSettings) {
+          throw new Error('Selected Mylar server no longer exists');
+        }
+
+        const mylar = new MylarAPI({
+          url: MylarAPI.buildUrl(mylarSettings),
+          apiKey: mylarSettings.apiKey,
+        });
+        await mylar.addComic(comicVineId);
+        externalServiceId = Number(comicVineId);
+        externalServiceSlug = comicVineId;
+      }
+
+      media.serviceId = backendId;
+      media.externalServiceId = externalServiceId;
+      media.externalServiceSlug = externalServiceSlug;
+      media.comicServiceType = selection.serviceType as 'mylar' | 'kapowarr';
+      await mediaRepository.save(media);
+      await saveRequestServiceTarget(entity, {
+        serviceType: selection.serviceType,
+        format: 'comic',
+        serverId: backendId,
+        externalServiceId,
+        externalServiceSlug,
+        status: media.status,
+      });
+
+      const requestRepository = getRepository(MediaRequest);
+      entity.status = MediaRequestStatus.COMPLETED;
+      await requestRepository.save(entity);
+
+      logger.info('Sent request to comics service', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        serviceType: selection.serviceType,
+        comicVineId,
+      });
+    } catch (e) {
+      if (isTransientExternalError(e)) {
+        const providerRetryDelay = getRetryAfterMs(e);
+        const retryAfterMs =
+          providerRetryDelay === undefined
+            ? undefined
+            : clampReadarrProviderRetryDelay(providerRetryDelay);
+
+        logger.warn(
+          'Comic request hit a transient error; leaving request in the durable dispatch queue.',
+          {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+            retryAfterMs,
+            errorMessage: e instanceof Error ? e.message : String(e),
+          }
+        );
+
+        return retryAfterMs;
+      }
+
+      const wasAlreadyFailed = entity.status === MediaRequestStatus.FAILED;
+      const requestRepository = getRepository(MediaRequest);
+      const mediaRepository = getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+
+      if (!wasAlreadyFailed) {
+        entity.status = MediaRequestStatus.FAILED;
+        await requestRepository.save(entity);
+      }
+
+      logger.warn(
+        'Something went wrong sending comic request to Mylar/Kapowarr; retaining the failed request in the durable dispatch queue.',
         {
           label: 'Media Request',
           requestId: entity.id,

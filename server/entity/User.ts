@@ -634,6 +634,34 @@ export class User {
         })
       : 0;
 
+    // Comics only support the admin-configured default quota in this first
+    // pass, not a per-user override like the other types have (no
+    // comicQuotaLimit/comicQuotaDays columns on User yet) - deliberate v1
+    // scope cut, not an oversight.
+    const comicQuotaLimit = !canBypass ? defaultQuotas.comic.quotaLimit : 0;
+    const comicQuotaDays = defaultQuotas.comic.quotaDays;
+
+    const comicDate = new Date();
+    if (comicQuotaDays) {
+      comicDate.setDate(comicDate.getDate() - comicQuotaDays);
+    }
+
+    const comicQuotaUsed = comicQuotaLimit
+      ? await requestRepository.count({
+          where: {
+            requestedBy: {
+              id: this.id,
+            },
+            ...(comicQuotaDays ? { createdAt: AfterDate(comicDate) } : {}),
+            type: MediaType.COMIC,
+            status: Not(
+              In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
+            ),
+            ignoreQuota: false,
+          },
+        })
+      : 0;
+
     return {
       movie: {
         days: movieQuotaDays,
@@ -674,6 +702,17 @@ export class User {
           ? Math.max(0, bookQuotaLimit - bookQuotaUsed)
           : undefined,
         restricted: !!(bookQuotaLimit && bookQuotaLimit - bookQuotaUsed <= 0),
+      },
+      comic: {
+        days: comicQuotaDays,
+        limit: comicQuotaLimit,
+        used: comicQuotaUsed,
+        remaining: comicQuotaLimit
+          ? Math.max(0, comicQuotaLimit - comicQuotaUsed)
+          : undefined,
+        restricted: !!(
+          comicQuotaLimit && comicQuotaLimit - comicQuotaUsed <= 0
+        ),
       },
     };
   }

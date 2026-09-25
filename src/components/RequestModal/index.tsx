@@ -10,6 +10,10 @@ const BookRequestModal = dynamic(
   () => import('@app/components/RequestModal/BookRequestModal'),
   { ssr: false }
 );
+const ComicRequestModal = dynamic(
+  () => import('@app/components/RequestModal/ComicRequestModal'),
+  { ssr: false }
+);
 const CollectionRequestModal = dynamic(
   () => import('@app/components/RequestModal/CollectionRequestModal'),
   { ssr: false }
@@ -29,10 +33,11 @@ const TvRequestModal = dynamic(
 
 interface RequestModalProps {
   show: boolean;
-  type: 'movie' | 'tv' | 'collection' | 'music' | 'book';
+  type: 'movie' | 'tv' | 'collection' | 'music' | 'book' | 'comic';
   tmdbId?: number;
   mbId?: string;
   bookId?: string;
+  comicId?: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
   initialMusicServerId?: number;
   initialIs4k?: boolean;
@@ -50,6 +55,7 @@ const RequestModal = ({
   tmdbId,
   mbId,
   bookId,
+  comicId,
   initialBookFormat,
   initialMusicServerId,
   initialIs4k,
@@ -118,6 +124,14 @@ const RequestModal = ({
           onCancel={onCancel}
           bookId={bookId}
           initialBookFormat={initialBookFormat}
+          onUpdating={onUpdating}
+          editRequest={editRequest}
+        />
+      ) : type === 'comic' && comicId ? (
+        <ComicRequestModal
+          onComplete={onComplete}
+          onCancel={onCancel}
+          comicId={comicId}
           onUpdating={onUpdating}
           editRequest={editRequest}
         />
