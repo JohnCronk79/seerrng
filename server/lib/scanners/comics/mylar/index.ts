@@ -8,6 +8,7 @@ import type {
 import BaseScanner from '@server/lib/scanners/baseScanner';
 import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import type { MylarSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 
 type SyncStatus = StatusBase & {
   currentServer: MylarSettings;
@@ -70,7 +71,10 @@ class MylarScanner
 
       this.log('Mylar comics scan complete', 'info');
     } catch (e) {
-      this.log('Scan interrupted', 'error', { errorMessage: e.message });
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
     } finally {
       this.endRun(sessionId);
     }

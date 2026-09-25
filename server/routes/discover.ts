@@ -92,6 +92,7 @@ import {
   settlePromisesWithin,
 } from '@server/utils/concurrency';
 import { filterEntityResponse } from '@server/utils/entityResponse';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { parsePositiveInt } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
@@ -241,7 +242,7 @@ const parseTmdbKeywordFilter = (
 };
 
 const getErrorLogFields = (error: unknown) => ({
-  errorMessage: error instanceof Error ? error.message : 'Unknown error',
+  ...getHttpErrorDetails(error),
   errorStack: error instanceof Error ? error.stack : undefined,
 });
 

@@ -4,6 +4,9 @@ export type HttpErrorDetails = {
   errorMessage: string;
   errorCode?: string;
   status?: number;
+  upstreamMethod?: string;
+  upstreamHost?: string;
+  upstreamPath?: string;
   upstreamStatusCode?: number;
   upstreamMessage?: string;
 };
@@ -82,6 +85,68 @@ const getRetryAfterHeader = (error: unknown): string | undefined => {
   return undefined;
 };
 
+const sanitizeUpstreamMessage = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const sanitized = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .replace(/\bBearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    .replace(
+      /((?:api[_-]?key|access[_-]?token|token|secret|password)["']?\s*[:=]\s*["']?)[^&\s"'&,}]*/giu,
+      '$1[redacted]'
+    )
+    .trim()
+    .slice(0, 512);
+
+  return sanitized || undefined;
+};
+
+const getUpstreamTarget = (
+  error: AxiosError
+): Pick<
+  HttpErrorDetails,
+  'upstreamMethod' | 'upstreamHost' | 'upstreamPath'
+> => {
+  const config = error.config;
+  const requestUrl = config?.url;
+  const baseUrl = config?.baseURL;
+  let target: URL;
+
+  try {
+    if (requestUrl) {
+      try {
+        target = new URL(requestUrl);
+      } catch {
+        if (!baseUrl) {
+          return {};
+        }
+
+        // Axios joins relative request paths to baseURL, even when that URL's
+        // last path segment has no trailing slash (for example, /3 + /movie).
+        const normalizedBaseUrl = `${baseUrl.replace(/\/+$/u, '')}/`;
+        target = new URL(requestUrl.replace(/^\/+/, ''), normalizedBaseUrl);
+      }
+    } else if (baseUrl) {
+      target = new URL(baseUrl);
+    } else {
+      return {};
+    }
+  } catch {
+    return {};
+  }
+
+  return {
+    ...(config?.method
+      ? { upstreamMethod: config.method.toUpperCase().slice(0, 12) }
+      : {}),
+    ...(target.hostname ? { upstreamHost: target.hostname.slice(0, 253) } : {}),
+    ...(target.pathname ? { upstreamPath: target.pathname.slice(0, 512) } : {}),
+  };
+};
+
 export const getRetryAfterMs = (error: unknown): number | undefined => {
   const value = getRetryAfterHeader(error)?.trim();
   if (!value) {
@@ -109,24 +174,46 @@ export const getHttpErrorDetails = (error: unknown): HttpErrorDetails => {
       !Array.isArray(responseData)
         ? (responseData as Record<string, unknown>)
         : undefined;
-    const upstreamMessage =
-      typeof responseRecord?.status_message === 'string'
-        ? responseRecord.status_message
-            .replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ')
-            .replace(/\s+/gu, ' ')
-            .trim()
-            .slice(0, 512)
-        : undefined;
+    const responseMessageKeys = [
+      'status_message',
+      'message',
+      'error_description',
+      'detail',
+      'error',
+      'title',
+    ] as const;
+    const responseMessage = responseRecord
+      ? responseMessageKeys
+          .map((key) => responseRecord[key])
+          .map((value) =>
+            value && typeof value === 'object' && !Array.isArray(value)
+              ? (value as Record<string, unknown>).message
+              : value
+          )
+          .find((value): value is string => typeof value === 'string')
+      : undefined;
+    const responseErrors = responseRecord?.errors;
+    const firstResponseError = Array.isArray(responseErrors)
+      ? responseErrors.find(
+          (value): value is string => typeof value === 'string'
+        )
+      : undefined;
+    const upstreamMessage = sanitizeUpstreamMessage(
+      responseMessage ?? firstResponseError ?? axiosError.response?.statusText
+    );
+    const rawErrorMessage =
+      error instanceof Error
+        ? error.message || error.name
+        : axiosError.message || axiosError.name;
+    const errorMessage = sanitizeUpstreamMessage(rawErrorMessage);
 
     return {
-      errorMessage:
-        error instanceof Error
-          ? error.message || error.name || 'Unknown HTTP error'
-          : axiosError.message || axiosError.name || 'Unknown HTTP error',
+      errorMessage: errorMessage || 'Unknown HTTP error',
       ...(axiosError.code ? { errorCode: axiosError.code } : {}),
       ...(axiosError.response?.status
         ? { status: axiosError.response.status }
         : {}),
+      ...getUpstreamTarget(axiosError),
       ...(responseRecord && Number.isSafeInteger(responseRecord.status_code)
         ? { upstreamStatusCode: responseRecord.status_code as number }
         : {}),
@@ -136,12 +223,15 @@ export const getHttpErrorDetails = (error: unknown): HttpErrorDetails => {
 
   if (error instanceof Error) {
     return {
-      errorMessage: error.message || error.name || 'Unknown error',
+      errorMessage:
+        sanitizeUpstreamMessage(error.message) || error.name || 'Unknown error',
     };
   }
 
   return {
-    errorMessage: String(error || 'Unknown error'),
+    errorMessage:
+      sanitizeUpstreamMessage(String(error || 'Unknown error')) ||
+      'Unknown error',
   };
 };
 

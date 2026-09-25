@@ -325,6 +325,15 @@ searchRoutes.get('/', async (req, res, next) => {
         typeFilter === 'music';
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
       const shouldSearchAuthors = !typeFilter || typeFilter === 'author';
+      const providerNames = [
+        'TMDB',
+        'MusicBrainz albums',
+        'MusicBrainz artists',
+        'Open Library books',
+        'Bookshelf books',
+        'Open Library authors',
+        'Bookshelf authors',
+      ];
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
           ? tmdb.searchMulti({
@@ -432,6 +441,31 @@ searchRoutes.get('/', async (req, res, next) => {
           )
           .map(({ value }) => [value.index, value.result])
       );
+      const failedProviders = providerNames.flatMap((provider, index) => {
+        const response = providerResults.get(index);
+        if (response?.status === 'rejected') {
+          return [{ provider, ...getHttpErrorDetails(response.reason) }];
+        }
+
+        return !response && providerResponses.timedOut
+          ? [
+              {
+                provider,
+                timedOut: true,
+                timeoutMs: SEARCH_PROVIDER_TIMEOUT_MS,
+                errorCode: 'SEARCH_PROVIDER_TIMEOUT',
+                errorMessage:
+                  'Provider did not finish before the global search deadline.',
+              },
+            ]
+          : [];
+      });
+      if (failedProviders.length > 0) {
+        logger.warn('One or more global search providers failed', {
+          label: 'API',
+          failedProviders,
+        });
+      }
       const getProviderValue = <T>(index: number, fallback: T): T => {
         const response = providerResults.get(index);
         return response?.status === 'fulfilled'

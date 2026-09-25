@@ -136,8 +136,6 @@ export const getMediaTypeLabel = (
       return intl.formatMessage(globalMessages.book);
     case MediaType.COMIC:
       return intl.formatMessage(globalMessages.comic);
-    case MediaType.MAGAZINE:
-      return intl.formatMessage(globalMessages.magazine);
     default:
       return intl.formatMessage(globalMessages.series);
   }
@@ -186,17 +184,6 @@ export const getNotificationMediaUrl = (
 
     return comicVineId && /^\d+$/.test(comicVineId)
       ? `/comic/${encodeURIComponent(comicVineId)}`
-      : undefined;
-  }
-
-  if (payload.media.mediaType === 'magazine') {
-    const magazineId =
-      payload.media.externalServiceSlug ??
-      payload.media.identifiers?.find(
-        (identifier) => identifier.provider === 'lazylibrarian'
-      )?.value;
-    return magazineId
-      ? `/magazine/${encodeURIComponent(magazineId)}`
       : undefined;
   }
 

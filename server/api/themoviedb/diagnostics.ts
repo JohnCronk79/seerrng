@@ -48,6 +48,11 @@ export const logTmdbRequestFailure = ({
       credentialSource,
       ...(details.status !== undefined ? { status: details.status } : {}),
       ...(details.errorCode ? { errorCode: details.errorCode } : {}),
+      ...(details.upstreamMethod
+        ? { upstreamMethod: details.upstreamMethod }
+        : {}),
+      ...(details.upstreamHost ? { upstreamHost: details.upstreamHost } : {}),
+      ...(details.upstreamPath ? { upstreamPath: details.upstreamPath } : {}),
       ...(details.upstreamStatusCode !== undefined
         ? { upstreamStatusCode: details.upstreamStatusCode }
         : {}),

@@ -22,7 +22,6 @@ const globalMessages = defineMessages('notifications.common', {
   music: 'music',
   book: 'book',
   comic: 'comic',
-  magazine: 'magazine',
   issue: 'issue',
   issueTypeName: '{type} issue',
 });

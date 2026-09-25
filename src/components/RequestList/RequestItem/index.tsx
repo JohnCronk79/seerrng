@@ -35,7 +35,6 @@ import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { RequestResultsResponse } from '@server/interfaces/api/requestInterfaces';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
-import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -79,12 +78,7 @@ const messages = defineMessages('components.RequestList.RequestItem', {
 });
 
 type RequestItemTitle =
-  | MovieDetails
-  | TvDetails
-  | MusicDetails
-  | BookDetails
-  | ComicDetails
-  | MagazineDetails;
+  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
 
 const isMovie = (media: RequestItemTitle): media is MovieDetails => {
   return (
@@ -105,9 +99,6 @@ const isComic = (media: RequestItemTitle): media is ComicDetails => {
   return (media as ComicDetails).mediaType === 'comic';
 };
 
-const isMagazine = (media: RequestItemTitle): media is MagazineDetails =>
-  (media as MagazineDetails).mediaType === 'magazine';
-
 const getBookId = (request: NonFunctionProperties<MediaRequest>) =>
   request.media.identifiers?.find(
     (identifier) => identifier.provider === 'openlibrary'
@@ -126,12 +117,6 @@ const getComicId = (request: NonFunctionProperties<MediaRequest>) =>
     (identifier) => identifier.provider === 'comicvine'
   )?.value;
 
-const getMagazineId = (request: NonFunctionProperties<MediaRequest>) =>
-  request.media.externalServiceSlug ??
-  request.media.identifiers?.find(
-    (identifier) => identifier.provider === 'lazylibrarian'
-  )?.value;
-
 const getRequestDetailHref = (
   request: NonFunctionProperties<MediaRequest>,
   manage = false
@@ -148,7 +133,6 @@ const getRequestDetailHref = (
   const bookId = getNormalizedBookId(request);
   const musicId = getNormalizedMusicId(request);
   const comicId = getComicId(request);
-  const magazineId = getMagazineId(request);
 
   if (request.type === 'music' && musicId) {
     return `/music/${encodeApiPathSegment(musicId)}${suffix}`;
@@ -160,9 +144,6 @@ const getRequestDetailHref = (
 
   if (request.type === 'comic' && comicId) {
     return `/comic/${encodeApiPathSegment(comicId)}${suffix}`;
-  }
-  if (request.type === 'magazine' && magazineId) {
-    return `/magazine/${encodeApiPathSegment(magazineId)}${suffix}`;
   }
 
   return `/${request.type}/${request.media.tmdbId}${suffix}`;
@@ -292,9 +273,7 @@ const RequestItemError = ({
                         ? globalMessages.music
                         : requestData?.type === 'comic'
                           ? globalMessages.comic
-                          : requestData?.type === 'magazine'
-                            ? globalMessages.magazine
-                            : globalMessages.book
+                          : globalMessages.book
                   : globalMessages.request
               ),
             })}
@@ -303,8 +282,7 @@ const RequestItemError = ({
             <>
               {requestData.type !== 'music' &&
                 requestData.type !== 'book' &&
-                requestData.type !== 'comic' &&
-                requestData.type !== 'magazine' && (
+                requestData.type !== 'comic' && (
                   <div className="card-field">
                     <span className="card-field-name">
                       {intl.formatMessage(messages.tmdbid)}
@@ -375,9 +353,7 @@ const RequestItemError = ({
                         ? getBookId(requestData)
                         : requestData.type === 'comic'
                           ? getComicId(requestData)
-                          : requestData.type === 'magazine'
-                            ? getMagazineId(requestData)
-                            : undefined
+                          : undefined
                     }
                     mediaType={
                       requestData.type === 'music'
@@ -386,11 +362,9 @@ const RequestItemError = ({
                           ? 'book'
                           : requestData.type === 'comic'
                             ? 'comic'
-                            : requestData.type === 'magazine'
-                              ? 'magazine'
-                              : requestData.type === 'tv'
-                                ? 'tv'
-                                : 'movie'
+                            : requestData.type === 'tv'
+                              ? 'tv'
+                              : 'movie'
                     }
                     bookFormat={
                       requestData.type === 'book'
@@ -551,8 +525,6 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   const musicId =
     request.type === 'music' ? getNormalizedMusicId(request) : undefined;
   const comicId = request.type === 'comic' ? getComicId(request) : undefined;
-  const magazineId =
-    request.type === 'magazine' ? getMagazineId(request) : undefined;
   const url =
     request.type === 'movie'
       ? `/api/v1/movie/${request.media.tmdbId}`
@@ -564,9 +536,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
             ? `/api/v1/book/${encodeApiPathSegment(bookId)}`
             : request.type === 'comic' && comicId
               ? `/api/v1/comic/${encodeApiPathSegment(comicId)}`
-              : request.type === 'magazine' && magazineId
-                ? `/api/v1/magazine/${encodeApiPathSegment(magazineId)}`
-                : null;
+              : null;
   const { data: title, error } = useSWR<RequestItemTitle>(inView ? url : null);
   const { data: requestData, mutate: revalidate } = useSWR<
     NonFunctionProperties<MediaRequest>
@@ -702,15 +672,13 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
         tmdbId={
           request.type === 'music' ||
           request.type === 'book' ||
-          request.type === 'comic' ||
-          request.type === 'magazine'
+          request.type === 'comic'
             ? undefined
             : request.media.tmdbId
         }
         mbId={request.type === 'music' ? musicId : undefined}
         bookId={request.type === 'book' ? bookId : undefined}
         comicId={request.type === 'comic' ? comicId : undefined}
-        magazineTitle={magazineId}
         type={
           request.type === 'music'
             ? 'music'
@@ -718,11 +686,9 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
               ? 'book'
               : request.type === 'comic'
                 ? 'comic'
-                : request.type === 'magazine'
-                  ? 'magazine'
-                  : request.type === 'tv'
-                    ? 'tv'
-                    : 'movie'
+                : request.type === 'tv'
+                  ? 'tv'
+                  : 'movie'
         }
         is4k={request.is4k}
         editRequest={request}
@@ -736,7 +702,6 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
         {!isMusic(title) &&
           !isBook(title) &&
           !isComic(title) &&
-          !isMagazine(title) &&
           title.backdropPath && (
             <div className="absolute inset-0 z-0 w-full bg-cover bg-center xl:w-2/3">
               <CachedImage
@@ -761,21 +726,17 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                     ? 'book'
                     : isMusic(title)
                       ? 'music'
-                      : isComic(title) || isMagazine(title)
+                      : isComic(title)
                         ? 'book'
                         : 'tmdb'
                 }
                 src={
-                  (isMusic(title) ||
-                    isBook(title) ||
-                    isComic(title) ||
-                    isMagazine(title)) &&
+                  (isMusic(title) || isBook(title) || isComic(title)) &&
                   title.posterPath
                     ? title.posterPath
                     : !isMusic(title) &&
                         !isBook(title) &&
                         !isComic(title) &&
-                        !isMagazine(title) &&
                         title.posterPath
                       ? getTmdbPosterImageUrl(title.posterPath)
                       : '/images/seerr_poster_not_found.png'
@@ -809,9 +770,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                         ? title.firstPublishYear?.toString()
                         : isComic(title)
                           ? title.startYear
-                          : isMagazine(title)
-                            ? title.latestIssue
-                            : title.firstAirDate
+                          : title.firstAirDate
                   )?.slice(0, 4)}
                 </span>
               </div>
@@ -825,18 +784,13 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                     ? title.title
                     : isBook(title)
                       ? title.title
-                      : isComic(title) || isMagazine(title)
+                      : isComic(title)
                         ? title.title
                         : title.name}
               </Link>
               {(isMusic(title) || isBook(title)) && (
                 <div className="mr-2 min-w-0 truncate text-sm text-gray-300">
                   {isMusic(title) ? title.artist.name : title.author}
-                </div>
-              )}
-              {isMagazine(title) && title.latestIssue && (
-                <div className="mr-2 min-w-0 truncate text-sm text-gray-300">
-                  {title.latestIssue}
                 </div>
               )}
               {!isMovie(title) &&
@@ -899,7 +853,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                         ? title.title
                         : isBook(title)
                           ? title.title
-                          : isComic(title) || isMagazine(title)
+                          : isComic(title)
                             ? title.title
                             : title.name
                   }
@@ -912,8 +866,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                       ? undefined
                       : requestData.type === 'book'
                         ? undefined
-                        : requestData.type === 'comic' ||
-                            requestData.type === 'magazine'
+                        : requestData.type === 'comic'
                           ? undefined
                           : requestData.media.tmdbId
                   }
@@ -927,9 +880,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                       ? getBookId(requestData)
                       : requestData.type === 'comic'
                         ? getComicId(requestData)
-                        : requestData.type === 'magazine'
-                          ? getMagazineId(requestData)
-                          : undefined
+                        : undefined
                   }
                   mediaType={
                     requestData.type === 'music'
@@ -938,11 +889,9 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                         ? 'book'
                         : requestData.type === 'comic'
                           ? 'comic'
-                          : requestData.type === 'magazine'
-                            ? 'magazine'
-                            : requestData.type === 'tv'
-                              ? 'tv'
-                              : 'movie'
+                          : requestData.type === 'tv'
+                            ? 'tv'
+                            : 'movie'
                   }
                   bookFormat={
                     requestData.type === 'book'
