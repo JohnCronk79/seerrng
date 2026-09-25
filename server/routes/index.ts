@@ -479,6 +479,7 @@ router.get('/regions', isAuthenticated(), async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve regions.',
+      cause: e,
     });
   }
 });
@@ -637,6 +638,7 @@ router.get('/backdrops', publicBackdropsRateLimit, async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve backdrops.',
+      cause: e,
     });
   }
 });

@@ -18,7 +18,12 @@ export const logTmdbRequestFailure = ({
 }: ExternalAPIRequestFailure): void => {
   const details = getHttpErrorDetails(error);
   const credentialSource = getTmdbAuthSource();
-  const category = `${details.status ?? 'no-status'}:${details.errorCode ?? 'unknown'}:${credentialSource}`;
+  const category = [
+    details.status ?? 'no-status',
+    details.errorCode ?? 'unknown',
+    details.upstreamStatusCode ?? 'no-upstream-code',
+    credentialSource,
+  ].join(':');
   const now = Date.now();
   const previous = tmdbFailureLogState.get(category);
 
@@ -43,6 +48,12 @@ export const logTmdbRequestFailure = ({
       credentialSource,
       ...(details.status !== undefined ? { status: details.status } : {}),
       ...(details.errorCode ? { errorCode: details.errorCode } : {}),
+      ...(details.upstreamStatusCode !== undefined
+        ? { upstreamStatusCode: details.upstreamStatusCode }
+        : {}),
+      ...(details.upstreamMessage
+        ? { upstreamMessage: details.upstreamMessage }
+        : {}),
       errorMessage: details.errorMessage,
       ...(previous?.suppressedCount
         ? { suppressedFailuresSinceLastLog: previous.suppressedCount }

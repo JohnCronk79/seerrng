@@ -4,6 +4,8 @@ export type HttpErrorDetails = {
   errorMessage: string;
   errorCode?: string;
   status?: number;
+  upstreamStatusCode?: number;
+  upstreamMessage?: string;
 };
 
 type ErrorWithCause = {
@@ -100,6 +102,22 @@ export const getRetryAfterMs = (error: unknown): number | undefined => {
 export const getHttpErrorDetails = (error: unknown): HttpErrorDetails => {
   const axiosError = findAxiosError(error);
   if (axiosError) {
+    const responseData = axiosError.response?.data;
+    const responseRecord =
+      responseData &&
+      typeof responseData === 'object' &&
+      !Array.isArray(responseData)
+        ? (responseData as Record<string, unknown>)
+        : undefined;
+    const upstreamMessage =
+      typeof responseRecord?.status_message === 'string'
+        ? responseRecord.status_message
+            .replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ')
+            .replace(/\s+/gu, ' ')
+            .trim()
+            .slice(0, 512)
+        : undefined;
+
     return {
       errorMessage:
         error instanceof Error
@@ -109,6 +127,10 @@ export const getHttpErrorDetails = (error: unknown): HttpErrorDetails => {
       ...(axiosError.response?.status
         ? { status: axiosError.response.status }
         : {}),
+      ...(responseRecord && Number.isSafeInteger(responseRecord.status_code)
+        ? { upstreamStatusCode: responseRecord.status_code as number }
+        : {}),
+      ...(upstreamMessage ? { upstreamMessage } : {}),
     };
   }
 

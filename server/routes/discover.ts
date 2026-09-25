@@ -1567,6 +1567,7 @@ discoverRoutes.get('/movies', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve popular movies.',
+      cause: e,
     });
   }
 });
@@ -1995,6 +1996,7 @@ discoverRoutes.get('/tv', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve popular series.',
+      cause: e,
     });
   }
 });
@@ -2377,6 +2379,7 @@ discoverRoutes.get('/trending', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve trending items.',
+      cause: e,
     });
   }
 });
@@ -2492,6 +2495,7 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
       return next({
         status: 500,
         message: 'Unable to retrieve movie genre slider.',
+        cause: e,
       });
     }
   }
@@ -2545,6 +2549,7 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
       return next({
         status: 500,
         message: 'Unable to retrieve series genre slider.',
+        cause: e,
       });
     }
   }
