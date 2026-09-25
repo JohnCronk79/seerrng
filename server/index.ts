@@ -68,6 +68,7 @@ import {
   createProcessShutdownController,
   drainForShutdown,
 } from '@server/utils/gracefulShutdown';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { configureHttpServer, parseListenPort } from '@server/utils/httpServer';
 import restartFlag from '@server/utils/restartFlag';
 import { getRateLimitKey } from '@server/utils/security';
@@ -402,6 +403,7 @@ Promise.resolve()
             errors?: string[];
             stack?: string;
             error?: string;
+            cause?: unknown;
           },
           req: Request,
           res: Response,
@@ -412,6 +414,10 @@ Promise.resolve()
           const status = normalizeApiErrorStatus(err.status);
 
           if (status >= 500) {
+            const causeDetails =
+              err.cause === undefined
+                ? undefined
+                : getHttpErrorDetails(err.cause);
             logger.error('Unhandled API request error', {
               label: 'API',
               method: req.method,
@@ -420,6 +426,29 @@ Promise.resolve()
               errorMessage: err.message,
               errorStack: err.stack,
               errors: err.errors,
+              ...(causeDetails
+                ? {
+                    causeName:
+                      err.cause instanceof Error ? err.cause.name : undefined,
+                    causeMessage: causeDetails.errorMessage,
+                    ...(causeDetails.errorCode
+                      ? { causeErrorCode: causeDetails.errorCode }
+                      : {}),
+                    ...(causeDetails.status !== undefined
+                      ? { causeStatus: causeDetails.status }
+                      : {}),
+                    ...(causeDetails.upstreamStatusCode !== undefined
+                      ? {
+                          upstreamStatusCode: causeDetails.upstreamStatusCode,
+                        }
+                      : {}),
+                    ...(causeDetails.upstreamMessage
+                      ? { upstreamMessage: causeDetails.upstreamMessage }
+                      : {}),
+                    causeStack:
+                      err.cause instanceof Error ? err.cause.stack : undefined,
+                  }
+                : {}),
             });
           } else if (
             getRequestLogPath(req.originalUrl).startsWith('/api/v1/playback/')
