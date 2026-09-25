@@ -50,6 +50,7 @@ import {
   mapWithConcurrency,
 } from '@server/utils/concurrency';
 import { getHostname } from '@server/utils/getHostname';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { normalizeJellyfinGuid } from '@server/utils/jellyfin';
 import { oidcSafeFetch } from '@server/utils/oidcHttp';
 import { parseOidcIdentity } from '@server/utils/oidcIdentity';
@@ -555,7 +556,8 @@ authRoutes.post('/plex/pin', authRateLimit, async (req, res, next) => {
   } catch (e) {
     logger.error('Unable to create Plex OAuth PIN', {
       label: 'Auth',
-      error: e instanceof Error ? e.message : String(e),
+      ...getHttpErrorDetails(e),
+      errorStack: e instanceof Error ? e.stack : undefined,
     });
     return next({ status: 502, message: 'Unable to contact Plex.' });
   }
@@ -610,7 +612,8 @@ authRoutes.get(
       logger.warn('Unable to poll Plex OAuth PIN', {
         label: 'Auth',
         pinId,
-        error: e instanceof Error ? e.message : String(e),
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
       });
       return next({ status: 502, message: 'Unable to contact Plex.' });
     }

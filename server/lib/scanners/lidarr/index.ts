@@ -19,6 +19,7 @@ import {
   runWithServarrServiceSnapshots,
 } from '@server/lib/serviceAdmission';
 import type { LidarrSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { uniqWith } from 'lodash';
 
 type SyncStatus = StatusBase & {
@@ -105,7 +106,10 @@ class LidarrScanner
       await this.cleanupOrphanedAlbums();
       this.log('Lidarr scan complete', 'info');
     } catch (e) {
-      this.log('Scan interrupted', 'error', { errorMessage: e.message });
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
     } finally {
       this.endRun(sessionId);
     }

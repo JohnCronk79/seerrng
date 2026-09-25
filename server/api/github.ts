@@ -1,5 +1,6 @@
 import cacheManager from '@server/lib/cache';
 import logger from '@server/logger';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import ExternalAPI from './externalapi';
 
 const SEERRNG_REPO = '/repos/snapetech/seerrng';
@@ -118,7 +119,7 @@ class GithubAPI extends ExternalAPI {
     } catch (e) {
       logger.warn(
         "Failed to retrieve GitHub releases. This may be an issue on GitHub's end. SeerrNG can't check if it's on the latest version.",
-        { label: 'GitHub API', errorMessage: e.message }
+        { label: 'GitHub API', ...getHttpErrorDetails(e) }
       );
       return [];
     }
@@ -147,7 +148,7 @@ class GithubAPI extends ExternalAPI {
     } catch (e) {
       logger.warn(
         "Failed to retrieve GitHub commits. This may be an issue on GitHub's end. SeerrNG can't check if it's on the latest version.",
-        { label: 'GitHub API', errorMessage: e.message }
+        { label: 'GitHub API', ...getHttpErrorDetails(e) }
       );
       return [];
     }

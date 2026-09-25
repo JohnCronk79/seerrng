@@ -48,6 +48,7 @@ import BaseScanner from '@server/lib/scanners/baseScanner';
 import type { Library, PlexSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { mapWithConcurrency } from '@server/utils/concurrency';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { uniqWith } from 'lodash';
 import { createHash } from 'node:crypto';
 
@@ -265,7 +266,10 @@ export class PlexScanner
       );
     } catch (e) {
       this.log('Scan interrupted', 'error', {
-        errorMessage: e.message,
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+        sessionId,
+        currentLibrary: this.currentLibrary?.name,
       });
     } finally {
       this.endRun(sessionId);

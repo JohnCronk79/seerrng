@@ -8,6 +8,7 @@ import type {
 import BaseScanner from '@server/lib/scanners/baseScanner';
 import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import type { KapowarrSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 
 type SyncStatus = StatusBase & {
   currentServer: KapowarrSettings;
@@ -76,7 +77,10 @@ class KapowarrScanner
 
       this.log('Kapowarr comics scan complete', 'info');
     } catch (e) {
-      this.log('Scan interrupted', 'error', { errorMessage: e.message });
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
     } finally {
       this.endRun(sessionId);
     }

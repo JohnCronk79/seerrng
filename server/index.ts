@@ -434,6 +434,15 @@ Promise.resolve()
                     ...(causeDetails.errorCode
                       ? { causeErrorCode: causeDetails.errorCode }
                       : {}),
+                    ...(causeDetails.upstreamMethod
+                      ? { upstreamMethod: causeDetails.upstreamMethod }
+                      : {}),
+                    ...(causeDetails.upstreamHost
+                      ? { upstreamHost: causeDetails.upstreamHost }
+                      : {}),
+                    ...(causeDetails.upstreamPath
+                      ? { upstreamPath: causeDetails.upstreamPath }
+                      : {}),
                     ...(causeDetails.status !== undefined
                       ? { causeStatus: causeDetails.status }
                       : {}),
