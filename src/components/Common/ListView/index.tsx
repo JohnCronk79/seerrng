@@ -17,6 +17,7 @@ import {
 import { MediaStatus } from '@server/constants/media';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import type { ComicResult } from '@server/models/Comic';
+import type { MagazineResult } from '@server/models/Magazine';
 import type {
   AlbumResult,
   ArtistResult,
@@ -42,6 +43,7 @@ type ListViewProps = {
     | BookResult
     | AuthorResult
     | ComicResult
+    | MagazineResult
   )[];
   plexItems?: WatchlistItem[];
   isEmpty?: boolean;
@@ -75,7 +77,12 @@ const ListView = ({
         (title) =>
           (
             title as
-              TvResult | MovieResult | AlbumResult | BookResult | ComicResult
+              | TvResult
+              | MovieResult
+              | AlbumResult
+              | BookResult
+              | ComicResult
+              | MagazineResult
           ).mediaInfo?.status !== MediaStatus.BLOCKLISTED
       ),
     [items]
@@ -275,6 +282,23 @@ const ListView = ({
                 title={title.title}
                 artist={title.publisher}
                 year={title.startYear}
+                mediaType={title.mediaType}
+                canExpand
+              />
+            );
+            break;
+          case 'magazine':
+            titleCard = (
+              <TitleCard
+                key={title.id}
+                id={title.id}
+                status={title.mediaInfo?.status}
+                title={title.title}
+                artist={
+                  title.latestIssue
+                    ? `Latest issue ${title.latestIssue}`
+                    : undefined
+                }
                 mediaType={title.mediaType}
                 canExpand
               />

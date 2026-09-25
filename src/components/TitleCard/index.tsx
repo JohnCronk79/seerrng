@@ -424,13 +424,14 @@ const TitleCard = ({
   const isArtist = mediaType === 'artist';
   const isBook = mediaType === 'book';
   const isComic = mediaType === 'comic';
+  const isMagazine = mediaType === 'magazine';
   const canonicalId = normalizeExternalTitleId(mediaType, id);
   const videoMediaType =
     mediaType === 'movie' || mediaType === 'collection' || mediaType === 'tv';
   const numericId = typeof id === 'number' ? id : Number(id);
   const canUseVideoActions = videoMediaType && Number.isFinite(numericId);
   const canUseRequestActions =
-    canUseVideoActions || isAlbum || isBook || isComic;
+    canUseVideoActions || isAlbum || isBook || isComic || isMagazine;
   const canUseWatchlistActions = canUseVideoActions || isAlbum || isBook;
   const detailHref =
     mediaType === 'movie'
@@ -450,7 +451,9 @@ const TitleCard = ({
                 }
               : mediaType === 'comic'
                 ? `/comic/${encodeApiPathSegment(canonicalId)}`
-                : `/artist/${encodeApiPathSegment(canonicalId)}`;
+                : mediaType === 'magazine'
+                  ? `/magazine/${encodeApiPathSegment(canonicalId)}`
+                  : `/artist/${encodeApiPathSegment(canonicalId)}`;
   const displayImage = getTmdbPosterImageUrl(image);
   // ComicVine artwork is served from its own CDN hosts and isn't yet routed
   // through our image cache proxy (deliberate scope cut - see comics plan);
@@ -472,7 +475,9 @@ const TitleCard = ({
           ? Permission.REQUEST_MUSIC
           : isComic
             ? Permission.REQUEST_COMIC
-            : Permission.REQUEST_BOOK,
+            : isMagazine
+              ? Permission.REQUEST_MAGAZINE
+              : Permission.REQUEST_BOOK,
   ];
 
   if (mediaType === 'movie') {
@@ -604,6 +609,16 @@ const TitleCard = ({
               comicId={canonicalId}
               show={showRequestModal}
               type="comic"
+              onComplete={requestComplete}
+              onUpdating={requestUpdating}
+              onCancel={closeModal}
+            />
+          )}
+          {isMagazine && typeof canonicalId === 'string' && (
+            <RequestModal
+              magazineTitle={canonicalId}
+              show={showRequestModal}
+              type="magazine"
               onComplete={requestComplete}
               onUpdating={requestUpdating}
               onCancel={closeModal}

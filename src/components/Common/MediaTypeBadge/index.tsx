@@ -4,6 +4,7 @@ import {
   BookOpenIcon,
   FilmIcon,
   MusicalNoteIcon,
+  NewspaperIcon,
   RectangleStackIcon,
   Square3Stack3DIcon,
   TvIcon,
@@ -13,7 +14,14 @@ import { useIntl } from 'react-intl';
 import { twMerge } from 'tailwind-merge';
 
 export type MediaTypeBadgeType =
-  'movie' | 'tv' | 'collection' | 'album' | 'artist' | 'book' | 'comic';
+  | 'movie'
+  | 'tv'
+  | 'collection'
+  | 'album'
+  | 'artist'
+  | 'book'
+  | 'comic'
+  | 'magazine';
 
 export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
   movie: 'border-blue-500/70 bg-blue-700/35 text-blue-50',
@@ -23,6 +31,7 @@ export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
   artist: 'border-fuchsia-500/70 bg-fuchsia-700/35 text-fuchsia-50',
   book: 'border-amber-500/70 bg-amber-700/35 text-amber-50',
   comic: 'border-rose-500/70 bg-rose-700/35 text-rose-50',
+  magazine: 'border-cyan-400/70 bg-cyan-700/35 text-cyan-50',
 };
 
 export const getMediaTypeBadgeType = (
@@ -39,7 +48,8 @@ export const getMediaTypeBadgeType = (
     mediaType === 'album' ||
     mediaType === 'artist' ||
     mediaType === 'book' ||
-    mediaType === 'comic'
+    mediaType === 'comic' ||
+    mediaType === 'magazine'
   ) {
     return mediaType;
   }
@@ -96,6 +106,11 @@ const badgeConfig = {
     message: globalMessages.comic,
     icon: Square3Stack3DIcon,
     tone: mediaTypeBadgeTone.comic,
+  },
+  magazine: {
+    message: globalMessages.magazine,
+    icon: NewspaperIcon,
+    tone: mediaTypeBadgeTone.magazine,
   },
 } as const satisfies Record<
   MediaTypeBadgeType,

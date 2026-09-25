@@ -134,9 +134,13 @@ const requestPermissions: Record<MediaType, Permission[]> = {
   // Comics have no media-server playback surface (they're downloaded files,
   // not streamed) - this is exhaustive-switch coverage, not a reachable path.
   [MediaType.COMIC]: [Permission.REQUEST, Permission.REQUEST_COMIC],
+  [MediaType.MAGAZINE]: [Permission.REQUEST, Permission.REQUEST_MAGAZINE],
 };
 
 const canUsePlayback = (user: User, mediaType: MediaType, is4k = false) => {
+  if (mediaType === MediaType.COMIC || mediaType === MediaType.MAGAZINE) {
+    return false;
+  }
   if (
     !user.hasPermission(requestPermissions[mediaType], {
       type: 'or',

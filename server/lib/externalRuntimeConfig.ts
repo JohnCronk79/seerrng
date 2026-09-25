@@ -24,6 +24,7 @@ export type ExternalRuntimeConfig = Pick<
   | 'readarr'
   | 'mylar'
   | 'kapowarr'
+  | 'lazylibrarian'
   | 'notifications'
   | 'network'
 >;
@@ -116,6 +117,10 @@ const validate = (value: unknown): ExternalRuntimeConfig => {
       root.kapowarr === undefined
         ? []
         : normalizeServarrServices(root.kapowarr, 'kapowarr'),
+    lazylibrarian:
+      root.lazylibrarian === undefined
+        ? []
+        : normalizeServarrServices(root.lazylibrarian, 'lazylibrarian'),
   } as unknown as ExternalRuntimeConfig;
 };
 
@@ -149,6 +154,7 @@ const loadFromSettingsFile = (): ExternalRuntimeConfig | undefined => {
       readarr: settings.readarr ?? [],
       mylar: settings.mylar ?? [],
       kapowarr: settings.kapowarr ?? [],
+      lazylibrarian: settings.lazylibrarian ?? [],
       notifications: settings.notifications,
       network: settings.network,
     };

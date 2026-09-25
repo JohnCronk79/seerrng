@@ -62,6 +62,7 @@ import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
 import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
+import magazineRoutes from './magazine';
 import mediaRoutes from './media';
 import movieRoutes from './movie';
 import musicRoutes from './music';
@@ -430,6 +431,12 @@ router.use('/tv', isAuthenticated(), externalMetadataRateLimit, tvRoutes);
 router.use('/music', isAuthenticated(), externalMetadataRateLimit, musicRoutes);
 router.use('/book', isAuthenticated(), bookRoutes);
 router.use('/comic', isAuthenticated(), comicRoutes);
+router.use(
+  '/magazine',
+  isAuthenticated(),
+  externalMetadataRateLimit,
+  magazineRoutes
+);
 router.use(
   '/artist',
   isAuthenticated(),

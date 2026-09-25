@@ -1005,6 +1005,116 @@ class BaseScanner<T> {
     );
   }
 
+  protected async processMagazine(
+    value: string,
+    {
+      mediaAddedAt,
+      serviceId,
+      externalServiceId,
+      externalServiceSlug,
+      processing = false,
+      title = 'Unknown Magazine',
+      hasFile = true,
+      mutationGuard,
+      outerMutationGuard,
+    }: ProcessOptions = {}
+  ): Promise<void> {
+    const provider = MediaIdentifierProvider.LAZYLIBRARIAN;
+    const lockKey = `${provider}:${value}`;
+
+    await this.runProcessMutation(outerMutationGuard, () =>
+      runWithRequestAdmission(
+        [`request-canonical:magazine:${provider}:${value}`],
+        () =>
+          this.asyncLock.dispatch(lockKey, () =>
+            this.runProcessMutation(mutationGuard, () =>
+              dataSource.transaction(async (manager) => {
+                const mediaRepository = manager.getRepository(Media);
+                const identifierRepository =
+                  manager.getRepository(MediaIdentifier);
+                const existingIdentifier = await identifierRepository.findOne({
+                  where: { provider, value },
+                  relations: { media: true },
+                });
+                const existing =
+                  existingIdentifier?.media?.mediaType === MediaType.MAGAZINE
+                    ? existingIdentifier.media
+                    : undefined;
+
+                if (existing) {
+                  let changed = false;
+                  const previousStatus = existing.status;
+                  existing.status = hasFile
+                    ? MediaStatus.AVAILABLE
+                    : processing
+                      ? previousStatus === MediaStatus.DELETED
+                        ? MediaStatus.DELETED
+                        : MediaStatus.PROCESSING
+                      : previousStatus === MediaStatus.AVAILABLE
+                        ? MediaStatus.UNKNOWN
+                        : previousStatus;
+                  if (existing.status !== previousStatus) changed = true;
+                  if (mediaAddedAt && !existing.mediaAddedAt) {
+                    existing.mediaAddedAt = mediaAddedAt;
+                    changed = true;
+                  }
+                  if (
+                    serviceId !== undefined &&
+                    existing.serviceId !== serviceId
+                  ) {
+                    existing.serviceId = serviceId;
+                    changed = true;
+                  }
+                  if (
+                    externalServiceId !== undefined &&
+                    existing.externalServiceId !== externalServiceId
+                  ) {
+                    existing.externalServiceId = externalServiceId;
+                    changed = true;
+                  }
+                  if (
+                    externalServiceSlug !== undefined &&
+                    existing.externalServiceSlug !== externalServiceSlug
+                  ) {
+                    existing.externalServiceSlug = externalServiceSlug;
+                    changed = true;
+                  }
+                  if (changed) {
+                    await mediaRepository.save(existing);
+                    this.log(`Updating existing magazine: ${title}`);
+                  }
+                } else if (processing || hasFile) {
+                  const media = await mediaRepository.save(
+                    new Media({
+                      tmdbId: 0,
+                      mediaType: MediaType.MAGAZINE,
+                      mediaAddedAt,
+                      serviceId,
+                      externalServiceId,
+                      externalServiceSlug,
+                      status: hasFile
+                        ? MediaStatus.AVAILABLE
+                        : MediaStatus.PROCESSING,
+                      status4k: MediaStatus.UNKNOWN,
+                    })
+                  );
+                  await identifierRepository.save(
+                    new MediaIdentifier({
+                      media,
+                      provider,
+                      value,
+                      canonical: true,
+                    })
+                  );
+                  this.log(`Saved new magazine: ${title}`);
+                }
+              })
+            )
+          )
+      )
+    );
+  }
+
   /**
    * processShow takes a TMDB ID and an array of ProcessableSeasons, which
    * should include the total episodes a sesaon has + the total available

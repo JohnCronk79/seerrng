@@ -258,6 +258,12 @@ class RequestWorkCleanupManager {
     await requestDispatchManager.cancel(request.id);
     if (!active) return;
 
+    if (request.type === MediaType.MAGAZINE) {
+      throw new RequestWorkCleanupError(
+        'LazyLibrarian does not support cancelling an individual magazine search through its API.'
+      );
+    }
+
     if (request.type === MediaType.BOOK) {
       const operations = await getRepository(BookRequestSearch).find({
         where: { requestId: request.id },

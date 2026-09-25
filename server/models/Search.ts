@@ -19,6 +19,7 @@ import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import type { AuthorResult, BookResult } from '@server/models/Book';
 export type { AuthorResult, BookResult } from '@server/models/Book';
+export type { MagazineResult } from '@server/models/Magazine';
 export type MediaType =
   | 'tv'
   | 'movie'
@@ -28,7 +29,8 @@ export type MediaType =
   | 'album'
   | 'book'
   | 'author'
-  | 'comic';
+  | 'comic'
+  | 'magazine';
 
 interface TmdbSearchResult {
   id: number;

@@ -917,6 +917,47 @@ components:
         - isDefault
         - syncEnabled
         - rootFolder
+    LazyLibrarianSettings:
+      type: object
+      properties:
+        id:
+          type: number
+          readOnly: true
+        name:
+          type: string
+          example: 'Magazine Library'
+        hostname:
+          type: string
+          example: '127.0.0.1'
+        port:
+          type: number
+          example: 5299
+        apiKey:
+          type: string
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+        isDefault:
+          type: boolean
+        externalUrl:
+          type: string
+        tags:
+          type: array
+          items:
+            type: number
+        syncEnabled:
+          type: boolean
+        preventSearch:
+          type: boolean
+      required:
+        - name
+        - hostname
+        - port
+        - apiKey
+        - useSsl
+        - isDefault
+        - syncEnabled
     SonarrSettings:
       type: object
       properties:
@@ -1305,6 +1346,55 @@ components:
           type: string
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+    MagazineIssueReference:
+      type: object
+      required:
+        - id
+        - available
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+        available:
+          type: boolean
+    MagazineResult:
+      type: object
+      required:
+        - id
+        - provider
+        - mediaType
+        - title
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+          enum: [lazylibrarian]
+        mediaType:
+          type: string
+          enum: [magazine]
+        title:
+          type: string
+        status:
+          type: string
+        latestIssue:
+          type: string
+        issueCount:
+          type: number
+        mediaInfo:
+          $ref: '#/components/schemas/MediaInfo'
+    MagazineDetails:
+      allOf:
+        - $ref: '#/components/schemas/MagazineResult'
+        - type: object
+          required:
+            - issues
+          properties:
+            issues:
+              type: array
+              items:
+                $ref: '#/components/schemas/MagazineIssueReference'
     AuthorResult:
       type: object
       properties:
@@ -2014,7 +2104,7 @@ components:
           type: integer
         mediaType:
           type: string
-          enum: [movie, tv, music, book]
+          enum: [movie, tv, music, book, comic, magazine]
         stage:
           type: string
         attempt:
@@ -2209,7 +2299,7 @@ components:
           nullable: true
         mediaType:
           type: string
-          enum: [movie, tv, music, book]
+          enum: [movie, tv, music, book, comic, magazine]
         serviceId:
           type: number
           nullable: true
@@ -8804,6 +8894,43 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ComicResult'
+  /discover/magazines:
+    get:
+      summary: Discover magazines
+      description: Returns magazines tracked by configured LazyLibrarian instances.
+      tags:
+        - search
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: number
+            example: 1
+            default: 1
+        - in: query
+          name: query
+          schema:
+            type: string
+            maxLength: 256
+            example: National Geographic
+      responses:
+        '200':
+          description: Magazine discovery results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  page:
+                    type: number
+                  totalPages:
+                    type: number
+                  totalResults:
+                    type: number
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MagazineResult'
   /discover/keyword/{keywordId}/movies:
     get:
       summary: Get movies from keyword
@@ -9134,6 +9261,30 @@ paths:
           description: Comic not found
         '503':
           description: ComicVine is not configured on this server
+  /magazine/{title}:
+    get:
+      summary: Get magazine details
+      description: Returns a magazine title and its known issues from LazyLibrarian.
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: title
+          required: true
+          schema:
+            type: string
+            maxLength: 256
+      responses:
+        '200':
+          description: Magazine details returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MagazineDetails'
+        '404':
+          description: Magazine not found
+        '503':
+          description: LazyLibrarian is unavailable
   /book/{bookId}:
     get:
       summary: Get book details
@@ -9769,6 +9920,102 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/KapowarrSettings'
+  /settings/lazylibrarian:
+    get:
+      summary: Get LazyLibrarian settings
+      description: Returns all LazyLibrarian settings in a JSON array.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Values were returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LazyLibrarianSettings'
+    post:
+      summary: Create LazyLibrarian instance
+      description: Creates a LazyLibrarian instance from the request body.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LazyLibrarianSettings'
+      responses:
+        '201':
+          description: New LazyLibrarian instance created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LazyLibrarianSettings'
+  /settings/lazylibrarian/test:
+    post:
+      summary: Test LazyLibrarian configuration
+      description: Tests the LazyLibrarian API connection.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServarrConnectionSettings'
+      responses:
+        '200':
+          description: Successfully connected to LazyLibrarian
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+  /settings/lazylibrarian/{lazylibrarianId}:
+    put:
+      summary: Update LazyLibrarian instance
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: lazylibrarianId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LazyLibrarianSettings'
+      responses:
+        '200':
+          description: LazyLibrarian instance updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LazyLibrarianSettings'
+    delete:
+      summary: Delete LazyLibrarian instance
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: lazylibrarianId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: LazyLibrarian instance deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LazyLibrarianSettings'
   /request:
     get:
       summary: Get all requests
@@ -9832,7 +10079,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [movie, tv, music, book, comic, all]
+            enum: [movie, tv, music, book, comic, magazine, all]
             nullable: true
             default: all
       responses:
@@ -9866,7 +10113,7 @@ paths:
               properties:
                 mediaType:
                   type: string
-                  enum: [movie, tv, music, book, comic]
+                  enum: [movie, tv, music, book, comic, magazine]
                   example: movie
                 mediaId:
                   oneOf:
@@ -10068,7 +10315,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [movie, tv, music, book, comic, all]
+            enum: [movie, tv, music, book, comic, magazine, all]
             default: all
         - in: query
           name: filter
@@ -10218,7 +10465,7 @@ paths:
               properties:
                 mediaType:
                   type: string
-                  enum: [movie, tv, music, book, comic]
+                  enum: [movie, tv, music, book, comic, magazine]
                 seasons:
                   type: array
                   items:

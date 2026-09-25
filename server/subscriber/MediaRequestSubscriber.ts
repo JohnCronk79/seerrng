@@ -1,5 +1,6 @@
 import KapowarrAPI from '@server/api/comics/kapowarr';
 import MylarAPI from '@server/api/comics/mylar';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import type { LidarrAlbumOptions } from '@server/api/servarr/lidarr';
 import LidarrAPI from '@server/api/servarr/lidarr';
@@ -45,6 +46,10 @@ import {
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
+import {
+  cleanMagazineTitle,
+  normalizeMagazineTitle,
+} from '@server/lib/magazineIdentity';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
 import { getLidarrAlbumMediaStatus } from '@server/lib/musicAvailability';
 import notificationManager, { Notification } from '@server/lib/notifications';
@@ -107,6 +112,7 @@ export const READARR_MAX_LOOKUP_RESULTS = 50;
 export const READARR_LOOKUP_HYDRATION_CONCURRENCY = 5;
 const activeReadarrDispatches = new Map<number, Promise<number | undefined>>();
 const activeComicDispatches = new Map<number, Promise<number | undefined>>();
+const activeMagazineDispatches = new Map<number, Promise<number | undefined>>();
 
 const saveRequestServiceTarget = async (
   request: MediaRequest,
@@ -198,6 +204,16 @@ const getRequestDispatchServiceSelection = (
     return {
       serviceType: 'kapowarr',
       serviceIds: uniqueIds([defaultKapowarr?.id]),
+    };
+  }
+  if (request.type === MediaType.MAGAZINE) {
+    const selected =
+      request.serverId !== null && request.serverId >= 0
+        ? settings.lazylibrarian.find(({ id }) => id === request.serverId)
+        : settings.lazylibrarian.find(({ isDefault }) => isDefault);
+    return {
+      serviceType: 'lazylibrarian',
+      serviceIds: uniqueIds([selected?.id]),
     };
   }
 
@@ -592,7 +608,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         });
         const isRetryableFailedRequest =
           (request?.type === MediaType.BOOK ||
-            request?.type === MediaType.COMIC) &&
+            request?.type === MediaType.COMIC ||
+            request?.type === MediaType.MAGAZINE) &&
           request.status === MediaRequestStatus.FAILED;
         if (
           !request ||
@@ -698,6 +715,11 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       }
     } else if (request.type === MediaType.COMIC) {
       const retryAfterMs = await this.sendToComicBackend(request);
+      if (retryAfterMs !== undefined) {
+        return { delivered: false, retryAfterMs };
+      }
+    } else if (request.type === MediaType.MAGAZINE) {
+      const retryAfterMs = await this.sendToMagazineBackend(request);
       if (retryAfterMs !== undefined) {
         return { delivered: false, retryAfterMs };
       }
@@ -2473,6 +2495,148 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         );
       }
 
+      return READARR_FAILED_RETRY_DELAY_MS;
+    }
+  }
+
+  public async sendToMagazineBackend(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    if (entity.type !== MediaType.MAGAZINE) {
+      return;
+    }
+    if (
+      entity.status !== MediaRequestStatus.APPROVED &&
+      entity.status !== MediaRequestStatus.FAILED
+    ) {
+      return;
+    }
+
+    const activeDispatch = activeMagazineDispatches.get(entity.id);
+    if (activeDispatch) {
+      return activeDispatch;
+    }
+    const dispatch = this.dispatchMagazineRequest(entity);
+    const trackedDispatch = dispatch.finally(() => {
+      if (activeMagazineDispatches.get(entity.id) === trackedDispatch) {
+        activeMagazineDispatches.delete(entity.id);
+      }
+    });
+    activeMagazineDispatches.set(entity.id, trackedDispatch);
+    return trackedDispatch;
+  }
+
+  private async dispatchMagazineRequest(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    try {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const settings = getExternalRuntimeConfig();
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+        relations: { identifiers: true },
+      });
+      if (!media) {
+        throw new Error('Magazine media data not found.');
+      }
+      const titleValue =
+        media.externalServiceSlug ??
+        media.identifiers?.find(
+          (identifier) =>
+            identifier.provider === MediaIdentifierProvider.LAZYLIBRARIAN
+        )?.value;
+      const title = titleValue ? cleanMagazineTitle(titleValue) : '';
+      if (!title) {
+        throw new Error('Magazine request is missing its LazyLibrarian title.');
+      }
+
+      const selection = getRequestDispatchServiceSelection(entity);
+      const serviceId = selection.serviceIds[0];
+      const service = settings.lazylibrarian.find(
+        (candidate) => candidate.id === serviceId
+      );
+      if (!service) {
+        throw new Error(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+
+      const lazyLibrarian = new LazyLibrarianAPI({
+        url: LazyLibrarianAPI.buildUrl(service),
+        apiKey: service.apiKey,
+      });
+      const normalizedTitle = normalizeMagazineTitle(title);
+      const trackedMagazines = await lazyLibrarian.getMagazines();
+      const alreadyTracked = trackedMagazines.some(
+        (magazine) => normalizeMagazineTitle(magazine.title) === normalizedTitle
+      );
+      if (!alreadyTracked) {
+        await lazyLibrarian.addMagazine(title);
+      }
+      if (!service.preventSearch) {
+        await lazyLibrarian.searchMagazine(title);
+      }
+
+      media.serviceId = service.id;
+      media.externalServiceId = 0;
+      media.externalServiceSlug = title;
+      media.mediaType = MediaType.MAGAZINE;
+      media.status = MediaStatus.PROCESSING;
+      await mediaRepository.save(media);
+      await saveRequestServiceTarget(entity, {
+        serviceType: 'lazylibrarian',
+        format: 'magazine',
+        serverId: service.id,
+        externalServiceId: 0,
+        externalServiceSlug: title,
+        rootFolder: null,
+        status: MediaStatus.PROCESSING,
+      });
+
+      entity.status = MediaRequestStatus.COMPLETED;
+      await requestRepository.save(entity);
+      logger.info('Sent magazine request to LazyLibrarian', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        serviceId: service.id,
+      });
+    } catch (error) {
+      if (isTransientExternalError(error)) {
+        const providerRetryDelay = getRetryAfterMs(error);
+        return providerRetryDelay === undefined
+          ? undefined
+          : clampReadarrProviderRetryDelay(providerRetryDelay);
+      }
+
+      const wasAlreadyFailed = entity.status === MediaRequestStatus.FAILED;
+      const requestRepository = getRepository(MediaRequest);
+      const mediaRepository = getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+      if (!wasAlreadyFailed) {
+        entity.status = MediaRequestStatus.FAILED;
+        await requestRepository.save(entity);
+      }
+      logger.warn(
+        'Something went wrong sending magazine request to LazyLibrarian; retaining the failed request in the durable dispatch queue.',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          retryAfterMs: READARR_FAILED_RETRY_DELAY_MS,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }
+      );
+      if (media && !wasAlreadyFailed) {
+        await MediaRequest.sendNotification(
+          entity,
+          media,
+          Notification.MEDIA_FAILED
+        );
+      }
       return READARR_FAILED_RETRY_DELAY_MS;
     }
   }

@@ -662,6 +662,30 @@ export class User {
         })
       : 0;
 
+    const magazineQuotaLimit = !canBypass
+      ? defaultQuotas.magazine.quotaLimit
+      : 0;
+    const magazineQuotaDays = defaultQuotas.magazine.quotaDays;
+    const magazineDate = new Date();
+    if (magazineQuotaDays) {
+      magazineDate.setDate(magazineDate.getDate() - magazineQuotaDays);
+    }
+    const magazineQuotaUsed = magazineQuotaLimit
+      ? await requestRepository.count({
+          where: {
+            requestedBy: { id: this.id },
+            ...(magazineQuotaDays
+              ? { createdAt: AfterDate(magazineDate) }
+              : {}),
+            type: MediaType.MAGAZINE,
+            status: Not(
+              In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
+            ),
+            ignoreQuota: false,
+          },
+        })
+      : 0;
+
     return {
       movie: {
         days: movieQuotaDays,
@@ -712,6 +736,17 @@ export class User {
           : undefined,
         restricted: !!(
           comicQuotaLimit && comicQuotaLimit - comicQuotaUsed <= 0
+        ),
+      },
+      magazine: {
+        days: magazineQuotaDays,
+        limit: magazineQuotaLimit,
+        used: magazineQuotaUsed,
+        remaining: magazineQuotaLimit
+          ? Math.max(0, magazineQuotaLimit - magazineQuotaUsed)
+          : undefined,
+        restricted: !!(
+          magazineQuotaLimit && magazineQuotaLimit - magazineQuotaUsed <= 0
         ),
       },
     };

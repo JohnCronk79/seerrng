@@ -2,6 +2,7 @@ import type {
   CollectorServiceSettings,
   DVRSettings,
   KapowarrSettings,
+  LazyLibrarianSettings,
   LidarrSettings,
   MylarSettings,
   RadarrSettings,
@@ -601,4 +602,12 @@ export const parseKapowarrSettings = (
   if ('error' in rootFolder) return rootFolder;
 
   return { value: { ...parsed.value, rootFolder: rootFolder.value } };
+};
+
+export const parseLazyLibrarianSettings = (
+  body: unknown,
+  current?: LazyLibrarianSettings
+): { value: LazyLibrarianSettings } | { error: string } => {
+  const parsed = parseCollectorSettings(body, current);
+  return 'error' in parsed ? parsed : { value: parsed.value };
 };

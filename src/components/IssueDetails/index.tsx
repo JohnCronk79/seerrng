@@ -7,6 +7,7 @@ import IssueComment from '@app/components/IssueDetails/IssueComment';
 import IssueMediaSummary, {
   isIssueBook,
   isIssueComic,
+  isIssueMagazine,
   isIssueMovie,
   isIssueMusic,
   type IssueMediaDetails,
@@ -84,6 +85,9 @@ const IssueDetails = () => {
   const comicId = issueData?.media.identifiers?.find(
     (identifier) => identifier.provider === 'comicvine'
   )?.value;
+  const magazineTitle = issueData?.media.identifiers?.find(
+    (identifier) => identifier.provider === 'lazylibrarian'
+  )?.value;
   const detailUrl =
     issueData?.media.mediaType === MediaType.MOVIE
       ? `/api/v1/movie/${issueData.media.tmdbId}`
@@ -95,7 +99,10 @@ const IssueDetails = () => {
             ? `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}`
             : issueData?.media.mediaType === MediaType.COMIC && comicId
               ? `/api/v1/comic/${encodeApiPathSegment(comicId)}`
-              : null;
+              : issueData?.media.mediaType === MediaType.MAGAZINE &&
+                  magazineTitle
+                ? `/api/v1/magazine/${encodeApiPathSegment(magazineTitle)}`
+                : null;
   const { data, error } = useSWR<IssueMediaDetails>(detailUrl);
   if (issueData && !detailUrl) {
     return <ErrorPage statusCode={404} />;
@@ -118,8 +125,11 @@ const IssueDetails = () => {
   const isMusic = isIssueMusic(data);
   const isBook = isIssueBook(data);
   const isComic = isIssueComic(data);
+  const isMagazine = isIssueMagazine(data);
   const title =
-    isMovie || isMusic || isBook || isComic ? data.title : data.name;
+    isMovie || isMusic || isBook || isComic || isMagazine
+      ? data.title
+      : data.name;
   const mediaHref =
     issueData.media.mediaType === MediaType.MOVIE
       ? `/movie/${issueData.media.tmdbId}`
@@ -129,12 +139,14 @@ const IssueDetails = () => {
           ? `/music/${encodeApiPathSegment(musicId)}`
           : issueData.media.mediaType === MediaType.COMIC && comicId
             ? `/comic/${encodeApiPathSegment(comicId)}`
-            : normalizedBookId
-              ? `/book/${encodeApiPathSegment(normalizedBookId)}`
-              : '/';
+            : issueData.media.mediaType === MediaType.MAGAZINE && magazineTitle
+              ? `/magazine/${encodeApiPathSegment(magazineTitle)}`
+              : normalizedBookId
+                ? `/book/${encodeApiPathSegment(normalizedBookId)}`
+                : '/';
   const backdropPath = isMusic
     ? data.artistBackdrop
-    : isBook || isComic
+    : isBook || isComic || isMagazine
       ? data.posterPath
       : data.backdropPath
         ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
@@ -167,7 +179,9 @@ const IssueDetails = () => {
           ? 'Lidarr'
           : issueData.media.mediaType === MediaType.COMIC
             ? 'Mylar/Kapowarr'
-            : 'Bookshelf';
+            : issueData.media.mediaType === MediaType.MAGAZINE
+              ? 'LazyLibrarian'
+              : 'Bookshelf';
   const updateIssueStatus = async (status: 'open' | 'resolved') => {
     try {
       await axios.post(`/api/v1/issue/${issueData.id}/${status}`);
@@ -219,7 +233,13 @@ const IssueDetails = () => {
               aria-hidden
             >
               <CachedImage
-                type={isBook || isComic ? 'book' : isMusic ? 'music' : 'tmdb'}
+                type={
+                  isBook || isComic || isMagazine
+                    ? 'book'
+                    : isMusic
+                      ? 'music'
+                      : 'tmdb'
+                }
                 alt=""
                 src={backdropPath}
                 fill
@@ -282,7 +302,8 @@ const IssueDetails = () => {
               !isMovie &&
               !isMusic &&
               !isBook &&
-              !isComic && (
+              !isComic &&
+              !isMagazine && (
                 <IssueAffectedEpisodes issue={issueData} tvId={data.id} />
               )}
 

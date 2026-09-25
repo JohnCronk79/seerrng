@@ -14,6 +14,7 @@ import {
   jellyfinRecentScanner,
 } from '@server/lib/scanners/jellyfin';
 import { lidarrScanner } from '@server/lib/scanners/lidarr';
+import { lazyLibrarianScanner } from '@server/lib/scanners/magazines/lazylibrarian';
 import { plexFullScanner, plexRecentScanner } from '@server/lib/scanners/plex';
 import { radarrScanner } from '@server/lib/scanners/radarr';
 import { readarrScanner } from '@server/lib/scanners/readarr';
@@ -398,6 +399,24 @@ export const startJobs = (): void => {
     }),
     running: () => kapowarrScanner.status().running,
     cancelFn: () => kapowarrScanner.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'magazine-scan',
+    name: 'LazyLibrarian Magazine Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['magazine-scan'].schedule,
+    job: schedule.scheduleJob(jobs['magazine-scan'].schedule, () => {
+      logger.info('Starting scheduled job: LazyLibrarian Magazine Scan', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('LazyLibrarian Magazine Scan', () =>
+        lazyLibrarianScanner.run()
+      );
+    }),
+    running: () => lazyLibrarianScanner.status().running,
+    cancelFn: () => lazyLibrarianScanner.cancel(),
   });
 
   // Checks if media is still available in plex/sonarr/radarr libs

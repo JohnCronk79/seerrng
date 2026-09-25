@@ -15,6 +15,7 @@ import { getSafeHref } from '@app/utils/safeUrl';
 import { Transition } from '@headlessui/react';
 import {
   BookOpenIcon,
+  NewspaperIcon,
   PencilIcon,
   PlusIcon,
   Square3Stack3DIcon,
@@ -24,6 +25,7 @@ import type OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
 import type {
   KapowarrSettings,
+  LazyLibrarianSettings,
   LidarrSettings,
   MylarSettings,
   RadarrSettings,
@@ -38,6 +40,9 @@ import useSWR, { mutate } from 'swr';
 
 const KapowarrModal = dynamic(
   () => import('@app/components/Settings/KapowarrModal')
+);
+const LazyLibrarianModal = dynamic(
+  () => import('@app/components/Settings/LazyLibrarianModal')
 );
 const LidarrModal = dynamic(
   () => import('@app/components/Settings/LidarrModal')
@@ -83,6 +88,11 @@ const messages = defineMessages('components.Settings', {
   addreadarr: 'Add Bookshelf Server',
   addmylar: 'Add Mylar Server',
   addkapowarr: 'Add Kapowarr Server',
+  addlazylibrarian: 'Add LazyLibrarian Server',
+  lazylibrariansettings: 'LazyLibrarian Settings',
+  magazineServiceSettingsDescription:
+    'Configure LazyLibrarian to search and track magazine issues. Enable scanning to keep library availability current.',
+  mediaTypeMagazine: 'magazine',
   mylarsettings: 'Mylar Settings',
   kapowarrsettings: 'Kapowarr Settings',
   comicServiceSettingsDescription:
@@ -115,11 +125,12 @@ interface ServerInstanceProps {
   port: number;
   isSSL?: boolean;
   externalUrl?: string;
-  profileName: string;
+  profileName?: string;
   isSonarr?: boolean;
   isLidarr?: boolean;
   isReadarr?: boolean;
   isComics?: boolean;
+  isMagazines?: boolean;
   serviceFormat?: 'ebook' | 'audiobook';
   onEdit: () => void;
   onDelete: () => void;
@@ -164,6 +175,7 @@ const ServerInstance = ({
   isLidarr = false,
   isReadarr = false,
   isComics = false,
+  isMagazines = false,
   serviceFormat,
   externalUrl,
   onEdit,
@@ -193,6 +205,8 @@ const ServerInstance = ({
             <BookOpenIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
           ) : isComics ? (
             <Square3Stack3DIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
+          ) : isMagazines ? (
+            <NewspaperIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
           ) : (
             <RadarrLogo className="h-10 w-10 flex-shrink-0" />
           )}
@@ -251,8 +265,12 @@ const ServerInstance = ({
                 {internalUrl}
               </a>
             </dd>
-            <dt>{intl.formatMessage(messages.activeProfile)}</dt>
-            <dd>{profileName}</dd>
+            {profileName !== undefined && (
+              <>
+                <dt>{intl.formatMessage(messages.activeProfile)}</dt>
+                <dd>{profileName}</dd>
+              </>
+            )}
           </dl>
           <div className="settings-card-actions settings-service-card-actions">
             <Button
@@ -311,6 +329,11 @@ const SettingsServices = () => {
     error: kapowarrError,
     mutate: revalidateKapowarr,
   } = useSWR<KapowarrSettings[]>('/api/v1/settings/kapowarr');
+  const {
+    data: lazyLibrarianData,
+    error: lazyLibrarianError,
+    mutate: revalidateLazyLibrarian,
+  } = useSWR<LazyLibrarianSettings[]>('/api/v1/settings/lazylibrarian');
   const { data: rules, mutate: revalidate } =
     useSWR<OverrideRuleResultsResponse>('/api/v1/overrideRule');
   const [editRadarrModal, setEditRadarrModal] = useState<{
@@ -355,9 +378,23 @@ const SettingsServices = () => {
     open: false,
     kapowarr: null,
   });
+  const [editLazyLibrarianModal, setEditLazyLibrarianModal] = useState<{
+    open: boolean;
+    lazylibrarian: LazyLibrarianSettings | null;
+  }>({
+    open: false,
+    lazylibrarian: null,
+  });
   const [deleteServerModal, setDeleteServerModal] = useState<{
     open: boolean;
-    type: 'radarr' | 'sonarr' | 'lidarr' | 'readarr' | 'mylar' | 'kapowarr';
+    type:
+      | 'radarr'
+      | 'sonarr'
+      | 'lidarr'
+      | 'readarr'
+      | 'mylar'
+      | 'kapowarr'
+      | 'lazylibrarian';
     serverId: number | null;
   }>({
     open: false,
@@ -411,6 +448,7 @@ const SettingsServices = () => {
     revalidateReadarr();
     revalidateMylar();
     revalidateKapowarr();
+    revalidateLazyLibrarian();
     mutate('/api/v1/settings/public');
   };
 
@@ -503,6 +541,19 @@ const SettingsServices = () => {
             revalidateMylar();
             mutate('/api/v1/settings/public');
             setEditKapowarrModal({ open: false, kapowarr: null });
+          }}
+        />
+      )}
+      {editLazyLibrarianModal.open && (
+        <LazyLibrarianModal
+          lazylibrarian={editLazyLibrarianModal.lazylibrarian}
+          onClose={() =>
+            setEditLazyLibrarianModal({ open: false, lazylibrarian: null })
+          }
+          onSave={() => {
+            revalidateLazyLibrarian();
+            mutate('/api/v1/settings/public');
+            setEditLazyLibrarianModal({ open: false, lazylibrarian: null });
           }}
         />
       )}
@@ -968,6 +1019,74 @@ const SettingsServices = () => {
                   >
                     <PlusIcon />
                     <span>{intl.formatMessage(messages.addkapowarr)}</span>
+                  </Button>
+                </div>
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.lazylibrariansettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.magazineServiceSettingsDescription)}
+        </p>
+      </div>
+      <div className="section settings-service-section">
+        {!lazyLibrarianData && !lazyLibrarianError && <LoadingSpinner />}
+        {lazyLibrarianData && !lazyLibrarianError && (
+          <>
+            {lazyLibrarianData.length > 0 &&
+              !lazyLibrarianData.some(({ isDefault }) => isDefault) && (
+                <Alert
+                  title={intl.formatMessage(messages.noDefaultServer, {
+                    serverType: 'LazyLibrarian',
+                    mediaType: intl.formatMessage(messages.mediaTypeMagazine),
+                  })}
+                />
+              )}
+            <ul className="settings-service-grid">
+              {lazyLibrarianData.map((lazylibrarian) => (
+                <ServerInstance
+                  key={`lazylibrarian-config-${lazylibrarian.id}`}
+                  name={lazylibrarian.name}
+                  hostname={lazylibrarian.hostname}
+                  port={lazylibrarian.port}
+                  isSSL={lazylibrarian.useSsl}
+                  isMagazines={true}
+                  isDefault={lazylibrarian.isDefault}
+                  externalUrl={lazylibrarian.externalUrl}
+                  onEdit={() =>
+                    setEditLazyLibrarianModal({
+                      open: true,
+                      lazylibrarian,
+                    })
+                  }
+                  onDelete={() =>
+                    setDeleteServerModal({
+                      open: true,
+                      serverId: lazylibrarian.id,
+                      type: 'lazylibrarian',
+                    })
+                  }
+                />
+              ))}
+              <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+                <div className="flex h-full w-full items-center justify-center">
+                  <Button
+                    buttonType="success"
+                    buttonSize="standard"
+                    onClick={() =>
+                      setEditLazyLibrarianModal({
+                        open: true,
+                        lazylibrarian: null,
+                      })
+                    }
+                  >
+                    <PlusIcon />
+                    <span>{intl.formatMessage(messages.addlazylibrarian)}</span>
                   </Button>
                 </div>
               </li>

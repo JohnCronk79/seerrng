@@ -26,6 +26,7 @@ const mediaTypeByService: Record<ServarrServiceType, MediaType> = {
   // MediaType.BOOK's ID space today).
   mylar: MediaType.COMIC,
   kapowarr: MediaType.COMIC,
+  lazylibrarian: MediaType.MAGAZINE,
 };
 
 const overrideColumnByService = {
@@ -67,7 +68,8 @@ export const getHistoricalServarrServiceIdMaximum = async (
       .getRawOne<{ standardMaximum: unknown; fourKMaximum: unknown }>(),
     serviceType === 'readarr' ||
     serviceType === 'mylar' ||
-    serviceType === 'kapowarr'
+    serviceType === 'kapowarr' ||
+    serviceType === 'lazylibrarian'
       ? Promise.resolve({ maximum: null as unknown })
       : getRepository(OverrideRule)
           .createQueryBuilder('rule')
@@ -125,7 +127,8 @@ export const assertServarrServiceCanBeRemoved = async (
   const overrideRuleCount =
     serviceType === 'readarr' ||
     serviceType === 'mylar' ||
-    serviceType === 'kapowarr'
+    serviceType === 'kapowarr' ||
+    serviceType === 'lazylibrarian'
       ? 0
       : await getRepository(OverrideRule).count({
           where: { [overrideColumnByService[serviceType]]: serviceId },

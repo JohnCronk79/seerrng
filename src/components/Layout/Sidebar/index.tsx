@@ -15,6 +15,7 @@ import {
   EyeSlashIcon,
   FilmIcon,
   MusicalNoteIcon,
+  NewspaperIcon,
   SparklesIcon,
   SpeakerWaveIcon,
   Square3Stack3DIcon,
@@ -35,6 +36,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   browsebooks: 'Books',
   browseaudiobooks: 'Audiobooks',
   browsecomics: 'Comics',
+  browsemagazines: 'Magazines',
   browsetv: 'Series',
   requests: 'Requests',
   blocklist: 'Blocklist',
@@ -105,6 +107,12 @@ const SidebarLinks: SidebarLinkProps[] = [
     messagesKey: 'browsecomics',
     svgIcon: <Square3Stack3DIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/(?:discover\/comics(?:\/.*)?|comic\/)/,
+  },
+  {
+    href: '/discover/magazines',
+    messagesKey: 'browsemagazines',
+    svgIcon: <NewspaperIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/magazines(?:\/.*)?|magazine\/)/,
   },
   {
     href: '/requests',

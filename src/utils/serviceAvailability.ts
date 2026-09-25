@@ -2,6 +2,7 @@ export interface OptionalServiceAvailability {
   musicEnabled: boolean;
   booksEnabled: boolean;
   comicsEnabled: boolean;
+  magazinesEnabled?: boolean;
 }
 
 export const isOptionalCatalogPathEnabled = (
@@ -14,6 +15,10 @@ export const isOptionalCatalogPathEnabled = (
 
   if (path === '/discover/comics') {
     return availability.comicsEnabled;
+  }
+
+  if (path === '/discover/magazines') {
+    return Boolean(availability.magazinesEnabled);
   }
 
   return (
