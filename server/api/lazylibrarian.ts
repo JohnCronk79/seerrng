@@ -196,6 +196,10 @@ class LazyLibrarianAPI extends ExternalAPI {
     await this.runCommand<unknown>('addMagazine', { name: title });
   }
 
+  public async removeMagazine(title: string): Promise<void> {
+    await this.runCommand<unknown>('removeMagazine', { name: title });
+  }
+
   public async searchMagazine(title: string): Promise<void> {
     // LazyLibrarian accepts an optional title and scopes the search to that
     // magazine when it is already in its database.

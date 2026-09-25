@@ -40,6 +40,16 @@ SeerrNG checks requests and availability by a normalized title, so requests
 that differ only in case or repeated whitespace resolve to the same magazine.
 The magazine details page shows issue dates and whether each issue has a file.
 
+## Manage tracked magazines
+
+Users with **Manage Requests** permission can open **Manage Magazine** from a
+tracked title's details page. The panel shows its SeerrNG status, requests, and
+known issues. Administrators can open the title in LazyLibrarian, mark it
+available in SeerrNG, clear its SeerrNG tracking data, or remove it from both
+LazyLibrarian and SeerrNG. Clearing tracking data also clears the related
+requests. Removing a title from LazyLibrarian removes its magazine and issue
+records, but leaves files on disk untouched.
+
 ## Permissions and quotas
 
 Administrators can grant **Request Magazine** and **Auto Approve Magazine** in

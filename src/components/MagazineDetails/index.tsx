@@ -11,21 +11,30 @@ import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import {
   ArrowDownTrayIcon,
+  CogIcon,
   InformationCircleIcon,
 } from '@heroicons/react/24/solid';
-import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { MagazineDetails as MagazineDetailsType } from '@server/models/Magazine';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
 });
+const ExternalMediaManageSlideOver = dynamic(
+  () => import('@app/components/ExternalMediaManageSlideOver'),
+  { ssr: false }
+);
 
 const messages = defineMessages('components.MagazineDetails', {
   status: 'Request status',
@@ -37,6 +46,7 @@ const messages = defineMessages('components.MagazineDetails', {
   noIssues: 'LazyLibrarian has no issue details for this title yet.',
   viewRequest: 'View Request',
   requestMagazine: 'Request Magazine',
+  manageMagazine: 'Manage Magazine',
   notAvailable: 'Not available',
 });
 
@@ -45,6 +55,7 @@ const MagazineDetails = () => {
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [showManager, setShowManager] = useState(router.query.manage === '1');
   const [editRequest, setEditRequest] =
     useState<NonFunctionProperties<MediaRequest>>();
   const title =
@@ -56,6 +67,10 @@ const MagazineDetails = () => {
   } = useSWR<MagazineDetailsType>(
     title ? `/api/v1/magazine/${encodeApiPathSegment(title)}` : null
   );
+
+  useEffect(() => {
+    setShowManager(router.query.manage === '1');
+  }, [router.query.manage]);
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -90,11 +105,30 @@ const MagazineDetails = () => {
     !isProcessing &&
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     !activeRequest;
+  const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
+  const isManageAvailable = Boolean(
+    data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
+  );
   const notAvailable = intl.formatMessage(messages.notAvailable);
 
   return (
     <>
       <PageTitle title={data.title} />
+      {showManager && canUseManage && isManageAvailable && (
+        <ExternalMediaManageSlideOver
+          data={data}
+          mediaType={MediaType.MAGAZINE}
+          onClose={() => {
+            setShowManager(false);
+            void router.push({
+              pathname: router.pathname,
+              query: { title },
+            });
+          }}
+          revalidate={() => revalidate()}
+          show={showManager}
+        />
+      )}
       {showRequestModal && (
         <RequestModal
           magazineTitle={data.title}
@@ -148,6 +182,16 @@ const MagazineDetails = () => {
             </dl>
 
             <div className="media-primary-action-row">
+              {canUseManage && isManageAvailable && (
+                <Button
+                  buttonType="ghost"
+                  buttonSize="sm"
+                  onClick={() => setShowManager(true)}
+                >
+                  <CogIcon />
+                  <span>{intl.formatMessage(messages.manageMagazine)}</span>
+                </Button>
+              )}
               {activeRequest && (
                 <Button
                   buttonType="ghost"

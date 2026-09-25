@@ -64,6 +64,8 @@ export interface UserSettingsGeneralResponse {
   globalMusicQuotaLimit?: number;
   globalBookQuotaDays?: number;
   globalBookQuotaLimit?: number;
+  globalComicQuotaDays?: number;
+  globalComicQuotaLimit?: number;
   watchlistSyncMovies?: boolean;
   watchlistSyncTv?: boolean;
   watchlistSyncMusic?: boolean;

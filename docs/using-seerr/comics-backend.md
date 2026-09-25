@@ -9,8 +9,9 @@ sidebar_position: 24
 SeerrNG discovers comics through [ComicVine](https://comicvine.gamespot.com/)
 and dispatches requests to either [Mylar3](https://github.com/mylar3/mylar3)
 or [Kapowarr](https://github.com/Casvt/Kapowarr). Both backends can be
-configured at the same time; each configured instance is selectable per
-request, with one instance of each marked as the default.
+configured at the same time. Users with advanced request permission can choose
+any configured instance when more than one is available; other requests go to
+the single default instance across both backends.
 
 ## ComicVine API Key
 
@@ -57,7 +58,8 @@ identified comics).
 2. In SeerrNG, open **Settings > Services** and add a Mylar3 server.
 3. Enter its hostname, port, and API key (**Mylar3 > Settings > General >
    Security**).
-4. Mark one Mylar3 server as the default if you configure more than one.
+4. If Mylar3 should be the default comics destination, mark this instance as
+   the default across your configured Mylar3 and Kapowarr servers.
 5. Enable **Sync** to bring already-owned comics into SeerrNG as available.
 
 ## Kapowarr setup
@@ -88,21 +90,23 @@ Point Kapowarr's FlareSolverr setting at the `flaresolverr` container, then:
 2. Enter its hostname, port, and API key (**Kapowarr > Settings > General**).
 3. Select a **Root Folder** — Kapowarr requires one; SeerrNG's connection test
    lists the root folders Kapowarr already knows about.
-4. Mark one Kapowarr server as the default if you configure more than one.
+4. If Kapowarr should be the default comics destination, mark this instance as
+   the default across your configured Mylar3 and Kapowarr servers.
 5. Enable **Sync** to bring already-owned comics into SeerrNG as available.
 
 ## Configuration checklist
 
 1. Add a ComicVine API key in **Settings > General**.
 2. Add a Mylar3 and/or Kapowarr server in **Settings > Services**.
-3. Mark one server as the default. When both backends are configured, one
-   Mylar3 and one Kapowarr instance can each be marked default; SeerrNG picks
-   a single default across the combined pool for requests that do not specify
-   a backend explicitly.
+3. Mark one server across the combined Mylar3 and Kapowarr list as the
+   default. Requests without an explicitly selected server use this instance.
 4. Enable **Sync** on each service you want scanned into SeerrNG's local
    availability data.
 5. Set a default comic request quota in **Settings > Users** if you want to
    limit comic requests per user.
+6. To give one user a different limit, open that user's profile settings and
+   enable **Override Global Limit** under **Comic Request Limit**. Clear the
+   override to return to the global limit.
 
 ## Known limitations
 
@@ -112,11 +116,15 @@ not bugs:
 - No per-request backend/root-folder/profile picker. Comics dispatch to
   whichever default (or explicitly targeted) server SeerrNG resolves, the
   same way movie and TV quality-profile overrides do not apply here.
-- No per-user comic quota override; only the admin-configured default quota
-  applies.
-- No watchlist or blocklist support for comics.
-- No "Manage" (remove from backend) button on the comic details page.
-- No issue reporting for comics.
+- No per-request root-folder or profile picker. Users with advanced request
+  permission can choose a comic server when multiple instances are configured;
+  other requests use a configured default.
+- Comics do not currently support watchlists.
+- Comic issue reports support the **Other** category only.
+
+Users with **Manage Requests** permission can open **Manage Comic** from a
+tracked comic's details page. Administrators can open the comic in its backend,
+remove it from the backend, mark it available, or clear its SeerrNG data.
 
 ## Troubleshooting
 
