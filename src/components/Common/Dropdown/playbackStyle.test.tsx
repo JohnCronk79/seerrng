@@ -40,5 +40,5 @@ it('leaves other dropdown variants on their existing styling', () => {
     <Dropdown buttonType="primary" text="Other dropdown" />
   );
   expect(html).not.toContain('playback-dropdown-trigger');
-  expect(html).toContain('border-indigo-500');
+  expect(html).toContain('app-button-primary');
 });

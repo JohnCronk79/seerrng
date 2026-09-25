@@ -405,51 +405,51 @@
   }
 
   .subject-tag-indigo {
-    @apply border-indigo-400/80 bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/35;
+    @apply border-indigo-400/80 bg-indigo-950/35 text-indigo-400 hover:bg-indigo-900/55 active:bg-indigo-900/70;
   }
 
   .subject-tag-purple {
-    @apply border-purple-400/80 bg-purple-500/20 text-purple-400 hover:bg-purple-500/35;
+    @apply border-purple-400/80 bg-purple-950/35 text-purple-400 hover:bg-purple-900/55 active:bg-purple-900/70;
   }
 
   .subject-tag-emerald {
-    @apply border-emerald-400/80 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/35;
+    @apply border-emerald-400/80 bg-emerald-950/35 text-emerald-400 hover:bg-emerald-900/55 active:bg-emerald-900/70;
   }
 
   .subject-tag-amber {
-    @apply border-amber-400/80 bg-amber-500/20 text-amber-400 hover:bg-amber-500/35;
+    @apply border-amber-400/80 bg-amber-950/35 text-amber-400 hover:bg-amber-900/55 active:bg-amber-900/70;
   }
 
   .subject-tag-sky {
-    @apply border-sky-400/80 bg-sky-500/20 text-sky-400 hover:bg-sky-500/35;
+    @apply border-sky-400/80 bg-sky-950/35 text-sky-400 hover:bg-sky-900/55 active:bg-sky-900/70;
   }
 
   .subject-tag-rose {
-    @apply border-rose-400/80 bg-rose-500/20 text-rose-400 hover:bg-rose-500/35;
+    @apply border-rose-400/80 bg-rose-950/35 text-rose-400 hover:bg-rose-900/55 active:bg-rose-900/70;
   }
 
   .subject-tag-yellow {
-    @apply border-yellow-400/80 bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/35;
+    @apply border-yellow-400/80 bg-yellow-950/35 text-yellow-400 hover:bg-yellow-900/55 active:bg-yellow-900/70;
   }
 
   .subject-tag-green {
-    @apply border-green-500/90 bg-green-950/35 text-green-300 hover:bg-green-900/55;
+    @apply border-green-500/90 bg-green-950/35 text-green-300 hover:bg-green-900/55 active:bg-green-900/70;
   }
 
   .subject-tag-cyan {
-    @apply border-cyan-500/90 bg-cyan-950/35 text-cyan-300 hover:bg-cyan-900/55;
+    @apply border-cyan-500/90 bg-cyan-950/35 text-cyan-300 hover:bg-cyan-900/55 active:bg-cyan-900/70;
   }
 
   .subject-tag-orange {
-    @apply border-orange-400/80 bg-orange-500/20 text-orange-400 hover:bg-orange-500/35;
+    @apply border-orange-400/80 bg-orange-950/35 text-orange-400 hover:bg-orange-900/55 active:bg-orange-900/70;
   }
 
   .subject-tag-lime {
-    @apply border-lime-400/80 bg-lime-500/20 text-lime-400 hover:bg-lime-500/35;
+    @apply border-lime-400/80 bg-lime-950/35 text-lime-400 hover:bg-lime-900/55 active:bg-lime-900/70;
   }
 
   .subject-tag-violet {
-    @apply border-violet-400/80 bg-violet-500/20 text-violet-400 hover:bg-violet-500/35;
+    @apply border-violet-400/80 bg-violet-950/35 text-violet-400 hover:bg-violet-900/55 active:bg-violet-900/70;
   }
 
   .searchbar {
@@ -1069,7 +1069,7 @@
   }
 
   .format-request-option {
-    @apply inline-flex items-center border-r border-green-500/70 px-2 text-green-200 transition duration-150 last:border-r-0 hover:bg-green-600 hover:text-white focus:ring-2 focus:ring-green-300 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
+    @apply inline-flex items-center border-r border-green-500/70 px-2 text-green-200 transition duration-150 last:border-r-0 hover:bg-green-900/55 hover:text-white focus:ring-2 focus:ring-green-300 focus:outline-none active:bg-green-900/70 disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
   }
 
   .format-request-control.media-quality-unavailable {
@@ -1082,12 +1082,13 @@
   }
 
   .format-request-option[aria-pressed='true']:not(:disabled) {
-    @apply bg-green-800/60 text-white;
+    @apply bg-green-900/70 text-white;
     box-shadow: inset 0 -1px 0 currentColor;
   }
 
   .request-submit-control {
-    @apply inline-flex items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none;
+    @apply inline-flex items-center rounded-md border border-emerald-600/80 bg-emerald-950/35 px-2 text-[11px] leading-none font-semibold text-emerald-200 transition hover:border-emerald-500 hover:bg-emerald-900/55 hover:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none active:bg-emerald-900/70;
+    column-gap: var(--button-content-gap);
   }
 
   .request-submit-control:disabled {
@@ -1108,7 +1109,7 @@
     @apply inline-flex flex-none items-stretch overflow-hidden rounded-md border text-xs font-medium shadow-sm;
     height: var(--compact-control-height);
     border-color: rgb(var(--theme-control-border) / 0.85);
-    background-color: rgb(var(--theme-control-surface) / 0.42);
+    background-color: rgb(var(--theme-control-surface) / 0.35);
     color: rgb(var(--theme-control-text));
   }
 
@@ -1123,10 +1124,15 @@
     color: rgb(var(--theme-control-text));
   }
 
-  .availability-quality-option:hover,
+  .availability-quality-option:hover {
+    @apply text-white;
+    background-color: rgb(var(--color-indigo-500) / 0.55);
+  }
+
+  .availability-quality-option:active,
   .availability-quality-option-active {
     @apply text-white;
-    background-color: rgb(var(--color-indigo-500) / 0.72);
+    background-color: rgb(var(--color-indigo-500) / 0.7);
   }
 
   .availability-quality-control:hover
@@ -1483,7 +1489,7 @@
   }
 
   .button-count-badge {
-    @apply rounded-full bg-black/25 px-1.5 text-[10px];
+    @apply rounded-full bg-black/35 px-1.5 text-[10px];
     color: inherit;
     line-height: 1.2;
   }
@@ -2216,13 +2222,17 @@
   .app-button-default {
     @apply text-gray-200 hover:text-white focus:ring-blue-500 active:text-gray-100;
     border-color: rgb(var(--theme-control-border) / 0.7);
-    background-color: rgb(var(--theme-control-surface) / 0.32);
+    background-color: rgb(var(--theme-control-surface) / 0.35);
   }
 
-  .app-button-default:hover,
+  .app-button-default:hover {
+    border-color: rgb(var(--theme-control-border) / 0.95);
+    background-color: rgb(var(--theme-control-surface-hover) / 0.55);
+  }
+
   .app-button-default:active {
     border-color: rgb(var(--theme-control-border) / 0.95);
-    background-color: rgb(var(--theme-control-surface-hover) / 0.58);
+    background-color: rgb(var(--theme-control-surface-hover) / 0.7);
   }
 
   .app-button-default:focus {
@@ -2266,7 +2276,7 @@
   }
 
   .app-button-bulk-request {
-    @apply border-emerald-600/90 bg-emerald-950/45 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-900/65 hover:text-white focus:border-emerald-400 focus:ring-emerald-500 active:border-emerald-500 active:bg-emerald-950;
+    @apply border-emerald-600/90 bg-emerald-950/35 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-900/55 hover:text-white focus:border-emerald-400 focus:ring-emerald-500 active:border-emerald-500 active:bg-emerald-900/70;
   }
 
   .app-button-detail-request {
@@ -2278,7 +2288,7 @@
   }
 
   .app-button-playback {
-    @apply border-gray-500 bg-black text-gray-400 hover:border-white hover:text-white focus:border-white focus:ring-gray-400 active:border-white active:text-white;
+    @apply border-gray-500 bg-black/35 text-gray-400 hover:border-white hover:bg-black/55 hover:text-white focus:border-white focus:ring-gray-400 active:border-white active:bg-black/70 active:text-white;
   }
 
   .playback-dropdown-trigger {
@@ -2290,7 +2300,7 @@
   }
 
   .app-button-ghost {
-    @apply border-gray-600 bg-transparent text-white hover:border-gray-200 hover:text-white focus:border-gray-100 active:border-gray-100;
+    @apply border-gray-600 bg-black/35 text-white hover:border-gray-200 hover:bg-black/55 hover:text-white focus:border-gray-100 active:border-gray-100 active:bg-black/70;
   }
 
   .compact-control {
@@ -2646,6 +2656,14 @@
     white-space: nowrap;
   }
 
+  .watched-status-badge:hover {
+    @apply bg-black/55;
+  }
+
+  .watched-status-badge:active {
+    @apply bg-black/70;
+  }
+
   .watched-status-badge.detail-watched-button {
     height: var(--action-control-height);
     min-height: var(--action-control-height);
@@ -2773,25 +2791,33 @@
   .app-filter-button-idle {
     color: rgb(var(--theme-control-text) / 0.9);
     border-color: rgb(var(--theme-control-border) / 0.7);
-    background-color: rgb(var(--theme-control-surface) / 0.28);
+    background-color: rgb(var(--theme-control-surface) / 0.35);
   }
 
   .app-filter-button-idle:hover {
     @apply text-white;
     border-color: rgb(var(--theme-control-border));
-    background-color: rgb(var(--theme-control-surface-hover) / 0.52);
+    background-color: rgb(var(--theme-control-surface-hover) / 0.55);
+  }
+
+  .app-filter-button-idle:active {
+    background-color: rgb(var(--theme-control-surface-hover) / 0.7);
   }
 
   .app-filter-reset-button-idle {
     color: rgb(var(--theme-control-text) / 0.58);
     border-color: rgb(var(--theme-control-border) / 0.45);
-    background-color: rgb(var(--theme-control-surface) / 0.18);
+    background-color: rgb(var(--theme-control-surface) / 0.35);
   }
 
   .app-filter-reset-button-idle:hover {
     color: rgb(var(--theme-control-text) / 0.9);
     border-color: rgb(var(--theme-control-border) / 0.75);
-    background-color: rgb(var(--theme-control-surface-hover) / 0.38);
+    background-color: rgb(var(--theme-control-surface-hover) / 0.55);
+  }
+
+  .app-filter-reset-button-idle:active {
+    background-color: rgb(var(--theme-control-surface-hover) / 0.7);
   }
 
   .app-filter-select-trigger {
@@ -3635,8 +3661,16 @@
     @apply relative inline-flex max-w-full min-w-0 rounded-md border focus-within:ring-2 focus-within:ring-indigo-400 focus-within:ring-inset;
     height: var(--compact-control-height);
     border-color: rgb(var(--theme-control-border) / 0.7);
-    background-color: rgb(var(--theme-control-surface) / 0.28);
+    background-color: rgb(var(--theme-control-surface) / 0.35);
     width: max-content;
+  }
+
+  .discover-filter-control:hover {
+    background-color: rgb(var(--theme-control-surface-hover) / 0.55);
+  }
+
+  .discover-filter-control:active {
+    background-color: rgb(var(--theme-control-surface-hover) / 0.7);
   }
 
   .discover-filter-control,

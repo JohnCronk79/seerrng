@@ -117,6 +117,43 @@ test('poster availability and watched badges share a translucent poster surface'
   }
 });
 
+test('unselected controls use Manage opacity while selected filters stay solid', () => {
+  const rule = (selector) => {
+    const start = css.indexOf(`\n  ${selector} {`);
+    const combinedStart = css.indexOf(`\n  ${selector},`);
+    const matchStart = start >= 0 ? start : combinedStart;
+    if (matchStart < 0) {
+      return '';
+    }
+    const open = css.indexOf('{', matchStart);
+    return css.slice(open + 1, css.indexOf('}', open));
+  };
+
+  for (const selector of [
+    '.app-button-manage',
+    '.app-button-bulk-request',
+    '.app-button-playback',
+    '.app-button-ghost',
+  ]) {
+    const declaration = rule(selector);
+    assert.match(declaration, /bg-[\w-]+\/35/, selector);
+    assert.match(declaration, /hover:bg-[\w-]+\/55/, selector);
+    assert.match(declaration, /active:bg-[\w-]+\/70/, selector);
+  }
+
+  for (const selector of [
+    '.app-filter-button-idle',
+    '.discover-filter-control',
+  ]) {
+    assert.match(rule(selector), /\/ 0\.35\)/, selector);
+    assert.match(rule(`${selector}:hover`), /\/ 0\.55\)/, selector);
+    assert.match(rule(`${selector}:active`), /\/ 0\.7\)/, selector);
+  }
+
+  assert.match(rule('.app-filter-button-active'), /bg-indigo-500\b/);
+  assert.match(rule('.watched-status-badge'), /bg-black\/35/);
+});
+
 test('segmented filters keep the outward focus ring', () => {
   for (const path of [
     'Blocklist/index.tsx',
