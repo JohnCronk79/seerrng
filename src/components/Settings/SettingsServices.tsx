@@ -17,12 +17,15 @@ import {
   BookOpenIcon,
   PencilIcon,
   PlusIcon,
+  Square3Stack3DIcon,
   TrashIcon,
 } from '@heroicons/react/24/solid';
 import type OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
 import type {
+  KapowarrSettings,
   LidarrSettings,
+  MylarSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -33,9 +36,13 @@ import { Fragment, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
+const KapowarrModal = dynamic(
+  () => import('@app/components/Settings/KapowarrModal')
+);
 const LidarrModal = dynamic(
   () => import('@app/components/Settings/LidarrModal')
 );
+const MylarModal = dynamic(() => import('@app/components/Settings/MylarModal'));
 const OverrideRuleModal = dynamic(
   () => import('@app/components/Settings/OverrideRule/OverrideRuleModal')
 );
@@ -74,6 +81,13 @@ const messages = defineMessages('components.Settings', {
   addsonarr: 'Add Sonarr Server',
   addlidarr: 'Add Lidarr Server',
   addreadarr: 'Add Bookshelf Server',
+  addmylar: 'Add Mylar Server',
+  addkapowarr: 'Add Kapowarr Server',
+  mylarsettings: 'Mylar Settings',
+  kapowarrsettings: 'Kapowarr Settings',
+  comicServiceSettingsDescription:
+    'Configure your {serverType} server(s) below. Mylar and Kapowarr instances share one pool of default selection: only one comics server across both can be marked as default.',
+  mediaTypeComic: 'comic',
   noDefaultServer:
     'At least one {serverType} server must be marked as default in order for {mediaType} requests to be processed.',
   noDefaultNon4kServer:
@@ -105,6 +119,7 @@ interface ServerInstanceProps {
   isSonarr?: boolean;
   isLidarr?: boolean;
   isReadarr?: boolean;
+  isComics?: boolean;
   serviceFormat?: 'ebook' | 'audiobook';
   onEdit: () => void;
   onDelete: () => void;
@@ -148,6 +163,7 @@ const ServerInstance = ({
   isSonarr = false,
   isLidarr = false,
   isReadarr = false,
+  isComics = false,
   serviceFormat,
   externalUrl,
   onEdit,
@@ -175,6 +191,8 @@ const ServerInstance = ({
             <LidarrLogo className="h-10 w-10 flex-shrink-0" />
           ) : isReadarr ? (
             <BookOpenIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
+          ) : isComics ? (
+            <Square3Stack3DIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
           ) : (
             <RadarrLogo className="h-10 w-10 flex-shrink-0" />
           )}
@@ -283,6 +301,16 @@ const SettingsServices = () => {
     error: readarrError,
     mutate: revalidateReadarr,
   } = useSWR<ReadarrSettings[]>('/api/v1/settings/readarr');
+  const {
+    data: mylarData,
+    error: mylarError,
+    mutate: revalidateMylar,
+  } = useSWR<MylarSettings[]>('/api/v1/settings/mylar');
+  const {
+    data: kapowarrData,
+    error: kapowarrError,
+    mutate: revalidateKapowarr,
+  } = useSWR<KapowarrSettings[]>('/api/v1/settings/kapowarr');
   const { data: rules, mutate: revalidate } =
     useSWR<OverrideRuleResultsResponse>('/api/v1/overrideRule');
   const [editRadarrModal, setEditRadarrModal] = useState<{
@@ -313,9 +341,23 @@ const SettingsServices = () => {
     open: false,
     readarr: null,
   });
+  const [editMylarModal, setEditMylarModal] = useState<{
+    open: boolean;
+    mylar: MylarSettings | null;
+  }>({
+    open: false,
+    mylar: null,
+  });
+  const [editKapowarrModal, setEditKapowarrModal] = useState<{
+    open: boolean;
+    kapowarr: KapowarrSettings | null;
+  }>({
+    open: false,
+    kapowarr: null,
+  });
   const [deleteServerModal, setDeleteServerModal] = useState<{
     open: boolean;
-    type: 'radarr' | 'sonarr' | 'lidarr' | 'readarr';
+    type: 'radarr' | 'sonarr' | 'lidarr' | 'readarr' | 'mylar' | 'kapowarr';
     serverId: number | null;
   }>({
     open: false,
@@ -367,6 +409,8 @@ const SettingsServices = () => {
     revalidateSonarr();
     revalidateLidarr();
     revalidateReadarr();
+    revalidateMylar();
+    revalidateKapowarr();
     mutate('/api/v1/settings/public');
   };
 
@@ -435,6 +479,30 @@ const SettingsServices = () => {
             revalidateReadarr();
             mutate('/api/v1/settings/public');
             setEditReadarrModal({ open: false, readarr: null });
+          }}
+        />
+      )}
+      {editMylarModal.open && (
+        <MylarModal
+          mylar={editMylarModal.mylar}
+          onClose={() => setEditMylarModal({ open: false, mylar: null })}
+          onSave={() => {
+            revalidateMylar();
+            revalidateKapowarr();
+            mutate('/api/v1/settings/public');
+            setEditMylarModal({ open: false, mylar: null });
+          }}
+        />
+      )}
+      {editKapowarrModal.open && (
+        <KapowarrModal
+          kapowarr={editKapowarrModal.kapowarr}
+          onClose={() => setEditKapowarrModal({ open: false, kapowarr: null })}
+          onSave={() => {
+            revalidateKapowarr();
+            revalidateMylar();
+            mutate('/api/v1/settings/public');
+            setEditKapowarrModal({ open: false, kapowarr: null });
           }}
         />
       )}
@@ -782,6 +850,124 @@ const SettingsServices = () => {
                   >
                     <PlusIcon />
                     <span>{intl.formatMessage(messages.addreadarr)}</span>
+                  </Button>
+                </div>
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.mylarsettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.comicServiceSettingsDescription, {
+            serverType: 'Mylar',
+          })}
+        </p>
+      </div>
+      <div className="section settings-service-section">
+        {!mylarData && !mylarError && <LoadingSpinner />}
+        {mylarData && !mylarError && (
+          <>
+            {mylarData.length > 0 &&
+              !mylarData.some((mylar) => mylar.isDefault) &&
+              !kapowarrData?.some((kapowarr) => kapowarr.isDefault) && (
+                <Alert
+                  title={intl.formatMessage(messages.noDefaultServer, {
+                    serverType: 'Mylar/Kapowarr',
+                    mediaType: intl.formatMessage(messages.mediaTypeComic),
+                  })}
+                />
+              )}
+            <ul className="settings-service-grid">
+              {mylarData.map((mylar) => (
+                <ServerInstance
+                  key={`mylar-config-${mylar.id}`}
+                  name={mylar.name}
+                  hostname={mylar.hostname}
+                  port={mylar.port}
+                  profileName={mylar.rootFolder ?? ''}
+                  isSSL={mylar.useSsl}
+                  isComics={true}
+                  isDefault={mylar.isDefault}
+                  externalUrl={mylar.externalUrl}
+                  onEdit={() => setEditMylarModal({ open: true, mylar })}
+                  onDelete={() =>
+                    setDeleteServerModal({
+                      open: true,
+                      serverId: mylar.id,
+                      type: 'mylar',
+                    })
+                  }
+                />
+              ))}
+              <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+                <div className="flex h-full w-full items-center justify-center">
+                  <Button
+                    buttonType="success"
+                    buttonSize="standard"
+                    onClick={() =>
+                      setEditMylarModal({ open: true, mylar: null })
+                    }
+                  >
+                    <PlusIcon />
+                    <span>{intl.formatMessage(messages.addmylar)}</span>
+                  </Button>
+                </div>
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.kapowarrsettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.comicServiceSettingsDescription, {
+            serverType: 'Kapowarr',
+          })}
+        </p>
+      </div>
+      <div className="section settings-service-section">
+        {!kapowarrData && !kapowarrError && <LoadingSpinner />}
+        {kapowarrData && !kapowarrError && (
+          <>
+            <ul className="settings-service-grid">
+              {kapowarrData.map((kapowarr) => (
+                <ServerInstance
+                  key={`kapowarr-config-${kapowarr.id}`}
+                  name={kapowarr.name}
+                  hostname={kapowarr.hostname}
+                  port={kapowarr.port}
+                  profileName={kapowarr.rootFolder ?? ''}
+                  isSSL={kapowarr.useSsl}
+                  isComics={true}
+                  isDefault={kapowarr.isDefault}
+                  externalUrl={kapowarr.externalUrl}
+                  onEdit={() => setEditKapowarrModal({ open: true, kapowarr })}
+                  onDelete={() =>
+                    setDeleteServerModal({
+                      open: true,
+                      serverId: kapowarr.id,
+                      type: 'kapowarr',
+                    })
+                  }
+                />
+              ))}
+              <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+                <div className="flex h-full w-full items-center justify-center">
+                  <Button
+                    buttonType="success"
+                    buttonSize="standard"
+                    onClick={() =>
+                      setEditKapowarrModal({ open: true, kapowarr: null })
+                    }
+                  >
+                    <PlusIcon />
+                    <span>{intl.formatMessage(messages.addkapowarr)}</span>
                   </Button>
                 </div>
               </li>

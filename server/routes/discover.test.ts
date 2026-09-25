@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, it, mock } from 'node:test';
 
+import ComicVineAPI from '@server/api/comicvine';
 import CoverArtArchive from '@server/api/coverartarchive';
 import ExternalAPI from '@server/api/externalapi';
 import ListenBrainzAPI from '@server/api/listenbrainz';
@@ -3940,6 +3941,115 @@ describe('GET /discover/books', () => {
       undefined
     );
     assert.strictEqual(res.body.results[0].mediaInfo.ratingKey, undefined);
+  });
+});
+
+describe('GET /discover/comics', () => {
+  afterEach(() => {
+    getSettings().main.comicVineApiKey = '';
+  });
+
+  it('returns an empty result set when ComicVine is not configured', async () => {
+    getSettings().main.comicVineApiKey = '';
+    const agent = await login();
+    const res = await agent.get('/discover/comics');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, {
+      page: 1,
+      totalPages: 0,
+      totalResults: 0,
+      results: [],
+    });
+  });
+
+  it('proxies the query and pagination to ComicVine', async () => {
+    getSettings().main.comicVineApiKey = 'test-key';
+    const searchVolumes = mock.method(
+      ComicVineAPI.prototype,
+      'searchVolumes',
+      async ({
+        query,
+        page,
+        limit,
+      }: {
+        query: string;
+        page?: number;
+        limit?: number;
+      }) => {
+        assert.strictEqual(query, 'Batman');
+        assert.strictEqual(page, 2);
+        assert.strictEqual(limit, 20);
+
+        return {
+          error: 'OK',
+          limit: 20,
+          offset: 20,
+          number_of_page_results: 1,
+          number_of_total_results: 21,
+          status_code: 1,
+          results: [
+            {
+              id: 1234,
+              name: 'Batman',
+              resource_type: 'volume' as const,
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent
+      .get('/discover/comics')
+      .query({ query: 'Batman', page: 2 });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(searchVolumes.mock.callCount(), 1);
+    assert.strictEqual(res.body.totalResults, 21);
+    assert.strictEqual(res.body.totalPages, 2);
+    assert.strictEqual(res.body.results[0].id, '1234');
+    assert.strictEqual(res.body.results[0].title, 'Batman');
+  });
+
+  it('merges local availability for comics already tracked by SeerrNG', async () => {
+    getSettings().main.comicVineApiKey = 'test-key';
+    mock.method(ComicVineAPI.prototype, 'searchVolumes', async () => ({
+      error: 'OK',
+      limit: 20,
+      offset: 0,
+      number_of_page_results: 1,
+      number_of_total_results: 1,
+      status_code: 1,
+      results: [{ id: 5678, name: 'Saga', resource_type: 'volume' as const }],
+    }));
+
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.COMIC,
+        tmdbId: 0,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaIdentifier).save(
+      new MediaIdentifier({
+        media,
+        provider: MediaIdentifierProvider.COMICVINE,
+        value: '5678',
+        canonical: true,
+      })
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/comics').query({ query: 'Saga' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.results[0].mediaInfo.id, media.id);
+    assert.strictEqual(
+      res.body.results[0].mediaInfo.status,
+      MediaStatus.AVAILABLE
+    );
   });
 });
 

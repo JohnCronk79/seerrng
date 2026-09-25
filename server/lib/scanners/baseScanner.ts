@@ -6,8 +6,9 @@ import {
 } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
-import type { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
-import MediaIdentifier from '@server/entity/MediaIdentifier';
+import MediaIdentifier, {
+  MediaIdentifierProvider,
+} from '@server/entity/MediaIdentifier';
 import MediaRequest, {
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
@@ -87,6 +88,7 @@ export interface ProcessOptions {
     value: string;
   }[];
   bookServiceType?: 'ebook' | 'audiobook';
+  comicServiceType?: 'mylar' | 'kapowarr';
   mutationGuard?: <Result>(callback: () => Promise<Result>) => Promise<Result>;
   outerMutationGuard?: <Result>(
     callback: () => Promise<Result>
@@ -852,6 +854,149 @@ class BaseScanner<T> {
                     )
                   );
                   this.log(`Saved new book: ${title}`);
+                }
+              })
+            )
+          )
+      )
+    );
+  }
+
+  /**
+   * processComic mirrors processBook's identifier-based upsert but without
+   * the dual-format complexity: a comic only ever has one canonical
+   * identifier (its ComicVine volume ID) and one destination, so there's no
+   * multi-identifier merging or ebook/audiobook branching to do.
+   */
+  protected async processComic(
+    value: string,
+    {
+      mediaAddedAt,
+      serviceId,
+      externalServiceId,
+      externalServiceSlug,
+      processing = false,
+      title = 'Unknown Comic',
+      hasFile = true,
+      comicServiceType = 'mylar',
+      mutationGuard,
+      outerMutationGuard,
+    }: ProcessOptions = {}
+  ): Promise<void> {
+    const provider = MediaIdentifierProvider.COMICVINE;
+    const lockKey = `${provider}:${value}`;
+
+    await this.runProcessMutation(outerMutationGuard, () =>
+      runWithRequestAdmission(
+        [`request-canonical:comic:${provider}:${value}`],
+        () =>
+          this.asyncLock.dispatch(lockKey, () =>
+            this.runProcessMutation(mutationGuard, () =>
+              dataSource.transaction(async (manager) => {
+                const mediaRepository = manager.getRepository(Media);
+                const identifierRepository =
+                  manager.getRepository(MediaIdentifier);
+
+                const existingIdentifier = await identifierRepository.findOne({
+                  where: { provider, value },
+                  relations: { media: true },
+                });
+                const existing =
+                  existingIdentifier?.media?.mediaType === MediaType.COMIC
+                    ? existingIdentifier.media
+                    : undefined;
+
+                if (existing) {
+                  let changedExisting = false;
+                  const previousStatus = existing.status;
+
+                  existing.status =
+                    !processing && hasFile
+                      ? MediaStatus.AVAILABLE
+                      : !processing &&
+                          !hasFile &&
+                          previousStatus === MediaStatus.PROCESSING
+                        ? MediaStatus.UNKNOWN
+                        : processing
+                          ? previousStatus === MediaStatus.DELETED
+                            ? MediaStatus.DELETED
+                            : MediaStatus.PROCESSING
+                          : previousStatus;
+
+                  if (existing.status !== previousStatus) {
+                    changedExisting = true;
+                    if (mediaAddedAt) {
+                      existing.mediaAddedAt = mediaAddedAt;
+                    }
+                  }
+
+                  if (!existing.mediaAddedAt && mediaAddedAt) {
+                    existing.mediaAddedAt = mediaAddedAt;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    serviceId !== undefined &&
+                    existing.serviceId !== serviceId
+                  ) {
+                    existing.serviceId = serviceId;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    externalServiceId !== undefined &&
+                    existing.externalServiceId !== externalServiceId
+                  ) {
+                    existing.externalServiceId = externalServiceId;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    externalServiceSlug !== undefined &&
+                    existing.externalServiceSlug !== externalServiceSlug
+                  ) {
+                    existing.externalServiceSlug = externalServiceSlug;
+                    changedExisting = true;
+                  }
+
+                  if (existing.comicServiceType !== comicServiceType) {
+                    existing.comicServiceType = comicServiceType;
+                    changedExisting = true;
+                  }
+
+                  if (changedExisting) {
+                    await mediaRepository.save(existing);
+                    this.log(`Updating existing comic: ${title}`, 'info');
+                  }
+                } else if (processing || hasFile) {
+                  const media = await mediaRepository.save(
+                    new Media({
+                      tmdbId: 0,
+                      mediaType: MediaType.COMIC,
+                      mediaAddedAt,
+                      serviceId,
+                      externalServiceId,
+                      externalServiceSlug,
+                      comicServiceType,
+                      status:
+                        !processing && hasFile
+                          ? MediaStatus.AVAILABLE
+                          : processing
+                            ? MediaStatus.PROCESSING
+                            : MediaStatus.UNKNOWN,
+                      status4k: MediaStatus.UNKNOWN,
+                    })
+                  );
+
+                  await identifierRepository.save(
+                    new MediaIdentifier({
+                      media,
+                      provider,
+                      value,
+                      canonical: true,
+                    })
+                  );
+                  this.log(`Saved new comic: ${title}`);
                 }
               })
             )

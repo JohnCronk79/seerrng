@@ -1,3 +1,4 @@
+import ComicVineAPI from '@server/api/comicvine';
 import { getCoverArtArchiveThumbnailUrl } from '@server/api/coverartarchive/urls';
 import { DEFAULT_EXTERNAL_API_TIMEOUT_MS } from '@server/api/externalapi';
 import ListenBrainzAPI from '@server/api/listenbrainz';
@@ -37,6 +38,7 @@ import type {
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
 import { findBookMediaByOpenLibraryIds } from '@server/lib/bookMediaMatcher';
+import { findComicMediaByComicVineIds } from '@server/lib/comicMediaMatcher';
 import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
@@ -68,6 +70,7 @@ import {
 import { getCombinedWatchlist } from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
+import { mapComicVineVolumeResult } from '@server/models/Comic';
 import { mapProductionCompany } from '@server/models/Movie';
 import {
   mapAlbumResult,
@@ -3485,6 +3488,63 @@ discoverRoutes.get('/books', async (req, res) => {
       status: 503,
       message:
         'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+    });
+  }
+});
+
+discoverRoutes.get('/comics', async (req, res) => {
+  const { comicVineApiKey } = getSettings().main;
+  if (!comicVineApiKey) {
+    return res
+      .status(200)
+      .json({ page: 1, totalPages: 0, totalResults: 0, results: [] });
+  }
+
+  const itemsPerPage = 20;
+  const page = parsePositiveInt(req.query.page, 1, 500);
+  const parsedSearchQuery = parseOptionalDiscoverString(
+    req.query.query,
+    'Query'
+  );
+  if ('error' in parsedSearchQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedSearchQuery.error });
+  }
+  const query = parsedSearchQuery.value || '*';
+
+  try {
+    const comicVine = new ComicVineAPI(comicVineApiKey);
+    const response = await comicVine.searchVolumes({
+      query,
+      page,
+      limit: itemsPerPage,
+    });
+    const mediaByComicVineId = await findComicMediaByComicVineIds(
+      response.results.map((volume) => volume.id),
+      req.user
+    );
+
+    return res.status(200).json({
+      page,
+      totalPages: Math.max(
+        Math.ceil(response.number_of_total_results / itemsPerPage),
+        1
+      ),
+      totalResults: response.number_of_total_results,
+      results: response.results.map((volume) =>
+        mapComicVineVolumeResult(volume, mediaByComicVineId.get(volume.id))
+      ),
+    });
+  } catch (e) {
+    logger.error('Failed to fetch comic discovery results', {
+      label: 'Discover Comics',
+      ...getErrorLogFields(e),
+    });
+    return res.status(503).json({
+      status: 503,
+      message:
+        'ComicVine, the service used for comic searches, timed out or is unavailable. Please try again.',
     });
   }
 });

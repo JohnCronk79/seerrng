@@ -459,6 +459,8 @@ export type JobId =
   | 'lidarr-scan'
   | 'readarr-scan'
   | 'readarr-request-retry'
+  | 'mylar-scan'
+  | 'kapowarr-scan'
   | 'download-sync'
   | 'download-recovery'
   | 'download-sync-reset'
@@ -728,6 +730,12 @@ class Settings {
         },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
+        },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
         },
         'availability-sync': {
           schedule: '0 0 5 * * *',
@@ -1495,6 +1503,12 @@ class Settings {
         },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
+        },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
         },
         'availability-sync': {
           schedule: '0 0 5 * * *',
