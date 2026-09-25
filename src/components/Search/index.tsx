@@ -19,6 +19,8 @@ import type {
   ArtistResult,
   AuthorResult,
   BookResult,
+  ComicResult,
+  MagazineResult,
   MovieResult,
   PersonResult,
   TvResult,
@@ -51,6 +53,8 @@ const messages = defineMessages('components.Search', {
   ebooks: 'Books',
   audiobooks: 'Audiobooks',
   music: 'Music',
+  comics: 'Comics',
+  magazines: 'Magazines',
   filter: 'Filters',
   mediaFilters: 'Media Filters',
   sortBy: 'Sort By',
@@ -91,6 +95,8 @@ const searchCategories = [
     message: messages.audiobooks,
   },
   { key: 'music', type: 'music', message: messages.music },
+  { key: 'comic', type: 'comic', message: messages.comics },
+  { key: 'magazine', type: 'magazine', message: messages.magazines },
   { key: 'author', type: 'author', message: messages.authors },
 ] as const;
 
@@ -103,7 +109,9 @@ type SearchResult =
   | AlbumResult
   | ArtistResult
   | BookResult
-  | AuthorResult;
+  | AuthorResult
+  | ComicResult
+  | MagazineResult;
 
 type SortOption = {
   field: SortField;
@@ -141,6 +149,8 @@ const sortFieldsByCategory: Record<
   book: ['date', 'title', 'author', 'publisher'],
   audiobook: ['date', 'title', 'author', 'publisher'],
   author: ['title'],
+  comic: ['date', 'title'],
+  magazine: ['date', 'title'],
 };
 
 const getSearchCategory = (
@@ -211,6 +221,11 @@ const getResultArtist = (result: SearchResult): string | undefined => {
 };
 
 const getResultDate = (result: SearchResult): number | undefined => {
+  if (result.mediaType === 'magazine') {
+    const issueDate = Date.parse(result.latestIssue ?? '');
+    return Number.isFinite(issueDate) ? issueDate : undefined;
+  }
+
   const value =
     result.mediaType === 'movie'
       ? result.releaseDate
@@ -220,7 +235,9 @@ const getResultDate = (result: SearchResult): number | undefined => {
           ? (result.releaseDate ?? result['first-release-date'])
           : result.mediaType === 'book'
             ? result.firstPublishYear
-            : undefined;
+            : result.mediaType === 'comic'
+              ? result.startYear
+              : undefined;
   const year =
     typeof value === 'number'
       ? value
@@ -386,6 +403,10 @@ const Search = () => {
               getResultArtist(title),
               title.mediaType === 'book' ? title.publisher : undefined,
               title.mediaType === 'author' ? title.topWork : undefined,
+              ...(title.mediaType === 'comic'
+                ? [title.publisher, title.startYear, ...(title.aliases ?? [])]
+                : []),
+              title.mediaType === 'magazine' ? title.latestIssue : undefined,
             ],
             resultFilter
           )

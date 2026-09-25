@@ -105,4 +105,18 @@ describe('MylarAPI', () => {
       params: { apikey: 'key', cmd: 'addComic', id: '1234' },
     });
   });
+
+  it('removeComic sends the comic id as the id param', async () => {
+    const getMock = mockGet(async () => ({
+      success: true,
+      data: 'Successfully deleted Batman (2016) [1234]',
+    }));
+
+    const api = new MylarAPI({ url: 'http://localhost:8090', apiKey: 'key' });
+    await api.removeComic('1234');
+
+    assert.deepStrictEqual(getMock.mock.calls[0].arguments[1], {
+      params: { apikey: 'key', cmd: 'delComic', id: '1234' },
+    });
+  });
 });

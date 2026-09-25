@@ -227,6 +227,12 @@ export class User {
   @Column({ nullable: true })
   public bookQuotaDays?: number;
 
+  @Column({ nullable: true })
+  public comicQuotaLimit?: number;
+
+  @Column({ nullable: true })
+  public comicQuotaDays?: number;
+
   @OneToOne(() => UserSettings, (settings) => settings.user, {
     cascade: true,
     eager: true,
@@ -634,12 +640,10 @@ export class User {
         })
       : 0;
 
-    // Comics only support the admin-configured default quota in this first
-    // pass, not a per-user override like the other types have (no
-    // comicQuotaLimit/comicQuotaDays columns on User yet) - deliberate v1
-    // scope cut, not an oversight.
-    const comicQuotaLimit = !canBypass ? defaultQuotas.comic.quotaLimit : 0;
-    const comicQuotaDays = defaultQuotas.comic.quotaDays;
+    const comicQuotaLimit = !canBypass
+      ? (this.comicQuotaLimit ?? defaultQuotas.comic.quotaLimit)
+      : 0;
+    const comicQuotaDays = this.comicQuotaDays ?? defaultQuotas.comic.quotaDays;
 
     const comicDate = new Date();
     if (comicQuotaDays) {

@@ -55,6 +55,7 @@ const issueMediaTypeFilters = [
   MediaType.TV,
   MediaType.MUSIC,
   MediaType.BOOK,
+  MediaType.COMIC,
 ] as const;
 const issueTypeFilters = [
   'all',

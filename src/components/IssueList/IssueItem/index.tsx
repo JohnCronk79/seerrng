@@ -19,6 +19,7 @@ import { IssueStatus } from '@server/constants/issue';
 import { MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -34,6 +35,7 @@ const messages = defineMessages('components.IssueList.IssueItem', {
   firstPublished: 'First Published',
   runtime: 'Runtime',
   pages: 'Pages',
+  issues: 'Issues',
   director: 'Director',
   creator: 'Creator',
   studio: 'Studio',
@@ -55,7 +57,8 @@ const messages = defineMessages('components.IssueList.IssueItem', {
   unavailable: 'Not available',
 });
 
-type IssueTitle = MovieDetails | TvDetails | MusicDetails | BookDetails;
+type IssueTitle =
+  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
 type LinkedDetailValue = {
   name: string;
   href?: string;
@@ -69,6 +72,7 @@ const isMovie = (movie: IssueTitle): movie is MovieDetails => {
   return (
     !isMusic(movie) &&
     !isBook(movie) &&
+    !isComic(movie) &&
     (movie as MovieDetails).title !== undefined
   );
 };
@@ -81,8 +85,14 @@ const isBook = (title: IssueTitle): title is BookDetails => {
   return (title as BookDetails).mediaType === 'book';
 };
 
+const isComic = (title: IssueTitle): title is ComicDetails => {
+  return (title as ComicDetails).mediaType === 'comic';
+};
+
 const getTitle = (title: IssueTitle): string =>
-  isMovie(title) || isMusic(title) || isBook(title) ? title.title : title.name;
+  isMovie(title) || isMusic(title) || isBook(title) || isComic(title)
+    ? title.title
+    : title.name;
 
 const getReleaseDate = (title: IssueTitle): string | undefined =>
   isMovie(title)
@@ -91,11 +101,16 @@ const getReleaseDate = (title: IssueTitle): string | undefined =>
       ? title.releaseDate
       : isBook(title)
         ? title.firstPublishYear?.toString()
-        : title.firstAirDate;
+        : isComic(title)
+          ? title.startYear
+          : title.firstAirDate;
 
 const getRuntime = (title: IssueTitle, unavailable: string): string => {
   if (isBook(title)) {
     return title.numberOfPages?.toLocaleString() ?? unavailable;
+  }
+  if (isComic(title)) {
+    return title.issueCount?.toLocaleString() ?? unavailable;
   }
   const minutes = isMovie(title)
     ? title.runtime
@@ -183,6 +198,14 @@ const getSecondaryDetails = (
       },
     ];
   }
+  if (isComic(title)) {
+    return [
+      {
+        label: intl.formatMessage(messages.publisher),
+        values: [{ name: title.publisher ?? unavailable }],
+      },
+    ];
+  }
 
   const affected = getIssueAffectedSummary(
     issue,
@@ -223,7 +246,7 @@ const getBackdrop = (
     const src = title.artistBackdrop ?? title.artistThumb ?? title.posterPath;
     return src ? { src, type: 'music' } : undefined;
   }
-  if (isBook(title)) {
+  if (isBook(title) || isComic(title)) {
     return title.posterPath
       ? { src: title.posterPath, type: 'book' }
       : undefined;
@@ -252,6 +275,9 @@ const IssueItem = ({ issue }: IssueItemProps) => {
   const bookId = issue.media.identifiers?.find(
     (identifier) => identifier.provider === 'openlibrary'
   )?.value;
+  const comicId = issue.media.identifiers?.find(
+    (identifier) => identifier.provider === 'comicvine'
+  )?.value;
   const normalizedMusicId = issue.media.mbId
     ? normalizeMusicBrainzId(issue.media.mbId)
     : undefined;
@@ -267,7 +293,9 @@ const IssueItem = ({ issue }: IssueItemProps) => {
           ? `/api/v1/music/${encodeApiPathSegment(normalizedMusicId)}`
           : issue.media.mediaType === MediaType.BOOK && normalizedBookId
             ? `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}`
-            : null;
+            : issue.media.mediaType === MediaType.COMIC && comicId
+              ? `/api/v1/comic/${encodeApiPathSegment(comicId)}`
+              : null;
   const mediaHref =
     issue.media.mediaType === MediaType.MOVIE
       ? `/movie/${issue.media.tmdbId}`
@@ -277,7 +305,9 @@ const IssueItem = ({ issue }: IssueItemProps) => {
           ? `/music/${encodeApiPathSegment(normalizedMusicId)}`
           : normalizedBookId
             ? `/book/${encodeApiPathSegment(normalizedBookId)}`
-            : '/';
+            : comicId
+              ? `/comic/${encodeApiPathSegment(comicId)}`
+              : '/';
   const { data: title, error } = useSWR<IssueTitle>(inView ? url : null);
 
   if (!url && inView) {
@@ -329,11 +359,16 @@ const IssueItem = ({ issue }: IssueItemProps) => {
   const releaseYear = releaseDate?.match(/\d{4}/)?.[0];
   const displayTitle = `${getTitle(title)}${releaseYear ? ` (${releaseYear})` : ''}`;
   const posterSrc = title.posterPath
-    ? isMusic(title) || isBook(title)
+    ? isMusic(title) || isBook(title) || isComic(title)
       ? title.posterPath
       : getTmdbPosterImageUrl(title.posterPath)
     : '/images/seerr_poster_not_found.png';
-  const posterType = isBook(title) ? 'book' : isMusic(title) ? 'music' : 'tmdb';
+  const posterType =
+    isBook(title) || isComic(title)
+      ? 'book'
+      : isMusic(title)
+        ? 'music'
+        : 'tmdb';
   const backdrop = getBackdrop(title);
   const secondaryDetails = getSecondaryDetails(title, issue, intl);
   const canViewCreator = hasPermission(
@@ -409,7 +444,9 @@ const IssueItem = ({ issue }: IssueItemProps) => {
                   {intl.formatMessage(
                     isBook(title)
                       ? messages.firstPublished
-                      : messages.releaseDate
+                      : isComic(title)
+                        ? messages.firstPublished
+                        : messages.releaseDate
                   )}
                   :
                 </dt>
@@ -418,7 +455,11 @@ const IssueItem = ({ issue }: IssueItemProps) => {
                 </dd>
                 <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                   {intl.formatMessage(
-                    isBook(title) ? messages.pages : messages.runtime
+                    isBook(title)
+                      ? messages.pages
+                      : isComic(title)
+                        ? messages.issues
+                        : messages.runtime
                   )}
                   :
                 </dt>

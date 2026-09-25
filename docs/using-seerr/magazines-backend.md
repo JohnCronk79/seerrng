@@ -29,8 +29,12 @@ it (or immediately when the request is auto-approved).
 ## Discover and request titles
 
 The Magazines page lists titles already tracked by configured LazyLibrarian
-instances. To request a title that is not listed, choose **Request Magazine**
-and enter its title. LazyLibrarian adds that title to its own magazine list.
+instances. Global Search also has a **Magazines** category that searches the
+tracked title catalogs across configured instances. Enter a main search query
+to find titles; the category can further narrow the displayed matches by title
+or latest issue. To request a title that is not listed, choose **Request
+Magazine** and enter its title. LazyLibrarian adds that title to its own
+magazine list.
 
 SeerrNG checks requests and availability by a normalized title, so requests
 that differ only in case or repeated whitespace resolve to the same magazine.

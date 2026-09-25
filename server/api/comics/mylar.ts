@@ -177,6 +177,13 @@ class MylarAPI extends ExternalAPI {
   public async addComic(comicVineId: string): Promise<void> {
     await this.runCommand('addComic', { id: comicVineId });
   }
+
+  // Confirmed live against a running Mylar3 instance: delComic is enveloped
+  // like addComic/getComic (not one of the raw-JSON commands), and succeeds
+  // even after the comic's files are gone from disk.
+  public async removeComic(comicId: string): Promise<void> {
+    await this.runCommand('delComic', { id: comicId });
+  }
 }
 
 export default MylarAPI;

@@ -30,6 +30,7 @@ import {
   MediaType,
 } from '@server/constants/media';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
 import type { MusicDetails } from '@server/models/Music';
 import axios from 'axios';
 import { Fragment } from 'react';
@@ -56,8 +57,10 @@ const messages = defineMessages('components.ExternalMediaManageSlideOver', {
   markavailable: 'Mark as Available',
   music: 'music',
   book: 'book',
+  comic: 'comic',
   musicTitle: 'Music',
   bookTitle: 'Book',
+  comicTitle: 'Comic',
 });
 
 const filterDuplicateDownloads = (
@@ -73,8 +76,8 @@ const filterDuplicateDownloads = (
 
 type ExternalMediaManageSlideOverProps = {
   show?: boolean;
-  mediaType: MediaType.MUSIC | MediaType.BOOK;
-  data: MusicDetails | BookDetails;
+  mediaType: MediaType.MUSIC | MediaType.BOOK | MediaType.COMIC;
+  data: MusicDetails | BookDetails | ComicDetails;
   onClose: () => void;
   revalidate: () => void;
 };
@@ -96,16 +99,33 @@ const ExternalMediaManageSlideOver = ({
   const intl = useIntl();
   const { hasPermission } = useUser();
   const mediaInfo = data.mediaInfo;
-  const arrName = mediaType === MediaType.MUSIC ? 'Lidarr' : 'Bookshelf';
+  const arrName =
+    mediaType === MediaType.MUSIC
+      ? 'Lidarr'
+      : mediaType === MediaType.COMIC
+        ? mediaInfo?.comicServiceType === 'kapowarr'
+          ? 'Kapowarr'
+          : 'Mylar3'
+        : 'Bookshelf';
   const externalId =
     mediaType === MediaType.MUSIC
       ? normalizeMusicBrainzId((data as MusicDetails).mbId)
-      : normalizeOpenLibraryWorkId(data.id);
+      : mediaType === MediaType.COMIC
+        ? data.id
+        : normalizeOpenLibraryWorkId(data.id);
   const mediaLabel = intl.formatMessage(
-    mediaType === MediaType.MUSIC ? messages.music : messages.book
+    mediaType === MediaType.MUSIC
+      ? messages.music
+      : mediaType === MediaType.COMIC
+        ? messages.comic
+        : messages.book
   );
   const mediaTitleLabel = intl.formatMessage(
-    mediaType === MediaType.MUSIC ? messages.musicTitle : messages.bookTitle
+    mediaType === MediaType.MUSIC
+      ? messages.musicTitle
+      : mediaType === MediaType.COMIC
+        ? messages.comicTitle
+        : messages.bookTitle
   );
   const manageBackdrop =
     mediaType === MediaType.MUSIC
@@ -242,7 +262,13 @@ const ExternalMediaManageSlideOver = ({
           ) : (
             <IssueMediaSummary
               data={data}
-              mediaType={mediaType === MediaType.MUSIC ? 'music' : 'book'}
+              mediaType={
+                mediaType === MediaType.MUSIC
+                  ? 'music'
+                  : mediaType === MediaType.COMIC
+                    ? 'comic'
+                    : 'book'
+              }
               embedded
               rightDetails={[
                 ...(isMusic

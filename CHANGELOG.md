@@ -100,6 +100,19 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.27.1](https://github.com/snapetech/seerrng/compare/v3.27.0..v3.27.1) - 2026-09-25
+
+### User-facing changes
+
+#### Fixed
+
+- **Requests:** When only one request quality is available, the full Request button now opens it. TV details also hide the quality selector when 4K is unavailable.
+
+### 🐛 Bug Fixes
+- *(requests)* Make single-quality controls fully clickable - ([62e8e1d](https://github.com/snapetech/seerrng/commit/62e8e1ded49ad4496db5822c65d6e36c105b9859))
+
 ## [3.27.0](https://github.com/snapetech/seerrng/compare/v3.26.1..v3.27.0) - 2026-09-25
 
 ### User-facing changes
