@@ -1,5 +1,8 @@
 import ComicVineAPI from '@server/api/comicvine';
 import CoverArtArchive from '@server/api/coverartarchive';
+import LazyLibrarianAPI, {
+  type LazyLibrarianMagazine,
+} from '@server/api/lazylibrarian';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import TheAudioDb from '@server/api/theaudiodb';
@@ -19,6 +22,8 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
+import { findMagazineMediaByTitles } from '@server/lib/magazineMediaMatcher';
 import {
   getAvailableMusicQualities,
   getMusicQualityStatuses,
@@ -27,6 +32,7 @@ import {
   findSearchProvider,
   type CombinedSearchResponse,
 } from '@server/lib/search';
+import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import {
@@ -35,6 +41,7 @@ import {
   type AuthorResult,
 } from '@server/models/Book';
 import { mapComicVineVolumeResult } from '@server/models/Comic';
+import { mapLazyLibrarianMagazine } from '@server/models/Magazine';
 import { mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import {
@@ -113,6 +120,7 @@ const searchTypes = [
   'author',
   'music',
   'comic',
+  'magazine',
 ] as const;
 type SearchType = (typeof searchTypes)[number];
 const bookFormats = ['ebook', 'audiobook'] as const;
@@ -131,6 +139,62 @@ const normalizeSearchText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+type MagazineCatalogSearchResults = {
+  totalResults: number;
+  results: LazyLibrarianMagazine[];
+};
+
+const searchLazyLibrarianCatalogs = async (
+  services: ReturnType<typeof getExternalRuntimeConfig>['lazylibrarian'],
+  query: string,
+  page: number
+): Promise<MagazineCatalogSearchResults> => {
+  const settled = await Promise.allSettled(
+    services.map((service) =>
+      runWithServarrServiceSnapshot('lazylibrarian', service, (current) =>
+        new LazyLibrarianAPI({
+          url: LazyLibrarianAPI.buildUrl(current),
+          apiKey: current.apiKey,
+        }).getMagazines()
+      )
+    )
+  );
+  const successful = settled.flatMap((result) =>
+    result.status === 'fulfilled' ? [result.value] : []
+  );
+  const failures = settled.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+
+  if (successful.length === 0 && failures.length > 0) {
+    throw failures[0].reason;
+  }
+  if (failures.length > 0) {
+    logger.warn('Some LazyLibrarian instances failed during magazine search', {
+      label: 'Search',
+      failedServices: failures.map(({ reason }) => getHttpErrorDetails(reason)),
+    });
+  }
+
+  const magazinesByTitle = new Map<string, LazyLibrarianMagazine>();
+  for (const magazine of successful.flat()) {
+    const key = normalizeMagazineTitle(magazine.title);
+    if (key && !magazinesByTitle.has(key)) {
+      magazinesByTitle.set(key, magazine);
+    }
+  }
+
+  const matched = [...magazinesByTitle.values()]
+    .filter((magazine) => matchesAllSearchTerms([magazine.title], query))
+    .sort((left, right) => left.title.localeCompare(right.title));
+  const offset = (page - 1) * MAX_SEARCH_RESULTS_PER_PROVIDER;
+
+  return {
+    totalResults: matched.length,
+    results: matched.slice(offset, offset + MAX_SEARCH_RESULTS_PER_PROVIDER),
+  };
+};
 
 const WRITING_JOBS = new Set(['Screenplay', 'Story', 'Teleplay', 'Writer']);
 
@@ -216,6 +280,8 @@ searchRoutes.get('/', async (req, res, next) => {
   }
 
   const queryString = parsedQuery.value;
+  let typeSpecificTotalResults: number | undefined;
+  let typeSpecificTotalPages: number | undefined;
   const page = parsePositiveInt(req.query.page, 1, 500);
   const parsedLanguage = parseOptionalLanguage(req.query.language);
   if ('error' in parsedLanguage) {
@@ -273,6 +339,7 @@ searchRoutes.get('/', async (req, res, next) => {
     : settings.readarr.length > 0;
   const comicVineApiKey = getSettings().main.comicVineApiKey;
   const comicsEnabled = !!comicVineApiKey;
+  const magazinesEnabled = settings.lazylibrarian.length > 0;
 
   if (
     (typeFilter === 'album' ||
@@ -298,6 +365,15 @@ searchRoutes.get('/', async (req, res, next) => {
   }
 
   if (typeFilter === 'comic' && !comicsEnabled) {
+    return res.status(200).json({
+      page,
+      totalPages: 1,
+      totalResults: 0,
+      results: [],
+    });
+  }
+
+  if (typeFilter === 'magazine' && !magazinesEnabled) {
     return res.status(200).json({
       page,
       totalPages: 1,
@@ -344,6 +420,7 @@ searchRoutes.get('/', async (req, res, next) => {
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
       const shouldSearchAuthors = !typeFilter || typeFilter === 'author';
       const shouldSearchComics = !typeFilter || typeFilter === 'comic';
+      const shouldSearchMagazines = !typeFilter || typeFilter === 'magazine';
       const providerNames = [
         'TMDB',
         'MusicBrainz albums',
@@ -353,6 +430,7 @@ searchRoutes.get('/', async (req, res, next) => {
         'Open Library authors',
         'Bookshelf authors',
         'ComicVine',
+        'LazyLibrarian magazines',
       ];
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
@@ -425,6 +503,13 @@ searchRoutes.get('/', async (req, res, next) => {
               status_code: 1,
               results: [],
             }),
+        shouldSearchMagazines && magazinesEnabled
+          ? searchLazyLibrarianCatalogs(
+              settings.lazylibrarian,
+              queryString,
+              page
+            )
+          : Promise.resolve({ totalResults: 0, results: [] }),
       ];
       type SearchProviderResult = {
         index: number;
@@ -452,6 +537,7 @@ searchRoutes.get('/', async (req, res, next) => {
       type ComicSearchResults = Awaited<
         ReturnType<ComicVineAPI['searchVolumes']>
       >;
+      type MagazineSearchResults = MagazineCatalogSearchResults;
 
       const providerResponses =
         await settlePromisesWithin<SearchProviderResult>(
@@ -557,6 +643,20 @@ searchRoutes.get('/', async (req, res, next) => {
             'ComicVine, the service used for comic searches, timed out or is unavailable. Please try again.',
         });
       }
+      const magazineProviderResponse = providerResults.get(8);
+      if (
+        typeFilter === 'magazine' &&
+        shouldSearchMagazines &&
+        magazinesEnabled &&
+        (!magazineProviderResponse ||
+          magazineProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'LazyLibrarian, the service used for magazine searches, is unavailable. Please try again.',
+        });
+      }
 
       if (providerResponses.timedOut) {
         logger.debug('Global search provider deadline exceeded', {
@@ -619,6 +719,21 @@ searchRoutes.get('/', async (req, res, next) => {
         status_code: 1,
         results: [],
       });
+      const rawMagazineResults = getProviderValue<MagazineSearchResults>(8, {
+        totalResults: 0,
+        results: [],
+      });
+      if (typeFilter === 'comic') {
+        typeSpecificTotalResults = rawComicResults.number_of_total_results;
+      } else if (typeFilter === 'magazine') {
+        typeSpecificTotalResults = rawMagazineResults.totalResults;
+      }
+      if (typeSpecificTotalResults !== undefined) {
+        typeSpecificTotalPages = Math.max(
+          1,
+          Math.ceil(typeSpecificTotalResults / MAX_SEARCH_RESULTS_PER_PROVIDER)
+        );
+      }
       const comicVolumes = capSearchProviderResults<
         ComicSearchResults['results'][number]
       >(rawComicResults.results);
@@ -842,7 +957,8 @@ searchRoutes.get('/', async (req, res, next) => {
         bookshelfBookResults.length +
         rawAuthorResults.numFound +
         rawBookshelfAuthorResults.length +
-        rawComicResults.number_of_total_results;
+        rawComicResults.number_of_total_results +
+        rawMagazineResults.totalResults;
       const totalPages = Math.max(
         tmdbResults.total_pages,
         Math.ceil(totalItems / 20)
@@ -866,6 +982,17 @@ searchRoutes.get('/', async (req, res, next) => {
       const mappedComicResults = comicVolumes.map((volume) =>
         mapComicVineVolumeResult(volume, comicMediaMap.get(volume.id))
       );
+      const magazineMediaMap = await findMagazineMediaByTitles(
+        rawMagazineResults.results.map((magazine) => magazine.title),
+        req.user
+      );
+      const mappedMagazineResults = rawMagazineResults.results.map((magazine) =>
+        mapLazyLibrarianMagazine(
+          magazine,
+          [],
+          magazineMediaMap.get(normalizeMagazineTitle(magazine.title))
+        )
+      );
 
       const combinedResults = [
         ...tmdbResults.results,
@@ -874,6 +1001,7 @@ searchRoutes.get('/', async (req, res, next) => {
         ...bookshelfBookResults,
         ...authorResults,
         ...mappedComicResults,
+        ...mappedMagazineResults,
       ];
 
       results = {
@@ -994,7 +1122,8 @@ searchRoutes.get('/', async (req, res, next) => {
         (((result.mediaType !== 'album' && result.mediaType !== 'artist') ||
           musicEnabled) &&
           (result.mediaType !== 'book' || booksEnabled) &&
-          (result.mediaType !== 'comic' || comicsEnabled))
+          (result.mediaType !== 'comic' || comicsEnabled) &&
+          (result.mediaType !== 'magazine' || magazinesEnabled))
     );
 
     const filteredResults = typeFilter
@@ -1012,11 +1141,12 @@ searchRoutes.get('/', async (req, res, next) => {
 
     return res.status(200).json({
       page: results.page,
-      totalPages: results.total_pages,
+      totalPages: typeSpecificTotalPages ?? results.total_pages,
       totalResults:
-        typeFilter || capabilityFiltered
+        typeSpecificTotalResults ??
+        (typeFilter || capabilityFiltered
           ? filteredResults.length
-          : results.total_results,
+          : results.total_results),
       results: filteredResults,
     });
   } catch (e) {
