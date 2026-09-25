@@ -90,6 +90,24 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.24.2](https://github.com/snapetech/seerrng/compare/v3.24.1..v3.24.2) - 2026-09-25
+
+### User-facing changes
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+### 🐛 Bug Fixes
+- *(settings)* Clarify reverse proxy trust requirements - ([62768fb](https://github.com/snapetech/seerrng/commit/62768fb0172f9328019d50fcd881f92a866391a7))
+
+### 📖 Documentation
+- Audit recent user-facing changes - ([4f4e43b](https://github.com/snapetech/seerrng/commit/4f4e43b7061adc691ed2e15571c591e6404efa96))
+
 ## [3.24.1](https://github.com/snapetech/seerrng/compare/v3.24.0..v3.24.1) - 2026-09-24
 
 ### User-facing changes
