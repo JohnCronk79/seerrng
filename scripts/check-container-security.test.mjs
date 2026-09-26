@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const rootDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -101,7 +101,6 @@ test('the Docker build context excludes secrets and development-only contracts',
       `${expectedPattern} is exposed to the Docker build context`
     );
   }
-
 });
 
 test('the production build does not require development-only contracts', () => {
