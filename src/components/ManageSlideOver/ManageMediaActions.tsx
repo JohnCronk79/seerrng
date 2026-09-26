@@ -208,9 +208,13 @@ const ManageMediaActions = ({
   );
   const issuesPanelId = useId();
   const blocklistId =
-    mediaType === MediaType.MUSIC || mediaType === MediaType.BOOK
+    mediaType === MediaType.MUSIC ||
+    mediaType === MediaType.BOOK ||
+    mediaType === MediaType.COMIC
       ? externalId
-      : media.tmdbId;
+      : mediaType === MediaType.MAGAZINE
+        ? undefined
+        : media.tmdbId;
   const {
     isBlocklisted,
     checking: checkingBlocklist,
@@ -395,62 +399,64 @@ const ManageMediaActions = ({
           {intl.formatMessage(messages.servicesDescription)}
         </p>
       </section>
-      <section className="manage-advanced-section">
-        <h4 className="manage-media-section-title">
-          {intl.formatMessage(messages.blocklist)}
-        </h4>
-        <div className="manage-request-action-buttons">
-          <Button
-            buttonType="danger"
-            disabled={!canBlock || busy}
-            title={intl.formatMessage(messages.blockDescription)}
-            disabledReason={intl.formatMessage(
-              blocklistError
-                ? messages.blocklistCheckFailed
-                : checkingBlocklist
-                  ? messages.checkingBlocklist
-                  : isBlocklisted
-                    ? messages.alreadyBlocklisted
-                    : !hasPermission(Permission.MANAGE_BLOCKLIST)
-                      ? messages.blocklistPermission
-                      : !blocklistId
-                        ? messages.missingBlocklistId
-                        : messages.blockDescription
-            )}
-            onClick={() => setAction('block')}
-          >
-            <EyeIcon aria-hidden="true" />
-            {intl.formatMessage(messages.block)}
-          </Button>
-          <Tooltip
-            className="manage-action-tooltip"
-            content={intl.formatMessage(
-              blocklistError
-                ? messages.blocklistCheckFailed
-                : checkingBlocklist
-                  ? messages.checkingBlocklist
-                  : isBlocklisted
-                    ? messages.unblockDescription
-                    : messages.notBlocklisted
-            )}
-          >
-            <span className="inline-flex">
-              <Button
-                buttonType="danger"
-                disabled={!canUnblock || busy}
-                disabledReason=""
-                onClick={() => setAction('unblock')}
-              >
-                <ArchiveBoxXMarkIcon aria-hidden="true" />
-                {intl.formatMessage(messages.unblock)}
-              </Button>
-            </span>
-          </Tooltip>
-        </div>
-        <p className="manage-action-note">
-          {intl.formatMessage(messages.unblockDescription)}
-        </p>
-      </section>
+      {mediaType !== MediaType.MAGAZINE && (
+        <section className="manage-advanced-section">
+          <h4 className="manage-media-section-title">
+            {intl.formatMessage(messages.blocklist)}
+          </h4>
+          <div className="manage-request-action-buttons">
+            <Button
+              buttonType="danger"
+              disabled={!canBlock || busy}
+              title={intl.formatMessage(messages.blockDescription)}
+              disabledReason={intl.formatMessage(
+                blocklistError
+                  ? messages.blocklistCheckFailed
+                  : checkingBlocklist
+                    ? messages.checkingBlocklist
+                    : isBlocklisted
+                      ? messages.alreadyBlocklisted
+                      : !hasPermission(Permission.MANAGE_BLOCKLIST)
+                        ? messages.blocklistPermission
+                        : !blocklistId
+                          ? messages.missingBlocklistId
+                          : messages.blockDescription
+              )}
+              onClick={() => setAction('block')}
+            >
+              <EyeIcon aria-hidden="true" />
+              {intl.formatMessage(messages.block)}
+            </Button>
+            <Tooltip
+              className="manage-action-tooltip"
+              content={intl.formatMessage(
+                blocklistError
+                  ? messages.blocklistCheckFailed
+                  : checkingBlocklist
+                    ? messages.checkingBlocklist
+                    : isBlocklisted
+                      ? messages.unblockDescription
+                      : messages.notBlocklisted
+              )}
+            >
+              <span className="inline-flex">
+                <Button
+                  buttonType="danger"
+                  disabled={!canUnblock || busy}
+                  disabledReason=""
+                  onClick={() => setAction('unblock')}
+                >
+                  <ArchiveBoxXMarkIcon aria-hidden="true" />
+                  {intl.formatMessage(messages.unblock)}
+                </Button>
+              </span>
+            </Tooltip>
+          </div>
+          <p className="manage-action-note">
+            {intl.formatMessage(messages.unblockDescription)}
+          </p>
+        </section>
+      )}
       <section className="manage-advanced-section">
         <h4 className="manage-media-section-title">
           {intl.formatMessage(messages.requests)}

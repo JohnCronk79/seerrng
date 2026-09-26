@@ -227,6 +227,12 @@ export class User {
   @Column({ nullable: true })
   public bookQuotaDays?: number;
 
+  @Column({ nullable: true })
+  public comicQuotaLimit?: number;
+
+  @Column({ nullable: true })
+  public comicQuotaDays?: number;
+
   @OneToOne(() => UserSettings, (settings) => settings.user, {
     cascade: true,
     eager: true,
@@ -634,12 +640,10 @@ export class User {
         })
       : 0;
 
-    // Comics only support the admin-configured default quota in this first
-    // pass, not a per-user override like the other types have (no
-    // comicQuotaLimit/comicQuotaDays columns on User yet) - deliberate v1
-    // scope cut, not an oversight.
-    const comicQuotaLimit = !canBypass ? defaultQuotas.comic.quotaLimit : 0;
-    const comicQuotaDays = defaultQuotas.comic.quotaDays;
+    const comicQuotaLimit = !canBypass
+      ? (this.comicQuotaLimit ?? defaultQuotas.comic.quotaLimit)
+      : 0;
+    const comicQuotaDays = this.comicQuotaDays ?? defaultQuotas.comic.quotaDays;
 
     const comicDate = new Date();
     if (comicQuotaDays) {
@@ -654,6 +658,30 @@ export class User {
             },
             ...(comicQuotaDays ? { createdAt: AfterDate(comicDate) } : {}),
             type: MediaType.COMIC,
+            status: Not(
+              In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
+            ),
+            ignoreQuota: false,
+          },
+        })
+      : 0;
+
+    const magazineQuotaLimit = !canBypass
+      ? defaultQuotas.magazine.quotaLimit
+      : 0;
+    const magazineQuotaDays = defaultQuotas.magazine.quotaDays;
+    const magazineDate = new Date();
+    if (magazineQuotaDays) {
+      magazineDate.setDate(magazineDate.getDate() - magazineQuotaDays);
+    }
+    const magazineQuotaUsed = magazineQuotaLimit
+      ? await requestRepository.count({
+          where: {
+            requestedBy: { id: this.id },
+            ...(magazineQuotaDays
+              ? { createdAt: AfterDate(magazineDate) }
+              : {}),
+            type: MediaType.MAGAZINE,
             status: Not(
               In([MediaRequestStatus.DECLINED, MediaRequestStatus.FAILED])
             ),
@@ -712,6 +740,17 @@ export class User {
           : undefined,
         restricted: !!(
           comicQuotaLimit && comicQuotaLimit - comicQuotaUsed <= 0
+        ),
+      },
+      magazine: {
+        days: magazineQuotaDays,
+        limit: magazineQuotaLimit,
+        used: magazineQuotaUsed,
+        remaining: magazineQuotaLimit
+          ? Math.max(0, magazineQuotaLimit - magazineQuotaUsed)
+          : undefined,
+        restricted: !!(
+          magazineQuotaLimit && magazineQuotaLimit - magazineQuotaUsed <= 0
         ),
       },
     };

@@ -18,6 +18,7 @@
     "emitDecoratorMetadata": true,
     "useUnknownInCatchVariables": false,
     "incremental": true,
+    "rootDir": ".",
     "paths": {
       "@server/*": ["./server/*"],
       "@app/*": ["./src/*"]

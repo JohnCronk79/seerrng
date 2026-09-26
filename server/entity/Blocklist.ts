@@ -176,7 +176,18 @@ export class Blocklist implements BlocklistItem {
               MediaIdentifierProvider.OPENLIBRARY,
               MediaIdentifierProvider.OPENLIBRARY_EDITION,
               MediaIdentifierProvider.ISBN,
-            ].includes(blocklistRequest.externalProvider))))
+            ].includes(blocklistRequest.externalProvider)))) ||
+      (blocklistRequest.mediaType === 'comic' &&
+        (!blocklistRequest.externalId ||
+          !isValidExternalMediaId(
+            blocklistRequest.externalId,
+            blocklistRequest.mediaType,
+            blocklistRequest.externalProvider
+          ) ||
+          blocklistRequest.tmdbId !== undefined ||
+          (blocklistRequest.externalProvider !== undefined &&
+            blocklistRequest.externalProvider !==
+              MediaIdentifierProvider.COMICVINE)))
     ) {
       throw new Error('Blocklist media identity is invalid.');
     }
@@ -196,6 +207,14 @@ export class Blocklist implements BlocklistItem {
       blocklistRequest = {
         ...blocklistRequest,
         externalProvider: MediaIdentifierProvider.OPENLIBRARY,
+      };
+    } else if (
+      blocklistRequest.mediaType === 'comic' &&
+      blocklistRequest.externalProvider === undefined
+    ) {
+      blocklistRequest = {
+        ...blocklistRequest,
+        externalProvider: MediaIdentifierProvider.COMICVINE,
       };
     }
 
@@ -234,6 +253,21 @@ export class Blocklist implements BlocklistItem {
           provider:
             blocklistRequest.externalProvider ??
             MediaIdentifierProvider.OPENLIBRARY,
+          value: blocklistRequest.externalId,
+        },
+        relations: { media: true },
+      });
+      media =
+        identifier?.media.mediaType === blocklistRequest.mediaType
+          ? identifier.media
+          : null;
+    } else if (
+      blocklistRequest.mediaType === 'comic' &&
+      blocklistRequest.externalId
+    ) {
+      const identifier = await em.getRepository(MediaIdentifier).findOne({
+        where: {
+          provider: MediaIdentifierProvider.COMICVINE,
           value: blocklistRequest.externalId,
         },
         relations: { media: true },
@@ -282,7 +316,16 @@ export class Blocklist implements BlocklistItem {
                   canonical: true,
                 }),
               ]
-            : undefined,
+            : blocklistRequest.mediaType === 'comic' &&
+                blocklistRequest.externalId
+              ? [
+                  new MediaIdentifier({
+                    provider: MediaIdentifierProvider.COMICVINE,
+                    value: blocklistRequest.externalId,
+                    canonical: true,
+                  }),
+                ]
+              : undefined,
       });
 
       await mediaRepository.save(media);

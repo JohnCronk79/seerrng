@@ -170,6 +170,7 @@ movieRoutes.get('/:id', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve movie.',
+      cause: e,
     });
   }
 });

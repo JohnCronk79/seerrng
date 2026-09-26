@@ -188,6 +188,7 @@ tvRoutes.get('/:id', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve series.',
+      cause: e,
     });
   }
 });

@@ -61,6 +61,7 @@ const messages = defineMessages('components.IssueList', {
   series: 'Series',
   music: 'Music',
   books: 'Books',
+  comics: 'Comics',
   issueType: 'Issue Type',
   releaseDate: 'Release Date',
   releaseYear: 'Release Year',
@@ -84,7 +85,7 @@ type Filter = 'all' | 'open' | 'resolved';
 type Sort = 'added' | 'modified' | 'status';
 type Direction = 'asc' | 'desc';
 type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
-type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book';
+type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book' | 'comic';
 type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 
 const IssueList = () => {
@@ -328,6 +329,7 @@ const IssueList = () => {
               ['tv', messages.series],
               ['music', messages.music],
               ['book', messages.books],
+              ['comic', messages.comics],
             ] as const
           ).map(([value, label]) => (
             <MediaFilterOption
@@ -391,7 +393,7 @@ const IssueList = () => {
               className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
             />
           </label>
-          {mediaFilter !== 'all' && (
+          {mediaFilter !== 'all' && mediaFilter !== 'comic' && (
             <>
               <CompactSelect
                 label={intl.formatMessage(

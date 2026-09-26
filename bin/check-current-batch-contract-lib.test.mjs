@@ -738,7 +738,7 @@ test('reports related-media controls, inset-heading, and duplicate icon-gap regr
     'movie and series discovery must consume the shared filter and sort controls',
     'linked Recommendations and Similar pages must reuse their media discovery controls',
     'linked Recommendations and Similar pages must apply their visible filters and sorts',
-    'media inset and table headings must use their shared white typography',
+    'media inset and table headings must use their shared mode-aware typography',
     'detail action labels must not duplicate the shared button icon gap',
     'playback actions and ratings must use the compact full-width shared row',
     'rating image and value pairs must use only the shared five-pixel internal gap',

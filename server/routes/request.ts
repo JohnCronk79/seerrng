@@ -48,6 +48,7 @@ import {
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
+import { cleanMagazineTitle } from '@server/lib/magazineIdentity';
 import { hydrateMediaRequestRelations } from '@server/lib/mediaRequestHydration';
 import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
@@ -111,6 +112,8 @@ const requestMediaTypeFilters = [
   'tv',
   'music',
   'book',
+  'comic',
+  'magazine',
 ] as const;
 const requestStatusFilters = [
   'all',
@@ -812,6 +815,37 @@ const sanitizeMediaRequestBody = (
     }
   }
 
+  if (mediaType === MediaType.MAGAZINE) {
+    const parsedTitle = parseOptionalRequestString(
+      bodyObject.mediaId,
+      'mediaId',
+      256
+    );
+    if ('error' in parsedTitle) {
+      return parsedTitle;
+    }
+    if (options.requireCreateIdentity && !parsedTitle.value) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId is required for magazine requests.',
+        },
+      };
+    }
+    if (parsedTitle.value !== undefined) {
+      const title = cleanMagazineTitle(parsedTitle.value);
+      if (!title) {
+        return {
+          error: {
+            status: 400,
+            message: 'Magazine title must contain 1 to 256 characters.',
+          },
+        };
+      }
+      bodyObject.mediaId = title;
+    }
+  }
+
   const serverId = parseOptionalRequestOptionId(
     bodyObject.serverId,
     'serverId',
@@ -1269,6 +1303,23 @@ const validateExternalServiceConfiguration = (
     ) {
       throw new ServiceConfigurationError(
         'The selected comics server no longer exists.'
+      );
+    }
+  }
+
+  if (requestType === MediaType.MAGAZINE) {
+    if (serverId === undefined || serverId === null) {
+      if (!settings.lazylibrarian.some((service) => service.isDefault)) {
+        throw new ServiceConfigurationError(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+      return;
+    }
+
+    if (!settings.lazylibrarian.some((service) => service.id === serverId)) {
+      throw new ServiceConfigurationError(
+        'The selected LazyLibrarian server no longer exists.'
       );
     }
   }

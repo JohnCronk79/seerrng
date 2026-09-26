@@ -1,3 +1,8 @@
+import KapowarrAPI, {
+  KapowarrTaskRunningError,
+} from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -69,6 +74,8 @@ const mediaListTypes: MediaType[] = [
   MediaType.TV,
   MediaType.MUSIC,
   MediaType.BOOK,
+  MediaType.COMIC,
+  MediaType.MAGAZINE,
 ];
 const mediaFileFormats = ['ebook', 'audiobook', 'both'] as const;
 const mediaListPermissions: Permission[] = [
@@ -552,7 +559,7 @@ mediaRoutes.get(
     if (!media) return next({ status: 404, message: 'Media not found.' });
     try {
       return await runWithServarrServiceCollectionMutationAdmission(
-        libraryServiceType(media.mediaType),
+        libraryServiceType(media.mediaType, media.comicServiceType),
         async () => {
           const { plan } = await resolveLibraryRemoval(media);
           return res.json(plan);
@@ -591,7 +598,7 @@ mediaRoutes.delete(
         () =>
           runMediaEntityMutation(initial, async () =>
             runWithServarrServiceCollectionMutationAdmission(
-              libraryServiceType(initial.mediaType),
+              libraryServiceType(initial.mediaType, initial.comicServiceType),
               async () => {
                 const media = await repository.findOneOrFail({
                   where: { id },
@@ -717,6 +724,8 @@ mediaRoutes.delete(
             const isMovie = media.mediaType === MediaType.MOVIE;
             const isMusic = media.mediaType === MediaType.MUSIC;
             const isBook = media.mediaType === MediaType.BOOK;
+            const isComic = media.mediaType === MediaType.COMIC;
+            const isMagazine = media.mediaType === MediaType.MAGAZINE;
             const parsedBookFormat = parseOptionalAllowedString(
               req.query.format,
               {
@@ -745,18 +754,28 @@ mediaRoutes.delete(
                     ? selectionSettings.lidarr.find(
                         (lidarr) => lidarr.isDefault
                       )?.id
-                    : isBook
-                      ? undefined
-                      : selectionSettings.sonarr.find(
-                          (sonarr) => sonarr.isDefault && sonarr.is4k === is4k
-                        )?.id;
+                    : isMagazine
+                      ? selectionSettings.lazylibrarian.find(
+                          (service) => service.isDefault
+                        )?.id
+                      : isBook || isComic
+                        ? undefined
+                        : selectionSettings.sonarr.find(
+                            (sonarr) => sonarr.isDefault && sonarr.is4k === is4k
+                          )?.id;
             const serviceType = isMovie
               ? ('radarr' as const)
               : isMusic
                 ? ('lidarr' as const)
                 : isBook
                   ? ('readarr' as const)
-                  : ('sonarr' as const);
+                  : isMagazine
+                    ? ('lazylibrarian' as const)
+                    : isComic
+                      ? media.comicServiceType === 'kapowarr'
+                        ? ('kapowarr' as const)
+                        : ('mylar' as const)
+                      : ('sonarr' as const);
             const serviceAdmissions = isBook
               ? [
                   ...(bookFormat !== 'audiobook' &&
@@ -798,9 +817,21 @@ mediaRoutes.delete(
                       )
                     : isBook
                       ? undefined
-                      : settings.sonarr.find(
-                          (sonarr) => sonarr.id === selectedServiceId
-                        );
+                      : isMagazine
+                        ? settings.lazylibrarian.find(
+                            (service) => service.id === selectedServiceId
+                          )
+                        : isComic
+                          ? media.comicServiceType === 'kapowarr'
+                            ? settings.kapowarr.find(
+                                (kapowarr) => kapowarr.id === selectedServiceId
+                              )
+                            : settings.mylar.find(
+                                (mylar) => mylar.id === selectedServiceId
+                              )
+                          : settings.sonarr.find(
+                              (sonarr) => sonarr.id === selectedServiceId
+                            );
 
                 const hasBookServiceLink =
                   isBook &&
@@ -820,7 +851,13 @@ mediaRoutes.delete(
                       ? 'Lidarr'
                       : isBook
                         ? 'Bookshelf'
-                        : 'Sonarr';
+                        : isMagazine
+                          ? 'LazyLibrarian'
+                          : isComic
+                            ? media.comicServiceType === 'kapowarr'
+                              ? 'Kapowarr'
+                              : 'Mylar3'
+                            : 'Sonarr';
                   logger.warn(
                     `There is no configured ${is4k ? '4K ' : ''}${serviceName} server for this media item.`,
                     {
@@ -845,6 +882,22 @@ mediaRoutes.delete(
                     apiKey: serviceSettings!.apiKey,
                     url: LidarrAPI.buildUrl(serviceSettings!, '/api/v1'),
                   });
+                } else if (isMagazine) {
+                  service = new LazyLibrarianAPI({
+                    apiKey: serviceSettings!.apiKey,
+                    url: LazyLibrarianAPI.buildUrl(serviceSettings!),
+                  });
+                } else if (isComic) {
+                  service =
+                    media.comicServiceType === 'kapowarr'
+                      ? new KapowarrAPI({
+                          apiKey: serviceSettings!.apiKey,
+                          url: KapowarrAPI.buildUrl(serviceSettings!),
+                        })
+                      : new MylarAPI({
+                          apiKey: serviceSettings!.apiKey,
+                          url: MylarAPI.buildUrl(serviceSettings!),
+                        });
                 } else if (!isBook) {
                   service = new SonarrAPI({
                     apiKey: serviceSettings!.apiKey,
@@ -1000,6 +1053,39 @@ mediaRoutes.delete(
                   if (!removedBookFormat) {
                     throw new Error('Bookshelf book ID not found');
                   }
+                } else if (isComic) {
+                  if (!media.externalServiceId) {
+                    throw new Error('Comic backend ID not found');
+                  }
+
+                  try {
+                    if (media.comicServiceType === 'kapowarr') {
+                      await (service as KapowarrAPI).removeVolume(
+                        media.externalServiceId
+                      );
+                    } else {
+                      await (service as MylarAPI).removeComic(
+                        media.externalServiceSlug ??
+                          String(media.externalServiceId)
+                      );
+                    }
+                  } catch (error) {
+                    if (error instanceof KapowarrTaskRunningError) {
+                      return next({
+                        status: 409,
+                        message:
+                          'Kapowarr has a queued or running task for this comic. Wait for it to finish, then try again.',
+                      });
+                    }
+                    throw error;
+                  }
+                } else if (isMagazine) {
+                  if (!media.externalServiceSlug) {
+                    throw new Error('LazyLibrarian magazine title not found');
+                  }
+                  await (service as LazyLibrarianAPI).removeMagazine(
+                    media.externalServiceSlug
+                  );
                 } else {
                   const tmdb = new TheMovieDb();
                   const series = await tmdb.getTvShow({ tvId: media.tmdbId });

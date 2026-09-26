@@ -13,7 +13,9 @@ export const getTitleBlocklistKey = (
 ) => {
   if (id == null || id === '') return null;
   const external =
-    mediaType === MediaType.BOOK || mediaType === MediaType.MUSIC;
+    mediaType === MediaType.BOOK ||
+    mediaType === MediaType.MUSIC ||
+    mediaType === MediaType.COMIC;
   const normalized = normalizeExternalTitleId(mediaType, id);
   if (
     !normalized ||

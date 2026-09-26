@@ -28,4 +28,16 @@ describe('settings migration file handling', () => {
       ['0001_first.ts', '0002_second.js', '0010_last.ts']
     );
   });
+
+  it('excludes co-located test files from the migration run', () => {
+    assert.deepStrictEqual(
+      getSettingsMigrationFiles([
+        '0015_enable_default_http_auth.ts',
+        '0015_enable_default_http_auth.test.ts',
+        '0016_add_comics_scan_jobs.js',
+        '0016_add_comics_scan_jobs.test.js',
+      ]),
+      ['0015_enable_default_http_auth.ts', '0016_add_comics_scan_jobs.js']
+    );
+  });
 });

@@ -94,6 +94,188 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+# Changelog
+
+# Changelog
+
+# Changelog
+
+# Changelog
+
+## [3.28.0](https://github.com/snapetech/seerrng/compare/v3.27.1..v3.28.0) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Media Management:** Administrators can set per-user comic request limits and manage tracked magazines from their detail pages. Removing a magazine from LazyLibrarian clears its SeerrNG tracking while leaving files on disk; the comics and magazines guides now describe the current controls.
+- **Comics:** Users with advanced request permissions can now choose which Mylar or Kapowarr server handles a comic request when more than one is configured, instead of always using the admin-set default.
+- **Search:** Global Search now has dedicated Comics and Magazines categories. Comics come from ComicVine, and magazines come from the tracked catalogs in configured LazyLibrarian services.
+- **Yunohost:** YunoHost operators can install SeerrNG on amd64 and arm64 from the new package branch, with persistent data, a localhost-only service, and YunoHost-managed reverse proxy, HTTPS, backups, and restores.
+
+#### Fixed
+
+- **Interface:** Light appearance now keeps page surfaces, controls, and text in the same color scheme, and request artwork no longer fades under a white overlay.
+
+### 🚀 Features
+- *(comics)* Add advanced server picker for comic requests - ([cf025c4](https://github.com/snapetech/seerrng/commit/cf025c467965a8ef5beaf707c76ae5ccbdfd54e7))
+- *(comics)* Add manage/issue-reporting parity and blocklist support - ([d8a43b3](https://github.com/snapetech/seerrng/commit/d8a43b3e3d7f9ab6326519bd03709ade6ea85a14))
+- *(magazines)* Add management and finish comic quotas - ([4654c69](https://github.com/snapetech/seerrng/commit/4654c69f8fb97fbb4e05b2e0a06c5e17bd9677a2))
+- *(search)* Merge comics and magazines search - ([461dac5](https://github.com/snapetech/seerrng/commit/461dac599bdfa437b4794a894ede3bb2337d9b64))
+- *(search)* Add comics and magazines categories - ([d105a96](https://github.com/snapetech/seerrng/commit/d105a96b6e8cd8140e5cd3ed0f1e47579f319ea2))
+- *(yunohost)* Add YunoHost package support - ([828859c](https://github.com/snapetech/seerrng/commit/828859ccf26c527b44bb1dbbc651fc3d96a62678))
+
+### 🐛 Bug Fixes
+- *(ui)* Align light appearance and artwork overlays - ([e18cf44](https://github.com/snapetech/seerrng/commit/e18cf442d645eb7cd40afd793b0fac82700aa474))
+- *(yunohost)* Preserve backup cleanup handler - ([d2615fa](https://github.com/snapetech/seerrng/commit/d2615fa5bb9374edd39c63f07bb9c18b7905d354))
+- *(yunohost)* Snapshot SQLite data during backups - ([788cac7](https://github.com/snapetech/seerrng/commit/788cac7dbfb36740b7c368966875a3c1d99a9a21))
+- *(yunohost)* Prepare private SQLite directory - ([8b36382](https://github.com/snapetech/seerrng/commit/8b363828fd9fd646f468d02a4711f08b3ebe5b73))
+
+### 📖 Documentation
+- *(comics)* Remove stale server picker limitation - ([49102ba](https://github.com/snapetech/seerrng/commit/49102ba1c3db961e82a43bcdf4a2e922899e9fdc))
+
+### ⚙️ Miscellaneous Tasks
+- *(yunohost)* Target v3.27.1 release assets - ([d4d2ad3](https://github.com/snapetech/seerrng/commit/d4d2ad3eee0d50f1a140dd36d849d4b5174cd016))
+
+## [3.27.1](https://github.com/snapetech/seerrng/compare/v3.27.0..v3.27.1) - 2026-09-25
+
+### User-facing changes
+
+#### Fixed
+
+- **Requests:** When only one request quality is available, the full Request button now opens it. TV details also hide the quality selector when 4K is unavailable.
+
+### 🐛 Bug Fixes
+- *(requests)* Make single-quality controls fully clickable - ([62e8e1d](https://github.com/snapetech/seerrng/commit/62e8e1ded49ad4496db5822c65d6e36c105b9859))
+
+## [3.27.0](https://github.com/snapetech/seerrng/compare/v3.26.1..v3.27.0) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Magazines:** SeerrNG adds LazyLibrarian support for magazine requests. Users can discover tracked titles or request one by name, see known issue availability, and follow request state; administrators can configure the service, permissions, and request limits.
+- **Comics:** Comics now have their own Discover and details pages, reachable from the sidebar, so you can search ComicVine and request comics without leaving the browser.
+  - **Action required:** Add a ComicVine API key in Settings > General to enable comic discovery.
+- **Comics:** The global search bar now includes comics from ComicVine alongside movies, TV, music, and books.
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+- **Comics:** Admins can now add and manage Mylar3 and Kapowarr servers from Settings, and comics already in those libraries sync in automatically so they show as available without a new request.
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Comics:** Comic requests are supported across request lists, quotas, account settings, and notifications.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+- **Magazines:** Magazine workflows are now included in this release through LazyLibrarian, including title discovery, requests, issue availability, and administrator controls.
+
+#### Fixed
+
+- **Comics:** Comic requests now show correct titles, links, and status everywhere requests appear, notifications label them correctly, and admins can set a default comic request quota in Settings.
+- **Operations:** Production builds now place the server entry point where containers, packages, and source installs expect it, preventing startup failures after deployment.
+- **Comics:** Comic and magazine request limits, account settings, and notifications now display their labels correctly in production builds.
+- **Comics:** Comic discovery, detail, and server settings screens now include their required English labels and status text in release builds, so production images package the new comics workflows correctly.
+- **Magazines:** The LazyLibrarian server SSL setting now uses the shared settings toggle and saves changes to the connection configuration.
+- **Release Pipeline:** Release notes now include all changes since the latest published release, even when newer tags are still drafts. This keeps fixes and features from failed or delayed releases visible in the next GitHub release and Discord announcement.
+- **Release Pipeline:** Standalone Linux, Windows, and macOS release packages now build with the expanded settings sections for comic integrations, so package users receive the same release as Docker users.
+- **Metadata:** Provider failures behind movie and discovery errors now retain the upstream status, provider message, and error code in server logs. TMDB rejections also show the credential source without exposing the key, helping operators distinguish authentication failures from network outages.
+- **Diagnostics:** When an external service fails, SeerrNG logs now include sanitized upstream host, path, HTTP status, response message, and network error code so operators can distinguish authentication failures from connectivity problems without exposing credentials.
+- **Metadata:** SeerrNG now checks TMDB authentication after startup and logs whether it succeeded, which credential source was used, or the upstream HTTP/network failure code. A rejected override is visible without exposing the key; the bundled key remains the default.
+  - **Action required:** If startup logs report HTTP 401, remove or correct the TMDB credential override.
+
+### 🚀 Features
+- *(comics)* Include comics in global search - ([67108db](https://github.com/snapetech/seerrng/commit/67108db776ce643dce761134ca98b127cb775a36))
+- *(magazines)* Complete shared request surfaces - ([05b1346](https://github.com/snapetech/seerrng/commit/05b134633130a7e26a081865b9db4b87d00a1ac6))
+- *(magazines)* Add LazyLibrarian request support - ([5fcbccc](https://github.com/snapetech/seerrng/commit/5fcbcccdf02d69268d01ef8786c4cb57646109cf))
+
+### 🐛 Bug Fixes
+- *(build)* Emit server entrypoint at runtime path - ([40c86cf](https://github.com/snapetech/seerrng/commit/40c86cf9aa1465a0d1e0999df0c678c9294772ea))
+- *(comics)* Remove incomplete magazine UI paths - ([4295990](https://github.com/snapetech/seerrng/commit/4295990438691e8439c2a26bae3de2727eca8155))
+- *(comics)* Thread comic support through request-list, quota, and notification surfaces - ([affb193](https://github.com/snapetech/seerrng/commit/affb1932907e9a8b65b5bc94a8ab00fef3b683a2))
+- *(diagnostics)* Report upstream request failures - ([47dd20a](https://github.com/snapetech/seerrng/commit/47dd20ad4f0368e58848fcf20e45845102e451a9))
+- *(i18n)* Include comic request labels - ([19e6177](https://github.com/snapetech/seerrng/commit/19e61771c19694fc994bde99739ff6b3fe6a4930))
+- *(magazines)* Use shared settings controls - ([2f32080](https://github.com/snapetech/seerrng/commit/2f320806e1c798d6a94d2480329c8fab9a6190fa))
+- *(release)* Validate expanded settings integrations - ([25a48dc](https://github.com/snapetech/seerrng/commit/25a48dcd62f8df3ac0797f370bdf9a7a0d9be5fa))
+
+### 📖 Documentation
+- *(release)* Remove superseded magazine scope note - ([27e8a76](https://github.com/snapetech/seerrng/commit/27e8a76c50f39027fae1f196724eb52566a121b2))
+- *(release)* Clarify magazine support scope - ([936cce2](https://github.com/snapetech/seerrng/commit/936cce257d31ccc54fb82ec8deb1985af966a0af))
+
+### 🧪 Testing
+- Expect upstream diagnostic message - ([943b8eb](https://github.com/snapetech/seerrng/commit/943b8eb52c9f31b03260ad4f1e04dee1864b5fbf))
+
+## [3.26.1](https://github.com/snapetech/seerrng/compare/v3.26.0..v3.26.1) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Comics:** Comics now have their own Discover and details pages, reachable from the sidebar, so you can search ComicVine and request comics without leaving the browser.
+  - **Action required:** Add a ComicVine API key in Settings > General to enable comic discovery.
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+- **Comics:** Admins can now add and manage Mylar3 and Kapowarr servers from Settings, and comics already in those libraries sync in automatically so they show as available without a new request.
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+#### Fixed
+
+- **Comics:** Comic discovery, detail, and server settings screens now include their required English labels and status text in release builds, so production images package the new comics workflows correctly.
+- **Release Pipeline:** Release notes now include all changes since the latest published release, even when newer tags are still drafts. This keeps fixes and features from failed or delayed releases visible in the next GitHub release and Discord announcement.
+- **Metadata:** Provider failures behind movie and discovery errors now retain the upstream status, provider message, and error code in server logs. TMDB rejections also show the credential source without exposing the key, helping operators distinguish authentication failures from network outages.
+- **Metadata:** SeerrNG now checks TMDB authentication after startup and logs whether it succeeded, which credential source was used, or the upstream HTTP/network failure code. A rejected override is visible without exposing the key; the bundled key remains the default.
+  - **Action required:** If startup logs report HTTP 401, remove or correct the TMDB credential override.
+
+### 🐛 Bug Fixes
+- *(i18n)* Include comic messages in release catalogs - ([6b20fa6](https://github.com/snapetech/seerrng/commit/6b20fa62136910b337b3e8205ec089e655ea6272))
+
+## [3.26.0](https://github.com/snapetech/seerrng/compare/v3.25.0..v3.26.0) - 2026-09-25
+
+### User-facing changes
+
+#### Added
+
+- **Comics:** Comics now have their own Discover and details pages, reachable from the sidebar, so you can search ComicVine and request comics without leaving the browser.
+  - **Action required:** Add a ComicVine API key in Settings > General to enable comic discovery.
+- **Comics:** SeerrNG now supports comic requests through configured Mylar3 and Kapowarr servers, with approval and processing status shown alongside other media requests.
+  - **Action required:** Configure a Mylar3 or Kapowarr service to enable comic request dispatch.
+- **Comics:** Admins can now add and manage Mylar3 and Kapowarr servers from Settings, and comics already in those libraries sync in automatically so they show as available without a new request.
+
+#### Changed
+
+- **Documentation:** The SeerrNG guides now explain how to browse books and series, follow request status history, set per-user request languages, use playback controls, configure override rules, and classify Plex Music and audiobook libraries. The README and documentation home link directly to these workflows and related setup guides.
+- **Network:** Network settings now explain when reverse-proxy trust is needed and why it must remain off when clients can connect directly. This helps operators avoid incorrect client-IP handling and rate-limit errors behind a reverse proxy.
+  - **Action required:** Enable reverse-proxy trust when SeerrNG is reachable only through one trusted reverse proxy that sets X-Forwarded-For, then restart SeerrNG.
+
+#### Fixed
+
+- **Release Pipeline:** Release notes now include all changes since the latest published release, even when newer tags are still drafts. This keeps fixes and features from failed or delayed releases visible in the next GitHub release and Discord announcement.
+- **Metadata:** Provider failures behind movie and discovery errors now retain the upstream status, provider message, and error code in server logs. TMDB rejections also show the credential source without exposing the key, helping operators distinguish authentication failures from network outages.
+- **Metadata:** SeerrNG now checks TMDB authentication after startup and logs whether it succeeded, which credential source was used, or the upstream HTTP/network failure code. A rejected override is visible without exposing the key; the bundled key remains the default.
+  - **Action required:** If startup logs report HTTP 401, remove or correct the TMDB credential override.
+
+### 🚀 Features
+- *(comics)* Add Comics Discover and details pages - ([92586dc](https://github.com/snapetech/seerrng/commit/92586dc3cf79dbd3fa37a979bce32040331cc5aa))
+- *(comics)* Sync existing libraries and add settings UI for Mylar3/Kapowarr - ([25f9a8c](https://github.com/snapetech/seerrng/commit/25f9a8cd5be4524c6b90f234c9009da61c479408))
+
+### 🐛 Bug Fixes
+- *(api)* Preserve upstream failure diagnostics - ([8640a10](https://github.com/snapetech/seerrng/commit/8640a10494184d40b9a63b4ca8bb2af3bd39e106))
+- *(release)* Carry draft release notes forward - ([87e9b7f](https://github.com/snapetech/seerrng/commit/87e9b7f4bf1246d1b4f363e03760c3a591649e14))
+- *(server)* Repair server type-check, dev boot, and pnpm dev startup - ([f8cf2ee](https://github.com/snapetech/seerrng/commit/f8cf2eeee4b94d59b7f47760dda4c2e0958b8513))
+- *(tmdb)* Report authentication and connectivity failures - ([8e68d49](https://github.com/snapetech/seerrng/commit/8e68d49a9890e78c8167b11eeb7718ce0b126872))
+
+### 📖 Documentation
+- *(release-notes)* Document Comics Discover and details pages - ([37f4106](https://github.com/snapetech/seerrng/commit/37f4106e68a6c707f477f76f404d8778346b9429))
+- *(release-notes)* Remove duplicate network note - ([094a521](https://github.com/snapetech/seerrng/commit/094a521715bd5da47b3a3f5e4bba57e96a53fbf5))
+- *(release-notes)* Document comics settings UI and library sync - ([8ec368d](https://github.com/snapetech/seerrng/commit/8ec368d5022fcf505b963631ab3eca2621d4c97b))
+
 ## [3.25.0](https://github.com/snapetech/seerrng/compare/v3.24.2..v3.25.0) - 2026-09-25
 
 ### User-facing changes

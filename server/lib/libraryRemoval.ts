@@ -1,19 +1,28 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaType } from '@server/constants/media';
 import type Media from '@server/entity/Media';
+import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
 import type {
   LibraryCopy,
   LibraryRemovalPlan,
 } from '@server/interfaces/api/libraryRemoval';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
-import type { DVRSettings } from '@server/lib/settings';
+import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
+import type {
+  CollectorServiceSettings,
+  DVRSettings,
+} from '@server/lib/settings';
 import { createHash } from 'node:crypto';
 
 export const libraryServiceType = (
-  type: MediaType
+  type: MediaType,
+  comicServiceType?: Media['comicServiceType']
 ): LibraryCopy['serviceType'] => {
   switch (type) {
     case MediaType.MOVIE:
@@ -24,15 +33,26 @@ export const libraryServiceType = (
       return 'lidarr';
     case MediaType.BOOK:
       return 'readarr';
+    case MediaType.COMIC:
+      return comicServiceType === 'kapowarr' ? 'kapowarr' : 'mylar';
+    case MediaType.MAGAZINE:
+      return 'lazylibrarian';
     default:
       throw new Error('Unsupported library media type.');
   }
 };
 
-const webUrl = (settings: DVRSettings, path: string) =>
+const webUrl = (
+  settings: DVRSettings | CollectorServiceSettings,
+  path: string
+) =>
   settings.externalUrl
     ? settings.externalUrl.replace(/\/+$/, '') + path
     : RadarrAPI.buildUrl(settings, path);
+
+const isHighQualityServer = (
+  settings: DVRSettings | CollectorServiceSettings
+): boolean => 'is4k' in settings && settings.is4k === true;
 
 export const libraryPlanToken = (
   mediaId: number,
@@ -58,18 +78,21 @@ export const resolveLibraryRemoval = async (
   plan: LibraryRemovalPlan;
   remove: (target: LibraryCopy) => Promise<void>;
 }> => {
-  const type = libraryServiceType(media.mediaType);
+  const type = libraryServiceType(media.mediaType, media.comicServiceType);
   const settings = getExternalRuntimeConfig()[type];
   const targets: LibraryCopy[] = [];
   const removers = new Map<string, () => Promise<void>>();
   const add = (
-    server: DVRSettings,
-    id: number,
+    server: DVRSettings | CollectorServiceSettings,
+    id: number | string,
     quality: string,
     path: string,
     remove: () => Promise<void>
   ) => {
-    if (!Number.isSafeInteger(id) || id <= 0)
+    if (
+      (typeof id === 'number' && (!Number.isSafeInteger(id) || id <= 0)) ||
+      (typeof id === 'string' && !id.trim())
+    )
       throw new Error('Invalid library item ID.');
     const key = [type, server.id, id, quality].join(':');
     if (removers.has(key)) return;
@@ -100,7 +123,7 @@ export const resolveLibraryRemoval = async (
             add(
               server,
               item.id,
-              server.is4k ? '4K' : 'HD',
+              isHighQualityServer(server) ? '4K' : 'HD',
               '/movie/' +
                 encodeURIComponent(item.titleSlug || String(item.tmdbId)),
               () => api.removeMovieById(item.id)
@@ -122,7 +145,7 @@ export const resolveLibraryRemoval = async (
             add(
               server,
               seriesId,
-              server.is4k ? '4K' : 'HD',
+              isHighQualityServer(server) ? '4K' : 'HD',
               '/series/' +
                 encodeURIComponent(item.titleSlug || String(item.tvdbId)),
               () => api.removeSeriesById(seriesId)
@@ -148,7 +171,7 @@ export const resolveLibraryRemoval = async (
             );
           }
         }
-      } else {
+      } else if (type === 'readarr') {
         const format =
           getExternalRuntimeConfig().readarr.find((s) => s.id === server.id)
             ?.serviceType ?? 'ebook';
@@ -189,6 +212,71 @@ export const resolveLibraryRemoval = async (
                 '?mediaType=' +
                 format,
               () => api.removeBook(item.id)
+            );
+        }
+      } else if (type === 'mylar') {
+        const comicVineId = media.identifiers?.find(
+          (identifier) =>
+            identifier.provider === MediaIdentifierProvider.COMICVINE
+        )?.value;
+        if (!comicVineId) throw new Error('Missing ComicVine identifier.');
+        const api = new MylarAPI({
+          apiKey: server.apiKey,
+          url: MylarAPI.buildUrl(server),
+        });
+        for (const item of await api.getIndex()) {
+          if (item.id === comicVineId)
+            add(
+              server,
+              item.id,
+              'Comic',
+              '/comicDetails?ComicID=' + encodeURIComponent(item.id),
+              () => api.removeComic(item.id)
+            );
+        }
+      } else if (type === 'kapowarr') {
+        const comicVineId = Number(
+          media.identifiers?.find(
+            (identifier) =>
+              identifier.provider === MediaIdentifierProvider.COMICVINE
+          )?.value
+        );
+        if (!Number.isSafeInteger(comicVineId) || comicVineId <= 0)
+          throw new Error('Missing ComicVine identifier.');
+        const api = new KapowarrAPI({
+          apiKey: server.apiKey,
+          url: KapowarrAPI.buildUrl(server),
+        });
+        for (const item of await api.getVolumes()) {
+          if (item.comicvine_id === comicVineId)
+            add(server, item.id, 'Comic', '/volumes/' + item.id, () =>
+              api.removeVolume(item.id)
+            );
+        }
+      } else {
+        const magazineTitles = new Set(
+          [
+            ...(media.identifiers ?? [])
+              .filter(
+                (identifier) =>
+                  identifier.provider === MediaIdentifierProvider.LAZYLIBRARIAN
+              )
+              .map((identifier) => identifier.value),
+            media.externalServiceSlug,
+          ]
+            .filter((title): title is string => !!title)
+            .map(normalizeMagazineTitle)
+        );
+        if (!magazineTitles.size)
+          throw new Error('Missing LazyLibrarian magazine identifier.');
+        const api = new LazyLibrarianAPI({
+          apiKey: server.apiKey,
+          url: LazyLibrarianAPI.buildUrl(server),
+        });
+        for (const item of await api.getMagazines()) {
+          if (magazineTitles.has(normalizeMagazineTitle(item.title)))
+            add(server, item.title, 'Magazine', '', () =>
+              api.removeMagazine(item.title)
             );
         }
       }

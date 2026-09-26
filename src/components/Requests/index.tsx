@@ -60,6 +60,7 @@ import type {
 import type { RequestStatusSortField } from '@server/lib/requestStatusSort';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -122,6 +123,8 @@ const messages = defineMessages('components.Requests', {
   movie: 'Movie',
   series: 'Series',
   album: 'Album',
+  comic: 'Comic',
+  magazine: 'Magazine',
   bookAndAudiobook: 'Book + Audiobook',
   book: 'Book',
   fourK: '4K',
@@ -132,9 +135,11 @@ const messages = defineMessages('components.Requests', {
   minutes: '{count} minutes',
   notAvailable: 'Not available',
   releaseDate: 'Release Date',
+  latestIssue: 'Latest Issue',
   firstPublished: 'First Published',
   runtime: 'Runtime',
   pages: 'Pages',
+  issues: 'Issues',
   genres: 'Genres',
   author: 'Author',
   artist: 'Artist',
@@ -165,6 +170,8 @@ const messages = defineMessages('components.Requests', {
   music: 'Music',
   ebooks: 'Books',
   audiobooks: 'Audiobooks',
+  comics: 'Comics',
+  magazines: 'Magazines',
   mediaAndFormat: 'Media & format',
   showingFormat: 'Showing requests for',
   format: 'Format',
@@ -225,7 +232,12 @@ const messages = defineMessages('components.Requests', {
 });
 
 type MediaDetails =
-  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
 type StatusStage =
   | 'requested'
   | 'approved'
@@ -239,7 +251,15 @@ type StatusStage =
   | 'declined'
   | 'cancelled';
 type RequestStatusItem = RequestStatusResultsResponse['results'][number];
-type MediaFilter = 'all' | 'movie' | 'tv' | 'music' | 'book' | 'audiobook';
+type MediaFilter =
+  | 'all'
+  | 'movie'
+  | 'tv'
+  | 'music'
+  | 'book'
+  | 'audiobook'
+  | 'comic'
+  | 'magazine';
 type UserSelection = Exclude<RequestStatusUserSelection, null>;
 type TimeFrame = '7d' | '14d' | '30d' | '6m' | 'all';
 type RemoveSelection = {
@@ -284,6 +304,8 @@ const mediaTypeValues: MediaFilter[] = [
   'music',
   'book',
   'audiobook',
+  'comic',
+  'magazine',
 ];
 
 const sortDirectionValues = ['asc', 'desc'] as const;
@@ -447,6 +469,9 @@ const isBook = (details: MediaDetails): details is BookDetails =>
 const isComic = (details: MediaDetails): details is ComicDetails =>
   (details as ComicDetails).mediaType === 'comic';
 
+const isMagazine = (details: MediaDetails): details is MagazineDetails =>
+  (details as MagazineDetails).mediaType === 'magazine';
+
 const getBookId = (item: RequestStatusItem): string | undefined =>
   item.request.media.identifiers?.find(
     (identifier) => identifier.provider === 'openlibrary'
@@ -455,6 +480,12 @@ const getBookId = (item: RequestStatusItem): string | undefined =>
 const getComicId = (item: RequestStatusItem): string | undefined =>
   item.request.media.identifiers?.find(
     (identifier) => identifier.provider === 'comicvine'
+  )?.value;
+
+const getMagazineId = (item: RequestStatusItem): string | undefined =>
+  item.request.media.externalServiceSlug ??
+  item.request.media.identifiers?.find(
+    (identifier) => identifier.provider === 'lazylibrarian'
   )?.value;
 
 const getDetailsUrl = (item: RequestStatusItem): string | null => {
@@ -468,6 +499,12 @@ const getDetailsUrl = (item: RequestStatusItem): string | null => {
   if (request.type === 'comic') {
     const comicId = getComicId(item);
     return comicId ? `/api/v1/comic/${encodeApiPathSegment(comicId)}` : null;
+  }
+  if (request.type === 'magazine') {
+    const magazineId = getMagazineId(item);
+    return magazineId
+      ? `/api/v1/magazine/${encodeApiPathSegment(magazineId)}`
+      : null;
   }
   const bookId = getBookId(item);
   return bookId
@@ -487,6 +524,10 @@ const getDetailHref = (item: RequestStatusItem): string | null => {
     const comicId = getComicId(item);
     return comicId ? `/comic/${encodeApiPathSegment(comicId)}` : null;
   }
+  if (request.type === 'magazine') {
+    const magazineId = getMagazineId(item);
+    return magazineId ? `/magazine/${encodeApiPathSegment(magazineId)}` : null;
+  }
   const bookId = getBookId(item);
   const bookFormat = getRequestedBookFormat(item.request.bookFormat);
   return bookId
@@ -497,6 +538,7 @@ const getDetailHref = (item: RequestStatusItem): string | null => {
 const getTitle = (
   intl: ReturnType<typeof useIntl>,
   details: MediaDetails | undefined,
+  item: RequestStatusItem,
   isLoading: boolean
 ): string => {
   if (details) {
@@ -505,9 +547,22 @@ const getTitle = (
     }
     return 'title' in details ? details.title : details.name;
   }
-  return intl.formatMessage(
-    isLoading ? messages.loadingTitle : messages.unknownTitle
-  );
+  if (isLoading) {
+    return intl.formatMessage(messages.loadingTitle);
+  }
+  if (item.request.type === 'music' && item.request.media.mbId) {
+    return item.request.media.mbId;
+  }
+  if (item.request.type === 'book') {
+    return getBookId(item) ?? intl.formatMessage(messages.unknownTitle);
+  }
+  if (item.request.type === 'comic') {
+    return getComicId(item) ?? intl.formatMessage(messages.unknownTitle);
+  }
+  if (item.request.type === 'magazine') {
+    return getMagazineId(item) ?? intl.formatMessage(messages.unknownTitle);
+  }
+  return `${item.request.type.toUpperCase()} #${item.request.media.tmdbId}`;
 };
 
 const getPoster = (
@@ -534,7 +589,7 @@ const getBackdrop = (
       details.artistBackdrop ?? details.artistThumb ?? details.posterPath;
     return src ? { src, type: 'music' } : undefined;
   }
-  if (isBook(details) || isComic(details)) {
+  if (isBook(details) || isComic(details) || isMagazine(details)) {
     return details.posterPath
       ? { src: details.posterPath, type: 'book' }
       : undefined;
@@ -565,6 +620,9 @@ const getMediaBadge = (
   if (item.request.type === 'movie') return intl.formatMessage(messages.movie);
   if (item.request.type === 'tv') return intl.formatMessage(messages.series);
   if (item.request.type === 'music') return intl.formatMessage(messages.album);
+  if (item.request.type === 'comic') return intl.formatMessage(messages.comic);
+  if (item.request.type === 'magazine')
+    return intl.formatMessage(messages.magazine);
   return intl.formatMessage(messages.book);
 };
 
@@ -574,6 +632,8 @@ const getMediaBadgeType = (
   if (item.request.type === 'movie') return 'movie';
   if (item.request.type === 'tv') return 'tv';
   if (item.request.type === 'music') return 'album';
+  if (item.request.type === 'comic') return 'comic';
+  if (item.request.type === 'magazine') return 'magazine';
   return undefined;
 };
 
@@ -586,6 +646,12 @@ const getMediaFormat = (
   }
   if (item.request.type === 'music') {
     return intl.formatMessage(messages.musicFormat);
+  }
+  if (item.request.type === 'comic') {
+    return intl.formatMessage(messages.comic);
+  }
+  if (item.request.type === 'magazine') {
+    return intl.formatMessage(messages.magazine);
   }
   return intl.formatMessage(
     getBookFormatMessage(getRequestedBookFormat(item.request.bookFormat))
@@ -606,6 +672,12 @@ const getReleaseDate = (
   if (item.request.type === 'music') {
     return (details as MusicDetails).releaseDate;
   }
+  if (item.request.type === 'comic') {
+    return (details as ComicDetails).startYear;
+  }
+  if (item.request.type === 'magazine') {
+    return (details as MagazineDetails).latestIssue;
+  }
   const year = (details as BookDetails).firstPublishYear;
   return year ? String(year) : undefined;
 };
@@ -617,7 +689,9 @@ const getReleaseDateLabel = (
   intl.formatMessage(
     item.request.type === 'book'
       ? messages.firstPublished
-      : messages.releaseDate
+      : item.request.type === 'magazine'
+        ? messages.latestIssue
+        : messages.releaseDate
   );
 
 const getRuntime = (
@@ -652,6 +726,13 @@ const getRuntime = (
         })
       : notAvailable;
   }
+
+  if (item.request.type === 'magazine') {
+    const issueCount = (details as MagazineDetails).issueCount;
+    return issueCount !== undefined
+      ? intl.formatNumber(issueCount)
+      : notAvailable;
+  }
   return notAvailable;
 };
 
@@ -660,7 +741,11 @@ const getRuntimeLabel = (
   item: RequestStatusItem
 ): string =>
   intl.formatMessage(
-    item.request.type === 'book' ? messages.pages : messages.runtime
+    item.request.type === 'book'
+      ? messages.pages
+      : item.request.type === 'magazine'
+        ? messages.issues
+        : messages.runtime
   );
 
 const getRuntimeOrPages = (
@@ -739,6 +824,16 @@ const getFeaturedCredits = (
         href: music.artist?.id
           ? `/artist/${encodeApiPathSegment(music.artist.id)}`
           : undefined,
+      },
+    ];
+  }
+
+  if (item.request.type === 'magazine') {
+    const magazine = details as MagazineDetails;
+    return [
+      {
+        label: intl.formatMessage(messages.latestIssue),
+        name: magazine.latestIssue ?? notAvailable,
       },
     ];
   }
@@ -1001,7 +1096,12 @@ const RequestStatusCard = ({
   const activeIndex = getLastTimelineIndex(currentStage, history);
   const poster = getPoster(details);
   const backdrop = getBackdrop(details);
-  const title = getTitle(intl, details, Boolean(detailsUrl && !detailsError));
+  const title = getTitle(
+    intl,
+    details,
+    item,
+    Boolean(detailsUrl && !detailsError)
+  );
   const mediaBadgeType = getMediaBadgeType(item) ?? 'movie';
   const StageIcon = stageIcon[currentStage] ?? InformationCircleIcon;
   const releaseDate = getReleaseDate(details, item);
@@ -1202,7 +1302,8 @@ const RequestStatusCard = ({
           tmdbId={
             item.request.type === 'music' ||
             item.request.type === 'book' ||
-            item.request.type === 'comic'
+            item.request.type === 'comic' ||
+            item.request.type === 'magazine'
               ? undefined
               : item.request.media.tmdbId
           }
@@ -1213,6 +1314,9 @@ const RequestStatusCard = ({
           }
           bookId={item.request.type === 'book' ? getBookId(item) : undefined}
           comicId={item.request.type === 'comic' ? getComicId(item) : undefined}
+          magazineTitle={
+            item.request.type === 'magazine' ? getMagazineId(item) : undefined
+          }
           type={item.request.type}
           is4k={item.request.is4k}
           editRequest={item.request}
@@ -2125,6 +2229,8 @@ const Requests = () => {
     { value: 'music', label: 'music' },
     { value: 'book', label: 'ebooks' },
     { value: 'audiobook', label: 'audiobooks' },
+    { value: 'comic', label: 'comics' },
+    { value: 'magazine', label: 'magazines' },
   ];
   const changePage = (nextPage: number) => {
     pushRouteQuery(routeQuery({ nextPage }));

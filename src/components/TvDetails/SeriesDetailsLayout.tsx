@@ -140,6 +140,13 @@ const SeriesDetailsLayout = ({
       ? '4k'
       : 'hd'
   );
+  const effectiveSelectedQuality =
+    show4kAvailability && selectedQuality === '4k' ? '4k' : 'hd';
+  useEffect(() => {
+    if (!show4kAvailability && selectedQuality !== 'hd') {
+      setSelectedQuality('hd');
+    }
+  }, [selectedQuality, show4kAvailability]);
   useEffect(() => {
     setShowCast(pins.cast);
   }, [pins.cast]);
@@ -160,7 +167,7 @@ const SeriesDetailsLayout = ({
     true
   );
   const playbackCatalog =
-    selectedQuality === '4k'
+    effectiveSelectedQuality === '4k'
       ? highQualityPlaybackCatalog
       : standardPlaybackCatalog;
   useEffect(() => {
@@ -453,7 +460,7 @@ const SeriesDetailsLayout = ({
             data.voteCount > 0) && (
             <div className="media-rating-row">
               <MediaQualitySelect
-                value={selectedQuality}
+                value={effectiveSelectedQuality}
                 options={[
                   {
                     label: 'HD',
@@ -475,13 +482,13 @@ const SeriesDetailsLayout = ({
               />
               {playbackActions?.(
                 effectivePlaybackItemIds,
-                selectedQuality === '4k'
+                effectiveSelectedQuality === '4k'
               )}
               {playbackActions && (
                 <PlayOnDeviceButton
                   mediaId={data.mediaInfo?.id}
                   itemIds={effectivePlaybackItemIds}
-                  is4k={selectedQuality === '4k'}
+                  is4k={effectiveSelectedQuality === '4k'}
                 />
               )}
               {ratingData?.criticsRating &&

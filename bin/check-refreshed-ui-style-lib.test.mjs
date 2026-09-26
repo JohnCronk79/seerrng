@@ -23,7 +23,7 @@ const validSharedStyles = `
   .refreshed-card-surface {}
   .refreshed-inset-surface {}
   .refreshed-artwork-scrim {}
-  .request-card-artwork-gradient {}
+  .request-card-artwork-gradient { background: rgb(var(--theme-artwork-gradient-black)); }
 `;
 
 test('accepts shared blue surfaces and semantic card text', () => {
@@ -107,6 +107,22 @@ test('does not duplicate CSS property values in the reference validator', () => 
     ),
   });
   assert.deepStrictEqual(result.errors, []);
+});
+
+test('keeps request artwork dark across the light and dark themes', () => {
+  const result = validateRefreshedUiStyleBoundaries({
+    'src/styles/globals.css': validSharedStyles.replace(
+      '.request-card-artwork-gradient { background: rgb(var(--theme-artwork-gradient-black)); }',
+      '.request-card-artwork-gradient { background: rgb(var(--color-gray-900)); }'
+    ),
+  });
+
+  assert.ok(
+    result.errors.some((error) => error.includes('mode-independent dark'))
+  );
+  assert.ok(
+    result.errors.some((error) => error.includes('mode-switched gray-900'))
+  );
 });
 
 test('rejects pseudo-element dividers and the larger legacy action token', () => {

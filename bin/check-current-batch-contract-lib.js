@@ -54,6 +54,64 @@ const validateCurrentBatchContract = (files) => {
       );
     }
   };
+  const requireDistinctSectionHeadings = (
+    fileName,
+    sectionStart,
+    sectionEnd,
+    headingTokens,
+    reason
+  ) => {
+    const source = requireFile(fileName);
+    const sections = [];
+    let offset = 0;
+    while (true) {
+      const start = source.indexOf(sectionStart, offset);
+      if (start < 0) break;
+      const contentStart = start + sectionStart.length;
+      const end = source.indexOf(sectionEnd, contentStart);
+      if (end < 0) break;
+      sections.push(source.slice(contentStart, end));
+      offset = end + sectionEnd.length;
+    }
+
+    const headingSections = headingTokens.map((heading) =>
+      sections.findIndex((section) => section.includes(heading))
+    );
+    if (
+      headingSections.some((section) => section < 0) ||
+      new Set(headingSections).size !== headingTokens.length
+    ) {
+      errors.push(`${fileName}: ${reason}`);
+    }
+  };
+  const requireHeadingScopedText = (
+    fileName,
+    headingTokens,
+    requiredTokens,
+    reason
+  ) => {
+    const source = requireFile(fileName);
+    const headings = headingTokens.map((heading) => ({
+      heading,
+      position: source.indexOf(heading),
+    }));
+    if (headings.some(({ position }) => position < 0)) {
+      errors.push(`${fileName}: ${reason}`);
+      return;
+    }
+
+    for (const { position } of headings) {
+      const nextHeadingPosition = headings
+        .map(({ position: candidate }) => candidate)
+        .filter((candidate) => candidate > position)
+        .sort((left, right) => left - right)[0];
+      const group = source.slice(position, nextHeadingPosition);
+      if (requiredTokens.some((token) => !group.includes(token))) {
+        errors.push(`${fileName}: ${reason}`);
+        return;
+      }
+    }
+  };
   const requireOrder = (fileName, tokens, reason) => {
     const source = requireFile(fileName);
     let previous = -1;
@@ -3358,10 +3416,15 @@ const validateCurrentBatchContract = (files) => {
       'Settings route navigation must reuse the shared filter-button component styling'
     );
   }
-  requireCount(
+  requireDistinctSectionHeadings(
     'src/components/Settings/SettingsMain/index.tsx',
     '<section className="settings-group-card">',
-    2,
+    '</section>',
+    [
+      'intl.formatMessage(messages.generalsettings)',
+      'intl.formatMessage(messages.playlistIntegrations)',
+      'intl.formatMessage(messages.comicsMetadata)',
+    ],
     'General Settings and Playlist Integrations must be separate standard subcards'
   );
   requireOrder(
@@ -3666,10 +3729,21 @@ const validateCurrentBatchContract = (files) => {
       'Settings services, warnings, logs, jobs, and table geometry must remain shared and standardized'
     );
   }
-  requireCount(
+  requireHeadingScopedText(
     'src/components/Settings/SettingsServices.tsx',
-    'className="settings-service-grid"',
-    5,
+    [
+      'intl.formatMessage(messages.radarrsettings)',
+      'intl.formatMessage(messages.sonarrsettings)',
+      'intl.formatMessage(messages.lidarrsettings)',
+      'intl.formatMessage(messages.readarrsettings)',
+      'intl.formatMessage(messages.mylarsettings)',
+      'intl.formatMessage(messages.kapowarrsettings)',
+      'intl.formatMessage(messages.overrideRules)',
+    ],
+    [
+      'className="section settings-service-section"',
+      'className="settings-service-grid"',
+    ],
     'every service and override-rule grid must use the shared five-pixel layout'
   );
   for (const token of [
@@ -3687,12 +3761,6 @@ const validateCurrentBatchContract = (files) => {
       'service cards must preserve the shared logo, title, detail-column, and semantic-action layout'
     );
   }
-  requireCount(
-    'src/components/Settings/SettingsServices.tsx',
-    'className="section settings-service-section"',
-    5,
-    'every Services subcard must preserve the shared body-text spacing'
-  );
   for (const token of [
     'className="settings-service-card refreshed-inset-surface text-left"',
     'className="settings-rule-card-content"',
@@ -5112,14 +5180,15 @@ const validateCurrentBatchContract = (files) => {
   }
   for (const token of [
     '.media-inset-heading {',
-    '@apply text-sm leading-5 font-semibold text-white;',
+    '@apply text-sm leading-5 font-semibold;',
     '.media-inset-table-heading {',
-    '@apply text-xs leading-4 font-semibold text-white;',
+    '@apply text-xs leading-4 font-semibold;',
+    'color: rgb(var(--theme-heading-text));',
   ]) {
     requireText(
       globals,
       token,
-      'media inset and table headings must use their shared white typography'
+      'media inset and table headings must use their shared mode-aware typography'
     );
   }
   for (const fileName of [

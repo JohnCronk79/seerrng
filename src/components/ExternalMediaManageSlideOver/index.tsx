@@ -19,6 +19,8 @@ import {
   MediaType,
 } from '@server/constants/media';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MusicDetails } from '@server/models/Music';
 import { Fragment, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -34,8 +36,12 @@ const messages = defineMessages('components.ExternalMediaManageSlideOver', {
   audiobook: 'Audiobook',
   music: 'music',
   book: 'book',
+  comic: 'comic',
+  magazine: 'magazine',
   musicTitle: 'Music',
   bookTitle: 'Book',
+  comicTitle: 'Comic',
+  magazineTitle: 'Magazine',
 });
 
 const filterDuplicateDownloads = (
@@ -51,8 +57,9 @@ const filterDuplicateDownloads = (
 
 type ExternalMediaManageSlideOverProps = {
   show?: boolean;
-  mediaType: MediaType.MUSIC | MediaType.BOOK;
-  data: MusicDetails | BookDetails;
+  mediaType:
+    MediaType.MUSIC | MediaType.BOOK | MediaType.COMIC | MediaType.MAGAZINE;
+  data: MusicDetails | BookDetails | ComicDetails | MagazineDetails;
   onClose: () => void;
   revalidate: () => void;
 };
@@ -71,9 +78,17 @@ const ExternalMediaManageSlideOver = ({
   const externalId =
     mediaType === MediaType.MUSIC
       ? normalizeMusicBrainzId((data as MusicDetails).mbId)
-      : normalizeOpenLibraryWorkId(data.id);
+      : mediaType === MediaType.COMIC || mediaType === MediaType.MAGAZINE
+        ? String(data.id)
+        : normalizeOpenLibraryWorkId(data.id);
   const mediaTitleLabel = intl.formatMessage(
-    mediaType === MediaType.MUSIC ? messages.musicTitle : messages.bookTitle
+    mediaType === MediaType.MUSIC
+      ? messages.musicTitle
+      : mediaType === MediaType.COMIC
+        ? messages.comicTitle
+        : mediaType === MediaType.MAGAZINE
+          ? messages.magazineTitle
+          : messages.bookTitle
   );
   const manageBackdrop =
     mediaType === MediaType.MUSIC
@@ -127,7 +142,15 @@ const ExternalMediaManageSlideOver = ({
         <div className="manage-media-stack">
           <IssueMediaSummary
             data={data}
-            mediaType={mediaType === MediaType.MUSIC ? 'music' : 'book'}
+            mediaType={
+              mediaType === MediaType.MUSIC
+                ? 'music'
+                : mediaType === MediaType.COMIC
+                  ? 'comic'
+                  : mediaType === MediaType.MAGAZINE
+                    ? 'magazine'
+                    : 'book'
+            }
             embedded
             rightDetails={[
               ...(isMusic
@@ -249,7 +272,9 @@ const ExternalMediaManageSlideOver = ({
                       year={
                         isMusic
                           ? (data as MusicDetails).releaseDate?.slice(0, 4)
-                          : (data as BookDetails).firstPublishYear
+                          : mediaType === MediaType.BOOK
+                            ? (data as BookDetails).firstPublishYear
+                            : undefined
                       }
                       onUpdate={revalidate}
                       onDialogChange={setConfirmationOpen}

@@ -84,6 +84,31 @@ const getMediaDetails = async (
       };
     }
   }
+  if (
+    media.mediaType === MediaType.COMIC ||
+    media.mediaType === MediaType.MAGAZINE
+  ) {
+    const identifiers =
+      media.identifiers ??
+      (await getRepository(MediaIdentifier).find({
+        where: { media: { id: media.id } },
+      }));
+    const provider =
+      media.mediaType === MediaType.COMIC
+        ? MediaIdentifierProvider.COMICVINE
+        : MediaIdentifierProvider.LAZYLIBRARIAN;
+    const identifier = identifiers.find(
+      (candidate) => candidate.provider === provider
+    )?.value;
+    return {
+      title:
+        media.externalServiceSlug ??
+        identifier ??
+        media.mbId ??
+        String(media.tmdbId),
+      image: '',
+    };
+  }
   return { title: media.mbId ?? String(media.tmdbId), image: '' };
 };
 
@@ -99,7 +124,11 @@ export const buildMediaRequestNotificationPayload = async (
         ? 'Series'
         : entity.type === MediaType.MUSIC
           ? 'Music'
-          : 'Book';
+          : entity.type === MediaType.COMIC
+            ? 'Comic'
+            : entity.type === MediaType.MAGAZINE
+              ? 'Magazine'
+              : 'Book';
   let event: string | undefined;
   let notifyAdmin = true;
   let notifySystem = true;
@@ -243,6 +272,29 @@ export const buildMediaRequestNotificationPayload = async (
         ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg`
         : undefined,
       extra: isbn ? [{ name: 'ISBN', value: isbn }] : undefined,
+    };
+  }
+  if (entity.type === MediaType.COMIC || entity.type === MediaType.MAGAZINE) {
+    const { title, image } = await getMediaDetails(media);
+    const mediaUrl =
+      entity.type === MediaType.COMIC
+        ? media.identifiers?.find(
+            (identifier) =>
+              identifier.provider === MediaIdentifierProvider.COMICVINE
+          )?.value
+        : (media.externalServiceSlug ??
+          media.identifiers?.find(
+            (identifier) =>
+              identifier.provider === MediaIdentifierProvider.LAZYLIBRARIAN
+          )?.value);
+    return {
+      ...base,
+      mediaUrl: mediaUrl
+        ? `/${entity.type}/${encodeURIComponent(mediaUrl)}`
+        : undefined,
+      subject: title,
+      message: `${mediaType} request details are available in SeerrNG.`,
+      image,
     };
   }
   throw new Error(`Unsupported media notification request ${entity.id}.`);

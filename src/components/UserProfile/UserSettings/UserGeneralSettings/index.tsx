@@ -62,6 +62,7 @@ const messages = defineMessages(
     seriesrequestlimit: 'Series Request Limit',
     musicrequestlimit: 'Music Request Limit',
     bookrequestlimit: 'Book Request Limit',
+    comicrequestlimit: 'Comic Request Limit',
     enableOverride: 'Override Global Limit',
     applanguage: 'Display Language',
     languageDefault: 'Default ({language})',
@@ -108,6 +109,7 @@ const UserGeneralSettings = () => {
   const [tvQuotaEnabled, setTvQuotaEnabled] = useState(false);
   const [musicQuotaEnabled, setMusicQuotaEnabled] = useState(false);
   const [bookQuotaEnabled, setBookQuotaEnabled] = useState(false);
+  const [comicQuotaEnabled, setComicQuotaEnabled] = useState(false);
   const router = useRouter();
   const userId = getPositiveQueryParamNumber(router.query.userId);
   const {
@@ -180,6 +182,9 @@ const UserGeneralSettings = () => {
     );
     setBookQuotaEnabled(
       data?.bookQuotaLimit != undefined && data?.bookQuotaDays != undefined
+    );
+    setComicQuotaEnabled(
+      data?.comicQuotaLimit != undefined && data?.comicQuotaDays != undefined
     );
   }, [data]);
 
@@ -258,6 +263,8 @@ const UserGeneralSettings = () => {
           musicQuotaDays: data?.musicQuotaDays,
           bookQuotaLimit: data?.bookQuotaLimit,
           bookQuotaDays: data?.bookQuotaDays,
+          comicQuotaLimit: data?.comicQuotaLimit,
+          comicQuotaDays: data?.comicQuotaDays,
           watchlistSyncMovies: data?.watchlistSyncMovies,
           watchlistSyncTv: data?.watchlistSyncTv,
           watchlistSyncMusic: data?.watchlistSyncMusic,
@@ -318,6 +325,10 @@ const UserGeneralSettings = () => {
               musicQuotaDays: musicQuotaEnabled ? values.musicQuotaDays : null,
               bookQuotaLimit: bookQuotaEnabled ? values.bookQuotaLimit : null,
               bookQuotaDays: bookQuotaEnabled ? values.bookQuotaDays : null,
+              comicQuotaLimit: comicQuotaEnabled
+                ? values.comicQuotaLimit
+                : null,
+              comicQuotaDays: comicQuotaEnabled ? values.comicQuotaDays : null,
               watchlistSyncMovies: values.watchlistSyncMovies,
               watchlistSyncTv: values.watchlistSyncTv,
               watchlistSyncMusic: values.watchlistSyncMusic,
@@ -787,6 +798,46 @@ const UserGeneralSettings = () => {
                             limitOverride={
                               !bookQuotaEnabled
                                 ? data?.globalBookQuotaLimit
+                                : undefined
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="text-label">
+                        <span>
+                          {intl.formatMessage(messages.comicrequestlimit)}
+                        </span>
+                      </div>
+                      <div className="form-input-area">
+                        <div className="flex flex-col">
+                          <div className="mb-4 flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={comicQuotaEnabled}
+                              onChange={() => setComicQuotaEnabled((s) => !s)}
+                            />
+                            <span className="ml-2 text-gray-300">
+                              {intl.formatMessage(messages.enableOverride)}
+                            </span>
+                          </div>
+                          <QuotaSelector
+                            isDisabled={!comicQuotaEnabled}
+                            dayFieldName="comicQuotaDays"
+                            limitFieldName="comicQuotaLimit"
+                            mediaType="comic"
+                            onChange={setFieldValue}
+                            defaultDays={values.comicQuotaDays}
+                            defaultLimit={values.comicQuotaLimit}
+                            dayOverride={
+                              !comicQuotaEnabled
+                                ? data?.globalComicQuotaDays
+                                : undefined
+                            }
+                            limitOverride={
+                              !comicQuotaEnabled
+                                ? data?.globalComicQuotaLimit
                                 : undefined
                             }
                           />

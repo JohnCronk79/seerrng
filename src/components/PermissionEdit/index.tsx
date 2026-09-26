@@ -29,6 +29,9 @@ export const messages = defineMessages('components.PermissionEdit', {
   requestMusicDescription: 'Grant permission to submit music requests.',
   requestBooks: 'Request Books',
   requestBooksDescription: 'Grant permission to submit book requests.',
+  requestMagazines: 'Request Magazines',
+  requestMagazinesDescription:
+    'Grant permission to submit magazine requests through LazyLibrarian.',
   autoapprove: 'Auto-Approve',
   autoapproveDescription:
     'Grant automatic approval for all non-4K media requests.',
@@ -42,6 +45,9 @@ export const messages = defineMessages('components.PermissionEdit', {
   autoapproveMusicDescription: 'Grant automatic approval for music requests.',
   autoapproveBooks: 'Auto-Approve Books',
   autoapproveBooksDescription: 'Grant automatic approval for book requests.',
+  autoapproveMagazines: 'Auto-Approve Magazines',
+  autoapproveMagazinesDescription:
+    'Grant automatic approval for magazine requests.',
   autoapprove4k: 'Auto-Approve 4K',
   autoapprove4kDescription:
     'Grant automatic approval for all 4K media requests.',
@@ -208,6 +214,12 @@ export const PermissionEdit = ({
           description: intl.formatMessage(messages.requestBooksDescription),
           permission: Permission.REQUEST_BOOK,
         },
+        {
+          id: 'request-magazines',
+          name: intl.formatMessage(messages.requestMagazines),
+          description: intl.formatMessage(messages.requestMagazinesDescription),
+          permission: Permission.REQUEST_MAGAZINE,
+        },
       ],
     },
     {
@@ -265,6 +277,20 @@ export const PermissionEdit = ({
           requires: [
             {
               permissions: [Permission.REQUEST, Permission.REQUEST_BOOK],
+              type: 'or',
+            },
+          ],
+        },
+        {
+          id: 'autoapprovemagazines',
+          name: intl.formatMessage(messages.autoapproveMagazines),
+          description: intl.formatMessage(
+            messages.autoapproveMagazinesDescription
+          ),
+          permission: Permission.AUTO_APPROVE_MAGAZINE,
+          requires: [
+            {
+              permissions: [Permission.REQUEST, Permission.REQUEST_MAGAZINE],
               type: 'or',
             },
           ],

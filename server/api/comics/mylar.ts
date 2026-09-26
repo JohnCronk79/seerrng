@@ -99,7 +99,10 @@ const sanitizeIssue = (value: unknown): MylarIssue | undefined => {
 };
 
 class MylarAPI extends ExternalAPI {
-  static buildUrl(settings: MylarSettings, path?: string): string {
+  static buildUrl(
+    settings: Pick<MylarSettings, 'useSsl' | 'hostname' | 'port' | 'baseUrl'>,
+    path?: string
+  ): string {
     return buildServiceUrl({
       useSsl: settings.useSsl,
       hostname: settings.hostname,
@@ -173,6 +176,13 @@ class MylarAPI extends ExternalAPI {
   // getComic(id) once the async add completes.
   public async addComic(comicVineId: string): Promise<void> {
     await this.runCommand('addComic', { id: comicVineId });
+  }
+
+  // Confirmed live against a running Mylar3 instance: delComic is enveloped
+  // like addComic/getComic (not one of the raw-JSON commands), and succeeds
+  // even after the comic's files are gone from disk.
+  public async removeComic(comicId: string): Promise<void> {
+    await this.runCommand('delComic', { id: comicId });
   }
 }
 

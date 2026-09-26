@@ -18,6 +18,8 @@ import {
 } from '@app/utils/libraryMedia';
 import { MediaStatus } from '@server/constants/media';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
+import type { ComicResult } from '@server/models/Comic';
+import type { MagazineResult } from '@server/models/Magazine';
 import type {
   AlbumResult,
   ArtistResult,
@@ -42,6 +44,8 @@ type ListViewProps = {
     | AlbumResult
     | BookResult
     | AuthorResult
+    | ComicResult
+    | MagazineResult
   )[];
   plexItems?: WatchlistItem[];
   isEmpty?: boolean;
@@ -79,8 +83,15 @@ const ListView = ({
     () =>
       items?.filter(
         (title) =>
-          (title as TvResult | MovieResult | AlbumResult | BookResult).mediaInfo
-            ?.status !== MediaStatus.BLOCKLISTED
+          (
+            title as
+              | TvResult
+              | MovieResult
+              | AlbumResult
+              | BookResult
+              | ComicResult
+              | MagazineResult
+          ).mediaInfo?.status !== MediaStatus.BLOCKLISTED
       ),
     [items]
   );
@@ -271,6 +282,38 @@ const ListView = ({
                 showText={visibility.book === 'always'}
                 preferredBookFormat={preferredBookFormat}
                 showAllBookFormats={showAllBookFormats}
+              />
+            );
+            break;
+          case 'comic':
+            titleCard = (
+              <TitleCard
+                key={title.id}
+                id={title.id}
+                image={title.posterPath}
+                status={title.mediaInfo?.status}
+                title={title.title}
+                artist={title.publisher}
+                year={title.startYear}
+                mediaType={title.mediaType}
+                canExpand
+              />
+            );
+            break;
+          case 'magazine':
+            titleCard = (
+              <TitleCard
+                key={title.id}
+                id={title.id}
+                status={title.mediaInfo?.status}
+                title={title.title}
+                artist={
+                  title.latestIssue
+                    ? `Latest issue ${title.latestIssue}`
+                    : undefined
+                }
+                mediaType={title.mediaType}
+                canExpand
               />
             );
             break;

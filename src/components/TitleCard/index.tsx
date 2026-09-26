@@ -436,6 +436,8 @@ const TitleCard = ({
   const isAlbum = mediaType === 'album';
   const isArtist = mediaType === 'artist';
   const isBook = mediaType === 'book';
+  const isComic = mediaType === 'comic';
+  const isMagazine = mediaType === 'magazine';
   const canonicalId = normalizeExternalTitleId(mediaType, id);
   const artwork = useAlbumArtwork(
     isAlbum ? String(canonicalId) : undefined,
@@ -477,7 +479,8 @@ const TitleCard = ({
     canShowWatchedStatus && watchStatusInView
   );
   const canUseVideoActions = videoMediaType && Number.isFinite(numericId);
-  const canUseRequestActions = canUseVideoActions || isAlbum || isBook;
+  const canUseRequestActions =
+    canUseVideoActions || isAlbum || isBook || isComic || isMagazine;
   const canUseWatchlistActions = canUseVideoActions || isAlbum || isBook;
   const detailHref =
     mediaType === 'movie'
@@ -495,8 +498,15 @@ const TitleCard = ({
                     ? { format: preferredBookFormat }
                     : undefined,
                 }
-              : `/artist/${encodeApiPathSegment(canonicalId)}`;
+              : mediaType === 'comic'
+                ? `/comic/${encodeApiPathSegment(canonicalId)}`
+                : mediaType === 'magazine'
+                  ? `/magazine/${encodeApiPathSegment(canonicalId)}`
+                  : `/artist/${encodeApiPathSegment(canonicalId)}`;
   const displayImage = getTmdbPosterImageUrl(artwork);
+  // ComicVine artwork is served from its own CDN hosts and isn't yet routed
+  // through our image cache proxy (deliberate scope cut - see comics plan);
+  // 'tmdb' is a safe no-op default since the proxy leaves non-tmdb URLs as-is.
   const imageCacheType =
     isResolvedImageUrl(displayImage) && isBook
       ? 'book'
@@ -512,7 +522,11 @@ const TitleCard = ({
         ? Permission.REQUEST_TV
         : isAlbum
           ? Permission.REQUEST_MUSIC
-          : Permission.REQUEST_BOOK,
+          : isComic
+            ? Permission.REQUEST_COMIC
+            : isMagazine
+              ? Permission.REQUEST_MAGAZINE
+              : Permission.REQUEST_BOOK,
   ];
 
   if (mediaType === 'movie') {
@@ -635,6 +649,26 @@ const TitleCard = ({
               initialBookFormat={preferredBookFormat}
               show={showRequestModal}
               type="book"
+              onComplete={requestComplete}
+              onUpdating={requestUpdating}
+              onCancel={closeModal}
+            />
+          )}
+          {isComic && typeof canonicalId === 'string' && (
+            <RequestModal
+              comicId={canonicalId}
+              show={showRequestModal}
+              type="comic"
+              onComplete={requestComplete}
+              onUpdating={requestUpdating}
+              onCancel={closeModal}
+            />
+          )}
+          {isMagazine && typeof canonicalId === 'string' && (
+            <RequestModal
+              magazineTitle={canonicalId}
+              show={showRequestModal}
+              type="magazine"
               onComplete={requestComplete}
               onUpdating={requestUpdating}
               onCancel={closeModal}

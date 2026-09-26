@@ -21,8 +21,12 @@ const mediaTypeByService: Record<ServarrServiceType, MediaType> = {
   sonarr: MediaType.TV,
   lidarr: MediaType.MUSIC,
   readarr: MediaType.BOOK,
+  // Mylar and Kapowarr both fulfill comics, so they share one ID space keyed
+  // to MediaType.COMIC (mirrors how ebook/audiobook Readarr instances share
+  // MediaType.BOOK's ID space today).
   mylar: MediaType.COMIC,
   kapowarr: MediaType.COMIC,
+  lazylibrarian: MediaType.MAGAZINE,
 };
 
 const overrideColumnByService: Partial<

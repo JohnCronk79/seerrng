@@ -531,6 +531,8 @@ const parseGeneralSettingsBody = (
     'musicQuotaDays',
     'bookQuotaLimit',
     'bookQuotaDays',
+    'comicQuotaLimit',
+    'comicQuotaDays',
   ] as const) {
     const rawValue = bodyObject[fieldName];
     if (!hasOwn(bodyObject, fieldName)) {
@@ -884,6 +886,8 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             musicQuotaDays: user.musicQuotaDays,
             bookQuotaLimit: user.bookQuotaLimit,
             bookQuotaDays: user.bookQuotaDays,
+            comicQuotaLimit: user.comicQuotaLimit,
+            comicQuotaDays: user.comicQuotaDays,
             globalMovieQuotaDays: defaultQuotas.movie.quotaDays,
             globalMovieQuotaLimit: defaultQuotas.movie.quotaLimit,
             globalTvQuotaDays: defaultQuotas.tv.quotaDays,
@@ -892,6 +896,8 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             globalMusicQuotaLimit: defaultQuotas.music.quotaLimit,
             globalBookQuotaDays: defaultQuotas.book.quotaDays,
             globalBookQuotaLimit: defaultQuotas.book.quotaLimit,
+            globalComicQuotaDays: defaultQuotas.comic.quotaDays,
+            globalComicQuotaLimit: defaultQuotas.comic.quotaLimit,
             watchlistSyncMovies: user.settings?.watchlistSyncMovies,
             watchlistSyncTv: user.settings?.watchlistSyncTv,
             watchlistSyncMusic: user.settings?.watchlistSyncMusic,
@@ -993,6 +999,8 @@ userSettingsRoutes.post<
               'musicQuotaLimit',
               'bookQuotaDays',
               'bookQuotaLimit',
+              'comicQuotaDays',
+              'comicQuotaLimit',
             ] as const) {
               if (hasOwn(body, fieldName)) {
                 Object.assign(user, { [fieldName]: body[fieldName] ?? null });

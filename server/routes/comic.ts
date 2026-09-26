@@ -8,14 +8,14 @@ import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { mapComicVineVolumeDetails } from '@server/models/Comic';
 import { filterEntityResponse } from '@server/utils/entityResponse';
-import { parsePositiveInt } from '@server/utils/pagination';
+import { parsePositiveRouteId } from '@server/utils/routeId';
 import { Router } from 'express';
 
 const comicRoutes = Router();
 
 comicRoutes.get('/:id', async (req, res, next) => {
-  const comicVineId = parsePositiveInt(req.params.id, 0);
-  if (comicVineId === 0) {
+  const comicVineId = parsePositiveRouteId(req.params.id);
+  if (comicVineId === undefined) {
     return res.status(404).json({ status: 404, message: 'Comic not found' });
   }
 

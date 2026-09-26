@@ -23,7 +23,7 @@ test('Manage icons, counts and disclosure share the global controls', () => {
     /className="disclosure-chevron"/
   );
   assert.match(
-    read('../RequestStatus/destructiveActions.tsx'),
+    read('../Requests/destructiveActions.tsx'),
     /<TrashIcon aria-hidden="true" \/>/
   );
 });
@@ -117,7 +117,7 @@ test('library deletion shares red styling and disabled Manage issue actions keep
     read('./ManageMediaActions.tsx'),
     /data-testid="manage-advanced-sections" className="card-stack"/
   );
-  const action = read('../RequestStatus/destructiveActions.tsx');
+  const action = read('../Requests/destructiveActions.tsx');
   assert.match(action, /remove: 'Delete From Library'/);
   assert.match(action, /disabled=\{disabled \|\| busy\}/);
 });
@@ -179,7 +179,7 @@ test('Manage buttons no longer show a red issue dot for any media type', () => {
   }
 });
 test('request screen consumes the same buttons, confirmations and destructive endpoints', () => {
-  const source = read('../RequestStatus/index.tsx');
+  const source = read('../Requests/index.tsx');
   assert.match(source, /<RequestActionButton/);
   assert.match(source, /<RequestActionConfirmation/);
   assert.match(source, /await deleteRequestStatus\(requestId\)/);

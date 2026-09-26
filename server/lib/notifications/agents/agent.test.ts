@@ -94,6 +94,31 @@ describe('getNotificationMediaUrl', () => {
       }),
       '/book/OL123W'
     );
+
+    assert.equal(
+      getNotificationMediaUrl({
+        media: {
+          mediaType: 'comic',
+          identifiers: [
+            {
+              provider: MediaIdentifierProvider.COMICVINE,
+              value: '12345',
+            },
+          ],
+        } as Media,
+      }),
+      '/comic/12345'
+    );
+
+    assert.equal(
+      getNotificationMediaUrl({
+        media: {
+          mediaType: 'comic',
+          identifiers: [],
+        } as unknown as Media,
+      }),
+      undefined
+    );
   });
 });
 
@@ -104,6 +129,7 @@ describe('getMediaTypeLabel', () => {
     assert.equal(getMediaTypeLabel(intl, MediaType.TV), 'series');
     assert.equal(getMediaTypeLabel(intl, MediaType.MUSIC), 'music');
     assert.equal(getMediaTypeLabel(intl, MediaType.BOOK), 'book');
+    assert.equal(getMediaTypeLabel(intl, MediaType.COMIC), 'comic');
   });
 });
 

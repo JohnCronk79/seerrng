@@ -43,7 +43,9 @@ export const removeManageBlocklist = (
   mediaType: MediaType
 ) => {
   const normalizedId =
-    mediaType === MediaType.BOOK || mediaType === MediaType.MUSIC
+    mediaType === MediaType.BOOK ||
+    mediaType === MediaType.MUSIC ||
+    mediaType === MediaType.COMIC
       ? normalizeExternalTitleId(mediaType, id)
       : id;
   if (!normalizedId) throw new Error('Missing media identifier');
@@ -58,7 +60,9 @@ export const addManageBlocklist = (
   title: string
 ) => {
   const external =
-    mediaType === MediaType.BOOK || mediaType === MediaType.MUSIC;
+    mediaType === MediaType.BOOK ||
+    mediaType === MediaType.MUSIC ||
+    mediaType === MediaType.COMIC;
   const normalizedId = external ? normalizeExternalTitleId(mediaType, id) : id;
   if (
     !normalizedId ||

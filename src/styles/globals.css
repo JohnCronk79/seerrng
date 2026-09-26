@@ -38,7 +38,9 @@
     --color-purple-950: 59 7 100;
     --theme-sidebar-border: 55 65 81;
     --theme-sidebar-hover: 55 65 81;
-    --theme-page-bg: 0 0 0;
+    --theme-page-bg: 17 24 39;
+    --theme-page-glow-start: 31 41 55;
+    --theme-page-glow-end: 17 24 39;
     --theme-page-spotlight-center: 194 169 255;
     --theme-page-spotlight-edge: 151 115 246;
     --theme-page-spotlight-strength: 1;
@@ -57,6 +59,13 @@
     --theme-overlay-deep: var(--theme-page-gradient-deep);
     --theme-overlay-neutral: var(--color-gray-900);
     --theme-overlay-menu: var(--color-gray-800);
+    --theme-heading-text: 255 255 255;
+    --theme-artwork-scrim: 52 51 157;
+    --theme-artwork-gradient-light: 76 67 189;
+    --theme-artwork-gradient-main: 52 51 157;
+    --theme-artwork-gradient-deep: 23 29 89;
+    --theme-artwork-gradient-black: 0 0 0;
+    --theme-artwork-text: 199 210 254;
     --compact-control-height: 1.25rem;
     --filter-control-height: 1rem;
     --filter-control-content-height: calc(var(--filter-control-height) - 2px);
@@ -525,6 +534,14 @@
       );
   }
 
+  :root[data-theme-mode='light'] .sidebar {
+    background: linear-gradient(
+      40deg,
+      rgb(var(--theme-sidebar-end)) 0%,
+      rgb(var(--theme-sidebar-start)) 100%
+    );
+  }
+
   .sidebar-link-idle {
     background: transparent;
     color: white;
@@ -644,6 +661,14 @@
           var(--theme-page-gradient-main-stop),
         rgb(var(--theme-page-gradient-light) / 0.96) 100%
       );
+  }
+
+  :root[data-theme-mode='light'] .app-menu-gradient {
+    background: linear-gradient(
+      40deg,
+      rgb(var(--theme-sidebar-end) / 0.98) 0%,
+      rgb(var(--theme-sidebar-start) / 0.98) 100%
+    );
   }
 
   .app-blocklist-confirmation-card {
@@ -1060,6 +1085,14 @@
     box-shadow: var(--theme-detail-divider-shadow);
   }
 
+  :root[data-theme-mode='light'] .app-blocklist-confirmation-card {
+    background: linear-gradient(
+      40deg,
+      rgb(var(--theme-sidebar-end) / 0.98) 0%,
+      rgb(var(--theme-sidebar-start) / 0.98) 100%
+    ) !important;
+  }
+
   .format-request-control {
     @apply inline-flex items-stretch overflow-hidden rounded-md border border-green-500/80 bg-green-950/35 text-xs font-medium text-green-200 shadow-sm;
     box-sizing: border-box;
@@ -1073,6 +1106,14 @@
     width: var(--action-control-content-height);
     height: var(--action-control-content-height);
     flex: none;
+  }
+
+  .format-request-control-single {
+    @apply cursor-pointer items-center justify-center px-[9px] text-white transition-colors duration-150 hover:bg-green-600 focus:ring-2 focus:ring-green-300 focus:outline-none focus:ring-inset disabled:cursor-not-allowed disabled:bg-gray-950/70 disabled:text-gray-500 disabled:brightness-50 disabled:grayscale;
+  }
+
+  .format-request-single-label {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap;
   }
 
   .format-request-label {
@@ -1125,8 +1166,9 @@
   }
 
   .availability-quality-label {
-    @apply inline-flex items-center border-r px-[9px] font-semibold whitespace-nowrap text-white;
+    @apply inline-flex items-center border-r px-[9px] font-semibold whitespace-nowrap;
     border-color: rgb(var(--theme-control-border) / 0.7);
+    color: rgb(var(--theme-heading-text));
   }
 
   .availability-quality-option {
@@ -1514,11 +1556,13 @@
   }
 
   .media-inset-heading {
-    @apply text-sm leading-5 font-semibold text-white;
+    @apply text-sm leading-5 font-semibold;
+    color: rgb(var(--theme-heading-text));
   }
 
   .media-inset-table-heading {
-    @apply text-xs leading-4 font-semibold text-white;
+    @apply text-xs leading-4 font-semibold;
+    color: rgb(var(--theme-heading-text));
   }
 
   .media-inset-poster-column-heading {
@@ -1743,7 +1787,7 @@
 
   .refreshed-artwork-scrim {
     @apply absolute inset-0;
-    background-color: rgb(var(--theme-overlay-main) / 0.46);
+    background-color: rgb(var(--theme-artwork-scrim) / 0.46);
   }
 
   .media-detail-artwork-layer {
@@ -1771,9 +1815,9 @@
   .refreshed-artwork-gradient {
     background: linear-gradient(
       90deg,
-      rgb(var(--theme-overlay-light) / 0.18) 0%,
-      rgb(var(--theme-overlay-main) / 0.32) 52%,
-      rgb(var(--theme-overlay-deep) / 0.58) 100%
+      rgb(var(--theme-artwork-gradient-light) / 0.18) 0%,
+      rgb(var(--theme-artwork-gradient-main) / 0.32) 52%,
+      rgb(var(--theme-artwork-gradient-deep) / 0.58) 100%
     );
     @apply absolute inset-0;
   }
@@ -1782,24 +1826,34 @@
     @apply absolute inset-0;
     background-image: linear-gradient(
       135deg,
-      rgb(var(--theme-overlay-neutral) / 0.47) 0%,
-      rgb(var(--theme-overlay-neutral)) 75%
+      rgb(var(--theme-artwork-gradient-black) / 0.47) 0%,
+      rgb(var(--theme-artwork-gradient-black)) 75%
     );
+  }
+
+  .request-card-artwork-copy {
+    color: rgb(var(--theme-artwork-text));
+  }
+
+  .request-card-artwork-copy .text-gray-200,
+  .request-card-artwork-copy .text-gray-300,
+  .request-card-artwork-copy .text-gray-400 {
+    color: rgb(var(--theme-artwork-text));
   }
 
   .title-card-overlay-full {
     background: linear-gradient(
       180deg,
-      rgb(var(--theme-overlay-main) / 0.4) 0%,
-      rgb(var(--theme-overlay-deep) / 0.9) 100%
+      rgb(var(--theme-artwork-gradient-main) / 0.4) 0%,
+      rgb(var(--theme-artwork-gradient-deep) / 0.9) 100%
     );
   }
 
   .title-card-overlay-compact {
     background: linear-gradient(
       180deg,
-      rgb(var(--theme-overlay-deep) / 0) 35%,
-      rgb(var(--theme-overlay-deep) / 0.88) 100%
+      rgb(var(--theme-artwork-gradient-deep) / 0) 35%,
+      rgb(var(--theme-artwork-gradient-deep) / 0.88) 100%
     );
   }
 
@@ -2673,6 +2727,14 @@
     @apply border-amber-500/70 bg-amber-950/35 text-amber-50;
   }
 
+  .poster-control.poster-control-type-comic {
+    @apply border-rose-500/70 bg-rose-950/35 text-rose-50;
+  }
+
+  .poster-control.poster-control-type-magazine {
+    @apply border-cyan-400/70 bg-cyan-950/35 text-cyan-50;
+  }
+
   .poster-control.poster-control-available {
     @apply border-green-500/90 bg-green-950/35 text-green-300;
   }
@@ -3032,7 +3094,8 @@
 
   .settings-page-content .heading,
   .settings-group-heading {
-    @apply text-sm leading-5 font-semibold text-white;
+    @apply text-sm leading-5 font-semibold;
+    color: rgb(var(--theme-heading-text));
   }
 
   .settings-page-content .description,

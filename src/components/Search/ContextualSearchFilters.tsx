@@ -21,6 +21,9 @@ import {
 const messages = defineMessages('components.Search.ContextualFilters', {
   keywordSearch: 'Keyword Search',
   searchAll: 'Search All Media',
+  searchComics: 'Filter Comic Results',
+  searchMagazines: 'Filter Magazine Results',
+  searchAuthors: 'Search Authors',
 });
 
 const getQueryString = (value: string | string[] | undefined) =>
@@ -102,34 +105,39 @@ const LibrarySearchFilters = ({
     );
   };
 
-  if (category === 'all') {
-    return (
-      <form
-        className="discover-filter-control w-72 max-w-full flex-none"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSearchSubmit();
-        }}
+  const renderKeywordSearch = (
+    placeholder: (typeof messages)[
+      'searchAll' | 'searchAuthors' | 'searchComics' | 'searchMagazines']
+  ) => (
+    <form
+      className="discover-filter-control w-72 max-w-full flex-none"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSearchSubmit();
+      }}
+    >
+      <span
+        className={
+          'discover-filter-control-label' +
+          (search.trim() ? ' discover-filter-control-label-active' : '')
+        }
       >
-        <span
-          className={
-            'discover-filter-control-label' +
-            (search.trim() ? ' discover-filter-control-label-active' : '')
-          }
-        >
-          <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
-          {intl.formatMessage(messages.keywordSearch)}
-        </span>
-        <input
-          type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={intl.formatMessage(messages.searchAll)}
-          aria-label={intl.formatMessage(messages.searchAll)}
-          className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
-        />
-      </form>
-    );
+        <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
+        {intl.formatMessage(messages.keywordSearch)}
+      </span>
+      <input
+        type="search"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder={intl.formatMessage(placeholder)}
+        aria-label={intl.formatMessage(placeholder)}
+        className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
+      />
+    </form>
+  );
+
+  if (category === 'all') {
+    return renderKeywordSearch(messages.searchAll);
   }
 
   if (category === 'book' || category === 'audiobook') {
@@ -156,6 +164,16 @@ const LibrarySearchFilters = ({
         language={getQueryString(router.query.language)}
         setParam={setParam}
       />
+    );
+  }
+
+  if (category !== 'music') {
+    return renderKeywordSearch(
+      category === 'author'
+        ? messages.searchAuthors
+        : category === 'comic'
+          ? messages.searchComics
+          : messages.searchMagazines
     );
   }
 

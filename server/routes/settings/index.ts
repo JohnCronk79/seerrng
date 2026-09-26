@@ -105,8 +105,11 @@ import { rescheduleJob } from 'node-schedule';
 import path from 'path';
 import semver from 'semver';
 import { URL } from 'url';
+import kapowarrRoutes from './kapowarr';
+import lazyLibrarianRoutes from './lazylibrarian';
 import lidarrRoutes from './lidarr';
 import metadataRoutes from './metadata';
+import mylarRoutes from './mylar';
 import notificationRoutes from './notifications';
 import radarrRoutes from './radarr';
 import readarrRoutes from './readarr';
@@ -1096,7 +1099,14 @@ const parseMainSettingsBody = (
     const incomingDefaultQuotas = body.defaultQuotas as Record<string, unknown>;
     const defaultQuotas: Record<string, unknown> = {};
 
-    for (const mediaType of ['movie', 'tv', 'music', 'book'] as const) {
+    for (const mediaType of [
+      'movie',
+      'tv',
+      'music',
+      'book',
+      'comic',
+      'magazine',
+    ] as const) {
       if (incomingDefaultQuotas[mediaType] === undefined) {
         continue;
       }
@@ -1160,6 +1170,7 @@ const parseMainSettingsBody = (
     ['spotifyClientId', 'spotifyClientId'],
     ['spotifyClientSecret', 'spotifyClientSecret'],
     ['youtubeApiKey', 'youtubeApiKey'],
+    ['comicVineApiKey', 'comicVineApiKey'],
   ] as const) {
     const parsed = parsePatchBoundedString(body, key, {
       fieldName,
@@ -1348,6 +1359,9 @@ settingsRoutes.use('/radarr', radarrRoutes);
 settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/lidarr', lidarrRoutes);
 settingsRoutes.use('/readarr', readarrRoutes);
+settingsRoutes.use('/mylar', mylarRoutes);
+settingsRoutes.use('/kapowarr', kapowarrRoutes);
+settingsRoutes.use('/lazylibrarian', lazyLibrarianRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 

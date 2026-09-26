@@ -32,6 +32,9 @@ export const mediaFilterValues = [
   'book',
   'ebook',
   'audiobook',
+  'comic',
+  'magazine',
+  'author',
 ] as const;
 export type MediaFilterValue = (typeof mediaFilterValues)[number];
 export type UserMediaFilterPins = Partial<
@@ -93,6 +96,8 @@ export interface UserSettingsGeneralResponse {
   musicQuotaDays?: number;
   bookQuotaLimit?: number;
   bookQuotaDays?: number;
+  comicQuotaLimit?: number;
+  comicQuotaDays?: number;
   globalMovieQuotaDays?: number;
   globalMovieQuotaLimit?: number;
   globalTvQuotaLimit?: number;
@@ -101,6 +106,8 @@ export interface UserSettingsGeneralResponse {
   globalMusicQuotaLimit?: number;
   globalBookQuotaDays?: number;
   globalBookQuotaLimit?: number;
+  globalComicQuotaDays?: number;
+  globalComicQuotaLimit?: number;
   watchlistSyncMovies?: boolean;
   watchlistSyncTv?: boolean;
   watchlistSyncMusic?: boolean;

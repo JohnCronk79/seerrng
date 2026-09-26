@@ -8,11 +8,14 @@ import downloadTracker from '@server/lib/downloadtracker';
 import ImageProxy from '@server/lib/imageproxy';
 import refreshToken from '@server/lib/refreshToken';
 import { reconcileActiveRequests } from '@server/lib/requestStatus';
+import { kapowarrScanner } from '@server/lib/scanners/comics/kapowarr';
+import { mylarScanner } from '@server/lib/scanners/comics/mylar';
 import {
   jellyfinFullScanner,
   jellyfinRecentScanner,
 } from '@server/lib/scanners/jellyfin';
 import { lidarrScanner } from '@server/lib/scanners/lidarr';
+import { lazyLibrarianScanner } from '@server/lib/scanners/magazines/lazylibrarian';
 import { plexFullScanner, plexRecentScanner } from '@server/lib/scanners/plex';
 import { radarrScanner } from '@server/lib/scanners/radarr';
 import { readarrScanner } from '@server/lib/scanners/readarr';
@@ -369,6 +372,56 @@ export const startJobs = (): void => {
         { logCompletion: true }
       );
     }),
+  });
+
+  scheduledJobs.push({
+    id: 'mylar-scan',
+    name: 'Mylar Comics Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['mylar-scan'].schedule,
+    job: schedule.scheduleJob(jobs['mylar-scan'].schedule, () => {
+      logger.info('Starting scheduled job: Mylar Comics Scan', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('Mylar Comics Scan', () => mylarScanner.run());
+    }),
+    running: () => mylarScanner.status().running,
+    cancelFn: () => mylarScanner.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'kapowarr-scan',
+    name: 'Kapowarr Comics Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['kapowarr-scan'].schedule,
+    job: schedule.scheduleJob(jobs['kapowarr-scan'].schedule, () => {
+      logger.info('Starting scheduled job: Kapowarr Comics Scan', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('Kapowarr Comics Scan', () => kapowarrScanner.run());
+    }),
+    running: () => kapowarrScanner.status().running,
+    cancelFn: () => kapowarrScanner.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'magazine-scan',
+    name: 'LazyLibrarian Magazine Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['magazine-scan'].schedule,
+    job: schedule.scheduleJob(jobs['magazine-scan'].schedule, () => {
+      logger.info('Starting scheduled job: LazyLibrarian Magazine Scan', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('LazyLibrarian Magazine Scan', () =>
+        lazyLibrarianScanner.run()
+      );
+    }),
+    running: () => lazyLibrarianScanner.status().running,
+    cancelFn: () => lazyLibrarianScanner.cancel(),
   });
 
   // Checks if media is still available in plex/sonarr/radarr libs

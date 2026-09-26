@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
+import ComicVineAPI from '@server/api/comicvine';
 import ExternalAPI from '@server/api/externalapi';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
@@ -193,6 +194,7 @@ describe('GET /search', () => {
       'searchArtistWithTotal'
     );
     const bookSearch = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+    const comicSearch = mock.method(ComicVineAPI.prototype, 'searchVolumes');
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint) => {
       if (endpoint === '/search/multi') {
         return { page: 1, total_pages: 1, total_results: 0, results: [] };
@@ -211,9 +213,66 @@ describe('GET /search', () => {
       assert.strictEqual(albumSearch.mock.callCount(), 0);
       assert.strictEqual(artistSearch.mock.callCount(), 0);
       assert.strictEqual(bookSearch.mock.callCount(), 0);
+      assert.strictEqual(comicSearch.mock.callCount(), 0);
     } finally {
       settings.lidarr = priorLidarr;
       settings.readarr = priorReadarr;
+    }
+  });
+
+  it('returns comics from ComicVine, merges local media, and respects the comic type filter', async () => {
+    const settings = getSettings();
+    const originalComicVineApiKey = settings.main.comicVineApiKey;
+    settings.main.comicVineApiKey = 'test-comicvine-key';
+
+    try {
+      mock.method(ComicVineAPI.prototype, 'searchVolumes', async () => ({
+        error: 'OK',
+        limit: 20,
+        offset: 0,
+        number_of_page_results: 1,
+        number_of_total_results: 1,
+        status_code: 1,
+        results: [
+          {
+            id: 5678,
+            name: 'Global Comic',
+            resource_type: 'volume' as const,
+          },
+        ],
+      }));
+
+      const comicMedia = await getRepository(Media).save(
+        new Media({
+          tmdbId: 0,
+          mediaType: MediaType.COMIC,
+          status: MediaStatus.AVAILABLE,
+        })
+      );
+      await getRepository(MediaIdentifier).save(
+        new MediaIdentifier({
+          media: comicMedia,
+          provider: MediaIdentifierProvider.COMICVINE,
+          value: '5678',
+          canonical: true,
+        })
+      );
+
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent
+        .get('/search')
+        .query({ query: 'global', type: 'comic' });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.results.length, 1);
+      const comic = res.body.results[0];
+      assert.strictEqual(comic.mediaType, 'comic');
+      assert.strictEqual(comic.id, '5678');
+      assert.strictEqual(comic.title, 'Global Comic');
+      assert.strictEqual(comic.mediaInfo.id, comicMedia.id);
+      assert.strictEqual(comic.mediaInfo.status, MediaStatus.AVAILABLE);
+    } finally {
+      settings.main.comicVineApiKey = originalComicVineApiKey;
     }
   });
 
@@ -396,7 +455,7 @@ describe('GET /search', () => {
     assert.strictEqual(res.status, 200);
     assert.strictEqual(
       albumQuery,
-      '(releasegroup:madonna OR artist:madonna) AND releasegroup:prayer'
+      '(releasegroup:madonna OR artist:madonna OR tag:madonna) AND releasegroup:prayer'
     );
     assert.strictEqual(artistSearch.mock.callCount(), 0);
   });
@@ -1237,14 +1296,19 @@ describe('search filters behind the OpenAPI validator', () => {
     const ebook = await request(validatedApp)
       .get('/api/v1/search')
       .query({ query: 'microsoft', type: 'book', format: 'ebook' });
+    const comic = await request(validatedApp)
+      .get('/api/v1/search')
+      .query({ query: 'saga', type: 'comic' });
 
     assert.strictEqual(music.status, 200);
     assert.strictEqual(audiobook.status, 200);
     assert.strictEqual(authors.status, 200, JSON.stringify(authors.body));
     assert.strictEqual(ebook.status, 200);
+    assert.strictEqual(comic.status, 200, JSON.stringify(comic.body));
     assert.deepStrictEqual(music.body.results, []);
     assert.deepStrictEqual(audiobook.body.results, []);
     assert.deepStrictEqual(authors.body.results, []);
     assert.deepStrictEqual(ebook.body.results, []);
+    assert.deepStrictEqual(comic.body.results, []);
   });
 });

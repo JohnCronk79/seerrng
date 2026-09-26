@@ -44,6 +44,10 @@ export enum MediaIdentifierProvider {
   unique: true,
   where: `"provider" = 'comicvine'`,
 })
+@Index('UQ_media_identifier_canonical_magazine', ['provider', 'value'], {
+  unique: true,
+  where: `"provider" = 'lazylibrarian'`,
+})
 class MediaIdentifier {
   @PrimaryGeneratedColumn()
   public id: number;

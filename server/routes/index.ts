@@ -62,6 +62,7 @@ import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
 import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
+import magazineRoutes from './magazine';
 import mediaRoutes from './media';
 import movieRoutes from './movie';
 import musicRoutes from './music';
@@ -431,6 +432,12 @@ router.use('/music', isAuthenticated(), externalMetadataRateLimit, musicRoutes);
 router.use('/book', isAuthenticated(), bookRoutes);
 router.use('/comic', isAuthenticated(), comicRoutes);
 router.use(
+  '/magazine',
+  isAuthenticated(),
+  externalMetadataRateLimit,
+  magazineRoutes
+);
+router.use(
   '/artist',
   isAuthenticated(),
   externalMetadataRateLimit,
@@ -485,6 +492,7 @@ router.get('/regions', isAuthenticated(), async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve regions.',
+      cause: e,
     });
   }
 });
@@ -652,6 +660,7 @@ router.get('/backdrops', publicBackdropsRateLimit, async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve backdrops.',
+      cause: e,
     });
   }
 });

@@ -1,5 +1,6 @@
 import KapowarrAPI from '@server/api/comics/kapowarr';
 import MylarAPI from '@server/api/comics/mylar';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -610,6 +611,16 @@ class Media {
                 );
           }
         }
+      }
+    }
+
+    if (this.mediaType === MediaType.MAGAZINE && this.serviceId != null) {
+      const server = getSettings().lazylibrarian.find(
+        (lazylibrarian) => lazylibrarian.id === this.serviceId
+      );
+      if (server) {
+        this.serviceUrl =
+          server.externalUrl ?? LazyLibrarianAPI.buildUrl(server);
       }
     }
   }
