@@ -71,7 +71,7 @@ const PaginationFooter = ({
           buttonSize="sm"
           onClick={() => onPageChange(page - 1)}
         >
-          <ChevronLeftIcon className="mr-1 h-4 w-4" aria-hidden="true" />
+          <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
           {intl.formatMessage(globalMessages.previous)}
         </Button>
         <Button
@@ -80,7 +80,7 @@ const PaginationFooter = ({
           onClick={() => onPageChange(page + 1)}
         >
           {intl.formatMessage(globalMessages.next)}
-          <ChevronRightIcon className="ml-1 h-4 w-4" aria-hidden="true" />
+          <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
     </nav>

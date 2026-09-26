@@ -13,6 +13,12 @@ import {
 } from './detailDisclosurePinsMutation';
 
 const defaultPins: DetailDisclosurePins = {
+  details: false,
+  advancedOptions: false,
+  filters: false,
+  mediaFilters: false,
+  sortBy: false,
+  collection: false,
   cast: false,
   crew: false,
   artists: false,
@@ -24,6 +30,12 @@ const fromUserSettings = (
   mediaType: DetailDisclosureMediaType
 ): DetailDisclosurePins => {
   const legacyPins: DetailDisclosurePins = {
+    details: false,
+    advancedOptions: false,
+    filters: false,
+    mediaFilters: false,
+    sortBy: false,
+    collection: false,
     cast:
       mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
     crew:

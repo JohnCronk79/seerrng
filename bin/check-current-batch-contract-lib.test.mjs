@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
@@ -6,6 +7,60 @@ const require = createRequire(import.meta.url);
 const {
   validateCurrentBatchContract,
 } = require('./check-current-batch-contract-lib.js');
+
+test('current shared owners pass their checks and functional mutations fail', () => {
+  const cases = [
+    [
+      'src/components/MediaDetails/MusicRatings.tsx',
+      'getSafeHref(rating?.url)',
+      'rating?.url',
+      'music rating links must pass through the shared safe URL boundary',
+    ],
+    [
+      'src/components/MediaDetails/MediaQualitySelect.tsx',
+      'if (!option.disabled) onChange(option.value);',
+      'onChange(option.value);',
+      'detail quality options must not activate unavailable formats',
+    ],
+    [
+      'src/components/Requests/destructiveActions.tsx',
+      'okDisabled={disabled || busy}',
+      'okDisabled={disabled}',
+      'request deletion confirmations must preserve shared surfaces and busy-write guards',
+    ],
+    [
+      'src/components/ManageSlideOver/ManageMediaActions.tsx',
+      'issuesExpanded && canViewIssues && issues.length > 0',
+      'issuesExpanded && issues.length > 0',
+      'media management must guard the expandable Issue list by permission and availability',
+    ],
+    [
+      'src/components/CollectionDetails/index.tsx',
+      '(!hasManualPlaybackSelection || selectedMediaIds.includes(part.id))',
+      'true',
+      'Collection playback must preserve oldest-first ordering and an intentionally empty selection',
+    ],
+  ];
+  for (const [fileName, original, replacement, reason] of cases) {
+    const source = readFileSync(
+      new URL(`../${fileName}`, import.meta.url),
+      'utf8'
+    );
+    assert.ok(source.includes(original), `${fileName}: mutation target exists`);
+    assert.ok(
+      !validateCurrentBatchContract({ [fileName]: source }).some((error) =>
+        error.includes(reason)
+      ),
+      reason
+    );
+    assert.ok(
+      validateCurrentBatchContract({
+        [fileName]: source.replace(original, replacement),
+      }).some((error) => error.includes(reason)),
+      reason
+    );
+  }
+});
 
 test('reports missing files instead of silently skipping contract checks', () => {
   const errors = validateCurrentBatchContract({});
@@ -439,7 +494,7 @@ test('reports persistent detail disclosure pin contract drift', () => {
     'detail disclosure pins must expose their selected state',
     'detail disclosure pins must use the authenticated category-scoped per-user settings endpoint',
     'detail disclosure pin settings must expose one read and one write route',
-    'the disclosure row must keep the same five-pixel gap above and below',
+    'the disclosure row must consume the shared spacing role',
     'the Subject Tags pin must carry into Music details',
     'refreshed inset cards must use the darker translucent control surface without changing outer cards',
   ]) {
@@ -469,7 +524,7 @@ test('reports request-card contrast and Advanced Options contract drift', () => 
     'detail columns must own their responsive divider border',
     'detail columns must resolve through the shared divider class',
     'root-folder scrolling must begin only after five rows',
-    'Destination Server, Quality Profile, and Root Folder must all use the shared request listbox',
+    'Destination Server, Metadata Profile, Quality Profile, and Root Folder must all use the shared request listbox',
     'Root Folder must use the shared request listbox with its selected path',
     'request listbox menus must mark their selected option with a check icon',
     'request dropdown color, geometry, and selection styling must live in shared global classes',
@@ -579,7 +634,9 @@ test('reports refreshed Manage, Issue action, availability, and Association card
         if (fileName.includes('ManageSlideOver')) {
           return 'className="w-full" buttonSize="sm" actionButtonSize="default" intl.formatMessage(messages.manageModalMedia)';
         }
-        if (fileName.endsWith('src/components/IssueDetails/index.tsx')) {
+        if (
+          fileName.endsWith('src/components/IssueDetails/IssueDiscussion.tsx')
+        ) {
           return 'buttonSize="default"';
         }
         return '';
@@ -591,14 +648,14 @@ test('reports refreshed Manage, Issue action, availability, and Association card
   for (const expected of [
     'media management actions must never use a full-width button override',
     'media management actions must not use the ambiguously named small size',
-    'the management Cancel action must use the explicit 30-pixel standard size',
-    'every media management content action must use the explicit 30-pixel standard size',
+    'the management Cancel action must use the shared standard size',
+    'media management must delegate common actions to their shared owner',
     'media management must not retain a standalone Media card heading',
-    'the management Cancel action must sit at bottom right with the standard five-pixel gap',
+    'the management Cancel action must retain the approved alignment without local spacing',
     'Report an Issue actions must preserve the standard icon-to-label gap',
-    'every Issue Details action must use the shared 30-pixel action size',
+    'both inline issue actions must use the shared small action size',
     'the ratings row must not add bottom spacing before the primary actions',
-    'ratings and primary actions must retain exactly one standard five-pixel gap',
+    'ratings and primary actions must retain the shared card-spacing gap',
     'availability headings and status icons must share one centered cell style',
     'scrolling media table headers must reserve the shared thin scrollbar width',
     'both series selector headers must reserve the same right-side space as their rows',
@@ -615,6 +672,36 @@ test('reports refreshed Manage, Issue action, availability, and Association card
       expected
     );
   }
+});
+
+test('shared CSS checks accept grouped selectors but reject unrelated declarations', () => {
+  const validate = (css) =>
+    validateCurrentBatchContract({
+      'src/styles/globals.css': css,
+    });
+  const reason = 'manage button must turn white on hover';
+  assert.ok(
+    !validate(
+      '.app-button-manage, .detail-disclosure-control { @apply hover:text-white; }'
+    ).some((error) => error.includes(reason))
+  );
+  assert.ok(
+    validate(
+      '.app-button-manage { @apply text-violet-300; } .unrelated { @apply hover:text-white; }'
+    ).some((error) => error.includes(reason))
+  );
+  const spacing =
+    'wrapped discovery filter rows must use the shared card spacing';
+  assert.ok(
+    !validate(
+      '.discover-filter-secondary-row, .other { gap: var(--card-spacing); margin-top: var(--card-spacing); }'
+    ).some((error) => error.includes(spacing))
+  );
+  assert.ok(
+    validate(
+      '.discover-filter-secondary-row { gap: 5px; } .other { gap: var(--card-spacing); margin-top: var(--card-spacing); }'
+    ).some((error) => error.includes(spacing))
+  );
 });
 
 test('reports related-media controls, inset-heading, and duplicate icon-gap regressions', () => {

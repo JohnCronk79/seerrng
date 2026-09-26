@@ -26,6 +26,10 @@ const MusicRequestModal = dynamic(
   () => import('@app/components/RequestModal/MusicRequestModal'),
   { ssr: false }
 );
+const TvCollectionRequestModal = dynamic(
+  () => import('@app/components/RequestModal/TvCollectionRequestModal'),
+  { ssr: false }
+);
 const TvRequestModal = dynamic(
   () => import('@app/components/RequestModal/TvRequestModal'),
   { ssr: false }
@@ -35,8 +39,11 @@ interface RequestModalProps {
   show: boolean;
   type: 'movie' | 'tv' | 'collection' | 'music' | 'book' | 'comic';
   tmdbId?: number;
+  collectionId?: string;
+  initialSelectedIds?: string[];
   mbId?: string;
   bookId?: string;
+  bookLookupTitle?: string;
   comicId?: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
   initialMusicServerId?: number;
@@ -53,8 +60,11 @@ const RequestModal = ({
   type,
   show,
   tmdbId,
+  collectionId,
+  initialSelectedIds,
   mbId,
   bookId,
+  bookLookupTitle,
   comicId,
   initialBookFormat,
   initialMusicServerId,
@@ -123,6 +133,7 @@ const RequestModal = ({
           onComplete={onComplete}
           onCancel={onCancel}
           bookId={bookId}
+          bookLookupTitle={bookLookupTitle}
           initialBookFormat={initialBookFormat}
           onUpdating={onUpdating}
           editRequest={editRequest}
@@ -144,6 +155,15 @@ const RequestModal = ({
           is4k={modalIs4k}
           editRequest={editRequest}
           allow4kServerSelection={canSelect4k}
+        />
+      ) : type === 'collection' && collectionId ? (
+        <TvCollectionRequestModal
+          collectionId={collectionId}
+          initialSelectedIds={initialSelectedIds ?? []}
+          onComplete={onComplete}
+          onCancel={onCancel}
+          onUpdating={onUpdating}
+          is4k={is4k}
         />
       ) : type === 'tv' && tmdbId ? (
         <TvRequestModal

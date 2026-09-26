@@ -183,7 +183,7 @@ const LinkJellyfinModal = ({
                         setError(null);
                         onSwitchToQuickConnect();
                       }}
-                      className="w-full gap-2"
+                      className="w-full"
                     >
                       <QrCodeIcon />
                       <span>{intl.formatMessage(messages.quickConnect)}</span>

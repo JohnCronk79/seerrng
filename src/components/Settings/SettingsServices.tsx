@@ -519,6 +519,7 @@ const SettingsServices = () => {
         <Modal
           okText={intl.formatMessage(globalMessages.delete)}
           okButtonType="danger"
+          okButtonProps={{ buttonIcon: 'delete' }}
           onOk={() => deleteServer()}
           onCancel={() =>
             setDeleteServerModal({
@@ -987,33 +988,39 @@ const SettingsServices = () => {
       </div>
       <div className="section settings-service-section">
         <ul className="settings-service-grid">
-          {rules && radarrData && sonarrData && lidarrData && (
+          {rules && radarrData && sonarrData && lidarrData && readarrData && (
             <OverrideRuleTiles
               rules={rules}
               radarrServices={radarrData}
               sonarrServices={sonarrData}
               lidarrServices={lidarrData}
+              readarrServices={readarrData}
               setOverrideRuleModal={setOverrideRuleModal}
               revalidate={revalidate}
             />
           )}
         </ul>
       </div>
-      {overrideRuleModal.open && radarrData && sonarrData && lidarrData && (
-        <OverrideRuleModal
-          rule={overrideRuleModal.rule}
-          onClose={() => {
-            setOverrideRuleModal({
-              open: false,
-              rule: null,
-            });
-            revalidate();
-          }}
-          radarrServices={radarrData}
-          sonarrServices={sonarrData}
-          lidarrServices={lidarrData}
-        />
-      )}
+      {overrideRuleModal.open &&
+        radarrData &&
+        sonarrData &&
+        lidarrData &&
+        readarrData && (
+          <OverrideRuleModal
+            rule={overrideRuleModal.rule}
+            onClose={() => {
+              setOverrideRuleModal({
+                open: false,
+                rule: null,
+              });
+              revalidate();
+            }}
+            radarrServices={radarrData}
+            sonarrServices={sonarrData}
+            lidarrServices={lidarrData}
+            readarrServices={readarrData}
+          />
+        )}
     </>
   );
 };

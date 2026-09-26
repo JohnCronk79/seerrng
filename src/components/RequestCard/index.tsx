@@ -359,25 +359,17 @@ const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
               {hasPermission(Permission.MANAGE_REQUESTS) &&
                 requestData?.media.id && (
                   <>
-                    <Button
-                      buttonType="danger"
-                      buttonSize="sm"
-                      className="mt-4 hidden sm:block"
-                      onClick={() => deleteRequest()}
-                    >
-                      <TrashIcon />
-                      <span>{intl.formatMessage(globalMessages.delete)}</span>
-                    </Button>
                     <Tooltip
                       content={intl.formatMessage(messages.deleterequest)}
                     >
                       <Button
                         buttonType="danger"
                         buttonSize="sm"
-                        className="mt-4 sm:hidden"
+                        className="mt-4"
                         onClick={() => deleteRequest()}
                       >
                         <TrashIcon />
+                        <span>{intl.formatMessage(globalMessages.delete)}</span>
                       </Button>
                     </Tooltip>
                   </>
@@ -661,7 +653,8 @@ const RequestCard = ({
               </Link>
             </div>
           )}
-          {!isMovie(title) &&
+          {!compact &&
+            !isMovie(title) &&
             !isMusic(title) &&
             !isBook(title) &&
             request.seasons.length > 0 && (
@@ -793,12 +786,11 @@ const RequestCard = ({
                   onClick={() => retryRequest()}
                 >
                   <ArrowPathIcon
-                    className={isRetrying ? 'animate-spin' : ''}
-                    style={{ marginRight: '0', animationDirection: 'reverse' }}
+                    className={
+                      isRetrying ? 'icon-spin-reverse animate-spin' : ''
+                    }
                   />
-                  <span className="ml-1.5 hidden sm:block">
-                    {intl.formatMessage(globalMessages.retry)}
-                  </span>
+                  <span>{intl.formatMessage(globalMessages.retry)}</span>
                 </Button>
               )}
             {showApprovalActions &&
@@ -806,23 +798,12 @@ const RequestCard = ({
               hasPermission(Permission.MANAGE_REQUESTS) && (
                 <>
                   <div>
-                    <Button
-                      buttonType="success"
-                      buttonSize="sm"
-                      className="hidden sm:block"
-                      onClick={() => modifyRequest('approve')}
-                      disabled={updatingType !== null}
-                    >
-                      {updatingType === 'approve' ? <Spinner /> : <CheckIcon />}
-                      <span>{intl.formatMessage(globalMessages.approve)}</span>
-                    </Button>
                     <Tooltip
                       content={intl.formatMessage(messages.approverequest)}
                     >
                       <Button
                         buttonType="success"
                         buttonSize="sm"
-                        className="sm:hidden"
                         onClick={() => modifyRequest('approve')}
                         disabled={updatingType !== null}
                       >
@@ -831,27 +812,19 @@ const RequestCard = ({
                         ) : (
                           <CheckIcon />
                         )}
+                        <span>
+                          {intl.formatMessage(globalMessages.approve)}
+                        </span>
                       </Button>
                     </Tooltip>
                   </div>
                   <div>
-                    <Button
-                      buttonType="danger"
-                      buttonSize="sm"
-                      className="hidden sm:block"
-                      onClick={() => modifyRequest('decline')}
-                      disabled={updatingType !== null}
-                    >
-                      {updatingType === 'decline' ? <Spinner /> : <XMarkIcon />}
-                      <span>{intl.formatMessage(globalMessages.decline)}</span>
-                    </Button>
                     <Tooltip
                       content={intl.formatMessage(messages.declinerequest)}
                     >
                       <Button
                         buttonType="danger"
                         buttonSize="sm"
-                        className="sm:hidden"
                         onClick={() => modifyRequest('decline')}
                         disabled={updatingType !== null}
                       >
@@ -860,6 +833,9 @@ const RequestCard = ({
                         ) : (
                           <XMarkIcon />
                         )}
+                        <span>
+                          {intl.formatMessage(globalMessages.decline)}
+                        </span>
                       </Button>
                     </Tooltip>
                   </div>
@@ -871,27 +847,15 @@ const RequestCard = ({
               (requestData.type === 'tv' ||
                 hasPermission(Permission.REQUEST_ADVANCED)) && (
                 <div>
-                  {!hasPermission(Permission.MANAGE_REQUESTS) && (
+                  <Tooltip content={intl.formatMessage(messages.editrequest)}>
                     <Button
                       buttonType="primary"
                       buttonSize="sm"
-                      className="hidden sm:block"
                       onClick={() => setShowEditModal(true)}
                       disabled={updatingType !== null}
                     >
                       <PencilIcon />
                       <span>{intl.formatMessage(globalMessages.edit)}</span>
-                    </Button>
-                  )}
-                  <Tooltip content={intl.formatMessage(messages.editrequest)}>
-                    <Button
-                      buttonType="primary"
-                      buttonSize="sm"
-                      className="sm:hidden"
-                      onClick={() => setShowEditModal(true)}
-                      disabled={updatingType !== null}
-                    >
-                      <PencilIcon />
                     </Button>
                   </Tooltip>
                 </div>
@@ -900,23 +864,14 @@ const RequestCard = ({
               !hasPermission(Permission.MANAGE_REQUESTS) &&
               requestData.requestedBy.id === user?.id && (
                 <div>
-                  <Button
-                    buttonType="danger"
-                    buttonSize="sm"
-                    className="hidden sm:block"
-                    onClick={() => deleteRequest()}
-                  >
-                    <XMarkIcon />
-                    <span>{intl.formatMessage(globalMessages.cancel)}</span>
-                  </Button>
                   <Tooltip content={intl.formatMessage(messages.cancelrequest)}>
                     <Button
                       buttonType="danger"
                       buttonSize="sm"
-                      className="sm:hidden"
                       onClick={() => deleteRequest()}
                     >
                       <XMarkIcon />
+                      <span>{intl.formatMessage(globalMessages.cancel)}</span>
                     </Button>
                   </Tooltip>
                 </div>
@@ -925,8 +880,10 @@ const RequestCard = ({
         </div>
         <Link
           href={getRequestDetailHref(requestData)}
-          className={`relative w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer self-start overflow-hidden rounded-md shadow-sm ring-1 ring-gray-700 transition duration-300 hover:scale-105 hover:shadow-md sm:w-28 ${
-            isMusic(title) ? 'aspect-square' : 'aspect-[2/3]'
+          className={`relative w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer overflow-hidden rounded-md shadow-sm ring-1 ring-gray-700 transition duration-300 hover:scale-105 hover:shadow-md sm:w-28 ${
+            compact
+              ? 'self-stretch'
+              : `self-start ${isMusic(title) ? 'aspect-square' : 'aspect-[2/3]'}`
           }`}
         >
           <CachedImage

@@ -13,7 +13,7 @@ describe('request status scroll restoration', () => {
   let originalWindow: PropertyDescriptor | undefined;
 
   beforeEach(() => {
-    dom = new JSDOM('', { url: 'http://localhost/requests/status?page=3' });
+    dom = new JSDOM('', { url: 'http://localhost/requests?page=3' });
     originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -22,7 +22,7 @@ describe('request status scroll restoration', () => {
     dom.window.history.replaceState(
       { key: 'request-status-page-3', __N: true },
       '',
-      '/requests/status?page=3'
+      '/requests?page=3'
     );
   });
 
@@ -35,7 +35,7 @@ describe('request status scroll restoration', () => {
     }
   });
 
-  it('recognizes every media detail route used by Request Status', () => {
+  it('recognizes every media detail route used by Requests', () => {
     for (const path of [
       '/movie/1',
       '/tv/2',
@@ -44,28 +44,28 @@ describe('request status scroll restoration', () => {
     ]) {
       strictEqual(isRequestDetailPath(path), true);
     }
-    strictEqual(isRequestDetailPath('/requests/status'), false);
+    strictEqual(isRequestDetailPath('/requests'), false);
     strictEqual(isRequestDetailPath('/discover/movies'), false);
   });
 
-  it('saves and restores an exact filtered or paged Request Status path', () => {
+  it('saves and restores an exact filtered or paged Requests path', () => {
     saveRequestStatusScrollEntry({
-      path: '/requests/status?page=3',
+      path: '/requests?page=3',
       scrollY: 2840,
     });
 
-    deepStrictEqual(readRequestStatusScrollEntry('/requests/status?page=3'), {
-      path: '/requests/status?page=3',
+    deepStrictEqual(readRequestStatusScrollEntry('/requests?page=3'), {
+      path: '/requests?page=3',
       scrollY: 2840,
     });
     strictEqual(
-      readRequestStatusScrollEntry('/requests/status?page=2'),
+      readRequestStatusScrollEntry('/requests?page=2'),
       undefined
     );
 
     clearRequestStatusScrollEntry();
     strictEqual(
-      readRequestStatusScrollEntry('/requests/status?page=3'),
+      readRequestStatusScrollEntry('/requests?page=3'),
       undefined
     );
   });

@@ -59,9 +59,14 @@ const messages = defineMessages('components.RequestBlock', {
 interface RequestBlockProps {
   request: MediaRequest;
   onUpdate?: () => void;
+  hideDeleteAction?: boolean;
 }
 
-const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
+const RequestBlock = ({
+  request,
+  onUpdate,
+  hideDeleteAction = false,
+}: RequestBlockProps) => {
   const { user } = useUser();
   const intl = useIntl();
   const [isUpdating, setIsUpdating] = useState(false);
@@ -226,17 +231,18 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
                 </Tooltip>
               </>
             )}
-            {request.status !== MediaRequestStatus.PENDING && (
-              <Tooltip content={intl.formatMessage(messages.delete)}>
-                <Button
-                  buttonType="danger"
-                  onClick={() => deleteRequest()}
-                  disabled={isUpdating}
-                >
-                  <TrashIcon className="icon-sm" />
-                </Button>
-              </Tooltip>
-            )}
+            {!hideDeleteAction &&
+              request.status !== MediaRequestStatus.PENDING && (
+                <Tooltip content={intl.formatMessage(messages.delete)}>
+                  <Button
+                    buttonType="danger"
+                    onClick={() => deleteRequest()}
+                    disabled={isUpdating}
+                  >
+                    <TrashIcon className="icon-sm" />
+                  </Button>
+                </Tooltip>
+              )}
           </div>
         </div>
         <div className="mt-2 sm:flex sm:justify-between">
@@ -327,7 +333,7 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
               {request.seasons.map((season) => (
                 <span
                   key={`season-${season.id}`}
-                  className="mr-2 mb-1 inline-block"
+                  className="mb-1 mr-2 inline-block"
                 >
                   <Badge>
                     {season.seasonNumber === 0
@@ -345,7 +351,7 @@ const RequestBlock = ({ request, onUpdate }: RequestBlockProps) => {
           rootFolder ||
           languageProfile) && (
           <>
-            <div className="mt-4 mb-1 text-sm">
+            <div className="mb-1 mt-4 text-sm">
               {intl.formatMessage(messages.requestoverrides)}
             </div>
             <ul className="divide-y divide-gray-700 rounded-md bg-gray-800 px-2 text-xs">

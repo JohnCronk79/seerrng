@@ -28,7 +28,6 @@
   "components.Discover.CreateSlider.validationDatarequired": "Phải nhập có giá trị.",
   "components.Discover.CreateSlider.validationTitlerequired": "Phải nhập tựa đề.",
   "components.Discover.DiscoverMovieGenre.genreMovies": "Phim {genre}",
-  "components.Discover.DiscoverMovieKeyword.keywordMovies": "Phim {keywordTitle}",
   "components.Discover.DiscoverMovieLanguage.languageMovies": "Phim {language}",
   "components.Discover.DiscoverMovies.activefilters": "{count, plural, one {Dùng # bộ lọc} other {Dùng # bộ lọc}}",
   "components.Discover.DiscoverMovies.discovermovies": "Phim",

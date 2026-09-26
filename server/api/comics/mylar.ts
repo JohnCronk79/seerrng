@@ -99,7 +99,10 @@ const sanitizeIssue = (value: unknown): MylarIssue | undefined => {
 };
 
 class MylarAPI extends ExternalAPI {
-  static buildUrl(settings: MylarSettings, path?: string): string {
+  static buildUrl(
+    settings: Pick<MylarSettings, 'useSsl' | 'hostname' | 'port' | 'baseUrl'>,
+    path?: string
+  ): string {
     return buildServiceUrl({
       useSsl: settings.useSsl,
       hostname: settings.hostname,

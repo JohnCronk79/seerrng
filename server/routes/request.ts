@@ -1336,10 +1336,15 @@ const getBulkCoveredReason = async (
     return undefined;
   }
 
-  const normalizedOpenLibraryId = normalizeOpenLibraryWorkId(mediaId);
+  const bookshelfBook = parseBookshelfBookId(mediaId);
+  const normalizedOpenLibraryId = bookshelfBook
+    ? mediaId
+    : normalizeOpenLibraryWorkId(mediaId);
   const identifier = await getRepository(MediaIdentifier).findOne({
     where: {
-      provider: MediaIdentifierProvider.OPENLIBRARY,
+      provider: bookshelfBook
+        ? MediaIdentifierProvider.BOOKSHELF
+        : MediaIdentifierProvider.OPENLIBRARY,
       value: normalizedOpenLibraryId,
     },
     relations: { media: true },

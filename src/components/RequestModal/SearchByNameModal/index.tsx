@@ -80,7 +80,7 @@ const SearchByNameModal = ({
         {data?.slice(0, 6).map((item) => (
           <button
             key={item.tvdbId}
-            className="focus:ring-opacity-70 container mx-auto flex h-40 scale-100 transform-gpu cursor-pointer flex-col items-center justify-center space-y-4 rounded-xl transition outline-none hover:scale-105 focus:ring focus:ring-indigo-500 focus:outline-none"
+            className="focus:ring-opacity-70 container mx-auto flex h-40 scale-100 transform-gpu cursor-pointer flex-col items-center justify-center rounded-xl transition outline-none hover:scale-105 focus:ring focus:ring-indigo-500 focus:outline-none"
             onClick={() => handleClick(item.tvdbId)}
           >
             <div
@@ -103,29 +103,11 @@ const SearchByNameModal = ({
                 <div className="text-sm leading-tight font-medium">
                   {item.year}
                 </div>
-                <div
-                  className="text-grey-200 text-xl leading-tight font-bold"
-                  style={{
-                    WebkitLineClamp: 1,
-                    display: '-webkit-box',
-                    overflow: 'hidden',
-                    WebkitBoxOrient: 'vertical',
-                    wordBreak: 'break-word',
-                  }}
-                >
+                <div className="tvdb-search-result-title text-grey-200 text-xl leading-tight font-bold">
                   {item.title}
                 </div>
                 {item.overview && (
-                  <div
-                    className="text-xs whitespace-normal text-gray-400"
-                    style={{
-                      WebkitLineClamp: 5,
-                      display: '-webkit-box',
-                      overflow: 'hidden',
-                      WebkitBoxOrient: 'vertical',
-                      wordBreak: 'break-word',
-                    }}
-                  >
+                  <div className="tvdb-search-result-overview text-xs whitespace-normal text-gray-400">
                     {item.overview}
                   </div>
                 )}

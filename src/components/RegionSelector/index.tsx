@@ -149,7 +149,7 @@ const RegionSelector = ({
               leave="transition-opacity ease-in duration-100"
               leaveFrom="opacity-100"
               leaveTo="opacity-0"
-              className="absolute z-50 mt-1 w-full rounded-md bg-gray-800 shadow-lg"
+              className="app-dropdown-menu absolute z-50 mt-1 w-full"
             >
               <ListboxOptions
                 static

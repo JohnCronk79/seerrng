@@ -40,7 +40,7 @@ describe('security response headers', () => {
     );
     assert.match(
       response.headers['content-security-policy'],
-      /connect-src 'self' https:\/\/plex\.tv https:\/\/\*\.plex\.tv/
+      /connect-src 'self' https:\/\/plex\.tv https:\/\/\*\.plex\.tv https:\/\/openlibrary\.org/
     );
     assert.match(
       response.headers['content-security-policy'],

@@ -592,8 +592,11 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
                       className="input-action"
                     >
                       <ArrowPathIcon
-                        className={isRefreshingPresets ? 'animate-spin' : ''}
-                        style={{ animationDirection: 'reverse' }}
+                        className={
+                          isRefreshingPresets
+                            ? 'icon-spin-reverse animate-spin'
+                            : 'icon-spin-reverse'
+                        }
                       />
                     </button>
                   </div>
@@ -730,8 +733,11 @@ const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
             disabled={isSyncing || !data?.ip || !data?.port}
           >
             <ArrowPathIcon
-              className={isSyncing ? 'animate-spin' : ''}
-              style={{ animationDirection: 'reverse' }}
+              className={
+                isSyncing
+                  ? 'icon-spin-reverse animate-spin'
+                  : 'icon-spin-reverse'
+              }
             />
             <span>
               {isSyncing

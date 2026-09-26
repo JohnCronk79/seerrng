@@ -277,8 +277,6 @@
   "components.Discover.CreateSlider.searchStudios": "Căutați studiouri…",
   "components.Discover.CreateSlider.slidernameplaceholder": "Nume Slider",
   "components.Discover.PlexWatchlistSlider.emptywatchlist": "Media adăugată la <PlexWatchlistSupportLink>Lista de urmărire Plex</PlexWatchlistSupportLink> va apărea aici.",
-  "components.Discover.DiscoverMovieKeyword.keywordMovies": "Filme {keywordTitle}",
-  "components.Discover.DiscoverTvKeyword.keywordSeries": "Seriale care conțin {keywordTitle}",
   "components.Discover.networks": "Rețele",
   "components.Discover.resetfailed": "A apărut o eroare la resetarea setărilor de personalizare a descoperirii.",
   "components.Discover.resetsuccess": "Resetat cu succes setările de personalizare a descoperirii.",

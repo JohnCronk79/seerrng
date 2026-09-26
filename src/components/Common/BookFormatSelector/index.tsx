@@ -9,10 +9,12 @@ const messages = defineMessages('components.Common.BookFormatSelector', {
   format: 'Format',
 });
 
+type SelectableBookFormat = Exclude<RequestedBookFormat, 'both'>;
+
 interface BookFormatSelectorProps {
-  value: RequestedBookFormat;
-  available: Record<RequestedBookFormat, boolean>;
-  onChange: (value: RequestedBookFormat) => void;
+  value: SelectableBookFormat;
+  available: Record<SelectableBookFormat, boolean>;
+  onChange: (value: SelectableBookFormat) => void;
   className?: string;
 }
 
@@ -23,7 +25,7 @@ const BookFormatSelector = ({
   className = 'mt-0',
 }: BookFormatSelectorProps) => {
   const intl = useIntl();
-  const options: RequestedBookFormat[] = ['ebook', 'audiobook', 'both'];
+  const options: SelectableBookFormat[] = ['ebook', 'audiobook'];
 
   return (
     <fieldset className={className}>

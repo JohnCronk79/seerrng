@@ -16,6 +16,25 @@ These interaction rules are standard for all model interfaces used with this rep
 - Optimize for accuracy, not approval.
 - If you do not know, say so. Never fabricate.
 
+## User interface work
+
+- Before changing user-facing layout, controls, or styling, read
+  [`docs/maintainers/ui-style-standard.md`](./docs/maintainers/ui-style-standard.md)
+  completely. Follow its shared component, layout, interaction, and review
+  requirements; do not substitute an older chat summary for the file.
+- Use [`src/styles/globals.css`](./src/styles/globals.css) as the executable
+  source for reusable visual styling. Components should refer to semantic CSS
+  classes there. Local utility classes may express structural or responsive
+  layout, but do not put reusable size, spacing, color, surface, border, or
+  effect values in component markup or inline `style` props. Keep data-driven
+  geometry only where a static CSS class cannot represent the value.
+- Keep the style standard and global CSS synchronized when a shared visual rule
+  changes. Do not create a page-specific override or a conflicting component
+  size to work around either source.
+- Verify shared styling changes in the existing development preview at desktop
+  and narrow widths before calling them accepted. Do not create a pull request
+  until John explicitly asks for one.
+
 ## Release-note contract
 
 Do not let user-facing changes reach a release without a user-facing note.
