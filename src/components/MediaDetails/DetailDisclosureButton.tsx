@@ -1,7 +1,7 @@
 import Tooltip from '@app/components/Common/Tooltip';
 import defineMessages from '@app/utils/defineMessages';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
-import type { SVGProps } from 'react';
+import type { ReactNode, SVGProps } from 'react';
 import { useIntl } from 'react-intl';
 
 export const PushPinIcon = ({
@@ -28,6 +28,7 @@ const messages = defineMessages('components.MediaDetails.DetailDisclosure', {
 
 interface DetailDisclosureButtonProps {
   label: string;
+  icon?: ReactNode;
   open: boolean;
   onClick: () => void;
   pinned?: boolean;
@@ -37,6 +38,7 @@ interface DetailDisclosureButtonProps {
 
 const DetailDisclosureButton = ({
   label,
+  icon,
   open,
   onClick,
   pinned = false,
@@ -74,6 +76,7 @@ const DetailDisclosureButton = ({
         aria-controls={controls}
         onClick={onClick}
       >
+        {icon}
         {label}
         <ChevronDownIcon className="disclosure-chevron" aria-hidden="true" />
       </button>

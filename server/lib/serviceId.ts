@@ -21,13 +21,20 @@ const mediaTypeByService: Record<ServarrServiceType, MediaType> = {
   sonarr: MediaType.TV,
   lidarr: MediaType.MUSIC,
   readarr: MediaType.BOOK,
+  mylar: MediaType.COMIC,
+  kapowarr: MediaType.COMIC,
 };
 
-const overrideColumnByService = {
+const overrideColumnByService: Partial<
+  Record<
+    ServarrServiceType,
+    'radarrServiceId' | 'sonarrServiceId' | 'lidarrServiceId'
+  >
+> = {
   radarr: 'radarrServiceId',
   sonarr: 'sonarrServiceId',
   lidarr: 'lidarrServiceId',
-} as const;
+};
 
 const parseStoredServiceId = (value: unknown): number => {
   if (value === null || value === undefined) {
@@ -48,6 +55,7 @@ export const getHistoricalServarrServiceIdMaximum = async (
   serviceType: ServarrServiceType
 ): Promise<number> => {
   const mediaType = mediaTypeByService[serviceType];
+  const overrideColumn = overrideColumnByService[serviceType];
   const [requestMaximum, mediaMaximum, overrideMaximum] = await Promise.all([
     getRepository(MediaRequest)
       .createQueryBuilder('request')
@@ -60,14 +68,11 @@ export const getHistoricalServarrServiceIdMaximum = async (
       .addSelect('MAX(media.serviceId4k)', 'fourKMaximum')
       .where('media.mediaType = :mediaType', { mediaType })
       .getRawOne<{ standardMaximum: unknown; fourKMaximum: unknown }>(),
-    serviceType === 'readarr'
+    !overrideColumn
       ? Promise.resolve({ maximum: null as unknown })
       : getRepository(OverrideRule)
           .createQueryBuilder('rule')
-          .select(
-            `MAX(rule.${overrideColumnByService[serviceType]})`,
-            'maximum'
-          )
+          .select(`MAX(rule.${overrideColumn})`, 'maximum')
           .getRawOne<{ maximum: unknown }>(),
   ]);
 
@@ -108,6 +113,7 @@ export const assertServarrServiceCanBeRemoved = async (
   serviceType: ServarrServiceType,
   serviceId: number
 ): Promise<void> => {
+  const overrideColumn = overrideColumnByService[serviceType];
   const activeRequestCount = await getRepository(MediaRequest).count({
     where: {
       type: mediaTypeByService[serviceType],
@@ -115,12 +121,11 @@ export const assertServarrServiceCanBeRemoved = async (
       status: In(activeRequestStatuses),
     },
   });
-  const overrideRuleCount =
-    serviceType === 'readarr'
-      ? 0
-      : await getRepository(OverrideRule).count({
-          where: { [overrideColumnByService[serviceType]]: serviceId },
-        });
+  const overrideRuleCount = overrideColumn
+    ? await getRepository(OverrideRule).count({
+        where: { [overrideColumn]: serviceId },
+      })
+    : 0;
 
   if (activeRequestCount > 0 || overrideRuleCount > 0) {
     const references = [

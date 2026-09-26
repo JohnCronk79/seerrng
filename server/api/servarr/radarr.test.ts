@@ -37,8 +37,7 @@ describe('Radarr response normalization', () => {
     }));
     assert.deepEqual(await radarr.getMovies({ strict: true, tmdbId: 42 }), []);
     const options = get.mock.calls[0].arguments[1] as
-      | { params?: { tmdbId?: number } }
-      | undefined;
+      { params?: { tmdbId?: number } } | undefined;
     assert.equal(options?.params?.tmdbId, 42);
     get.mock.restore();
   });

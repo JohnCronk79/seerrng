@@ -104,11 +104,6 @@ const validateCurrentBatchContract = (files) => {
     'the container security test must evaluate later npmrc negation rules'
   );
   requireText(
-    'docs/maintainers/ui-style-standard.md',
-    'use the shared 20-pixel `DetailDisclosureButton`',
-    'must document the intentional disclosure-button size exception'
-  );
-  requireText(
     ledger,
     "Sonarr's generic Series rating is not identified as IMDb",
     'must preserve the evidence-based Series IMDb decision'
@@ -214,7 +209,7 @@ const validateCurrentBatchContract = (files) => {
     ['src/components/Discover/FilterPanel/index.tsx', ['sortBy: undefined,']],
     [
       'src/components/Discover/DiscoverBooks/index.tsx',
-      ["sortBy !== 'ranked'", 'sortBy: undefined,'],
+      ['sortBy !== defaultSortBy', 'sortBy: undefined,'],
     ],
     [
       'src/components/Discover/DiscoverMusic/index.tsx',
@@ -229,7 +224,7 @@ const validateCurrentBatchContract = (files) => {
       ["setSort('added');", "setDirection('desc');"],
     ],
     [
-      'src/components/RequestStatus/index.tsx',
+      'src/components/Requests/index.tsx',
       ["setSort('added');", "setSortDirection('desc');"],
     ],
     [
@@ -287,7 +282,7 @@ const validateCurrentBatchContract = (files) => {
   );
 
   requireOrder(
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     [
       "key: 'all'",
       "key: 'completed'",
@@ -433,7 +428,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Search/ContextualSearchFilters.tsx',
-    '<div className="contents">',
+    '<LibraryFilterFields',
     'Global Search contextual controls must participate in the wrapping regular filter row'
   );
   requireText(
@@ -442,7 +437,7 @@ const validateCurrentBatchContract = (files) => {
     'Global Search All must retain its keyword-only contextual row'
   );
   requireOrder(
-    'src/components/Search/ContextualSearchFilters.tsx',
+    'src/components/Discover/FilterPanel/LibraryFilterFields.tsx',
     [
       'messages.keywordSearch',
       'messages.firstPublished',
@@ -452,16 +447,18 @@ const validateCurrentBatchContract = (files) => {
     ],
     'Book and Audiobook Search filters must preserve their discovery-page order'
   );
-  requireOrder(
-    'src/components/Search/ContextualSearchFilters.tsx',
-    [
-      'messages.keywordSearch',
-      'messages.releaseYear',
-      '<MusicReleaseTypeSelect',
-      'messages.genres',
-    ],
-    'Music Search filters must preserve their discovery-page order'
-  );
+  for (const token of [
+    'mediaType="music"',
+    'className="order-6"',
+    'className="order-7"',
+    'className="order-8"',
+  ]) {
+    requireText(
+      'src/components/Discover/FilterPanel/LibraryFilterFields.tsx',
+      token,
+      'Music Search filters must preserve their discovery-page order'
+    );
+  }
   requireText(
     'src/components/Discover/FilterPanel/index.tsx',
     "variant?: 'discover' | 'search';",
@@ -548,7 +545,7 @@ const validateCurrentBatchContract = (files) => {
     'the fixed global search header must not own the progress indicator'
   );
   requireText(
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     "ebookAndAudiobook: 'Book + Audiobook'",
     'Request Status must use Book terminology for combined requests'
   );
@@ -564,7 +561,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/i18n/locale/en.json',
-    '"components.RequestStatus.ebookAndAudiobook": "Book + Audiobook"',
+    '"components.Requests.ebookAndAudiobook": "Book + Audiobook"',
     'the English Request Status translation must use Book terminology'
   );
 
@@ -661,7 +658,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Association/AssociationBadge.tsx',
-    "'app-button app-button-association h-6 w-6 rounded-full p-0",
+    "'app-button poster-control-icon poster-control-association rounded-full",
     'the poster Associations action must reuse the shared association button style'
   );
   requireOrder(
@@ -767,7 +764,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/CollectionDetails/CollectionAssociationsButton.tsx',
-    'onClick={() => setShow(false)}',
+    'onSelect={() => setShow(false)}',
     'collection association links must close their popup as navigation begins'
   );
   requireText(
@@ -791,22 +788,22 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Common/StatusBadgeMini/index.tsx',
-    'inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px]',
+    'poster-control rounded-full border px-2 font-semibold shadow-md',
     'poster quality states must match the rounded media-type badge silhouette'
   );
-  requireText(
-    'src/components/Common/StatusBadgeMini/index.tsx',
-    'bg-indigo-700/35',
+  requireCssRule(
+    '.poster-control.poster-control-processing',
+    ['bg-indigo-950/35'],
     'processing timer badges must preserve the translucent poster surface'
   );
-  requireText(
-    'src/components/Common/StatusBadgeMini/index.tsx',
-    'bg-yellow-700/35',
+  requireCssRule(
+    '.poster-control.poster-control-pending',
+    ['bg-yellow-950/35'],
     'pending bell badges must preserve the translucent poster surface'
   );
-  requireText(
-    'src/components/Common/StatusBadgeMini/index.tsx',
-    'bg-green-700/35',
+  requireCssRule(
+    '.poster-control.poster-control-available',
+    ['bg-green-950/35'],
     'available quality badges must use the same resting transparency as buttons'
   );
   rejectText(
@@ -1312,9 +1309,13 @@ const validateCurrentBatchContract = (files) => {
     '.discover-compact-select\n    .react-select__indicator-separator {\n    @apply hidden;',
     'compact searchable dropdowns must not restore the oversized legacy indicator divider'
   );
-  for (const fileName of [
+  requireText(
     'src/components/Search/index.tsx',
-    'src/components/RequestStatus/index.tsx',
+    '<PinnedFilterSection',
+    'filter categories must retain the shared larger vertical gap'
+  );
+  for (const fileName of [
+    'src/components/Requests/index.tsx',
     'src/components/IssueList/index.tsx',
     'src/components/Blocklist/index.tsx',
   ]) {
@@ -1324,22 +1325,24 @@ const validateCurrentBatchContract = (files) => {
       'filter categories must retain the shared larger vertical gap'
     );
   }
-  for (const fileName of [
-    'src/components/Discover/DiscoverMusic/index.tsx',
-    'src/components/Discover/DiscoverBooks/index.tsx',
-  ]) {
+  for (const fileName of ['src/components/Discover/DiscoverMusic/index.tsx']) {
     requireText(
       fileName,
       'app-filter-section-heading',
       'discovery filter categories must retain the shared larger vertical gap'
     );
   }
+  requireText(
+    'src/components/Discover/DiscoverBooks/index.tsx',
+    '<PinnedFilterSection',
+    'discovery filter categories must retain the shared larger vertical gap'
+  );
   for (const fileName of [
     'src/components/Common/BookFormatSelector/index.tsx',
     'src/components/Discover/FilterPanel/index.tsx',
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/index.tsx',
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
   ]) {
     requireText(
       fileName,
@@ -1476,7 +1479,7 @@ const validateCurrentBatchContract = (files) => {
     'src/components/MediaDetails/MovieSummaryCard.tsx',
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/IssueItem/index.tsx',
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
   ]) {
     requireText(
       fileName,
@@ -1501,7 +1504,12 @@ const validateCurrentBatchContract = (files) => {
   ]) {
     requireText(
       fileName,
-      'request-divider-dark grid',
+      'request-divider-dark',
+      'track and episode table header rules must use the two-pixel dark divider standard'
+    );
+    requireText(
+      fileName,
+      'media-scroll-grid-header',
       'track and episode table header rules must use the two-pixel dark divider standard'
     );
   }
@@ -1511,7 +1519,7 @@ const validateCurrentBatchContract = (files) => {
     'full-size request surfaces must expose the shared site-gradient treatment'
   );
   for (const fileName of [
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/IssueItem/index.tsx',
     'src/components/IssueDetails/IssueDiscussion.tsx',
@@ -2123,20 +2131,29 @@ const validateCurrentBatchContract = (files) => {
   );
   for (const fileName of [
     'src/components/RequestModal/MovieRequestModal.tsx',
-    'src/components/RequestModal/MusicRequestModal.tsx',
     'src/components/RequestModal/BookRequestModal.tsx',
   ]) {
     requireText(
       fileName,
-      'useState(true)',
+      'useAdvancedOptionsDisclosure(',
       'fresh request forms must open Advanced Options by default'
     );
     requireText(
       fileName,
-      'className="app-button app-button-manage button-standard"',
+      '<AdvancedOptionsDisclosureButton',
       'Advanced Options buttons must use the shared standard management action style'
     );
   }
+  requireText(
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'useState(true)',
+    'fresh request forms must open Advanced Options by default'
+  );
+  requireText(
+    'src/components/RequestModal/MusicRequestModal.tsx',
+    'className="app-button app-button-manage button-standard"',
+    'Advanced Options buttons must use the shared standard management action style'
+  );
   for (const fileName of [
     'src/components/RequestModal/MovieRequestModal.tsx',
     'src/components/RequestModal/MusicRequestModal.tsx',
@@ -2331,7 +2348,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireCssRule(
     ".format-request-option[aria-pressed='true']:not(:disabled)",
-    ['bg-green-800/60 text-white'],
+    ['bg-green-900/70 text-white'],
     'segmented quality controls must visibly highlight the selected available format'
   );
 
@@ -2613,7 +2630,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     seriesBrowser,
-    "import SelectionCircle from '@app/components/Common/SelectionCircle';",
+    "from '@app/components/Common/SelectionCircle';",
     'Series selection controls must consume the shared SelectionCircle component'
   );
 
@@ -2650,7 +2667,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     albumTrackList,
-    'disabled={!selectableId}',
+    'disabled={albumRequest || !selectableId}',
     'Music track circles must use the resolved availability selection ID'
   );
 
@@ -2705,7 +2722,7 @@ const validateCurrentBatchContract = (files) => {
   ]) {
     requireText(
       selectorConsumer,
-      "import SelectionCircle from '@app/components/Common/SelectionCircle';",
+      "from '@app/components/Common/SelectionCircle';",
       'selection controls must consume the shared SelectionCircle component'
     );
     requireText(
@@ -2831,7 +2848,7 @@ const validateCurrentBatchContract = (files) => {
     'src/components/BookDetails/BookDetailsLayout.tsx',
     'src/components/CollectionDetails/index.tsx',
     'src/components/RequestModal/RequestMediaCard.tsx',
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
   ]) {
     requireText(
       fileName,
@@ -3144,9 +3161,9 @@ const validateCurrentBatchContract = (files) => {
     'orderCollectionPartsOldestFirst(data?.parts ?? [])',
     'reconcileCollectionPlaybackSelection(',
     'hasManualPlaybackSelection',
-    '(!hasManualPlaybackSelection || selectedMediaIds.includes(part.id))',
+    '(part) => !hasManualPlaybackSelection || selectedMediaIds.includes(part.id)',
     'const effectivePlaybackMediaIds',
-    '!playbackQuality || effectivePlaybackMediaIds.length === 0',
+    'selectedPlaybackParts.length > 0 &&',
     'orderedParts.map((part)',
   ]) {
     requireText(
@@ -3167,9 +3184,9 @@ const validateCurrentBatchContract = (files) => {
     '<SelectionCircle',
     'const visibleParts = orderCollectionPartsOldestFirst(',
     'getCollectionPartRequestPresentation(',
-    "? 'text-green-400'",
-    "? 'text-yellow-300'",
-    'messages.readyToRequest',
+    "presentation !== 'ready' || quotaBlocked",
+    '<AvailabilityValue status={hdStatus}>',
+    '<AvailabilityValue status={ultraHdStatus}>',
   ]) {
     requireText(
       collectionRequestModal,
@@ -3197,7 +3214,7 @@ const validateCurrentBatchContract = (files) => {
     'src/components/Blocklist/index.tsx',
     'src/components/IssueList/index.tsx',
     'src/components/RequestList/index.tsx',
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'src/components/Settings/SettingsLogs/index.tsx',
   ];
   for (const fileName of paginationPages) {
@@ -3786,17 +3803,17 @@ const validateCurrentBatchContract = (files) => {
     requireText(issueDetails, token, description);
   }
   requireText(
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px]',
     'Request Status History must use the compact translucent green action treatment'
   );
   requireText(
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'className="request-status-action-row"',
     'request cards must resolve wrapping action alignment through the shared global style'
   );
   for (const filterPage of [
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'src/components/Blocklist/index.tsx',
   ]) {
     requireText(
@@ -3921,7 +3938,7 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const fileName of [
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'src/components/Blocklist/index.tsx',
   ]) {
     requireOrder(
@@ -4073,13 +4090,12 @@ const validateCurrentBatchContract = (files) => {
   );
   for (const token of ['action="delete"', 'action="remove"']) {
     requireOrder(
-      'src/components/RequestStatus/index.tsx',
+      'src/components/Requests/index.tsx',
       ['<RequestActionConfirmation', token],
       'request deletion must use the shared confirmation for both destructive actions'
     );
   }
-  const requestConfirmation =
-    'src/components/RequestStatus/destructiveActions.tsx';
+  const requestConfirmation = 'src/components/Requests/destructiveActions.tsx';
   for (const token of [
     'dialogClass="request-modal-site-surface refreshed-detail-text request-action-dialog"',
     '<p className="refreshed-inset-surface request-action-explanation">',
@@ -4381,7 +4397,7 @@ const validateCurrentBatchContract = (files) => {
 
   requireText(
     'src/components/Layout/SearchInput/index.tsx',
-    'w-full min-w-0 max-w-2xl',
+    'w-full max-w-2xl min-w-0',
     'the global search control must be wide enough for its complete placeholder'
   );
   requireText(
@@ -4646,7 +4662,7 @@ const validateCurrentBatchContract = (files) => {
       'const clearAllFilters = () => {',
       "routedSearchRef.current = '';",
       "setSearchValue('');",
-      'batchUpdateQueryParams({',
+      'applyFilters({',
       '...clearedFilters,',
       '[searchQueryKey]: undefined,',
       'onClick={clearAllFilters}',
@@ -4775,14 +4791,11 @@ const validateCurrentBatchContract = (files) => {
     [
       'messages.mediaFilters',
       '<BookFormatTabs',
-      'messages.filters',
+      'section="filters"',
       '<FilterResetButton',
       '<CardTextVisibilityToggle',
-      '<form',
-      'messages.firstPublished',
-      'messages.genres',
-      'messages.ratingFilter',
-      'messages.language',
+      '<LibraryFilterFields',
+      'section="sortBy"',
     ],
     'Books and Audiobooks must separate Media Filters from the continuous regular filter row'
   );
@@ -5132,7 +5145,7 @@ const validateCurrentBatchContract = (files) => {
   );
 
   requireText(
-    'src/components/RequestStatus/index.tsx',
+    'src/components/Requests/index.tsx',
     'grid-cols-[7rem_6rem_7.5rem_minmax(0,1fr)]',
     'Request Status history must keep Date, Time, Action, Description columns'
   );
@@ -5278,7 +5291,7 @@ const validateCurrentBatchContract = (files) => {
       'must test MP3-to-FLAC eligibility',
     ],
     [
-      'src/components/RequestStatus/requestStatusQuery.test.ts',
+      'src/components/Requests/requestStatusQuery.test.ts',
       'All Users',
       'must test the Request Status manager default',
     ],

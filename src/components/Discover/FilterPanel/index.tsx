@@ -13,7 +13,6 @@ import { tvNetworks } from '@app/components/Discover/NetworkSlider';
 import type { FilterOptions } from '@app/components/Discover/constants';
 import {
   CompanySelector,
-  StatusSelector,
   WatchProviderSelector,
 } from '@app/components/Selector';
 import useDebouncedState from '@app/hooks/useDebouncedState';
@@ -44,6 +43,12 @@ const messages = defineMessages('components.Discover.FilterPanel', {
   streamingservices: 'Streaming Services',
   region: 'Region',
   status: 'Status',
+  returningSeries: 'Returning Series',
+  planned: 'Planned',
+  inProduction: 'In Production',
+  ended: 'Ended',
+  canceled: 'Canceled',
+  pilot: 'Pilot',
   certification: 'Content Rating',
   any: 'Any',
   durationMinutes: '{minutes} Minutes',
@@ -57,6 +62,7 @@ type FilterPanelProps = {
   currentFilters: FilterOptions;
   variant?: 'discover' | 'search';
   searchQueryKey?: 'search' | 'resultFilter';
+  onFiltersChange?: (values: Record<string, string | undefined>) => void;
 };
 
 const clearedFilters = {
@@ -97,9 +103,11 @@ const FilterPanel = ({
   currentFilters,
   variant = 'discover',
   searchQueryKey = 'search',
+  onFiltersChange,
 }: FilterPanelProps) => {
   const intl = useIntl();
   const batchUpdateQueryParams = useBatchUpdateQueryParams({});
+  const applyFilters = onFiltersChange ?? batchUpdateQueryParams;
   const [searchValue, debouncedSearchValue, setSearchValue] = useDebouncedState(
     currentFilters.search ?? ''
   );
@@ -116,8 +124,11 @@ const FilterPanel = ({
   );
 
   useEffect(() => {
-    routedSearchRef.current = (currentFilters.search ?? '').trim();
-    setSearchValue(currentFilters.search ?? '');
+    const routedSearch = (currentFilters.search ?? '').trim();
+    if (routedSearch !== routedSearchRef.current) {
+      routedSearchRef.current = routedSearch;
+      setSearchValue(currentFilters.search ?? '');
+    }
   }, [currentFilters.search, setSearchValue]);
 
   useEffect(() => {
@@ -128,11 +139,30 @@ const FilterPanel = ({
     }
 
     routedSearchRef.current = nextSearch;
-    batchUpdateQueryParams({
+    const values = {
       page: undefined,
       [searchQueryKey]: nextSearch || undefined,
-    });
-  }, [batchUpdateQueryParams, debouncedSearchValue, searchQueryKey, variant]);
+    };
+    if (onFiltersChange) {
+      onFiltersChange(values);
+    } else {
+      batchUpdateQueryParams(values, { shallow: true, scroll: false });
+    }
+  }, [
+    batchUpdateQueryParams,
+    debouncedSearchValue,
+    onFiltersChange,
+    searchQueryKey,
+  ]);
+
+  useEffect(() => {
+    if (type === 'tv' && currentFilters.status?.includes('|')) {
+      applyFilters({
+        page: undefined,
+        status: currentFilters.status.split('|')[0],
+      });
+    }
+  }, [applyFilters, currentFilters.status, type]);
 
   const dateGte =
     type === 'movie' ? 'primaryReleaseDateGte' : 'firstAirDateGte';
@@ -142,25 +172,34 @@ const FilterPanel = ({
   const clearAllFilters = () => {
     routedSearchRef.current = '';
     setSearchValue('');
-    batchUpdateQueryParams({
+    applyFilters({
       ...clearedFilters,
       [searchQueryKey]: undefined,
       sortBy: undefined,
     });
   };
   const updateFilter = (key: string, value?: string) => {
-    batchUpdateQueryParams({
+    applyFilters({
       page: undefined,
       [key]: value,
     });
   };
   const updateFilters = (values: Record<string, string | undefined>) => {
-    batchUpdateQueryParams({
+    applyFilters({
       page: undefined,
       ...values,
     });
   };
   const currentYear = new Date().getFullYear();
+  const statusOptions: CompactSelectOption[] = [
+    { label: intl.formatMessage(messages.any), value: '' },
+    { label: intl.formatMessage(messages.returningSeries), value: '0' },
+    { label: intl.formatMessage(messages.planned), value: '1' },
+    { label: intl.formatMessage(messages.inProduction), value: '2' },
+    { label: intl.formatMessage(messages.ended), value: '3' },
+    { label: intl.formatMessage(messages.canceled), value: '4' },
+    { label: intl.formatMessage(messages.pilot), value: '5' },
+  ];
   const yearOptions: CompactSelectOption[] = [
     { label: intl.formatMessage(messages.any), value: 'any' },
     ...Array.from({ length: currentYear - 1969 }, (_, index) => {
@@ -422,14 +461,19 @@ const FilterPanel = ({
           className="discover-filter-control order-5 w-72 max-w-full flex-none"
           onSubmit={(event) => {
             event.preventDefault();
-            batchUpdateQueryParams({
+            const values = {
               page: undefined,
               [searchQueryKey]: searchValue.trim() || undefined,
-            });
+            };
+            if (onFiltersChange) {
+              onFiltersChange(values);
+            } else {
+              batchUpdateQueryParams(values, { shallow: true, scroll: false });
+            }
           }}
         >
           <span
-            className={`discover-filter-control-label gap-1.5 ${
+            className={`discover-filter-control-label ${
               searchValue.trim() ? 'discover-filter-control-label-active' : ''
             }`}
           >
@@ -450,25 +494,13 @@ const FilterPanel = ({
           />
         </form>
         {type === 'tv' && (
-          <div className="discover-filter-control order-6">
-            <span
-              className={`discover-filter-control-label ${
-                currentFilters.status
-                  ? 'discover-filter-control-label-active'
-                  : ''
-              }`}
-            >
-              {intl.formatMessage(messages.status)}
-            </span>
-            <StatusSelector
-              compact
-              defaultValue={currentFilters.status}
-              isMulti
-              onChange={(value) => {
-                updateFilter('status', value?.map((v) => v.value).join('|'));
-              }}
-            />
-          </div>
+          <CompactSelect
+            className="status-filter order-6"
+            label={intl.formatMessage(messages.status)}
+            value={currentFilters.status?.split('|')[0] ?? ''}
+            options={statusOptions}
+            onChange={(value) => updateFilter('status', value || undefined)}
+          />
         )}
         <CompactSelect
           className={type === 'movie' ? 'order-6' : 'order-7'}
@@ -625,7 +657,7 @@ const FilterPanel = ({
                   watchProviders: providers.join('|'),
                 });
               } else {
-                batchUpdateQueryParams({
+                applyFilters({
                   watchRegion: undefined,
                   watchProviders: undefined,
                 });

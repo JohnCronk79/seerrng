@@ -16,7 +16,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it('restores once, honors explicit navigation, remembers changes, and unpins', async () => {
+it('restores once, honors explicit navigation, pins changes, and unpins', async () => {
   const dom = new JSDOM('<div id="root"></div>');
   vi.stubGlobal('window', dom.window);
   vi.stubGlobal('document', dom.window.document);
@@ -40,12 +40,12 @@ it('restores once, honors explicit navigation, remembers changes, and unpins', a
     expect(restore).toHaveBeenCalledExactlyOnceWith('ebook');
     await act(async () => root.render(<Probe />));
     expect(restore).toHaveBeenCalledTimes(1);
-    await act(async () => pin.remember('audiobook'));
+    await act(async () => pin.toggle('audiobook'));
     expect(state.post).toHaveBeenLastCalledWith(
       '/api/v1/user/7/settings/media-filter-pins/books',
       { value: 'audiobook' }
     );
-    await act(async () => pin.toggle());
+    await act(async () => pin.toggle('ebook'));
     expect(state.post).toHaveBeenLastCalledWith(
       '/api/v1/user/7/settings/media-filter-pins/books',
       { value: null }
@@ -54,7 +54,7 @@ it('restores once, honors explicit navigation, remembers changes, and unpins', a
     await act(async () => root.render(<Probe key="new-visit" explicit />));
     expect(restore).not.toHaveBeenCalled();
     state.post.mockRejectedValueOnce(new Error('offline'));
-    await act(async () => pin.toggle());
+    await act(async () => pin.toggle('audiobook'));
     expect(pin.error).toBe(true);
   } finally {
     await act(async () => root.unmount());

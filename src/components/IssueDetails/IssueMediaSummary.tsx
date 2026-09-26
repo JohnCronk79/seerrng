@@ -49,7 +49,7 @@ const linkedValues = (values: LinkedValue[]) =>
       {value.href ? (
         <Link
           href={value.href}
-          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
         >
           {value.label}
         </Link>
@@ -309,13 +309,13 @@ const IssueMediaSummary = ({
             {resolvedHref ? (
               <Link
                 href={resolvedHref}
-                className="detail-summary-title block truncate text-lg font-semibold leading-5 text-white hover:underline"
+                className="detail-summary-title block truncate text-lg leading-5 font-semibold text-white hover:underline"
               >
                 {title}
                 {releaseYear ? ` (${releaseYear})` : ''}
               </Link>
             ) : (
-              <h3 className="detail-summary-title truncate text-lg font-semibold leading-5 text-white">
+              <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
                 {title}
                 {releaseYear ? ` (${releaseYear})` : ''}
               </h3>
@@ -324,26 +324,26 @@ const IssueMediaSummary = ({
             <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
               <div className="detail-paired-column-span min-w-0">
                 <dl className="media-detail-rows detail-paired-columns grid min-w-0 content-start text-xs">
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-1">
+                  <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     Media &amp; Format:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-1">
+                  <dd className="card:col-start-3 card:row-start-1 m-0 truncate">
                     {mediaLabel}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-2">
+                  <dt className="card:col-start-1 card:row-start-2 font-medium text-gray-100">
                     {isBook ? 'First Published' : 'Release Date'}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-2">
+                  <dd className="card:col-start-3 card:row-start-2 m-0 truncate">
                     {releaseDate || unavailable}
                   </dd>
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-3">
+                  <dt className="card:col-start-1 card:row-start-3 font-medium text-gray-100">
                     {isBook ? 'Pages' : 'Runtime'}:
                   </dt>
-                  <dd className="m-0 truncate card:col-start-3 card:row-start-3">
+                  <dd className="card:col-start-3 card:row-start-3 m-0 truncate">
                     {runtime}
                   </dd>
 
-                  <div className="media-detail-rows media-detail-column-divider col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1">
+                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                     {secondaryRows.slice(0, 3).map((row) => (
                       <div className="contents" key={row.label}>
                         <dt className="font-medium text-gray-100">
@@ -356,10 +356,10 @@ const IssueMediaSummary = ({
                     ))}
                   </div>
 
-                  <dt className="font-medium text-gray-100 card:col-start-1 card:row-start-4">
+                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                     Genres:
                   </dt>
-                  <dd className="m-0 line-clamp-2 min-w-0 break-words card:col-span-3 card:col-start-3 card:row-start-4">
+                  <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                     {genres.length > 0 ? linkedValues(genres) : unavailable}
                   </dd>
                 </dl>

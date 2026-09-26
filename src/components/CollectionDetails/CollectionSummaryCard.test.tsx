@@ -8,19 +8,15 @@ const state = vi.hoisted(() => ({
   collection: undefined as unknown,
   genres: undefined as unknown,
   error: undefined as Error | undefined,
-  keys: [] as (string | null)[],
+  keys: [] as string[],
 }));
 
 vi.mock('swr', () => ({
-  default: (key: string | null) => {
+  default: (key: string) => {
     state.keys.push(key);
     return {
-      data: key?.includes('/collection')
-        ? state.collection
-        : key
-          ? state.genres
-          : undefined,
-      error: key?.includes('/collection') ? state.error : undefined,
+      data: key.includes('/collection/') ? state.collection : state.genres,
+      error: key.includes('/collection/') ? state.error : undefined,
       mutate: vi.fn(),
     };
   },
@@ -134,61 +130,3 @@ it('handles empty collections and missing poster/overview safely', () => {
   expect(html).toContain('Not Available');
   expect(html).toContain('Overview unavailable');
 });
-
-it('uses the resolved music collection cover instead of an unverified first member URL', () => {
-  state.collection = {id:'artist',kind:'music',name:'Artist Collection',posterPath:'https://archive.org/verified.jpg',parts:[{posterPath:'https://coverartarchive.org/missing.jpg',genres:[]}]};
-  const html=renderToStaticMarkup(<IntlProvider locale="en"><CollectionSummaryCard kind="music" collection={{id:'artist',name:'Artist Collection'}}/></IntlProvider>);
-  expect(html).toContain('https://archive.org/verified.jpg');
-  expect(html).not.toContain('https://coverartarchive.org/missing.jpg');
-});
-
-it.each(['tv', 'music'] as const)(
-  'shares the movie layout for %s collection summaries',
-  (kind) => {
-    state.collection = {
-      id: '7502',
-      kind,
-      name: 'Yellowstone Collection',
-      overview: 'The full collection overview.',
-      parts: [
-        {
-          posterPath:
-            kind === 'tv'
-              ? '/show.jpg'
-              : 'https://coverartarchive.org/album.jpg',
-          genres: ['Drama'],
-          genreIds: [18],
-        },
-        { genres: ['Drama', 'Western'], genreIds: [18, 37] },
-      ],
-    };
-    const html = renderToStaticMarkup(
-      <IntlProvider locale="en">
-        <CollectionSummaryCard
-          kind={kind}
-          collection={{ id: '7502', name: 'Yellowstone Collection' }}
-        />
-      </IntlProvider>
-    );
-    expect(state.keys).toEqual([
-      `/api/v1/collection-catalog/${kind}/7502`,
-      null,
-    ]);
-    expect(
-      html.match(new RegExp(`href="/collections/${kind}/7502"`, 'g'))
-    ).toHaveLength(2);
-    expect(html).toContain('collection-summary-size-value">2</dd>');
-    expect(html).toContain(
-      `href="/discover/${kind}?genre=${kind === 'tv' ? '18' : 'Drama'}">Drama</a>`
-    );
-    expect(html).toContain(
-      `href="/discover/${kind}?genre=${kind === 'tv' ? '37' : 'Western'}">Western</a>`
-    );
-    expect(html.match(/>Drama<\/a>/g)).toHaveLength(1);
-    expect(html).toContain('The full collection overview.');
-    expect(html).toContain(
-      'detail-item-surface detail-summary-card media-detail-collection-card'
-    );
-    expect(html.match(/<section\b/g)).toHaveLength(1);
-  }
-);

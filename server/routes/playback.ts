@@ -136,7 +136,7 @@ const getPlexPlaybackTargets = async (
   return [...targets.values()];
 };
 
-const requestPermissions: Record<MediaType, Permission[]> = {
+const requestPermissions: Partial<Record<MediaType, Permission[]>> = {
   [MediaType.MOVIE]: [Permission.REQUEST, Permission.REQUEST_MOVIE],
   [MediaType.TV]: [Permission.REQUEST, Permission.REQUEST_TV],
   [MediaType.MUSIC]: [Permission.REQUEST, Permission.REQUEST_MUSIC],
@@ -144,8 +144,10 @@ const requestPermissions: Record<MediaType, Permission[]> = {
 };
 
 const canUsePlayback = (user: User, mediaType: MediaType, is4k = false) => {
+  const permissions = requestPermissions[mediaType];
   if (
-    !user.hasPermission(requestPermissions[mediaType], {
+    !permissions ||
+    !user.hasPermission(permissions, {
       type: 'or',
     })
   ) {

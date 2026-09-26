@@ -198,9 +198,7 @@ class Tvdb extends ExternalAPI implements TvShowProvider {
       .map(({ id, name }) => ({ id, name: name.slice(0, 512) }));
   }
 
-  public async getSeriesCollection(
-    id: number
-  ): Promise<{
+  public async getSeriesCollection(id: number): Promise<{
     id: number;
     name: string;
     overview: string;

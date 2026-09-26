@@ -312,6 +312,10 @@ const parseDetailDisclosurePinsBody = (
   const allowedKeys: (keyof UserSettingsDetailDisclosureResponse)[] = [
     ...keys,
     ...(includeDetails ? (['details'] as const) : []),
+    'advancedOptions',
+    'filters',
+    'mediaFilters',
+    'sortBy',
     ...(includeCollection ? (['collection'] as const) : []),
   ];
   for (const key of allowedKeys) {

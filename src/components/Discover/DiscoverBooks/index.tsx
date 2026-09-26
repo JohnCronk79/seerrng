@@ -83,13 +83,8 @@ const DiscoverBooks = ({
   const query = typeof routeQuery.search === 'string' ? routeQuery.search : '';
   const authorQuery =
     typeof routeQuery.author === 'string' ? routeQuery.author : '';
-  const narratorQuery =
-    typeof routeQuery.narrator === 'string' ? routeQuery.narrator : '';
   const [author, debouncedAuthor, setAuthor] = useDebouncedState(authorQuery);
-  const [narrator, debouncedNarrator, setNarrator] =
-    useDebouncedState(narratorQuery);
   const routedAuthorRef = useRef(authorQuery.trim());
-  const routedNarratorRef = useRef(narratorQuery.trim());
   useEffect(() => {
     const routedAuthor = authorQuery.trim();
     if (routedAuthor !== routedAuthorRef.current) {
@@ -97,13 +92,6 @@ const DiscoverBooks = ({
       setAuthor(authorQuery);
     }
   }, [authorQuery, setAuthor]);
-  useEffect(() => {
-    const routedNarrator = narratorQuery.trim();
-    if (routedNarrator !== routedNarratorRef.current) {
-      routedNarratorRef.current = routedNarrator;
-      setNarrator(narratorQuery);
-    }
-  }, [narratorQuery, setNarrator]);
   const routedFormat =
     routeQuery.format === 'all' ||
     routeQuery.format === 'ebook' ||
@@ -140,7 +128,6 @@ const DiscoverBooks = ({
     {
       query,
       author: authorQuery,
-      narrator: activeFormat === 'audiobook' ? narratorQuery : undefined,
       subject,
       firstPublishYear,
       language,
@@ -199,16 +186,6 @@ const DiscoverBooks = ({
       );
     }
   }, [debouncedAuthor, update]);
-  useEffect(() => {
-    const nextNarrator = debouncedNarrator.trim();
-    if (nextNarrator !== routedNarratorRef.current) {
-      routedNarratorRef.current = nextNarrator;
-      update(
-        { narrator: nextNarrator || undefined, page: undefined },
-        { shallow: true, scroll: false }
-      );
-    }
-  }, [debouncedNarrator, update]);
   useSearchActivityReporter(
     Boolean(author.trim()) &&
       isRouteReady &&
@@ -216,15 +193,6 @@ const DiscoverBooks = ({
         discover.isLoadingInitialData ||
         discover.isValidating),
     'books-author'
-  );
-  useSearchActivityReporter(
-    activeFormat === 'audiobook' &&
-      Boolean(narrator.trim()) &&
-      isRouteReady &&
-      (narrator.trim() !== narratorQuery.trim() ||
-        discover.isLoadingInitialData ||
-        discover.isValidating),
-    'books-narrator'
   );
   const title =
     titleOverride ??
@@ -236,7 +204,6 @@ const DiscoverBooks = ({
   const hasActiveFilters = Boolean(
     query ||
     authorQuery ||
-    (activeFormat === 'audiobook' && narratorQuery) ||
     subject ||
     firstPublishYear ||
     language ||
@@ -277,11 +244,9 @@ const DiscoverBooks = ({
               onClick={() => {
                 setSearch('');
                 setAuthor('');
-                setNarrator('');
                 setParam({
                   search: undefined,
                   author: undefined,
-                  narrator: undefined,
                   subject: undefined,
                   firstPublishYear: undefined,
                   language: undefined,
@@ -311,16 +276,6 @@ const DiscoverBooks = ({
                 routedAuthorRef.current = nextAuthor;
                 update(
                   { author: nextAuthor || undefined, page: undefined },
-                  { shallow: true, scroll: false }
-                );
-              }}
-              narrator={narrator}
-              onNarratorChange={setNarrator}
-              onNarratorSubmit={() => {
-                const nextNarrator = narrator.trim();
-                routedNarratorRef.current = nextNarrator;
-                update(
-                  { narrator: nextNarrator || undefined, page: undefined },
                   { shallow: true, scroll: false }
                 );
               }}

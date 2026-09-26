@@ -227,7 +227,7 @@ const MobileMenu = ({
   ]);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50">
+    <div className="fixed right-0 bottom-0 left-0 z-50">
       <Transition
         show={isOpen}
         as="div"
@@ -238,7 +238,7 @@ const MobileMenu = ({
         leave="transition duration-500"
         leaveFrom="opacity-100 -translate-y-full"
         leaveTo="opacity-0 translate-y-0"
-        className="app-menu-gradient absolute left-0 right-0 top-0 flex w-full -translate-y-full flex-col space-y-6 border-t border-gray-600 px-6 py-6 font-semibold text-gray-100 backdrop-blur"
+        className="app-menu-gradient absolute top-0 right-0 left-0 flex w-full -translate-y-full flex-col space-y-6 border-t border-gray-600 px-6 py-6 font-semibold text-gray-100 backdrop-blur"
       >
         {filteredLinks.map((link) => {
           const isActive = router.pathname.match(link.activeRegExp);

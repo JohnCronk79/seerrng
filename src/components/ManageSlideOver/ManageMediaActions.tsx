@@ -7,7 +7,7 @@ import {
   RequestActionConfirmation,
   requestActionMessages,
   type LibraryRemovalTarget,
-} from '@app/components/RequestStatus/destructiveActions';
+} from '@app/components/Requests/destructiveActions';
 import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';

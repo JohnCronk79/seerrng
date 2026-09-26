@@ -287,7 +287,7 @@ const BookDetailsLayout = ({
                             <span key={genre}>
                               {index > 0 && ', '}
                               <Link
-                                href={`/discover/books?search=${encodeURIComponent(genre)}&sortBy=ranked`}
+                                href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
                                 className="text-indigo-300 hover:text-indigo-200 hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
                               >
                                 {genre}
@@ -484,7 +484,7 @@ const BookDetailsLayout = ({
                   {genres.map((genre, index) => (
                     <Link
                       key={genre}
-                      href={`/discover/books?search=${encodeURIComponent(genre)}&sortBy=ranked`}
+                      href={`/discover/books?subject=${encodeURIComponent(genre)}&sortBy=ranked`}
                       className={subjectTagClassName(index)}
                     >
                       {genre}

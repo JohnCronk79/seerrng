@@ -64,12 +64,12 @@ const mediaListFilters = [
   'pending',
 ] as const;
 const mediaListSorts = ['modified', 'mediaAdded'] as const;
-const mediaListTypes = [
+const mediaListTypes: MediaType[] = [
   MediaType.MOVIE,
   MediaType.TV,
   MediaType.MUSIC,
   MediaType.BOOK,
-] as const;
+];
 const mediaFileFormats = ['ebook', 'audiobook', 'both'] as const;
 const mediaListPermissions: Permission[] = [
   Permission.MANAGE_REQUESTS,
@@ -1020,7 +1020,7 @@ mediaRoutes.delete(
                   )
                     media[deleted4k ? 'status4k' : 'status'] =
                       MediaStatus.DELETED;
-                  media.resetServiceDataForResolution(deleted4k, !isMusic);
+                  media.resetServiceDataForResolution(deleted4k, isMusic);
                   if (media.mediaType === MediaType.TV) {
                     for (const season of media.seasons) {
                       season[deleted4k ? 'status4k' : 'status'] =

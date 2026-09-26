@@ -68,7 +68,7 @@ const ButtonWithDropdown = ({
           >
             {dropdownIcon ? dropdownIcon : <ChevronDownIcon />}
           </MenuButton>
-          <Dropdown.Items dropdownType={buttonType}>{children}</Dropdown.Items>
+          <Dropdown.Items>{children}</Dropdown.Items>
         </span>
       )}
     </Menu>

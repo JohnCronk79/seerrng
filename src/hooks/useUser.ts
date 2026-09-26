@@ -2,8 +2,8 @@ import { isAuthenticationError } from '@app/utils/auth';
 import { UserType } from '@server/constants/user';
 import type {
   CardTextVisibility,
-  UserPreferredLanguages,
   UserMediaFilterPins,
+  UserPreferredLanguages,
   UserSettingsCardTextResponse,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';

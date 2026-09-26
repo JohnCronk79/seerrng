@@ -4,8 +4,14 @@ import test from 'node:test';
 const read = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
 test('shared middle groups center as one unit and stretch across their allotted rows', () => {
   const css = read('./globals.css');
-  assert.match(css, /\.detail-paired-columns > \.media-detail-column-divider,\s*\.detail-paired-simple-columns > \.media-detail-column-divider,[\s\S]*?width: max-content;\s*max-width: 100%;\s*justify-self: center;\s*align-self: stretch;/);
-  assert.match(css, /\.detail-three-column-grid:not\(:has\(> \.detail-paired-column-span\)\)\s*> \.media-detail-column-divider:nth-child\(2\)/);
+  assert.match(
+    css,
+    /\.detail-paired-columns > \.media-detail-column-divider,\s*\.detail-paired-simple-columns > \.media-detail-column-divider,[\s\S]*?width: max-content;\s*max-width: 100%;\s*justify-self: center;\s*align-self: stretch;/
+  );
+  assert.match(
+    css,
+    /\.detail-three-column-grid:not\(:has\(> \.detail-paired-column-span\)\)\s*> \.media-detail-column-divider:nth-child\(2\)/
+  );
 });
 const files = [
   'MediaDetails/MovieSummaryCard.tsx',

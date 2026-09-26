@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
@@ -7,6 +7,19 @@ const require = createRequire(import.meta.url);
 const {
   validateCurrentBatchContract,
 } = require('./check-current-batch-contract-lib.js');
+
+const repositoryFilesWith = (overrides = {}) =>
+  new Proxy(overrides, {
+    has: (target, key) =>
+      typeof key === 'string' &&
+      (Object.hasOwn(target, key) ||
+        existsSync(new URL(`../${key}`, import.meta.url))),
+    get: (target, key) => {
+      if (typeof key !== 'string') return undefined;
+      if (Object.hasOwn(target, key)) return target[key];
+      return readFileSync(new URL(`../${key}`, import.meta.url), 'utf8');
+    },
+  });
 
 test('current shared owners pass their checks and functional mutations fail', () => {
   const cases = [
@@ -23,7 +36,7 @@ test('current shared owners pass their checks and functional mutations fail', ()
       'detail quality options must not activate unavailable formats',
     ],
     [
-      'src/components/RequestStatus/destructiveActions.tsx',
+      'src/components/Requests/destructiveActions.tsx',
       'okDisabled={disabled || busy}',
       'okDisabled={disabled}',
       'request deletion confirmations must preserve shared surfaces and busy-write guards',
@@ -36,8 +49,8 @@ test('current shared owners pass their checks and functional mutations fail', ()
     ],
     [
       'src/components/CollectionDetails/index.tsx',
-      '(!hasManualPlaybackSelection || selectedMediaIds.includes(part.id))',
-      'true',
+      '(part) => !hasManualPlaybackSelection || selectedMediaIds.includes(part.id)',
+      '() => true',
       'Collection playback must preserve oldest-first ordering and an intentionally empty selection',
     ],
   ];
@@ -48,15 +61,17 @@ test('current shared owners pass their checks and functional mutations fail', ()
     );
     assert.ok(source.includes(original), `${fileName}: mutation target exists`);
     assert.ok(
-      !validateCurrentBatchContract({ [fileName]: source }).some((error) =>
-        error.includes(reason)
-      ),
+      !validateCurrentBatchContract(
+        repositoryFilesWith({ [fileName]: source })
+      ).some((error) => error.includes(reason)),
       reason
     );
     assert.ok(
-      validateCurrentBatchContract({
-        [fileName]: source.replace(original, replacement),
-      }).some((error) => error.includes(reason)),
+      validateCurrentBatchContract(
+        repositoryFilesWith({
+          [fileName]: source.replace(original, replacement),
+        })
+      ).some((error) => error.includes(reason)),
       reason
     );
   }
@@ -512,7 +527,7 @@ test('reports request-card contrast and Advanced Options contract drift', () => 
       has: () => true,
       get: (_target, key) =>
         String(key).endsWith('src/components/RequestModal/TvRequestModal.tsx')
-          ? '<RequestMediaCard'
+          ? '<RequestMediaCard backdropFull'
           : '',
     }
   );
@@ -524,14 +539,14 @@ test('reports request-card contrast and Advanced Options contract drift', () => 
     'detail columns must own their responsive divider border',
     'detail columns must resolve through the shared divider class',
     'root-folder scrolling must begin only after five rows',
-    'Destination Server, Metadata Profile, Quality Profile, and Root Folder must all use the shared request listbox',
+    'Destination Server, Metadata Profile, Quality Profile, Root Folder, and Language must all use the shared request listbox',
     'Root Folder must use the shared request listbox with its selected path',
     'request listbox menus must mark their selected option with a check icon',
     'request dropdown color, geometry, and selection styling must live in shared global classes',
     'fresh request forms must open Advanced Options by default',
     'full-size request cards must use the site background gradient',
-    'Request Series must reuse the Report Issue main-card artwork, border, and inset-card layout',
-    'Request Series must not restore a nested artwork card inside the main modal card',
+    'Request Series must reuse the shared request site canvas and inset artwork card',
+    'Request Series must keep artwork in the media card, not behind the page heading',
     'Report Issue and Request Series must share one main-card layout class',
     'Report Issue and Request Series must consume the same main-card layout class',
     'artwork forms must leave vertical scrolling on the full modal viewport rather than the main card',

@@ -1,7 +1,7 @@
 import { IssueStatus } from '@server/constants/issue';
 import type Issue from '@server/entity/Issue';
-import type { FormikConfig } from 'formik';
 import type * as FormikModule from 'formik';
+import type { FormikConfig } from 'formik';
 import { JSDOM } from 'jsdom';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';

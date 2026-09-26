@@ -5,6 +5,8 @@ export interface CuratedCollectionMember {
   id: string;
   title: string;
   releaseDate: string;
+  originalLanguage?: string;
+  status?: string;
   posterPath?: string;
   overview?: string;
   subtitle?: string;

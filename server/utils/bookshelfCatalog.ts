@@ -262,6 +262,9 @@ export const mapBookshelfBook = (
   const image = result.images?.find(
     (entry) => entry.coverType?.toLowerCase() === 'cover'
   );
+  const subjects = [...(result.genres ?? []), ...(result.subjects ?? [])]
+    .map((subject) => subject.trim())
+    .filter(Boolean);
   return {
     id: makeBookshelfBookId(serviceId, result.foreignBookId),
     provider: 'bookshelf',
@@ -285,6 +288,10 @@ export const mapBookshelfBook = (
     isbnCandidates,
     editionId:
       result.foreignEditionId ?? result.editions?.[0]?.foreignEditionId,
+    subjects: subjects.length ? [...new Set(subjects)] : undefined,
+    languages: result.languages?.length ? result.languages : undefined,
+    ratingsAverage: result.ratingsAverage,
+    ratingsCount: result.ratingsCount,
     series,
     audiobookDuration,
     narrators: narrators?.length ? [...new Set(narrators)] : undefined,
@@ -503,17 +510,24 @@ export const searchBookshelfNarrators = async (
 
 export const getBookshelfBookDetails = async (
   servers: ReadarrSettings[],
-  id: string
+  id: string,
+  lookupTitle?: string
 ): Promise<BookDetails | undefined> => {
   const parsed = parseBookshelfBookId(id);
   if (!parsed) return undefined;
   const server = servers.find((candidate) => candidate.id === parsed.serviceId);
   if (!server) return undefined;
   try {
-    const candidates = await getApi(server).lookupBook(parsed.foreignBookId);
-    const result = candidates.find(
-      (candidate) => candidate.foreignBookId === parsed.foreignBookId
-    );
+    const api = getApi(server);
+    let result;
+    for (const term of [...new Set([lookupTitle, parsed.foreignBookId])]) {
+      if (!term?.trim()) continue;
+      const candidates = await api.lookupBook(term);
+      result = candidates.find(
+        (candidate) => candidate.foreignBookId === parsed.foreignBookId
+      );
+      if (result) break;
+    }
     if (!result) return undefined;
     const base = mapBookshelfBook(result, server.id);
     const editions = result.editions ?? [];

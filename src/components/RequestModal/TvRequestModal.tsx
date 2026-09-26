@@ -11,6 +11,7 @@ import RequestFooterStatus from '@app/components/RequestModal/RequestFooterStatu
 import RequestMediaCard from '@app/components/RequestModal/RequestMediaCard';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
 import {
+  canPromotePendingDestinationRequests,
   createRequestDestination,
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
@@ -57,7 +58,8 @@ const messages = defineMessages('components.RequestModal', {
   pendingrequest: 'Pending Request',
   pending4krequest: 'Pending 4K Request',
   requestfrom: "{username}'s request is pending approval.",
-  selectItemsToRequest: 'Select unavailable seasons or episodes to request.',
+  selectUnavailableItemsToRequest:
+    'Select unavailable seasons or episodes to request.',
   alreadyAvailable:
     'The selected seasons or episodes are already available or requested.',
   noUnavailableItems: 'No unavailable seasons or episodes remain to request.',
@@ -513,7 +515,7 @@ const TvRequestModal = ({
         ? settings.currentSettings.partialRequestsEnabled &&
           seasonSelections.length === 0 &&
           unrequestedSeasons.length > 0
-          ? intl.formatMessage(messages.selectItemsToRequest)
+          ? intl.formatMessage(messages.selectUnavailableItemsToRequest)
           : intl.formatMessage(
               unrequestedSeasons.length === 0
                 ? messages.noUnavailableItems
@@ -580,6 +582,19 @@ const TvRequestModal = ({
     'tv',
     effectiveIs4k
   );
+  const selectedDestinationPromotable =
+    selectedDestinationRequested &&
+    canPromotePendingDestinationRequests(
+      data?.mediaInfo?.requests,
+      [selectedDestination],
+      {
+        canManageRequests: hasPermission(Permission.MANAGE_REQUESTS),
+        hasAutoApprove,
+      }
+    );
+  const selectedDestinationCovered =
+    selectedDestinationAvailable ||
+    (selectedDestinationRequested && !selectedDestinationPromotable);
   const isAnime =
     data?.keywords.some((keyword) => keyword.id === ANIME_KEYWORD_ID) ?? false;
   const notAvailable = intl.formatMessage(messages.notAvailable);
@@ -621,7 +636,8 @@ const TvRequestModal = ({
     : intl.formatMessage(globalMessages.request);
   const requestDisabled = editRequest
     ? false
-    : requestableSelections.length === 0 ||
+    : selectedDestinationCovered ||
+      requestableSelections.length === 0 ||
       partialQuotaExceeded ||
       (!settings.currentSettings.partialRequestsEnabled && fullQuotaExceeded);
   const closeAction = tvdbId ? () => setSearchModal({ show: true }) : onCancel;

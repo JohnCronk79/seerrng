@@ -1,6 +1,6 @@
+import CollectionPage from '@app/pages/collections/[kind]/[id]';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
-import CollectionPage from './[kind]/[id]';
 
 const state = vi.hoisted(() => ({
   query: { kind: 'music', id: 'artist-id', view: 'discography' },

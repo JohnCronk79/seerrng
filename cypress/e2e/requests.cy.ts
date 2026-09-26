@@ -1,10 +1,10 @@
-describe('Request Status', () => {
+describe('Requests', () => {
   beforeEach(() => {
     cy.loginAsAdmin();
   });
 
   it('opens on all requests and lets users choose a history window', () => {
-    cy.visit('/requests/status');
+    cy.visit('/requests');
 
     cy.get('button[aria-label="Time Period"]')
       .should('be.visible')

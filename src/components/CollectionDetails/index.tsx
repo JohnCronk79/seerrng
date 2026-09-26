@@ -1,5 +1,6 @@
 import BlocklistModal from '@app/components/BlocklistModal';
 import CollectionAssociationsButton from '@app/components/CollectionDetails/CollectionAssociationsButton';
+import CollectionMetadataDisclosures from '@app/components/CollectionDetails/CollectionMetadataDisclosures';
 import CollectionPlayOnDeviceButton from '@app/components/CollectionDetails/CollectionPlayOnDeviceButton';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
@@ -488,6 +489,8 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
             <CollectionAssociationsButton parts={data.parts} />
             <FormatRequestControl options={requestOptions} />
           </div>
+
+          <CollectionMetadataDisclosures parts={data.parts} />
 
           <div className="media-detail-disclosure-row collection-detail-disclosure-row collection-selection-action-row">
             <Button

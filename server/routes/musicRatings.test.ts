@@ -36,15 +36,13 @@ const setup = () => {
     scale: 10,
     url: 'https://www.theaudiodb.com/album/2109828',
   });
-  return vi
-    .spyOn(Discogs.prototype, 'getAlbumRating')
-    .mockResolvedValue({
-      source: 'discogs',
-      score: 4.5,
-      votes: 15,
-      scale: 5,
-      url: 'https://www.discogs.com/release/249504',
-    });
+  return vi.spyOn(Discogs.prototype, 'getAlbumRating').mockResolvedValue({
+    source: 'discogs',
+    score: 4.5,
+    votes: 15,
+    scale: 5,
+    url: 'https://www.discogs.com/release/249504',
+  });
 };
 it('returns each provider separately and preserves the legacy primary rating', async () => {
   const discogs = setup();

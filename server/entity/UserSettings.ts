@@ -1,8 +1,8 @@
 import type {
   CardTextVisibility,
   NotificationAgentTypes,
-  UserPreferredLanguages,
   UserMediaFilterPins,
+  UserPreferredLanguages,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Notification, hasNotificationType } from '@server/lib/notifications';

@@ -38,12 +38,8 @@ const LibrarySearchFilters = ({
   const update = useBatchUpdateQueryParams({});
   const [search, debouncedSearch, setSearch] = useDebouncedState(filterQuery);
   const authorQuery = getQueryString(router.query.author);
-  const narratorQuery = getQueryString(router.query.narrator);
   const [author, debouncedAuthor, setAuthor] = useDebouncedState(authorQuery);
-  const [narrator, debouncedNarrator, setNarrator] =
-    useDebouncedState(narratorQuery);
   const routedAuthorRef = useRef(authorQuery.trim());
-  const routedNarratorRef = useRef(narratorQuery.trim());
   const routedSearchRef = useRef(filterQuery.trim());
 
   useEffect(() => {
@@ -84,36 +80,11 @@ const LibrarySearchFilters = ({
     }
   }, [debouncedAuthor, update]);
 
-  useEffect(() => {
-    const routedNarrator = narratorQuery.trim();
-    if (routedNarrator !== routedNarratorRef.current) {
-      routedNarratorRef.current = routedNarrator;
-      setNarrator(narratorQuery);
-    }
-  }, [narratorQuery, setNarrator]);
-
-  useEffect(() => {
-    const nextNarrator = debouncedNarrator.trim();
-    if (nextNarrator !== routedNarratorRef.current) {
-      routedNarratorRef.current = nextNarrator;
-      update(
-        { narrator: nextNarrator || undefined, page: undefined },
-        { shallow: true, scroll: false }
-      );
-    }
-  }, [debouncedNarrator, update]);
-
   useSearchActivityReporter(
     (category === 'book' || category === 'audiobook') &&
       Boolean(author.trim()) &&
       author.trim() !== authorQuery.trim(),
     'main-search-author-input'
-  );
-  useSearchActivityReporter(
-    category === 'audiobook' &&
-      Boolean(narrator.trim()) &&
-      narrator.trim() !== narratorQuery.trim(),
-    'main-search-narrator-input'
   );
   useSearchActivityReporter(
     Boolean(search.trim()) && search.trim() !== filterQuery.trim(),
@@ -176,16 +147,6 @@ const LibrarySearchFilters = ({
           routedAuthorRef.current = nextAuthor;
           update(
             { author: nextAuthor || undefined, page: undefined },
-            { shallow: true, scroll: false }
-          );
-        }}
-        narrator={narrator}
-        onNarratorChange={setNarrator}
-        onNarratorSubmit={() => {
-          const nextNarrator = narrator.trim();
-          routedNarratorRef.current = nextNarrator;
-          update(
-            { narrator: nextNarrator || undefined, page: undefined },
             { shallow: true, scroll: false }
           );
         }}

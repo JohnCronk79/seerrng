@@ -10,14 +10,26 @@ import {
 
 describe('themePalettes', () => {
   it('adds Blackout without changing the Seerr color scales or other chrome', () => {
-    assert.equal(themePalettes.find((p) => p.id === 'blackout')?.name, 'Blackout');
-    assert.deepEqual(themePalettes.slice(0, 3).map((p) => p.name), ['Seerr', 'SeerrNG', 'Blackout']);
+    assert.equal(
+      themePalettes.find((p) => p.id === 'blackout')?.name,
+      'Blackout'
+    );
+    assert.deepEqual(
+      themePalettes.slice(0, 3).map((p) => p.name),
+      ['Seerr', 'SeerrNG', 'Blackout']
+    );
     for (const mode of ['dark', 'light'] as const) {
       const original = getThemeTokens(mode, 'classic');
       const blackout = getThemeTokens(mode, 'blackout');
       for (const field of [
-        'primaryScale', 'secondaryScale', 'surfaceScale', 'pageBg',
-        'pageGlowStart', 'pageGlowEnd', 'sidebarBorder', 'sidebarHover',
+        'primaryScale',
+        'secondaryScale',
+        'surfaceScale',
+        'pageBg',
+        'pageGlowStart',
+        'pageGlowEnd',
+        'sidebarBorder',
+        'sidebarHover',
       ] as const) {
         assert.deepEqual(blackout[field], original[field], field);
       }
@@ -29,19 +41,21 @@ describe('themePalettes', () => {
 
   it('keeps overlay opacity at its shared owner and scopes black to Blackout', () => {
     const css = readFileSync('src/styles/globals.css', 'utf8');
-    const block = css.match(/\[data-theme-palette='blackout'\] \{([^}]+)\}/)?.[1];
+    const block = css.match(
+      /\[data-theme-palette='blackout'\] \{([^}]+)\}/
+    )?.[1];
     assert.ok(block);
     assert.doesNotMatch(block, /--color-|--theme-control-(text|border):/);
     for (const [token, value] of Object.entries({
-      'spotlight-center': '51 51 51',
-      'spotlight-edge': '38 38 38',
-      'gradient-light': '40 68 120',
-      'gradient-main': '26 50 96',
+      'gradient-light': '0 0 0',
+      'gradient-main': '40 68 120',
       'gradient-deep': '14 28 58',
       'gradient-black': '0 0 0',
     })) {
       assert.ok(block.includes(`--theme-page-${token}: ${value};`));
     }
+    assert.ok(block.includes('--theme-page-spotlight-strength: 0;'));
+    assert.ok(block.includes('--theme-page-gradient-main-stop: 50%;'));
     for (const token of ['light', 'main', 'deep', 'neutral', 'menu']) {
       assert.ok(block.includes(`--theme-overlay-${token}: 0 0 0;`));
     }
@@ -52,10 +66,18 @@ describe('themePalettes', () => {
       ['settings-main-card', '0.38'],
       ['app-searchbar-scrolled', '0.8'],
     ]) {
-      const rule = css.split(`.${selector} {`)[1]?.split('}')[0];
-      assert.ok(rule?.includes(`/ ${opacity})`), selector);
+      const rules = css
+        .split(`.${selector} {`)
+        .slice(1)
+        .map((rule) => rule.split('}')[0]);
+      assert.ok(
+        rules.some((rule) => rule.includes(`/ ${opacity})`)),
+        selector
+      );
     }
-    const sidebar = css.match(/\[data-theme-palette='blackout'\] \.sidebar \{([^}]+)\}/)?.[1];
+    const sidebar = css.match(
+      /\[data-theme-palette='blackout'\] \.sidebar \{([^}]+)\}/
+    )?.[1];
     assert.ok(sidebar);
     assert.ok(sidebar?.includes('radial-gradient('));
     assert.ok(sidebar?.includes('linear-gradient('));
@@ -63,8 +85,16 @@ describe('themePalettes', () => {
     assert.ok(sidebar?.includes('backdrop-filter: blur(5px)'));
     const seerrng = getThemeTokens('dark', 'seerr');
     for (const shade of [500, 600, 800]) {
-      assert.ok(sidebar.includes(`--color-indigo-${shade}: ${seerrng.primaryScale[shade / 100]};`));
-      assert.ok(sidebar.includes(`--color-purple-${shade}: ${seerrng.secondaryScale[shade / 100]};`));
+      assert.ok(
+        sidebar.includes(
+          `--color-indigo-${shade}: ${seerrng.primaryScale[shade / 100]};`
+        )
+      );
+      assert.ok(
+        sidebar.includes(
+          `--color-purple-${shade}: ${seerrng.secondaryScale[shade / 100]};`
+        )
+      );
     }
   });
 

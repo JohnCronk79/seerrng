@@ -10,7 +10,12 @@ test('shared summary titles compensate for font bearing without changing layout 
   assert.match(rule, /top: -2px;/);
   assert.doesNotMatch(rule, /margin|padding/);
   const titleRule = css.match(/\.movie-summary-title\s*\{([^}]+)\}/)?.[1];
-  for (const token of ['items-start', 'text-lg', 'font-semibold', 'leading-5']) {
+  for (const token of [
+    'items-start',
+    'text-lg',
+    'font-semibold',
+    'leading-5',
+  ]) {
     assert.ok(titleRule?.includes(token), `Missing title utility: ${token}`);
   }
 });

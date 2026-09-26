@@ -119,7 +119,6 @@ const matchesBookLanguage = (
 
 interface BookRequestModalProps {
   bookId: string;
-  bookLookupTitle?: string;
   initialBookFormat?: 'ebook' | 'audiobook' | 'both';
   onCancel?: () => void;
   onComplete?: (newStatus: MediaStatus) => void;
@@ -129,7 +128,6 @@ interface BookRequestModalProps {
 
 const BookRequestModal = ({
   bookId,
-  bookLookupTitle,
   initialBookFormat = 'ebook',
   onCancel,
   onComplete,
@@ -162,12 +160,8 @@ const BookRequestModal = ({
   const [requestedByPortal, setRequestedByPortal] =
     useState<HTMLDivElement | null>(null);
   const normalizedBookId = normalizeOpenLibraryWorkId(bookId);
-  const lookupQuery =
-    normalizedBookId.startsWith('bookshelf:') && bookLookupTitle
-      ? `?lookupTitle=${encodeURIComponent(bookLookupTitle)}`
-      : '';
   const { data, error } = useSWR<BookDetails>(
-    `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}${lookupQuery}`,
+    `/api/v1/book/${encodeApiPathSegment(normalizedBookId)}`,
     {
       revalidateOnMount: true,
     }

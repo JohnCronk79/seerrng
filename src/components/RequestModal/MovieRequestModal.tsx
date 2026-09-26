@@ -386,32 +386,41 @@ const MovieRequestModal = ({
         actionButtonSize="standard"
         dialogClass="request-modal-site-surface sm:max-w-5xl"
       >
-        <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-          {isOwner
-            ? intl.formatMessage(messages.pendingapproval)
-            : intl.formatMessage(messages.requestfrom, {
-                username: editRequest.requestedBy.displayName,
-              })}
-        </div>
-        {(hasPermission(Permission.REQUEST_ADVANCED) ||
-          hasPermission(Permission.MANAGE_REQUESTS)) && (
-          <AdvancedRequester
-            type="movie"
-            tmdbId={tmdbId}
-            is4k={is4k}
-            requestUser={editRequest.requestedBy}
-            requestId={editRequest.id}
-            defaultOverrides={{
-              folder: editRequest.rootFolder,
-              profile: editRequest.profileId,
-              server: editRequest.serverId,
-              tags: editRequest.tags,
-            }}
-            onChange={(overrides) => {
-              setRequestOverrides(overrides);
-            }}
-          />
-        )}
+        <RequestMediaCard
+          artwork={
+            data?.backdropPath
+              ? `https://image.tmdb.org/t/p/original${data.backdropPath}`
+              : undefined
+          }
+          artworkType="tmdb"
+        >
+          <div className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
+            {isOwner
+              ? intl.formatMessage(messages.pendingapproval)
+              : intl.formatMessage(messages.requestfrom, {
+                  username: editRequest.requestedBy.displayName,
+                })}
+          </div>
+          {(hasPermission(Permission.REQUEST_ADVANCED) ||
+            hasPermission(Permission.MANAGE_REQUESTS)) && (
+            <AdvancedRequester
+              type="movie"
+              tmdbId={tmdbId}
+              is4k={is4k}
+              requestUser={editRequest.requestedBy}
+              requestId={editRequest.id}
+              defaultOverrides={{
+                folder: editRequest.rootFolder,
+                profile: editRequest.profileId,
+                server: editRequest.serverId,
+                tags: editRequest.tags,
+              }}
+              onChange={(overrides) => {
+                setRequestOverrides(overrides);
+              }}
+            />
+          )}
+        </RequestMediaCard>
       </Modal>
     );
   }

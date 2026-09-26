@@ -9,6 +9,7 @@ const messages = defineMessages('components.MediaDetails.MediaQualitySelect', {
   unavailable: 'This quality is not available in your library.',
   select: 'Use {quality} for playback.',
   report: 'Report an issue with the {quality} version.',
+  request: 'Request the {quality} version.',
 });
 
 interface MediaQualitySelectProps<Quality extends string> {
@@ -17,7 +18,7 @@ interface MediaQualitySelectProps<Quality extends string> {
   onChange: (quality: Quality) => void;
   className?: string;
   label?: string;
-  purpose?: 'playback' | 'issue';
+  purpose?: 'playback' | 'issue' | 'request';
   autoSelectAvailable?: boolean;
 }
 
@@ -57,7 +58,11 @@ const MediaQualitySelect = <Quality extends string>({
         disabled: option.disabled,
         disabledReason: intl.formatMessage(messages.unavailable),
         description: intl.formatMessage(
-          purpose === 'issue' ? messages.report : messages.select,
+          purpose === 'issue'
+            ? messages.report
+            : purpose === 'request'
+              ? messages.request
+              : messages.select,
           {
             quality: option.label,
           }

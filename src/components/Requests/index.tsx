@@ -948,7 +948,8 @@ const RequestStatusCard = ({
   const [timelineHasOverflow, setTimelineHasOverflow] = useState(false);
   const detailsUrl = getDetailsUrl(item);
   const detailHref = getDetailHref(item);
-  const { data: details, error: detailsError } = useSWR<MediaDetails>(detailsUrl);
+  const { data: details, error: detailsError } =
+    useSWR<MediaDetails>(detailsUrl);
   const { data: detail, mutate: revalidateDetail } =
     useSWR<RequestStatusDetailResponse>(
       `/api/v1/request/status/${item.request.id}`,

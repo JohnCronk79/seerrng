@@ -45,8 +45,7 @@ describe('Sonarr deletion-check inventory', () => {
     );
     assert.deepEqual(await api.getSeries({ strict: true, tvdbId: 33 }), []);
     const options = get.mock.calls[0].arguments[1] as
-      | { params?: { tvdbId?: number } }
-      | undefined;
+      { params?: { tvdbId?: number } } | undefined;
     assert.equal(options?.params?.tvdbId, 33);
   });
 });

@@ -175,7 +175,7 @@ const AlbumTrackList = ({
                 className="refreshed-inset-surface rounded-lg border border-gray-700 p-2"
               >
                 <div
-                  className={`media-inset-table-heading request-divider-dark grid ${gridColumns} items-center gap-x-2 border-b px-1 pb-2`}
+                  className={`media-inset-table-heading media-scroll-grid-header request-divider-dark grid ${gridColumns} items-center gap-x-2 border-b px-1 pb-2`}
                 >
                   {columnIndex === 0 ? (
                     <SelectionCircle
