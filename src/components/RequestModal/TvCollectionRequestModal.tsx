@@ -28,6 +28,7 @@ import {
   getRequestableTvSelections,
   mergeEpisodeNumbersBySeason,
 } from '@app/utils/tvRequestSelection';
+import { Transition } from '@headlessui/react';
 import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
@@ -474,245 +475,249 @@ const TvCollectionRequestModal = ({
   };
 
   return (
-    <Modal
-      backgroundClickable
-      onCancel={onCancel}
-      onOk={sendRequest}
-      hideActions
-      alignTop
-      title={intl.formatMessage(
-        effectiveIs4k
-          ? messages.requestcollection4ktitle
-          : messages.requestcollectiontitle
-      )}
-      okText={intl.formatMessage(globalMessages.request)}
-      okDisabled={requestDisabled}
-      cancelButtonType="danger"
-      okButtonType="success"
-      actionButtonSize="standard"
-      dialogClass="app-card-main request-modal-site-surface sm:max-w-5xl"
-    >
-      <RequestMediaCard
-        artwork={
-          data?.backdropPath
-            ? 'https://image.tmdb.org/t/p/original' + data.backdropPath
-            : getTmdbPosterImageUrl(data?.posterPath, 'original')
-        }
-        artworkType="tmdb"
+    <Transition show appear>
+      <Modal
+        backgroundClickable
+        onCancel={onCancel}
+        onOk={sendRequest}
+        hideActions
+        alignTop
+        title={intl.formatMessage(
+          effectiveIs4k
+            ? messages.requestcollection4ktitle
+            : messages.requestcollectiontitle
+        )}
+        okText={intl.formatMessage(globalMessages.request)}
+        okDisabled={requestDisabled}
+        cancelButtonType="danger"
+        okButtonType="success"
+        actionButtonSize="standard"
+        dialogClass="app-card-main request-modal-site-surface sm:max-w-5xl"
       >
-        {((!data && !error) ||
-          (!details && !detailsError) ||
-          (!catalogs && !catalogsError) ||
-          (!quota && !quotaError)) && (
-          <p role="status">{intl.formatMessage(globalMessages.loading)}</p>
-        )}
-        {(error || catalogsError || quotaError) && (
-          <p role="alert">{intl.formatMessage(globalMessages.error)}</p>
-        )}
-        {data && (
-          <CollectionSummaryCard
-            collection={{
-              id: data.id,
-              name: data.name,
-              posterPath: data.posterPath,
-            }}
+        <RequestMediaCard
+          artwork={
+            data?.backdropPath
+              ? 'https://image.tmdb.org/t/p/original' + data.backdropPath
+              : getTmdbPosterImageUrl(data?.posterPath, 'original')
+          }
+          artworkType="tmdb"
+        >
+          {((!data && !error) ||
+            (!details && !detailsError) ||
+            (!catalogs && !catalogsError) ||
+            (!quota && !quotaError)) && (
+            <p role="status">{intl.formatMessage(globalMessages.loading)}</p>
+          )}
+          {(error || catalogsError || quotaError) && (
+            <p role="alert">{intl.formatMessage(globalMessages.error)}</p>
+          )}
+          {data && (
+            <CollectionSummaryCard
+              collection={{
+                id: data.id,
+                name: data.name,
+                posterPath: data.posterPath,
+              }}
+              kind="tv"
+              selectionSize={{
+                selected: selectedRequestableParts.length,
+                visible: visibleParts.length,
+              }}
+            />
+          )}
+          {(quota?.tv.limit ?? 0) > 0 && (
+            <QuotaDisplay
+              mediaType="tv"
+              quota={quota?.tv}
+              userOverride={
+                requestOverrides?.user && requestOverrides.user.id !== user?.id
+                  ? requestOverrides.user.id
+                  : undefined
+              }
+              remaining={remaining}
+            />
+          )}
+          {detailsError && (
+            <p role="alert">
+              {intl.formatMessage(messages.detailsUnavailable)}
+            </p>
+          )}
+          <VideoCollectionRequestFilters
             kind="tv"
-            selectionSize={{
-              selected: selectedRequestableParts.length,
-              visible: visibleParts.length,
-            }}
+            filters={filters}
+            onChange={setFilters}
           />
-        )}
-        {(quota?.tv.limit ?? 0) > 0 && (
-          <QuotaDisplay
-            mediaType="tv"
-            quota={quota?.tv}
-            userOverride={
-              requestOverrides?.user && requestOverrides.user.id !== user?.id
-                ? requestOverrides.user.id
-                : undefined
-            }
-            remaining={remaining}
-          />
-        )}
-        {detailsError && (
-          <p role="alert">{intl.formatMessage(messages.detailsUnavailable)}</p>
-        )}
-        <VideoCollectionRequestFilters
-          kind="tv"
-          filters={filters}
-          onChange={setFilters}
-        />
-        <div className="card-spacing-before card:grid-cols-2 grid grid-cols-1 items-start gap-2">
-          {columns.map((columnParts, columnIndex) => (
-            <section
-              key={'collection-column-' + columnIndex}
-              className="app-card-inset refreshed-inset-surface overflow-hidden rounded-lg border border-gray-700 p-2"
-            >
-              <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 border-b px-2 pb-2">
-                {columnIndex === 0 ? (
-                  <SelectionCircle
-                    disabled={requestableParts.length === 0 || !canSelectAll}
-                    onClick={toggleAllParts}
-                    selected={allSelected}
-                    label={intl.formatMessage(messages.selectAll)}
-                  />
-                ) : (
-                  <span aria-hidden="true" />
-                )}
-                <span className="media-inset-poster-column-heading text-left">
-                  {intl.formatMessage(globalMessages.tvshow)}
-                </span>
-              </div>
-              <div className="scrollable-card -mr-3 max-h-[228px] space-y-0.5 overflow-y-auto pt-1 pr-3">
-                {columnParts.map((part) => {
-                  const selected =
-                    selectedParts.includes(part.id) && canRequestPart(part);
-                  const selectionDisabled =
-                    !canRequestPart(part) ||
-                    (quotaLimit &&
-                      !selected &&
-                      selectionsFor(part.id).length > remaining);
-                  const hdStatus = part.mediaInfo?.status;
-                  const ultraHdStatus = part.mediaInfo?.status4k;
-                  return (
-                    <div
-                      key={'part-' + part.id}
-                      className="app-card-inset refreshed-inset-surface grid min-h-[54px] grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 rounded-lg border border-gray-700 px-2"
-                    >
-                      <SelectionCircle
-                        disabled={selectionDisabled}
-                        onClick={() => togglePart(part)}
-                        selected={selected}
-                        label={intl.formatMessage(messages.selection)}
-                      />
-                      <div className="relative h-[46px] w-[35px] justify-self-center overflow-hidden rounded-md ring-1 ring-gray-700">
-                        <CachedImage
-                          type="tmdb"
-                          src={
-                            part.posterPath
-                              ? getTmdbPosterImageUrl(part.posterPath)
-                              : '/images/seerr_poster_not_found.png'
-                          }
-                          alt=""
-                          fill
-                          sizes="35px"
-                          className="object-cover"
+          <div className="card-spacing-before card:grid-cols-2 grid grid-cols-1 items-start gap-2">
+            {columns.map((columnParts, columnIndex) => (
+              <section
+                key={'collection-column-' + columnIndex}
+                className="app-card-inset refreshed-inset-surface overflow-hidden rounded-lg border border-gray-700 p-2"
+              >
+                <div className="media-inset-table-heading request-divider-dark grid grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 border-b px-2 pb-2">
+                  {columnIndex === 0 ? (
+                    <SelectionCircle
+                      disabled={requestableParts.length === 0 || !canSelectAll}
+                      onClick={toggleAllParts}
+                      selected={allSelected}
+                      label={intl.formatMessage(messages.selectAll)}
+                    />
+                  ) : (
+                    <span aria-hidden="true" />
+                  )}
+                  <span className="media-inset-poster-column-heading text-left">
+                    {intl.formatMessage(globalMessages.tvshow)}
+                  </span>
+                </div>
+                <div className="scrollable-card -mr-3 max-h-[228px] space-y-0.5 overflow-y-auto pt-1 pr-3">
+                  {columnParts.map((part) => {
+                    const selected =
+                      selectedParts.includes(part.id) && canRequestPart(part);
+                    const selectionDisabled =
+                      !canRequestPart(part) ||
+                      (quotaLimit &&
+                        !selected &&
+                        selectionsFor(part.id).length > remaining);
+                    const hdStatus = part.mediaInfo?.status;
+                    const ultraHdStatus = part.mediaInfo?.status4k;
+                    return (
+                      <div
+                        key={'part-' + part.id}
+                        className="app-card-inset refreshed-inset-surface grid min-h-[54px] grid-cols-[2rem_40px_minmax(0,1fr)] items-center gap-x-2 rounded-lg border border-gray-700 px-2"
+                      >
+                        <SelectionCircle
+                          disabled={selectionDisabled}
+                          onClick={() => togglePart(part)}
+                          selected={selected}
+                          label={intl.formatMessage(messages.selection)}
                         />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm leading-5 font-semibold text-gray-100">
-                          {part.title}
+                        <div className="relative h-[46px] w-[35px] justify-self-center overflow-hidden rounded-md ring-1 ring-gray-700">
+                          <CachedImage
+                            type="tmdb"
+                            src={
+                              part.posterPath
+                                ? getTmdbPosterImageUrl(part.posterPath)
+                                : '/images/seerr_poster_not_found.png'
+                            }
+                            alt=""
+                            fill
+                            sizes="35px"
+                            className="object-cover"
+                          />
                         </div>
-                        <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-1 text-xs leading-4">
-                          <dt className="font-medium text-gray-100">
-                            {intl.formatMessage(messages.hd)}:
-                          </dt>
-                          <dd className="m-0 truncate font-medium">
-                            <AvailabilityValue status={hdStatus}>
-                              {intl.formatMessage(
-                                getAvailabilityMessage(hdStatus)
-                              )}
-                            </AvailabilityValue>
-                          </dd>
-                          <dt className="font-medium text-gray-100">
-                            {intl.formatMessage(messages.ultraHd)}:
-                          </dt>
-                          <dd className="m-0 truncate font-medium">
-                            <AvailabilityValue status={ultraHdStatus}>
-                              {intl.formatMessage(
-                                getAvailabilityMessage(ultraHdStatus)
-                              )}
-                            </AvailabilityValue>
-                          </dd>
-                        </dl>
-                        {!details?.[part.id]?.externalIds.tvdbId &&
-                          details?.[part.id] && (
-                            <div className="text-xs text-amber-300">
-                              {intl.formatMessage(messages.missingTvdb)}
-                            </div>
-                          )}
+                        <div className="min-w-0">
+                          <div className="truncate text-sm leading-5 font-semibold text-gray-100">
+                            {part.title}
+                          </div>
+                          <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] gap-x-1 text-xs leading-4">
+                            <dt className="font-medium text-gray-100">
+                              {intl.formatMessage(messages.hd)}:
+                            </dt>
+                            <dd className="m-0 truncate font-medium">
+                              <AvailabilityValue status={hdStatus}>
+                                {intl.formatMessage(
+                                  getAvailabilityMessage(hdStatus)
+                                )}
+                              </AvailabilityValue>
+                            </dd>
+                            <dt className="font-medium text-gray-100">
+                              {intl.formatMessage(messages.ultraHd)}:
+                            </dt>
+                            <dd className="m-0 truncate font-medium">
+                              <AvailabilityValue status={ultraHdStatus}>
+                                {intl.formatMessage(
+                                  getAvailabilityMessage(ultraHdStatus)
+                                )}
+                              </AvailabilityValue>
+                            </dd>
+                          </dl>
+                          {!details?.[part.id]?.externalIds.tvdbId &&
+                            details?.[part.id] && (
+                              <div className="text-xs text-amber-300">
+                                {intl.formatMessage(messages.missingTvdb)}
+                              </div>
+                            )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-        <div className="mt-2 flex items-center">
-          <MediaQualitySelect
-            value={effectiveIs4k ? '4k' : 'hd'}
-            options={[
-              { label: 'HD', value: 'hd' },
-              { label: '4K', value: '4k' },
-            ]}
-            onChange={(quality) => {
-              setSelectedIs4k(quality === '4k');
-              setRequestOverrides(undefined);
-              setQualityRevision((current) => current + 1);
-            }}
-            label={intl.formatMessage(messages.quality)}
-            autoSelectAvailable={false}
-            purpose="request"
-          />
-        </div>
-
-        {canUseAdvancedOptions && (
-          <AdvancedRequester
-            key={(selectedIs4k ? '4k' : 'hd') + '-' + qualityRevision}
-            type="tv"
-            is4k={selectedIs4k}
-            quota={quota}
-            expanded={advancedOptionsOpen}
-            panelOnly
-            rootFolderTable
-            allow4kServerSelection
-            requestedByPortal={requestedByPortal}
-            onChange={setRequestOverrides}
-          />
-        )}
-        <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
-          <div className="mr-auto flex items-center gap-2">
-            {canUseAdvancedOptions && (
-              <AdvancedOptionsDisclosureButton
-                label={intl.formatMessage(messages.advancedOptions)}
-                open={advancedOptionsOpen}
-                pinned={advancedOptionsPinned}
-                onToggle={toggleAdvancedOptions}
-                onPin={toggleAdvancedOptionsPin}
-              />
-            )}
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
-          <div
-            className="compact-control flex items-center"
-            ref={setRequestedByPortal}
-          />
-          <Button
-            type="button"
-            onClick={onCancel}
-            data-testid="modal-cancel-button"
-            buttonType="danger"
-            buttonSize="standard"
-          >
-            <XMarkIcon aria-hidden="true" />
-            {intl.formatMessage(globalMessages.cancel)}
-          </Button>
-          <Button
-            type="button"
-            disabled={requestDisabled}
-            disabledReason={requestDisabledReason}
-            onClick={() => void sendRequest()}
-            data-testid="modal-ok-button"
-            buttonType="success"
-            buttonSize="standard"
-          >
-            <ArrowDownTrayIcon aria-hidden="true" />
-            {intl.formatMessage(globalMessages.request)}
-          </Button>
-        </div>
-      </RequestMediaCard>
-    </Modal>
+          <div className="mt-2 flex items-center">
+            <MediaQualitySelect
+              value={effectiveIs4k ? '4k' : 'hd'}
+              options={[
+                { label: 'HD', value: 'hd' },
+                { label: '4K', value: '4k' },
+              ]}
+              onChange={(quality) => {
+                setSelectedIs4k(quality === '4k');
+                setRequestOverrides(undefined);
+                setQualityRevision((current) => current + 1);
+              }}
+              label={intl.formatMessage(messages.quality)}
+              autoSelectAvailable={false}
+              purpose="request"
+            />
+          </div>
+
+          {canUseAdvancedOptions && (
+            <AdvancedRequester
+              key={(selectedIs4k ? '4k' : 'hd') + '-' + qualityRevision}
+              type="tv"
+              is4k={selectedIs4k}
+              quota={quota}
+              expanded={advancedOptionsOpen}
+              panelOnly
+              rootFolderTable
+              allow4kServerSelection
+              requestedByPortal={requestedByPortal}
+              onChange={setRequestOverrides}
+            />
+          )}
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+            <div className="mr-auto flex items-center gap-2">
+              {canUseAdvancedOptions && (
+                <AdvancedOptionsDisclosureButton
+                  label={intl.formatMessage(messages.advancedOptions)}
+                  open={advancedOptionsOpen}
+                  pinned={advancedOptionsPinned}
+                  onToggle={toggleAdvancedOptions}
+                  onPin={toggleAdvancedOptionsPin}
+                />
+              )}
+            </div>
+            <div
+              className="compact-control flex items-center"
+              ref={setRequestedByPortal}
+            />
+            <Button
+              type="button"
+              onClick={onCancel}
+              data-testid="modal-cancel-button"
+              buttonType="danger"
+              buttonSize="standard"
+            >
+              <XMarkIcon aria-hidden="true" />
+              {intl.formatMessage(globalMessages.cancel)}
+            </Button>
+            <Button
+              type="button"
+              disabled={requestDisabled}
+              disabledReason={requestDisabledReason}
+              onClick={() => void sendRequest()}
+              data-testid="modal-ok-button"
+              buttonType="success"
+              buttonSize="standard"
+            >
+              <ArrowDownTrayIcon aria-hidden="true" />
+              {intl.formatMessage(globalMessages.request)}
+            </Button>
+          </div>
+        </RequestMediaCard>
+      </Modal>
+    </Transition>
   );
 };
 
