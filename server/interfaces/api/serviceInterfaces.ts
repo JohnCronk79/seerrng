@@ -19,6 +19,7 @@ export interface ServiceCommonServer {
   activeAnimeTags?: number[];
   serviceType?: 'ebook' | 'audiobook';
   provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
 }
@@ -30,4 +31,14 @@ export interface ServiceCommonServerWithDetails {
   rootFolders: Partial<RootFolder>[];
   languageProfiles?: LanguageProfile[];
   tags: Tag[];
+}
+
+// Comics don't share Servarr's quality-profile/root-folder concept, so this
+// is deliberately a much smaller shape than ServiceCommonServer rather than
+// a forced fit into it.
+export interface ComicServiceOption {
+  id: number;
+  name: string;
+  isDefault: boolean;
+  backendType: 'mylar' | 'kapowarr';
 }

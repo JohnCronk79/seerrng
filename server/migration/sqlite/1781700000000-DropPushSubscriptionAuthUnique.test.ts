@@ -5,7 +5,7 @@ import { DropPushSubscriptionAuthUnique1781700000000 } from './1781700000000-Dro
 
 test('SQLite push subscription migration scopes uniqueness to endpoint and user', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

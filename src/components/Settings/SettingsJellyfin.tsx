@@ -3,6 +3,9 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import LibraryItem from '@app/components/Settings/LibraryItem';
+import Field, {
+  default as SettingsField,
+} from '@app/components/Settings/SettingsField';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
@@ -11,9 +14,13 @@ import { isValidURL } from '@app/utils/urlValidationHelper';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
+import {
+  createSettingsLibraryUpdateBody,
+  getSettingsLibraryApiPath,
+} from '@server/constants/settingsLibraryApi';
 import type { JellyfinSettings } from '@server/lib/settings';
 import axios from 'axios';
-import { Field, Formik } from 'formik';
+import { Formik } from 'formik';
 import { useState } from 'react';
 import { FormattedMessage, useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -24,7 +31,6 @@ const messages = defineMessages('components.Settings', {
   jellyfinsettingsDescription:
     'Configure the settings for your {mediaServerName} server. {mediaServerName} scans your {mediaServerName} libraries to see what content is available.',
   timeout: 'Timeout',
-  save: 'Save Changes',
   saving: 'Saving…',
   jellyfinlibraries: '{mediaServerName} Libraries',
   jellyfinlibrariesDescription:
@@ -47,6 +53,9 @@ const messages = defineMessages('components.Settings', {
     'Custom authentication with Automatic Library Grouping not supported',
   jellyfinSyncFailedGenericError:
     'Something went wrong while syncing libraries',
+  jellyfinSyncFailedConnectionError:
+    'Unable to reach the {mediaServerName} server. Check that it is running and reachable from Seerr.',
+  jellyfinLibraryUpdateFailure: 'Failed to update {mediaServerName} libraries.',
   invalidurlerror: 'Unable to connect to {mediaServerName} server.',
   syncing: 'Syncing',
   syncJellyfin: 'Sync Libraries',
@@ -73,6 +82,7 @@ interface Library {
   id: string;
   name: string;
   enabled: boolean;
+  type: 'show' | 'movie' | 'music' | 'book';
 }
 
 interface SyncStatus {
@@ -89,8 +99,8 @@ interface SettingsJellyfinProps {
 }
 
 const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
-  onComplete,
   isSetupSettings,
+  onComplete,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const {
@@ -101,7 +111,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const { data: dataSync, mutate: revalidateSync } = useSWR<SyncStatus>(
     '/api/v1/settings/jellyfin/sync',
     {
-      refreshInterval: 1000,
+      refreshInterval: (latestData) => (latestData?.running ? 1000 : 10000),
     }
   );
   const intl = useIntl();
@@ -161,16 +171,14 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   const syncLibraries = async () => {
     setIsSyncing(true);
 
-    const params: { sync: boolean; enable?: string } = {
-      sync: true,
-    };
-
-    if (activeLibraries.length > 0) {
-      params.enable = activeLibraries.join(',');
-    }
-
     try {
-      await axios.post('/api/v1/settings/jellyfin/library', params);
+      await axios.post(
+        getSettingsLibraryApiPath('jellyfin'),
+        createSettingsLibraryUpdateBody({
+          sync: true,
+          enabledLibraryIds: activeLibraries,
+        })
+      );
       setIsSyncing(false);
       revalidate();
     } catch (e) {
@@ -182,6 +190,19 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           {
             autoDismiss: true,
             appearance: 'warning',
+          }
+        );
+      } else if (e?.response?.data?.message === 'CONNECTION_ERROR') {
+        addToast(
+          intl.formatMessage(messages.jellyfinSyncFailedConnectionError, {
+            mediaServerName:
+              settings.currentSettings.mediaServerType === MediaServerType.EMBY
+                ? 'Emby'
+                : 'Jellyfin',
+          }),
+          {
+            autoDismiss: true,
+            appearance: 'error',
           }
         );
       } else if (e?.response?.data?.message === 'SYNC_ERROR_NO_LIBRARIES') {
@@ -219,26 +240,35 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
 
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
-    if (activeLibraries.includes(libraryId)) {
-      const params: { enable?: string } = {};
+    try {
+      const enabledLibraryIds = activeLibraries.includes(libraryId)
+        ? activeLibraries.filter((id) => id !== libraryId)
+        : [...activeLibraries, libraryId];
 
-      if (activeLibraries.length > 1) {
-        params.enable = activeLibraries
-          .filter((id) => id !== libraryId)
-          .join(',');
+      await axios.post(
+        getSettingsLibraryApiPath('jellyfin'),
+        createSettingsLibraryUpdateBody({ enabledLibraryIds })
+      );
+      if (onComplete) {
+        onComplete();
       }
-
-      await axios.post('/api/v1/settings/jellyfin/library', params);
-    } else {
-      await axios.post('/api/v1/settings/jellyfin/library', {
-        enable: [...activeLibraries, libraryId].join(','),
-      });
+      revalidate();
+    } catch {
+      addToast(
+        intl.formatMessage(messages.jellyfinLibraryUpdateFailure, {
+          mediaServerName:
+            settings.currentSettings.mediaServerType === MediaServerType.EMBY
+              ? 'Emby'
+              : 'Jellyfin',
+        }),
+        {
+          autoDismiss: true,
+          appearance: 'error',
+        }
+      );
+    } finally {
+      setIsSyncing(false);
     }
-    if (onComplete) {
-      onComplete();
-    }
-    setIsSyncing(false);
-    revalidate();
   };
 
   if (!data && !error) {
@@ -270,7 +300,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           )}
         </p>
       </div>
-      <div className="section">
+      <div className="app-card-sub section">
         <Button onClick={() => syncLibraries()} disabled={isSyncing}>
           <svg
             className={`${isSyncing ? 'animate-spin' : ''} mr-1 h-5 w-5`}
@@ -292,6 +322,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           {data?.libraries.map((library) => (
             <LibraryItem
               name={library.name}
+              type={library.type}
               isEnabled={library.enabled}
               key={`setting-library-${library.id}`}
               onToggle={() => toggleLibrary(library.id)}
@@ -299,7 +330,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           ))}
         </ul>
       </div>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           <FormattedMessage {...messages.manualscanJellyfin} />
         </h3>
@@ -310,7 +341,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           )}
         </p>
       </div>
-      <div className="section">
+      <div className="app-card-sub section">
         <div className="rounded-md bg-gray-800 p-4">
           <div className="relative mb-6 h-8 w-full overflow-hidden rounded-full bg-gray-600">
             {dataSync?.running && (
@@ -335,7 +366,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
             {dataSync?.running && (
               <>
                 {dataSync.currentLibrary && (
-                  <div className="mb-2 mr-0 flex items-center sm:mb-0 sm:mr-2">
+                  <div className="mr-0 mb-2 flex items-center sm:mr-2 sm:mb-0">
                     <Badge>
                       <FormattedMessage
                         {...messages.currentlibrary}
@@ -385,21 +416,11 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
               )}
 
               {dataSync?.running && (
-                <Button buttonType="danger" onClick={() => cancelScan()}>
-                  <svg
-                    className="mr-1 h-5 w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
+                <Button
+                  buttonType="danger"
+                  buttonIcon="cancel"
+                  onClick={() => cancelScan()}
+                >
                   <FormattedMessage {...messages.cancelscan} />
                 </Button>
               )}
@@ -415,7 +436,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           {intl.formatMessage(messages.scanbackground)}
         </div>
       )}
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(
             messages.jellyfinSettings,
@@ -501,7 +522,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           isValid,
         }) => {
           return (
-            <form className="section" onSubmit={handleSubmit}>
+            <form className="app-card-sub section" onSubmit={handleSubmit}>
               {!isSetupSettings && (
                 <>
                   <div className="form-row">
@@ -535,7 +556,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
                       <span className="label-required">*</span>
                     </label>
                     <div className="form-input-area">
-                      <Field
+                      <SettingsField
                         type="text"
                         inputMode="numeric"
                         id="port"

@@ -37,3 +37,9 @@ export const getMetadataProvider = async (
     return new TheMovieDb();
   }
 };
+
+export const isTheMovieDbProvider = (
+  provider: TvShowProvider
+): provider is TheMovieDb =>
+  provider instanceof TheMovieDb ||
+  provider.constructor?.name === TheMovieDb.name;

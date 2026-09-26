@@ -102,6 +102,14 @@ export const isValidExternalMediaId = (
     );
   }
 
+  if (mediaType === MediaType.COMIC) {
+    return (
+      (provider === undefined ||
+        provider === MediaIdentifierProvider.COMICVINE) &&
+      /^\d+$/.test(id.trim())
+    );
+  }
+
   if (mediaType !== MediaType.BOOK) {
     return false;
   }

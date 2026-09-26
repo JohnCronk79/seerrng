@@ -3,48 +3,38 @@ import CardTextVisibilityToggle from '@app/components/Common/CardTextVisibilityT
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
+import BookFormatTabs, {
+  type BookDiscoveryFormat,
+} from '@app/components/Discover/BookFormatTabs';
 import {
-  CompactRatingSelect,
-  CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
-  type CompactSelectOption,
-  type RatingOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
-import {
-  BOOK_GENRES,
-  BOOK_LANGUAGES,
-  bookSortOptions,
-} from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import LibraryFilterFields from '@app/components/Discover/FilterPanel/LibraryFilterFields';
+import { bookSortOptions } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useDebouncedState from '@app/hooks/useDebouncedState';
 import useDiscover from '@app/hooks/useDiscover';
 import useDiscoverScrollRestoration from '@app/hooks/useDiscoverScrollRestoration';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import defineMessages from '@app/utils/defineMessages';
-import {
-  BarsArrowDownIcon,
-  BarsArrowUpIcon,
-  MagnifyingGlassIcon,
-} from '@heroicons/react/24/solid';
+import { parseQueryFromPath } from '@app/utils/routeQuery';
+import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { BookResult } from '@server/models/Book';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Discover.DiscoverBooks', {
   books: 'Books',
+  audiobooks: 'Audiobooks',
+  mediaFilters: 'Media Filters',
   filters: 'Filters',
   sortBy: 'Sort By',
-  search: 'Keyword Search',
-  searchBooks: 'Search Books',
   clearFilters: 'Clear Filters',
-  genres: 'Genres',
-  firstPublished: 'First Published',
-  language: 'Language',
-  ratingFilter: 'Rating',
-  any: 'Any',
   recommended: 'Recommended',
+  trending: 'Trending',
   rating: 'Rating',
   editions: 'Most Editions',
   date: 'First Published',
@@ -54,54 +44,111 @@ const messages = defineMessages('components.Discover.DiscoverBooks', {
   retry: 'Try Again',
   retrying: 'Trying Again…',
 });
-const DiscoverBooks = () => {
+
+interface DiscoverBooksProps {
+  format?: BookDiscoveryFormat;
+  titleOverride?: string;
+  mediaFilters?: ReactNode;
+  showFormatTabs?: boolean;
+  defaultSortBy?: 'ranked' | 'trending';
+}
+
+const DiscoverBooks = ({
+  format = 'ebook',
+  titleOverride,
+  mediaFilters,
+  showFormatTabs = true,
+  defaultSortBy = 'ranked',
+}: DiscoverBooksProps) => {
   const intl = useIntl();
   const router = useRouter();
-  const update = useBatchUpdateQueryParams({});
-  const query =
-    typeof router.query.query === 'string' ? router.query.query : '';
+  const [currentPath, setCurrentPath] = useState<string>();
+  useEffect(() => {
+    const syncCurrentPath = () => {
+      setCurrentPath(`${window.location.pathname}${window.location.search}`);
+    };
+
+    syncCurrentPath();
+    router.events.on('routeChangeComplete', syncCurrentPath);
+
+    return () => {
+      router.events.off('routeChangeComplete', syncCurrentPath);
+    };
+  }, [router.events]);
+  const routeQuery = currentPath
+    ? parseQueryFromPath(currentPath)
+    : router.query;
+  const isRouteReady = currentPath !== undefined;
+  const update = useBatchUpdateQueryParams(routeQuery);
+  const query = typeof routeQuery.search === 'string' ? routeQuery.search : '';
+  const authorQuery =
+    typeof routeQuery.author === 'string' ? routeQuery.author : '';
+  const [author, debouncedAuthor, setAuthor] = useDebouncedState(authorQuery);
+  const routedAuthorRef = useRef(authorQuery.trim());
+  useEffect(() => {
+    const routedAuthor = authorQuery.trim();
+    if (routedAuthor !== routedAuthorRef.current) {
+      routedAuthorRef.current = routedAuthor;
+      setAuthor(authorQuery);
+    }
+  }, [authorQuery, setAuthor]);
+  const routedFormat =
+    routeQuery.format === 'all' ||
+    routeQuery.format === 'ebook' ||
+    routeQuery.format === 'audiobook'
+      ? routeQuery.format
+      : undefined;
+  const activeFormat = routedFormat ?? format;
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
-    routedSearchRef.current = query.trim();
-    setSearch(query);
+    const routedSearch = query.trim();
+    if (routedSearch !== routedSearchRef.current) {
+      routedSearchRef.current = routedSearch;
+      setSearch(query);
+    }
   }, [query, setSearch]);
   const subject =
-    typeof router.query.subject === 'string' ? router.query.subject : '';
+    typeof routeQuery.subject === 'string' ? routeQuery.subject : '';
   const firstPublishYear =
-    typeof router.query.firstPublishYear === 'string'
-      ? router.query.firstPublishYear
+    typeof routeQuery.firstPublishYear === 'string'
+      ? routeQuery.firstPublishYear
       : '';
   const language =
-    typeof router.query.language === 'string' ? router.query.language : '';
+    typeof routeQuery.language === 'string' ? routeQuery.language : '';
   const minRating =
-    typeof router.query.minRating === 'string' ? router.query.minRating : '';
+    typeof routeQuery.minRating === 'string' ? routeQuery.minRating : '';
   const sortBy =
-    typeof router.query.sortBy === 'string' &&
-    bookSortOptions.has(router.query.sortBy)
-      ? router.query.sortBy
-      : 'ranked';
+    typeof routeQuery.sortBy === 'string' &&
+    bookSortOptions.has(routeQuery.sortBy)
+      ? routeQuery.sortBy
+      : defaultSortBy;
   const discover = useDiscover<BookResult>(
     '/api/v1/discover/books',
     {
       query,
+      author: authorQuery,
       subject,
       firstPublishYear,
       language,
       minRating,
       sortBy,
+      format: activeFormat === 'all' ? undefined : activeFormat,
       // One-time response contract bump prevents browsers from substituting
       // the old stale-on-error empty response after this behavior changed.
       responseVersion: 2,
     },
     {
-      randomizeOrder: sortBy === 'ranked',
+      enabled: isRouteReady,
+      randomizeOrder:
+        sortBy === 'ranked' || sortBy === 'ranked.asc' || sortBy === 'random',
       showErrorToast: false,
       hideErrorWithResults: false,
     }
   );
   useSearchActivityReporter(
     Boolean(search.trim()) &&
+      isRouteReady &&
       (search.trim() !== query.trim() ||
         discover.isLoadingInitialData ||
         discover.isValidating),
@@ -111,7 +158,8 @@ const DiscoverBooks = () => {
     mediaType: 'book',
     itemCount: discover.titles.length,
     shuffleSeed: discover.shuffleSeed,
-    isLoading: discover.isLoadingInitialData || discover.isLoadingMore,
+    isLoading:
+      !isRouteReady || discover.isLoadingInitialData || discover.isLoadingMore,
     isReachingEnd: discover.isReachingEnd,
     fetchMore: discover.fetchMore,
   });
@@ -121,40 +169,46 @@ const DiscoverBooks = () => {
     const nextSearch = debouncedSearch.trim();
 
     if (nextSearch !== routedSearchRef.current) {
-      update({ query: nextSearch || undefined, page: undefined });
+      routedSearchRef.current = nextSearch;
+      update(
+        { search: nextSearch || undefined, page: undefined },
+        { shallow: true, scroll: false }
+      );
     }
   }, [debouncedSearch, update]);
-  const title = intl.formatMessage(messages.books);
-  const currentYear = new Date().getFullYear();
-  const yearOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...Array.from({ length: currentYear - 1969 }, (_, index) => {
-      const year = currentYear - index;
-      return { label: year.toString(), value: year.toString() };
-    }),
-    { label: '<1970', value: 'before-1970' },
-  ];
-  const genreOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...BOOK_GENRES.map(([value, label]) => ({ value, label })),
-  ];
-  const languageOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...BOOK_LANGUAGES.map(([value, label]) => ({ value, label })),
-  ];
-  const ratingOptions: RatingOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    ...Array.from({ length: 9 }, (_, index) => {
-      const score = 1 + index * 0.5;
-      return {
-        label: `${score.toFixed(1)}+`,
-        value: score.toFixed(1),
-        score,
-      };
-    }),
-  ];
+  useEffect(() => {
+    const nextAuthor = debouncedAuthor.trim();
+    if (nextAuthor !== routedAuthorRef.current) {
+      routedAuthorRef.current = nextAuthor;
+      update(
+        { author: nextAuthor || undefined, page: undefined },
+        { shallow: true, scroll: false }
+      );
+    }
+  }, [debouncedAuthor, update]);
+  useSearchActivityReporter(
+    Boolean(author.trim()) &&
+      isRouteReady &&
+      (author.trim() !== authorQuery.trim() ||
+        discover.isLoadingInitialData ||
+        discover.isValidating),
+    'books-author'
+  );
+  const title =
+    titleOverride ??
+    intl.formatMessage(
+      router.pathname === '/discover/audiobooks'
+        ? messages.audiobooks
+        : messages.books
+    );
   const hasActiveFilters = Boolean(
-    query || subject || firstPublishYear || language || minRating
+    query ||
+    authorQuery ||
+    subject ||
+    firstPublishYear ||
+    language ||
+    minRating ||
+    sortBy !== defaultSortBy
   );
   const providerMessage = (
     discover.error as { response?: { data?: { message?: string } } } | undefined
@@ -164,147 +218,171 @@ const DiscoverBooks = () => {
       <PageTitle title={title} />
       <div className="mb-4">
         <Header>{title}</Header>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
-          {intl.formatMessage(messages.filters)}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <CardTextVisibilityToggle mediaType="book" className="order-2" />
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
-            className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
-            onClick={() => {
-              setSearch('');
-              setParam({
-                query: undefined,
-                subject: undefined,
-                firstPublishYear: undefined,
-                language: undefined,
-                minRating: undefined,
-              });
-            }}
+        {mediaFilters}
+        {showFormatTabs && (
+          <PinnedFilterSection
+            mediaType="book"
+            section="mediaFilters"
+            label={intl.formatMessage(messages.mediaFilters)}
           >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
-          <form
-            className="order-3 inline-flex h-8 w-72 max-w-full flex-none overflow-hidden rounded-md border border-gray-600 bg-gray-900/70"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setParam({ query: search.trim() || undefined });
-            }}
-          >
-            <span
-              className={`inline-flex flex-shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-l-[5px] border-r border-gray-600 px-1.5 text-xs font-semibold text-indigo-100 transition-colors ${
-                search.trim() ? 'bg-indigo-500/35 text-white' : ''
-              }`}
-            >
-              <MagnifyingGlassIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              {intl.formatMessage(messages.search)}
-            </span>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={intl.formatMessage(messages.searchBooks)}
-              aria-label={intl.formatMessage(messages.searchBooks)}
-              className="min-w-0 flex-1 border-0 bg-gray-900/70 px-2 py-1 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-2 focus:ring-inset focus:ring-indigo-400"
+            <BookFormatTabs
+              format={activeFormat}
+              query={routeQuery}
+              currentPath={currentPath}
             />
-          </form>
-          <CompactSelect
-            className="order-5"
-            label={intl.formatMessage(messages.genres)}
-            value={subject}
-            options={genreOptions}
-            onChange={(value) => setParam({ subject: value || undefined })}
-          />
-          <CompactSelect
-            className="order-4"
-            label={intl.formatMessage(messages.firstPublished)}
-            value={firstPublishYear}
-            options={yearOptions}
-            onChange={(value) =>
-              setParam({ firstPublishYear: value || undefined })
-            }
-          />
-          <CompactSelect
-            className="order-7"
-            label={intl.formatMessage(messages.language)}
-            value={language}
-            options={languageOptions}
-            onChange={(value) => setParam({ language: value || undefined })}
-          />
-          <CompactRatingSelect
-            className="order-6"
-            label={intl.formatMessage(messages.ratingFilter)}
-            value={minRating}
-            options={ratingOptions}
-            maxScore={5}
-            onChange={(value) => setParam({ minRating: value || undefined })}
-          />
-        </div>
-        <div className="mb-2 mt-4 text-sm text-gray-300">
-          {intl.formatMessage(messages.sortBy)}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={getFilterToggleButtonClass(sortBy === 'ranked')}
-            onClick={() => setParam({ sortBy: 'ranked' })}
-          >
-            {intl.formatMessage(messages.recommended)}
-            <BarsArrowDownIcon className="h-4 w-4" />
-          </button>
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'rating' ||
-                sortBy === 'rating.desc' ||
-                sortBy === 'rating.asc'
-            )}
-            onClick={() =>
-              setParam({
-                sortBy:
-                  sortBy === 'rating' || sortBy === 'rating.desc'
-                    ? 'rating.asc'
-                    : 'rating.desc',
-              })
-            }
-          >
-            {intl.formatMessage(messages.rating)}
-            {sortBy === 'rating.asc' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
+          </PinnedFilterSection>
+        )}
+        <PinnedFilterSection
+          mediaType="book"
+          section="filters"
+          label={intl.formatMessage(messages.filters)}
+        >
+          <div className="flex flex-wrap gap-2">
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={!hasActiveFilters}
+              onClick={() => {
+                setSearch('');
+                setAuthor('');
+                setParam({
+                  search: undefined,
+                  author: undefined,
+                  subject: undefined,
+                  firstPublishYear: undefined,
+                  language: undefined,
+                  minRating: undefined,
+                  sortBy: undefined,
+                });
+              }}
+            />
+            <CardTextVisibilityToggle mediaType="book" />
+            <LibraryFilterFields
+              mediaType="book"
+              audiobook={activeFormat === 'audiobook'}
+              search={search}
+              onSearchChange={setSearch}
+              onSearchSubmit={() => {
+                const nextSearch = search.trim();
+                routedSearchRef.current = nextSearch;
+                update(
+                  { search: nextSearch || undefined, page: undefined },
+                  { shallow: true, scroll: false }
+                );
+              }}
+              author={author}
+              onAuthorChange={setAuthor}
+              onAuthorSubmit={() => {
+                const nextAuthor = author.trim();
+                routedAuthorRef.current = nextAuthor;
+                update(
+                  { author: nextAuthor || undefined, page: undefined },
+                  { shallow: true, scroll: false }
+                );
+              }}
+              firstPublishYear={firstPublishYear}
+              subject={subject}
+              minRating={minRating}
+              language={language}
+              setParam={setParam}
+            />
+          </div>
+        </PinnedFilterSection>
+        <PinnedFilterSection
+          mediaType="book"
+          section="sortBy"
+          label={intl.formatMessage(messages.sortBy)}
+        >
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'ranked' || sortBy === 'ranked.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy: sortBy === 'ranked' ? 'ranked.asc' : 'ranked',
+                })
+              }
+            >
+              {intl.formatMessage(messages.recommended)}
+              {sortBy === 'ranked.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(sortBy === 'trending')}
+              onClick={() => setParam({ sortBy: 'trending' })}
+            >
+              {intl.formatMessage(messages.trending)}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'rating' ||
+                  sortBy === 'rating.desc' ||
+                  sortBy === 'rating.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy:
+                    sortBy === 'rating' || sortBy === 'rating.desc'
+                      ? 'rating.asc'
+                      : 'rating.desc',
+                })
+              }
+            >
+              {intl.formatMessage(messages.rating)}
+              {sortBy === 'rating.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'editions' || sortBy === 'editions.asc'
+              )}
+              onClick={() =>
+                setParam({
+                  sortBy: sortBy === 'editions' ? 'editions.asc' : 'editions',
+                })
+              }
+            >
+              {intl.formatMessage(messages.editions)}
+              {sortBy === 'editions.asc' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(
+                sortBy === 'newest' || sortBy === 'oldest'
+              )}
+              onClick={() =>
+                setParam({ sortBy: sortBy === 'newest' ? 'oldest' : 'newest' })
+              }
+            >
+              {intl.formatMessage(messages.date)}
+              {sortBy === 'oldest' ? (
+                <BarsArrowUpIcon className="h-4 w-4" />
+              ) : (
+                <BarsArrowDownIcon className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              className={getFilterToggleButtonClass(sortBy === 'random')}
+              onClick={() =>
+                sortBy === 'random'
+                  ? discover.mutate?.()
+                  : setParam({ sortBy: 'random' })
+              }
+            >
+              {intl.formatMessage(messages.random)}
               <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(sortBy === 'editions')}
-            onClick={() => setParam({ sortBy: 'editions' })}
-          >
-            {intl.formatMessage(messages.editions)}
-            <BarsArrowDownIcon className="h-4 w-4" />
-          </button>
-          <button
-            className={getFilterToggleButtonClass(
-              sortBy === 'newest' || sortBy === 'oldest'
-            )}
-            onClick={() =>
-              setParam({ sortBy: sortBy === 'newest' ? 'oldest' : 'newest' })
-            }
-          >
-            {intl.formatMessage(messages.date)}
-            {sortBy === 'oldest' ? (
-              <BarsArrowUpIcon className="h-4 w-4" />
-            ) : (
-              <BarsArrowDownIcon className="h-4 w-4" />
-            )}
-          </button>
-          <button
-            className={getFilterToggleButtonClass(sortBy === 'random')}
-            onClick={() => setParam({ sortBy: 'random' })}
-          >
-            {intl.formatMessage(messages.random)}
-            <BarsArrowDownIcon className="h-4 w-4" />
-          </button>
-        </div>
+            </button>
+          </div>
+        </PinnedFilterSection>
       </div>
       {discover.error && (
         <div
@@ -334,8 +412,13 @@ const DiscoverBooks = () => {
       {(!discover.error || discover.titles.length > 0) && (
         <ListView
           items={discover.titles}
-          isEmpty={discover.isEmpty}
+          preferredBookFormat={
+            activeFormat === 'audiobook' ? 'audiobook' : 'ebook'
+          }
+          showAllBookFormats={activeFormat === 'all'}
+          isEmpty={isRouteReady && discover.isEmpty}
           isLoading={
+            !isRouteReady ||
             discover.isLoadingInitialData ||
             (discover.isLoadingMore && discover.titles.length > 0)
           }

@@ -48,7 +48,7 @@ const GenreCard = ({ image, url, name, canExpand = false }: GenreCardProps) => {
           isHovered ? 'bg-gray-800/10' : 'bg-gray-800/30'
         }`}
       />
-      <div className="relative z-20 w-full truncate whitespace-normal text-center text-base font-bold leading-5 text-white sm:text-lg">
+      <div className="relative z-20 w-full truncate text-center text-base leading-5 font-bold whitespace-normal text-white sm:text-lg">
         {name}
       </div>
     </Link>

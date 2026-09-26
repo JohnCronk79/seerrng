@@ -5,7 +5,7 @@ import { EnforceCanonicalBookIdentifierUniqueness1782800000000 } from './1782800
 
 test('SQLite canonical book identifier migration repairs and enforces ownership', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

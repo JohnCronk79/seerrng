@@ -22,7 +22,20 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-raw_manifest="$(docker buildx imagetools inspect --raw "$image_ref")"
+raw_manifest=''
+max_attempts=5
+for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+  if raw_manifest="$(docker buildx imagetools inspect --raw "$image_ref")"; then
+    break
+  fi
+  if ((attempt == max_attempts)); then
+    echo "Unable to inspect ${image_ref} after ${max_attempts} attempts." >&2
+    exit 1
+  fi
+  delay_seconds=$((2 ** (attempt - 1)))
+  echo "Manifest inspection failed for ${image_ref}; retrying in ${delay_seconds}s." >&2
+  sleep "$delay_seconds"
+done
 jq -e '.manifests | type == "array"' >/dev/null <<<"$raw_manifest" || {
   echo "${image_ref} is not a multi-platform OCI index." >&2
   exit 1

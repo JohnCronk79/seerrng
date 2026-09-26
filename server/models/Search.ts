@@ -11,11 +11,18 @@ import type {
   TmdbTvDetails,
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
-import { MediaType as MainMediaType } from '@server/constants/media';
+import {
+  MediaType as MainMediaType,
+  type MediaStatus,
+} from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
-import type { BookResult } from '@server/models/Book';
-export type { BookResult } from '@server/models/Book';
+import type { AuthorResult, BookResult } from '@server/models/Book';
+import type { ComicResult } from '@server/models/Comic';
+import type { MagazineResult } from '@server/models/Magazine';
+export type { AuthorResult, BookResult } from '@server/models/Book';
+export type { ComicResult } from '@server/models/Comic';
+export type { MagazineResult } from '@server/models/Magazine';
 export type MediaType =
   | 'tv'
   | 'movie'
@@ -23,7 +30,10 @@ export type MediaType =
   | 'collection'
   | 'artist'
   | 'album'
-  | 'book';
+  | 'book'
+  | 'author'
+  | 'comic'
+  | 'magazine';
 
 interface TmdbSearchResult {
   id: number;
@@ -106,7 +116,7 @@ export interface ArtistResult extends MbSearchResult {
 export interface AlbumResult extends MbSearchResult {
   mediaType: 'album';
   title: string;
-  'primary-type': 'Album' | 'Single' | 'EP';
+  'primary-type': MbAlbumResult['primary-type'];
   'first-release-date': string;
   releaseDate?: string;
   'artist-credit': {
@@ -119,6 +129,11 @@ export interface AlbumResult extends MbSearchResult {
   }[];
   posterPath?: string;
   needsCoverArt?: boolean;
+  availableQualities?: ('MP3' | 'FLAC')[];
+  qualityStatuses?: {
+    quality: 'MP3' | 'FLAC';
+    status: MediaStatus;
+  }[];
   mediaInfo?: Media;
 }
 
@@ -129,7 +144,22 @@ export type Results =
   | CollectionResult
   | ArtistResult
   | AlbumResult
-  | BookResult;
+  | BookResult
+  | AuthorResult
+  | ComicResult
+  | MagazineResult;
+
+type SearchProviderResult =
+  | TmdbMovieResult
+  | TmdbTvResult
+  | TmdbPersonResult
+  | TmdbCollectionResult
+  | MbArtistResult
+  | MbAlbumResult
+  | BookResult
+  | AuthorResult
+  | ComicResult
+  | MagazineResult;
 
 export const mapMovieResult = (
   movieResult: TmdbMovieResult,
@@ -245,106 +275,52 @@ export const mapAlbumResult = (
 });
 
 const isTmdbMovie = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
+  result: SearchProviderResult
 ): result is TmdbMovieResult => {
   return 'media_type' in result && result.media_type === 'movie';
 };
 
-const isTmdbTv = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
-): result is TmdbTvResult => {
+const isTmdbTv = (result: SearchProviderResult): result is TmdbTvResult => {
   return 'media_type' in result && result.media_type === 'tv';
 };
 
 const isTmdbPerson = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
+  result: SearchProviderResult
 ): result is TmdbPersonResult => {
   return 'media_type' in result && result.media_type === 'person';
 };
 
 const isTmdbCollection = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
+  result: SearchProviderResult
 ): result is TmdbCollectionResult => {
   return 'media_type' in result && result.media_type === 'collection';
 };
 
-const isMbArtist = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
-): result is MbArtistResult => {
+const isMbArtist = (result: SearchProviderResult): result is MbArtistResult => {
   return 'media_type' in result && result.media_type === 'artist';
 };
 
-const isMbAlbum = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
-): result is MbAlbumResult => {
+const isMbAlbum = (result: SearchProviderResult): result is MbAlbumResult => {
   return 'media_type' in result && result.media_type === 'album';
 };
 
-const isBookResult = (
-  result:
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
-): result is BookResult => {
+const isBookResult = (result: SearchProviderResult): result is BookResult => {
   return 'mediaType' in result && result.mediaType === 'book';
 };
 
+const isAuthorResult = (result: SearchProviderResult): result is AuthorResult =>
+  'mediaType' in result && result.mediaType === 'author';
+
+const isComicResult = (result: SearchProviderResult): result is ComicResult =>
+  'mediaType' in result && result.mediaType === 'comic';
+
+const isMagazineResult = (
+  result: SearchProviderResult
+): result is MagazineResult =>
+  'mediaType' in result && result.mediaType === 'magazine';
+
 export const mapSearchResults = async (
-  results: (
-    | TmdbMovieResult
-    | TmdbTvResult
-    | TmdbPersonResult
-    | TmdbCollectionResult
-    | MbArtistResult
-    | MbAlbumResult
-    | BookResult
-  )[],
+  results: SearchProviderResult[],
   media?: Media[]
 ): Promise<Results[]> =>
   Promise.all(
@@ -380,6 +356,12 @@ export const mapSearchResults = async (
           )
         );
       } else if (isBookResult(result)) {
+        return result;
+      } else if (isAuthorResult(result)) {
+        return result;
+      } else if (isComicResult(result)) {
+        return result;
+      } else if (isMagazineResult(result)) {
         return result;
       }
 

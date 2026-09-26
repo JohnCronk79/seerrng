@@ -4,13 +4,16 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import SettingsBadge from '@app/components/Settings/SettingsBadge';
+import Field, {
+  default as SettingsField,
+} from '@app/components/Settings/SettingsField';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import type { NetworkSettings } from '@server/lib/settings';
 import axios from 'axios';
-import { Field, Form, Formik } from 'formik';
+import { Form, Formik } from 'formik';
 import type { ChangeEvent } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
@@ -28,9 +31,9 @@ const messages = defineMessages('components.Settings.SettingsNetwork', {
     'Reject cross-site state-changing browser requests (requires HTTPS)',
   csrfProtectionWarning:
     'Keep this enabled for browser-session security. Disable it only when a trusted external API client must make write requests and cannot send CSRF tokens.',
-  trustProxy: 'Enable Proxy Support',
+  trustProxy: 'Trust Reverse Proxy',
   trustProxyTip:
-    'Allow Seerr to correctly register client IP addresses behind a proxy',
+    'Enable when one trusted reverse proxy in front of SeerrNG sets X-Forwarded-For. SeerrNG will trust one proxy hop to identify client IP addresses. Keep this off if clients can connect directly, because they could forge forwarded headers.',
   proxyEnabled: 'HTTP(S) Proxy',
   proxyEnabledTip:
     'Send ALL outgoing HTTP/HTTPS requests through a proxy server (host/port). Does NOT enable HTTPS, SSL, or certificate configuration.',
@@ -67,7 +70,7 @@ const messages = defineMessages('components.Settings.SettingsNetwork', {
   transportSecurityDescription:
     'Choose how Seerr protects browser login sessions. Listener changes require a server restart.',
   tlsMode: 'Built-in HTTPS mode',
-  tlsDisabled: 'Disabled (use a reverse proxy or explicit HTTP fallback)',
+  tlsDisabled: 'Disabled (direct HTTP sign-in or use a reverse proxy)',
   tlsSelfSigned: 'Self-signed local HTTPS',
   tlsProvided: 'Provided certificate',
   httpsPort: 'HTTPS Port',
@@ -167,7 +170,7 @@ const SettingsNetwork = () => {
           {intl.formatMessage(messages.networksettingsDescription)}
         </p>
       </div>
-      <div className="section">
+      <div className="app-card-sub section">
         <Formik
           initialValues={{
             csrfProtection: data?.csrfProtection,
@@ -195,8 +198,8 @@ const SettingsNetwork = () => {
             tlsKeyFile: data?.tls?.keyFile ?? '',
             tlsCaFile: data?.tls?.caFile ?? '',
             tlsRedirectHttpToHttps: data?.tls?.redirectHttpToHttps ?? false,
-            tlsAllowHttpAuth: data?.tls?.allowHttpAuth ?? false,
-            tlsHttpAuthAcknowledged: data?.tls?.httpAuthAcknowledged ?? false,
+            tlsAllowHttpAuth: data?.tls?.allowHttpAuth ?? true,
+            tlsHttpAuthAcknowledged: data?.tls?.httpAuthAcknowledged ?? true,
           }}
           enableReinitialize
           validationSchema={NetworkSettingsSchema}
@@ -260,7 +263,10 @@ const SettingsNetwork = () => {
             setFieldValue,
           }) => {
             return (
-              <Form className="section" data-testid="settings-network-form">
+              <Form
+                className="app-card-sub section"
+                data-testid="settings-network-form"
+              >
                 <div className="mb-6">
                   <h4 className="heading">
                     {intl.formatMessage(messages.transportSecurity)}
@@ -311,13 +317,10 @@ const SettingsNetwork = () => {
                 </div>
                 {values.tlsMode !== 'disabled' && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label htmlFor="tlsHttpsPort" className="text-label">
                           {intl.formatMessage(messages.httpsPort)}
-                          <span className="label-tip">
-                            {intl.formatMessage(messages.httpsPortTip)}
-                          </span>
                         </label>
                         <div className="form-input-area">
                           <Field
@@ -328,18 +331,21 @@ const SettingsNetwork = () => {
                             className="short"
                           />
                         </div>
+                        <span className="settings-form-row-description">
+                          {intl.formatMessage(messages.httpsPortTip)}
+                        </span>
                       </div>
                       {values.tlsMode === 'self-signed' && (
                         <div className="form-row">
                           <label htmlFor="tlsHosts" className="text-label">
                             {intl.formatMessage(messages.tlsHosts)}
-                            <span className="label-tip">
-                              {intl.formatMessage(messages.tlsHostsTip)}
-                            </span>
                           </label>
                           <div className="form-input-area">
                             <Field id="tlsHosts" name="tlsHosts" type="text" />
                           </div>
+                          <span className="settings-form-row-description">
+                            {intl.formatMessage(messages.tlsHostsTip)}
+                          </span>
                         </div>
                       )}
                       {values.tlsMode === 'provided' && (
@@ -375,12 +381,9 @@ const SettingsNetwork = () => {
                           {intl.formatMessage(messages.redirectHttpToHttps)}
                         </span>
                         <SettingsBadge badgeType="restartRequired" />
-                        <span className="label-tip">
-                          {intl.formatMessage(messages.redirectHttpToHttpsTip)}
-                        </span>
                       </label>
                       <div className="form-input-area">
-                        <Field
+                        <SettingsField
                           type="checkbox"
                           id="tlsRedirectHttpToHttps"
                           name="tlsRedirectHttpToHttps"
@@ -392,6 +395,9 @@ const SettingsNetwork = () => {
                           }}
                         />
                       </div>
+                      <span className="settings-form-row-description">
+                        {intl.formatMessage(messages.redirectHttpToHttpsTip)}
+                      </span>
                     </div>
                   </>
                 )}
@@ -406,12 +412,9 @@ const SettingsNetwork = () => {
                           {intl.formatMessage(messages.allowHttpAuth)}
                         </span>
                         <SettingsBadge badgeType="restartRequired" />
-                        <span className="label-tip">
-                          {intl.formatMessage(messages.allowHttpAuthTip)}
-                        </span>
                       </label>
                       <div className="form-input-area">
-                        <Field
+                        <SettingsField
                           type="checkbox"
                           id="tlsAllowHttpAuth"
                           name="tlsAllowHttpAuth"
@@ -426,14 +429,17 @@ const SettingsNetwork = () => {
                           }}
                         />
                       </div>
+                      <p className="settings-form-row-description">
+                        {intl.formatMessage(messages.allowHttpAuthTip)}
+                      </p>
                     </div>
                     {values.tlsAllowHttpAuth && (
-                      <Alert type="warning">
+                      <Alert type="warning" className="settings-http-warning">
                         <label
                           htmlFor="tlsHttpAuthAcknowledged"
-                          className="checkbox-label"
+                          className="settings-warning-acknowledgement checkbox-label"
                         >
-                          <Field
+                          <SettingsField
                             type="checkbox"
                             id="tlsHttpAuthAcknowledged"
                             name="tlsHttpAuthAcknowledged"
@@ -457,12 +463,9 @@ const SettingsNetwork = () => {
                       {intl.formatMessage(messages.trustProxy)}
                     </span>
                     <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.trustProxyTip)}
-                    </span>
                   </label>
                   <div className="form-input-area">
-                    <Field
+                    <SettingsField
                       type="checkbox"
                       id="trustProxy"
                       name="trustProxy"
@@ -471,16 +474,18 @@ const SettingsNetwork = () => {
                       }}
                     />
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.trustProxyTip)}
+                  </span>
                 </div>
                 <div className="form-row">
                   <label htmlFor="csrfProtection" className="checkbox-label">
                     <span className="mr-2">
                       {intl.formatMessage(messages.csrfProtection)}
                     </span>
-                    <SettingsBadge badgeType="advanced" className="mr-2" />
-                    <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.csrfProtectionDescription)}
+                    <span className="settings-badge-row">
+                      <SettingsBadge badgeType="advanced" />
+                      <SettingsBadge badgeType="restartRequired" />
                     </span>
                   </label>
                   <div className="form-input-area">
@@ -489,7 +494,7 @@ const SettingsNetwork = () => {
                         messages.csrfProtectionWarning
                       )}
                     >
-                      <Field
+                      <SettingsField
                         type="checkbox"
                         id="csrfProtection"
                         name="csrfProtection"
@@ -502,21 +507,23 @@ const SettingsNetwork = () => {
                       />
                     </Tooltip>
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.csrfProtectionDescription)}
+                  </span>
                 </div>
                 <div className="form-row">
                   <label htmlFor="forceIpv4First" className="checkbox-label">
                     <span className="mr-2">
                       {intl.formatMessage(messages.forceIpv4First)}
                     </span>
-                    <SettingsBadge badgeType="advanced" className="mr-2" />
-                    <SettingsBadge badgeType="restartRequired" />
-                    <SettingsBadge badgeType="experimental" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.forceIpv4FirstTip)}
+                    <span className="settings-badge-row">
+                      <SettingsBadge badgeType="advanced" />
+                      <SettingsBadge badgeType="restartRequired" />
+                      <SettingsBadge badgeType="experimental" />
                     </span>
                   </label>
                   <div className="form-input-area">
-                    <Field
+                    <SettingsField
                       type="checkbox"
                       id="forceIpv4First"
                       name="forceIpv4First"
@@ -525,24 +532,26 @@ const SettingsNetwork = () => {
                       }}
                     />
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.forceIpv4FirstTip)}
+                  </span>
                 </div>
                 <div className="form-row">
                   <label htmlFor="dnsCacheEnabled" className="checkbox-label">
                     <span className="mr-2">
                       {intl.formatMessage(messages.dnsCache)}
                     </span>
-                    <SettingsBadge badgeType="advanced" className="mr-2" />
-                    <SettingsBadge badgeType="restartRequired" />
-                    <SettingsBadge badgeType="experimental" className="mr-2" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.dnsCacheTip)}
+                    <span className="settings-badge-row">
+                      <SettingsBadge badgeType="advanced" />
+                      <SettingsBadge badgeType="restartRequired" />
+                      <SettingsBadge badgeType="experimental" />
                     </span>
                   </label>
                   <div className="form-input-area">
                     <Tooltip
                       content={intl.formatMessage(messages.dnsCacheHoverTip)}
                     >
-                      <Field
+                      <SettingsField
                         type="checkbox"
                         id="dnsCacheEnabled"
                         name="dnsCacheEnabled"
@@ -555,10 +564,13 @@ const SettingsNetwork = () => {
                       />
                     </Tooltip>
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.dnsCacheTip)}
+                  </span>
                 </div>
                 {values.dnsCacheEnabled && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label
                           htmlFor="dnsCacheForceMinTtl"
@@ -616,12 +628,9 @@ const SettingsNetwork = () => {
                       {intl.formatMessage(messages.apiRequestTimeout)}
                     </span>
                     <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.apiRequestTimeoutTip)}
-                    </span>
                   </label>
                   <div className="form-input-area">
-                    <Field
+                    <SettingsField
                       id="apiRequestTimeout"
                       name="apiRequestTimeout"
                       type="text"
@@ -629,6 +638,9 @@ const SettingsNetwork = () => {
                       className="short"
                     />
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.apiRequestTimeoutTip)}
+                  </span>
                   {errors.apiRequestTimeout &&
                     touched.apiRequestTimeout &&
                     typeof errors.apiRequestTimeout === 'string' && (
@@ -640,10 +652,9 @@ const SettingsNetwork = () => {
                     <span className="mr-2">
                       {intl.formatMessage(messages.proxyEnabled)}
                     </span>
-                    <SettingsBadge badgeType="advanced" className="mr-2" />
-                    <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.proxyEnabledTip)}
+                    <span className="settings-badge-row">
+                      <SettingsBadge badgeType="advanced" />
+                      <SettingsBadge badgeType="restartRequired" />
                     </span>
                   </label>
                   <div className="form-input-area">
@@ -656,10 +667,13 @@ const SettingsNetwork = () => {
                       }}
                     />
                   </div>
+                  <span className="settings-form-row-description">
+                    {intl.formatMessage(messages.proxyEnabledTip)}
+                  </span>
                 </div>
                 {values.proxyEnabled && (
                   <>
-                    <div className="ml-4 mr-2">
+                    <div className="mr-2 ml-4">
                       <div className="form-row">
                         <label
                           htmlFor="proxyHostname"
@@ -689,7 +703,7 @@ const SettingsNetwork = () => {
                           {intl.formatMessage(messages.proxyPort)}
                         </label>
                         <div className="form-input-area">
-                          <Field
+                          <SettingsField
                             id="proxyPort"
                             name="proxyPort"
                             type="text"
@@ -708,7 +722,7 @@ const SettingsNetwork = () => {
                           {intl.formatMessage(messages.proxySsl)}
                         </label>
                         <div className="form-input-area">
-                          <Field
+                          <SettingsField
                             type="checkbox"
                             id="proxySsl"
                             name="proxySsl"
@@ -767,9 +781,6 @@ const SettingsNetwork = () => {
                           className="checkbox-label"
                         >
                           {intl.formatMessage(messages.proxyBypassFilter)}
-                          <span className="label-tip">
-                            {intl.formatMessage(messages.proxyBypassFilterTip)}
-                          </span>
                         </label>
                         <div className="form-input-area">
                           <div className="form-input-field">
@@ -787,6 +798,9 @@ const SettingsNetwork = () => {
                               </div>
                             )}
                         </div>
+                        <span className="settings-form-row-description">
+                          {intl.formatMessage(messages.proxyBypassFilterTip)}
+                        </span>
                       </div>
                       <div className="form-row">
                         <label

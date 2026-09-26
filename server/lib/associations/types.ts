@@ -10,10 +10,7 @@ import type {
 export type AssociationMediaType = 'movie' | 'tv' | 'album' | 'artist' | 'book';
 
 export type AssociationEdgeType =
-  | 'similar'
-  | 'recommended'
-  | 'shared-person'
-  | 'shared-genre';
+  'similar' | 'recommended' | 'shared-person' | 'shared-genre';
 
 export type AssociationNode =
   | MovieResult

@@ -2,12 +2,19 @@ export const getSearchQuery = (query: string | string[] | undefined): string =>
   typeof query === 'string' ? query : '';
 
 export const getDefaultSearchType = (pathname: string): string | undefined =>
-  pathname === '/discover/books' ? 'book' : undefined;
+  pathname === '/discover/books' || pathname === '/discover/audiobooks'
+    ? 'book'
+    : undefined;
 
 export const getDefaultSearchFormat = (
   pathname: string
-): 'ebook' | undefined =>
-  pathname === '/discover/books' ? 'ebook' : undefined;
+): 'ebook' | 'audiobook' | undefined => {
+  if (pathname === '/discover/audiobooks') {
+    return 'audiobook';
+  }
+
+  return pathname === '/discover/books' ? 'ebook' : undefined;
+};
 
 export const shouldNavigateToSearch = (
   pathname: string,
@@ -31,4 +38,4 @@ export const shouldSyncSearchInput = (
 ): boolean =>
   routeQuery !== searchValue &&
   searchValue === debouncedValue &&
-  !(pathname === '/search' && closingSearch);
+  !(pathname === '/search' && (closingSearch || searchValue === ''));

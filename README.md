@@ -56,6 +56,29 @@ breaking-change status, and CI shows the exact release-note preview during
 review.
 The historical tag coverage and audit method are documented in
 [`docs/maintainers/release-history-audit.md`](./docs/maintainers/release-history-audit.md).
+The in-app version check compares against published stable tags from the
+SeerrNG fork, not the upstream Seerr repository.
+
+## Documentation
+
+The [SeerrNG documentation site](https://snapetech.github.io/seerrng/) covers
+installation, setup, user workflows, and integrations. These guides are useful
+starting points:
+
+- [Install SeerrNG](https://snapetech.github.io/seerrng/getting-started/)
+- [Install on Unraid](https://snapetech.github.io/seerrng/getting-started/third-parties/unraid)
+- [Find books, authors, and series](https://snapetech.github.io/seerrng/using-seerr/books-and-series/)
+- [Track requests and status history](https://snapetech.github.io/seerrng/using-seerr/request-status/)
+- [Use media detail and playback controls](https://snapetech.github.io/seerrng/using-seerr/media-details-and-playback/)
+- [Configure media-server libraries, including Plex Music and Audiobooks](https://snapetech.github.io/seerrng/using-seerr/settings/mediaserver)
+- [Enable built-in HTTPS](https://snapetech.github.io/seerrng/using-seerr/advanced/built-in-tls/)
+- [Configure notifications](https://snapetech.github.io/seerrng/using-seerr/notifications/)
+- [Hide requested or available media](https://snapetech.github.io/seerrng/using-seerr/settings/general)
+- [Configure Bookshelf](https://snapetech.github.io/seerrng/using-seerr/bookshelf-backend/)
+- [Bookshelf metadata sources](https://snapetech.github.io/seerrng/using-seerr/bookshelf-metadata-sources/)
+- [Configure override rules](https://snapetech.github.io/seerrng/using-seerr/override-rules/)
+- [Manage users and request preferences](https://snapetech.github.io/seerrng/using-seerr/users/editing-users/)
+- [REST API reference](https://snapetech.github.io/seerrng/api/seerr-api/)
 
 ## Screenshots
 
@@ -100,6 +123,7 @@ services:
     environment:
       LOG_LEVEL: info
       PORT: 5055
+      # Optional overrides; SeerrNG includes a default TMDB application key.
       TMDB_API_KEY: ${TMDB_API_KEY}
       TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN}
     ports:
@@ -108,6 +132,10 @@ services:
       - /path/to/seerrng/config:/app/config
     restart: unless-stopped
 ```
+
+### Unraid
+
+Install SeerrNG from Community Applications with the [Unraid template](https://raw.githubusercontent.com/snapetech/seerrng/main/packaging/unraid/seerrng.xml). It uses the stable `latest` image, maps HTTP port `5055` and optional HTTPS port `5056`, and persists `/app/config`. The image runs as UID/GID `1000:1000`, so make the selected appdata directory writable by that user before the first start.
 
 ### Linux Packages
 
@@ -129,9 +157,10 @@ Music:
 - Lidarr server configured in **Settings > Services**.
 - Root folder, quality profile, metadata profile, and tags configured from the Lidarr service settings.
 - A default Lidarr server if users should be able to request music without choosing a service each time.
-- Jellyfin music libraries can also be enabled in **Settings > Media Server**;
-  albums must expose MusicBrainz metadata for SeerrNG to match existing media.
-  Lidarr remains the automation and fallback availability source.
+- Jellyfin and Plex music libraries can also be enabled in **Settings > Media
+  Server**; albums need MusicBrainz metadata for SeerrNG to match existing
+  media. Plex artist libraries can be reclassified as Audiobooks for audiobook
+  availability. Lidarr remains the music automation and fallback source.
 
 Books:
 
@@ -148,18 +177,23 @@ default deployment path uses the Snapetech BookshelfNG fork with Hardcover
 metadata:
 
 ```text
-ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636
+ghcr.io/snapetech/bookshelfng:hardcover
 ```
 
-The installer and Compose file use an immutable BookshelfNG digest. Update the
-digest deliberately when adopting a newer BookshelfNG build so deployments are
-reproducible and rollbackable.
+The stable `hardcover` and `softcover` tags are published only from
+BookshelfNG's `main` release workflow, so SeerrNG follows the newest released
+BookshelfNG build. Set `BOOKSHELF_IMAGE` to a digest-pinned reference when a
+reproducible or rollbackable deployment is required.
 
 ### BookshelfNG and rreading-glasses
 
 These components solve different problems. Fresh Hardcover installs use the
 rreading-glasses compatibility boundary by default; native Hardcover remains an
 explicit opt-in:
+
+If Docker is not an option, see the [BookshelfNG source-build
+guide](./docs/using-seerr/bookshelf-source-build.md) for a direct Linux build,
+systemd service, metadata configuration, and SeerrNG connection.
 
 - **BookshelfNG** is the maintained Readarr-style application. It manages the
   library, download clients, imports, file organization, and the
@@ -229,7 +263,7 @@ caching, so a fresh search or uncached refresh still needs Hardcover.
 Legacy softcover/Goodreads deployments remain supported for existing users:
 
 ```text
-ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667
+ghcr.io/snapetech/bookshelfng:softcover
 ```
 
 Do not convert an existing Readarr or softcover database to Hardcover by only
@@ -281,7 +315,19 @@ The migration is layered:
 - pre-create missing authors where Hardcover can resolve them;
 - optionally query a softcover Bookshelf endpoint to recover title/author/edition metadata, then remap that profile back through Hardcover;
 - query OpenLibrary for alternate title/author/ISBN profiles, then remap those candidates back through Hardcover;
+- query Google Books and the Library of Congress for additional migration recovery profiles, then remap only strict matches through Hardcover;
+- optionally call a configured Apify Actor to search Goodreads-compatible catalogs when the open APIs do not return useful metadata;
 - optionally create deterministic local Bookshelf records for the books Hardcover still cannot import.
+
+These catalogs support **normal BookshelfNG search and metadata lookups**, as
+well as migration recovery. SeerrNG merges BookshelfNG results with its
+Open Library results and carries each Bookshelf result's source identity
+through details and book requests. The managed two-instance deployment enables
+Library of Congress for the audiobook service by default; Google Books and
+Europeana are added when their API keys are configured. Apify remains
+operator-enabled. A provider result does not need a numeric Goodreads ID. See
+the [metadata source support matrix](./docs/using-seerr/bookshelf-metadata-sources.md)
+for setup, coverage, limits, and identity details.
 
 Migration record states:
 
@@ -349,8 +395,11 @@ Common runtime variables:
 | `PORT` | HTTP port. Defaults to `5055`. |
 | `LOG_LEVEL` | Server log level. |
 | `CONFIG_DIRECTORY` | Alternate config directory for non-container installs. |
-| `TMDB_API_KEY` | TMDB v3 API key. |
-| `TMDB_READ_ACCESS_TOKEN` | TMDB v4 bearer token. |
+| `TMDB_API_KEY` | Optional TMDB v3 API key override. SeerrNG uses its bundled application key when this is unset. |
+| `TMDB_READ_ACCESS_TOKEN` | Optional TMDB v4 bearer-token override. When set, it takes precedence over `TMDB_API_KEY`. |
+| `SEARCH_CREDIT_CONCURRENCY` | Maximum concurrent TMDB credit lookups per server process during movie/TV searches; defaults to `10` and is capped at `40`. |
+| `METRICS_ENABLED` | Enables the Prometheus `/metrics` endpoint when set to `true`. |
+| `METRICS_AUTH_TOKEN` | Long random bearer token required by `/metrics` when metrics are enabled. |
 | `OIDC_ALLOW_PRIVATE_ADDRESSES` | Allows server-side OIDC requests to private network addresses. Required only for an intentionally internal identity provider. |
 | `OIDC_ALLOW_INSECURE` | Allows non-HTTPS OIDC provider requests. |
 | `SEERR_EXTERNAL_READ_ONLY` | Blocks mutating requests to external automation APIs when enabled. Useful for test/lab environments. Production refuses to start with this enabled unless explicitly allowed. |
@@ -368,6 +417,21 @@ Common runtime variables:
 | `SEERR_SKIP_DB_MIGRATIONS` | Skips automatically running database migrations at startup in production. Only relevant when migrations are run out-of-band (e.g. `pnpm migration:run`, or a prepared Cypress test database). |
 | `JELLYFIN_TYPE` | One-time settings-migration hint. Set to `emby` before the first start after upgrading if your existing configuration was saved as `Jellyfin` but the server is actually Emby; relabels the stored media server type and can be unset afterward. |
 
+### First-run browser transport
+
+The setup page will not allow a media-server login until the active browser
+transport can persist a session. On a direct installation, choose built-in
+self-signed HTTPS or a provided certificate, save the choice, restart SeerrNG,
+and then open the HTTPS address. If HTTPS must remain disabled on a trusted
+LAN, enable `SEERR_ALLOW_HTTP_AUTH=true` (or the matching **Allow authenticated
+sessions over HTTP** option), acknowledge the warning, save, and restart.
+
+If a previous attempt saved Jellyfin details but did not establish a session,
+restart after correcting the transport and use `/login` to sign in again. Do
+not submit the setup hostname a second time. See [Built-in HTTPS and HTTP
+authentication modes](docs/using-seerr/advanced/built-in-tls.mdx) for the
+status check and reverse-proxy requirements.
+
 Use deployment secrets, `.env` files, or container environment variables. Do not commit private TMDB, Plex, Jellyfin, Emby, Radarr, Sonarr, Lidarr, Bookshelf, SMTP, or notification credentials.
 
 Bookshelf deployment and migration variables live on the helper scripts rather
@@ -376,12 +440,19 @@ than the SeerrNG runtime container. Common ones include:
 | Variable | Purpose |
 | --- | --- |
 | `BOOKSHELF_BACKEND` | `auto`, `hardcover`, or `softcover`. |
-| `BOOKSHELF_IMAGE` | Override the Bookshelf image. Hardcover mode uses the digest-pinned Snapetech image by default. |
+| `BOOKSHELF_IMAGE` | Override the Bookshelf image. Hardcover mode uses the stable Snapetech `main` release tag by default; use a digest to pin it. |
 | `BOOKSHELF_METADATA_MODE` | `compatibility` (default for fresh Hardcover), `native`, or `hosted`. |
 | `BOOKSHELF_METADATA_URL` | Compatibility or hosted metadata URL. Native Hardcover uses it only when native mode is disabled. |
 | `BOOKSHELF_HARDCOVER_NATIVE` | Rendered Bookshelf flag; the installer sets it from `BOOKSHELF_METADATA_MODE`. |
 | `BOOKSHELF_HARDCOVER_AUTH` | Native-mode token passed to BookshelfNG; compatibility mode passes `HARDCOVER_AUTH` to rreading-glasses instead. |
 | `BOOKSHELF_HARDCOVER_API_URL` | Optional native Hardcover GraphQL base URL. Defaults to `https://api.hardcover.app`. |
+| `BOOKSHELF_METADATA_SOURCES` | Legacy shared runtime override. When supplied to the installer it applies to both services; otherwise the per-service values take precedence. |
+| `BOOKSHELF_EBOOKS_METADATA_SOURCES` | Ebook source list; defaults to `gutendex,googlebooks,europeana`. Google Books and Europeana run only when their keys are configured. |
+| `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` | Audiobook source list; defaults to `loc,gutendex,googlebooks,europeana`. Google Books and Europeana run only when their keys are configured. |
+| `GOOGLE_BOOKS_API_KEY` | Optional Google Books runtime/migration key; Google Books is skipped without it. |
+| `EUROPEANA_API_KEY` | Optional Europeana runtime key; a free registered key is required, and runtime search uses openly reusable text records. |
+| `HARDCOVER_APIFY_GOODREADS_ACTOR` / `HARDCOVER_APIFY_TOKEN` | Optional runtime/migration Goodreads-compatible Actor; usage may be metered. |
+| `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` | Optional Apify Actor JSON input template containing `{{query}}`. |
 | `HARDCOVER_AUTH` | Hardcover API token. The installer passes it to native BookshelfNG by default, or to rreading-glasses in compatibility mode; include the `Bearer ` prefix. |
 | `COOKIE` | Optional Goodreads cookie for softcover mode. |
 | `BOOKSHELF_EBOOKS_CONFIG_DIR` | Ebook Bookshelf/Readarr config directory. |
@@ -389,6 +460,11 @@ than the SeerrNG runtime container. Common ones include:
 | `HARDCOVER_EBOOK_API_KEY` / `HARDCOVER_AUDIOBOOK_API_KEY` | API keys for target Hardcover Bookshelf instances. |
 | `HARDCOVER_SOFTCOVER_EBOOK_BASE_URL` / `HARDCOVER_SOFTCOVER_AUDIOBOOK_BASE_URL` | Optional softcover recovery endpoints. |
 | `HARDCOVER_OPENLIBRARY_RECOVERY` | Enables OpenLibrary-assisted native Hardcover remapping. Defaults to `true`. |
+| `HARDCOVER_GOOGLEBOOKS_RECOVERY` | Enables Google Books recovery for migration/reconciliation. Defaults to `true`; `GOOGLE_BOOKS_API_KEY` is required by Google's public API. |
+| `HARDCOVER_LOC_RECOVERY` | Enables Library of Congress catalog recovery for migration/reconciliation. Defaults to `true`. |
+| `HARDCOVER_APIFY_GOODREADS_ACTOR` / `HARDCOVER_APIFY_TOKEN` | Optional Apify Actor adapter for Goodreads-compatible recovery. Actor runs may be metered; set a JSON `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` containing `{{query}}` when the Actor uses a different input schema. |
+| `HARDCOVER_APIFY_API_BASE_URL` | Apify API base URL; defaults to `https://api.apify.com`. |
+| `HARDCOVER_GOOGLEBOOKS_BASE_URL` / `HARDCOVER_LOC_BASE_URL` | Override provider API bases for controlled deployments and tests. |
 | `HARDCOVER_LOCAL_DB_IMPORT` | Enables deterministic local DB fallback after API and softcover recovery fail. |
 | `HARDCOVER_MATCH_CONCURRENCY` | Match report lookup concurrency. |
 | `HARDCOVER_API_TIMEOUT_MS` | Target API timeout for migration requests. |

@@ -4,7 +4,11 @@ import { isOptionalCatalogPathEnabled } from './serviceAvailability';
 
 describe('isOptionalCatalogPathEnabled', () => {
   it('hides optional catalogs without a configured backend service', () => {
-    const availability = { musicEnabled: false, booksEnabled: false };
+    const availability = {
+      musicEnabled: false,
+      booksEnabled: false,
+      comicsEnabled: false,
+    };
 
     strictEqual(
       isOptionalCatalogPathEnabled('/discover/music', availability),
@@ -12,6 +16,14 @@ describe('isOptionalCatalogPathEnabled', () => {
     );
     strictEqual(
       isOptionalCatalogPathEnabled('/discover/books', availability),
+      false
+    );
+    strictEqual(
+      isOptionalCatalogPathEnabled('/discover/audiobooks', availability),
+      false
+    );
+    strictEqual(
+      isOptionalCatalogPathEnabled('/discover/comics', availability),
       false
     );
     strictEqual(
@@ -25,6 +37,7 @@ describe('isOptionalCatalogPathEnabled', () => {
       isOptionalCatalogPathEnabled('/discover/music', {
         musicEnabled: true,
         booksEnabled: false,
+        comicsEnabled: false,
       }),
       true
     );
@@ -32,6 +45,23 @@ describe('isOptionalCatalogPathEnabled', () => {
       isOptionalCatalogPathEnabled('/discover/books', {
         musicEnabled: false,
         booksEnabled: true,
+        comicsEnabled: false,
+      }),
+      true
+    );
+    strictEqual(
+      isOptionalCatalogPathEnabled('/discover/audiobooks', {
+        musicEnabled: false,
+        booksEnabled: true,
+        comicsEnabled: false,
+      }),
+      true
+    );
+    strictEqual(
+      isOptionalCatalogPathEnabled('/discover/comics', {
+        musicEnabled: false,
+        booksEnabled: false,
+        comicsEnabled: true,
       }),
       true
     );

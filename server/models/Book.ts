@@ -13,6 +13,7 @@ import { normalizeValidIsbn } from '@server/lib/isbn';
 
 export interface BookResult {
   id: string;
+  provider?: 'openlibrary' | 'bookshelf';
   mediaType: 'book';
   title: string;
   author?: string;
@@ -22,11 +23,17 @@ export interface BookResult {
   isbn13?: string;
   editionId?: string;
   isbnCandidates?: BookIsbnCandidate[];
+  metadataSource?: { name: string; url: string };
   editionCount?: number;
   ratingsAverage?: number;
   ratingsCount?: number;
+  subjects?: string[];
+  languages?: string[];
   wantToReadCount?: number;
   publisher?: string;
+  series?: BookSeriesReference[];
+  audiobookDuration?: number;
+  narrators?: string[];
   score?: number;
   mediaInfo?: Media;
 }
@@ -36,6 +43,38 @@ export interface BookDetails extends BookResult {
   subjects?: string[];
   numberOfPages?: number;
   onUserWatchlist?: boolean;
+}
+
+export interface BookRatingResponse {
+  average?: number;
+  count: number;
+  source: 'openlibrary' | 'bookshelf';
+  workId?: string;
+}
+
+export interface BookSeriesReference {
+  id: string;
+  title: string;
+  position?: string;
+}
+
+export interface BookSeriesDetails {
+  id: string;
+  title: string;
+  description?: string;
+  books: BookResult[];
+}
+
+export interface AuthorResult {
+  id: string;
+  provider: 'openlibrary' | 'bookshelf';
+  mediaType: 'author';
+  name: string;
+  posterPath?: string;
+  topWork?: string;
+  workCount?: number;
+  birthDate?: string;
+  deathDate?: string;
 }
 
 export interface AuthorDetails {
@@ -58,6 +97,7 @@ export interface BookIsbnCandidate {
   editionId?: string;
   title?: string;
   format?: string;
+  languages?: string[];
 }
 
 export const MAX_BOOK_ISBN_CANDIDATES = 200;
@@ -74,6 +114,9 @@ const mapEditionIsbnCandidates = (
     const editionId = getEditionId(edition.key);
     const title = edition.title;
     const format = edition.physical_format;
+    const languages = edition.languages
+      ?.map(({ key }) => key.split('/').filter(Boolean).pop() ?? key)
+      .filter((language, index, values) => values.indexOf(language) === index);
 
     for (const isbn of [
       ...(edition.isbn_13 ?? []),
@@ -87,6 +130,7 @@ const mapEditionIsbnCandidates = (
           editionId,
           title,
           format,
+          languages,
         });
 
         if (candidates.size >= MAX_BOOK_ISBN_CANDIDATES) {
@@ -120,6 +164,7 @@ export const mapOpenLibrarySearchDoc = (
 
   return {
     id: workId,
+    provider: 'openlibrary',
     mediaType: 'book',
     title: doc.title,
     author: doc.author_name?.[0],
@@ -136,6 +181,29 @@ export const mapOpenLibrarySearchDoc = (
     wantToReadCount: doc.want_to_read_count,
     publisher: doc.publisher?.[0],
     mediaInfo: media,
+  };
+};
+
+export const mapOpenLibraryAuthorSearchDoc = (doc: {
+  key: string;
+  name: string;
+  top_work?: string;
+  work_count?: number;
+  birth_date?: string;
+  death_date?: string;
+}): AuthorResult => {
+  const id = doc.key.replace(/^\/?authors\//, '');
+
+  return {
+    id,
+    provider: 'openlibrary',
+    mediaType: 'author',
+    name: doc.name,
+    posterPath: `https://covers.openlibrary.org/a/olid/${encodeURIComponent(id)}-L.jpg`,
+    topWork: doc.top_work,
+    workCount: doc.work_count,
+    birthDate: doc.birth_date,
+    deathDate: doc.death_date,
   };
 };
 
@@ -160,6 +228,7 @@ export const mapOpenLibraryWork = (
 
   return {
     id: normalizeOpenLibraryWorkId(work.key),
+    provider: 'openlibrary',
     mediaType: 'book',
     title: work.title,
     author: authorName,
@@ -196,6 +265,7 @@ export const mapOpenLibraryAuthorWork = (
 
   return {
     id: normalizeOpenLibraryWorkId(work.key),
+    provider: 'openlibrary',
     mediaType: 'book',
     title: work.title,
     author: authorName,
@@ -203,6 +273,10 @@ export const mapOpenLibraryAuthorWork = (
     firstPublishYear: work.first_publish_date
       ? Number(work.first_publish_date.match(/\d{4}/)?.[0])
       : undefined,
+    subjects: work.subjects,
+    languages: work.languages?.map((language) =>
+      language.key.replace(/^\/?languages\//, '')
+    ),
     posterPath: coverId
       ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg`
       : undefined,

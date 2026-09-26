@@ -5,7 +5,7 @@ import { AddMediaSearchMetadata1784400000000 } from './1784400000000-AddMediaSea
 
 test('SQLite media search metadata migration is reversible and cascades with media', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

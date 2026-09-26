@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import RadarrAPI from '@server/api/servarr/radarr';
 import {
   DOWNLOAD_TRACKER_SERVER_CONCURRENCY,
   DownloadTracker,
   hasSameServarrDownloadAuthority,
   isMatchingReadarrDownloadServer,
 } from '@server/lib/downloadtracker';
+import { getSettings } from '@server/lib/settings';
 
 it('bounds queue hydration per service family', () => {
   assert.strictEqual(DOWNLOAD_TRACKER_SERVER_CONCURRENCY, 5);
@@ -155,6 +157,93 @@ describe('DownloadTracker credential snapshots', () => {
 });
 
 describe('DownloadTracker update lifecycle', () => {
+  it('continues polling remaining configured instances when one fails', async (t) => {
+    const settings = getSettings();
+    const originalRadarr = settings.radarr;
+    const originalSonarr = settings.sonarr;
+    const originalLidarr = settings.lidarr;
+    const originalReadarr = settings.readarr;
+    const baseRadarr = {
+      id: 1,
+      name: 'Failing Radarr',
+      hostname: 'radarr-one.local',
+      port: 7878,
+      apiKey: 'first-key',
+      useSsl: false,
+      baseUrl: '',
+      activeProfileId: 1,
+      activeProfileName: 'HD',
+      activeDirectory: '/movies',
+      minimumAvailability: 'released',
+      tags: [],
+      is4k: false,
+      isDefault: true,
+      syncEnabled: true,
+      preventSearch: false,
+      tagRequests: false,
+      overrideRule: [],
+    };
+    settings.radarr = [
+      baseRadarr,
+      {
+        ...baseRadarr,
+        id: 2,
+        name: 'Healthy Radarr',
+        hostname: 'radarr-two.local',
+        apiKey: 'second-key',
+        isDefault: false,
+      },
+    ];
+    settings.sonarr = [];
+    settings.lidarr = [];
+    settings.readarr = [];
+
+    let queueCalls = 0;
+    t.mock.method(
+      RadarrAPI.prototype,
+      'refreshMonitoredDownloads',
+      async () => undefined
+    );
+    t.mock.method(RadarrAPI.prototype, 'getHistory', async () => []);
+    t.mock.method(RadarrAPI.prototype, 'getQueue', async () => {
+      queueCalls += 1;
+      if (queueCalls === 1) {
+        throw new Error('First Radarr unavailable');
+      }
+      return [
+        {
+          movieId: 202,
+          size: 100,
+          title: 'Healthy download',
+          sizeleft: 50,
+          timeleft: '5 minutes',
+          estimatedCompletionTime: '2026-09-12T12:00:00Z',
+          status: 'downloading',
+          trackedDownloadStatus: 'ok',
+          trackedDownloadState: 'downloading',
+          downloadId: 'healthy-download',
+          protocol: 'usenet',
+          downloadClient: 'SABnzbd',
+          indexer: 'test',
+          id: 202,
+        },
+      ];
+    });
+
+    const tracker = new DownloadTracker();
+    try {
+      await tracker.updateDownloads();
+      assert.strictEqual(queueCalls, 2);
+      assert.deepStrictEqual(tracker.getMovieProgress(1, 202), []);
+      assert.strictEqual(tracker.getMovieProgress(2, 202).length, 1);
+    } finally {
+      settings.radarr = originalRadarr;
+      settings.sonarr = originalSonarr;
+      settings.lidarr = originalLidarr;
+      settings.readarr = originalReadarr;
+    }
+  });
+
   it('coalesces overlapping queue refreshes', async () => {
     const tracker = new DownloadTracker();
     let calls = 0;

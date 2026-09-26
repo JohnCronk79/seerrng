@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 
 import JellyfinAPI, {
   MAX_JELLYFIN_SEASONS,
@@ -10,11 +10,47 @@ import JellyfinAPI, {
   sanitizeJellyfinUsers,
 } from './jellyfin';
 
+afterEach(() => {
+  mock.restoreAll();
+});
+
 class TestJellyfinAPI extends JellyfinAPI {
+  public getTransport() {
+    return this.axios;
+  }
   public getLookup() {
     return this.axios.defaults.lookup;
   }
 }
+
+describe('Jellyfin deletion-check evidence', () => {
+  it('accepts only a well-formed successful empty item list as absence', async () => {
+    const api = new TestJellyfinAPI('http://localhost:8096', 'test');
+    const get = mock.method(api.getTransport(), 'get', async () => ({
+      data: { Items: [] },
+    }));
+    assert.equal(await api.getItemDataForDeletionCheck('movie-id'), undefined);
+    get.mock.restore();
+    for (const data of [
+      {},
+      { Items: [null] },
+      { Items: [{ Id: 'different-id', Name: 'Wrong', Type: 'Movie' }] },
+    ]) {
+      const invalid = mock.method(api.getTransport(), 'get', async () => ({
+        data,
+      }));
+      await assert.rejects(api.getItemDataForDeletionCheck('movie-id'));
+      invalid.mock.restore();
+    }
+  });
+  it('does not convert server errors to missing items', async () => {
+    const api = new TestJellyfinAPI('http://localhost:8096', 'test');
+    mock.method(api.getTransport(), 'get', async () => {
+      throw { response: { status: 500 } };
+    });
+    await assert.rejects(api.getItemDataForDeletionCheck('movie-id'));
+  });
+});
 
 const runLookup = (
   lookup: ReturnType<TestJellyfinAPI['getLookup']>,
@@ -252,5 +288,67 @@ describe('Jellyfin response normalization', () => {
     assert.ok(!('providerOnly' in seasons[0]));
     assert.ok(!endpoint.includes('../'));
     assert.ok(!endpoint.includes('?query='));
+  });
+});
+
+describe('Jellyfin and Emby current-selection playlist replacement', () => {
+  it('removes every exact-name remnant before creating one ordered replacement', async () => {
+    const api = new JellyfinAPI('http://localhost', 'token', 'device');
+    const requests: {
+      method: string;
+      endpoint: string;
+      params?: Record<string, unknown>;
+    }[] = [];
+    Object.defineProperty(api, 'get', {
+      configurable: true,
+      value: async () => ({
+        Items: [
+          { Id: 'old-audio', Name: 'SeerrNG - Current Selection' },
+          { Id: 'keep-me', Name: 'Personal Playlist' },
+          { Id: 'old-video', Name: 'SeerrNG - Current Selection' },
+        ],
+      }),
+    });
+    Object.defineProperty(api, 'request', {
+      configurable: true,
+      value: async (
+        method: string,
+        endpoint: string,
+        _data?: unknown,
+        options?: { params?: Record<string, unknown> }
+      ) => {
+        requests.push({ method, endpoint, params: options?.params });
+        return method === 'POST'
+          ? { data: { Id: 'replacement' } }
+          : { data: undefined };
+      },
+    });
+
+    const playlist = await api.replacePlaylist(
+      'SeerrNG - Current Selection',
+      ['track-3', 'track-1'],
+      'Audio',
+      'user-id'
+    );
+
+    assert.deepStrictEqual(playlist, {
+      Id: 'replacement',
+      Name: 'SeerrNG - Current Selection',
+      MediaType: 'Audio',
+    });
+    assert.deepStrictEqual(
+      requests.map(({ method, endpoint }) => ({ method, endpoint })),
+      [
+        { method: 'DELETE', endpoint: '/Items/old-audio' },
+        { method: 'DELETE', endpoint: '/Items/old-video' },
+        { method: 'POST', endpoint: '/Playlists' },
+      ]
+    );
+    assert.deepStrictEqual(requests[2].params, {
+      UserId: 'user-id',
+      Name: 'SeerrNG - Current Selection',
+      Ids: 'track-3,track-1',
+      MediaType: 'Audio',
+    });
   });
 });

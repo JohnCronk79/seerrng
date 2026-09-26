@@ -6,12 +6,14 @@ import {
 } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
-import type { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
-import MediaIdentifier from '@server/entity/MediaIdentifier';
+import MediaIdentifier, {
+  MediaIdentifierProvider,
+} from '@server/entity/MediaIdentifier';
 import MediaRequest, {
   runWithRequestAdmission,
 } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
+import type { AudioPlaybackFormat } from '@server/lib/audioPlaybackFormat';
 import {
   normalizeExternalBookId,
   normalizeMusicBrainzId,
@@ -73,6 +75,7 @@ export interface ProcessOptions {
   mediaAddedAt?: Date;
   ratingKey?: string;
   jellyfinMediaId?: string;
+  audioFormats?: AudioPlaybackFormat[];
   imdbId?: string;
   serviceId?: number;
   externalServiceId?: number;
@@ -85,6 +88,7 @@ export interface ProcessOptions {
     value: string;
   }[];
   bookServiceType?: 'ebook' | 'audiobook';
+  comicServiceType?: 'mylar' | 'kapowarr';
   mutationGuard?: <Result>(callback: () => Promise<Result>) => Promise<Result>;
   outerMutationGuard?: <Result>(
     callback: () => Promise<Result>
@@ -347,10 +351,12 @@ class BaseScanner<T> {
     mbId: string,
     {
       mediaAddedAt,
+      ratingKey,
       serviceId,
       externalServiceId,
       externalServiceSlug,
       jellyfinMediaId,
+      audioFormats = [],
       processing = false,
       title = 'Unknown Album',
       hasFile = true,
@@ -385,6 +391,7 @@ class BaseScanner<T> {
               if (existing) {
                 let changedExisting = false;
                 const previousStatus = existing.status;
+                const isAvailableOnService = !processing && hasFile;
 
                 existing.status =
                   !processing && hasFile
@@ -419,6 +426,36 @@ class BaseScanner<T> {
                   changedExisting = true;
                 }
 
+                if (serviceId !== undefined) {
+                  const currentAvailableServiceIds =
+                    existing.availableMusicServiceIds ?? [];
+                  const nextAvailableServiceIds = isAvailableOnService
+                    ? [...new Set([...currentAvailableServiceIds, serviceId])]
+                    : currentAvailableServiceIds.filter(
+                        (availableServiceId) => availableServiceId !== serviceId
+                      );
+                  if (
+                    existing.availableMusicServiceIds === null ||
+                    existing.availableMusicServiceIds === undefined ||
+                    nextAvailableServiceIds.length !==
+                      currentAvailableServiceIds.length ||
+                    nextAvailableServiceIds.some(
+                      (availableServiceId, index) =>
+                        availableServiceId !== currentAvailableServiceIds[index]
+                    )
+                  ) {
+                    existing.availableMusicServiceIds = nextAvailableServiceIds;
+                    changedExisting = true;
+                  }
+                  if (
+                    nextAvailableServiceIds.length > 0 &&
+                    existing.status !== MediaStatus.AVAILABLE
+                  ) {
+                    existing.status = MediaStatus.AVAILABLE;
+                    changedExisting = true;
+                  }
+                }
+
                 if (
                   externalServiceId !== undefined &&
                   existing.externalServiceId !== externalServiceId
@@ -443,6 +480,47 @@ class BaseScanner<T> {
                   changedExisting = true;
                 }
 
+                if (
+                  ratingKey !== undefined &&
+                  existing.ratingKey !== ratingKey
+                ) {
+                  existing.ratingKey = ratingKey;
+                  changedExisting = true;
+                }
+
+                if (
+                  ratingKey !== undefined &&
+                  audioFormats.includes('mp3') &&
+                  existing.ratingKeyMp3 !== ratingKey
+                ) {
+                  existing.ratingKeyMp3 = ratingKey;
+                  changedExisting = true;
+                }
+                if (
+                  ratingKey !== undefined &&
+                  audioFormats.includes('flac') &&
+                  existing.ratingKeyFlac !== ratingKey
+                ) {
+                  existing.ratingKeyFlac = ratingKey;
+                  changedExisting = true;
+                }
+                if (
+                  jellyfinMediaId !== undefined &&
+                  audioFormats.includes('mp3') &&
+                  existing.jellyfinMediaIdMp3 !== jellyfinMediaId
+                ) {
+                  existing.jellyfinMediaIdMp3 = jellyfinMediaId;
+                  changedExisting = true;
+                }
+                if (
+                  jellyfinMediaId !== undefined &&
+                  audioFormats.includes('flac') &&
+                  existing.jellyfinMediaIdFlac !== jellyfinMediaId
+                ) {
+                  existing.jellyfinMediaIdFlac = jellyfinMediaId;
+                  changedExisting = true;
+                }
+
                 if (changedExisting) {
                   await mediaRepository.save(existing);
                   this.log(`Updating existing album: ${title}`, 'info');
@@ -454,10 +532,33 @@ class BaseScanner<T> {
                     mbId: normalizedMbId,
                     mediaType: MediaType.MUSIC,
                     mediaAddedAt,
+                    ratingKey,
+                    ratingKeyMp3:
+                      ratingKey && audioFormats.includes('mp3')
+                        ? ratingKey
+                        : undefined,
+                    ratingKeyFlac:
+                      ratingKey && audioFormats.includes('flac')
+                        ? ratingKey
+                        : undefined,
                     serviceId,
+                    availableMusicServiceIds:
+                      serviceId !== undefined && !processing && hasFile
+                        ? [serviceId]
+                        : serviceId !== undefined
+                          ? []
+                          : undefined,
                     externalServiceId,
                     externalServiceSlug,
                     jellyfinMediaId,
+                    jellyfinMediaIdMp3:
+                      jellyfinMediaId && audioFormats.includes('mp3')
+                        ? jellyfinMediaId
+                        : undefined,
+                    jellyfinMediaIdFlac:
+                      jellyfinMediaId && audioFormats.includes('flac')
+                        ? jellyfinMediaId
+                        : undefined,
                     status:
                       !processing && hasFile
                         ? MediaStatus.AVAILABLE
@@ -480,6 +581,7 @@ class BaseScanner<T> {
     value: string,
     {
       mediaAddedAt,
+      ratingKey,
       serviceId,
       externalServiceId,
       externalServiceSlug,
@@ -644,6 +746,14 @@ class BaseScanner<T> {
                     changedExisting = true;
                   }
 
+                  if (
+                    ratingKey !== undefined &&
+                    existing.ratingKey !== ratingKey
+                  ) {
+                    existing.ratingKey = ratingKey;
+                    changedExisting = true;
+                  }
+
                   if (changedExisting) {
                     await mediaRepository.save(existing);
                     this.log(`Updating existing book: ${title}`, 'info');
@@ -701,6 +811,7 @@ class BaseScanner<T> {
                       tmdbId: 0,
                       mediaType: MediaType.BOOK,
                       mediaAddedAt,
+                      ratingKey,
                       serviceId:
                         bookServiceType === 'ebook' ? serviceId : undefined,
                       externalServiceId:
@@ -743,6 +854,259 @@ class BaseScanner<T> {
                     )
                   );
                   this.log(`Saved new book: ${title}`);
+                }
+              })
+            )
+          )
+      )
+    );
+  }
+
+  /**
+   * processComic mirrors processBook's identifier-based upsert but without
+   * the dual-format complexity: a comic only ever has one canonical
+   * identifier (its ComicVine volume ID) and one destination, so there's no
+   * multi-identifier merging or ebook/audiobook branching to do.
+   */
+  protected async processComic(
+    value: string,
+    {
+      mediaAddedAt,
+      serviceId,
+      externalServiceId,
+      externalServiceSlug,
+      processing = false,
+      title = 'Unknown Comic',
+      hasFile = true,
+      comicServiceType = 'mylar',
+      mutationGuard,
+      outerMutationGuard,
+    }: ProcessOptions = {}
+  ): Promise<void> {
+    const provider = MediaIdentifierProvider.COMICVINE;
+    const lockKey = `${provider}:${value}`;
+
+    await this.runProcessMutation(outerMutationGuard, () =>
+      runWithRequestAdmission(
+        [`request-canonical:comic:${provider}:${value}`],
+        () =>
+          this.asyncLock.dispatch(lockKey, () =>
+            this.runProcessMutation(mutationGuard, () =>
+              dataSource.transaction(async (manager) => {
+                const mediaRepository = manager.getRepository(Media);
+                const identifierRepository =
+                  manager.getRepository(MediaIdentifier);
+
+                const existingIdentifier = await identifierRepository.findOne({
+                  where: { provider, value },
+                  relations: { media: true },
+                });
+                const existing =
+                  existingIdentifier?.media?.mediaType === MediaType.COMIC
+                    ? existingIdentifier.media
+                    : undefined;
+
+                if (existing) {
+                  let changedExisting = false;
+                  const previousStatus = existing.status;
+
+                  existing.status =
+                    !processing && hasFile
+                      ? MediaStatus.AVAILABLE
+                      : !processing &&
+                          !hasFile &&
+                          previousStatus === MediaStatus.PROCESSING
+                        ? MediaStatus.UNKNOWN
+                        : processing
+                          ? previousStatus === MediaStatus.DELETED
+                            ? MediaStatus.DELETED
+                            : MediaStatus.PROCESSING
+                          : previousStatus;
+
+                  if (existing.status !== previousStatus) {
+                    changedExisting = true;
+                    if (mediaAddedAt) {
+                      existing.mediaAddedAt = mediaAddedAt;
+                    }
+                  }
+
+                  if (!existing.mediaAddedAt && mediaAddedAt) {
+                    existing.mediaAddedAt = mediaAddedAt;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    serviceId !== undefined &&
+                    existing.serviceId !== serviceId
+                  ) {
+                    existing.serviceId = serviceId;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    externalServiceId !== undefined &&
+                    existing.externalServiceId !== externalServiceId
+                  ) {
+                    existing.externalServiceId = externalServiceId;
+                    changedExisting = true;
+                  }
+
+                  if (
+                    externalServiceSlug !== undefined &&
+                    existing.externalServiceSlug !== externalServiceSlug
+                  ) {
+                    existing.externalServiceSlug = externalServiceSlug;
+                    changedExisting = true;
+                  }
+
+                  if (existing.comicServiceType !== comicServiceType) {
+                    existing.comicServiceType = comicServiceType;
+                    changedExisting = true;
+                  }
+
+                  if (changedExisting) {
+                    await mediaRepository.save(existing);
+                    this.log(`Updating existing comic: ${title}`, 'info');
+                  }
+                } else if (processing || hasFile) {
+                  const media = await mediaRepository.save(
+                    new Media({
+                      tmdbId: 0,
+                      mediaType: MediaType.COMIC,
+                      mediaAddedAt,
+                      serviceId,
+                      externalServiceId,
+                      externalServiceSlug,
+                      comicServiceType,
+                      status:
+                        !processing && hasFile
+                          ? MediaStatus.AVAILABLE
+                          : processing
+                            ? MediaStatus.PROCESSING
+                            : MediaStatus.UNKNOWN,
+                      status4k: MediaStatus.UNKNOWN,
+                    })
+                  );
+
+                  await identifierRepository.save(
+                    new MediaIdentifier({
+                      media,
+                      provider,
+                      value,
+                      canonical: true,
+                    })
+                  );
+                  this.log(`Saved new comic: ${title}`);
+                }
+              })
+            )
+          )
+      )
+    );
+  }
+
+  protected async processMagazine(
+    value: string,
+    {
+      mediaAddedAt,
+      serviceId,
+      externalServiceId,
+      externalServiceSlug,
+      processing = false,
+      title = 'Unknown Magazine',
+      hasFile = true,
+      mutationGuard,
+      outerMutationGuard,
+    }: ProcessOptions = {}
+  ): Promise<void> {
+    const provider = MediaIdentifierProvider.LAZYLIBRARIAN;
+    const lockKey = `${provider}:${value}`;
+
+    await this.runProcessMutation(outerMutationGuard, () =>
+      runWithRequestAdmission(
+        [`request-canonical:magazine:${provider}:${value}`],
+        () =>
+          this.asyncLock.dispatch(lockKey, () =>
+            this.runProcessMutation(mutationGuard, () =>
+              dataSource.transaction(async (manager) => {
+                const mediaRepository = manager.getRepository(Media);
+                const identifierRepository =
+                  manager.getRepository(MediaIdentifier);
+                const existingIdentifier = await identifierRepository.findOne({
+                  where: { provider, value },
+                  relations: { media: true },
+                });
+                const existing =
+                  existingIdentifier?.media?.mediaType === MediaType.MAGAZINE
+                    ? existingIdentifier.media
+                    : undefined;
+
+                if (existing) {
+                  let changed = false;
+                  const previousStatus = existing.status;
+                  existing.status = hasFile
+                    ? MediaStatus.AVAILABLE
+                    : processing
+                      ? previousStatus === MediaStatus.DELETED
+                        ? MediaStatus.DELETED
+                        : MediaStatus.PROCESSING
+                      : previousStatus === MediaStatus.AVAILABLE
+                        ? MediaStatus.UNKNOWN
+                        : previousStatus;
+                  if (existing.status !== previousStatus) changed = true;
+                  if (mediaAddedAt && !existing.mediaAddedAt) {
+                    existing.mediaAddedAt = mediaAddedAt;
+                    changed = true;
+                  }
+                  if (
+                    serviceId !== undefined &&
+                    existing.serviceId !== serviceId
+                  ) {
+                    existing.serviceId = serviceId;
+                    changed = true;
+                  }
+                  if (
+                    externalServiceId !== undefined &&
+                    existing.externalServiceId !== externalServiceId
+                  ) {
+                    existing.externalServiceId = externalServiceId;
+                    changed = true;
+                  }
+                  if (
+                    externalServiceSlug !== undefined &&
+                    existing.externalServiceSlug !== externalServiceSlug
+                  ) {
+                    existing.externalServiceSlug = externalServiceSlug;
+                    changed = true;
+                  }
+                  if (changed) {
+                    await mediaRepository.save(existing);
+                    this.log(`Updating existing magazine: ${title}`);
+                  }
+                } else if (processing || hasFile) {
+                  const media = await mediaRepository.save(
+                    new Media({
+                      tmdbId: 0,
+                      mediaType: MediaType.MAGAZINE,
+                      mediaAddedAt,
+                      serviceId,
+                      externalServiceId,
+                      externalServiceSlug,
+                      status: hasFile
+                        ? MediaStatus.AVAILABLE
+                        : MediaStatus.PROCESSING,
+                      status4k: MediaStatus.UNKNOWN,
+                    })
+                  );
+                  await identifierRepository.save(
+                    new MediaIdentifier({
+                      media,
+                      provider,
+                      value,
+                      canonical: true,
+                    })
+                  );
+                  this.log(`Saved new magazine: ${title}`);
                 }
               })
             )

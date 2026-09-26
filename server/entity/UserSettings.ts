@@ -1,6 +1,9 @@
 import type {
   CardTextVisibility,
   NotificationAgentTypes,
+  UserMediaFilterPins,
+  UserPreferredLanguages,
+  UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Notification, hasNotificationType } from '@server/lib/notifications';
 import { NotificationAgentKey } from '@server/lib/settings';
@@ -130,6 +133,9 @@ export class UserSettings {
   @Column({ nullable: true })
   public originalLanguage?: string;
 
+  @Column({ type: 'simple-json', nullable: true })
+  public preferredLanguages?: UserPreferredLanguages;
+
   @Column({ nullable: true })
   public pgpKey?: string;
 
@@ -184,17 +190,35 @@ export class UserSettings {
   @Column({ nullable: true })
   public watchlistSyncBooks?: boolean;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityMovie?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityTv?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityAlbum?: CardTextVisibility;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityBook?: CardTextVisibility;
+
+  @Column({ default: false })
+  public detailDisclosureCastPinned: boolean;
+
+  @Column({ default: false })
+  public detailDisclosureCrewPinned: boolean;
+
+  @Column({ default: false })
+  public detailDisclosureArtistsPinned: boolean;
+
+  @Column({ default: false })
+  public detailDisclosureSubjectTagsPinned: boolean;
+
+  @Column({ type: 'simple-json', nullable: true })
+  public detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
+
+  @Column({ type: 'simple-json', nullable: true })
+  public mediaFilterPins?: UserMediaFilterPins;
 
   @Column({
     type: 'text',
@@ -227,6 +251,7 @@ export class UserSettings {
       discoverRegion: this.discoverRegion,
       streamingRegion: this.streamingRegion,
       originalLanguage: this.originalLanguage,
+      preferredLanguages: this.preferredLanguages,
       discordIds: this.discordIds,
       notificationTypes: this.notificationTypes,
       watchlistSyncMovies: this.watchlistSyncMovies,
@@ -237,6 +262,12 @@ export class UserSettings {
       cardTextVisibilityTv: this.cardTextVisibilityTv,
       cardTextVisibilityAlbum: this.cardTextVisibilityAlbum,
       cardTextVisibilityBook: this.cardTextVisibilityBook,
+      detailDisclosureCastPinned: this.detailDisclosureCastPinned,
+      detailDisclosureCrewPinned: this.detailDisclosureCrewPinned,
+      detailDisclosureArtistsPinned: this.detailDisclosureArtistsPinned,
+      detailDisclosureSubjectTagsPinned: this.detailDisclosureSubjectTagsPinned,
+      detailDisclosurePins: this.detailDisclosurePins,
+      mediaFilterPins: this.mediaFilterPins,
     };
   }
 

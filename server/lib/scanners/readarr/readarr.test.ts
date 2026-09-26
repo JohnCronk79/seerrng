@@ -247,6 +247,49 @@ describe('Readarr Scanner', () => {
     assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
   });
 
+  it('stores ebook service data separately from audiobook service data', async () => {
+    const media = await seedBook('9780000000009');
+    media.audiobookServiceId = 21;
+    media.audiobookExternalServiceId = 210;
+    media.audiobookExternalServiceSlug = 'audiobook-slug';
+    await getRepository(Media).save(media);
+
+    configureReadarr([
+      {
+        id: 10,
+        serviceType: 'ebook',
+        activeDirectory: '/ebooks',
+      },
+    ]);
+    getBooksImpl = async () => [
+      fakeReadarrBook({
+        id: 110,
+        titleSlug: 'ebook-slug',
+        editions: [
+          {
+            foreignEditionId: 'edition-id',
+            title: 'Test Book',
+            isbn13: '9780000000009',
+            monitored: true,
+          },
+        ],
+      }),
+    ];
+
+    await readarrScanner.run();
+
+    const updated = await getRepository(Media).findOneOrFail({
+      where: { mediaType: MediaType.BOOK },
+    });
+    assert.strictEqual(updated.serviceId, 10);
+    assert.strictEqual(updated.externalServiceId, 110);
+    assert.strictEqual(updated.externalServiceSlug, 'ebook-slug');
+    assert.strictEqual(updated.audiobookServiceId, 21);
+    assert.strictEqual(updated.audiobookExternalServiceId, 210);
+    assert.strictEqual(updated.audiobookExternalServiceSlug, 'audiobook-slug');
+    assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
+  });
+
   it('keeps an available ebook available while audiobook is still processing', async () => {
     const media = await seedBook('9780000000007', MediaStatus.AVAILABLE);
     media.serviceId = 10;

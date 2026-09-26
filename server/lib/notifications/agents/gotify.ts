@@ -80,6 +80,7 @@ class GotifyAgent
     const intl = getIntl(settings.options.locale);
     const { applicationUrl, applicationTitle } =
       getExternalRuntimeConfig().main;
+    const embedPoster = settings.embedPoster;
     const priority = settings.options.priority ?? 1;
 
     const title = payload.event
@@ -164,6 +165,13 @@ class GotifyAgent
         'client::display': {
           contentType: 'text/markdown',
         },
+        ...(embedPoster && payload.image
+          ? {
+              'client::notification': {
+                bigImageUrl: payload.image,
+              },
+            }
+          : {}),
       },
       title,
       message,

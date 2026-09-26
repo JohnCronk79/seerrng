@@ -1,9 +1,15 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
+import MylarAPI from '@server/api/comics/mylar';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import type { LidarrAlbumOptions } from '@server/api/servarr/lidarr';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import type { RadarrMovieOptions } from '@server/api/servarr/radarr';
 import RadarrAPI from '@server/api/servarr/radarr';
-import type { ReadarrBookLookupResult } from '@server/api/servarr/readarr';
+import type {
+  ReadarrBookLookupResult,
+  ReadarrEdition,
+} from '@server/api/servarr/readarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import type {
   AddSeriesOptions,
@@ -40,6 +46,10 @@ import {
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeValidIsbn } from '@server/lib/isbn';
+import {
+  cleanMagazineTitle,
+  normalizeMagazineTitle,
+} from '@server/lib/magazineIdentity';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
 import { getLidarrAlbumMediaStatus } from '@server/lib/musicAvailability';
 import notificationManager, { Notification } from '@server/lib/notifications';
@@ -61,7 +71,13 @@ import {
 } from '@server/lib/serviceAdmission';
 import { type ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
+import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
+import {
+  hydrateBookshelfLookupResult,
+  isAddableBookshelfLookupResult,
+} from '@server/utils/bookshelfLookup';
 import { mapWithConcurrency } from '@server/utils/concurrency';
+import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import { isEqual } from 'lodash';
 import type {
   EntityManager,
@@ -95,6 +111,8 @@ export const READARR_FAILED_RETRY_DELAY_MS = 6 * 60 * 60 * 1_000;
 export const READARR_MAX_LOOKUP_RESULTS = 50;
 export const READARR_LOOKUP_HYDRATION_CONCURRENCY = 5;
 const activeReadarrDispatches = new Map<number, Promise<number | undefined>>();
+const activeComicDispatches = new Map<number, Promise<number | undefined>>();
+const activeMagazineDispatches = new Map<number, Promise<number | undefined>>();
 
 const saveRequestServiceTarget = async (
   request: MediaRequest,
@@ -154,6 +172,49 @@ const getRequestDispatchServiceSelection = (
         ? settings.lidarr.find(({ id }) => id === request.serverId)
         : settings.lidarr.find(({ isDefault }) => isDefault);
     return { serviceType: 'lidarr', serviceIds: uniqueIds([selected?.id]) };
+  }
+  if (request.type === MediaType.COMIC) {
+    const requestedMylar =
+      request.serverId !== null && request.serverId >= 0
+        ? settings.mylar.find(({ id }) => id === request.serverId)
+        : undefined;
+    const requestedKapowarr =
+      request.serverId !== null && request.serverId >= 0 && !requestedMylar
+        ? settings.kapowarr.find(({ id }) => id === request.serverId)
+        : undefined;
+    if (requestedMylar) {
+      return {
+        serviceType: 'mylar',
+        serviceIds: uniqueIds([requestedMylar.id]),
+      };
+    }
+    if (requestedKapowarr) {
+      return {
+        serviceType: 'kapowarr',
+        serviceIds: uniqueIds([requestedKapowarr.id]),
+      };
+    }
+    const defaultMylar = settings.mylar.find(({ isDefault }) => isDefault);
+    if (defaultMylar) {
+      return { serviceType: 'mylar', serviceIds: uniqueIds([defaultMylar.id]) };
+    }
+    const defaultKapowarr = settings.kapowarr.find(
+      ({ isDefault }) => isDefault
+    );
+    return {
+      serviceType: 'kapowarr',
+      serviceIds: uniqueIds([defaultKapowarr?.id]),
+    };
+  }
+  if (request.type === MediaType.MAGAZINE) {
+    const selected =
+      request.serverId !== null && request.serverId >= 0
+        ? settings.lazylibrarian.find(({ id }) => id === request.serverId)
+        : settings.lazylibrarian.find(({ isDefault }) => isDefault);
+    return {
+      serviceType: 'lazylibrarian',
+      serviceIds: uniqueIds([selected?.id]),
+    };
   }
 
   const format = request.bookFormat ?? 'ebook';
@@ -291,47 +352,7 @@ const lookupReadarrBookWithRetry = async (
   }
 };
 
-const isAddableReadarrBookLookupResult = (
-  result: ReadarrBookLookupResult
-): boolean => {
-  return !!(
-    result.foreignBookId &&
-    result.title &&
-    result.author?.foreignAuthorId &&
-    Array.isArray(result.editions) &&
-    result.editions.length > 0
-  );
-};
-
-const parseReadarrAuthorName = (
-  result: ReadarrBookLookupResult
-): string | undefined => {
-  const authorTitle = result.authorTitle?.trim();
-
-  if (!authorTitle) {
-    return undefined;
-  }
-
-  const titleIndex = authorTitle
-    .toLocaleLowerCase()
-    .lastIndexOf(result.title.toLocaleLowerCase());
-  const rawAuthorName =
-    titleIndex > 0 ? authorTitle.slice(0, titleIndex).trim() : authorTitle;
-  const [lastName, ...firstNameParts] = rawAuthorName
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (!lastName) {
-    return undefined;
-  }
-
-  return firstNameParts.length
-    ? `${firstNameParts.join(' ')} ${lastName}`
-    : lastName;
-};
-
-const hydrateSoftcoverLookupResults = async (
+const hydrateBookshelfLookupResults = async (
   readarr: ReadarrAPI,
   results: ReadarrBookLookupResult[],
   normalizedIsbn?: string
@@ -344,56 +365,43 @@ const hydrateSoftcoverLookupResults = async (
   return mapWithConcurrency(
     results.slice(0, READARR_MAX_LOOKUP_RESULTS),
     READARR_LOOKUP_HYDRATION_CONCURRENCY,
-    async (result) => {
-      if (isAddableReadarrBookLookupResult(result)) {
-        return result;
-      }
-
-      if (result.author || !result.foreignEditionId) {
-        return result;
-      }
-
-      const authorName = parseReadarrAuthorName(result);
-
-      if (!authorName) {
-        return result;
-      }
-
-      let pendingAuthor = authorCache.get(authorName);
-
-      if (!pendingAuthor) {
-        pendingAuthor = readarr
-          .lookupAuthor(authorName)
-          .then(([authorResult]) =>
-            authorResult?.foreignAuthorId && authorResult.authorName
+    (result) =>
+      hydrateBookshelfLookupResult(readarr, result, normalizedIsbn, (name) => {
+        let pending = authorCache.get(name);
+        if (!pending) {
+          pending = readarr.lookupAuthor(name).then((authors) => {
+            const normalized = name
+              .toLocaleLowerCase()
+              .normalize('NFKD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^\p{L}\p{N}]+/gu, ' ')
+              .trim();
+            const complete = authors.filter(
+              (author) =>
+                !!author.foreignAuthorId?.trim() && !!author.authorName?.trim()
+            );
+            const match = complete.find(
+              (author) =>
+                author.authorName
+                  .toLocaleLowerCase()
+                  .normalize('NFKD')
+                  .replace(/[\u0300-\u036f]/g, '')
+                  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+                  .trim() === normalized
+            );
+            const resolved = match ?? complete[0];
+            return resolved
               ? {
-                  foreignAuthorId: authorResult.foreignAuthorId,
-                  authorName: authorResult.authorName,
-                  id: authorResult.id,
+                  foreignAuthorId: resolved.foreignAuthorId,
+                  authorName: resolved.authorName,
+                  id: resolved.id,
                 }
-              : undefined
-          );
-        authorCache.set(authorName, pendingAuthor);
-      }
-
-      const author = await pendingAuthor;
-      if (!author) {
-        return result;
-      }
-
-      return {
-        ...result,
-        author,
-        editions: [
-          {
-            foreignEditionId: result.foreignEditionId,
-            title: result.title,
-            isbn13: normalizedIsbn,
-            monitored: true,
-          },
-        ],
-      };
-    }
+              : undefined;
+          });
+          authorCache.set(name, pending);
+        }
+        return pending;
+      })
   );
 };
 
@@ -598,13 +606,15 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         const request = await getRepository(MediaRequest).findOne({
           where: { id: requestId },
         });
-        const isRetryableFailedBook =
-          request?.type === MediaType.BOOK &&
+        const isRetryableFailedRequest =
+          (request?.type === MediaType.BOOK ||
+            request?.type === MediaType.COMIC ||
+            request?.type === MediaType.MAGAZINE) &&
           request.status === MediaRequestStatus.FAILED;
         if (
           !request ||
           (request.status !== MediaRequestStatus.APPROVED &&
-            !isRetryableFailedBook)
+            !isRetryableFailedRequest)
         ) {
           return { delivered: true };
         }
@@ -700,6 +710,16 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       return { delivered };
     } else if (request.type === MediaType.BOOK) {
       const retryAfterMs = await this.sendToReadarr(request);
+      if (retryAfterMs !== undefined) {
+        return { delivered: false, retryAfterMs };
+      }
+    } else if (request.type === MediaType.COMIC) {
+      const retryAfterMs = await this.sendToComicBackend(request);
+      if (retryAfterMs !== undefined) {
+        return { delivered: false, retryAfterMs };
+      }
+    } else if (request.type === MediaType.MAGAZINE) {
+      const retryAfterMs = await this.sendToMagazineBackend(request);
       if (retryAfterMs !== undefined) {
         return { delivered: false, retryAfterMs };
       }
@@ -831,13 +851,6 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
         }
 
-        const tmdb = new TheMovieDb();
-        const radarr = new RadarrAPI({
-          apiKey: radarrSettings.apiKey,
-          url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
-        });
-        const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
-
         const media = await mediaRepository.findOne({
           where: { id: entity.media.id },
         });
@@ -850,6 +863,28 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
           return false;
         }
+
+        if (
+          media[entity.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
+        ) {
+          logger.warn('Media already exists, marking request as COMPLETED', {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+          });
+
+          const requestRepository = getRepository(MediaRequest);
+          entity.status = MediaRequestStatus.COMPLETED;
+          await requestRepository.save(entity);
+          return true;
+        }
+
+        const tmdb = new TheMovieDb();
+        const radarr = new RadarrAPI({
+          apiKey: radarrSettings.apiKey,
+          url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
+        });
+        const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
 
         if (radarrSettings.tagRequests) {
           const radarrTags = await radarr.getTags();
@@ -1627,8 +1662,19 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       const isbn = media.identifiers?.find(
         (identifier) => identifier.provider === MediaIdentifierProvider.ISBN
       )?.value;
+      const bookshelfId = media.identifiers?.find(
+        (identifier) =>
+          identifier.provider === MediaIdentifierProvider.BOOKSHELF
+      )?.value;
+      const bookshelfLookupId = bookshelfId
+        ? (parseBookshelfBookId(bookshelfId)?.foreignBookId ?? bookshelfId)
+        : undefined;
+      const preferredEditionId = entity.preferredEditionId?.trim() || undefined;
+      const preferredIsbn = normalizeValidIsbn(
+        entity.preferredIsbn13 ?? undefined
+      );
 
-      if (!openLibraryId && !isbn) {
+      if (!openLibraryId && !isbn && !bookshelfId) {
         throw new Error('Book request is missing lookup identifiers');
       }
 
@@ -1640,6 +1686,9 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         ? await openLibrary.getWork(normalizedOpenLibraryId)
         : undefined;
       const lookupTerms = [
+        bookshelfLookupId,
+        preferredIsbn,
+        preferredIsbn ? `isbn:${preferredIsbn}` : undefined,
         isbn,
         isbn ? `isbn:${isbn}` : undefined,
         work?.title,
@@ -1730,7 +1779,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           .slice(0, READARR_MAX_EXPANDED_LOOKUP_TERMS);
       };
       const identifierRepository = getRepository(MediaIdentifier);
-      const normalizedIsbn = normalizeValidIsbn(isbn);
+      const normalizedIsbn = preferredIsbn ?? normalizeValidIsbn(isbn);
       const existingIdentifierKeys = new Set(
         (media.identifiers ?? []).map(
           (identifier) => `${identifier.provider}:${identifier.value}`
@@ -1812,14 +1861,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             requestId: entity.id,
             serviceType,
           });
-          searchResults = await hydrateSoftcoverLookupResults(
+          searchResults = await hydrateBookshelfLookupResults(
             readarr,
             searchResults,
             normalizedIsbn
           );
 
           const addableSearchResults = searchResults.filter(
-            isAddableReadarrBookLookupResult
+            isAddableBookshelfLookupResult
           );
 
           if (addableSearchResults.length) {
@@ -1878,12 +1927,55 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           );
         }
 
+        const findPreferredEdition = (
+          editions?: ReadarrEdition[]
+        ): ReadarrEdition | undefined =>
+          (preferredEditionId
+            ? editions?.find(
+                (edition) => edition.foreignEditionId === preferredEditionId
+              )
+            : undefined) ??
+          (preferredIsbn
+            ? editions?.find(
+                (edition) =>
+                  normalizeValidIsbn(edition.isbn13) === preferredIsbn
+              )
+            : undefined);
         const bookInfo =
-          searchResults.find((result) =>
-            result.editions?.some(
-              (edition) => normalizeValidIsbn(edition.isbn13) === normalizedIsbn
-            )
-          ) ?? searchResults[0];
+          searchResults.find(
+            (result) => findPreferredEdition(result.editions) !== undefined
+          ) ??
+          (!preferredEditionId && !preferredIsbn
+            ? (searchResults.find((result) =>
+                result.editions?.some(
+                  (edition) =>
+                    normalizeValidIsbn(edition.isbn13) === normalizedIsbn
+                )
+              ) ?? searchResults[0])
+            : undefined);
+
+        if (!bookInfo) {
+          throw new Error(
+            `Bookshelf metadata does not contain the selected edition${preferredIsbn ? ` (ISBN ${preferredIsbn})` : ''}. Choose another edition or update the Bookshelf metadata source.`
+          );
+        }
+        const matchedPreferredEdition =
+          preferredEditionId || preferredIsbn
+            ? findPreferredEdition(bookInfo.editions)
+            : undefined;
+        if ((preferredEditionId || preferredIsbn) && !matchedPreferredEdition) {
+          throw new Error(
+            `Bookshelf metadata does not contain the selected edition${preferredIsbn ? ` (ISBN ${preferredIsbn})` : ''}. Choose another edition or update the Bookshelf metadata source.`
+          );
+        }
+        const bookEditions = matchedPreferredEdition
+          ? (bookInfo.editions ?? []).map((edition) => ({
+              ...edition,
+              monitored:
+                edition.foreignEditionId ===
+                matchedPreferredEdition.foreignEditionId,
+            }))
+          : (bookInfo.editions ?? []);
         const savedTarget = entity.serviceTargets?.find(
           (target) =>
             target.serviceType === 'readarr' && target.format === serviceType
@@ -1979,7 +2071,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                 manualAdd: true,
               }
             : bookInfo.author,
-          editions: bookInfo.editions ?? [],
+          editions: bookEditions,
+          useRequestedEdition: !!(preferredEditionId || preferredIsbn),
           addOptions: {
             // Seerr starts and tracks BookSearch explicitly after the add.
             // The Bookshelf convenience flag depends on a later metadata
@@ -1988,35 +2081,51 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           },
         });
 
-        if (!result.id) {
+        const providerBookId =
+          result.foreignBookId?.trim() || bookInfo.foreignBookId;
+        const providerEditionId = bookEditions.find(
+          (edition) => edition.monitored
+        )?.foreignEditionId;
+        const hasLocalBookId =
+          typeof result.id === 'number' &&
+          Number.isSafeInteger(result.id) &&
+          result.id > 0;
+        const localBookId = hasLocalBookId ? (result.id as number) : null;
+
+        if (!hasLocalBookId && !result.pending) {
           throw new Error(
             'Bookshelf returned no book ID after adding the book.'
           );
         }
 
-        const searchCommand = await readarr.startBookSearch(result.id);
+        const searchCommand = hasLocalBookId
+          ? await readarr.startBookSearch(localBookId as number)
+          : undefined;
         await getRepository(BookRequestSearch).save(
           new BookRequestSearch({
             requestId: entity.id,
             serviceId: readarrSettings.id,
             format: serviceType,
-            bookId: result.id,
+            bookId: localBookId,
+            providerBookId,
+            providerEditionId: providerEditionId ?? null,
+            pendingId: result.pendingId ?? null,
             authorId: result.authorId ?? result.author?.id ?? null,
-            commandId: searchCommand.id,
+            commandId: searchCommand?.id ?? null,
             createdBook: result.createdBook,
             createdAuthor: result.createdAuthor,
-            state: 'searching',
+            state: result.pending ? 'pending' : 'searching',
           })
         );
 
         if (serviceType === 'audiobook') {
-          media.audiobookExternalServiceId = result.id ?? null;
+          media.audiobookExternalServiceId = localBookId;
           media.audiobookExternalServiceSlug =
-            result.titleSlug ?? result.foreignBookId;
+            result.titleSlug ?? providerBookId;
           media.audiobookServiceId = readarrSettings.id;
         } else {
-          media.externalServiceId = result.id ?? null;
-          media.externalServiceSlug = result.titleSlug ?? result.foreignBookId;
+          media.externalServiceId = localBookId;
+          media.externalServiceSlug = result.titleSlug ?? providerBookId;
           media.serviceId = readarrSettings.id;
         }
 
@@ -2029,20 +2138,20 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           metadataProfileId: metadataProfile,
           rootFolder,
           tags,
-          externalServiceId: result.id ?? null,
-          externalServiceSlug: result.titleSlug ?? result.foreignBookId,
+          externalServiceId: localBookId,
+          externalServiceSlug: result.titleSlug ?? providerBookId,
           status: media.status,
         });
 
-        const resultIsbn = result.editions?.find(
-          (edition) => edition.isbn13
-        )?.isbn13;
+        const resultIsbn =
+          result.editions?.find((edition) => edition.isbn13)?.isbn13 ??
+          bookInfo.editions?.find((edition) => edition.isbn13)?.isbn13;
         const normalizedResultIsbn = normalizeValidIsbn(resultIsbn);
         const identifierCandidates = [
-          (result.foreignBookId ?? bookInfo.foreignBookId)
+          providerBookId
             ? {
                 provider: MediaIdentifierProvider.READARR,
-                value: result.foreignBookId ?? bookInfo.foreignBookId,
+                value: providerBookId,
               }
             : undefined,
           normalizedResultIsbn
@@ -2181,6 +2290,353 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         );
       }
 
+      return READARR_FAILED_RETRY_DELAY_MS;
+    }
+  }
+
+  public async sendToComicBackend(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    if (entity.type !== MediaType.COMIC) {
+      return;
+    }
+
+    if (
+      entity.status !== MediaRequestStatus.APPROVED &&
+      entity.status !== MediaRequestStatus.FAILED
+    ) {
+      return;
+    }
+
+    const activeDispatch = activeComicDispatches.get(entity.id);
+    if (activeDispatch) {
+      return activeDispatch;
+    }
+
+    const dispatch = this.dispatchComicRequest(entity);
+    const trackedDispatch = dispatch.finally(() => {
+      if (activeComicDispatches.get(entity.id) === trackedDispatch) {
+        activeComicDispatches.delete(entity.id);
+      }
+    });
+    activeComicDispatches.set(entity.id, trackedDispatch);
+
+    return trackedDispatch;
+  }
+
+  private async dispatchComicRequest(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    try {
+      const mediaRepository = getRepository(Media);
+      const settings = getExternalRuntimeConfig();
+
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+        relations: { identifiers: true },
+      });
+
+      if (!media) {
+        throw new Error('Comic media data not found');
+      }
+
+      if (
+        media.status === MediaStatus.AVAILABLE &&
+        media.serviceId !== null &&
+        media.externalServiceId !== null
+      ) {
+        logger.warn('Comic already exists, marking request as COMPLETED', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+
+        const requestRepository = getRepository(MediaRequest);
+        entity.status = MediaRequestStatus.COMPLETED;
+        await requestRepository.save(entity);
+        return;
+      }
+
+      const comicVineId = media.identifiers?.find(
+        (identifier) =>
+          identifier.provider === MediaIdentifierProvider.COMICVINE
+      )?.value;
+      if (!comicVineId) {
+        throw new Error('Comic request is missing a ComicVine identifier');
+      }
+
+      const selection = getRequestDispatchServiceSelection(entity);
+      const backendId = selection.serviceIds[0];
+      if (backendId === undefined) {
+        throw new Error(
+          `No default ${selection.serviceType === 'kapowarr' ? 'Kapowarr' : 'Mylar'} server is configured for comic requests`
+        );
+      }
+
+      let externalServiceId: number;
+      let externalServiceSlug: string;
+
+      if (selection.serviceType === 'kapowarr') {
+        const kapowarrSettings = settings.kapowarr.find(
+          ({ id }) => id === backendId
+        );
+        if (!kapowarrSettings) {
+          throw new Error('Selected Kapowarr server no longer exists');
+        }
+        if (!kapowarrSettings.rootFolder) {
+          throw new Error(
+            'Selected Kapowarr server has no root folder configured'
+          );
+        }
+
+        const kapowarr = new KapowarrAPI({
+          url: KapowarrAPI.buildUrl(kapowarrSettings),
+          apiKey: kapowarrSettings.apiKey,
+        });
+        const rootFolderId = await kapowarr.resolveRootFolderId(
+          kapowarrSettings.rootFolder
+        );
+        const volume = await kapowarr.addVolume({
+          comicVineId: Number(comicVineId),
+          rootFolderId,
+        });
+        externalServiceId = volume.id;
+        externalServiceSlug = String(volume.id);
+      } else {
+        const mylarSettings = settings.mylar.find(({ id }) => id === backendId);
+        if (!mylarSettings) {
+          throw new Error('Selected Mylar server no longer exists');
+        }
+
+        const mylar = new MylarAPI({
+          url: MylarAPI.buildUrl(mylarSettings),
+          apiKey: mylarSettings.apiKey,
+        });
+        await mylar.addComic(comicVineId);
+        externalServiceId = Number(comicVineId);
+        externalServiceSlug = comicVineId;
+      }
+
+      media.serviceId = backendId;
+      media.externalServiceId = externalServiceId;
+      media.externalServiceSlug = externalServiceSlug;
+      media.comicServiceType = selection.serviceType as 'mylar' | 'kapowarr';
+      await mediaRepository.save(media);
+      await saveRequestServiceTarget(entity, {
+        serviceType: selection.serviceType,
+        format: 'comic',
+        serverId: backendId,
+        externalServiceId,
+        externalServiceSlug,
+        status: media.status,
+      });
+
+      const requestRepository = getRepository(MediaRequest);
+      entity.status = MediaRequestStatus.COMPLETED;
+      await requestRepository.save(entity);
+
+      logger.info('Sent request to comics service', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        serviceType: selection.serviceType,
+        comicVineId,
+      });
+    } catch (e) {
+      if (isTransientExternalError(e)) {
+        const providerRetryDelay = getRetryAfterMs(e);
+        const retryAfterMs =
+          providerRetryDelay === undefined
+            ? undefined
+            : clampReadarrProviderRetryDelay(providerRetryDelay);
+
+        logger.warn(
+          'Comic request hit a transient error; leaving request in the durable dispatch queue.',
+          {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+            retryAfterMs,
+            errorMessage: e instanceof Error ? e.message : String(e),
+          }
+        );
+
+        return retryAfterMs;
+      }
+
+      const wasAlreadyFailed = entity.status === MediaRequestStatus.FAILED;
+      const requestRepository = getRepository(MediaRequest);
+      const mediaRepository = getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+
+      if (!wasAlreadyFailed) {
+        entity.status = MediaRequestStatus.FAILED;
+        await requestRepository.save(entity);
+      }
+
+      logger.warn(
+        'Something went wrong sending comic request to Mylar/Kapowarr; retaining the failed request in the durable dispatch queue.',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          retryAfterMs: READARR_FAILED_RETRY_DELAY_MS,
+          errorMessage: e instanceof Error ? e.message : String(e),
+        }
+      );
+
+      if (media && !wasAlreadyFailed) {
+        await MediaRequest.sendNotification(
+          entity,
+          media,
+          Notification.MEDIA_FAILED
+        );
+      }
+
+      return READARR_FAILED_RETRY_DELAY_MS;
+    }
+  }
+
+  public async sendToMagazineBackend(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    if (entity.type !== MediaType.MAGAZINE) {
+      return;
+    }
+    if (
+      entity.status !== MediaRequestStatus.APPROVED &&
+      entity.status !== MediaRequestStatus.FAILED
+    ) {
+      return;
+    }
+
+    const activeDispatch = activeMagazineDispatches.get(entity.id);
+    if (activeDispatch) {
+      return activeDispatch;
+    }
+    const dispatch = this.dispatchMagazineRequest(entity);
+    const trackedDispatch = dispatch.finally(() => {
+      if (activeMagazineDispatches.get(entity.id) === trackedDispatch) {
+        activeMagazineDispatches.delete(entity.id);
+      }
+    });
+    activeMagazineDispatches.set(entity.id, trackedDispatch);
+    return trackedDispatch;
+  }
+
+  private async dispatchMagazineRequest(
+    entity: MediaRequest
+  ): Promise<number | undefined> {
+    try {
+      const mediaRepository = getRepository(Media);
+      const requestRepository = getRepository(MediaRequest);
+      const settings = getExternalRuntimeConfig();
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+        relations: { identifiers: true },
+      });
+      if (!media) {
+        throw new Error('Magazine media data not found.');
+      }
+      const titleValue =
+        media.externalServiceSlug ??
+        media.identifiers?.find(
+          (identifier) =>
+            identifier.provider === MediaIdentifierProvider.LAZYLIBRARIAN
+        )?.value;
+      const title = titleValue ? cleanMagazineTitle(titleValue) : '';
+      if (!title) {
+        throw new Error('Magazine request is missing its LazyLibrarian title.');
+      }
+
+      const selection = getRequestDispatchServiceSelection(entity);
+      const serviceId = selection.serviceIds[0];
+      const service = settings.lazylibrarian.find(
+        (candidate) => candidate.id === serviceId
+      );
+      if (!service) {
+        throw new Error(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+
+      const lazyLibrarian = new LazyLibrarianAPI({
+        url: LazyLibrarianAPI.buildUrl(service),
+        apiKey: service.apiKey,
+      });
+      const normalizedTitle = normalizeMagazineTitle(title);
+      const trackedMagazines = await lazyLibrarian.getMagazines();
+      const alreadyTracked = trackedMagazines.some(
+        (magazine) => normalizeMagazineTitle(magazine.title) === normalizedTitle
+      );
+      if (!alreadyTracked) {
+        await lazyLibrarian.addMagazine(title);
+      }
+      if (!service.preventSearch) {
+        await lazyLibrarian.searchMagazine(title);
+      }
+
+      media.serviceId = service.id;
+      media.externalServiceId = 0;
+      media.externalServiceSlug = title;
+      media.mediaType = MediaType.MAGAZINE;
+      media.status = MediaStatus.PROCESSING;
+      await mediaRepository.save(media);
+      await saveRequestServiceTarget(entity, {
+        serviceType: 'lazylibrarian',
+        format: 'magazine',
+        serverId: service.id,
+        externalServiceId: 0,
+        externalServiceSlug: title,
+        rootFolder: null,
+        status: MediaStatus.PROCESSING,
+      });
+
+      entity.status = MediaRequestStatus.COMPLETED;
+      await requestRepository.save(entity);
+      logger.info('Sent magazine request to LazyLibrarian', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        serviceId: service.id,
+      });
+    } catch (error) {
+      if (isTransientExternalError(error)) {
+        const providerRetryDelay = getRetryAfterMs(error);
+        return providerRetryDelay === undefined
+          ? undefined
+          : clampReadarrProviderRetryDelay(providerRetryDelay);
+      }
+
+      const wasAlreadyFailed = entity.status === MediaRequestStatus.FAILED;
+      const requestRepository = getRepository(MediaRequest);
+      const mediaRepository = getRepository(Media);
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+      if (!wasAlreadyFailed) {
+        entity.status = MediaRequestStatus.FAILED;
+        await requestRepository.save(entity);
+      }
+      logger.warn(
+        'Something went wrong sending magazine request to LazyLibrarian; retaining the failed request in the durable dispatch queue.',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          retryAfterMs: READARR_FAILED_RETRY_DELAY_MS,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }
+      );
+      if (media && !wasAlreadyFailed) {
+        await MediaRequest.sendNotification(
+          entity,
+          media,
+          Notification.MEDIA_FAILED
+        );
+      }
       return READARR_FAILED_RETRY_DELAY_MS;
     }
   }
@@ -2340,6 +2796,10 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     manager: EntityManager,
     entity: MediaRequest
   ): Promise<void> {
+    const fullMedia = await manager.findOneOrFail(Media, {
+      where: { id: entity.media.id },
+      relations: { requests: { seasons: true }, seasons: true },
+    });
     const media = await manager.findOneOrFail(Media, {
       where: { id: entity.media.id },
     });
@@ -2441,6 +2901,40 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
 
       await manager.save(media);
     }
+
+    // Reset stale seasons or re-requests fail ("No seasons available to request")
+    if (fullMedia.mediaType === MediaType.TV) {
+      const statusKey = entity.is4k ? 'status4k' : 'status';
+      const removedSeasonNumbers = new Set(
+        entity.seasons.map((s) => s.seasonNumber)
+      );
+      const activeSeasonNumbers = new Set(
+        fullMedia.requests
+          .filter(
+            (request) =>
+              request.is4k === entity.is4k &&
+              request.status !== MediaRequestStatus.COMPLETED &&
+              request.status !== MediaRequestStatus.DECLINED
+          )
+          .flatMap((request) => request.seasons.map((s) => s.seasonNumber))
+      );
+
+      const changedSeasons: Season[] = [];
+      for (const season of fullMedia.seasons) {
+        if (
+          (season[statusKey] === MediaStatus.PENDING ||
+            season[statusKey] === MediaStatus.PROCESSING) &&
+          removedSeasonNumbers.has(season.seasonNumber) &&
+          !activeSeasonNumbers.has(season.seasonNumber)
+        ) {
+          season[statusKey] = MediaStatus.UNKNOWN;
+          changedSeasons.push(season);
+        }
+      }
+      if (changedSeasons.length) {
+        await manager.save(changedSeasons);
+      }
+    }
   }
 
   public async afterUpdate(event: UpdateEvent<MediaRequest>): Promise<void> {
@@ -2461,9 +2955,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       return;
     }
 
-    await this.updateParentStatus(
-      event.manager as EntityManager,
-      event.entity as MediaRequest
+    await withNestedTransaction(event.manager as EntityManager, (manager) =>
+      this.updateParentStatus(manager, event.entity as MediaRequest)
     );
     await recordRequestStatus((event.entity as MediaRequest).id, {
       manager: event.manager as EntityManager,
@@ -2484,9 +2977,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     );
     await this.enqueueRequestDispatch(event.entity as MediaRequest, event);
 
-    await this.updateParentStatus(
-      event.manager as EntityManager,
-      event.entity as MediaRequest
+    await withNestedTransaction(event.manager as EntityManager, (manager) =>
+      this.updateParentStatus(manager, event.entity as MediaRequest)
     );
     await recordRequestStatus((event.entity as MediaRequest).id, {
       manager: event.manager as EntityManager,

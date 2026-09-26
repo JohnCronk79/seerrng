@@ -1,6 +1,7 @@
 import BookFormatBadge, {
   type RequestedBookFormat,
 } from '@app/components/Common/BookFormatBadge';
+import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import defineMessages from '@app/utils/defineMessages';
 import { useIntl } from 'react-intl';
 
@@ -46,11 +47,7 @@ const BookFormatSelector = ({
               aria-checked={isSelected}
               disabled={!isAvailable}
               onClick={() => onChange(option)}
-              className={`inline-flex h-8 min-w-0 items-center justify-center whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-45 ${
-                isSelected
-                  ? 'border-indigo-400 bg-indigo-500 text-white'
-                  : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'
-              }`}
+              className={`${getFilterToggleButtonClass(isSelected)} min-w-0 disabled:cursor-not-allowed disabled:opacity-45`}
             >
               <BookFormatBadge
                 format={option}

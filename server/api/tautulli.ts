@@ -9,6 +9,7 @@ import {
   stringifySafeHttpUrl,
 } from '@server/utils/security';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
+import { userAgentRequestInterceptor } from '@server/utils/userAgent';
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
 import axios from 'axios';
 import { uniqWith } from 'lodash';
@@ -160,6 +161,7 @@ class TautulliAPI {
       ...TAUTULLI_HTTP_LIMITS,
     });
     this.axios.interceptors.request.use(proxyRequestInterceptor);
+    this.axios.interceptors.request.use(userAgentRequestInterceptor);
   }
 
   private async get<T>(

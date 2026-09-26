@@ -1,14 +1,27 @@
-import ReadarrAPI from '@server/api/servarr/readarr';
+import ReadarrAPI, {
+  matchesReadarrBookProviderIdentity,
+  type ReadarrBook,
+  type ReadarrBookLookupResult,
+  type ReadarrPendingAuthorImport,
+} from '@server/api/servarr/readarr';
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import { BookRequestSearch } from '@server/entity/BookRequestSearch';
 import Media from '@server/entity/Media';
-import { MediaRequest } from '@server/entity/MediaRequest';
+import MediaIdentifier, {
+  MediaIdentifierProvider,
+} from '@server/entity/MediaIdentifier';
+import {
+  MediaRequest,
+  type MediaRequestServiceTarget,
+} from '@server/entity/MediaRequest';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeValidIsbn } from '@server/lib/isbn';
 import {
   RequestStatusStage,
   recordRequestStatusOverride,
 } from '@server/lib/requestStatus';
+import type { ReadarrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 
 const terminalCommandStates = new Set([
@@ -114,6 +127,16 @@ class BookRequestSearchManager {
       url: ReadarrAPI.buildUrl(server, '/api/v1'),
       mediaType: operation.format,
     });
+
+    if (
+      operation.state === 'pending' ||
+      operation.bookId == null ||
+      operation.commandId == null
+    ) {
+      await this.reconcilePendingOperation(operation, readarr, server);
+      return;
+    }
+
     const command = await readarr.getCommand(operation.commandId);
     const commandStatus = normalize(command.status);
 
@@ -131,12 +154,25 @@ class BookRequestSearchManager {
       return;
     }
 
-    const [book, queue, history] = await Promise.all([
-      // Active lifecycle telemetry must not reuse the normal five-minute
-      // metadata cache or a completed import can remain hidden until expiry.
-      readarr.getBook(operation.bookId, 0),
+    const providerBookId = await this.getProviderBookId(operation);
+    const providerEditionId =
+      operation.providerEditionId ??
+      operation.request.preferredEditionId ??
+      undefined;
+    const book = await this.getBookAfterSearch(
+      operation,
+      readarr,
+      providerBookId,
+      providerEditionId
+    );
+    if (!book) {
+      await this.waitForCatalogBook(operation, providerBookId);
+      return;
+    }
+
+    const [queue, history] = await Promise.all([
       readarr.getQueue(),
-      readarr.getBookHistory(operation.bookId),
+      readarr.getBookHistory(book.id),
     ]);
     const currentHistory = history.filter((item) => {
       const eventTime = item.date ? new Date(item.date).getTime() : Number.NaN;
@@ -151,7 +187,7 @@ class BookRequestSearchManager {
     }
 
     const currentQueue = queue.filter(
-      (item) => (item.bookId ?? item.book?.id) === operation.bookId
+      (item) => (item.bookId ?? item.book?.id) === book.id
     );
     if (
       currentQueue.some((item) => isFailedQueueItem(item)) ||
@@ -207,6 +243,367 @@ class BookRequestSearchManager {
     );
   }
 
+  private async reconcilePendingOperation(
+    operation: BookRequestSearch,
+    readarr: ReadarrAPI,
+    server: ReadarrSettings
+  ): Promise<void> {
+    const providerBookId = await this.getProviderBookId(operation);
+    if (!providerBookId) {
+      logger.warn('Pending Bookshelf add has no saved provider book ID.', {
+        label: 'Book Request Search',
+        requestId: operation.requestId,
+        serviceId: operation.serviceId,
+      });
+      return;
+    }
+
+    if (operation.pendingId != null) {
+      const pendingImport = await readarr.getPendingAuthorImport(
+        operation.pendingId
+      );
+      const formatStatus = this.getPendingFormatStatus(
+        pendingImport,
+        operation.format
+      );
+      if (formatStatus === 'failed') {
+        await this.finishWithoutRelease(
+          operation,
+          readarr,
+          RequestStatusStage.FAILED,
+          pendingImport?.lastError ||
+            'Chaptarr could not prepare the requested book.'
+        );
+        return;
+      }
+      if (
+        pendingImport &&
+        formatStatus !== 'succeeded' &&
+        formatStatus !== 'partialsuccess'
+      ) {
+        await this.setState(operation, 'pending');
+        return;
+      }
+    }
+
+    const providerEditionId =
+      operation.providerEditionId ??
+      operation.request.preferredEditionId ??
+      undefined;
+    const lookup = await readarr.lookupBookByProviderIdentity(
+      providerBookId,
+      providerEditionId
+    );
+    if (!lookup) {
+      await this.setState(operation, 'pending');
+      return;
+    }
+
+    const addOptions = this.buildPendingAddOptions(
+      operation,
+      server,
+      lookup,
+      providerBookId,
+      providerEditionId
+    );
+    if (!addOptions) {
+      await this.setState(operation, 'pending');
+      return;
+    }
+
+    const result = await readarr.addBook(addOptions);
+    if (result.pending) {
+      await getRepository(BookRequestSearch).update(operation.id, {
+        bookId: null,
+        commandId: null,
+        pendingId: result.pendingId ?? null,
+        providerBookId: result.foreignBookId || providerBookId,
+        providerEditionId,
+        createdBook: false,
+        createdAuthor: false,
+        state: 'pending',
+        updatedAt: new Date(),
+      });
+      operation.bookId = null;
+      operation.commandId = null;
+      operation.pendingId = result.pendingId ?? null;
+      operation.providerBookId = result.foreignBookId || providerBookId;
+      operation.providerEditionId = providerEditionId;
+      operation.createdBook = false;
+      operation.createdAuthor = false;
+      operation.state = 'pending';
+      await this.storeBookServiceLink(operation, undefined);
+      return;
+    }
+    const bookId = result.id;
+    if (
+      typeof bookId !== 'number' ||
+      !Number.isSafeInteger(bookId) ||
+      bookId <= 0
+    ) {
+      throw new Error('Bookshelf returned no book ID after its pending add.');
+    }
+
+    await getRepository(BookRequestSearch).update(operation.id, {
+      bookId,
+      commandId: null,
+      pendingId: null,
+      providerBookId: result.foreignBookId || providerBookId,
+      providerEditionId,
+      authorId: result.authorId ?? result.author?.id ?? null,
+      createdBook: result.createdBook,
+      createdAuthor: result.createdAuthor,
+      state: 'pending',
+      updatedAt: new Date(),
+    });
+    operation.bookId = bookId;
+    operation.commandId = null;
+    operation.pendingId = null;
+    operation.providerBookId = result.foreignBookId || providerBookId;
+    operation.providerEditionId = providerEditionId;
+    operation.authorId = result.authorId ?? result.author?.id ?? null;
+    operation.createdBook = result.createdBook;
+    operation.createdAuthor = result.createdAuthor;
+    operation.state = 'pending';
+    await this.storeBookServiceLink(operation, result);
+
+    const command = await readarr.startBookSearch(bookId);
+    const searchStartedAt = new Date();
+    await getRepository(BookRequestSearch).update(operation.id, {
+      commandId: command.id,
+      state: 'searching',
+      createdAt: searchStartedAt,
+      updatedAt: searchStartedAt,
+    });
+    operation.commandId = command.id;
+    operation.state = 'searching';
+    operation.createdAt = searchStartedAt;
+    operation.updatedAt = searchStartedAt;
+  }
+
+  private getPendingFormatStatus(
+    pendingImport: ReadarrPendingAuthorImport | undefined,
+    format: 'ebook' | 'audiobook'
+  ): string | undefined {
+    if (!pendingImport) return undefined;
+    return normalize(
+      format === 'audiobook'
+        ? (pendingImport.audiobookStatus ?? pendingImport.overallStatus)
+        : (pendingImport.ebookStatus ?? pendingImport.overallStatus)
+    );
+  }
+
+  private buildPendingAddOptions(
+    operation: BookRequestSearch,
+    server: ReadarrSettings,
+    book: ReadarrBookLookupResult,
+    providerBookId: string,
+    providerEditionId?: string
+  ) {
+    const savedTarget = operation.request.serviceTargets?.find(
+      (target) =>
+        target.serviceType === 'readarr' &&
+        target.format === operation.format &&
+        target.serverId === operation.serviceId
+    );
+    const rootFolder = savedTarget?.rootFolder ?? server.activeDirectory;
+    const qualityProfileId = savedTarget?.profileId ?? server.activeProfileId;
+    const metadataProfileId =
+      savedTarget?.metadataProfileId ?? server.activeMetadataProfileId ?? 1;
+    const tags = [...(savedTarget?.tags ?? server.tags ?? [])];
+    const preferredIsbn = normalizeValidIsbn(
+      operation.request.preferredIsbn13 ?? undefined
+    );
+    const editions = book.editions ?? [];
+    const requestedEdition = editions.find(
+      (edition) =>
+        (providerEditionId &&
+          normalize(edition.foreignEditionId) ===
+            normalize(providerEditionId)) ||
+        (preferredIsbn && normalizeValidIsbn(edition.isbn13) === preferredIsbn)
+    );
+
+    if ((providerEditionId || preferredIsbn) && !requestedEdition) {
+      return undefined;
+    }
+
+    return {
+      ...book,
+      mediaType: operation.format,
+      monitored: true,
+      qualityProfileId,
+      metadataProfileId,
+      rootFolderPath: rootFolder,
+      tags,
+      author: book.author
+        ? {
+            ...book.author,
+            rootFolderPath: rootFolder,
+            qualityProfileId,
+            metadataProfileId,
+            monitored: true,
+            monitorNewItems: 'none',
+            addOptions: {
+              monitor: 'none',
+              searchForMissingBooks: false,
+              booksToMonitor: [providerBookId],
+            },
+            manualAdd: true,
+          }
+        : book.author,
+      editions: editions.map((edition) => ({
+        ...edition,
+        monitored: requestedEdition
+          ? edition.foreignEditionId === requestedEdition.foreignEditionId
+          : edition.monitored,
+      })),
+      useRequestedEdition: !!requestedEdition,
+      addOptions: { searchForNewBook: false },
+    };
+  }
+
+  private async getProviderBookId(
+    operation: BookRequestSearch
+  ): Promise<string | undefined> {
+    if (operation.providerBookId?.trim()) return operation.providerBookId;
+
+    const identifier = await getRepository(MediaIdentifier).findOne({
+      where: {
+        media: { id: operation.request.media.id },
+        provider: MediaIdentifierProvider.READARR,
+      },
+    });
+    if (!identifier?.value.trim()) return undefined;
+
+    operation.providerBookId = identifier.value;
+    await getRepository(BookRequestSearch).update(operation.id, {
+      providerBookId: identifier.value,
+    });
+    return identifier.value;
+  }
+
+  private async getBookAfterSearch(
+    operation: BookRequestSearch,
+    readarr: ReadarrAPI,
+    providerBookId?: string,
+    providerEditionId?: string
+  ): Promise<ReadarrBook | undefined> {
+    const currentBook =
+      operation.bookId != null
+        ? await readarr.getBookIfExists(operation.bookId)
+        : null;
+    if (
+      currentBook &&
+      (!providerBookId ||
+        matchesReadarrBookProviderIdentity(
+          currentBook,
+          providerBookId,
+          providerEditionId
+        ))
+    ) {
+      return currentBook;
+    }
+    if (!providerBookId) return currentBook ?? undefined;
+
+    const recoveredBook = await readarr.lookupBookByProviderIdentity(
+      providerBookId,
+      providerEditionId
+    );
+    if (
+      !recoveredBook?.id ||
+      !Number.isSafeInteger(recoveredBook.id) ||
+      recoveredBook.id <= 0
+    ) {
+      return undefined;
+    }
+
+    await getRepository(BookRequestSearch).update(operation.id, {
+      bookId: recoveredBook.id,
+      providerBookId,
+      providerEditionId: providerEditionId ?? null,
+      updatedAt: new Date(),
+    });
+    operation.bookId = recoveredBook.id;
+    operation.providerBookId = providerBookId;
+    operation.providerEditionId = providerEditionId ?? null;
+    await this.storeBookServiceLink(operation, recoveredBook);
+    return recoveredBook as ReadarrBook;
+  }
+
+  private async waitForCatalogBook(
+    operation: BookRequestSearch,
+    providerBookId?: string
+  ): Promise<void> {
+    const updatedAt = new Date();
+    await getRepository(BookRequestSearch).update(operation.id, {
+      bookId: null,
+      commandId: null,
+      pendingId: null,
+      providerBookId: providerBookId ?? null,
+      createdBook: false,
+      createdAuthor: false,
+      state: 'pending',
+      updatedAt,
+    });
+    operation.bookId = null;
+    operation.commandId = null;
+    operation.pendingId = null;
+    operation.providerBookId = providerBookId ?? null;
+    operation.createdBook = false;
+    operation.createdAuthor = false;
+    operation.state = 'pending';
+    operation.updatedAt = updatedAt;
+    await this.storeBookServiceLink(operation, undefined);
+  }
+
+  private async storeBookServiceLink(
+    operation: BookRequestSearch,
+    book: ReadarrBookLookupResult | undefined
+  ): Promise<void> {
+    const providerBookId = operation.providerBookId ?? book?.foreignBookId;
+    const externalServiceId = book?.id ?? null;
+    const externalServiceSlug =
+      book?.titleSlug ?? providerBookId ?? book?.title ?? null;
+    const media = operation.request.media;
+    const mediaPatch: Partial<Media> = {};
+    if (operation.format === 'audiobook') {
+      mediaPatch.audiobookServiceId = operation.serviceId;
+      mediaPatch.audiobookExternalServiceId = externalServiceId;
+      mediaPatch.audiobookExternalServiceSlug = externalServiceSlug;
+    } else {
+      mediaPatch.serviceId = operation.serviceId;
+      mediaPatch.externalServiceId = externalServiceId;
+      mediaPatch.externalServiceSlug = externalServiceSlug;
+    }
+    await getRepository(Media).update(media.id, mediaPatch);
+    Object.assign(media, mediaPatch);
+
+    const targets = operation.request.serviceTargets ?? [];
+    const target: MediaRequestServiceTarget = {
+      serviceType: 'readarr',
+      format: operation.format,
+      serverId: operation.serviceId,
+      externalServiceId,
+      externalServiceSlug,
+    };
+    const targetIndex = targets.findIndex(
+      (candidate) =>
+        candidate.serviceType === target.serviceType &&
+        candidate.format === target.format &&
+        candidate.serverId === target.serverId
+    );
+    const nextTargets =
+      targetIndex === -1
+        ? [...targets, target]
+        : targets.map((candidate, index) =>
+            index === targetIndex ? { ...candidate, ...target } : candidate
+          );
+    await getRepository(MediaRequest).update(operation.requestId, {
+      serviceTargets: nextTargets,
+    });
+    operation.request.serviceTargets = nextTargets;
+  }
+
   private async setState(
     operation: BookRequestSearch,
     state: BookRequestSearch['state']
@@ -216,6 +613,7 @@ class BookRequestSearchManager {
       state,
       updatedAt: new Date(),
     });
+    operation.state = state;
   }
 
   private async finishWithoutRelease(
@@ -224,7 +622,7 @@ class BookRequestSearchManager {
     stage: RequestStatusStage.UNAVAILABLE | RequestStatusStage.FAILED,
     message: string
   ): Promise<void> {
-    if (operation.createdBook) {
+    if (operation.createdBook && operation.bookId != null) {
       await readarr.removeBook(operation.bookId, { deleteFiles: false });
     }
 
@@ -247,6 +645,22 @@ class BookRequestSearchManager {
       mediaPatch.externalServiceSlug = null;
     }
     await getRepository(Media).update(media.id, mediaPatch);
+    const targets = operation.request.serviceTargets ?? [];
+    const nextTargets = targets.map((target) =>
+      target.serviceType === 'readarr' &&
+      target.format === operation.format &&
+      target.serverId === operation.serviceId
+        ? {
+            ...target,
+            externalServiceId: null,
+            externalServiceSlug: null,
+          }
+        : target
+    );
+    await getRepository(MediaRequest).update(operation.requestId, {
+      serviceTargets: nextTargets,
+    });
+    operation.request.serviceTargets = nextTargets;
     await this.setState(
       operation,
       stage === RequestStatusStage.FAILED ? 'failed' : 'unavailable'

@@ -1,8 +1,4 @@
-import Modal from '@app/components/Common/Modal';
-import globalMessages from '@app/i18n/globalMessages';
-import defineMessages from '@app/utils/defineMessages';
-import { Transition } from '@headlessui/react';
-import { useIntl } from 'react-intl';
+import BlocklistConfirmationModal from '@app/components/BlocklistConfirmationModal';
 
 interface ExternalBlocklistModalProps {
   show: boolean;
@@ -14,52 +10,19 @@ interface ExternalBlocklistModalProps {
   isUpdating?: boolean;
 }
 
-const messages = defineMessages('component.ExternalBlocklistModal', {
-  blocklisting: 'Blocklisting',
-  book: 'Book',
-  music: 'Music',
-});
-
 const ExternalBlocklistModal = ({
   show,
-  title,
-  type,
-  backdrop,
   onComplete,
   onCancel,
   isUpdating,
 }: ExternalBlocklistModalProps) => {
-  const intl = useIntl();
-
   return (
-    <Transition
-      as="div"
-      enter="transition-opacity duration-300"
-      enterFrom="opacity-0"
-      enterTo="opacity-100"
-      leave="transition-opacity duration-300"
-      leaveFrom="opacity-100"
-      leaveTo="opacity-0"
+    <BlocklistConfirmationModal
       show={show}
-    >
-      <Modal
-        backgroundClickable
-        title={`${intl.formatMessage(globalMessages.blocklist)} ${intl.formatMessage(
-          type === 'book' ? messages.book : messages.music
-        )}`}
-        subTitle={title}
-        onCancel={onCancel}
-        onOk={onComplete}
-        okText={
-          isUpdating
-            ? intl.formatMessage(messages.blocklisting)
-            : intl.formatMessage(globalMessages.blocklist)
-        }
-        okButtonType="danger"
-        okDisabled={isUpdating}
-        backdrop={backdrop ?? undefined}
-      />
-    </Transition>
+      onCancel={onCancel}
+      onComplete={onComplete}
+      isUpdating={isUpdating}
+    />
   );
 };
 

@@ -7,11 +7,19 @@ import {
   type RequestedBookFormat,
 } from '@app/components/Common/BookFormatBadge';
 import Button from '@app/components/Common/Button';
+import FormatRequestControl from '@app/components/Common/FormatRequestControl';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import IssueBlock from '@app/components/IssueBlock';
 import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
+import {
+  createRequestDestination,
+  isRequestDestinationAvailable,
+  isRequestDestinationRequested,
+} from '@app/components/RequestModal/requestAvailability';
+import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -40,11 +48,15 @@ import {
 import { UserType } from '@server/constants/user';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
-import type { BookDetails as BookDetailsType } from '@server/models/Book';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
+import type {
+  BookDetails as BookDetailsType,
+  BookRatingResponse,
+} from '@server/models/Book';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -77,6 +89,15 @@ const messages = defineMessages('components.BookDetails', {
   viewRequestFormat: 'View {format} request',
   requestBookFormat: 'Request {format}',
   requestbibliography: 'Request Bibliography',
+  selectToPlay: 'No playable audiobook tracks are currently available.',
+  selectAudiobookToPlay: 'Select Audiobook to enable playback.',
+  bookAvailable: 'The Book format is already available.',
+  audiobookAvailable: 'The Audiobook format is already available.',
+  bookPending: 'An open Book request already exists.',
+  audiobookPending: 'An open Audiobook request already exists.',
+  noBookService: 'No Book Bookshelf service is configured.',
+  noAudiobookService: 'No Audiobook Bookshelf service is configured.',
+  blocklisted: 'This title is blocklisted.',
 });
 
 const BookDetails = () => {
@@ -98,6 +119,11 @@ const BookDetails = () => {
   const normalizedRouteBookId = bookId
     ? normalizeOpenLibraryWorkId(bookId)
     : undefined;
+  const lookupTitle = getQueryParamString(router.query.lookupTitle);
+  const bookDetailsQuery =
+    normalizedRouteBookId?.startsWith('bookshelf:') && lookupTitle
+      ? `?lookupTitle=${encodeURIComponent(lookupTitle)}`
+      : '';
   const routeBookFormat = getQueryParamString(router.query.format);
   const preferredBookFormat: RequestedBookFormat | undefined =
     routeBookFormat === 'audiobook' ||
@@ -108,14 +134,64 @@ const BookDetails = () => {
   const [requestModalFormat, setRequestModalFormat] =
     useState<RequestedBookFormat>(preferredBookFormat ?? 'ebook');
 
+  useEffect(() => {
+    if (
+      !router.isReady ||
+      router.query.request !== '1' ||
+      !normalizedRouteBookId
+    ) {
+      return;
+    }
+
+    setEditRequest(undefined);
+    setRequestModalFormat(preferredBookFormat ?? 'ebook');
+    setShowRequestModal(true);
+
+    const remainingQuery = { ...router.query };
+    delete remainingQuery.request;
+    void router.replace(
+      { pathname: router.pathname, query: remainingQuery },
+      undefined,
+      { shallow: true }
+    );
+  }, [normalizedRouteBookId, preferredBookFormat, router]);
+
   const {
     data,
     error,
     mutate: revalidate,
   } = useSWR<BookDetailsType>(
     normalizedRouteBookId
-      ? `/api/v1/book/${encodeApiPathSegment(normalizedRouteBookId)}`
+      ? `/api/v1/book/${encodeApiPathSegment(normalizedRouteBookId)}${bookDetailsQuery}`
       : null
+  );
+  const { data: ratingData } = useSWR<BookRatingResponse>(
+    normalizedRouteBookId
+      ? `/api/v1/book/${encodeApiPathSegment(normalizedRouteBookId)}/ratings${bookDetailsQuery}`
+      : null,
+    { revalidateOnFocus: false }
+  );
+  const { data: bookServices } = useSWR<ServiceCommonServer[]>(
+    '/api/v1/service/readarr'
+  );
+  const bibliographySeed = useMemo(
+    () =>
+      data
+        ? [
+            {
+              id: normalizeOpenLibraryWorkId(data.id),
+              title: data.title,
+              year: data.firstPublishYear,
+              image: data.posterPath,
+              artist: data.author,
+              isbn13: data.isbn13,
+              editionId: data.editionId,
+              authorId: data.authorId,
+              mediaInfo: data.mediaInfo,
+            },
+          ]
+        : [],
+    [data]
   );
 
   useEffect(() => {
@@ -123,8 +199,23 @@ const BookDetails = () => {
   }, [router.query.manage]);
 
   useEffect(() => {
+    setShowBulkRequestModal(false);
+  }, [normalizedRouteBookId]);
+
+  useEffect(() => {
     setToggleWatchlist(!data?.onUserWatchlist);
   }, [data?.onUserWatchlist]);
+
+  const {
+    isBlocklisted,
+    checking: checkingBlocklist,
+    error: blocklistError,
+    setBlocklisted,
+  } = useTitleBlocklist(
+    normalizedRouteBookId,
+    MediaType.BOOK,
+    data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
+  );
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -140,6 +231,28 @@ const BookDetails = () => {
     [Permission.REQUEST, Permission.REQUEST_BOOK],
     { type: 'or' }
   );
+  const canChooseAlternateTarget = hasPermission(
+    [Permission.REQUEST_ADVANCED, Permission.MANAGE_REQUESTS],
+    { type: 'or' }
+  );
+  const playbackUnavailableReason = (format: 'ebook' | 'audiobook') =>
+    intl.formatMessage(
+      format === 'audiobook'
+        ? messages.selectToPlay
+        : messages.selectAudiobookToPlay
+    );
+  const playbackActions = canRequest
+    ? (itemIds: string[], format: 'ebook' | 'audiobook') => (
+        <MediaServerPlayButton
+          mediaUrl={data.mediaInfo?.mediaUrl}
+          iOSPlexUrl={data.mediaInfo?.iOSPlexUrl}
+          mediaId={data.mediaInfo?.id}
+          itemIds={itemIds}
+          disabled={format !== 'audiobook' || itemIds.length === 0}
+          disabledReason={playbackUnavailableReason(format)}
+        />
+      )
+    : undefined;
   const hasEbookServiceLink =
     data.mediaInfo?.serviceId !== null &&
     data.mediaInfo?.serviceId !== undefined &&
@@ -166,6 +279,75 @@ const BookDetails = () => {
     (request) =>
       request.bookFormat === 'audiobook' || request.bookFormat === 'both'
   );
+  const defaultEbookService =
+    bookServices?.find(
+      (service) =>
+        service.isDefault && (service.serviceType ?? 'ebook') === 'ebook'
+    ) ??
+    bookServices?.find(
+      (service) => (service.serviceType ?? 'ebook') === 'ebook'
+    );
+  const defaultAudiobookService =
+    bookServices?.find(
+      (service) => service.isDefault && service.serviceType === 'audiobook'
+    ) ?? bookServices?.find((service) => service.serviceType === 'audiobook');
+  const hasEbookService =
+    bookServices === undefined ||
+    bookServices.some(
+      (service) => (service.serviceType ?? 'ebook') === 'ebook'
+    );
+  const hasAudiobookService =
+    bookServices === undefined ||
+    bookServices.some((service) => service.serviceType === 'audiobook');
+  const ebookDestination = createRequestDestination(
+    'readarr',
+    'ebook',
+    defaultEbookService,
+    null
+  );
+  const audiobookDestination = createRequestDestination(
+    'readarr',
+    'audiobook',
+    defaultAudiobookService,
+    null
+  );
+  const destinationAvailable = (
+    format: 'ebook' | 'audiobook',
+    destination: typeof ebookDestination
+  ) => {
+    const externalServiceId =
+      format === 'ebook'
+        ? data.mediaInfo?.externalServiceId
+        : data.mediaInfo?.audiobookExternalServiceId;
+    const serviceId =
+      format === 'ebook'
+        ? data.mediaInfo?.serviceId
+        : data.mediaInfo?.audiobookServiceId;
+
+    return isRequestDestinationAvailable(
+      data.mediaInfo
+        ? {
+            ...data.mediaInfo,
+            status:
+              data.mediaInfo.status === MediaStatus.AVAILABLE &&
+              externalServiceId != null
+                ? MediaStatus.AVAILABLE
+                : MediaStatus.UNKNOWN,
+            serviceId,
+          }
+        : undefined,
+      destination
+    );
+  };
+  const defaultEbookCovered =
+    destinationAvailable('ebook', ebookDestination) ||
+    isRequestDestinationRequested(data.mediaInfo?.requests, ebookDestination);
+  const defaultAudiobookCovered =
+    destinationAvailable('audiobook', audiobookDestination) ||
+    isRequestDestinationRequested(
+      data.mediaInfo?.requests,
+      audiobookDestination
+    );
   const activeBookRequest =
     activeBookRequests.find(
       (request) => request.requestedBy?.id === user?.id
@@ -176,12 +358,16 @@ const BookDetails = () => {
       : undefined);
   const canRequestEbook =
     canRequest &&
+    !destinationAvailable('ebook', ebookDestination) &&
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
-    !(hasEbookServiceLink || hasActiveEbookRequest);
+    hasEbookService &&
+    (canChooseAlternateTarget || !defaultEbookCovered);
   const canRequestAudiobook =
     canRequest &&
+    !destinationAvailable('audiobook', audiobookDestination) &&
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
-    !(hasAudiobookServiceLink || hasActiveAudiobookRequest);
+    hasAudiobookService &&
+    (canChooseAlternateTarget || !defaultAudiobookCovered);
   const canUseReportIssue = hasPermission(
     [Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES],
     { type: 'or' }
@@ -192,7 +378,7 @@ const BookDetails = () => {
       data.mediaInfo.status === MediaStatus.PARTIALLY_AVAILABLE);
   const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
   const isBlocklistAvailable =
-    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
+    !isBlocklisted && !checkingBlocklist && !blocklistError;
   const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
   const isManageAvailable = Boolean(
     data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
@@ -245,6 +431,7 @@ const BookDetails = () => {
         mediaType: MediaType.BOOK,
         title: data.title,
       });
+      await setBlocklisted(true);
 
       addToast(
         <span>
@@ -336,6 +523,21 @@ const BookDetails = () => {
     }
   };
 
+  const catalogActions = (
+    <>
+      {canRequest && data.authorId && (
+        <Button
+          buttonType="bulkRequest"
+          buttonSize="sm"
+          onClick={() => setShowBulkRequestModal(true)}
+        >
+          <ArrowDownTrayIcon />
+          <span>{intl.formatMessage(messages.requestbibliography)}</span>
+        </Button>
+      )}
+    </>
+  );
+
   const primaryActions = (
     <>
       {canUseBlocklist && (
@@ -379,13 +581,8 @@ const BookDetails = () => {
             className="relative"
             aria-label={intl.formatMessage(messages.manage)}
           >
-            <CogIcon className="!mr-0" />
-            {openIssues.length > 0 && (
-              <>
-                <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-red-600" />
-                <span className="absolute -right-1 -top-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-              </>
-            )}
+            <CogIcon />
+            <span>{intl.formatMessage(globalMessages.manage)}</span>
           </Button>
         </Tooltip>
       )}
@@ -408,25 +605,19 @@ const BookDetails = () => {
             aria-label={intl.formatMessage(messages.reportissue)}
           >
             <ExclamationTriangleIcon />
+            <span>{intl.formatMessage(globalMessages.reportIssue)}</span>
           </Button>
         </Tooltip>
       )}
       <AssociationBadge
         mediaType="book"
-        id={openLibraryWorkId}
+        id={
+          data.provider === 'bookshelf'
+            ? (ratingData?.workId ?? '')
+            : openLibraryWorkId
+        }
         variant="button"
       />
-      <span className="ml-auto hidden sm:block" aria-hidden="true" />
-      {canRequest && data.authorId && (
-        <Button
-          buttonType="bulkRequest"
-          buttonSize="sm"
-          onClick={() => setShowBulkRequestModal(true)}
-        >
-          <ArrowDownTrayIcon />
-          <span>{intl.formatMessage(messages.requestbibliography)}</span>
-        </Button>
-      )}
       {activeBookRequest && (
         <Button
           buttonType="ghost"
@@ -440,33 +631,43 @@ const BookDetails = () => {
           <span>{activeRequestLabel}</span>
         </Button>
       )}
-      {canRequestEbook && (
-        <Button
-          buttonType="detailRequest"
-          buttonSize="sm"
-          onClick={() => openRequestModal('ebook')}
-        >
-          <ArrowDownTrayIcon />
-          <span>
-            {intl.formatMessage(messages.requestBookFormat, {
-              format: intl.formatMessage(getBookFormatMessage('ebook')),
-            })}
-          </span>
-        </Button>
-      )}
-      {canRequestAudiobook && (
-        <Button
-          buttonType="detailRequest"
-          buttonSize="sm"
-          onClick={() => openRequestModal('audiobook')}
-        >
-          <ArrowDownTrayIcon />
-          <span>
-            {intl.formatMessage(messages.requestBookFormat, {
-              format: intl.formatMessage(getBookFormatMessage('audiobook')),
-            })}
-          </span>
-        </Button>
+      {canRequest && (
+        <FormatRequestControl
+          options={[
+            {
+              id: 'ebook',
+              label: intl.formatMessage(getBookFormatMessage('ebook')),
+              onClick: () => openRequestModal('ebook'),
+              disabled: !canRequestEbook,
+              disabledReason:
+                data.mediaInfo?.status === MediaStatus.BLOCKLISTED
+                  ? intl.formatMessage(messages.blocklisted)
+                  : !hasEbookService
+                    ? intl.formatMessage(messages.noBookService)
+                    : hasEbookServiceLink
+                      ? intl.formatMessage(messages.bookAvailable)
+                      : hasActiveEbookRequest
+                        ? intl.formatMessage(messages.bookPending)
+                        : undefined,
+            },
+            {
+              id: 'audiobook',
+              label: intl.formatMessage(getBookFormatMessage('audiobook')),
+              onClick: () => openRequestModal('audiobook'),
+              disabled: !canRequestAudiobook,
+              disabledReason:
+                data.mediaInfo?.status === MediaStatus.BLOCKLISTED
+                  ? intl.formatMessage(messages.blocklisted)
+                  : !hasAudiobookService
+                    ? intl.formatMessage(messages.noAudiobookService)
+                    : hasAudiobookServiceLink
+                      ? intl.formatMessage(messages.audiobookAvailable)
+                      : hasActiveAudiobookRequest
+                        ? intl.formatMessage(messages.audiobookPending)
+                        : undefined,
+            },
+          ]}
+        />
       )}
     </>
   );
@@ -508,8 +709,8 @@ const BookDetails = () => {
     hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
       type: 'or',
     }) && openIssues.length > 0 ? (
-      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
-        <h2 className="px-3 py-2 text-xs font-semibold text-gray-200">
+      <section className="app-card-inset refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
+        <h2 className="media-inset-heading px-3 py-2">
           {intl.formatMessage(messages.openissues)}
         </h2>
         <ul className="border-t border-gray-700">
@@ -591,28 +792,23 @@ const BookDetails = () => {
           mediaType="book"
           authorId={data.authorId}
           title={data.author ?? data.title}
-          initialItems={[
-            {
-              id: openLibraryWorkId,
-              title: data.title,
-              year: data.firstPublishYear,
-              image: data.posterPath,
-              artist: data.author,
-              isbn13: data.isbn13,
-              editionId: data.editionId,
-              authorId: data.authorId,
-              mediaInfo: data.mediaInfo,
-            },
-          ]}
+          initialItems={bibliographySeed}
           onCancel={() => setShowBulkRequestModal(false)}
           onComplete={() => revalidate()}
         />
       )}
       <BookDetailsLayout
         data={data}
+        ratingData={ratingData}
         formatCoverage={formatCoverage}
+        initialPlaybackFormat={
+          preferredBookFormat === 'audiobook' ? 'audiobook' : 'ebook'
+        }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        catalogActions={catalogActions}
+        playbackActions={playbackActions}
+        playbackUnavailableReason={playbackUnavailableReason}
         additionalContent={additionalContent}
       />
     </>

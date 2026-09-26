@@ -46,7 +46,10 @@ const configureBookshelf = () => {
 const createTrackedRequest = async (options: {
   createdBook: boolean;
   createdAuthor: boolean;
+  pendingId?: number;
+  providerBookId?: string;
 }) => {
+  const pending = options.pendingId !== undefined;
   const requestedBy = await getRepository(User).findOneByOrFail({
     email: 'friend@seerr.dev',
   });
@@ -57,8 +60,8 @@ const createTrackedRequest = async (options: {
       status: MediaStatus.PROCESSING,
       status4k: MediaStatus.UNKNOWN,
       serviceId: 20,
-      externalServiceId: 55,
-      externalServiceSlug: 'tracked-book',
+      externalServiceId: pending ? null : 55,
+      externalServiceSlug: options.providerBookId ?? 'tracked-book',
     })
   );
   const request = await getRepository(MediaRequest).save(
@@ -76,16 +79,30 @@ const createTrackedRequest = async (options: {
       requestId: request.id,
       serviceId: 20,
       format: 'ebook',
-      bookId: 55,
+      bookId: pending ? null : 55,
+      providerBookId: options.providerBookId ?? 'hc:book-55',
+      pendingId: options.pendingId ?? null,
       authorId: 77,
-      commandId: 901,
+      commandId: pending ? null : 901,
       createdBook: options.createdBook,
       createdAuthor: options.createdAuthor,
-      state: 'searching',
+      state: pending ? 'pending' : 'searching',
     })
   );
   return { media, request };
 };
+
+const mockCurrentBooks = (fileCounts: Record<number, number> = {}) =>
+  mock.method(
+    ReadarrAPI.prototype,
+    'getBookIfExists',
+    async (bookId: number) => ({
+      id: bookId,
+      title: 'Tracked Book',
+      foreignBookId: bookId === 66 ? 'hc:book-66' : 'hc:book-55',
+      statistics: { bookFileCount: fileCounts[bookId] ?? 0 },
+    })
+  );
 
 describe('BookRequestSearchManager', () => {
   before(async () => {
@@ -121,6 +138,91 @@ describe('BookRequestSearchManager', () => {
     assert.equal(operation.state, 'searching');
   });
 
+  it('keeps a queued Chaptarr author import pending while its format retries', async () => {
+    const { request } = await createTrackedRequest({
+      createdBook: false,
+      createdAuthor: false,
+      pendingId: 901,
+      providerBookId: 'hc:book-17',
+    });
+    mock.method(ReadarrAPI.prototype, 'getPendingAuthorImport', async () => ({
+      id: 901,
+      overallStatus: 'Retrying',
+      ebookStatus: 'Retrying',
+      audiobookStatus: 'NotRequested',
+    }));
+    const lookupMock = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBookByProviderIdentity',
+      async () => undefined
+    );
+
+    await bookRequestSearchManager.run();
+
+    const operation = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+    });
+    assert.equal(operation.state, 'pending');
+    assert.equal(operation.pendingId, 901);
+    assert.equal(operation.bookId, null);
+    assert.equal(operation.commandId, null);
+    assert.equal(lookupMock.mock.calls.length, 0);
+  });
+
+  it('starts a tracked book search after Chaptarr finishes preparing the book', async () => {
+    const { media, request } = await createTrackedRequest({
+      createdBook: false,
+      createdAuthor: false,
+      pendingId: 902,
+      providerBookId: 'hc:book-18',
+    });
+    mock.method(ReadarrAPI.prototype, 'getPendingAuthorImport', async () => ({
+      id: 902,
+      overallStatus: 'Succeeded',
+      ebookStatus: 'Succeeded',
+      audiobookStatus: 'NotRequested',
+    }));
+    mock.method(
+      ReadarrAPI.prototype,
+      'lookupBookByProviderIdentity',
+      async () => ({
+        id: 56,
+        title: 'Prepared Book',
+        titleSlug: 'prepared-book',
+        foreignBookId: 'hc:book-18',
+      })
+    );
+    mock.method(ReadarrAPI.prototype, 'addBook', async () => ({
+      id: 56,
+      title: 'Prepared Book',
+      titleSlug: 'prepared-book',
+      foreignBookId: 'hc:book-18',
+      authorId: 78,
+      createdBook: true,
+      createdAuthor: false,
+    }));
+    mock.method(ReadarrAPI.prototype, 'startBookSearch', async () => ({
+      id: 903,
+      name: 'BookSearch',
+      status: 'started',
+    }));
+
+    await bookRequestSearchManager.run();
+
+    const operation = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+    });
+    assert.equal(operation.state, 'searching');
+    assert.equal(operation.pendingId, null);
+    assert.equal(operation.bookId, 56);
+    assert.equal(operation.commandId, 903);
+    const updatedMedia = await getRepository(Media).findOneByOrFail({
+      id: media.id,
+    });
+    assert.equal(updatedMedia.externalServiceId, 56);
+    assert.equal(updatedMedia.externalServiceSlug, 'prepared-book');
+  });
+
   it('reports no release and removes only records it created', async () => {
     const { media, request } = await createTrackedRequest({
       createdBook: true,
@@ -131,11 +233,7 @@ describe('BookRequestSearchManager', () => {
       name: 'BookSearch',
       status: 'completed',
     }));
-    mock.method(ReadarrAPI.prototype, 'getBook', async () => ({
-      id: 55,
-      title: 'Tracked Book',
-      statistics: { bookFileCount: 0 },
-    }));
+    mockCurrentBooks();
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => []);
     const removedBooks: number[] = [];
@@ -197,11 +295,7 @@ describe('BookRequestSearchManager', () => {
       name: 'BookSearch',
       status: 'completed',
     }));
-    mock.method(ReadarrAPI.prototype, 'getBook', async () => ({
-      id: 55,
-      title: 'Tracked Book',
-      statistics: { bookFileCount: 0 },
-    }));
+    mockCurrentBooks();
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => []);
     let removalAttempted = false;
@@ -238,11 +332,7 @@ describe('BookRequestSearchManager', () => {
       name: 'BookSearch',
       status: 'completed',
     }));
-    mock.method(ReadarrAPI.prototype, 'getBook', async () => ({
-      id: 55,
-      title: 'Tracked Book',
-      statistics: { bookFileCount: 0 },
-    }));
+    mockCurrentBooks();
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => [
       {
@@ -277,11 +367,7 @@ describe('BookRequestSearchManager', () => {
       name: 'BookSearch',
       status: 'completed',
     }));
-    mock.method(ReadarrAPI.prototype, 'getBook', async () => ({
-      id: 55,
-      title: 'Tracked Book',
-      statistics: { bookFileCount: 0 },
-    }));
+    mockCurrentBooks();
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => [
       {
@@ -310,19 +396,7 @@ describe('BookRequestSearchManager', () => {
       name: 'BookSearch',
       status: 'completed',
     }));
-    let cacheTtl: number | undefined;
-    mock.method(
-      ReadarrAPI.prototype,
-      'getBook',
-      async (_bookId: number, requestedCacheTtl?: number) => {
-        cacheTtl = requestedCacheTtl;
-        return {
-          id: 55,
-          title: 'Tracked Book',
-          statistics: { bookFileCount: 1 },
-        };
-      }
-    );
+    mockCurrentBooks({ 55: 1 });
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => []);
 
@@ -332,7 +406,6 @@ describe('BookRequestSearchManager', () => {
       await getRepository(BookRequestSearch).countBy({ requestId: request.id }),
       0
     );
-    assert.equal(cacheTtl, 0);
     const updatedMedia = await getRepository(Media).findOneByOrFail({
       id: media.id,
     });
@@ -367,6 +440,7 @@ describe('BookRequestSearchManager', () => {
         serviceId: 21,
         format: 'audiobook',
         bookId: 66,
+        providerBookId: 'hc:book-66',
         authorId: 88,
         commandId: 902,
         createdBook: true,
@@ -384,11 +458,7 @@ describe('BookRequestSearchManager', () => {
         status: 'completed',
       })
     );
-    mock.method(ReadarrAPI.prototype, 'getBook', async (bookId: number) => ({
-      id: bookId,
-      title: 'Tracked Book',
-      statistics: { bookFileCount: bookId === 66 ? 1 : 0 },
-    }));
+    mockCurrentBooks({ 66: 1 });
     mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
     mock.method(ReadarrAPI.prototype, 'getBookHistory', async () => []);
     const removedBooks: number[] = [];

@@ -1,17 +1,21 @@
-import { getMetadataProvider } from '@server/api/metadata';
+import {
+  getMetadataProvider,
+  isTheMovieDbProvider,
+} from '@server/api/metadata';
 import type { SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
-import TheMovieDb from '@server/api/themoviedb';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
 import type {
   TmdbKeyword,
   TmdbTvDetails,
+  TmdbTvScanDetails,
 } from '@server/api/themoviedb/interfaces';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import type {
   ProcessableSeason,
   RunnableScanner,
@@ -25,6 +29,7 @@ import {
   runWithServarrServiceSnapshots,
 } from '@server/lib/serviceAdmission';
 import type { SonarrSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { uniqWith } from 'lodash';
 
 type SyncStatus = StatusBase & {
@@ -155,7 +160,10 @@ class SonarrScanner
       await this.cleanupOrphanedShows();
       this.log('Sonarr scan complete', 'info');
     } catch (e) {
-      this.log('Scan interrupted', 'error', { errorMessage: e.message });
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
     } finally {
       this.endRun(sessionId);
     }
@@ -172,18 +180,18 @@ class SonarrScanner
     try {
       const mediaRepository = getRepository(Media);
       const processableSeasons: ProcessableSeason[] = [];
-      let tvShow: TmdbTvDetails;
+      let tvShow: TmdbTvScanDetails | TmdbTvDetails;
 
       const media = await mediaRepository.findOne({
         where: { tvdbId: sonarrSeries.tvdbId },
       });
 
       if (!media || !media.tmdbId) {
-        tvShow = await this.tmdb.getShowByTvdbId({
+        tvShow = await this.tmdb.getShowByTvdbIdForScan({
           tvdbId: sonarrSeries.tvdbId,
         });
       } else {
-        tvShow = await this.tmdb.getTvShow({ tvId: media.tmdbId });
+        tvShow = await this.tmdb.getTvShowForScan({ tvId: media.tmdbId });
       }
 
       const tmdbId = tvShow.id;
@@ -193,7 +201,7 @@ class SonarrScanner
         ? await getMetadataProvider('anime')
         : await getMetadataProvider('tv');
 
-      if (!(metadataProvider instanceof TheMovieDb)) {
+      if (!isTheMovieDbProvider(metadataProvider)) {
         tvShow = await metadataProvider.getTvShow({ tvId: tmdbId });
       }
       const settings = getExternalRuntimeConfig();
@@ -243,6 +251,30 @@ class SonarrScanner
         mutationGuard: (callback) =>
           runWithServarrServiceSnapshot('sonarr', this.currentServer, callback),
       });
+
+      const updatedMedia = await getRepository(Media).findOneBy({
+        tmdbId,
+        mediaType: MediaType.TV,
+      });
+      await upsertMediaSearchMetadata(updatedMedia?.id, {
+        title: tvShow.name,
+        alternateTitle: tvShow.original_name,
+        releaseDate: tvShow.first_air_date,
+        genres: tvShow.genres.map((genre) => genre.name).join(', '),
+        runtime: tvShow.episode_run_time[0]
+          ? `${tvShow.episode_run_time[0]} minutes`
+          : undefined,
+        creator: tvShow.created_by.map((creator) => creator.name).join(', '),
+        studio: tvShow.production_companies
+          .map((company) => company.name)
+          .join(', '),
+        network: tvShow.networks.map((network) => network.name).join(', '),
+        format: 'Series',
+        provider: this.currentServer.name,
+        externalIds: [tmdbId, sonarrSeries.tvdbId, sonarrSeries.imdbId]
+          .filter(Boolean)
+          .join(' '),
+      });
     } catch (e) {
       if (e instanceof ServarrServiceAuthorityChangedError) throw e;
       this.log('Failed to process Sonarr media', 'error', {
@@ -252,6 +284,39 @@ class SonarrScanner
     }
   }
 
+  private async existsInAnyServer(
+    tvdbId: number,
+    is4k: boolean
+  ): Promise<boolean> {
+    const servers = this.servers.filter(
+      (server) =>
+        server.syncEnabled && (this.enable4kShow && server.is4k) === is4k
+    );
+
+    for (const server of servers) {
+      try {
+        const api = new SonarrAPI({
+          apiKey: server.apiKey,
+          url: SonarrAPI.buildUrl(server, '/api/v3'),
+        });
+        const series = await api.getLibrarySeriesByTvdbId(tvdbId);
+
+        if (series.some((show) => show.tvdbId === tvdbId)) {
+          return true;
+        }
+      } catch (e) {
+        this.log(
+          `Could not confirm series ${tvdbId} against Sonarr server ${server.name}. Skipping cleanup for it.`,
+          'warn',
+          { errorMessage: e.message }
+        );
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private async cleanupOrphanedShows(): Promise<void> {
     const mediaRepository = getRepository(Media);
 
@@ -259,7 +324,11 @@ class SonarrScanner
       await forEachMediaCleanupBatch(
         { mediaType: MediaType.TV, status: MediaStatus.PROCESSING },
         async (media) => {
-          if (media.tvdbId && !this.scannedTvdbIds.has(media.tvdbId)) {
+          if (
+            media.tvdbId &&
+            !this.scannedTvdbIds.has(media.tvdbId) &&
+            !(await this.existsInAnyServer(media.tvdbId, false))
+          ) {
             const changed = await runMediaEntityMutation(media, () =>
               runWithServarrServiceSnapshots(
                 'sonarr',
@@ -312,7 +381,11 @@ class SonarrScanner
       await forEachMediaCleanupBatch(
         { mediaType: MediaType.TV, status4k: MediaStatus.PROCESSING },
         async (media) => {
-          if (media.tvdbId && !this.scanned4kTvdbIds.has(media.tvdbId)) {
+          if (
+            media.tvdbId &&
+            !this.scanned4kTvdbIds.has(media.tvdbId) &&
+            !(await this.existsInAnyServer(media.tvdbId, true))
+          ) {
             const changed = await runMediaEntityMutation(media, () =>
               runWithServarrServiceSnapshots(
                 'sonarr',

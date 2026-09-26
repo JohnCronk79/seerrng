@@ -1,14 +1,18 @@
 import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
+import Field, {
+  default as SettingsField,
+} from '@app/components/Settings/SettingsField';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
 import { Transition } from '@headlessui/react';
 import type { ReadarrSettings } from '@server/lib/settings';
+import type { BookshelfProvider } from '@server/utils/bookshelfProvider';
 import axios from 'axios';
-import { Field, Formik } from 'formik';
+import { Formik } from 'formik';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import * as Yup from 'yup';
@@ -54,12 +58,12 @@ const messages = defineMessages('components.Settings.ReadarrModal', {
   externalUrl: 'External URL',
   enableSearch: 'Enable Automatic Search',
   serviceType: 'Book Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   compatibilityNote:
     'Bookshelf is the recommended book backend. Readarr-compatible servers, including Chaptarr, can also be used. For Chaptarr, set Book Format to match the configured root folder; Seerr sends that format explicitly on every request.',
   migrationNote:
-    'Existing Readarr or softcover libraries should be migrated before switching to Hardcover. The migration tool can preserve native Hardcover matches, recover metadata through softcover, and optionally create local Bookshelf records for books Hardcover cannot import.',
+    'Hardcover is used by default for new installs. Existing Goodreads/softcover libraries remain supported. Migration to Hardcover is optional; use the migration guide if you choose to move provider-specific metadata IDs.',
   migrationGuide: 'Bookshelf Hardcover migration guide',
   apiKeyHelp:
     'Find it in Bookshelf or Readarr: Settings > General > Security > API Key.',
@@ -95,7 +99,8 @@ interface TestResponse {
     label: string;
   }[];
   urlBase?: string;
-  provider?: 'hardcover' | 'softcover' | 'unknown';
+  provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
 }
@@ -107,12 +112,16 @@ interface DiagnosticResponse {
     | 'backend_unreachable'
     | 'lookup_empty'
     | 'lookup_incomplete'
+    | 'provider_failed'
+    | 'backend_add_pending'
     | 'backend_add_rejected';
   message: string;
-  provider?: 'hardcover' | 'softcover' | 'unknown';
+  provider?: BookshelfProvider;
+  providerNotice?: string;
   legacyWarning?: string;
   metadataSource?: string;
   lookupCount?: number;
+  pendingId?: number;
   sample?: {
     title?: string;
     foreignBookId?: string;
@@ -227,12 +236,15 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
         setDiagnosticResponse(
           response.data.provider
             ? {
-                ok: response.data.provider !== 'softcover',
+                ok: true,
                 category: 'ok',
                 message:
+                  response.data.providerNotice ??
                   response.data.legacyWarning ??
                   'Bookshelf connection established successfully.',
                 provider: response.data.provider,
+                providerNotice:
+                  response.data.providerNotice ?? response.data.legacyWarning,
                 legacyWarning: response.data.legacyWarning,
                 metadataSource: response.data.metadataSource,
               }
@@ -513,8 +525,12 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       {diagnosticResponse.metadataSource
                         ? ` Metadata: ${diagnosticResponse.metadataSource}.`
                         : ''}
-                      {diagnosticResponse.legacyWarning
-                        ? ` ${diagnosticResponse.legacyWarning}`
+                      {diagnosticResponse.pendingId
+                        ? ` Pending import ID: ${diagnosticResponse.pendingId}.`
+                        : ''}
+                      {(diagnosticResponse.providerNotice ??
+                      diagnosticResponse.legacyWarning)
+                        ? ` ${diagnosticResponse.providerNotice ?? diagnosticResponse.legacyWarning}`
                         : ''}
                     </p>
                   )}
@@ -525,7 +541,11 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                   {intl.formatMessage(messages.defaultserver)}
                 </label>
                 <div className="form-input-area">
-                  <Field type="checkbox" id="isDefault" name="isDefault" />
+                  <SettingsField
+                    type="checkbox"
+                    id="isDefault"
+                    name="isDefault"
+                  />
                 </div>
               </div>
               <div className="form-row">
@@ -603,7 +623,7 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                   <span className="label-required">*</span>
                 </label>
                 <div className="form-input-area">
-                  <Field
+                  <SettingsField
                     id="port"
                     name="port"
                     type="text"
@@ -641,9 +661,6 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                 <label htmlFor="apiKey" className="text-label">
                   {intl.formatMessage(messages.apiKey)}
                   <span className="label-required">*</span>
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.apiKeyHelp)}
-                  </span>
                 </label>
                 <div className="form-input-area">
                   <div className="form-input-field">
@@ -664,13 +681,13 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       <div className="error">{errors.apiKey}</div>
                     )}
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.apiKeyHelp)}
+                </span>
               </div>
               <div className="form-row">
                 <label htmlFor="baseUrl" className="text-label">
                   {intl.formatMessage(messages.baseUrl)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.baseUrlHelp)}
-                  </span>
                 </label>
                 <div className="form-input-area">
                   <div className="form-input-field">
@@ -691,6 +708,9 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       <div className="error">{errors.baseUrl}</div>
                     )}
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.baseUrlHelp)}
+                </span>
               </div>
               <div className="form-row">
                 <label htmlFor="activeProfileId" className="text-label">
@@ -814,9 +834,6 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
               <div className="form-row">
                 <label htmlFor="externalUrl" className="text-label">
                   {intl.formatMessage(messages.externalUrl)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.externalUrlHelp)}
-                  </span>
                 </label>
                 <div className="form-input-area">
                   <div className="form-input-field">
@@ -828,32 +845,39 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       <div className="error">{errors.externalUrl}</div>
                     )}
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.externalUrlHelp)}
+                </span>
               </div>
               <div className="form-row">
                 <label htmlFor="syncEnabled" className="checkbox-label">
                   {intl.formatMessage(messages.syncEnabled)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.syncEnabledHelp)}
-                  </span>
                 </label>
                 <div className="form-input-area">
-                  <Field type="checkbox" id="syncEnabled" name="syncEnabled" />
+                  <SettingsField
+                    type="checkbox"
+                    id="syncEnabled"
+                    name="syncEnabled"
+                  />
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.syncEnabledHelp)}
+                </span>
               </div>
               <div className="form-row">
                 <label htmlFor="enableSearch" className="checkbox-label">
                   {intl.formatMessage(messages.enableSearch)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.enableSearchHelp)}
-                  </span>
                 </label>
                 <div className="form-input-area">
-                  <Field
+                  <SettingsField
                     type="checkbox"
                     id="enableSearch"
                     name="enableSearch"
                   />
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.enableSearchHelp)}
+                </span>
               </div>
             </div>
           </Modal>

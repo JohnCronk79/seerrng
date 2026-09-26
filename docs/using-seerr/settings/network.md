@@ -74,24 +74,27 @@ Both settings are **disabled** by default.
 ## Session cookies, built-in HTTPS, and HTTP
 
 Plex, local, and other browser sign-ins use an `HttpOnly` session cookie. The
-default keeps that cookie HTTPS-only, so direct HTTP can display the interface
-but cannot persist a login. Configure an HTTPS reverse proxy or use SeerrNG's
-built-in local TLS for a direct LAN deployment.
+default `SEERR_TLS_MODE=disabled` listener uses a transport-aware cookie, so
+direct HTTP can persist a login while showing a warning. Configure an HTTPS
+reverse proxy or use SeerrNG's built-in local TLS for encrypted browser
+sessions.
 
-SeerrNG also has an explicit `SEERR_ALLOW_HTTP_AUTH=true` fallback for a
-trusted, isolated LAN. It is disabled by default, shows a startup/UI warning,
-and allows anyone observing the LAN traffic to steal a session cookie. It is
-mutually exclusive with `SEERR_TLS_MODE`; SeerrNG refuses to start if both are
-enabled. The same fallback can be enabled from **Browser Transport Security**
-after checking the required risk acknowledgement.
+Direct HTTP authentication is enabled by default when built-in TLS is disabled,
+shows a startup/UI warning, and allows anyone observing the LAN traffic to
+steal a session cookie. Set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS for
+direct browser sign-in; setting it to `true` makes the default explicit. HTTP
+authentication is mutually exclusive with an enabled `SEERR_TLS_MODE`, and
+SeerrNG refuses to start if both are enabled. The same choice is available in
+**Browser Transport Security** after checking the required risk acknowledgement.
 
 ### Browser Transport Security
 
 The **Browser Transport Security** section controls the application’s own
 listeners. It is separate from the outbound HTTP(S) proxy setting:
 
-- **Disabled** leaves HTTPS off. Direct HTTP login remains non-persistent unless
-  the administrator explicitly enables the HTTP authentication fallback.
+- **Disabled** leaves HTTPS off. Direct HTTP login works by default with a
+  warning; disable **Allow authenticated browser sessions over HTTP** when
+  direct browser access must require HTTPS.
 - **Self-signed local HTTPS** generates and persists a local CA and server
   certificate under `CONFIG_DIRECTORY/tls`.
 - **Provided certificate** reads certificate paths mounted into the SeerrNG
@@ -99,15 +102,16 @@ listeners. It is separate from the outbound HTTP(S) proxy setting:
 - **Redirect HTTP to HTTPS** is intentionally separate. Leave it off while
   verifying the HTTPS URL and certificate trust; HTTP then returns an upgrade
   instruction instead of serving the application.
-- **Allow authenticated browser sessions over HTTP** is available only when
-  HTTPS is disabled and requires an explicit acknowledgement of the session
-  interception risk.
+- **Allow authenticated browser sessions over HTTP** is enabled by default only
+  when HTTPS is disabled and requires an explicit acknowledgement when changed
+  from the Network page.
 
 All listener and cookie-policy changes require a restart. Existing installations
-remain disabled during upgrade. If a bad certificate configuration prevents
-access, set `SEERR_TLS_MODE=disabled` and restart as the documented recovery
-override. Environment variables take precedence over saved settings, and the
-page identifies those overrides.
+are migrated to the working direct-HTTP default when their built-in TLS mode is
+disabled. If a bad certificate configuration prevents access, set
+`SEERR_TLS_MODE=disabled` and restart as the documented recovery override.
+Environment variables take precedence over saved settings, and the page
+identifies those overrides.
 
 See [Built-in HTTPS and HTTP authentication modes](/using-seerr/advanced/built-in-tls)
 for the complete first-run flow, trust procedure, environment variables, and

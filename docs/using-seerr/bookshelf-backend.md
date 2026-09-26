@@ -6,11 +6,18 @@ sidebar_position: 21
 
 # Bookshelf Backend
 
-SeerrNG sends book requests to a Readarr-compatible Bookshelf API. New
-deployments should use the Hardcover metadata backend. Existing Readarr or
-softcover deployments should be backed up and inventoried before cutover because
-Goodreads/softcover foreign IDs are provider-specific and cannot be safely
-reused as Hardcover IDs.
+SeerrNG sends book requests through the Readarr-compatible Bookshelf API and
+preserves the metadata provider's native book, edition, and author IDs.
+Hardcover remains the default for new deployments. Existing Goodreads/softcover
+and other compatible metadata sources remain supported; moving
+between providers is optional. Provider IDs are source-specific, so migrating a
+library to another provider requires rebuilding its metadata records rather
+than changing only the metadata URL or container image.
+
+For the exact distinction between runtime metadata and migration-only
+recovery, plus Google Books, Library of Congress, Apify, caching, IDs, and
+future provider candidates, see [Bookshelf Metadata Sources and Migration
+Recovery](./bookshelf-metadata-sources.md).
 
 [Chaptarr](https://github.com/Chaptarr/chaptarr) is a supported Readarr-
 compatible alternative. SeerrNG sends the selected book format explicitly, so
@@ -22,7 +29,7 @@ provider-specific URL Base or API adapter.
 Configure Chaptarr in **Settings > Services** as a Bookshelf server:
 
 1. Add one service entry for each format you want to request. Set **Book
-   Format** to **Ebook** or **Audiobook** to match the Chaptarr root folder and
+   Format** to **Book** or **Audiobook** to match the Chaptarr root folder and
    profiles selected below it.
 2. Use Chaptarr's normal host, port, and API key. Leave **URL Base** blank
    unless you deliberately configured a URL Base in Chaptarr.
@@ -42,10 +49,48 @@ the same author; only the requested format/book is marked for monitoring. This
 is normal Chaptarr behaviour, not evidence that SeerrNG approved those other
 books.
 
-Pin the Chaptarr image to a tested version instead of relying on `latest`.
-Compatibility was validated against the official Docker image reporting
-`0.9.911.0`; Chaptarr is actively developed and its Readarr-compatible surface
-can change between releases.
+### Chaptarr interoperability
+
+SeerrNG detects Chaptarr from its system status and sends each Bookshelf service
+through the matching ebook or audiobook API facade. It reads Chaptarr's
+Hardcover setting to choose the provider-ID dialect; older Chaptarr versions
+without that setting use the Hardcover facade. Keep both SeerrNG service entries
+on the same Chaptarr instance when it manages both formats, and select the
+matching format in each entry.
+
+| Operation | SeerrNG behavior |
+| --- | --- |
+| Search and edition selection | Uses format-scoped lookups, retains the provider's work and edition IDs, and falls back to native lookup results when a format facade has no addressable result. |
+| Library scan | Reads paged, format-scoped results including unmonitored catalogue rows. It follows Chaptarr's reported total even when a page is short, and refuses to return a scan known to be incomplete. |
+| Add and search | Sends the selected format and monitoring intent. When Chaptarr queues author metadata preparation, SeerrNG stores the pending import and resumes the requested book add and search when it is ready. |
+| Request cancellation | Cancels the pending author import only when no other active request on the same Chaptarr instance references it. The check includes both SeerrNG ebook and audiobook service entries. For completed adds, normal book and queue cleanup applies. |
+| Settings diagnostic | A normal diagnostic checks the connection, profiles, folders, and lookup. The optional `testAdd` API flag performs a real add and removes the local book afterward. If Chaptarr returns a pending import, the diagnostic displays its ID and leaves it queued because Chaptarr may share that import with an active request. Check the import in Chaptarr and cancel it only if no request needs it. |
+
+The `testAdd` diagnostic is an API option; the Settings modal's **Run
+Diagnostic** button does not enable it. Use it only when you intend to exercise
+the add endpoint and can review any provider-side work it queues.
+
+When Chaptarr accepts an add with `202 Accepted` while it prepares author
+metadata, SeerrNG keeps the request waiting and resumes the selected format's
+add and search after Chaptarr reports that import complete. SeerrNG retains the
+provider work and edition IDs for that request, so it can restore tracking if
+Chaptarr assigns the local book a different row ID. Cancelling a waiting
+request checks for active references across both format entries when they point
+to the same Chaptarr instance, and cancels the pending author import only when
+no other request depends on it.
+
+The last end-to-end Docker validation used Chaptarr `0.9.911.0`. As of
+2026-09-24, the client contract has also been source-reviewed against
+[Chaptarr v0.9.958](https://github.com/Chaptarr/chaptarr/releases/tag/v0.9.958),
+the latest listed pre-release, including the pending-add response and
+pending-author-import API available since v0.9.936. The v0.9.958 Docker image
+has not been runtime-tested with SeerrNG. Pin an exact Chaptarr image version
+instead of relying on `latest`, because Chaptarr is actively developed and its
+Readarr-compatible surface can change between releases.
+The source-reviewed contracts are in Chaptarr's
+[BookController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/Books/BookController.cs)
+and
+[PendingAuthorImportController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/PendingImport/PendingAuthorImportController.cs).
 
 If a Chaptarr lookup is empty, first verify that the selected **Book Format**
 has a writable root folder and matching quality/metadata profiles. If the
@@ -56,29 +101,27 @@ Chaptarr metadata provider and retry the lookup from its UI.
 
 ### Readarr to Softcover to Hardcover Migration
 
-Make Hardcover the default Bookshelf backend for new installs. For existing
-Readarr or softcover users, provide an automatic in-place migration workflow
-whose final result keeps the same Seerr-facing service endpoints where possible,
-but rebuilds book metadata against Hardcover IDs instead of blindly reusing
-Goodreads or softcover IDs.
+Make Hardcover the default Bookshelf backend for new installs while keeping
+other compatible metadata sources first-class options. Migration to Hardcover
+is optional; existing Goodreads/softcover users can keep their current backend
+and SeerrNG service configuration.
 
 Core policy:
 
 - New install with no existing Readarr or Bookshelf config: create Hardcover
   ebook and audiobook instances.
-- Existing Readarr or softcover config: back up, inventory, migrate matched
-  books to Hardcover, then disable softcover after successful migration.
+- Existing Readarr or softcover config: retain the configured backend unless
+  the operator explicitly chooses to migrate.
 - Matching: strict automatic migration only; fuzzy matches go to an optional
   admin review report, not automatic cutover.
-- Softcover becomes a legacy or backup backend, not the default path.
+- Softcover remains a supported Goodreads-compatible backend; Hardcover remains
+  the default for new deployments.
 
 ### Installer and Compose
 
-- Change the default image from the pinned
-  `ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667`
-  image to the pinned
-  `ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636`
-  image.
+- Change the default image from the stable
+  `ghcr.io/snapetech/bookshelfng:softcover` image to the stable
+  `ghcr.io/snapetech/bookshelfng:hardcover` image.
 - Add an installer backend mode:
 
   ```env
@@ -91,9 +134,8 @@ Core policy:
   - if an existing Readarr or softcover config/database exists, run the
     migration flow.
 - For fresh Hardcover installs:
-  - use the pinned
-    `ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636`
-    image;
+  - use the stable `ghcr.io/snapetech/bookshelfng:hardcover` image, which is
+    updated only by a release from BookshelfNG's `main` branch;
   - use the local rreading-glasses compatibility boundary by default;
   - pass `HARDCOVER_AUTH` to rreading-glasses;
   - enable the rreading-glasses and PostgreSQL Compose profile;
@@ -182,6 +224,36 @@ Applying the generated rebuild payload is opt-in. Set
 `APPLY_HARDCOVER_REBUILD=true` only after reviewing `matched-books.json`,
 `unmatched-books.json`, `ambiguous-books.json`, `rebuild-payload.json`, and
 `rebuild-blocked.json`.
+
+BookshelfNG also searches Library of Congress and Gutendex alongside Hardcover
+by default. The managed two-instance SeerrNG installer enables LOC on the
+audiobook service by default so both processes do not exceed LOC's shared
+outbound request pacing; it enables Gutendex on both services. Google Books
+and Europeana are added when `GOOGLE_BOOKS_API_KEY` and `EUROPEANA_API_KEY` are
+configured. Internet Archive and NDL Search are opt-in. Europeana is limited
+to openly reusable text records from its cultural heritage collection. These
+runtime catalogs return source-qualified IDs that SeerrNG retains through
+search, details, and requests.
+Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+`BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` to override each service; the legacy
+`BOOKSHELF_METADATA_SOURCES` value applies to both when supplied to the
+installer. An empty per-service source list disables additional catalogs for
+that service; set both per-service values empty to disable them in both
+containers.
+The installer preserves these settings and credentials when rewriting its
+private `.env` file. A directly managed single BookshelfNG instance enables
+LOC by default unless `BOOKSHELF_METADATA_SOURCES` overrides it.
+
+Migration recovery separately queries Google Books and Library of Congress
+before creating an optional local shadow record. These lookups are cached in
+the migration directory and only promote a result into Hardcover when strict
+identity matching succeeds. An optional Apify Actor adapter supports runtime
+search and migration recovery for Goodreads-compatible scrapers. Configure
+`HARDCOVER_APIFY_GOODREADS_ACTOR` and `HARDCOVER_APIFY_TOKEN`, and adjust
+`HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` for the Actor's input schema. Actor
+availability and pricing depend on the selected Actor. Runtime responses are
+cached for one day; migration recovery makes at most two Actor runs per source
+item.
 Applied and failed adds are written to `applied-books.json` and
 `apply-failures.json`. After apply, the helper writes `validation-report.json`
 and marks `migration-report.json` as `validation_complete` or
@@ -323,10 +395,17 @@ and a foreign book ID, but no author object and no editions. SeerrNG refuses to
 add those raw records because Bookshelf/Readarr can reject them or create broken
 library entries.
 
-Bookshelf with Hardcover should be the default path for new installs. Bookshelf
-with `softcover` and `rreading-glasses` remains available as a legacy fallback
-for existing deployments and environments that still need Goodreads-compatible
-metadata.
+Hardcover is the default path for new installs. Bookshelf with `softcover` and
+`rreading-glasses` is also supported for Goodreads-compatible metadata, and
+other Readarr-compatible provider endpoints can be configured through the same
+service API. Goodreads no longer issues new public developer API keys, so
+Goodreads support here is mediated by the configured Bookshelf-compatible
+provider rather than a direct SeerrNG Goodreads client.
+Goodreads' own developer notice says it no longer issues new public API keys;
+the [Goodreads Developers notice](https://www.goodreads.com/group/show/8095-goodreads-developers)
+therefore makes a Bookshelf-compatible provider the practical way to retain
+Goodreads metadata support. SeerrNG uses provider-native author images returned
+by Bookshelf when Open Library has no author photo.
 
 ## Architecture
 
@@ -358,6 +437,13 @@ detected and preserved on rerun.
 Native remains an explicit alternative when the shortest direct path is more
 valuable than the shared proxy boundary. Select it with
 `BOOKSHELF_METADATA_MODE=native`.
+
+Choose runtime fallback catalogs and enter provider credentials on each
+BookshelfNG instance under **Settings > Metadata**. That page also manages the
+native Hardcover token when no environment token is set. SeerrNG's own
+**Settings > Metadata** page selects TMDB or TVDB for video metadata; its book
+catalog panel directs administrators to the connected BookshelfNG settings,
+where catalog choices take effect.
 
 ### Native Hardcover failure behavior
 
@@ -430,22 +516,28 @@ The public Snapetech fork is:
 https://github.com/snapetech/bookshelfng
 ```
 
+If Docker is not an option, follow the [BookshelfNG source-build
+guide](./bookshelf-source-build.md) to compile and run the backend directly on
+Linux.
+
 The deployment compose defaults to the Snapetech image:
 
 ```text
-ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636
+ghcr.io/snapetech/bookshelfng:hardcover
 ```
 
-The installer and deployment Compose file use an immutable BookshelfNG digest.
-Update the digest deliberately when adopting a newer BookshelfNG build so
-deployments are reproducible and rollbackable.
+The installer and deployment Compose file use the stable `hardcover` tag.
+BookshelfNG updates that tag only from its `main` release workflow, so SeerrNG
+does not consume `develop` images by default. Set `BOOKSHELF_IMAGE` to a full
+digest reference when reproducible upgrades and rollbackability matter more
+than automatic adoption of the newest main release.
 
 That image is built from the public `bookshelfng` fork and provides the native
 Hardcover metadata backend. Fresh installs use the local rreading-glasses
 compatibility path by default; set `BOOKSHELF_METADATA_MODE=native` to pass
 `HARDCOVER_AUTH` directly to BookshelfNG. To force the legacy softcover path,
-set `BOOKSHELF_BACKEND=softcover`; this switches the image to the pinned
-`ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667`
+set `BOOKSHELF_BACKEND=softcover`; this switches the image to the stable
+`ghcr.io/snapetech/bookshelfng:softcover`
 and keeps compatibility mode.
 Softcover deployments use `COOKIE` when the Goodreads upstream requires it.
 
@@ -453,7 +545,7 @@ The image is published from GitHub Actions in the `snapetech/bookshelfng`
 repository:
 
 ```bash
-docker pull ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667
+docker pull ghcr.io/snapetech/bookshelfng:softcover
 ```
 
 If a pull returns `denied`, the package exists but is not anonymously readable.
@@ -483,10 +575,9 @@ fd8abff6b Add sparse Hardcover metadata regression tests
 5788f7c1c Pin patched transitive dependencies
 ```
 
-Use the pinned `ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667`
-image for softcover once the GHCR package is public or the Docker host is
-authenticated. If you need a fully anonymous pull before that package
-visibility is corrected, use
+Use the stable `ghcr.io/snapetech/bookshelfng:softcover` image for softcover
+once the GHCR package is public or the Docker host is authenticated. If you
+need a fully anonymous pull before that package visibility is corrected, use
 `ghcr.io/pennydreadful/bookshelf:softcover` and rely on SeerrNG's softcover
 hydration fallback.
 
@@ -612,13 +703,30 @@ cd /opt/bookshelf-backend
 
 Create `/opt/bookshelf-backend/.env`:
 
+`PUID` and `PGID` are numeric IDs on the Docker host, not account or group
+names. The values below are examples and may not match your host. To map an
+existing account, run `id -u accountname` and `id -g accountname` on the host,
+replacing `accountname` with that user. These report the user's UID and primary
+GID. If the media directories use a shared group, run `getent group groupname`
+and use that group's numeric GID instead. Copy the numeric values into `.env`;
+do not put names or shell expressions there. The `/config` mount must be
+writable, and Bookshelf must have the required read/write access to its media
+mounts.
+
+After changing these IDs, recreate both Bookshelf containers from
+`/opt/bookshelf-backend` so Compose applies the new values:
+
+```bash
+docker compose up -d --force-recreate bookshelf-ebooks bookshelf-audiobooks
+```
+
 ```env
 PUID=1000
 PGID=953
 TZ=America/Regina
 
 BOOKSHELF_BACKEND=hardcover
-BOOKSHELF_IMAGE=ghcr.io/snapetech/bookshelfng:hardcover@sha256:867abb5a95d1556c30bd22389ea913755c9157323fac36159a691d5453f92636
+BOOKSHELF_IMAGE=ghcr.io/snapetech/bookshelfng:hardcover
 BOOKSHELF_METADATA_MODE=compatibility
 BOOKSHELF_METADATA_URL=http://127.0.0.1:8790
 BOOKSHELF_HARDCOVER=true
@@ -655,7 +763,7 @@ For Goodreads/softcover compatibility mode, use:
 
 ```env
 BOOKSHELF_BACKEND=softcover
-BOOKSHELF_IMAGE=ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667
+BOOKSHELF_IMAGE=ghcr.io/snapetech/bookshelfng:softcover
 BOOKSHELF_METADATA_MODE=compatibility
 BOOKSHELF_METADATA_URL=http://127.0.0.1:8790
 BOOKSHELF_HARDCOVER_NATIVE=false
@@ -710,12 +818,12 @@ and both-format requests have been tested through SeerrNG.
 
 In **Settings > Services**, add two Bookshelf services.
 
-Ebook service:
+Book service:
 
 ```text
 Hostname: kspls0, 127.0.0.1, or the Docker host name reachable by SeerrNG
 Port: 8787
-Book Format: Ebook
+Book Format: Book
 Quality Profile: eBook
 Root Folder: /data/plex/books
 Default Server: enabled
@@ -781,9 +889,8 @@ curl -H "X-Api-Key: EBOOK_API_KEY" \
   "http://127.0.0.1:8787/api/v1/author/lookup?term=J.R.R.%20Tolkien"
 ```
 
-With the pinned
-`ghcr.io/snapetech/bookshelfng:softcover@sha256:bea37ae5981406f7221e1fced4191a06167997c9777fc2a6a5aa6301a776b667`
-image, lookup results should include
+With the stable `ghcr.io/snapetech/bookshelfng:softcover` image, lookup results
+should include
 nested `author` metadata and at least one `editions` entry. If you use upstream
 Bookshelf and see `editions: []`, SeerrNG can still hydrate results that include
 `foreignEditionId` and resolvable author metadata, but the Snapetech image is
@@ -940,6 +1047,17 @@ settings and backend containers.
 - confirm SeerrNG can reach the host and port,
 - confirm the API key is correct,
 - confirm URL Base is empty unless Bookshelf is configured with one.
+- For the supplied Compose files, SeerrNG and Bookshelf use host networking,
+  so `127.0.0.1` reaches services on that host. If either container uses a
+  bridge network instead, configure a host address and published port or a
+  service name on a shared network; loopback inside one container cannot reach
+  another container.
+- From `/opt/bookshelf-backend`, inspect container health and logs:
+
+  ```bash
+  docker compose ps
+  docker compose logs --tail=100 bookshelf-ebooks bookshelf-audiobooks
+  ```
 
 `lookup_empty`:
 
@@ -988,3 +1106,30 @@ service/profile override value, not as a missing or invalid ID.
   before every request.
 - Both-format book requests dispatch to two backend services. Check each
   Bookshelf instance when troubleshooting partial success.
+
+## Optional chaptered M4B imports
+
+BookshelfNG can merge an identified multi-file audiobook download into one
+chaptered M4B. In the SeerrNG-managed deployment, set
+`BOOKSHELF_M4B_MERGE=true` before running the installer. It stores that choice
+in the generated `.env` and passes it to both BookshelfNG instances. The
+default is `false`.
+
+The standard BookshelfNG Docker image includes FFmpeg. The merge encodes AAC
+at 128 kbps by default; set `BOOKSHELF_M4B_AAC_BITRATE_KBPS` to a value from
+48 to 320 to change it. Original audio files are kept if conversion or M4B
+import fails, and copy-only imports keep the source tracks. See the
+[BookshelfNG merge guide](https://github.com/Snapetech/bookshelfng/blob/main/docs/audiobook-m4b-merging.md)
+for track ordering and failure behavior.
+
+## Requesting a specific edition
+
+The book request dialog lets you choose an ISBN edition. When you make an
+explicit choice, SeerrNG keeps that ISBN and edition with the request and
+passes it to BookshelfNG. The matching Bookshelf edition is selected for
+acquisition; if that edition is absent from the configured metadata source,
+the request reports the mismatch instead of silently switching editions.
+Edition choices show their language when the catalog provides it. The
+language filter selects the first matching ISBN candidate, and the edition
+selector remains available for a manual override. The automatic edition
+option keeps the existing best-match behavior.

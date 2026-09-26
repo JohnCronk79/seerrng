@@ -2,7 +2,7 @@
 id: built-in-tls
 title: Built-in HTTPS and HTTP authentication modes
 sidebar_label: Built-in HTTPS
-description: Configure direct HTTPS, local certificates, or the explicit HTTP fallback.
+description: Configure direct HTTPS, local certificates, or direct HTTP authentication.
 ---
 
 import Tabs from '@theme/Tabs';
@@ -12,21 +12,25 @@ import TabItem from '@theme/TabItem';
 
 SeerrNG can terminate HTTPS itself. This is useful for a direct LAN deployment
 where adding Caddy, Traefik, Nginx, or another reverse proxy would be
-unnecessary. It also provides an explicit HTTP fallback for trusted local
+unnecessary. It also supports direct HTTP authentication for trusted local
 installations that cannot use TLS.
 
-The default remains compatible with existing installations:
+The default listener remains HTTP on `PORT`, and direct HTTP authentication is
+enabled with a warning when built-in TLS is disabled. HTTPS is still the
+recommended choice for authenticated sessions:
 
 | Mode | Listener | Browser session behavior | Use when |
 | --- | --- | --- | --- |
-| `disabled` | HTTP on `PORT` (5055 by default) | Session cookies are HTTPS-only; direct HTTP login does not persist | A reverse proxy terminates HTTPS, or the interface is being used without authentication |
-| `disabled` + `SEERR_ALLOW_HTTP_AUTH=true` | HTTP on `PORT` | Cookies follow the request transport, including non-Secure cookies on HTTP | A deliberately trusted LAN needs direct HTTP login temporarily |
+| `disabled` | HTTP on `PORT` (5055 by default) | Cookies follow the request transport, including non-Secure cookies on HTTP; a warning is shown | A reverse proxy terminates HTTPS, or a trusted LAN cannot use TLS |
+| `disabled` + `SEERR_ALLOW_HTTP_AUTH=false` | HTTP on `PORT` | Session cookies are HTTPS-only; direct HTTP login does not persist | Direct browser access must require HTTPS |
 | `self-signed` | HTTPS on the configured HTTPS port; HTTP either redirects or returns an HTTPS upgrade response | HTTPS-only cookies | A direct LAN deployment needs encryption without an external proxy |
 | `provided` | HTTPS on the configured HTTPS port; HTTP either redirects or returns an HTTPS upgrade response | HTTPS-only cookies | The operator already has a certificate and private key |
 
 `SEERR_ALLOW_HTTP_AUTH=true` and any enabled TLS mode are mutually exclusive.
 SeerrNG refuses to start if both are configured, so a deployment cannot
-silently choose an insecure session path while the operator expects TLS.
+silently choose an insecure session path while the operator expects TLS. Set
+`SEERR_ALLOW_HTTP_AUTH=false` when TLS is disabled but direct HTTP sign-in must
+remain unavailable.
 
 ## First-run and administrator settings
 
@@ -36,16 +40,24 @@ the first media-server login:
 1. **Self-signed HTTPS** is the recommended direct-installation choice.
 2. **Provided certificate** is for a certificate and private key mounted into
    the SeerrNG process.
-3. **HTTP authentication** is available only after checking an explicit risk
-   acknowledgement.
+3. **HTTP authentication** is enabled by default when HTTPS is disabled, after
+   the setup page's risk acknowledgement is accepted.
 
 Saving a first-run choice writes it to the persistent settings file. Restart
 SeerrNG before attempting the first login. This is intentional: changing the
 listener and session-cookie policy while the process is serving requests would
 make the result ambiguous.
 
-Existing installations are not switched during upgrade. Their persisted
-transport mode remains `disabled` unless an administrator changes it. Use
+The setup page keeps media-server choices disabled until the active transport
+can persist a browser session. If a previous version of the page saved the
+media-server details before the session was established, restart SeerrNG after
+fixing the transport choice and use the normal `/login` page to sign in again.
+Do not submit the first-run Jellyfin hostname a second time; it is already
+stored and the setup page will guide you back to sign-in.
+
+Existing installations with built-in TLS disabled are migrated so direct HTTP
+authentication works by default. Set `SEERR_ALLOW_HTTP_AUTH=false` if the
+installation must remain HTTPS-only, or use
 **Settings > Network > Browser Transport Security** to select a mode, save it,
 and restart SeerrNG. When enabling HTTPS, leave **Redirect HTTP to HTTPS** off
 for the first restart, verify the HTTPS URL and certificate trust, then enable
@@ -54,9 +66,9 @@ not serve the authenticated application; it returns an HTTPS upgrade response.
 
 The same settings page can disable HTTPS again. If a certificate mistake makes
 the UI unreachable, use the startup recovery override
-`SEERR_TLS_MODE=disabled` and restart. If direct HTTP login is also required
-temporarily, explicitly set `SEERR_ALLOW_HTTP_AUTH=true` and acknowledge the
-network risk; remove it again after recovery.
+`SEERR_TLS_MODE=disabled` and restart. Direct HTTP authentication is then
+available by default; set `SEERR_ALLOW_HTTP_AUTH=false` if the recovery path
+must remain HTTPS-only.
 
 Listener changes are restart-required. The status endpoint and the Network page
 show the active mode, the saved mode, environment overrides, and whether a
@@ -77,7 +89,8 @@ The environment overrides are:
   `SEERR_TLS_CA_FILE`: provided-certificate paths.
 - `SEERR_HTTP_REDIRECT_TO_HTTPS`: `true` for HTTP `308` redirects or `false`
   for the non-authenticated HTTPS upgrade response.
-- `SEERR_ALLOW_HTTP_AUTH`: explicit direct-HTTP authentication fallback.
+- `SEERR_ALLOW_HTTP_AUTH`: direct-HTTP authentication when TLS is disabled;
+  defaults to `true` in that mode and can be set to `false` to require HTTPS.
 
 If any of these variables are set by a Compose file, systemd unit, chart, or
 container environment, they take precedence over the corresponding saved
@@ -212,12 +225,12 @@ or the Network settings page; it must differ from `PORT`. The HTTP listener
 returns an HTTPS upgrade response until **Redirect HTTP to HTTPS** is enabled.
 When enabled, it sends a `308` redirect to HTTPS.
 
-## Explicit HTTP fallback
+## Direct HTTP authentication
 
-If TLS is not possible on a trusted, isolated LAN, select **Disabled** and
-enable **Allow authenticated browser sessions over HTTP** in the Network
-settings. The form requires an explicit acknowledgement. The equivalent
-environment configuration is:
+If TLS is not possible on a trusted, isolated LAN, leave built-in TLS
+**Disabled**. Direct HTTP authentication is enabled by default and the UI
+shows a prominent warning. The equivalent environment configuration, with the
+default made explicit, is:
 
 ```yaml
 environment:
@@ -246,8 +259,9 @@ Use either the built-in HTTPS listener or a reverse proxy as the TLS
 terminator. For a reverse proxy, leave `SEERR_TLS_MODE=disabled` and proxy to
 the existing HTTP `PORT`; enable SeerrNG's **Enable Proxy Support** setting so
 the application can safely use the proxy's `X-Forwarded-Proto` value for
-Secure cookies and CSRF transport decisions. Do not enable the HTTP fallback
-just because the proxy talks HTTP to the backend.
+Secure cookies, HSTS, and CSRF transport decisions. Set
+`SEERR_ALLOW_HTTP_AUTH=false` if the backend's direct HTTP path must not accept
+browser sign-in; HTTPS through the proxy still works.
 
 In built-in TLS mode, port 5055 is intentionally either redirect-only or
 upgrade-only, depending on the saved redirect setting. The official container
@@ -262,6 +276,25 @@ hostname and IP to the environment variable before starting the server.
 
 ## Troubleshooting sign-in
 
+If Jellyfin setup appears to save, does not advance, and a retry reports that
+the hostname is already configured, the first request probably saved the
+server details but the browser did not retain the session cookie. This happens
+when direct HTTP authentication is disabled (`httpAuthAllowed: false`), or when a
+new transport choice was saved but SeerrNG was not restarted yet.
+
+Check the public status endpoint:
+
+```text
+GET /api/v1/status/tls
+```
+
+Before direct HTTP sign-in, the response must report `mode: "disabled"`,
+`httpAuthAllowed: true`, and `pendingRestart: false`. For HTTPS, open the
+HTTPS URL after trusting the local CA or configure the reverse proxy to pass
+`X-Forwarded-Proto: https` with proxy support enabled. After the transport is
+active, open `/login` and sign in again; the saved Jellyfin server does not
+need to be entered again.
+
 If Plex or local sign-in appears to succeed but the browser immediately returns
 to the login page:
 
@@ -272,6 +305,7 @@ to the login page:
 4. If using a reverse proxy, enable **Enable Proxy Support** and forward
    `X-Forwarded-Proto: https`.
 5. If a certificate configuration prevents access, set `SEERR_TLS_MODE=disabled`
-   and restart, then correct the saved settings. Use
-   `SEERR_ALLOW_HTTP_AUTH=true` only when the LAN risk is understood and
-   built-in/reverse-proxy HTTPS is not available.
+   and restart, then correct the saved settings. Set
+   `SEERR_ALLOW_HTTP_AUTH=false` when direct HTTP sign-in must remain disabled;
+   otherwise use HTTPS whenever possible because the default HTTP session path
+   can be observed on the network.

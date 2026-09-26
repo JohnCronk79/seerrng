@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
+import ComicVineAPI from '@server/api/comicvine';
 import ExternalAPI from '@server/api/externalapi';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import TheAudioDb from '@server/api/theaudiodb';
 import TmdbPersonMapper from '@server/api/themoviedb/personMapper';
 import { MediaStatus, MediaType } from '@server/constants/media';
@@ -183,9 +185,16 @@ describe('GET /search', () => {
     settings.lidarr = [];
     settings.readarr = [];
 
-    const albumSearch = mock.method(MusicBrainz.prototype, 'searchAlbum');
-    const artistSearch = mock.method(MusicBrainz.prototype, 'searchArtist');
+    const albumSearch = mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal'
+    );
+    const artistSearch = mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal'
+    );
     const bookSearch = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+    const comicSearch = mock.method(ComicVineAPI.prototype, 'searchVolumes');
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint) => {
       if (endpoint === '/search/multi') {
         return { page: 1, total_pages: 1, total_results: 0, results: [] };
@@ -204,10 +213,129 @@ describe('GET /search', () => {
       assert.strictEqual(albumSearch.mock.callCount(), 0);
       assert.strictEqual(artistSearch.mock.callCount(), 0);
       assert.strictEqual(bookSearch.mock.callCount(), 0);
+      assert.strictEqual(comicSearch.mock.callCount(), 0);
     } finally {
       settings.lidarr = priorLidarr;
       settings.readarr = priorReadarr;
     }
+  });
+
+  it('returns comics from ComicVine, merges local media, and respects the comic type filter', async () => {
+    const settings = getSettings();
+    const originalComicVineApiKey = settings.main.comicVineApiKey;
+    settings.main.comicVineApiKey = 'test-comicvine-key';
+
+    try {
+      mock.method(ComicVineAPI.prototype, 'searchVolumes', async () => ({
+        error: 'OK',
+        limit: 20,
+        offset: 0,
+        number_of_page_results: 1,
+        number_of_total_results: 1,
+        status_code: 1,
+        results: [
+          {
+            id: 5678,
+            name: 'Global Comic',
+            resource_type: 'volume' as const,
+          },
+        ],
+      }));
+
+      const comicMedia = await getRepository(Media).save(
+        new Media({
+          tmdbId: 0,
+          mediaType: MediaType.COMIC,
+          status: MediaStatus.AVAILABLE,
+        })
+      );
+      await getRepository(MediaIdentifier).save(
+        new MediaIdentifier({
+          media: comicMedia,
+          provider: MediaIdentifierProvider.COMICVINE,
+          value: '5678',
+          canonical: true,
+        })
+      );
+
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent
+        .get('/search')
+        .query({ query: 'global', type: 'comic' });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.results.length, 1);
+      const comic = res.body.results[0];
+      assert.strictEqual(comic.mediaType, 'comic');
+      assert.strictEqual(comic.id, '5678');
+      assert.strictEqual(comic.title, 'Global Comic');
+      assert.strictEqual(comic.mediaInfo.id, comicMedia.id);
+      assert.strictEqual(comic.mediaInfo.status, MediaStatus.AVAILABLE);
+    } finally {
+      settings.main.comicVineApiKey = originalComicVineApiKey;
+    }
+  });
+
+  it('searches authors in Open Library and configured Bookshelf services', async () => {
+    mock.method(OpenLibraryAPI.prototype, 'searchAuthors', async () => ({
+      numFound: 2,
+      start: 0,
+      docs: [
+        {
+          key: '/authors/OL1A',
+          name: 'Shared Writer',
+          top_work: 'First Book',
+          work_count: 20,
+        },
+        { key: '/authors/OL2A', name: 'Open Library Writer' },
+      ],
+    }));
+    mock.method(ReadarrAPI.prototype, 'lookupAuthor', async () => [
+      {
+        foreignAuthorId: 'bookshelf-author-1',
+        authorName: 'Shared Writer',
+      },
+      {
+        foreignAuthorId: 'bookshelf-author-2',
+        authorName: 'Bookshelf Writer',
+      },
+    ]);
+
+    getSettings().readarr = [
+      {
+        id: 7,
+        hostname: 'bookshelf.test',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      } as ReadarrSettings,
+    ];
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'writer',
+      type: 'author',
+    });
+
+    assert.strictEqual(res.status, 200);
+    const authors = res.body.results as {
+      id: string;
+      mediaType: string;
+      name: string;
+      provider: string;
+    }[];
+    assert.deepStrictEqual(authors.map(({ name }) => name).sort(), [
+      'Bookshelf Writer',
+      'Open Library Writer',
+      'Shared Writer',
+    ]);
+    assert.strictEqual(authors.length, 3);
+    assert.ok(authors.every((author) => author.mediaType === 'author'));
+    assert.strictEqual(
+      authors.find((author) => author.name === 'Shared Writer')?.provider,
+      'openlibrary'
+    );
   });
 
   it('rejects missing search queries before provider lookup', async () => {
@@ -298,6 +426,82 @@ describe('GET /search', () => {
     );
   });
 
+  it('keeps the main artist search while refining music by album title', async () => {
+    let albumQuery: string | undefined;
+    const artistSearch = mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal',
+      async () => ({
+        results: [],
+        totalResults: 0,
+      })
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        albumQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'Madonna',
+      type: 'music',
+      resultFilter: 'Prayer',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      albumQuery,
+      '(releasegroup:madonna OR artist:madonna OR tag:madonna) AND releasegroup:prayer'
+    );
+    assert.strictEqual(artistSearch.mock.callCount(), 0);
+  });
+
+  it('autocomplete searches artist prefixes without fetching albums or dropping mapped artists', async () => {
+    const artistId = '79239441-bfd5-4981-a70c-55c3f15c1287';
+    await getRepository(MetadataArtist).save(
+      new MetadataArtist({ mbArtistId: artistId, tmdbPersonId: '999' })
+    );
+    const albums = mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async () => {
+        throw new Error('Albums should not be fetched');
+      }
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal',
+      async ({ query }: { query: string }) => {
+        assert.strictEqual(query, 'artist:Mad*');
+        return {
+          totalResults: 1,
+          results: [
+            {
+              id: artistId,
+              name: 'Madonna',
+              type: 'Person',
+              score: 100,
+              disambiguation: 'US singer',
+              'sort-name': 'Madonna',
+            },
+          ],
+        };
+      }
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent
+      .get('/search')
+      .query({ query: 'Mad', type: 'artist' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.results[0].id, artistId);
+    assert.equal(res.body.results[0].name, 'Madonna');
+    assert.equal(albums.mock.callCount(), 0);
+  });
+
   it('rejects book formats on non-book searches', async () => {
     const agent = await loginAs('friend@seerr.dev', 'test1234');
     const res = await agent.get('/search').query({
@@ -319,56 +523,74 @@ describe('GET /search', () => {
   });
 
   it('returns global video, music, and book results together', async () => {
-    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => [
+    getSettings().lidarr = [
       {
-        id: 'a1a2a3a4-b1b2-c1c2-d1d2-e1e2e3e4e5e6',
-        media_type: 'album',
-        title: 'Global Album',
-        score: 95,
-        'primary-type': 'Album',
-        'first-release-date': '2026-02-01',
-        'artist-credit': [
-          {
-            name: 'Global Artist',
-            artist: {
-              id: 'artist-1',
+        id: 0,
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      } as LidarrSettings,
+      {
+        id: 2,
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      } as LidarrSettings,
+    ];
+    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
+      results: [
+        {
+          id: 'a1a2a3a4-b1b2-c1c2-d1d2-e1e2e3e4e5e6',
+          media_type: 'album',
+          title: 'Global Album',
+          score: 95,
+          'primary-type': 'Album',
+          'first-release-date': '2026-02-01',
+          'artist-credit': [
+            {
               name: 'Global Artist',
-              'sort-name': 'Artist, Global',
+              artist: {
+                id: 'artist-1',
+                name: 'Global Artist',
+                'sort-name': 'Artist, Global',
+              },
             },
-          },
-        ],
-        posterPath: undefined,
-      },
-      {
-        id: 'A1A2A3A4-B1B2-C1C2-D1D2-E1E2E3E4E5E6',
-        media_type: 'album',
-        title: 'Global Album',
-        score: 94,
-        'primary-type': 'Album',
-        'first-release-date': '2026-02-01',
-        'artist-credit': [
-          {
-            name: 'Global Artist',
-            artist: {
-              id: 'artist-1',
+          ],
+          posterPath: undefined,
+        },
+        {
+          id: 'A1A2A3A4-B1B2-C1C2-D1D2-E1E2E3E4E5E6',
+          media_type: 'album',
+          title: 'Global Album',
+          score: 94,
+          'primary-type': 'Album',
+          'first-release-date': '2026-02-01',
+          'artist-credit': [
+            {
               name: 'Global Artist',
-              'sort-name': 'Artist, Global',
+              artist: {
+                id: 'artist-1',
+                name: 'Global Artist',
+                'sort-name': 'Artist, Global',
+              },
             },
-          },
-        ],
-        posterPath: undefined,
-      },
-    ]);
-    mock.method(MusicBrainz.prototype, 'searchArtist', async () => [
-      {
-        id: 'artist-1',
-        media_type: 'artist',
-        name: 'Global Artist',
-        type: 'Group',
-        'sort-name': 'Artist, Global',
-        score: 90,
-      },
-    ]);
+          ],
+          posterPath: undefined,
+        },
+      ],
+      totalResults: 2,
+    }));
+    mock.method(MusicBrainz.prototype, 'searchArtistWithTotal', async () => ({
+      results: [
+        {
+          id: 'artist-1',
+          media_type: 'artist',
+          name: 'Global Artist',
+          type: 'Group',
+          'sort-name': 'Artist, Global',
+          score: 90,
+        },
+      ],
+      totalResults: 1,
+    }));
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint) => {
       const endpointString = endpoint as string;
       if (endpointString === '/search/multi') {
@@ -440,6 +662,15 @@ describe('GET /search', () => {
         caaUrl: 'https://covers.example/album.jpg',
       })
     );
+    const musicMedia = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mbId: 'a1a2a3a4-b1b2-c1c2-d1d2-e1e2e3e4e5e6',
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.AVAILABLE,
+        availableMusicServiceIds: [0, 2],
+      })
+    );
     const bookMedia = await getRepository(Media).save(
       new Media({
         tmdbId: 0,
@@ -464,12 +695,17 @@ describe('GET /search', () => {
       res.body.results.map((result: { mediaType: string }) => result.mediaType),
       ['movie', 'album', 'artist', 'book']
     );
-    assert.equal(res.body.totalResults, 4);
+    // MusicBrainz's own match count (3: 2 albums + 1 artist) is used for
+    // pagination even though this page's app-level de-dup collapses the two
+    // duplicate-ID albums down to one displayed result.
+    assert.equal(res.body.totalResults, 5);
 
     const album = res.body.results.find(
       (result: { mediaType: string }) => result.mediaType === 'album'
     );
     assert.equal(album.posterPath, 'https://covers.example/album.jpg');
+    assert.equal(album.mediaInfo.id, musicMedia.id);
+    assert.deepStrictEqual(album.availableQualities, ['MP3', 'FLAC']);
 
     const book = res.body.results.find(
       (result: { mediaType: string }) => result.mediaType === 'book'
@@ -501,17 +737,23 @@ describe('GET /search', () => {
       );
     });
 
-    mock.method(MusicBrainz.prototype, 'searchAlbum', () => delayedAlbumSearch);
-    mock.method(MusicBrainz.prototype, 'searchArtist', async () => [
-      {
-        id: 'resident-alien-artist',
-        media_type: 'artist',
-        name: 'Resident Alien Artist',
-        type: 'Group',
-        'sort-name': 'Artist, Resident Alien',
-        score: 90,
-      },
-    ]);
+    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
+      results: await delayedAlbumSearch,
+      totalResults: 0,
+    }));
+    mock.method(MusicBrainz.prototype, 'searchArtistWithTotal', async () => ({
+      results: [
+        {
+          id: 'resident-alien-artist',
+          media_type: 'artist',
+          name: 'Resident Alien Artist',
+          type: 'Group',
+          'sort-name': 'Artist, Resident Alien',
+          score: 90,
+        },
+      ],
+      totalResults: 1,
+    }));
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint) => {
       const endpointString = endpoint as string;
       if (endpointString === '/search/multi') {
@@ -555,51 +797,57 @@ describe('GET /search', () => {
 
     mock.method(
       MusicBrainz.prototype,
-      'searchAlbum',
+      'searchAlbumWithTotal',
       async (options: unknown) => {
         const { offset } = options as { offset?: number };
         albumSearchOffset = offset;
 
-        return [
-          {
-            id: 'album-page-2',
-            media_type: 'album',
-            title: 'Paged Album',
-            score: 95,
-            'primary-type': 'Album',
-            'first-release-date': '2026-02-01',
-            'artist-credit': [
-              {
-                name: 'Paged Artist',
-                artist: {
-                  id: 'artist-page-2',
+        return {
+          results: [
+            {
+              id: 'album-page-2',
+              media_type: 'album',
+              title: 'Paged Album',
+              score: 95,
+              'primary-type': 'Album',
+              'first-release-date': '2026-02-01',
+              'artist-credit': [
+                {
                   name: 'Paged Artist',
-                  'sort-name': 'Artist, Paged',
+                  artist: {
+                    id: 'artist-page-2',
+                    name: 'Paged Artist',
+                    'sort-name': 'Artist, Paged',
+                  },
                 },
-              },
-            ],
-            posterPath: undefined,
-          },
-        ];
+              ],
+              posterPath: undefined,
+            },
+          ],
+          totalResults: 1,
+        };
       }
     );
     mock.method(
       MusicBrainz.prototype,
-      'searchArtist',
+      'searchArtistWithTotal',
       async (options: unknown) => {
         const { offset } = options as { offset?: number };
         artistSearchOffset = offset;
 
-        return [
-          {
-            id: 'artist-page-2',
-            media_type: 'artist',
-            name: 'Paged Artist',
-            type: 'Group',
-            'sort-name': 'Artist, Paged',
-            score: 90,
-          },
-        ];
+        return {
+          results: [
+            {
+              id: 'artist-page-2',
+              media_type: 'artist',
+              name: 'Paged Artist',
+              type: 'Group',
+              'sort-name': 'Artist, Paged',
+              score: 90,
+            },
+          ],
+          totalResults: 1,
+        };
       }
     );
     mockPrivate(ExternalAPI.prototype, 'get', async (endpoint, options) => {
@@ -654,6 +902,46 @@ describe('GET /search', () => {
     assert.deepStrictEqual(
       res.body.results.map((result: { mediaType: string }) => result.mediaType),
       ['album', 'artist', 'book']
+    );
+  });
+
+  it('reports enough total pages to page past a capped music/book result page', async () => {
+    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
+      results: [],
+      totalResults: 150,
+    }));
+    mock.method(MusicBrainz.prototype, 'searchArtistWithTotal', async () => ({
+      results: [],
+      totalResults: 0,
+    }));
+    mockPrivate(ExternalAPI.prototype, 'get', async (endpoint) => {
+      const endpointString = endpoint as string;
+      if (endpointString === '/search/multi') {
+        return { page: 1, total_pages: 1, total_results: 0, results: [] };
+      }
+      if (endpointString === '/search.json') {
+        return { numFound: 80, start: 0, docs: [] };
+      }
+      throw new Error(`Unexpected endpoint: ${endpointString}`);
+    });
+    mock.method(
+      TmdbPersonMapper.prototype,
+      'batchGetMappings',
+      async () => ({})
+    );
+    mock.method(TheAudioDb.prototype, 'batchGetArtistImages', async () => ({}));
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({ query: 'popular' });
+
+    assert.strictEqual(res.status, 200);
+    // Neither provider returned any items on this page (both were mocked
+    // empty), but their true upstream match counts (150 albums, 80 books)
+    // must still drive pagination so later pages remain reachable.
+    assert.equal(res.body.totalResults, 230);
+    assert.ok(
+      res.body.totalPages > 1,
+      `expected multiple pages, got ${res.body.totalPages}`
     );
   });
 
@@ -885,25 +1173,31 @@ describe('GET /search', () => {
 
       throw new Error(`Unexpected endpoint: ${endpointString}`);
     });
-    mock.method(MusicBrainz.prototype, 'searchAlbum', async () => []);
-    mock.method(MusicBrainz.prototype, 'searchArtist', async () => [
-      {
-        id: 'mapped-artist',
-        media_type: 'artist',
-        name: 'Mapped Singer',
-        type: 'Person',
-        'sort-name': 'Singer, Mapped',
-        score: 99,
-      },
-      {
-        id: 'unmapped-artist',
-        media_type: 'artist',
-        name: 'Unmapped Singer',
-        type: 'Person',
-        'sort-name': 'Singer, Unmapped',
-        score: 98,
-      },
-    ]);
+    mock.method(MusicBrainz.prototype, 'searchAlbumWithTotal', async () => ({
+      results: [],
+      totalResults: 0,
+    }));
+    mock.method(MusicBrainz.prototype, 'searchArtistWithTotal', async () => ({
+      results: [
+        {
+          id: 'mapped-artist',
+          media_type: 'artist',
+          name: 'Mapped Singer',
+          type: 'Person',
+          'sort-name': 'Singer, Mapped',
+          score: 99,
+        },
+        {
+          id: 'unmapped-artist',
+          media_type: 'artist',
+          name: 'Unmapped Singer',
+          type: 'Person',
+          'sort-name': 'Singer, Unmapped',
+          score: 98,
+        },
+      ],
+      totalResults: 2,
+    }));
     mock.method(TmdbPersonMapper.prototype, 'batchGetMappings', async () => ({
       'mapped-artist': {
         personId: 500,
@@ -974,28 +1268,47 @@ describe('search filters behind the OpenAPI validator', () => {
     return validatedApp;
   }
 
-  it('admits the music type and both book formats', async () => {
+  it('admits the music refinement and both book formats', async () => {
     const validatedApp = createValidatedApp();
     getSettings().lidarr = [];
     getSettings().readarr = [{ serviceType: 'ebook' } as ReadarrSettings];
 
-    const music = await request(validatedApp)
-      .get('/api/v1/search')
-      .query({ query: 'microsoft', type: 'music' });
+    const music = await request(validatedApp).get('/api/v1/search').query({
+      query: 'madonna',
+      type: 'music',
+      resultFilter: 'prayer',
+      artist: 'Madonna',
+      artistId: '79239441-bfd5-4981-a70c-55c3f15c1287',
+      primaryReleaseDateGte: '1998-01-01',
+      primaryReleaseDateLte: '1998-12-31',
+      genre: 'pop',
+      releaseType: 'Album',
+    });
     const audiobook = await request(validatedApp)
       .get('/api/v1/search')
       .query({ query: 'microsoft', type: 'book', format: 'audiobook' });
+    getSettings().readarr = [];
+    const authors = await request(validatedApp)
+      .get('/api/v1/search')
+      .query({ query: 'rowling', type: 'author' });
 
     getSettings().readarr = [{ serviceType: 'audiobook' } as ReadarrSettings];
     const ebook = await request(validatedApp)
       .get('/api/v1/search')
       .query({ query: 'microsoft', type: 'book', format: 'ebook' });
+    const comic = await request(validatedApp)
+      .get('/api/v1/search')
+      .query({ query: 'saga', type: 'comic' });
 
     assert.strictEqual(music.status, 200);
     assert.strictEqual(audiobook.status, 200);
+    assert.strictEqual(authors.status, 200, JSON.stringify(authors.body));
     assert.strictEqual(ebook.status, 200);
+    assert.strictEqual(comic.status, 200, JSON.stringify(comic.body));
     assert.deepStrictEqual(music.body.results, []);
     assert.deepStrictEqual(audiobook.body.results, []);
+    assert.deepStrictEqual(authors.body.results, []);
     assert.deepStrictEqual(ebook.body.results, []);
+    assert.deepStrictEqual(comic.body.results, []);
   });
 });

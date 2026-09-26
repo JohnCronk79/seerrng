@@ -132,15 +132,15 @@ tvRoutes.get('/:id', async (req, res, next) => {
     });
     const media = await Media.getMedia(tv.id, MediaType.TV, req.user);
 
-    const onUserWatchlist = await getRepository(Watchlist).exist({
-      where: {
-        tmdbId: tvId,
-        mediaType: MediaType.TV,
-        requestedBy: {
-          id: req.user?.id,
-        },
-      },
-    });
+    const onUserWatchlist = req.user
+      ? await getRepository(Watchlist).exists({
+          where: {
+            tmdbId: tvId,
+            mediaType: MediaType.TV,
+            requestedBy: { id: req.user.id },
+          },
+        })
+      : false;
 
     const data = mapTvDetails(tv, media, onUserWatchlist);
 
@@ -188,6 +188,7 @@ tvRoutes.get('/:id', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve series.',
+      cause: e,
     });
   }
 });
@@ -323,7 +324,8 @@ tvRoutes.get('/:id/recommendations', async (req, res, next) => {
       rankedResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     return res.status(200).json({
@@ -389,7 +391,8 @@ tvRoutes.get('/:id/similar', async (req, res, next) => {
       rankedResults.map((result) => ({
         tmdbId: result.id,
         mediaType: MediaType.TV,
-      }))
+      })),
+      { includeActiveRequest: true }
     );
 
     return res.status(200).json({

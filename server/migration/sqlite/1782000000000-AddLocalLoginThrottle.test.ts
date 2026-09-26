@@ -5,7 +5,7 @@ import { AddLocalLoginThrottle1782000000000 } from './1782000000000-AddLocalLogi
 
 test('SQLite local login throttle migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

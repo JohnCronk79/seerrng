@@ -285,6 +285,46 @@ describe('Servarr service admission', () => {
     }
   });
 
+  it('treats a missing legacy quality flag as the standard tier', async () => {
+    const settings = getSettings();
+    const previous = settings.radarr;
+    const snapshot = {
+      id: 14,
+      name: 'Legacy standard',
+      hostname: 'legacy.local',
+      port: 7878,
+      apiKey: 'legacy-key',
+      useSsl: false,
+      activeProfileId: 1,
+      activeProfileName: 'HD',
+      activeDirectory: '/movies',
+      tags: [],
+      is4k: false,
+      isDefault: true,
+      syncEnabled: true,
+      preventSearch: false,
+      tagRequests: false,
+      overrideRule: [],
+      minimumAvailability: 'released',
+    };
+    const legacySettings = { ...snapshot };
+    Reflect.deleteProperty(legacySettings, 'is4k');
+    settings.radarr = [legacySettings];
+
+    try {
+      assert.strictEqual(
+        await runWithServarrServiceSnapshot(
+          'radarr',
+          snapshot,
+          async (service) => service.apiKey
+        ),
+        'legacy-key'
+      );
+    } finally {
+      settings.radarr = previous;
+    }
+  });
+
   it('rejects exact authority sets when a new active service is added', async () => {
     const settings = getSettings();
     const previous = settings.radarr;

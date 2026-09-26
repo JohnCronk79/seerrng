@@ -5,7 +5,7 @@ import { NormalizeJellyfinUserIds1783000000000 } from './1783000000000-Normalize
 
 test('SQLite Jellyfin identity migration canonicalizes and repairs duplicates', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

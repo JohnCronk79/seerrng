@@ -6,6 +6,7 @@ import Media from '@server/entity/Media';
 import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import type {
   RunnableScanner,
   StatusBase,
@@ -18,6 +19,7 @@ import {
   runWithServarrServiceSnapshots,
 } from '@server/lib/serviceAdmission';
 import type { LidarrSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { uniqWith } from 'lodash';
 
 type SyncStatus = StatusBase & {
@@ -34,6 +36,7 @@ class LidarrScanner
   private lidarrApi: LidarrAPI;
   private scannedMbIds: Set<string> = new Set();
   private scannedServiceAlbums: Set<string> = new Set();
+  private scannedAvailableServiceMbIds: Set<string> = new Set();
   private didScan = false;
 
   constructor() {
@@ -58,6 +61,7 @@ class LidarrScanner
     }
     this.scannedMbIds.clear();
     this.scannedServiceAlbums.clear();
+    this.scannedAvailableServiceMbIds.clear();
     this.didScan = false;
 
     try {
@@ -102,7 +106,10 @@ class LidarrScanner
       await this.cleanupOrphanedAlbums();
       this.log('Lidarr scan complete', 'info');
     } catch (e) {
-      this.log('Scan interrupted', 'error', { errorMessage: e.message });
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
     } finally {
       this.endRun(sessionId);
     }
@@ -130,23 +137,16 @@ class LidarrScanner
       );
 
       const hasFile = (lidarrAlbum.statistics?.trackFileCount ?? 0) > 0;
+      const processing =
+        lidarrAlbum.monitored &&
+        (!lidarrAlbum.statistics ||
+          lidarrAlbum.statistics.trackFileCount <
+            lidarrAlbum.statistics.totalTrackCount);
 
-      if (!lidarrAlbum.monitored) {
-        await this.processMusic(mbId, {
-          serviceId: this.currentServer.id,
-          externalServiceId: lidarrAlbum.id,
-          externalServiceSlug: mbId,
-          title: lidarrAlbum.title,
-          processing: false,
-          hasFile,
-          mutationGuard: (callback) =>
-            runWithServarrServiceSnapshot(
-              'lidarr',
-              this.currentServer,
-              callback
-            ),
-        });
-        return;
+      if (hasFile && !processing) {
+        this.scannedAvailableServiceMbIds.add(
+          `${this.currentServer.id}:${mbId}`
+        );
       }
 
       await this.processMusic(mbId, {
@@ -154,14 +154,35 @@ class LidarrScanner
         externalServiceId: lidarrAlbum.id,
         externalServiceSlug: mbId,
         title: lidarrAlbum.title,
-        processing:
-          lidarrAlbum.monitored &&
-          (!lidarrAlbum.statistics ||
-            lidarrAlbum.statistics.trackFileCount <
-              lidarrAlbum.statistics.totalTrackCount),
+        processing: lidarrAlbum.monitored ? processing : false,
         hasFile,
         mutationGuard: (callback) =>
           runWithServarrServiceSnapshot('lidarr', this.currentServer, callback),
+      });
+
+      const media = await getRepository(Media).findOne({
+        where: [
+          { mbId, mediaType: MediaType.MUSIC },
+          {
+            serviceId: this.currentServer.id,
+            externalServiceId: lidarrAlbum.id,
+            mediaType: MediaType.MUSIC,
+          },
+        ],
+      });
+      await upsertMediaSearchMetadata(media?.id, {
+        title: lidarrAlbum.title,
+        releaseDate: lidarrAlbum.releaseDate,
+        genres: lidarrAlbum.genres?.join(', '),
+        runtime:
+          Number.isFinite(lidarrAlbum.duration) && lidarrAlbum.duration > 0
+            ? String(Math.round(lidarrAlbum.duration / 60))
+            : undefined,
+        artist: lidarrAlbum.artistName ?? lidarrAlbum.artist?.artistName,
+        albumType: lidarrAlbum.albumType,
+        format: 'Music',
+        provider: this.currentServer.name,
+        externalIds: mbId,
       });
     } catch (e) {
       if (e instanceof ServarrServiceAuthorityChangedError) throw e;
@@ -183,8 +204,14 @@ class LidarrScanner
       return;
     }
 
+    const scannedServiceIds = new Set(
+      this.servers
+        .filter((server) => server.syncEnabled)
+        .map((server) => server.id)
+    );
+
     await forEachMediaCleanupBatch(
-      { mediaType: MediaType.MUSIC, status: MediaStatus.PROCESSING },
+      { mediaType: MediaType.MUSIC },
       async (media) => {
         const mbId = media.mbId
           ? normalizeMusicBrainzId(media.mbId)
@@ -198,11 +225,26 @@ class LidarrScanner
             ? `${media.serviceId}:${media.externalServiceId}`
             : undefined;
 
-        if (
+        const currentAvailableServiceIds = media.availableMusicServiceIds ?? [];
+        const nextAvailableServiceIds = currentAvailableServiceIds.filter(
+          (serverId) =>
+            !scannedServiceIds.has(serverId) ||
+            (mbId !== undefined &&
+              this.scannedAvailableServiceMbIds.has(`${serverId}:${mbId}`))
+        );
+        const availabilityChanged =
+          nextAvailableServiceIds.length !==
+            currentAvailableServiceIds.length ||
+          nextAvailableServiceIds.some(
+            (serverId, index) => serverId !== currentAvailableServiceIds[index]
+          );
+        const shouldResetProcessing =
+          media.status === MediaStatus.PROCESSING &&
           mbId &&
           !this.scannedMbIds.has(mbId) &&
-          (!serviceAlbumKey || !this.scannedServiceAlbums.has(serviceAlbumKey))
-        ) {
+          (!serviceAlbumKey || !this.scannedServiceAlbums.has(serviceAlbumKey));
+
+        if (availabilityChanged || shouldResetProcessing) {
           const changed = await runMediaEntityMutation(media, () =>
             runWithServarrServiceSnapshots(
               'lidarr',
@@ -211,10 +253,18 @@ class LidarrScanner
                 const current = await mediaRepository.findOneBy({
                   id: media.id,
                 });
-                if (!current || current.status !== MediaStatus.PROCESSING) {
+                if (!current) {
                   return false;
                 }
-                current.status = MediaStatus.UNKNOWN;
+                if (availabilityChanged) {
+                  current.availableMusicServiceIds = nextAvailableServiceIds;
+                }
+                if (
+                  shouldResetProcessing &&
+                  current.status === MediaStatus.PROCESSING
+                ) {
+                  current.status = MediaStatus.UNKNOWN;
+                }
                 await mediaRepository.save(current);
                 return true;
               },
@@ -224,7 +274,7 @@ class LidarrScanner
               }
             )
           );
-          if (changed) {
+          if (changed && shouldResetProcessing) {
             this.log(
               `Album ${mbId} not found in any Lidarr server. Status reset to UNKNOWN.`,
               'info'

@@ -158,7 +158,7 @@ const oidcFetchImplementation: typeof undiciFetch =
         globalThis.fetch(
           url as Parameters<typeof globalThis.fetch>[0],
           options as RequestInit
-        ) as ReturnType<typeof undiciFetch>
+        ) as unknown as ReturnType<typeof undiciFetch>
     : undiciFetch;
 
 export const oidcSafeFetch = createOidcSafeFetch(oidcFetchImplementation);

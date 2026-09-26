@@ -8,6 +8,7 @@ import type {
 import JellyfinAPI from '@server/api/jellyfin';
 import type { PlexMetadata } from '@server/api/plexapi';
 import PlexAPI from '@server/api/plexapi';
+import RadarrAPI from '@server/api/servarr/radarr';
 import type { SonarrSeason, SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaStatus, MediaType } from '@server/constants/media';
@@ -16,7 +17,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import type { SonarrSettings } from '@server/lib/settings';
+import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
 import { setupTestDb } from '@server/test/db';
@@ -29,6 +30,25 @@ let getSystemInfoImpl: () => Promise<Record<string, unknown>> = async () => ({
 let getItemDataImpl: (
   id: string
 ) => Promise<JellyfinLibraryItemExtended | undefined> = async () => undefined;
+let getDeletionItemImpl: (
+  id: string
+) => Promise<JellyfinLibraryItemExtended | undefined> = async () => undefined;
+let deletionMovieIds: number[] = [];
+Object.defineProperty(RadarrAPI.prototype, 'getMovies', {
+  get: () => async () => deletionMovieIds.map((tmdbId) => ({ tmdbId })),
+  set() {},
+  configurable: true,
+});
+Object.defineProperty(SonarrAPI.prototype, 'getSeries', {
+  get: () => async () => [],
+  set() {},
+  configurable: true,
+});
+Object.defineProperty(JellyfinAPI.prototype, 'getItemDataForDeletionCheck', {
+  get: () => async (id: string) => getDeletionItemImpl(id),
+  set() {},
+  configurable: true,
+});
 let getSeasonsImpl: (
   seriesID: string
 ) => Promise<JellyfinLibraryItem[]> = async () => [];
@@ -295,6 +315,8 @@ function fakeSonarrSeasons(
 
 describe('AvailabilitySync', () => {
   beforeEach(async () => {
+    deletionMovieIds = [];
+    getDeletionItemImpl = async () => undefined;
     getSystemInfoImpl = async () => ({ ServerName: 'Test' });
     getItemDataImpl = async () => undefined;
     getSeasonsImpl = async () => [];
@@ -394,7 +416,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1408 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -468,7 +490,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1409 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -565,7 +587,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1410 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -650,7 +672,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 1411 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -715,7 +737,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { id: media.id },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(updated.status, MediaStatus.AVAILABLE);
@@ -796,7 +818,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2000 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s6 = updated.seasons.find((s) => s.seasonNumber === 6);
@@ -877,7 +899,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2001 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       assert.strictEqual(
@@ -946,7 +968,7 @@ describe('AvailabilitySync', () => {
 
       const updated = await mediaRepository.findOneOrFail({
         where: { tmdbId: 2002 },
-        relations: ['seasons'],
+        relations: { seasons: true },
       });
 
       const s2 = updated.seasons.find((s) => s.seasonNumber === 2);
@@ -971,6 +993,73 @@ describe('AvailabilitySync', () => {
   });
 
   describe('scan lifecycle and pagination', () => {
+    it('cleans up a movie after both Arr and the media server confirm deletion', async () => {
+      configureJellyfin();
+      configureSonarr([]);
+      getSettings().radarr = [
+        {
+          id: 0,
+          name: 'Radarr',
+          hostname: 'localhost',
+          port: 7878,
+          apiKey: 'test',
+          syncEnabled: true,
+          is4k: false,
+        },
+      ] as RadarrSettings[];
+      getSystemInfoImpl = async () => ({
+        Id: 'test-server',
+        ServerName: 'Test',
+      });
+      const media = await getRepository(Media).save(
+        new Media({
+          tmdbId: 88001,
+          mediaType: MediaType.MOVIE,
+          status: MediaStatus.AVAILABLE,
+          jellyfinMediaId: 'removed-id',
+        })
+      );
+      await availabilitySync.run();
+      assert.equal(
+        await getRepository(Media).existsBy({ id: media.id }),
+        false
+      );
+    });
+    it('preserves the database when strict deletion checks encounter a server error', async () => {
+      configureJellyfin();
+      configureSonarr([]);
+      getSettings().radarr = [
+        {
+          id: 0,
+          name: 'Radarr',
+          hostname: 'localhost',
+          port: 7878,
+          apiKey: 'test',
+          syncEnabled: true,
+          is4k: false,
+        },
+      ] as RadarrSettings[];
+      getSystemInfoImpl = async () => ({
+        Id: 'test-server',
+        ServerName: 'Test',
+      });
+      getDeletionItemImpl = async () => {
+        throw { response: { status: 500 } };
+      };
+      const media = await getRepository(Media).save(
+        new Media({
+          tmdbId: 88002,
+          mediaType: MediaType.MOVIE,
+          status: MediaStatus.AVAILABLE,
+          jellyfinMediaId: 'unreachable-id',
+        })
+      );
+      await availabilitySync.run();
+      assert.equal(
+        (await getRepository(Media).findOneByOrFail({ id: media.id })).status,
+        MediaStatus.AVAILABLE
+      );
+    });
     it('does not delete media refreshed while an availability probe is in flight', async () => {
       configurePlex();
       configureSonarr([]);

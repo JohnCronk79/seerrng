@@ -41,7 +41,7 @@ interface StatusBadgeProps {
   tmdbId?: number;
   mbId?: string;
   externalId?: string;
-  mediaType?: 'movie' | 'tv' | 'music' | 'book';
+  mediaType?: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   bookFormat?: RequestedBookFormat;
   title?: string | string[];
   statusLabelOverride?: string;
@@ -92,9 +92,13 @@ const StatusBadge = ({
               ? Permission.REQUEST_MUSIC
               : mediaType === 'book'
                 ? Permission.REQUEST_BOOK
-                : mediaType === 'movie'
-                  ? Permission.REQUEST_MOVIE
-                  : Permission.REQUEST_TV,
+                : mediaType === 'comic'
+                  ? Permission.REQUEST_COMIC
+                  : mediaType === 'magazine'
+                    ? Permission.REQUEST_MAGAZINE
+                    : mediaType === 'movie'
+                      ? Permission.REQUEST_MOVIE
+                      : Permission.REQUEST_TV,
           ],
       {
         type: 'or',
@@ -102,6 +106,8 @@ const StatusBadge = ({
     ) &&
     mediaType !== 'music' &&
     mediaType !== 'book' &&
+    mediaType !== 'comic' &&
+    mediaType !== 'magazine' &&
     (!is4k ||
       (mediaType === 'movie'
         ? settings.currentSettings.movie4kEnabled
@@ -135,6 +141,16 @@ const StatusBadge = ({
         : intl.formatMessage(messages.managemedia, {
             mediaType: 'Book',
           });
+    } else if (mediaType === 'comic' && externalId) {
+      mediaLink = `/comic/${encodeApiPathSegment(externalId)}?manage=1`;
+      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
+        mediaType: 'Comic',
+      });
+    } else if (mediaType === 'magazine' && externalId) {
+      mediaLink = `/magazine/${encodeApiPathSegment(externalId)}?manage=1`;
+      mediaLinkDescription = intl.formatMessage(messages.managemedia, {
+        mediaType: 'Magazine',
+      });
     } else if (mediaType && tmdbId) {
       mediaLink = `/${mediaType}/${tmdbId}?manage=1`;
       mediaLinkDescription = intl.formatMessage(messages.managemedia, {
@@ -150,9 +166,13 @@ const StatusBadge = ({
             ? 'Lidarr'
             : mediaType === 'book'
               ? 'Bookshelf'
-              : mediaType === 'movie'
-                ? 'Radarr'
-                : 'Sonarr',
+              : mediaType === 'comic'
+                ? 'Comics'
+                : mediaType === 'magazine'
+                  ? 'LazyLibrarian'
+                  : mediaType === 'movie'
+                    ? 'Radarr'
+                    : 'Sonarr',
       });
     }
   }
@@ -189,12 +209,12 @@ const StatusBadge = ({
 
   const badgeDownloadProgress = (
     <div
-      className={`absolute left-0 top-0 z-10 flex h-full ${
+      className={`absolute top-0 left-0 z-10 flex h-full ${
         status === MediaStatus.DELETED
-          ? 'bg-red-600/80'
+          ? 'bg-red-600/35'
           : status === MediaStatus.PROCESSING
-            ? 'bg-indigo-500/80'
-            : 'bg-green-500/80'
+            ? 'bg-indigo-500/35'
+            : 'bg-green-500/35'
       } transition-all duration-200 ease-in-out`}
       style={{
         width: `${
@@ -210,7 +230,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -220,7 +241,8 @@ const StatusBadge = ({
             badgeType="success"
             href={mediaLink}
             className={`${className ?? ''} ${
-              inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
+              inProgress &&
+              'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
             } overflow-hidden`}
           >
             {inProgress && badgeDownloadProgress}
@@ -275,7 +297,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -285,7 +308,8 @@ const StatusBadge = ({
             badgeType="success"
             href={mediaLink}
             className={`${className ?? ''} ${
-              inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
+              inProgress &&
+              'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
             } overflow-hidden`}
           >
             {inProgress && badgeDownloadProgress}
@@ -340,7 +364,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -350,7 +375,8 @@ const StatusBadge = ({
             badgeType="primary"
             href={mediaLink}
             className={`${className ?? ''} ${
-              inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
+              inProgress &&
+              'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
             } overflow-hidden`}
           >
             {inProgress && badgeDownloadProgress}
@@ -429,7 +455,8 @@ const StatusBadge = ({
         <Tooltip
           content={inProgress ? tooltipContent : mediaLinkDescription}
           className={`${
-            inProgress && 'hidden max-h-96 w-96 overflow-y-auto sm:block'
+            inProgress &&
+            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
           }`}
           tooltipConfig={{
             ...(inProgress && { interactive: true, delayHide: 100 }),
@@ -439,7 +466,8 @@ const StatusBadge = ({
             badgeType="danger"
             href={mediaLink}
             className={`${className ?? ''} ${
-              inProgress && 'relative !bg-gray-700/80 !px-0 hover:!bg-gray-700'
+              inProgress &&
+              'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
             } overflow-hidden`}
           >
             {inProgress && badgeDownloadProgress}

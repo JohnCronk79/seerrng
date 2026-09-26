@@ -1,12 +1,28 @@
 export interface OptionalServiceAvailability {
   musicEnabled: boolean;
   booksEnabled: boolean;
+  comicsEnabled: boolean;
+  magazinesEnabled?: boolean;
 }
 
 export const isOptionalCatalogPathEnabled = (
   path: string,
   availability: OptionalServiceAvailability
-): boolean =>
-  path !== '/discover/music'
-    ? path !== '/discover/books' || availability.booksEnabled
-    : availability.musicEnabled;
+): boolean => {
+  if (path === '/discover/music') {
+    return availability.musicEnabled;
+  }
+
+  if (path === '/discover/comics') {
+    return availability.comicsEnabled;
+  }
+
+  if (path === '/discover/magazines') {
+    return Boolean(availability.magazinesEnabled);
+  }
+
+  return (
+    !['/discover/books', '/discover/audiobooks'].includes(path) ||
+    availability.booksEnabled
+  );
+};

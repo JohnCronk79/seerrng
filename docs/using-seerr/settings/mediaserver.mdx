@@ -232,6 +232,18 @@ In this section, simply select the libraries you would like Seerr to scan. Seerr
 
 If you do not see your Plex libraries listed, verify your Plex settings are correct and click the **Sync Libraries** button.
 
+Plex reports both music and audiobook libraries as artist libraries. SeerrNG
+classifies them as **Music** after syncing. For an audiobook library, open its
+library actions and select **Reclassify as an Audiobooks library**. You can
+switch it back with **Reclassify as a Music library**. SeerrNG keeps this choice
+when you sync libraries again, including when a library is renamed.
+
+Enable each library you want SeerrNG to scan. Music availability matching uses
+MusicBrainz identifiers from Plex; albums without an identifier that resolves
+to a MusicBrainz release group are skipped. After changing library selection
+or classification, use **Start Scan** under **Manual Library Scan** to refresh
+availability.
+
 ### Manual Library Scan
 
 Seerr will perform a full scan of your Plex libraries once every 24 hours (recently added items are fetched more frequently). If this is your first time configuring Plex, a one-time full manual library scan is recommended!

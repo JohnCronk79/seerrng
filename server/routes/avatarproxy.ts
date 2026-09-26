@@ -48,8 +48,7 @@ const avatarProxyRateLimit = rateLimit({
 let _avatarImageProxy: ImageProxy | null = null;
 let _avatarImageProxySettingsKey: string | null = null;
 let _avatarImageProxyInitialization:
-  | { key: string; promise: Promise<ImageProxy> }
-  | undefined;
+  { key: string; promise: Promise<ImageProxy> } | undefined;
 let _remoteAvatarImageProxy: ImageProxy | null = null;
 
 const isPlexAvatarUrl = (avatarUrl: string): boolean => {
@@ -77,8 +76,7 @@ const refreshPlexAvatarInBackground = (
     remotePlexAvatarRetryAfter.size >= MAX_REMOTE_PLEX_AVATAR_RETRY_ENTRIES
   ) {
     const oldestUrl = remotePlexAvatarRetryAfter.keys().next().value as
-      | string
-      | undefined;
+      string | undefined;
     if (!oldestUrl) {
       break;
     }
@@ -122,7 +120,7 @@ async function initAvatarImageProxy(): Promise<ImageProxy> {
   const initialization = (async () => {
     const admin = await getRepository(User).findOne({
       where: { id: 1 },
-      select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
+      select: { id: true, jellyfinUserId: true, jellyfinDeviceId: true },
       order: { id: 'ASC' },
     });
     const deviceId = admin?.jellyfinDeviceId || 'BOT_seerr';
@@ -326,7 +324,7 @@ router.get('/local/:userId', avatarProxyRateLimit, async (req, res) => {
     }
 
     const user = await getRepository(User).findOne({
-      select: ['id', 'avatarVersion', 'userType'],
+      select: { id: true, avatarVersion: true, userType: true },
       where: { id: userId, userType: UserType.LOCAL },
     });
     if (

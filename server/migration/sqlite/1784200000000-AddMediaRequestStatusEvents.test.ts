@@ -5,7 +5,7 @@ import { AddMediaRequestStatusEvents1784200000000 } from './1784200000000-AddMed
 
 test('SQLite request status event migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

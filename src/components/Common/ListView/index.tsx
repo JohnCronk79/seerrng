@@ -1,20 +1,29 @@
 import ArtistCard from '@app/components/ArtistCard';
+import AuthorCard from '@app/components/AuthorCard';
+import Button from '@app/components/Common/Button';
 import PersonCard from '@app/components/PersonCard';
 import TitleCard from '@app/components/TitleCard';
 import LibraryTitleCard from '@app/components/TitleCard/LibraryTitleCard';
 import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import useCardTextVisibility from '@app/hooks/useCardTextVisibility';
 import useVerticalScroll from '@app/hooks/useVerticalScroll';
+import useWarmImageCache, {
+  MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+} from '@app/hooks/useWarmImageCache';
 import globalMessages from '@app/i18n/globalMessages';
+import defineMessages from '@app/utils/defineMessages';
 import {
   canRequestMissingBookFormat,
   isBookInProgress,
 } from '@app/utils/libraryMedia';
 import { MediaStatus } from '@server/constants/media';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
+import type { ComicResult } from '@server/models/Comic';
+import type { MagazineResult } from '@server/models/Magazine';
 import type {
   AlbumResult,
   ArtistResult,
+  AuthorResult,
   BookResult,
   CollectionResult,
   MovieResult,
@@ -34,6 +43,9 @@ type ListViewProps = {
     | ArtistResult
     | AlbumResult
     | BookResult
+    | AuthorResult
+    | ComicResult
+    | MagazineResult
   )[];
   plexItems?: WatchlistItem[];
   isEmpty?: boolean;
@@ -42,9 +54,14 @@ type ListViewProps = {
   onScrollBottom: () => void;
   mutateParent?: () => void;
   preferredBookFormat?: 'ebook' | 'audiobook';
+  showAllBookFormats?: boolean;
   emptyMessage?: React.ReactNode;
   emptyClassName?: string;
 };
+
+const messages = defineMessages('components.ListView', {
+  continueSearch: 'Continue Search',
+});
 
 const ListView = ({
   items,
@@ -55,6 +72,7 @@ const ListView = ({
   plexItems,
   mutateParent,
   preferredBookFormat,
+  showAllBookFormats = false,
   emptyMessage,
   emptyClassName,
 }: ListViewProps) => {
@@ -65,11 +83,23 @@ const ListView = ({
     () =>
       items?.filter(
         (title) =>
-          (title as TvResult | MovieResult | AlbumResult | BookResult).mediaInfo
-            ?.status !== MediaStatus.BLOCKLISTED
+          (
+            title as
+              | TvResult
+              | MovieResult
+              | AlbumResult
+              | BookResult
+              | ComicResult
+              | MagazineResult
+          ).mediaInfo?.status !== MediaStatus.BLOCKLISTED
       ),
     [items]
   );
+
+  useWarmImageCache(visibleItems ?? [], {
+    maxUrls: MAIN_MEDIA_POSTER_CACHE_WARM_LIMIT,
+    posterOnly: true,
+  });
   const plexCards = useMemo(
     () =>
       plexItems?.flatMap((title, index) => {
@@ -128,6 +158,7 @@ const ListView = ({
                 summary={title.overview}
                 title={title.title}
                 userScore={title.voteAverage}
+                voteCount={title.voteCount}
                 year={title.releaseDate}
                 mediaType={title.mediaType}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -151,6 +182,7 @@ const ListView = ({
                 summary={title.overview}
                 title={title.name}
                 userScore={title.voteAverage}
+                voteCount={title.voteCount}
                 year={title.firstAirDate}
                 mediaType={title.mediaType}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -200,6 +232,8 @@ const ListView = ({
                   title['first-release-date']?.split('-')[0]
                 }
                 mediaType={title.mediaType}
+                availableQualities={title.availableQualities}
+                qualityStatuses={title.qualityStatuses}
                 inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
                 needsCoverArt={title.needsCoverArt}
                 canExpand
@@ -238,6 +272,8 @@ const ListView = ({
                 status={title.mediaInfo?.status}
                 title={title.title}
                 artist={title.author}
+                bookRatingAverage={title.ratingsAverage}
+                bookRatingCount={title.ratingsCount}
                 year={title.firstPublishYear?.toString()}
                 mediaType={title.mediaType}
                 inProgress={isBookInProgress(title)}
@@ -245,8 +281,44 @@ const ListView = ({
                 canExpand
                 showText={visibility.book === 'always'}
                 preferredBookFormat={preferredBookFormat}
+                showAllBookFormats={showAllBookFormats}
               />
             );
+            break;
+          case 'comic':
+            titleCard = (
+              <TitleCard
+                key={title.id}
+                id={title.id}
+                image={title.posterPath}
+                status={title.mediaInfo?.status}
+                title={title.title}
+                artist={title.publisher}
+                year={title.startYear}
+                mediaType={title.mediaType}
+                canExpand
+              />
+            );
+            break;
+          case 'magazine':
+            titleCard = (
+              <TitleCard
+                key={title.id}
+                id={title.id}
+                status={title.mediaInfo?.status}
+                title={title.title}
+                artist={
+                  title.latestIssue
+                    ? `Latest issue ${title.latestIssue}`
+                    : undefined
+                }
+                mediaType={title.mediaType}
+                canExpand
+              />
+            );
+            break;
+          case 'author':
+            titleCard = <AuthorCard key={title.id} author={title} canExpand />;
             break;
           default:
             return null;
@@ -261,6 +333,7 @@ const ListView = ({
       visibility.movie,
       visibility.tv,
       preferredBookFormat,
+      showAllBookFormats,
     ]
   );
   const hasRenderableItems =
@@ -283,6 +356,11 @@ const ListView = ({
 
   return (
     <>
+      {!hasRenderableItems && !isLoading && !isReachingEnd && (
+        <Button onClick={onScrollBottom}>
+          {intl.formatMessage(messages.continueSearch)}
+        </Button>
+      )}
       {effectiveIsEmpty && (
         <div
           className={twMerge(
@@ -293,7 +371,7 @@ const ListView = ({
           {emptyMessage ?? intl.formatMessage(globalMessages.noresults)}
         </div>
       )}
-      <ul className="cards-vertical">
+      <ul className="cards-vertical poster-grid">
         {plexCards}
         {itemCards}
         {isLoading && !isReachingEnd && placeholderCards}

@@ -9,7 +9,9 @@ describe('User Profile', () => {
     cy.get('[data-testid=user-menu]').click();
     cy.get('[data-testid=user-menu-profile]').click();
 
-    cy.get('h1').should('contain', Cypress.env('ADMIN_EMAIL'));
+    cy.env<{ ADMIN_EMAIL: string }>(['ADMIN_EMAIL']).then(({ ADMIN_EMAIL }) => {
+      cy.get('h1').should('contain', ADMIN_EMAIL);
+    });
   });
 
   it('loads plex watchlist', () => {

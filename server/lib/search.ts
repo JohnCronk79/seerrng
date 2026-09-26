@@ -20,11 +20,13 @@ import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
-import type { BookResult } from '@server/models/Book';
+import type { AuthorResult, BookResult } from '@server/models/Book';
 import {
   mapOpenLibrarySearchDoc,
   mapOpenLibraryWork,
 } from '@server/models/Book';
+import type { ComicResult } from '@server/models/Comic';
+import type { MagazineResult } from '@server/models/Magazine';
 import {
   mapMovieDetailsToResult,
   mapPersonDetailsToResult,
@@ -48,6 +50,9 @@ export type CombinedSearchResponse = {
     | TmdbPersonResult
     | TmdbCollectionResult
     | BookResult
+    | AuthorResult
+    | ComicResult
+    | MagazineResult
   )[];
 };
 interface SearchProvider {

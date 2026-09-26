@@ -5,7 +5,7 @@ import { AddMediaRequestServiceTargets1784700000000 } from './1784700000000-AddM
 
 test('SQLite request service target migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

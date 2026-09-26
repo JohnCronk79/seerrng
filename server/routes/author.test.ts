@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
 import OpenLibraryAPI from '@server/api/openlibrary';
+import ReadarrAPI from '@server/api/servarr/readarr';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -17,6 +18,7 @@ import { User } from '@server/entity/User';
 import { getSettings } from '@server/lib/settings';
 import { checkUser } from '@server/middleware/auth';
 import { setupTestDb } from '@server/test/db';
+import { makeBookshelfAuthorId } from '@server/utils/bookshelfCatalog';
 import { MAX_PAGINATION_OFFSET } from '@server/utils/pagination';
 import type { Express } from 'express';
 import express from 'express';
@@ -201,9 +203,132 @@ describe('GET /author/:id', () => {
     );
     assert.strictEqual(res.body.works[0].mediaInfo.ratingKey, undefined);
   });
+
+  it('uses a configured Bookshelf author image when Open Library has no photo', async () => {
+    const settings = getSettings();
+    const previousReadarr = settings.readarr;
+    settings.readarr = [
+      {
+        id: 14,
+        name: 'Softcover Bookshelf',
+        hostname: 'bookshelf.local',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 1,
+        activeProfileName: 'Default',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: false,
+        preventSearch: true,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'ebook',
+      },
+    ];
+    mock.method(OpenLibraryAPI.prototype, 'getAuthor', async () => ({
+      key: '/authors/OL1A',
+      name: 'Test Author',
+      photos: [],
+    }));
+    mock.method(OpenLibraryAPI.prototype, 'getAuthorWorks', async () => ({
+      size: 0,
+      entries: [],
+    }));
+    mock.method(ReadarrAPI.prototype, 'lookupAuthor', async () => [
+      {
+        id: 42,
+        foreignAuthorId: 'goodreads-author-42',
+        authorName: 'Test Author',
+        remotePoster: 'https://covers.example/author.jpg',
+      },
+    ]);
+    mock.method(ReadarrAPI.prototype, 'getAuthorCover', async () => ({
+      imageBuffer: Buffer.from('fake-image'),
+      contentType: 'image/jpeg',
+    }));
+
+    try {
+      const agent = await login();
+      const res = await agent.get('/author/OL1A');
+
+      assert.strictEqual(res.status, 200);
+      assert.match(res.body.posterPath, /\/api\/v1\/author\/OL1A\/cover/);
+      assert.match(res.body.posterPath, /serviceId=14/);
+      assert.match(res.body.posterPath, /bookshelfAuthorId=42/);
+
+      const image = await agent.get(res.body.posterPath.replace('/api/v1', ''));
+      assert.strictEqual(image.status, 200);
+      assert.strictEqual(image.headers['content-type'], 'image/jpeg');
+      assert.strictEqual(image.body.toString(), 'fake-image');
+    } finally {
+      settings.readarr = previousReadarr;
+    }
+  });
 });
 
 describe('GET /author/:id/works', () => {
+  it('paginates Bookshelf bibliography works through the same route', async () => {
+    const settings = getSettings();
+    const previousReadarr = settings.readarr;
+    settings.readarr = [
+      {
+        id: 0,
+        hostname: 'bookshelf.test',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      },
+    ];
+    mock.method(ReadarrAPI.prototype, 'lookupAuthor', async () => [
+      { foreignAuthorId: 'tolkien', authorName: 'J.R.R. Tolkien' },
+    ]);
+    mock.method(ReadarrAPI.prototype, 'lookupBook', async () =>
+      Array.from({ length: 15 }, (_, index) => ({
+        foreignBookId: String(index + 1),
+        title: `Book ${index + 1}`,
+        author: {
+          foreignAuthorId: 'tolkien',
+          authorName: 'J.R.R. Tolkien',
+        },
+      }))
+    );
+
+    try {
+      const agent = await login();
+      const id = makeBookshelfAuthorId(0, 'tolkien', 'J.R.R. Tolkien');
+      const first = await agent.get(
+        `/author/${encodeURIComponent(id)}/works?limit=10&offset=0`
+      );
+      const second = await agent.get(
+        `/author/${encodeURIComponent(id)}/works?limit=10&offset=10`
+      );
+
+      assert.strictEqual(first.status, 200);
+      assert.strictEqual(first.body.works.length, 10);
+      assert.deepStrictEqual(first.body.pagination, {
+        limit: 10,
+        offset: 0,
+        totalItems: 15,
+        nextOffset: 10,
+      });
+      assert.strictEqual(second.status, 200);
+      assert.strictEqual(second.body.works.length, 5);
+      assert.deepStrictEqual(second.body.pagination, {
+        limit: 10,
+        offset: 10,
+        totalItems: 15,
+        nextOffset: 15,
+      });
+    } finally {
+      settings.readarr = previousReadarr;
+    }
+  });
+
   it('rejects malformed author work IDs before calling OpenLibrary', async () => {
     const getAuthor = mock.method(OpenLibraryAPI.prototype, 'getAuthor');
     const getAuthorWorks = mock.method(

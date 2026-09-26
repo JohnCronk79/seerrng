@@ -56,10 +56,29 @@ describe('Theme picker and seeded discovery refresh', () => {
     });
     cy.contains('[data-testid=page-header]', 'Movies').should('be.visible');
 
-    cy.get('html').should('have.attr', 'data-theme-palette', 'aurora');
+    cy.get('html').should('have.attr', 'data-theme-palette', 'classic');
+    cy.get('meta[name="theme-color"]').should(
+      'have.attr',
+      'content',
+      '#1f2937'
+    );
+    cy.get('button[aria-label="Theme picker"]').click();
+    cy.contains('button', /^Seerr$/).should('exist');
+    cy.contains('button', /^SeerrNG$/).click();
+    cy.get('html').should('have.attr', 'data-theme-palette', 'seerr');
+    cy.get('meta[name="theme-color"]').should(
+      'not.have.attr',
+      'content',
+      '#1f2937'
+    );
     cy.get('button[aria-label="Theme picker"]').click();
     cy.contains('button', 'Lagoon').click();
     cy.get('html').should('have.attr', 'data-theme-palette', 'lagoon');
+    cy.get('meta[name="theme-color"]').should(
+      'not.have.attr',
+      'content',
+      '#1f2937'
+    );
     cy.window()
       .its('localStorage')
       .invoke('getItem', 'seerr-theme-palette')

@@ -1,8 +1,11 @@
+import { MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
 import type IssueComment from '@server/entity/IssueComment';
 import type Media from '@server/entity/Media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { User } from '@server/entity/User';
+import type { IntlInstance } from '@server/i18n';
+import globalMessages from '@server/i18n/globalMessages';
 import {
   isValidOpenLibraryResourceId,
   normalizeMusicBrainzId,
@@ -120,6 +123,26 @@ const isSafeRelativeNotificationPath = (value: string): boolean => {
   }
 };
 
+export const getMediaTypeLabel = (
+  intl: IntlInstance,
+  mediaType: Media['mediaType']
+): string => {
+  switch (mediaType) {
+    case MediaType.MOVIE:
+      return intl.formatMessage(globalMessages.movie);
+    case MediaType.MUSIC:
+      return intl.formatMessage(globalMessages.music);
+    case MediaType.BOOK:
+      return intl.formatMessage(globalMessages.book);
+    case MediaType.COMIC:
+      return intl.formatMessage(globalMessages.comic);
+    case MediaType.MAGAZINE:
+      return intl.formatMessage(globalMessages.magazine);
+    default:
+      return intl.formatMessage(globalMessages.series);
+  }
+};
+
 export const getNotificationMediaUrl = (
   payload: Pick<NotificationPayload, 'media' | 'mediaUrl'>
 ): string | undefined => {
@@ -153,6 +176,27 @@ export const getNotificationMediaUrl = (
     return normalizedOpenLibraryId &&
       isValidOpenLibraryResourceId(normalizedOpenLibraryId)
       ? `/book/${encodeURIComponent(normalizedOpenLibraryId)}`
+      : undefined;
+  }
+
+  if (payload.media.mediaType === 'comic') {
+    const comicVineId = payload.media.identifiers?.find(
+      (identifier) => identifier.provider === 'comicvine'
+    )?.value;
+
+    return comicVineId && /^\d+$/.test(comicVineId)
+      ? `/comic/${encodeURIComponent(comicVineId)}`
+      : undefined;
+  }
+
+  if (payload.media.mediaType === 'magazine') {
+    const magazineId =
+      payload.media.externalServiceSlug ??
+      payload.media.identifiers?.find(
+        (identifier) => identifier.provider === 'lazylibrarian'
+      )?.value;
+    return magazineId
+      ? `/magazine/${encodeURIComponent(magazineId)}`
       : undefined;
   }
 

@@ -22,6 +22,9 @@ export type ExternalRuntimeConfig = Pick<
   | 'sonarr'
   | 'lidarr'
   | 'readarr'
+  | 'mylar'
+  | 'kapowarr'
+  | 'lazylibrarian'
   | 'notifications'
   | 'network'
 >;
@@ -47,6 +50,35 @@ const assertRecord = (
   return value;
 };
 
+const normalizeServarrServices = (
+  value: unknown,
+  service: string
+): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`SEERR_EXTERNAL_CONFIG.${service} must be an array`);
+  }
+
+  return value.map((entry, index) => {
+    const settings = assertRecord(entry, `${service}[${index}]`);
+    if (
+      settings.is4k !== undefined &&
+      settings.is4k !== null &&
+      typeof settings.is4k !== 'boolean'
+    ) {
+      throw new Error(
+        `SEERR_EXTERNAL_CONFIG.${service}[${index}].is4k must be a boolean`
+      );
+    }
+
+    return {
+      ...settings,
+      // Older settings files omitted this field or stored it as null. Both
+      // representations mean the standard (non-4K) service.
+      is4k: settings.is4k === true,
+    };
+  });
+};
+
 const validate = (value: unknown): ExternalRuntimeConfig => {
   const root = assertRecord(value, 'root');
   if (typeof root.clientId !== 'string' || root.clientId.length === 0) {
@@ -65,15 +97,31 @@ const validate = (value: unknown): ExternalRuntimeConfig => {
   ]) {
     assertRecord(root[section], section);
   }
-  for (const service of ['radarr', 'sonarr', 'lidarr', 'readarr']) {
-    if (!Array.isArray(root[service])) {
-      throw new Error(`SEERR_EXTERNAL_CONFIG.${service} must be an array`);
-    }
-  }
-
   const notifications = assertRecord(root.notifications, 'notifications');
   assertRecord(notifications.agents, 'notifications.agents');
-  return value as ExternalRuntimeConfig;
+  return {
+    ...root,
+    radarr: normalizeServarrServices(root.radarr, 'radarr'),
+    sonarr: normalizeServarrServices(root.sonarr, 'sonarr'),
+    lidarr: normalizeServarrServices(root.lidarr, 'lidarr'),
+    readarr: normalizeServarrServices(root.readarr, 'readarr'),
+    // Lenient unlike the four services above: SEERR_EXTERNAL_CONFIG is
+    // hand-maintained by whoever sets it (or predates this feature), and
+    // requiring these two new keys would break every existing config the
+    // moment this shipped.
+    mylar:
+      root.mylar === undefined
+        ? []
+        : normalizeServarrServices(root.mylar, 'mylar'),
+    kapowarr:
+      root.kapowarr === undefined
+        ? []
+        : normalizeServarrServices(root.kapowarr, 'kapowarr'),
+    lazylibrarian:
+      root.lazylibrarian === undefined
+        ? []
+        : normalizeServarrServices(root.lazylibrarian, 'lazylibrarian'),
+  } as unknown as ExternalRuntimeConfig;
 };
 
 const getTestProvider = (): ExternalRuntimeConfigTestProvider | undefined => {
@@ -104,6 +152,9 @@ const loadFromSettingsFile = (): ExternalRuntimeConfig | undefined => {
       sonarr: settings.sonarr ?? [],
       lidarr: settings.lidarr ?? [],
       readarr: settings.readarr ?? [],
+      mylar: settings.mylar ?? [],
+      kapowarr: settings.kapowarr ?? [],
+      lazylibrarian: settings.lazylibrarian ?? [],
       notifications: settings.notifications,
       network: settings.network,
     };

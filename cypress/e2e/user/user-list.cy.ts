@@ -21,8 +21,13 @@ describe('User List', () => {
   it('can find the admin user and friend user in the user list', () => {
     cy.visit('/users');
 
-    cy.get('[data-testid=user-list-row]').contains(Cypress.env('ADMIN_EMAIL'));
-    cy.get('[data-testid=user-list-row]').contains(Cypress.env('USER_EMAIL'));
+    cy.env<{ ADMIN_EMAIL: string; USER_EMAIL: string }>([
+      'ADMIN_EMAIL',
+      'USER_EMAIL',
+    ]).then(({ ADMIN_EMAIL, USER_EMAIL }) => {
+      cy.get('[data-testid=user-list-row]').contains(ADMIN_EMAIL);
+      cy.get('[data-testid=user-list-row]').contains(USER_EMAIL);
+    });
   });
 
   it('can create a local user', () => {
@@ -74,7 +79,7 @@ describe('User List', () => {
     cy.visit('/users');
     cy.wait('@userListFetch');
 
-    cy.get('[data-testid=column-header-displayname]').click();
+    cy.contains('button', 'User Name').click();
     cy.wait('@userListFetch').then((interception) => {
       const url = interception.request.url;
       expect(url).to.include('sort=displayname');
@@ -91,7 +96,7 @@ describe('User List', () => {
       expect(displayNames).to.deep.equal(sortedAsc);
     });
 
-    cy.get('[data-testid=column-header-created]').click();
+    cy.contains('button', 'Joined').click();
 
     cy.window().then((win) => {
       const rawSettings = win.localStorage.getItem('ul-filter-settings');

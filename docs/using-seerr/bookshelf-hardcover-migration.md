@@ -8,10 +8,16 @@ sidebar_position: 22
 
 SeerrNG can migrate an existing Readarr-compatible ebook/audiobook library into
 Bookshelf instances backed by Hardcover metadata. The migration is layered and
-resumable: it keeps strict Hardcover matches, retries transient failures, uses a
-softcover Bookshelf endpoint to recover metadata when Hardcover rejects a stale
-ID, and can optionally create deterministic local Bookshelf rows for the few
-books that Hardcover still cannot import.
+resumable: it keeps strict Hardcover matches, retries transient failures, uses
+other catalogs to recover metadata when Hardcover rejects a stale ID, and can
+optionally create deterministic local Bookshelf rows for the few books that
+Hardcover still cannot import.
+
+The extra catalog lookups are part of the SeerrNG migration helper. They do
+not turn BookshelfNG's normal search and detail APIs into a live multi-provider
+catalog. See the [metadata source support matrix](./bookshelf-metadata-sources.md)
+for runtime versus migration scope, provider setup, cache durations, and
+unimplemented future candidates.
 
 The validated lab result imported `2115 / 2115` books with `0` failures. In that
 run, most books imported through the normal Hardcover API path. The final `42`
@@ -24,7 +30,7 @@ The migration reports separate the record state from the Bookshelf backend:
 
 | State | Meaning | Typical source |
 | --- | --- | --- |
-| Native Hardcover | The target row uses Hardcover-provided book, author, and edition IDs. | Direct Hardcover lookup, softcover remap, or OpenLibrary remap. |
+| Native Hardcover | The target row uses Hardcover-provided book, author, and edition IDs. | Direct Hardcover lookup or a strictly matched Softcover, Open Library, Google Books, LOC, or Apify profile remapped through Hardcover. |
 | Shadow local | The target row is shaped like a Hardcover-backed Bookshelf row, but uses stable `local:*` IDs. | `HARDCOVER_LOCAL_DB_IMPORT=true` after all native recovery paths fail. |
 | Reconciled | A former shadow row was promoted in place to native Hardcover IDs. | `--reconcile-local` after Hardcover adds or fixes metadata. |
 
@@ -67,7 +73,12 @@ The migration keeps earlier recovery layers. It does not replace them.
    softcover Bookshelf endpoint, then remaps back through Hardcover.
 9. OpenLibrary recovery finds alternate title/author/ISBN profiles, then remaps
    those profiles back through Hardcover for a native target record.
-10. Optional local DB fallback inserts deterministic local records for anything
+10. Google Books and Library of Congress supply candidate profiles; only strict
+    Hardcover matches are imported as native records.
+11. Optional Apify Goodreads-compatible recovery runs a configured Actor with
+    a title/author query and at most one ISBN query, then remaps strict matches
+    through Hardcover.
+12. Optional local DB fallback inserts deterministic local records for anything
    still rejected by the target API.
 
 The local DB fallback is opt-in. Leave it off when you only want current native
@@ -178,8 +189,23 @@ deploy/install-bookshelf-backend.sh --migrate-to-hardcover --allow-local-db-impo
 ```
 
 `HARDCOVER_LOCAL_DB_IMPORT=true` requires `sqlite3` and direct access to the
-target `readarr.db` files. It inserts only after the API path, softcover
-recovery path, and OpenLibrary recovery path fail.
+target `readarr.db` files. It inserts only after API adds and available
+metadata recovery/remapping paths fail. If a source profile exactly matches by
+identifier or normalized title and author, the local record can retain its
+description, publisher, page count, language, release date, and allowed cover
+URL.
+
+Google Books and LOC recovery are enabled by default and can be disabled with
+`HARDCOVER_GOOGLEBOOKS_RECOVERY=false` and `HARDCOVER_LOC_RECOVERY=false`.
+`GOOGLE_BOOKS_API_KEY` is required for Google's public API; no user OAuth is
+needed for this search. Google Books and LOC profiles are cached
+for 30 days; Apify results are cached for 7 days in `catalog-cache.json` under
+the migration directory. Enable Apify by setting both
+`HARDCOVER_APIFY_GOODREADS_ACTOR` and `HARDCOVER_APIFY_TOKEN`. Actor input
+schemas differ, so set `HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE` to valid JSON
+containing `{{query}}` when the default input does not fit. Actor calls may be
+metered and are not guaranteed to be free. See the [metadata source support
+matrix](./bookshelf-metadata-sources.md) for configuration examples and limits.
 
 To apply the final fallback directly to an existing migration directory:
 
@@ -250,6 +276,7 @@ node deploy/bookshelf-hardcover-migration.mjs --validate \
 | `validation-report.json` | Validate run | Per-target provider, lookup, and applied-record checks. |
 | `cutover-decision.json` | Validate/cutover check | Boolean cutover gate plus blocking reasons. |
 | `lookup-cache.json` | Report/apply/reconcile | Cached Hardcover lookup responses for resumability and rate-limit control. |
+| `catalog-cache.json` | Report/apply/reconcile | Cached migration recovery profiles from Google Books, LOC, and Apify. |
 | `local-reconciliation-report.json` | Reconcile run | Promotion results for shadow local records. |
 
 ## Command Reference

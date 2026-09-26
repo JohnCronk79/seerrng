@@ -4,7 +4,9 @@ import { withGitBashOnPath } from './platform-tools.mjs';
 const portableTests = [
   'bin/check-current-batch-contract-lib.test.mjs',
   'bin/check-i18n-lib.test.mjs',
+  'bin/extract-messages-lib.test.mjs',
   'bin/check-pr-template.test.mjs',
+  'bin/check-refreshed-ui-style-lib.test.mjs',
   'bin/duplicate-detector/index.test.mjs',
   'bin/duplicate-detector/triage.test.mjs',
   'scripts/chart-workflow.test.mjs',
@@ -14,6 +16,7 @@ const portableTests = [
   'scripts/release-notes.test.mjs',
   'scripts/release-workflow.test.mjs',
   'scripts/verify-container-manifest.test.mjs',
+  'packaging/unraid/unraid-template.test.mjs',
 ];
 
 const posixOnlyTests = [

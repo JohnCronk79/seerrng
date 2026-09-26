@@ -10,8 +10,6 @@ const PlexLoading = () => {
       return;
     }
 
-    // This page is loaded both before Plex authentication and after Plex
-    // returns the approved popup. Only the returned page may close itself.
     window.close();
   }, []);
 

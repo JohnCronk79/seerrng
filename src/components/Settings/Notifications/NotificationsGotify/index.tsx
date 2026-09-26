@@ -1,6 +1,7 @@
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import NotificationTypeSelector from '@app/components/NotificationTypeSelector';
+import Field from '@app/components/Settings/SettingsField';
 import { availableLanguages } from '@app/context/LanguageContext';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
@@ -8,7 +9,7 @@ import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
 import { ArrowDownOnSquareIcon, BeakerIcon } from '@heroicons/react/24/solid';
 import axios from 'axios';
-import { Field, Form, Formik } from 'formik';
+import { Form, Formik } from 'formik';
 import { useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -18,6 +19,7 @@ const messages = defineMessages(
   'components.Settings.Notifications.NotificationsGotify',
   {
     agentenabled: 'Enable Agent',
+    embedPoster: 'Embed Poster',
     url: 'Server URL',
     token: 'Application Token',
     priority: 'Priority',
@@ -92,6 +94,7 @@ const NotificationsGotify = () => {
     <Formik
       initialValues={{
         enabled: data?.enabled,
+        embedPoster: data?.embedPoster,
         types: data?.types,
         url: data?.options.url,
         token: data?.options.token,
@@ -103,6 +106,7 @@ const NotificationsGotify = () => {
         try {
           await axios.post('/api/v1/settings/notifications/gotify', {
             enabled: values.enabled,
+            embedPoster: values.embedPoster,
             types: values.types,
             options: {
               url: values.url,
@@ -180,7 +184,7 @@ const NotificationsGotify = () => {
         };
 
         return (
-          <Form className="section">
+          <Form className="app-card-sub section">
             <div className="form-row">
               <label htmlFor="enabled" className="checkbox-label">
                 {intl.formatMessage(messages.agentenabled)}
@@ -188,6 +192,14 @@ const NotificationsGotify = () => {
               </label>
               <div className="form-input-area">
                 <Field type="checkbox" id="enabled" name="enabled" />
+              </div>
+            </div>
+            <div className="form-row">
+              <label htmlFor="embedPoster" className="checkbox-label">
+                {intl.formatMessage(messages.embedPoster)}
+              </label>
+              <div className="form-input-area">
+                <Field type="checkbox" id="embedPoster" name="embedPoster" />
               </div>
             </div>
             <div className="form-row">

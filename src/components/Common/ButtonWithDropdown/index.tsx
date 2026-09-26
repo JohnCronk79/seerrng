@@ -1,14 +1,14 @@
 import Dropdown from '@app/components/Common/Dropdown';
 import { withProperties } from '@app/utils/typeHelpers';
-import { Menu } from '@headlessui/react';
+import { Menu, MenuButton } from '@headlessui/react';
 import { ChevronDownIcon } from '@heroicons/react/24/solid';
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes } from 'react';
 
 type ButtonWithDropdownProps = {
   text: React.ReactNode;
   dropdownIcon?: React.ReactNode;
-  buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest';
-  buttonSize?: 'default' | 'sm';
+  buttonType?: 'primary' | 'ghost' | 'success' | 'detailRequest' | 'playback';
+  buttonSize?: 'standard' | 'default' | 'sm';
   disabledReason?: string;
 } & (
   | ({ as?: 'button' } & ButtonHTMLAttributes<HTMLButtonElement>)
@@ -21,7 +21,7 @@ const ButtonWithDropdown = ({
   dropdownIcon,
   className,
   buttonType = 'primary',
-  buttonSize = 'default',
+  buttonSize = 'standard',
   disabledReason,
   ...props
 }: ButtonWithDropdownProps) => {
@@ -31,9 +31,10 @@ const ButtonWithDropdown = ({
     ghost: 'app-button-ghost',
     success: 'app-button-success',
     detailRequest: 'app-button-detail-request',
+    playback: 'app-button-playback',
   };
   const sharedClasses = `app-button ${buttonTypeClassNames[buttonType]} ${
-    isSmall ? 'button-sm' : 'button-md'
+    isSmall ? 'button-sm' : 'button-standard'
   }`;
 
   const TriggerElement = props.as ?? 'button';
@@ -50,22 +51,24 @@ const ButtonWithDropdown = ({
           children ? 'rounded-r-none' : ''
         } ${className ?? ''}`}
         {...(props as Record<string, string>)}
-        title={disabledTitle}
+        data-button-help={props.title}
+        data-disabled-reason={disabled ? disabledTitle : undefined}
+        title={undefined}
       >
         {text}
       </TriggerElement>
       {children && (
         <span className="relative -ml-px block">
-          <Menu.Button
+          <MenuButton
             type="button"
             disabled={disabled}
             className={`relative z-10 -ml-px rounded-l-none px-1.5 hover:z-20 focus:z-20 ${sharedClasses}`}
             aria-label="Expand"
-            title={disabledTitle}
+            data-disabled-reason={disabled ? disabledTitle : undefined}
           >
             {dropdownIcon ? dropdownIcon : <ChevronDownIcon />}
-          </Menu.Button>
-          <Dropdown.Items dropdownType={buttonType}>{children}</Dropdown.Items>
+          </MenuButton>
+          <Dropdown.Items>{children}</Dropdown.Items>
         </span>
       )}
     </Menu>

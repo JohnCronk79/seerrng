@@ -5,12 +5,79 @@ import type {
 
 export type CardTextVisibility = 'always' | 'hover';
 
+export type PreferredLanguageMediaType = 'movie' | 'tv' | 'music' | 'book';
+
+export interface UserPreferredLanguages {
+  all?: string;
+  movie?: string | null;
+  tv?: string | null;
+  music?: string | null;
+  book?: string | null;
+}
+
+export const mediaFilterScopes = [
+  'books',
+  'trending',
+  'search',
+  'blocklist',
+  'issues',
+  'requests',
+] as const;
+export type MediaFilterScope = (typeof mediaFilterScopes)[number];
+export const mediaFilterValues = [
+  'all',
+  'movie',
+  'tv',
+  'music',
+  'book',
+  'ebook',
+  'audiobook',
+  'comic',
+  'magazine',
+  'author',
+] as const;
+export type MediaFilterValue = (typeof mediaFilterValues)[number];
+export type UserMediaFilterPins = Partial<
+  Record<MediaFilterScope, MediaFilterValue>
+>;
+
 export interface UserSettingsCardTextResponse {
   movie?: CardTextVisibility;
   tv?: CardTextVisibility;
   album?: CardTextVisibility;
   book?: CardTextVisibility;
 }
+
+export type DetailDisclosurePin =
+  | 'cast'
+  | 'crew'
+  | 'artists'
+  | 'subjectTags'
+  | 'collection'
+  | 'details'
+  | 'advancedOptions'
+  | 'filters'
+  | 'mediaFilters'
+  | 'sortBy';
+
+export type DetailDisclosureMediaType = 'movie' | 'tv' | 'music' | 'book';
+
+export interface UserSettingsDetailDisclosureResponse {
+  details?: boolean;
+  advancedOptions?: boolean;
+  filters?: boolean;
+  mediaFilters?: boolean;
+  sortBy?: boolean;
+  collection?: boolean;
+  cast?: boolean;
+  crew?: boolean;
+  artists?: boolean;
+  subjectTags?: boolean;
+}
+
+export type UserSettingsDetailDisclosuresByMedia = Partial<
+  Record<DetailDisclosureMediaType, UserSettingsDetailDisclosureResponse>
+>;
 
 export interface UserSettingsGeneralResponse {
   username?: string;
@@ -20,6 +87,7 @@ export interface UserSettingsGeneralResponse {
   discoverRegion?: string;
   streamingRegion?: string;
   originalLanguage?: string;
+  preferredLanguages?: UserPreferredLanguages;
   movieQuotaLimit?: number;
   movieQuotaDays?: number;
   tvQuotaLimit?: number;
@@ -28,6 +96,8 @@ export interface UserSettingsGeneralResponse {
   musicQuotaDays?: number;
   bookQuotaLimit?: number;
   bookQuotaDays?: number;
+  comicQuotaLimit?: number;
+  comicQuotaDays?: number;
   globalMovieQuotaDays?: number;
   globalMovieQuotaLimit?: number;
   globalTvQuotaLimit?: number;
@@ -36,6 +106,8 @@ export interface UserSettingsGeneralResponse {
   globalMusicQuotaLimit?: number;
   globalBookQuotaDays?: number;
   globalBookQuotaLimit?: number;
+  globalComicQuotaDays?: number;
+  globalComicQuotaLimit?: number;
   watchlistSyncMovies?: boolean;
   watchlistSyncTv?: boolean;
   watchlistSyncMusic?: boolean;

@@ -91,6 +91,14 @@ const LibraryTitleCard = ({
 
   if (type === 'album') {
     const album = title as MusicDetails;
+    const availableServiceQualities = (album.availableServices ?? []).map(
+      (service) => service.quality.toUpperCase()
+    );
+    const availableQualities = (['MP3', 'FLAC'] as const).filter((quality) =>
+      availableServiceQualities.some((serviceQuality) =>
+        serviceQuality.includes(quality)
+      )
+    );
 
     return (
       <TitleCard
@@ -104,6 +112,7 @@ const LibraryTitleCard = ({
         type={album.type}
         year={album.releaseDate}
         mediaType="album"
+        availableQualities={availableQualities}
         inProgress={(album.mediaInfo?.downloadStatus ?? []).length > 0}
         needsCoverArt={album.needsCoverArt}
         canExpand={canExpand}

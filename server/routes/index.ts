@@ -40,14 +40,15 @@ import {
   getTlsConfigurationStatus,
   getTlsRuntimeInfo,
 } from '@server/utils/tls';
-import { isPerson } from '@server/utils/typeHelpers';
 import {
   parseBoundedString,
   parseOptionalBoundedString,
   parseOptionalLanguage,
+  parseOptionalQueryBoolean,
 } from '@server/utils/validation';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import semver from 'semver';
 import artistRoutes from './artist';
 import associationRoutes from './association';
 import authRoutes from './auth';
@@ -55,17 +56,22 @@ import authorRoutes from './author';
 import blocklistRoutes from './blocklist';
 import bookRoutes from './book';
 import collectionRoutes from './collection';
+import collectionCatalogRoutes from './collectionCatalog';
+import comicRoutes from './comic';
 import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
 import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
+import magazineRoutes from './magazine';
 import mediaRoutes from './media';
 import movieRoutes from './movie';
 import musicRoutes from './music';
 import personRoutes from './person';
+import playbackRoutes from './playback';
 import playlistRoutes from './playlist';
 import requestRoutes from './request';
 import searchRoutes from './search';
+import seriesRoutes from './series';
 import serviceRoutes from './service';
 import tvRoutes from './tv';
 import user from './user';
@@ -83,7 +89,8 @@ const publicStatusRateLimit = rateLimit({
   limit: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: () => process.env.NODE_ENV === 'test',
+  skip: () =>
+    process.env.NODE_ENV === 'test' || process.env.E2E_TESTS === 'true',
 });
 export const PUBLIC_BACKDROPS_RATE_LIMIT = {
   windowMs: 60 * 1000,
@@ -143,6 +150,26 @@ export const getCommitUpdateStatus = (
     // is unknown but it is at least the number of relevant commits returned.
     commitsBehind: commitIndex >= 0 ? commitIndex : relevantCommits.length,
   };
+};
+
+export const getReleaseUpdateStatus = (
+  releases: {
+    tag_name: string;
+    prerelease: boolean;
+    draft: boolean;
+  }[],
+  currentVersion: string
+): boolean => {
+  const installedVersion = semver.valid(currentVersion);
+  if (!installedVersion) {
+    return false;
+  }
+
+  return releases
+    .filter((release) => !release.prerelease && !release.draft)
+    .map((release) => semver.valid(release.tag_name))
+    .filter((version): version is string => version !== null)
+    .some((version) => semver.gt(version, installedVersion));
 };
 
 router.use(checkUser);
@@ -243,20 +270,25 @@ router.get('/status/tls/ca', publicStatusRateLimit, (_req, res) => {
 router.get<Record<string, never>, StatusResponse>(
   '/status',
   publicStatusRateLimit,
-  async (req, res) => {
+  async (req, res, next) => {
     const settings = getSettings();
     const currentVersion = getAppVersion();
     const commitTag = getCommitTag();
+    const parsedCheckUpdate = parseOptionalQueryBoolean(
+      req.query.checkUpdateAvailable,
+      'checkUpdateAvailable'
+    );
+    if ('error' in parsedCheckUpdate) {
+      return next({ status: 400, message: parsedCheckUpdate.error });
+    }
     const checkUpdate =
-      req.query.checkUpdateAvailable !== undefined
-        ? Boolean(req.query.checkUpdateAvailable)
-        : settings.fullPublicSettings.versionCheck;
+      parsedCheckUpdate.value ?? settings.fullPublicSettings.versionCheck;
     let updateAvailable = false;
     let commitsBehind = 0;
 
     if (checkUpdate) {
       const githubApi = new GithubAPI();
-      const branchMatch = currentVersion.match(/^main-/);
+      const branchMatch = currentVersion.match(/^(main)-/);
 
       if (branchMatch && commitTag !== 'local') {
         const commits = await githubApi.getSeerrCommits({
@@ -271,11 +303,7 @@ router.get<Record<string, never>, StatusResponse>(
         const releases = await githubApi.getSeerrReleases();
 
         if (releases.length) {
-          const latestVersion = releases[0];
-
-          if (!latestVersion.name.includes(currentVersion)) {
-            updateAvailable = true;
-          }
+          updateAvailable = getReleaseUpdateStatus(releases, currentVersion);
         }
       }
     }
@@ -385,6 +413,7 @@ router.use('/search', isAuthenticated(), searchRoutes);
 router.use('/discover', isAuthenticated(), discoverRoutes);
 router.use('/request', isAuthenticated(), requestRoutes);
 router.use('/playlist', isAuthenticated(), playlistRoutes);
+router.use('/playback', isAuthenticated(), playbackRoutes);
 router.use('/watchlist', isAuthenticated(), watchlistRoutes);
 router.use('/blocklist', isAuthenticated(), blocklistRoutes);
 router.use(
@@ -401,6 +430,13 @@ router.use('/movie', isAuthenticated(), externalMetadataRateLimit, movieRoutes);
 router.use('/tv', isAuthenticated(), externalMetadataRateLimit, tvRoutes);
 router.use('/music', isAuthenticated(), externalMetadataRateLimit, musicRoutes);
 router.use('/book', isAuthenticated(), bookRoutes);
+router.use('/comic', isAuthenticated(), comicRoutes);
+router.use(
+  '/magazine',
+  isAuthenticated(),
+  externalMetadataRateLimit,
+  magazineRoutes
+);
 router.use(
   '/artist',
   isAuthenticated(),
@@ -409,6 +445,7 @@ router.use(
 );
 router.use('/association', isAuthenticated(), associationRoutes);
 router.use('/author', isAuthenticated(), authorRoutes);
+router.use('/series', isAuthenticated(), seriesRoutes);
 router.use('/media', isAuthenticated(), mediaRoutes);
 router.use(
   '/person',
@@ -423,6 +460,12 @@ router.use(
   collectionRoutes
 );
 router.use('/service', isAuthenticated(), serviceRoutes);
+router.use(
+  '/collection-catalog',
+  isAuthenticated(),
+  externalMetadataRateLimit,
+  collectionCatalogRoutes
+);
 router.use('/issue', isAuthenticated(), issueRoutes);
 router.use('/issueComment', isAuthenticated(), issueCommentRoutes);
 router.post(
@@ -432,11 +475,7 @@ router.post(
   warmImageCache
 );
 router.use('/auth', authRoutes);
-router.use(
-  '/overrideRule',
-  isAuthenticated(Permission.ADMIN),
-  overrideRuleRoutes
-);
+router.use('/overrideRule', isAuthenticated(), overrideRuleRoutes);
 
 router.get('/regions', isAuthenticated(), async (req, res, next) => {
   const tmdb = new TheMovieDb();
@@ -453,6 +492,7 @@ router.get('/regions', isAuthenticated(), async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve regions.',
+      cause: e,
     });
   }
 });
@@ -593,16 +633,24 @@ router.get('/backdrops', publicBackdropsRateLimit, async (req, res, next) => {
         page: 1,
         timeWindow: 'week',
       })
-    ).results.filter((result) => !isPerson(result)) as (
-      | TmdbMovieResult
-      | TmdbTvResult
-    )[];
+    ).results.filter(
+      (result) => result.media_type === 'movie' || result.media_type === 'tv'
+    ) as (TmdbMovieResult | TmdbTvResult)[];
 
     return res.status(200).json(
       data
-        .map((result) => result.backdrop_path)
-        .filter((backdropPath) => !!backdropPath)
+        .filter((result) => !!result.backdrop_path)
         .slice(0, 8)
+        .map((result) => ({
+          path: result.backdrop_path!,
+          title: result.media_type === 'movie' ? result.title : result.name,
+          mediaType: result.media_type,
+          year:
+            (result.media_type === 'movie'
+              ? result.release_date
+              : result.first_air_date
+            )?.slice(0, 4) || undefined,
+        }))
     );
   } catch (e) {
     logger.debug('Something went wrong retrieving backdrops', {
@@ -612,6 +660,7 @@ router.get('/backdrops', publicBackdropsRateLimit, async (req, res, next) => {
     return next({
       status: 500,
       message: 'Unable to retrieve backdrops.',
+      cause: e,
     });
   }
 });

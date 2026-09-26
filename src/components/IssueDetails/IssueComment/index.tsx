@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -29,6 +30,10 @@ const messages = defineMessages('components.IssueDetails.IssueComment', {
     'Comment must be {maxLength, number} characters or fewer',
   edit: 'Edit',
   edited: 'Edited',
+  editHelp: 'Edit your comment on this issue.',
+  deleteHelp: 'Permanently delete this comment after confirmation.',
+  cancelHelp: 'Discard these edits and keep the saved comment.',
+  saveHelp: 'Save changes to this comment.',
 });
 
 interface IssueCommentProps {
@@ -88,13 +93,14 @@ const IssueComment = ({
           onOk={() => void deleteComment()}
           okText={intl.formatMessage(messages.delete)}
           okButtonType="danger"
+          okButtonProps={{ buttonIcon: 'delete' }}
         >
           {intl.formatMessage(messages.areyousuredelete)}
         </Modal>
       </Transition>
 
       <time
-        className="whitespace-nowrap text-xs leading-4 text-gray-500"
+        className="refreshed-detail-text-muted text-xs leading-4 whitespace-nowrap"
         dateTime={new Date(comment.createdAt).toISOString()}
       >
         <FormattedDate value={comment.createdAt} dateStyle="medium" />
@@ -112,28 +118,32 @@ const IssueComment = ({
         />
       </Link>
 
-      <div className="min-w-0 text-xs leading-4 text-gray-400">
+      <div className="refreshed-detail-text min-w-0 text-xs leading-4">
         {!isEditing && (isActiveUser || canDelete) && (
-          <div className="float-right mb-1 ml-3 flex items-start gap-1">
+          <div className="issue-comment-actions">
             {isActiveUser && (
-              <button
+              <Button
                 type="button"
                 onClick={() => setIsEditing(true)}
-                className="inline-flex h-[22px] items-center gap-1 rounded-md border border-indigo-500/80 bg-indigo-700/35 px-2 text-[11px] font-semibold text-indigo-100 hover:border-indigo-300 hover:bg-indigo-600/50 hover:text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                buttonType="manage"
+                buttonSize="sm"
+                title={intl.formatMessage(messages.editHelp)}
               >
                 <PencilSquareIcon className="h-3.5 w-3.5" />
                 {intl.formatMessage(messages.edit)}
-              </button>
+              </Button>
             )}
             {canDelete && (
-              <button
+              <Button
                 type="button"
                 onClick={() => setShowDeleteModal(true)}
-                className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold text-red-200 hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                buttonType="danger"
+                buttonSize="sm"
+                title={intl.formatMessage(messages.deleteHelp)}
               >
                 <TrashIcon className="h-3.5 w-3.5" />
                 {intl.formatMessage(messages.delete)}
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -145,7 +155,7 @@ const IssueComment = ({
             {comment.user.displayName}
           </Link>
           {edited && (
-            <span className="ml-1 text-gray-500">
+            <span className="refreshed-detail-text-muted ml-1">
               ({intl.formatMessage(messages.edited)})
             </span>
           )}
@@ -169,36 +179,40 @@ const IssueComment = ({
                   rows={3}
                   id={`comment-${comment.id}`}
                   name="newMessage"
-                  className="max-h-28 w-full resize-y overflow-y-auto rounded-md border-gray-600 bg-gray-900/60 text-xs text-gray-100"
+                  className="issue-comment-input"
                 />
                 {errors.newMessage && touched.newMessage && (
                   <div className="mt-1 text-xs text-red-300">
                     {String(errors.newMessage)}
                   </div>
                 )}
-                <div className="mt-1 flex justify-end gap-1">
-                  <button
+                <div className="issue-discussion-actions card-spacing-before">
+                  <Button
                     type="button"
                     onClick={() => setIsEditing(false)}
-                    className="inline-flex h-[22px] items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] font-semibold text-red-200 hover:border-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                    buttonType="success"
+                    buttonSize="sm"
+                    title={intl.formatMessage(messages.cancelHelp)}
                   >
                     <XMarkIcon className="h-3.5 w-3.5" />
                     {intl.formatMessage(globalMessages.cancel)}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="submit"
                     disabled={!isValid || isSubmitting}
-                    className="inline-flex h-[22px] items-center gap-1 rounded-md border border-emerald-600/80 bg-emerald-800/25 px-2 text-[11px] font-semibold text-emerald-200 hover:border-emerald-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-40"
+                    buttonType="success"
+                    buttonSize="sm"
+                    title={intl.formatMessage(messages.saveHelp)}
                   >
                     <CheckIcon className="h-3.5 w-3.5" />
                     {intl.formatMessage(globalMessages.save)}
-                  </button>
+                  </Button>
                 </div>
               </Form>
             )}
           </Formik>
         ) : (
-          <div className="prose prose-sm max-w-full text-xs leading-4 text-gray-400 prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4">
+          <div className="refreshed-detail-text-muted prose prose-sm prose-p:my-0 prose-p:leading-4 prose-ol:my-0 prose-ul:my-0 prose-li:my-0 prose-li:leading-4 max-w-full text-xs leading-4">
             <ReactMarkdown
               skipHtml
               allowedElements={['p', 'em', 'strong', 'ul', 'ol', 'li']}

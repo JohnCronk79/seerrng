@@ -40,6 +40,7 @@ const { notes, errors } = readReleaseNotes(
 );
 const body = fs.readFileSync(bodyFile, 'utf8');
 const explicitNoReleaseNote = hasExplicitNoReleaseNote(body);
+const allowMixedPushBatch = args.has('--allow-mixed-push-batch');
 const issues = [...errors];
 
 for (const entry of modified) {
@@ -54,7 +55,7 @@ if (notes.length === 0 && !explicitNoReleaseNote) {
   );
 }
 
-if (notes.length > 0 && explicitNoReleaseNote) {
+if (notes.length > 0 && explicitNoReleaseNote && !allowMixedPushBatch) {
   issues.push(
     'choose either a release-note fragment or `release-note: none`; do not select both'
   );
