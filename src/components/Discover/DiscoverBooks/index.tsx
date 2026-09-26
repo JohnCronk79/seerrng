@@ -9,7 +9,7 @@ import BookFormatTabs, {
 import {
   CompactRatingSelect,
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
   type RatingOption,
@@ -44,6 +44,8 @@ const messages = defineMessages('components.Discover.DiscoverBooks', {
   sortBy: 'Sort By',
   search: 'Keyword Search',
   searchBooks: 'Search Books',
+  authorSearch: 'Author Search',
+  searchAuthors: 'Search Authors',
   clearFilters: 'Clear Filters',
   genres: 'Genres',
   firstPublished: 'First Published',
@@ -96,6 +98,14 @@ const DiscoverBooks = ({
   const isRouteReady = currentPath !== undefined;
   const update = useBatchUpdateQueryParams(routeQuery);
   const query = typeof routeQuery.search === 'string' ? routeQuery.search : '';
+  const authorQuery =
+    typeof routeQuery.author === 'string' ? routeQuery.author : '';
+  const [author, debouncedAuthor, setAuthor] = useDebouncedState(authorQuery);
+  const routedAuthorRef = useRef(authorQuery.trim());
+  useEffect(() => {
+    routedAuthorRef.current = authorQuery.trim();
+    setAuthor(authorQuery);
+  }, [authorQuery, setAuthor]);
   const routedFormat =
     routeQuery.format === 'ebook' || routeQuery.format === 'audiobook'
       ? routeQuery.format
@@ -126,6 +136,7 @@ const DiscoverBooks = ({
     '/api/v1/discover/books',
     {
       query,
+      author: authorQuery,
       subject,
       firstPublishYear,
       language,
@@ -171,6 +182,21 @@ const DiscoverBooks = ({
       update({ search: nextSearch || undefined, page: undefined });
     }
   }, [debouncedSearch, update]);
+  useEffect(() => {
+    const nextAuthor = debouncedAuthor.trim();
+    if (nextAuthor !== routedAuthorRef.current) {
+      routedAuthorRef.current = nextAuthor;
+      update({ author: nextAuthor || undefined, page: undefined });
+    }
+  }, [debouncedAuthor, update]);
+  useSearchActivityReporter(
+    Boolean(author.trim()) &&
+      isRouteReady &&
+      (author.trim() !== authorQuery.trim() ||
+        discover.isLoadingInitialData ||
+        discover.isValidating),
+    'books-author'
+  );
   const title =
     titleOverride ??
     intl.formatMessage(
@@ -206,6 +232,7 @@ const DiscoverBooks = ({
   ];
   const hasActiveFilters = Boolean(
     query ||
+    authorQuery ||
     subject ||
     firstPublishYear ||
     language ||
@@ -237,14 +264,15 @@ const DiscoverBooks = ({
           {intl.formatMessage(messages.filters)}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
-            className={getFilterResetButtonClass(!hasActiveFilters)}
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
             onClick={() => {
               setSearch('');
+              setAuthor('');
               setParam({
                 search: undefined,
+                author: undefined,
                 subject: undefined,
                 firstPublishYear: undefined,
                 language: undefined,
@@ -252,12 +280,10 @@ const DiscoverBooks = ({
                 sortBy: undefined,
               });
             }}
-          >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           <CardTextVisibilityToggle mediaType="book" />
           <form
-            className="discover-filter-control w-72 max-w-full flex-none"
+            className="discover-filter-control w-52 max-w-full flex-none"
             onSubmit={(e) => {
               e.preventDefault();
               const nextSearch = search.trim();
@@ -296,6 +322,30 @@ const DiscoverBooks = ({
             options={genreOptions}
             onChange={(value) => setParam({ subject: value || undefined })}
           />
+          <form
+            className="discover-filter-control w-52 max-w-full flex-none"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const nextAuthor = author.trim();
+              routedAuthorRef.current = nextAuthor;
+              setParam({ author: nextAuthor || undefined });
+            }}
+          >
+            <span
+              className={`discover-filter-control-label gap-1.5 ${author.trim() ? 'discover-filter-control-label-active' : ''}`}
+            >
+              <MagnifyingGlassIcon className="h-4 w-4" aria-hidden="true" />
+              {intl.formatMessage(messages.authorSearch)}
+            </span>
+            <input
+              type="search"
+              value={author}
+              onChange={(event) => setAuthor(event.target.value)}
+              placeholder={intl.formatMessage(messages.searchAuthors)}
+              aria-label={intl.formatMessage(messages.searchAuthors)}
+              className="min-w-0 flex-1 border-0 bg-transparent px-2 py-0 text-xs font-medium text-gray-200 placeholder:text-gray-500 focus:ring-0"
+            />
+          </form>
           <CompactRatingSelect
             label={intl.formatMessage(messages.ratingFilter)}
             value={minRating}

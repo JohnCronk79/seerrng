@@ -19,6 +19,7 @@ import {
   isRequestDestinationAvailable,
   isRequestDestinationRequested,
 } from '@app/components/RequestModal/requestAvailability';
+import useTitleBlocklist from '@app/hooks/useTitleBlocklist';
 import useToasts from '@app/hooks/useToasts';
 import { getQueryParamString } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -167,6 +168,17 @@ const BookDetails = () => {
     setToggleWatchlist(!data?.onUserWatchlist);
   }, [data?.onUserWatchlist]);
 
+  const {
+    isBlocklisted,
+    checking: checkingBlocklist,
+    error: blocklistError,
+    setBlocklisted,
+  } = useTitleBlocklist(
+    normalizedRouteBookId,
+    MediaType.BOOK,
+    data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
+  );
+
   if (!data && !error) {
     return <LoadingSpinner />;
   }
@@ -302,11 +314,13 @@ const BookDetails = () => {
       : undefined);
   const canRequestEbook =
     canRequest &&
+    !destinationAvailable('ebook', ebookDestination) &&
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     hasEbookService &&
     (canChooseAlternateTarget || !defaultEbookCovered);
   const canRequestAudiobook =
     canRequest &&
+    !destinationAvailable('audiobook', audiobookDestination) &&
     data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
     hasAudiobookService &&
     (canChooseAlternateTarget || !defaultAudiobookCovered);
@@ -320,7 +334,7 @@ const BookDetails = () => {
       data.mediaInfo.status === MediaStatus.PARTIALLY_AVAILABLE);
   const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
   const isBlocklistAvailable =
-    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
+    !isBlocklisted && !checkingBlocklist && !blocklistError;
   const canUseManage = hasPermission(Permission.MANAGE_REQUESTS);
   const isManageAvailable = Boolean(
     data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
@@ -373,6 +387,7 @@ const BookDetails = () => {
         mediaType: MediaType.BOOK,
         title: data.title,
       });
+      await setBlocklisted(true);
 
       addToast(
         <span>
@@ -464,6 +479,21 @@ const BookDetails = () => {
     }
   };
 
+  const catalogActions = (
+    <>
+      {canRequest && data.authorId && (
+        <Button
+          buttonType="bulkRequest"
+          buttonSize="sm"
+          onClick={() => setShowBulkRequestModal(true)}
+        >
+          <ArrowDownTrayIcon />
+          <span>{intl.formatMessage(messages.requestbibliography)}</span>
+        </Button>
+      )}
+    </>
+  );
+
   const primaryActions = (
     <>
       {canUseBlocklist && (
@@ -507,13 +537,8 @@ const BookDetails = () => {
             className="relative"
             aria-label={intl.formatMessage(messages.manage)}
           >
-            <CogIcon className="!mr-0" />
-            {openIssues.length > 0 && (
-              <>
-                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-600" />
-                <span className="absolute -top-1 -right-1 h-3 w-3 animate-ping rounded-full bg-red-600" />
-              </>
-            )}
+            <CogIcon />
+            <span>{intl.formatMessage(globalMessages.manage)}</span>
           </Button>
         </Tooltip>
       )}
@@ -536,6 +561,7 @@ const BookDetails = () => {
             aria-label={intl.formatMessage(messages.reportissue)}
           >
             <ExclamationTriangleIcon />
+            <span>{intl.formatMessage(globalMessages.reportIssue)}</span>
           </Button>
         </Tooltip>
       )}
@@ -544,16 +570,6 @@ const BookDetails = () => {
         id={openLibraryWorkId}
         variant="button"
       />
-      {canRequest && data.authorId && (
-        <Button
-          buttonType="bulkRequest"
-          buttonSize="sm"
-          onClick={() => setShowBulkRequestModal(true)}
-        >
-          <ArrowDownTrayIcon />
-          <span>{intl.formatMessage(messages.requestbibliography)}</span>
-        </Button>
-      )}
       {activeBookRequest && (
         <Button
           buttonType="ghost"
@@ -645,7 +661,7 @@ const BookDetails = () => {
     hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
       type: 'or',
     }) && openIssues.length > 0 ? (
-      <section className="refreshed-inset-surface mt-[5px] overflow-hidden rounded-lg border border-gray-700">
+      <section className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
         <h2 className="media-inset-heading px-3 py-2">
           {intl.formatMessage(messages.openissues)}
         </h2>
@@ -750,6 +766,7 @@ const BookDetails = () => {
         formatCoverage={formatCoverage}
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        catalogActions={catalogActions}
         playbackActions={playbackActions}
         additionalContent={additionalContent}
       />

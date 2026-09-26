@@ -141,7 +141,7 @@ const PlaylistImportModal = ({
             }}
           />
         </div>
-        <section className="refreshed-inset-surface mt-5 rounded-lg border border-gray-700 p-3 text-sm">
+        <section className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3 text-sm">
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
             <Button
               as="a"

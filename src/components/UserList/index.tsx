@@ -369,6 +369,7 @@ const UserList = () => {
           }
           okDisabled={isDeleting}
           okButtonType="danger"
+          okButtonProps={{ buttonIcon: 'delete' }}
           onCancel={() =>
             setDeleteModal({ isOpen: false, user: deleteModal.user })
           }
@@ -683,7 +684,7 @@ const UserList = () => {
           })}
         </div>
 
-        <div className="refreshed-inset-surface mt-5 overflow-hidden rounded-lg border border-gray-700">
+        <div className="refreshed-inset-surface card-spacing-before overflow-hidden rounded-lg border border-gray-700">
           <div className="user-list-table-scroll scrollable-card overflow-auto">
             <table className="app-data-table user-list-data-table">
               <thead className="app-data-table-head">

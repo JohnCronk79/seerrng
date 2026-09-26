@@ -227,7 +227,7 @@ const MobileMenu = ({
   ]);
 
   return (
-    <div className="fixed right-0 bottom-0 left-0 z-50">
+    <div className="fixed bottom-0 left-0 right-0 z-50">
       <Transition
         show={isOpen}
         as="div"
@@ -238,7 +238,7 @@ const MobileMenu = ({
         leave="transition duration-500"
         leaveFrom="opacity-100 -translate-y-full"
         leaveTo="opacity-0 translate-y-0"
-        className="app-menu-gradient absolute top-0 right-0 left-0 flex w-full -translate-y-full flex-col space-y-6 border-t border-gray-600 px-6 py-6 font-semibold text-gray-100 backdrop-blur"
+        className="app-menu-gradient absolute left-0 right-0 top-0 flex w-full -translate-y-full flex-col space-y-6 border-t border-gray-600 px-6 py-6 font-semibold text-gray-100 backdrop-blur"
       >
         {filteredLinks.map((link) => {
           const isActive = router.pathname.match(link.activeRegExp);
@@ -247,8 +247,8 @@ const MobileMenu = ({
               key={`mobile-menu-link-${link.href}`}
               href={link.href}
               prefetch={false}
-              className={`flex items-center ${
-                isActive ? 'text-indigo-500' : ''
+              className={`main-menu-link flex items-center px-2 py-2 ${
+                isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
               }`}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -285,7 +285,7 @@ const MobileMenu = ({
           );
         })}
       </Transition>
-      <div className="padding-bottom-safe border-t border-gray-600 bg-gray-800/90 backdrop-blur">
+      <div className="app-mobile-menu-surface padding-bottom-safe border-t border-gray-600 backdrop-blur">
         <div className="flex h-full items-center justify-between px-6 py-4 text-gray-100">
           {filteredLinks
             .slice(0, filteredLinks.length === 5 ? 5 : 4)
@@ -300,8 +300,8 @@ const MobileMenu = ({
                   aria-label={
                     typeof link.content === 'string' ? link.content : undefined
                   }
-                  className={`relative flex flex-col items-center space-y-1 ${
-                    isActive ? 'text-indigo-500' : ''
+                  className={`main-menu-link relative flex flex-col items-center space-y-1 p-2 ${
+                    isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
                   }`}
                 >
                   {cloneElement(
@@ -334,8 +334,8 @@ const MobileMenu = ({
             })}
           {filteredLinks.length > 4 && filteredLinks.length !== 5 && (
             <button
-              className={`flex flex-col items-center space-y-1 ${
-                isOpen ? 'text-indigo-500' : ''
+              className={`main-menu-link flex flex-col items-center space-y-1 p-2 ${
+                isOpen ? 'sidebar-link-selected' : 'sidebar-link-idle'
               }`}
               onClick={() => toggle()}
               aria-label={isOpen ? 'Close menu' : 'More navigation'}

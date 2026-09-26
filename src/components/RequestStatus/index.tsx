@@ -9,17 +9,18 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaTypeBadge, {
   type MediaTypeBadgeType,
 } from '@app/components/Common/MediaTypeBadge';
-import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import Tooltip from '@app/components/Common/Tooltip';
 import {
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import useRequestStatusScrollRestoration from '@app/hooks/useRequestStatusScrollRestoration';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import useToasts from '@app/hooks/useToasts';
@@ -34,7 +35,6 @@ import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { Transition } from '@headlessui/react';
 import {
-  ArchiveBoxXMarkIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   CheckIcon,
@@ -45,10 +45,8 @@ import {
   ExclamationTriangleIcon,
   InformationCircleIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
   PencilIcon,
   ServerIcon,
-  TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
@@ -76,6 +74,14 @@ import {
   resolveRequestStatusUserSelection,
   type RequestStatusUserSelection,
 } from './requestStatusQuery';
+
+import {
+  deleteLibraryMedia,
+  deleteRequestStatus,
+  RequestActionButton,
+  RequestActionConfirmation,
+  requestActionMessageText,
+} from './destructiveActions';
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -201,23 +207,7 @@ const messages = defineMessages('components.RequestStatus', {
   modifyFailed: 'Unable to update this request.',
   retryFailed: 'Unable to retry this request.',
   retrySuccess: 'Request queued for another attempt.',
-  delete: 'Delete',
-  deleting: 'Deleting…',
-  deleteTooltip: 'Delete this request and its status history.',
-  deleteTitle: 'Delete request status entry?',
-  deleteDescription:
-    'Seerr will cancel any active work it can identify, clean up temporary request records, and permanently remove this entry and its history.',
-  deleteFailed: 'Unable to delete this request entry.',
-  deleteSuccess: 'Request entry deleted.',
-  remove: 'Delete From Library',
-  removing: 'Deleting…',
-  removeTooltip: 'The media and the library entry will both be deleted.',
-  removeUnavailableTooltip: 'No linked library item is available to delete.',
-  removeTitle: 'Delete item from {service}?',
-  removeDescription:
-    'Delete {title} and its media files from {service}. Seerr will preserve an author or artist that still has other books or albums.',
-  removeFailed: 'Unable to delete this item from its library service.',
-  removeSuccess: 'Item deleted from its library service.',
+  ...requestActionMessageText,
   loading: 'Loading request status',
   refresh: 'Refresh',
   refreshing: 'Refreshing…',
@@ -1183,46 +1173,27 @@ const RequestStatusCard = ({
         </button>
       </Tooltip>
       {canShowDelete && (
-        <Tooltip content={intl.formatMessage(messages.deleteTooltip)}>
-          <button
-            type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-red-600/80 bg-red-800/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-red-200 transition hover:border-red-500 hover:text-white focus:ring-2 focus:ring-red-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={isDeleting || isRetrying || isRemoving}
-            onClick={() => onDelete(item.request.id)}
-          >
-            <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            {intl.formatMessage(
-              isDeleting ? messages.deleting : messages.delete
-            )}
-          </button>
-        </Tooltip>
+        <RequestActionButton
+          action="delete"
+          busy={isDeleting}
+          disabled={isDeleting || isRetrying || isRemoving}
+          onClick={() => onDelete(item.request.id)}
+        />
       )}
       {canShowRemove && (
-        <Tooltip
-          content={intl.formatMessage(
-            canRemove
-              ? messages.removeTooltip
-              : messages.removeUnavailableTooltip
-          )}
-        >
-          <button
-            type="button"
-            className="compact-control inline-flex items-center gap-1 rounded-md border border-rose-400 bg-rose-500/25 px-2 text-[11px] leading-none font-semibold whitespace-nowrap text-rose-100 transition hover:border-rose-200 hover:bg-rose-500/45 hover:text-white focus:ring-2 focus:ring-rose-300 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={!canRemove || isRemoving || isRetrying || isDeleting}
-            onClick={() =>
-              onRemove(
-                item.request.id,
-                displayTitle,
-                getDisplayServiceName(current.service) ?? 'library service'
-              )
-            }
-          >
-            <ArchiveBoxXMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            {intl.formatMessage(
-              isRemoving ? messages.removing : messages.remove
-            )}
-          </button>
-        </Tooltip>
+        <RequestActionButton
+          action="remove"
+          busy={isRemoving}
+          unavailable={!canRemove}
+          disabled={!canRemove || isRemoving || isRetrying || isDeleting}
+          onClick={() =>
+            onRemove(
+              item.request.id,
+              displayTitle,
+              getDisplayServiceName(current.service) ?? 'library service'
+            )
+          }
+        />
       )}
     </div>
   );
@@ -1274,13 +1245,13 @@ const RequestStatusCard = ({
             <div className="refreshed-artwork-gradient" />
           </div>
         )}
-        <div className="relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
+        <div className="refreshed-inset-surface detail-summary-card relative z-10 grid min-w-0 grid-cols-[64px_minmax(0,1fr)] gap-3 sm:grid-cols-[80px_minmax(0,1fr)]">
           <div className="min-w-0 self-start">
             {detailHref ? (
               <Link
                 href={detailHref}
                 aria-label={displayTitle}
-                className="relative block h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none motion-reduce:transition-none sm:h-[120px] sm:w-20"
+                className="detail-card-poster relative block overflow-hidden rounded-lg ring-1 ring-gray-600 transition duration-200 hover:ring-indigo-400 focus:ring-2 focus:ring-indigo-400 focus:outline-none motion-reduce:transition-none"
               >
                 <CachedImage
                   src={poster.src}
@@ -1295,7 +1266,7 @@ const RequestStatusCard = ({
                 </span>
               </Link>
             ) : (
-              <div className="relative h-24 w-16 overflow-hidden rounded-lg ring-1 ring-gray-600 sm:h-[120px] sm:w-20">
+              <div className="detail-card-poster relative overflow-hidden rounded-lg ring-1 ring-gray-600">
                 <CachedImage
                   src={poster.src}
                   type={poster.type}
@@ -1315,19 +1286,19 @@ const RequestStatusCard = ({
             {detailHref ? (
               <Link
                 href={detailHref}
-                className="-mt-0.5 block truncate text-lg leading-5 font-semibold text-white hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+                className="detail-summary-title block truncate text-lg leading-5 font-semibold text-white hover:underline focus:ring-2 focus:ring-indigo-400 focus:outline-none"
               >
                 {displayTitle}
               </Link>
             ) : (
-              <h3 className="-mt-0.5 truncate text-lg leading-5 font-semibold text-white">
+              <h3 className="detail-summary-title truncate text-lg leading-5 font-semibold text-white">
                 {displayTitle}
               </h3>
             )}
 
-            <div className="card:grid-cols-3 mt-4 grid min-h-0 min-w-0 flex-1 grid-cols-1 items-stretch">
-              <div className="card:col-span-2 card:pr-3 min-w-0">
-                <dl className="refreshed-detail-text card:grid-cols-[max-content_0.75rem_6rem_0.75rem_1px_0.75rem_minmax(0,1fr)] card:gap-x-0 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+            <div className="detail-card-heading-spacing detail-three-column-grid grid min-h-0 min-w-0 flex-1 items-stretch">
+              <div className="detail-paired-column-span min-w-0">
+                <dl className="media-detail-rows refreshed-detail-text detail-paired-columns grid min-w-0 content-start text-xs">
                   <dt className="card:col-start-1 card:row-start-1 font-medium text-gray-100">
                     {intl.formatMessage(messages.mediaAndFormat)}:
                   </dt>
@@ -1347,9 +1318,7 @@ const RequestStatusCard = ({
                     {getRuntimeOrPages(intl, details, item)}
                   </dd>
 
-                  <div className="card:col-start-5 card:row-span-3 card:row-start-1 card:block hidden bg-gray-600" />
-
-                  <div className="card:col-span-1 card:col-start-7 card:row-span-3 card:row-start-1 card:mt-0 card:border-t-0 card:pt-0 col-span-2 mt-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 border-t border-gray-600 pt-2">
+                  <div className="media-detail-rows media-detail-column-divider card:col-span-1 card:col-start-5 card:row-span-3 card:row-start-1 col-span-2 grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3">
                     {[...featuredCredits, ...secondaryDetails].map(
                       (credit, index) => (
                         <div
@@ -1376,11 +1345,11 @@ const RequestStatusCard = ({
                     )}
                   </div>
 
-                  <dt className="card:col-start-1 card:row-start-4 mt-0.5 font-medium text-gray-100">
+                  <dt className="card:col-start-1 card:row-start-4 font-medium text-gray-100">
                     {intl.formatMessage(messages.genres)}:
                   </dt>
                   {genres.length > 0 ? (
-                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5 line-clamp-2 min-w-0 break-words">
+                    <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0 line-clamp-2 min-w-0 break-words">
                       {genres.map((genre, index) => (
                         <span key={`${genre.href}-${genre.name}`}>
                           {index > 0 && ', '}
@@ -1394,14 +1363,14 @@ const RequestStatusCard = ({
                       ))}
                     </dd>
                   ) : (
-                    <dd className="card:col-span-5 card:col-start-3 card:row-start-4 m-0 mt-0.5">
+                    <dd className="card:col-span-3 card:col-start-3 card:row-start-4 m-0">
                       {notAvailable}
                     </dd>
                   )}
                 </dl>
               </div>
 
-              <dl className="refreshed-detail-text media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 gap-y-0.5 text-xs leading-4">
+              <dl className="media-detail-rows refreshed-detail-text media-detail-column-divider grid h-full min-w-0 grid-cols-[max-content_minmax(0,1fr)] content-start gap-x-3 text-xs">
                 <dt className="font-medium text-gray-100">
                   {intl.formatMessage(messages.requestedByLabel)}:
                 </dt>
@@ -1442,7 +1411,7 @@ const RequestStatusCard = ({
           </div>
         </div>
 
-        <div className="refreshed-inset-surface relative z-10 mt-[5px] rounded-lg border border-gray-700 py-[5px]">
+        <div className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 py-[5px]">
           {timelineHasOverflow && (
             <button
               type="button"
@@ -1525,7 +1494,7 @@ const RequestStatusCard = ({
         </div>
 
         {current.stage === 'downloading' && current.percent !== null && (
-          <div className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
+          <div className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-indigo-200">
               <span className="inline-flex items-center gap-2">
                 <span>
@@ -1615,7 +1584,7 @@ const RequestStatusCard = ({
         </div>
 
         {isHistoryOpen && (
-          <section className="refreshed-inset-surface relative z-10 mt-2 rounded-lg border border-gray-700 p-3">
+          <section className="refreshed-inset-surface card-spacing-before relative z-10 rounded-lg border border-gray-700 p-3">
             <h4 className="mb-2 text-xs font-semibold text-gray-200">
               {intl.formatMessage(messages.history)}
             </h4>
@@ -1889,6 +1858,7 @@ const RequestStatus = () => {
   };
 
   const updateMediaFilter = (nextMediaFilter: MediaFilter) => {
+    mediaPin.remember(nextMediaFilter);
     const options = getSortOptions(nextMediaFilter);
     const keepsSort = options.some((option) => option.value === sort);
     const nextSort = keepsSort ? sort : 'added';
@@ -1900,6 +1870,20 @@ const RequestStatus = () => {
       routeQuery({ nextMediaFilter, nextSort, nextSortDirection })
     );
   };
+
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'requests',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book', 'audiobook'],
+    ready: router.isReady,
+    explicit: Boolean(router.query.mediaType),
+    restore: (value) => {
+      void router.replace({
+        pathname: router.pathname,
+        query: { ...router.query, mediaType: value, page: undefined },
+      });
+    },
+  });
 
   const updateSort = (nextSort: RequestStatusSortField) => {
     const nextSortDirection =
@@ -1948,7 +1932,7 @@ const RequestStatus = () => {
     const requestId = deleteRequestId;
     setDeletingRequestId(requestId);
     try {
-      await axios.delete(`/api/v1/request/${requestId}/status`);
+      await deleteRequestStatus(requestId);
       addToast(intl.formatMessage(messages.deleteSuccess), {
         appearance: 'success',
         autoDismiss: true,
@@ -2013,16 +1997,7 @@ const RequestStatus = () => {
     const selection = removeSelection;
     setRemovingRequestId(selection.requestId);
     try {
-      const params = new URLSearchParams({
-        is4k: String(selection.is4k),
-      });
-      if (selection.format) {
-        params.set('format', selection.format);
-      }
-
-      await axios.delete(
-        `/api/v1/media/${selection.mediaId}/file?${params.toString()}`
-      );
+      await deleteLibraryMedia(selection);
       addToast(intl.formatMessage(messages.removeSuccess), {
         appearance: 'success',
         autoDismiss: true,
@@ -2146,6 +2121,7 @@ const RequestStatus = () => {
     setSearchFilter('');
     setFilter('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setSort('added');
     setSortDirection('desc');
     setTimeFrame('all');
@@ -2166,20 +2142,12 @@ const RequestStatus = () => {
           leaveTo="opacity-0"
           show
         >
-          <Modal
-            title={intl.formatMessage(messages.deleteTitle)}
-            okText={intl.formatMessage(messages.delete)}
-            okButtonType="danger"
-            loading={deletingRequestId !== null}
-            onOk={() => void deleteRequest()}
+          <RequestActionConfirmation
+            action="delete"
+            busy={deletingRequestId !== null}
+            onConfirm={() => void deleteRequest()}
             onCancel={() => setDeleteRequestId(null)}
-            actionButtonSize="standard"
-            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
-          >
-            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-              {intl.formatMessage(messages.deleteDescription)}
-            </p>
-          </Modal>
+          />
         </Transition>
       )}
       {removeSelection && (
@@ -2193,25 +2161,14 @@ const RequestStatus = () => {
           leaveTo="opacity-0"
           show
         >
-          <Modal
-            title={intl.formatMessage(messages.removeTitle, {
-              service: removeSelection.service,
-            })}
-            okText={intl.formatMessage(messages.remove)}
-            okButtonType="danger"
-            loading={removingRequestId !== null}
-            onOk={() => void removeRequestFromLibrary()}
+          <RequestActionConfirmation
+            action="remove"
+            title={removeSelection.title}
+            service={removeSelection.service}
+            busy={removingRequestId !== null}
+            onConfirm={() => void removeRequestFromLibrary()}
             onCancel={() => setRemoveSelection(null)}
-            actionButtonSize="standard"
-            dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-lg"
-          >
-            <p className="refreshed-inset-surface rounded-lg border border-gray-700 p-3">
-              {intl.formatMessage(messages.removeDescription, {
-                title: removeSelection.title,
-                service: removeSelection.service,
-              })}
-            </p>
-          </Modal>
+          />
         </Transition>
       )}
       <PageTitle title={intl.formatMessage(messages.title)} />
@@ -2262,14 +2219,11 @@ const RequestStatus = () => {
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasFilters}
             onClick={clearFilters}
-            className={getFilterResetButtonClass(false)}
-          >
-            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           {[
             {
               key: 'all',
@@ -2339,6 +2293,7 @@ const RequestStatus = () => {
           {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2 align-middle">
+          <MediaFilterPin pin={mediaPin} />
           {mediaFilters.map((option) => (
             <button
               key={option.value}
@@ -2455,7 +2410,7 @@ const RequestStatus = () => {
         </div>
       </section>
 
-      <div className="space-y-4">
+      <div className="card-stack">
         {data.results.map((item) => (
           <RequestStatusCard
             key={item.request.id}
@@ -2481,9 +2436,11 @@ const RequestStatus = () => {
         <div className="refreshed-card-surface flex min-h-12 flex-row flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-gray-700 p-2 text-center">
           <span>{intl.formatMessage(messages.noResults)}</span>
           {hasFilters && (
-            <Button buttonType="default" buttonSize="sm" onClick={clearFilters}>
-              {intl.formatMessage(messages.clearFilters)}
-            </Button>
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={false}
+              onClick={clearFilters}
+            />
           )}
         </div>
       )}

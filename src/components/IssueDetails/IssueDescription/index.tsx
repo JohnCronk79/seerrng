@@ -66,10 +66,10 @@ const IssueDescription = ({
             {({ open }) => (
               <>
                 <div>
-                  <MenuButton className="flex items-center rounded-full text-gray-400 hover:text-gray-200 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-100 focus:outline-none">
+                  <MenuButton className="issue-options-menu-trigger">
                     <span className="sr-only">Open options</span>
                     <EllipsisVerticalIcon
-                      className="h-5 w-5"
+                      className="issue-options-menu-trigger-icon"
                       aria-hidden="true"
                     />
                   </MenuButton>
@@ -87,7 +87,7 @@ const IssueDescription = ({
                 >
                   <MenuItems
                     static
-                    className="ring-opacity-5 absolute right-0 mt-2 w-56 origin-top-right rounded-md bg-gray-700 shadow-lg ring-1 ring-black focus:outline-none"
+                    className="app-dropdown-menu absolute right-0 mt-2 w-56 origin-top-right focus:outline-none"
                   >
                     <div className="py-1">
                       {belongsToUser && (
@@ -95,11 +95,7 @@ const IssueDescription = ({
                           {({ active }) => (
                             <button
                               onClick={() => setIsEditing(true)}
-                              className={`block w-full px-4 py-2 text-left text-sm ${
-                                active
-                                  ? 'bg-gray-600 text-white'
-                                  : 'text-gray-100'
-                              }`}
+                              className={`issue-options-menu-action ${active ? 'issue-options-menu-action-active' : ''}`}
                             >
                               {intl.formatMessage(messages.edit)}
                             </button>
@@ -112,11 +108,7 @@ const IssueDescription = ({
                           {({ active }) => (
                             <button
                               onClick={() => onDelete()}
-                              className={`block w-full px-4 py-2 text-left text-sm ${
-                                active
-                                  ? 'bg-gray-600 text-white'
-                                  : 'text-gray-100'
-                              }`}
+                              className={`issue-options-menu-action ${active ? 'issue-options-menu-action-active' : ''}`}
                             >
                               {intl.formatMessage(messages.deleteissue)}
                             </button>

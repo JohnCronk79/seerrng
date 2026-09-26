@@ -4,15 +4,18 @@ import PageTitle from '@app/components/Common/PageTitle';
 import PaginationFooter from '@app/components/Common/PaginationFooter';
 import {
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import { BOOK_GENRES } from '@app/components/Discover/FilterPanel/libraryFilterUtils';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
 import { tvNetworks } from '@app/components/Discover/NetworkSlider';
 import { studios } from '@app/components/Discover/StudioSlider';
+import FocusedIssue from '@app/components/IssueList/FocusedIssue';
 import IssueItem from '@app/components/IssueList/IssueItem';
 import useDebouncedState from '@app/hooks/useDebouncedState';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
 import {
   getPositiveQueryParamNumber,
@@ -25,7 +28,6 @@ import {
   BarsArrowDownIcon,
   BarsArrowUpIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
 } from '@heroicons/react/24/outline';
 import type { TmdbGenre } from '@server/api/themoviedb/interfaces';
 import type { IssueResultsResponse } from '@server/interfaces/api/issueInterfaces';
@@ -87,11 +89,18 @@ type IssueTypeFilter = 'all' | 'audio' | 'video' | 'subtitle' | 'other';
 const IssueList = () => {
   const intl = useIntl();
   const router = useRouter();
+  const focusedIssueId = getPositiveQueryParamNumber(router.query.issue);
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('added');
   const [direction, setDirection] = useState<Direction>('desc');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('all');
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const mediaPin = useMediaFilterPin<MediaFilter>({
+    scope: 'issues',
+    selected: mediaFilter,
+    values: ['all', 'movie', 'tv', 'music', 'book'],
+    restore: setMediaFilter,
+  });
   const [issueTypeFilter, setIssueTypeFilter] =
     useState<IssueTypeFilter>('all');
   const [releaseYearFilter, setReleaseYearFilter] = useState('any');
@@ -170,6 +179,7 @@ const IssueList = () => {
     setFilter('all');
     setTimeFrame('all');
     setMediaFilter('all');
+    mediaPin.remember('all');
     setIssueTypeFilter('all');
     clearMediaSpecificFilters();
     setSearch('');
@@ -237,19 +247,32 @@ const IssueList = () => {
           {intl.formatMessage(messages.issues)}
         </span>
       </h2>
+      {focusedIssueId && (
+        <FocusedIssue key={focusedIssueId} issueId={focusedIssueId} />
+      )}
       <section className="app-filter-section-gap mt-4">
         <div className="mb-2 text-sm text-gray-300">
           {intl.formatMessage(messages.taskFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={
+              filter === 'all' &&
+              timeFrame === 'all' &&
+              mediaFilter === 'all' &&
+              issueTypeFilter === 'all' &&
+              releaseYearFilter === 'any' &&
+              !genreFilter &&
+              !studioFilter &&
+              !networkFilter &&
+              !albumTypeFilter &&
+              !search &&
+              sort === 'added' &&
+              direction === 'desc'
+            }
             onClick={clearFilters}
-            className={getFilterResetButtonClass(false)}
-          >
-            <NoSymbolIcon className="h-4 w-4" aria-hidden="true" />
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+          />
           {(
             [
               ['all', messages.allIssues, data.counts?.all ?? 0],
@@ -292,6 +315,7 @@ const IssueList = () => {
           {intl.formatMessage(messages.mediaFilters)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <MediaFilterPin pin={mediaPin} />
           {(
             [
               ['all', messages.allMedia],
@@ -307,6 +331,7 @@ const IssueList = () => {
               aria-pressed={mediaFilter === value}
               onClick={() => {
                 setMediaFilter(value);
+                mediaPin.remember(value);
                 clearMediaSpecificFilters();
                 resetPage();
               }}
@@ -467,11 +492,13 @@ const IssueList = () => {
           })}
         </div>
       </section>
-      {data.results.map((issue) => (
-        <div className="py-2" key={`issue-item-${issue.id}`}>
-          <IssueItem issue={issue} />
-        </div>
-      ))}
+      <div className="card-stack card-spacing-before">
+        {data.results
+          .filter((issue) => issue.id !== focusedIssueId)
+          .map((issue) => (
+            <IssueItem key={`issue-item-${issue.id}`} issue={issue} />
+          ))}
+      </div>
       {data.results.length === 0 && (
         <div className="refreshed-card-surface flex min-h-16 w-full flex-col items-center justify-center rounded-xl border border-gray-700 px-4 py-4 text-white">
           <span className="refreshed-detail-text text-sm">

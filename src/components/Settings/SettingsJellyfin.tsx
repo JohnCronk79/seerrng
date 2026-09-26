@@ -31,7 +31,6 @@ const messages = defineMessages('components.Settings', {
   jellyfinsettingsDescription:
     'Configure the settings for your {mediaServerName} server. {mediaServerName} scans your {mediaServerName} libraries to see what content is available.',
   timeout: 'Timeout',
-  save: 'Save Changes',
   saving: 'Saving…',
   jellyfinlibraries: '{mediaServerName} Libraries',
   jellyfinlibrariesDescription:
@@ -417,21 +416,11 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
               )}
 
               {dataSync?.running && (
-                <Button buttonType="danger" onClick={() => cancelScan()}>
-                  <svg
-                    className="mr-1 h-5 w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
+                <Button
+                  buttonType="danger"
+                  buttonIcon="cancel"
+                  onClick={() => cancelScan()}
+                >
                   <FormattedMessage {...messages.cancelscan} />
                 </Button>
               )}

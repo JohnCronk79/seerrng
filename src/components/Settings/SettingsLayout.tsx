@@ -300,6 +300,7 @@ const SettingsLayout = ({ children }: SettingsLayoutProps) => {
             buttonType="danger"
             buttonSize="standard"
             onClick={discardAndLeave}
+            buttonIcon="cancel"
           >
             {intl.formatMessage(globalMessages.cancel)}
           </Button>

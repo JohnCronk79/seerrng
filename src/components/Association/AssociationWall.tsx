@@ -1,3 +1,4 @@
+import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import type {
   AssociationEdge,
   AssociationGraph,
@@ -99,14 +100,14 @@ const AssociationWall = ({ graph }: { graph: AssociationGraph }) => {
               <span>{section.title}</span>
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-3">
+          <ThreeItemScroll label={section.title}>
             {edges.map((edge) => (
               <AssociationDetailCard
                 key={`${edge.node.mediaType}:${edge.node.id}`}
                 edge={edge}
               />
             ))}
-          </div>
+          </ThreeItemScroll>
         </div>
       ))}
     </div>

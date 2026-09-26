@@ -5,6 +5,8 @@ import {
   type CompactSelectOption,
   type RatingOption,
 } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MusicArtistFilter from '@app/components/Discover/FilterPanel/MusicArtistSelector';
+import MusicReleaseTypeSelect from '@app/components/Discover/FilterPanel/MusicReleaseTypeSelect';
 import {
   BOOK_GENRES,
   BOOK_LANGUAGES,
@@ -144,12 +146,6 @@ const LibrarySearchFilters = ({
       value: value.toLowerCase(),
     })),
   ];
-  const releaseTypeOptions: CompactSelectOption[] = [
-    { label: intl.formatMessage(messages.any), value: '' },
-    { label: intl.formatMessage(messages.album), value: 'Album' },
-    { label: intl.formatMessage(messages.ep), value: 'EP' },
-    { label: intl.formatMessage(messages.single), value: 'Single' },
-  ];
   const placeholderMessage =
     category === 'all'
       ? messages.searchAll
@@ -220,6 +216,7 @@ const LibrarySearchFilters = ({
       )}
       {category === 'music' && (
         <>
+          <MusicArtistFilter />
           <CompactSelect
             label={intl.formatMessage(messages.releaseYear)}
             value={releaseYear}
@@ -243,10 +240,8 @@ const LibrarySearchFilters = ({
               }
             }}
           />
-          <CompactSelect
-            label={intl.formatMessage(messages.releaseType)}
+          <MusicReleaseTypeSelect
             value={releaseType}
-            options={releaseTypeOptions}
             onChange={(value) => setParam({ releaseType: value || undefined })}
           />
           <CompactSelect

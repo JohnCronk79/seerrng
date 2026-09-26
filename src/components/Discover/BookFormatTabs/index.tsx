@@ -1,4 +1,6 @@
 import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterPin from '@app/components/Discover/MediaFilterPin';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import defineMessages from '@app/utils/defineMessages';
 import { parseQueryFromPath } from '@app/utils/routeQuery';
 import {
@@ -7,6 +9,7 @@ import {
   Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import type { ParsedUrlQuery } from 'querystring';
 import { useIntl } from 'react-intl';
 
@@ -22,7 +25,7 @@ interface BookFormatTabsProps {
 const getBookFormatHref = (
   pathname: string,
   query: ParsedUrlQuery,
-  queryFormat?: 'ebook'
+  queryFormat?: 'ebook' | 'all'
 ): string => {
   const queryParams = new URLSearchParams();
 
@@ -70,13 +73,14 @@ const BookFormatTabs = ({
     label: (typeof messages)[keyof typeof messages];
     icon: typeof BookOpenIcon;
     pathname: string;
-    queryFormat?: 'ebook';
+    queryFormat?: 'ebook' | 'all';
   }[] = [
     {
       format: 'all',
       label: messages.allBooks,
       icon: Squares2X2Icon,
       pathname: '/discover/books',
+      queryFormat: 'all',
     },
     {
       format: 'ebook',
@@ -97,6 +101,22 @@ const BookFormatTabs = ({
   // contains a query string and fall back to the parsed router query otherwise.
   const pathQuery = currentPath ? parseQueryFromPath(currentPath) : {};
   const preservedQuery = Object.keys(pathQuery).length > 0 ? pathQuery : query;
+  const router = useRouter();
+  const pin = useMediaFilterPin<BookDiscoveryFormat>({
+    scope: 'books',
+    selected: format,
+    values: ['all', 'ebook', 'audiobook'],
+    ready: router.isReady,
+    explicit:
+      Boolean(preservedQuery.format) ||
+      router.pathname === '/discover/audiobooks',
+    restore: (value) => {
+      const tab = tabs.find((tab) => tab.format === value)!;
+      void router.replace(
+        getBookFormatHref(tab.pathname, preservedQuery, tab.queryFormat)
+      );
+    },
+  });
 
   return (
     <nav
@@ -104,6 +124,7 @@ const BookFormatTabs = ({
       className={`flex flex-wrap gap-2 ${className}`}
       data-testid="book-format-tabs"
     >
+      <MediaFilterPin pin={pin} />
       {tabs.map((tab) => {
         const isSelected = tab.format === format;
         const Icon = tab.icon;
@@ -111,6 +132,7 @@ const BookFormatTabs = ({
         return (
           <Link
             key={tab.format}
+            onClick={() => pin.remember(tab.format)}
             href={getBookFormatHref(
               tab.pathname,
               preservedQuery,

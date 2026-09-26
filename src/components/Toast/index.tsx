@@ -35,7 +35,7 @@ const Toast = ({
         leaveTo="opacity-0 scale-90"
       >
         <div className="pointer-events-auto w-full max-w-sm rounded-lg bg-gray-800 shadow-lg ring-1 ring-gray-500">
-          <div className="ring-opacity-5 overflow-hidden rounded-lg ring-1 ring-black">
+          <div className="overflow-hidden rounded-lg ring-1 ring-black ring-opacity-5">
             <div className="p-4">
               <div className="flex items-start">
                 <div className="flex-shrink-0">
@@ -56,6 +56,7 @@ const Toast = ({
                 <div className="ml-4 flex flex-shrink-0">
                   <button
                     onClick={() => onDismiss()}
+                    aria-label="Dismiss this notification"
                     className="inline-flex text-gray-400 transition duration-150 ease-in-out focus:text-gray-500 focus:outline-none"
                   >
                     <XMarkIcon className="h-5 w-5" />

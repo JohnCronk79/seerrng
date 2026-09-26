@@ -3,7 +3,7 @@ import AvailabilityQualityControl from '@app/components/Discover/AvailabilityQua
 import {
   CompactRatingSelect,
   CompactSelect,
-  getFilterResetButtonClass,
+  FilterResetButton,
   getFilterToggleButtonClass,
   type CompactSelectOption,
   type RangeOption,
@@ -129,7 +129,7 @@ const FilterPanel = ({
 
     routedSearchRef.current = nextSearch;
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? clearedFilters : {}),
+      page: undefined,
       [searchQueryKey]: nextSearch || undefined,
     });
   }, [batchUpdateQueryParams, debouncedSearchValue, searchQueryKey, variant]);
@@ -150,13 +150,13 @@ const FilterPanel = ({
   };
   const updateFilter = (key: string, value?: string) => {
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      page: undefined,
       [key]: value,
     });
   };
   const updateFilters = (values: Record<string, string | undefined>) => {
     batchUpdateQueryParams({
-      ...(variant === 'discover' ? { [searchQueryKey]: undefined } : {}),
+      page: undefined,
       ...values,
     });
   };
@@ -398,14 +398,12 @@ const FilterPanel = ({
     >
       {variant === 'discover' && (
         <div className="discover-filter-primary-row">
-          <button
-            type="button"
-            aria-pressed={!hasActiveFilters}
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
             onClick={clearAllFilters}
-            className={`${getFilterResetButtonClass(!hasActiveFilters)} order-1`}
-          >
-            {intl.formatMessage(messages.clearFilters)}
-          </button>
+            className="order-1"
+          />
           <CardTextVisibilityToggle mediaType={type} className="order-2" />
           <AvailabilityQualityControl
             mediaType={type}
@@ -425,7 +423,7 @@ const FilterPanel = ({
           onSubmit={(event) => {
             event.preventDefault();
             batchUpdateQueryParams({
-              ...(variant === 'discover' ? clearedFilters : {}),
+              page: undefined,
               [searchQueryKey]: searchValue.trim() || undefined,
             });
           }}

@@ -1,15 +1,16 @@
 import Alert from '@app/components/Common/Alert';
-import Badge from '@app/components/Common/Badge';
 import {
   getBookFormatMessage,
   type RequestedBookFormat,
 } from '@app/components/Common/BookFormatBadge';
 import BookFormatSelector from '@app/components/Common/BookFormatSelector';
 import Button from '@app/components/Common/Button';
-import CachedImage from '@app/components/Common/CachedImage';
 import Modal from '@app/components/Common/Modal';
+import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
-import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
+import AdvancedRequester, {
+  RequestListboxControl,
+} from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -37,6 +38,7 @@ import axios from 'axios';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
+import BulkRequestItemCard from './BulkRequestItemCard';
 
 const messages = defineMessages('components.RequestModal.BulkRequestModal', {
   requestdiscography: 'Request Discography',
@@ -909,20 +911,18 @@ const BulkRequestModal = ({
                   className="mt-0"
                 />
               ) : (
-                <label className="w-48">
-                  <span>{intl.formatMessage(messages.releasetype)}</span>
-                  <select
-                    className="mt-1 border-gray-700 bg-gray-800"
-                    value={releaseType}
-                    onChange={(e) => setReleaseType(e.target.value)}
-                  >
-                    {releaseTypeOptions.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <RequestListboxControl
+                  id="bulk-release-type"
+                  label={intl.formatMessage(messages.releasetype)}
+                  value={releaseType}
+                  onChange={setReleaseType}
+                  options={releaseTypeOptions.map((type) => ({
+                    value: type,
+                    label: type,
+                  }))}
+                  active={releaseType !== 'Album'}
+                  loadingLabel={intl.formatMessage(globalMessages.loading)}
+                />
               )}
               <div className="mt-4 flex flex-wrap items-center gap-4">
                 <Button buttonType="ghost" onClick={toggleAll}>
@@ -950,86 +950,22 @@ const BulkRequestModal = ({
                 </a>
               </div>
             )}
-            <div className="mt-4 overflow-hidden border border-gray-700 sm:rounded-lg">
-              <table className="min-w-full">
-                <tbody className="divide-y divide-gray-900/70">
-                  {items.map((item) => {
-                    const reason = getIneligibleReason(item);
-                    const selected = selectedIds.includes(item.id);
-
-                    return (
-                      <tr
-                        key={item.id}
-                        className={reason ? 'opacity-60' : 'cursor-pointer'}
-                        onClick={() => toggleItem(item)}
-                      >
-                        <td className="w-16 px-4 py-3">
-                          <span
-                            role="checkbox"
-                            aria-checked={selected}
-                            className={`relative inline-flex h-5 w-10 items-center pt-2 ${
-                              reason ? 'opacity-50' : ''
-                            }`}
-                          >
-                            <span
-                              className={`absolute h-4 w-9 rounded-full ${
-                                selected ? 'bg-indigo-500' : 'bg-gray-700'
-                              }`}
-                            />
-                            <span
-                              className={`absolute left-0 h-5 w-5 rounded-full border border-gray-200 bg-white transition-transform ${
-                                selected ? 'translate-x-5' : 'translate-x-0'
-                              }`}
-                            />
-                          </span>
-                        </td>
-                        <td className="flex items-center px-2 py-3">
-                          <div className="relative h-16 w-11 flex-shrink-0 overflow-hidden rounded-md bg-gray-900">
-                            <CachedImage
-                              type={mediaType === 'book' ? 'book' : 'music'}
-                              src={
-                                item.image ??
-                                '/images/seerr_poster_not_found.png'
-                              }
-                              alt=""
-                              fill
-                              style={{ objectFit: 'cover' }}
-                            />
-                          </div>
-                          <div className="min-w-0 pl-3">
-                            <div className="truncate font-semibold text-white">
-                              {item.title}
-                            </div>
-                            <div className="truncate text-sm text-gray-300">
-                              {[item.artist, item.year]
-                                .filter(Boolean)
-                                .join(' - ')}
-                            </div>
-                            {item.sourceTitle &&
-                              item.sourceTitle !== item.title && (
-                                <div className="truncate text-xs text-gray-400">
-                                  {intl.formatMessage(messages.sourceTrack, {
-                                    title: item.sourceTitle,
-                                  })}
-                                </div>
-                              )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                          {reason ? (
-                            <Badge badgeType="warning">{reason}</Badge>
-                          ) : (
-                            <Badge>
-                              {intl.formatMessage(messages.notrequested)}
-                            </Badge>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <section className="refreshed-inset-surface card-spacing-before">
+              <ThreeItemScroll label={intl.formatMessage(messages.selectitems)}>
+                {items.map((item) => (
+                  <BulkRequestItemCard
+                    key={item.id}
+                    item={item}
+                    mediaType={mediaType}
+                    format={format}
+                    selected={selectedIds.includes(item.id)}
+                    reason={getIneligibleReason(item)}
+                    onToggle={() => toggleItem(item)}
+                    onNavigate={onCancel}
+                  />
+                ))}
+              </ThreeItemScroll>
+            </section>
             {hasMoreAuthorWorks && (
               <div className="mt-4">
                 <Button

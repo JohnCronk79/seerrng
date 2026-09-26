@@ -15,6 +15,7 @@ import {
   getTitleCardStatusBadges,
   getTitleCardStatusBadgeSlots,
 } from '@app/components/TitleCard/statusBadges';
+import useAlbumArtwork from '@app/hooks/useAlbumArtwork';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -424,6 +425,11 @@ const TitleCard = ({
   const isArtist = mediaType === 'artist';
   const isBook = mediaType === 'book';
   const canonicalId = normalizeExternalTitleId(mediaType, id);
+  const artwork = useAlbumArtwork(
+    isAlbum ? String(canonicalId) : undefined,
+    image,
+    cardRef
+  );
   const videoMediaType =
     mediaType === 'movie' || mediaType === 'collection' || mediaType === 'tv';
   const numericId = typeof id === 'number' ? id : Number(id);
@@ -447,7 +453,7 @@ const TitleCard = ({
                     : undefined,
                 }
               : `/artist/${encodeApiPathSegment(canonicalId)}`;
-  const displayImage = getTmdbPosterImageUrl(image);
+  const displayImage = getTmdbPosterImageUrl(artwork);
   const imageCacheType =
     isResolvedImageUrl(displayImage) && isBook
       ? 'book'
@@ -509,8 +515,9 @@ const TitleCard = ({
     !!currentStatus &&
     currentStatus !== MediaStatus.UNKNOWN &&
     currentStatus !== MediaStatus.DELETED;
-  const showTextOverlay = showText || !image || showDetail || showRequestModal;
-  const showFullDetailOverlay = !image || showDetail || showRequestModal;
+  const showTextOverlay =
+    showText || !artwork || showDetail || showRequestModal;
+  const showFullDetailOverlay = !artwork || showDetail || showRequestModal;
   const requestLabel =
     isBook && preferredBookFormat
       ? intl.formatMessage(messages.requestBookFormat, {
@@ -654,14 +661,15 @@ const TitleCard = ({
                   >
                     <Button
                       buttonType="ghost"
-                      className="z-40 h-6 w-6 rounded-full border-red-600/80 bg-red-950/75 p-0 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
+                      className="z-40 rounded-full border-red-600/80 bg-red-950/75 text-red-600 hover:border-red-400 hover:bg-red-700/90 hover:text-white"
                       buttonSize="sm"
+                      iconOnly
                       aria-label={intl.formatMessage(
                         globalMessages.addToBlocklist
                       )}
                       onClick={() => setShowBlocklistModal(true)}
                     >
-                      <EyeSlashIcon className="h-3.5 w-3.5" />
+                      <EyeSlashIcon />
                     </Button>
                   </Tooltip>
                 )}
