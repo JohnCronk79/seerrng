@@ -28,6 +28,27 @@ export const collectionHasMissing = (
       (include4k && part.mediaInfo?.status4k !== MediaStatus.AVAILABLE)
   );
 
+const safeCollectionId = (
+  id: string,
+  kind: CollectionKind
+): string | undefined => {
+  const pattern =
+    kind === 'music' ? /^[A-Za-z0-9_-]{1,128}$/ : /^[1-9]\d{0,8}$/;
+
+  return id.match(pattern)?.[0];
+};
+
+const collectionEndpoint = (id: string, kind: CollectionKind): string => {
+  const safeId = safeCollectionId(id, kind);
+  if (!safeId || safeId !== id) {
+    throw new Error('Invalid collection identifier.');
+  }
+
+  if (kind === 'movie') return `/api/v1/collection/${safeId}`;
+  if (kind === 'tv') return `/api/v1/collection-catalog/tv/${safeId}`;
+  return `/api/v1/collection-catalog/music/${safeId}`;
+};
+
 /** No manual refresh control. Hidden/offline pages do not poll. */
 const useCollectionAvailability = <
   T extends Collection | CuratedCollection = Collection,
@@ -58,7 +79,8 @@ const useCollectionAvailability = <
     MediaServerType.JELLYFIN,
     MediaServerType.EMBY,
   ].includes(settings.currentSettings.mediaServerType);
-  const enabled = supported && visible && !!user && /^[a-zA-Z0-9-]+$/.test(id);
+  const enabled =
+    supported && visible && !!user && safeCollectionId(id, kind) === id;
   const key =
     enabled && user
       ? (['collection-availability', user.id, kind, id] as const)
@@ -66,15 +88,7 @@ const useCollectionAvailability = <
   const result = useSWR<CollectionAvailabilityResponse<T>>(
     key,
     async () => {
-      if (!/^[a-zA-Z0-9-]+$/.test(id)) {
-        throw new Error('Invalid collection identifier.');
-      }
-      const endpoint =
-        kind === 'movie'
-          ? `/api/v1/collection/${encodeURIComponent(id)}`
-          : `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
-      // Same-origin API path with an allowlisted kind and restricted ID.
-      // codeql[js/request-forgery]
+      const endpoint = collectionEndpoint(id, kind);
       const response = await axios.post<CollectionAvailabilityResponse<T>>(
         `${endpoint}/availability`,
         {},
