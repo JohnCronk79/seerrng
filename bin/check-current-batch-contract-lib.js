@@ -146,10 +146,25 @@ const validateCurrentBatchContract = (files) => {
     '.npmrc',
     'the Docker context must exclude the root npm credential file'
   );
-  requireText(
+  rejectText(
     '.dockerignore',
     '!/.npmrc',
-    'the Docker context must re-include the sanitized root npm configuration required by the production install'
+    'the Docker context must not re-include host package-manager configuration'
+  );
+  requireText(
+    'Dockerfile',
+    'pnpm --config.engine-strict=true install --prod --frozen-lockfile',
+    'production dependency installation must keep strict engine checks without copying .npmrc'
+  );
+  requireText(
+    'Dockerfile',
+    'pnpm --config.engine-strict=true install --frozen-lockfile',
+    'build dependency installation must keep strict engine checks without copying .npmrc'
+  );
+  rejectText(
+    'Dockerfile',
+    '.npmrc',
+    'the Dockerfile must not copy host package-manager configuration'
   );
   requireText(
     '.dockerignore',

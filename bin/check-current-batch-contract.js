@@ -24,6 +24,7 @@ const fileNames = [
   'docs/maintainers/ui-style-standard.md',
   'docs/maintainers/site-visual-audit-2026-09-11.md',
   '.dockerignore',
+  'Dockerfile',
   'prettier-scope.txt',
   '.github/workflows/ci.yml',
   'package.json',

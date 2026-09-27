@@ -82,6 +82,52 @@ test('reports missing files instead of silently skipping contract checks', () =>
   assert.ok(errors.some((error) => error.includes('Missing contract input:')));
 });
 
+test('Docker keeps the host npm configuration out of the build context', () => {
+  const dockerfile = readFileSync(
+    new URL('../Dockerfile', import.meta.url),
+    'utf8'
+  );
+  const ignoreRules = readFileSync(
+    new URL('../.dockerignore', import.meta.url),
+    'utf8'
+  );
+  const validErrors = validateCurrentBatchContract(
+    repositoryFilesWith({
+      Dockerfile: dockerfile,
+      '.dockerignore': ignoreRules,
+    })
+  );
+  assert.ok(
+    !validErrors.some((error) => error.includes('without copying .npmrc')),
+    validErrors.join('\n')
+  );
+
+  const weakInstallErrors = validateCurrentBatchContract(
+    repositoryFilesWith({
+      Dockerfile: dockerfile.replace(
+        'pnpm --config.engine-strict=true install --prod --frozen-lockfile',
+        'pnpm install --prod --frozen-lockfile'
+      ),
+    })
+  );
+  assert.ok(
+    weakInstallErrors.some((error) =>
+      error.includes(
+        'production dependency installation must keep strict engine checks'
+      )
+    )
+  );
+
+  const exposedConfigErrors = validateCurrentBatchContract(
+    repositoryFilesWith({ '.dockerignore': `${ignoreRules}\n!/.npmrc\n` })
+  );
+  assert.ok(
+    exposedConfigErrors.some((error) =>
+      error.includes('must not re-include host package-manager configuration')
+    )
+  );
+});
+
 test('reports a button-order regression', () => {
   const proxy = new Proxy(
     {},
