@@ -22,7 +22,10 @@ describe('Requests', () => {
     cy.contains('button', 'Books').should('be.visible');
     cy.contains('button', 'Audiobooks').click();
     cy.location('search').should('contain', 'mediaType=audiobook');
-    cy.contains('Showing requests for').should('be.visible');
-    cy.contains('Audiobook').should('be.visible');
+    cy.contains('Showing requests for')
+      .should('be.visible')
+      .parent()
+      .find('[title="Audiobook"]')
+      .should('be.visible');
   });
 });
