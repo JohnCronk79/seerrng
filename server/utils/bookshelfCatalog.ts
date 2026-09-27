@@ -632,7 +632,7 @@ export const getBookshelfBookDetails = async (
       : [parsed.foreignBookId];
     let result: ReadarrBookLookupResult | undefined;
     for (const term of [
-      ...new Set([providerLookupId, lookupTitle, ...providerIds]),
+      ...new Set([lookupTitle, ...providerIds, providerLookupId]),
     ]) {
       if (!term?.trim()) continue;
       let candidates: ReadarrBookLookupResult[];
