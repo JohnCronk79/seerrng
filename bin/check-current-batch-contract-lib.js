@@ -4406,7 +4406,7 @@ const validateCurrentBatchContract = (files) => {
   requireText(
     'src/components/Common/Button/index.tsx',
     "default: 'button-standard'",
-    'the shared Button default must resolve to the 30-pixel site standard'
+    'the shared Button default must resolve to the site standard'
   );
   requireText(
     globals,
@@ -4414,7 +4414,7 @@ const validateCurrentBatchContract = (files) => {
     'the shared standard-size token must resolve to the approved 16-pixel height'
   );
   for (const token of [
-    'expect(bounds.height).to.eq(30)',
+    'expect(bounds.height).to.eq(16)',
     "expect(styles.fontSize).to.eq('12px')",
     "expect($button).to.have.class('button-standard')",
   ]) {

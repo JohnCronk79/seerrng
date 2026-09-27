@@ -78,6 +78,55 @@ import { canMakePermissionsChange, isUniqueConstraintError } from '.';
 
 const userSettingsRoutes = Router({ mergeParams: true });
 
+const updateMediaFilterPin = (
+  current: Partial<Record<MediaFilterScope, MediaFilterValue>> | undefined,
+  scope: MediaFilterScope,
+  value: MediaFilterValue | null
+): Partial<Record<MediaFilterScope, MediaFilterValue>> => {
+  const pins = { ...current };
+
+  // Keep request-derived property names out of object writes. The explicit
+  // cases also make additions to MediaFilterScope fail closed until handled.
+  switch (scope) {
+    case 'books': {
+      if (value !== null) return { ...pins, books: value };
+      const remaining = { ...pins };
+      delete remaining.books;
+      return remaining;
+    }
+    case 'trending': {
+      if (value !== null) return { ...pins, trending: value };
+      const remaining = { ...pins };
+      delete remaining.trending;
+      return remaining;
+    }
+    case 'search': {
+      if (value !== null) return { ...pins, search: value };
+      const remaining = { ...pins };
+      delete remaining.search;
+      return remaining;
+    }
+    case 'blocklist': {
+      if (value !== null) return { ...pins, blocklist: value };
+      const remaining = { ...pins };
+      delete remaining.blocklist;
+      return remaining;
+    }
+    case 'issues': {
+      if (value !== null) return { ...pins, issues: value };
+      const remaining = { ...pins };
+      delete remaining.issues;
+      return remaining;
+    }
+    case 'requests': {
+      if (value !== null) return { ...pins, requests: value };
+      const remaining = { ...pins };
+      delete remaining.requests;
+      return remaining;
+    }
+  }
+};
+
 userSettingsRoutes.post<{ id: string; scope: string }>(
   '/media-filter-pins/:scope',
   isOwnProfileOrAdmin(),
@@ -107,9 +156,11 @@ userSettingsRoutes.post<{ id: string; scope: string }>(
           if (!canModifyUser(user, actor))
             return next({ status: 403, message: 'Access denied.' });
           if (!user.settings) user.settings = new UserSettings({ user });
-          const pins = { ...user.settings.mediaFilterPins };
-          if (value === null) delete pins[scope];
-          else pins[scope] = value as MediaFilterValue;
+          const pins = updateMediaFilterPin(
+            user.settings.mediaFilterPins,
+            scope,
+            value as MediaFilterValue | null
+          );
           user.settings.mediaFilterPins = pins;
           await repository.save(user);
           return res.status(200).json(pins);

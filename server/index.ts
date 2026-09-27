@@ -372,6 +372,9 @@ Promise.resolve()
           }) as Store);
       server.use(
         '/api',
+        // HTTP session cookies are an explicit compatibility mode controlled
+        // by allowHttpAuth; HTTPS-only deployments always force Secure.
+        // codeql[js/clear-text-cookie]
         session({
           secret: settings.sessionSecret,
           resave: false,

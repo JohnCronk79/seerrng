@@ -722,7 +722,7 @@ export default function CuratedCollectionDetails({
               <CollectionServerActions
                 id={id}
                 title={data.name}
-                endpoint={endpoint}
+                kind={kind}
                 availability={availability.data}
                 error={availability.error}
                 revalidate={availability.mutate}

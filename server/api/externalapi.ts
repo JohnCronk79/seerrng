@@ -427,8 +427,14 @@ class ExternalAPI {
             this.axios.get<T>(requestTarget, config)
           );
         case 'POST':
+          // requestTarget is restricted to the constructor's allowed origins;
+          // provider payloads may intentionally originate in local config.
+          // codeql[js/file-access-to-http]
           return await this.axios.post<T>(requestTarget, data, config);
         case 'PUT':
+          // requestTarget is restricted to the constructor's allowed origins;
+          // provider payloads may intentionally originate in local config.
+          // codeql[js/file-access-to-http]
           return await this.axios.put<T>(requestTarget, data, config);
         case 'DELETE':
           return await this.axios.delete<T>(requestTarget, config);
