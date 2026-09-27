@@ -20,7 +20,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useIntl } from 'react-intl';
 
-export type DiscoverMediaType = DiscoverMediaCategory;
+export type DiscoverMediaType = 'all' | DiscoverMediaCategory;
 
 interface DiscoverMediaTabsProps {
   selected?: DiscoverMediaType;
@@ -106,7 +106,11 @@ const DiscoverMediaTabs = ({ selected, basePath }: DiscoverMediaTabsProps) => {
     >
       <nav className="flex flex-wrap gap-2" data-testid="discover-media-tabs">
         {tabs
-          .filter((tab) => availableTypes.includes(tab.type))
+          .filter(
+            (tab) =>
+              tab.type === 'all' ||
+              availableTypes.includes(tab.type as DiscoverMediaCategory)
+          )
           .map((tab) => {
             const Icon = tab.icon;
             const isSelected = selected === tab.type;
