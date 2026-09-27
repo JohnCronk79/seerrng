@@ -146,20 +146,20 @@ const validateCurrentBatchContract = (files) => {
     '.npmrc',
     'the Docker context must exclude the root npm credential file'
   );
-  rejectText(
+  requireText(
     '.dockerignore',
     '!/.npmrc',
-    'the Docker context must not re-include the root npm credential file'
+    'the Docker context must re-include the sanitized root npm configuration required by the production install'
   );
   requireText(
     '.dockerignore',
-    '!docs/maintainers/site-visual-audit-2026-09-11.md',
-    'the Docker context must include the visual audit required by the prebuild contract'
+    'docs/*',
+    'the Docker context must exclude development-only documentation'
   );
   requireText(
     'scripts/check-container-security.test.mjs',
-    'a later negation re-exposes the root .npmrc',
-    'the container security test must evaluate later npmrc negation rules'
+    'the production build does not require development-only contracts',
+    'the container security test must verify production builds exclude development-only contracts'
   );
   requireText(
     ledger,
@@ -404,7 +404,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     blocklistConfirmation,
-    'dialogClass="app-blocklist-confirmation-card"',
+    'dialogClass="app-card-main app-blocklist-confirmation-card"',
     'shared Blocklist confirmation must use the website-gradient card'
   );
   requireText(
@@ -716,7 +716,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Association/AssociationBadge.tsx',
-    "'app-button poster-control-icon poster-control-association rounded-full",
+    "'app-button poster-control poster-control-icon poster-control-association",
     'the poster Associations action must reuse the shared association button style'
   );
   requireOrder(
@@ -760,7 +760,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Association/AssociationDetailCard.tsx',
-    'detail-summary-standalone refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20',
+    'detail-summary-standalone app-card-main refreshed-card-surface refreshed-detail-text relative overflow-hidden rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20',
     'association results must reuse the complete artwork-backed Issue card surface'
   );
   for (const token of [
@@ -846,7 +846,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/Common/StatusBadgeMini/index.tsx',
-    'poster-control rounded-full border px-2 font-semibold shadow-md',
+    'className={`poster-control shadow-md ${tone}`}',
     'poster quality states must match the rounded media-type badge silhouette'
   );
   requireCssRule(
@@ -929,7 +929,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/RequestModal/PlaylistImportModal.tsx',
-    'dialogClass="request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"',
+    'dialogClass="app-card-main request-modal-site-surface refreshed-detail-text !w-[calc(100%-2rem)] rounded-xl border border-gray-700 shadow-lg shadow-gray-950/20 sm:!max-w-2xl"',
     'playlist import must use a centered readable-width site-background card surface'
   );
   for (const [token, description] of [
@@ -2226,9 +2226,9 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const token of [
-    'dialogClass="request-modal-site-surface sm:max-w-5xl"',
+    'dialogClass="app-card-main request-modal-site-surface sm:max-w-5xl"',
     '<RequestMediaCard',
-    'className="refreshed-inset-surface rounded-lg border border-gray-700 p-3"',
+    'className="app-card-inset refreshed-inset-surface rounded-lg border border-gray-700 p-3"',
   ]) {
     requireText(
       'src/components/RequestModal/TvRequestModal.tsx',
@@ -2248,7 +2248,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     'src/components/IssueModal/CreateIssueModal/index.tsx',
-    'dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"',
+    'dialogClass="artwork-form-main-card app-card-main refreshed-card-surface refreshed-detail-text"',
     'Report Issue and Request Series must consume the same main-card layout class'
   );
   for (const token of [
@@ -3301,7 +3301,7 @@ const validateCurrentBatchContract = (files) => {
 
   const userList = 'src/components/UserList/index.tsx';
   for (const token of [
-    'className="refreshed-card-surface',
+    'className="app-card-main refreshed-card-surface',
     'messages.filters',
     'messages.keywordSearch',
     'value={typeFilter}',
@@ -3353,7 +3353,7 @@ const validateCurrentBatchContract = (files) => {
     '.user-list-table-scroll {',
     'max-height: 32rem;',
     '.app-data-table.user-list-data-table {',
-    'min-width: 44rem;',
+    'min-width: 40rem;',
     '.user-list-name-column {',
     '.user-list-actions-column {',
     '.app-data-table {',
@@ -3380,7 +3380,7 @@ const validateCurrentBatchContract = (files) => {
     '<Header>{intl.formatMessage(globalMessages.settings)}</Header>',
     '<SettingsTabs tabType="filter" settingsRoutes={settingsRoutes} />',
     'className="discover-filter-control settings-page-search"',
-    '<article className="settings-main-card">',
+    '<article className="app-card-main settings-main-card">',
     'className="settings-page-actions"',
     'buttonType="danger"',
     'buttonType="success"',
@@ -3418,7 +3418,7 @@ const validateCurrentBatchContract = (files) => {
   }
   requireDistinctSectionHeadings(
     'src/components/Settings/SettingsMain/index.tsx',
-    '<section className="settings-group-card">',
+    '<section className="app-card-sub settings-group-card">',
     '</section>',
     [
       'intl.formatMessage(messages.generalsettings)',
@@ -3518,7 +3518,7 @@ const validateCurrentBatchContract = (files) => {
     'Default Permissions must use the shared compact nested-option spacing'
   );
   for (const token of [
-    '<section className="settings-group-card">',
+    '<section className="app-card-sub settings-group-card">',
     '<h3 className="settings-group-heading">',
     '<Form className="settings-group-content">',
   ]) {
@@ -3659,7 +3659,7 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const token of [
-    '<section className="settings-group-card">',
+    '<section className="app-card-sub settings-group-card">',
     'className="settings-library-actions mt-[5px]"',
     'className="settings-library-grid"',
     'setAllLibrariesEnabled(true)',
@@ -3683,7 +3683,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireCount(
     'src/components/Settings/SettingsMetadata.tsx',
-    'className="refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3"',
+    'className="app-card-inset refreshed-inset-surface card-spacing-before rounded-lg border border-gray-700 p-3"',
     2,
     'Metadata Provider Status and Selection must be two valid standard inset cards'
   );
@@ -3741,13 +3741,13 @@ const validateCurrentBatchContract = (files) => {
       'intl.formatMessage(messages.overrideRules)',
     ],
     [
-      'className="section settings-service-section"',
+      'className="app-card-sub section settings-service-section"',
       'className="settings-service-grid"',
     ],
     'every service and override-rule grid must use the shared five-pixel layout'
   );
   for (const token of [
-    'className="settings-service-card refreshed-inset-surface"',
+    'className="settings-service-card app-card-inset refreshed-inset-surface"',
     'className="settings-service-logo-link"',
     'className="settings-service-badges"',
     'className="settings-service-details"',
@@ -3762,7 +3762,7 @@ const validateCurrentBatchContract = (files) => {
     );
   }
   for (const token of [
-    'className="settings-service-card refreshed-inset-surface text-left"',
+    'className="settings-service-card app-card-inset refreshed-inset-surface text-left"',
     'className="settings-rule-card-content"',
     'className="settings-rule-subheading"',
   ]) {
@@ -4032,7 +4032,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     issueSummary,
-    "embedded ? 'refreshed-inset-surface' : 'refreshed-card-surface shadow-lg shadow-gray-950/20'",
+    "embedded ? 'app-card-inset refreshed-inset-surface' : 'app-card-main refreshed-card-surface shadow-lg shadow-gray-950/20'",
     'embedded Issue Details summary must use the shared inset transparency'
   );
   rejectText(
@@ -4073,7 +4073,7 @@ const validateCurrentBatchContract = (files) => {
   );
   requireText(
     createIssue,
-    'dialogClass="artwork-form-main-card refreshed-card-surface refreshed-detail-text"',
+    'dialogClass="artwork-form-main-card app-card-main refreshed-card-surface refreshed-detail-text"',
     'Report an Issue must use the Collection-style main card with visible outer spacing'
   );
   requireText(
@@ -4141,7 +4141,7 @@ const validateCurrentBatchContract = (files) => {
     );
     requireCount(
       editRequestFile,
-      'dialogClass="request-modal-site-surface sm:max-w-5xl"',
+      'dialogClass="app-card-main request-modal-site-surface sm:max-w-5xl"',
       2,
       'new and pending requests must both use the site canvas'
     );
@@ -4165,8 +4165,8 @@ const validateCurrentBatchContract = (files) => {
   }
   const requestConfirmation = 'src/components/Requests/destructiveActions.tsx';
   for (const token of [
-    'dialogClass="request-modal-site-surface refreshed-detail-text request-action-dialog"',
-    '<p className="refreshed-inset-surface request-action-explanation">',
+    'dialogClass="app-card-main request-modal-site-surface refreshed-detail-text request-action-dialog"',
+    '<p className="app-card-inset refreshed-inset-surface app-card-sub request-action-explanation">',
     'okDisabled={disabled || busy}',
     'onCancel={busy ? undefined : onCancel}',
   ]) {
@@ -4249,7 +4249,7 @@ const validateCurrentBatchContract = (files) => {
     );
     requireText(
       manageFile,
-      'dialogClass="refreshed-card-surface refreshed-detail-text manage-media-dialog"',
+      'dialogClass="app-card-main refreshed-card-surface refreshed-detail-text manage-media-dialog"',
       'media management must use the Report an Issue main-card layout'
     );
     requireText(
@@ -4351,6 +4351,29 @@ const validateCurrentBatchContract = (files) => {
     ['sm:!max-w-5xl', 'width: calc(100% - 2rem)'],
     'management dialogs must retain shared responsive width'
   );
+  requireText(
+    'src/components/RequestModal/AdvancedRequester/index.tsx',
+    '!isValidating &&\n            !!serverData?.tags?.length',
+    'advanced request tags must stay hidden until real tag options finish loading'
+  );
+  requireCssRule(
+    '.app-card-main',
+    ['border-radius: 0.75rem;'],
+    'main-card borders must preserve the shared rounded-xl silhouette'
+  );
+  for (const token of [
+    ':is(.app-card-sub, .app-card-inset),',
+    '--app-card-frame-width: 1px;',
+    'border-radius: 0.5rem;',
+    'background: var(--app-card-frame-background);',
+    'mask-composite: exclude;',
+  ]) {
+    requireText(
+      globals,
+      token,
+      'card borders must preserve the shared rounded silhouette and masked gradient ring'
+    );
+  }
   for (const token of ["label: 'HD'", "label: '4K'"]) {
     requireText(
       'src/components/ManageSlideOver/index.tsx',

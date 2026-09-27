@@ -1074,7 +1074,8 @@ const AdvancedRequester = ({
           )}
           {selectedServer !== null &&
             serviceOverridesEnabled &&
-            (isValidating || !serverData || !!serverData?.tags?.length) && (
+            !isValidating &&
+            !!serverData?.tags?.length && (
               <div className="discover-filter-control mb-2 max-w-xl">
                 <label
                   htmlFor="tags"
