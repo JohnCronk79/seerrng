@@ -1,0 +1,1 @@
+Move the current filtered Requests screen directly to `/requests`, remove the obsolete `/requests/status` page, and label the screen “Requests.” The avatar and main navigation now open the same page. The screen preloads the next page and its media details, and shows a neutral loading title instead of exposing raw media IDs while metadata arrives.

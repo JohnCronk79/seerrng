@@ -29,6 +29,10 @@ import type {
 } from '@server/api/themoviedb/interfaces';
 import { MAX_DISCOVER_KEYWORD_IDS } from '@server/constants/discover';
 import { MediaStatus, MediaType } from '@server/constants/media';
+import {
+  MUSIC_PRIMARY_TYPES,
+  musicReleaseTypeField,
+} from '@server/constants/musicReleaseTypes';
 import { getRepository } from '@server/datasource';
 import type MediaEntity from '@server/entity/Media';
 import Media from '@server/entity/Media';
@@ -73,6 +77,7 @@ import {
   isUserSessionCredentialVersionCurrent,
   runUserSecurityMutation,
 } from '@server/lib/userSecurityMutation';
+import { filterVideoSearchResults } from '@server/lib/videoSearchFilters';
 import { getCombinedWatchlist } from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { mapOpenLibrarySearchDoc } from '@server/models/Book';
@@ -88,17 +93,21 @@ import {
   type AlbumResult,
 } from '@server/models/Search';
 import { mapNetwork } from '@server/models/Tv';
+import { searchBookshelfNarrators } from '@server/utils/bookshelfCatalog';
 import {
   mapWithConcurrency,
   settlePromisesWithin,
 } from '@server/utils/concurrency';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import { getHttpErrorDetails } from '@server/utils/httpError';
+import {
+  buildMusicAlbumSearchQuery,
+  parseMusicSearchFilters,
+} from '@server/utils/musicSearchFilters';
 import { parsePositiveInt } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
   matchesAllSearchTerms,
-  toBooleanAndQuery,
   toFieldedBooleanAndQuery,
 } from '@server/utils/searchTerms';
 import { isCollection, isMovie, isPerson } from '@server/utils/typeHelpers';
@@ -520,14 +529,10 @@ const normalizeLocalAlbumType = (
 ): AlbumResult['primary-type'] => {
   const normalized = value?.trim().toLocaleLowerCase();
 
-  if (normalized === 'single') {
-    return 'Single';
-  }
-  if (normalized === 'ep') {
-    return 'EP';
-  }
-
-  return 'Album';
+  return (
+    MUSIC_PRIMARY_TYPES.find((type) => type.toLowerCase() === normalized) ??
+    'Album'
+  );
 };
 
 const getLocalAvailableMusic = async ({
@@ -535,6 +540,7 @@ const getLocalAvailableMusic = async ({
   page,
   itemsPerPage,
   query,
+  artist,
   genreFilter,
   releaseTypeFilter,
   releaseDateGte,
@@ -546,6 +552,7 @@ const getLocalAvailableMusic = async ({
   page: number;
   itemsPerPage: number;
   query: string;
+  artist?: string;
   genreFilter: string[];
   releaseTypeFilter: string[];
   releaseDateGte?: string;
@@ -570,6 +577,42 @@ const getLocalAvailableMusic = async ({
   const requestedQuality = availability.toLocaleUpperCase();
   const sortAscending = sortByValue.endsWith('.asc');
   const sortByBase = sortByValue.replace(/\.(?:asc|desc)$/, '');
+
+  // Scanned local metadata only stores the primary type. Resolve secondary
+  // membership in bounded catalogue batches, before local pagination.
+  const secondaryTypes = releaseTypeFilter.filter(
+    (type) => musicReleaseTypeField(type) === 'secondarytype'
+  );
+  const secondaryMatches = new Set<string>();
+  if (secondaryTypes.length) {
+    const ids = media
+      .filter((item) =>
+        getAvailableMusicQualities(
+          item,
+          item.requests ?? [],
+          settings.lidarr
+        ).includes(requestedQuality as 'MP3' | 'FLAC')
+      )
+      .map((item) => item.mbId)
+      .filter(
+        (id): id is string =>
+          !!id && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)
+      );
+    const batches = Array.from(
+      { length: Math.ceil(ids.length / 100) },
+      (_, index) => ids.slice(index * 100, index * 100 + 100)
+    );
+    const api = new MusicBrainz();
+    const results = await mapWithConcurrency(batches, 2, (batch) =>
+      api.searchAlbumWithTotal({
+        query: `(${batch.map((id) => `rgid:"${id}"`).join(' OR ')}) AND ${buildMusicAlbumSearchQuery('', { releaseType: secondaryTypes.join(',') })}`,
+        limit: 100,
+        offset: 0,
+      })
+    );
+    for (const result of results)
+      for (const album of result.results) secondaryMatches.add(album.id);
+  }
 
   const matches = media
     .map((item) => {
@@ -597,6 +640,7 @@ const getLocalAvailableMusic = async ({
     })
     .filter(
       ({
+        item,
         searchMetadata,
         availableQualities,
         genres,
@@ -604,6 +648,7 @@ const getLocalAvailableMusic = async ({
         albumType,
       }) =>
         Boolean(searchMetadata?.title) &&
+        (!artist || matchesAllSearchTerms([searchMetadata?.artist], artist)) &&
         availableQualities.includes(requestedQuality as 'MP3' | 'FLAC') &&
         (!query ||
           matchesAllSearchTerms(
@@ -611,8 +656,10 @@ const getLocalAvailableMusic = async ({
             query
           )) &&
         (!releaseTypeFilter.length ||
-          releaseTypeFilter.some(
-            (type) => type.toLocaleLowerCase() === albumType.toLocaleLowerCase()
+          releaseTypeFilter.some((type) =>
+            musicReleaseTypeField(type) === 'secondarytype'
+              ? secondaryMatches.has(item.mbId ?? '')
+              : type.toLocaleLowerCase() === albumType.toLocaleLowerCase()
           )) &&
         (!genreFilter.length ||
           genreFilter.some((filterGenre) =>
@@ -1472,6 +1519,26 @@ const shuffleRankedWindow = <T>(
   return [...windowedResults, ...rankedResults.slice(windowSize)];
 };
 
+const findMatchingVideoKeywordIds = async (
+  tmdb: TheMovieDb,
+  search: string
+): Promise<string | undefined> => {
+  try {
+    const response = await tmdb.searchKeyword({ query: search });
+    const ids = response.results
+      .filter((keyword) => matchesAllSearchTerms([keyword.name], search))
+      .slice(0, MAX_DISCOVER_KEYWORD_IDS)
+      .map((keyword) => keyword.id);
+    return ids.length ? ids.join('|') : undefined;
+  } catch (error) {
+    logger.debug('Unable to include TMDB keywords in discovery search', {
+      label: 'API',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+};
+
 discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
@@ -1524,6 +1591,9 @@ discoverRoutes.get('/movies', async (req, res, next) => {
         })
       );
     }
+    const matchingKeywordIdsPromise = query.search
+      ? findMatchingVideoKeywordIds(tmdb, query.search)
+      : Promise.resolve(undefined);
     const data = query.search
       ? await tmdb.searchMovies({
           query: query.search,
@@ -1559,6 +1629,28 @@ discoverRoutes.get('/movies', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    const matchingKeywordIds = await matchingKeywordIdsPromise;
+    const taggedData = matchingKeywordIds
+      ? await tmdb.getDiscoverMovies({
+          page,
+          language: req.locale ?? query.language,
+          keywords: matchingKeywordIds,
+        })
+      : undefined;
+    const taggedIds = new Set(taggedData?.results.map((result) => result.id));
+    const combinedResults = [...data.results, ...(taggedData?.results ?? [])];
+    data.results = await filterVideoSearchResults(
+      tmdb,
+      'movie',
+      combinedResults.filter(
+        (result, index) =>
+          combinedResults.findIndex(
+            (candidate) => candidate.id === result.id
+          ) === index
+      ),
+      query,
+      req.locale
+    );
     const providerResults =
       query.search || query.sortBy
         ? data.results
@@ -1567,11 +1659,13 @@ discoverRoutes.get('/movies', async (req, res, next) => {
             parsedShuffleSeed.value
           );
     const rankedResults = query.search
-      ? providerResults.filter((result) =>
-          matchesAllSearchTerms(
-            [result.title, result.original_title],
-            query.search ?? ''
-          )
+      ? providerResults.filter(
+          (result) =>
+            taggedIds.has(result.id) ||
+            matchesAllSearchTerms(
+              [result.title, result.original_title],
+              query.search ?? ''
+            )
         )
       : providerResults;
 
@@ -1599,8 +1693,8 @@ discoverRoutes.get('/movies', async (req, res, next) => {
 
     return res.status(200).json({
       page: data.page,
-      totalPages: data.total_pages,
-      totalResults: data.total_results,
+      totalPages: Math.max(data.total_pages, taggedData?.total_pages ?? 0),
+      totalResults: data.total_results + (taggedData?.total_results ?? 0),
       keywords: keywordData,
       results: rankedResults.map((result) =>
         mapMovieResult(
@@ -1953,6 +2047,9 @@ discoverRoutes.get('/tv', async (req, res, next) => {
         })
       );
     }
+    const matchingKeywordIdsPromise = query.search
+      ? findMatchingVideoKeywordIds(tmdb, query.search)
+      : Promise.resolve(undefined);
     const data = query.search
       ? await tmdb.searchTvShows({
           query: query.search,
@@ -1989,6 +2086,28 @@ discoverRoutes.get('/tv', async (req, res, next) => {
           certificationLte: query.certificationLte,
           certificationCountry: query.certificationCountry,
         });
+    const matchingKeywordIds = await matchingKeywordIdsPromise;
+    const taggedData = matchingKeywordIds
+      ? await tmdb.getDiscoverTv({
+          page,
+          language: req.locale ?? query.language,
+          keywords: matchingKeywordIds,
+        })
+      : undefined;
+    const taggedIds = new Set(taggedData?.results.map((result) => result.id));
+    const combinedResults = [...data.results, ...(taggedData?.results ?? [])];
+    data.results = await filterVideoSearchResults(
+      tmdb,
+      'tv',
+      combinedResults.filter(
+        (result, index) =>
+          combinedResults.findIndex(
+            (candidate) => candidate.id === result.id
+          ) === index
+      ),
+      query,
+      req.locale
+    );
     const providerResults =
       query.search || query.sortBy
         ? data.results
@@ -1997,11 +2116,13 @@ discoverRoutes.get('/tv', async (req, res, next) => {
             parsedShuffleSeed.value
           );
     const rankedResults = query.search
-      ? providerResults.filter((result) =>
-          matchesAllSearchTerms(
-            [result.name, result.original_name],
-            query.search ?? ''
-          )
+      ? providerResults.filter(
+          (result) =>
+            taggedIds.has(result.id) ||
+            matchesAllSearchTerms(
+              [result.name, result.original_name],
+              query.search ?? ''
+            )
         )
       : providerResults;
 
@@ -2029,8 +2150,8 @@ discoverRoutes.get('/tv', async (req, res, next) => {
 
     return res.status(200).json({
       page: data.page,
-      totalPages: data.total_pages,
-      totalResults: data.total_results,
+      totalPages: Math.max(data.total_pages, taggedData?.total_pages ?? 0),
+      totalResults: data.total_results + (taggedData?.total_results ?? 0),
       keywords: keywordData,
       results: rankedResults.map((result) =>
         mapTvResult(
@@ -2616,6 +2737,12 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
 );
 
 discoverRoutes.get('/music', async (req, res) => {
+  const parsedMusicFilters = parseMusicSearchFilters(req.query);
+  if ('error' in parsedMusicFilters)
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedMusicFilters.error });
+  const musicFilters = parsedMusicFilters.value;
   const listenBrainz = new ListenBrainzAPI();
   const musicBrainz = new MusicBrainz();
   const itemsPerPage = 20;
@@ -2703,7 +2830,6 @@ discoverRoutes.get('/music', async (req, res) => {
         .filter(Boolean)
     : [];
   const query = parsedQuery.value ?? '';
-  const providerSearchQuery = toBooleanAndQuery(query);
   const shuffleSeed = parsedShuffleSeed.value;
   const releaseDateGte = parsedReleaseDateGte.value;
   const releaseDateLte = parsedReleaseDateLte.value;
@@ -2716,6 +2842,7 @@ discoverRoutes.get('/music', async (req, res) => {
           page,
           itemsPerPage,
           query,
+          artist: musicFilters.artist,
           genreFilter,
           releaseTypeFilter,
           releaseDateGte,
@@ -2726,67 +2853,54 @@ discoverRoutes.get('/music', async (req, res) => {
       );
     }
 
-    if (query) {
-      const providerWindow = getProviderWindow(page, itemsPerPage);
-      const albumWindow = await musicBrainz.searchAlbum({
-        query: providerSearchQuery,
-        limit: providerWindow.limit,
-        offset: providerWindow.offset,
+    if (
+      query ||
+      musicFilters.artistId ||
+      musicFilters.artist ||
+      releaseDateGte ||
+      releaseDateLte ||
+      releaseTypeFilter.length
+    ) {
+      const response = await musicBrainz.searchAlbumWithTotal({
+        query: buildMusicAlbumSearchQuery(query, musicFilters),
+        limit: itemsPerPage,
+        offset: (page - 1) * itemsPerPage,
       });
-      const filteredAlbums = albumWindow.filter((album) => {
-        const releaseDate = album['first-release-date'] ?? '';
-        const albumGenres = (album.tags ?? []).map((tag) =>
-          tag.name.toLocaleLowerCase()
-        );
-
-        return (
-          matchesAllSearchTerms(
-            [
-              album.title,
-              ...album['artist-credit'].flatMap((credit) => [
-                credit.name,
-                credit.artist.name,
-                credit.artist['sort-name'],
-              ]),
-              ...albumGenres,
-            ],
-            query
-          ) &&
-          (!releaseTypeFilter.length ||
-            releaseTypeFilter.includes(album['primary-type'])) &&
-          (!genreFilter.length ||
-            genreFilter.some((genre) =>
-              albumGenres.includes(genre.toLocaleLowerCase())
-            )) &&
-          (!releaseDateGte || releaseDate >= releaseDateGte) &&
-          (!releaseDateLte || releaseDate <= releaseDateLte)
-        );
-      });
-      const albums = dedupeMusicAlbums(
-        filteredAlbums.slice(providerWindow.sliceStart, providerWindow.sliceEnd)
-      ).sort((a, b) => {
-        if (sortByBase === 'release_date') {
-          const comparison = (a['first-release-date'] ?? '').localeCompare(
-            b['first-release-date'] ?? ''
-          );
-          return sortAscending ? comparison : -comparison;
-        }
-
-        const comparison = scoreMusicAlbum(b) - scoreMusicAlbum(a);
-        return sortAscending ? -comparison : comparison;
-      });
-      const relatedMediaMap = await getRelatedMusicMediaMap(
+      const albums = dedupeMusicAlbums(response.results)
+        .filter(
+          (album) =>
+            !query ||
+            matchesAllSearchTerms(
+              [
+                album.title,
+                ...album['artist-credit'].map((credit) => credit.name),
+                ...(album.tags ?? []).map((tag) => tag.name),
+              ],
+              query
+            )
+        )
+        .sort((a, b) => {
+          if (sortByBase === 'release_date') {
+            const comparison = (a['first-release-date'] ?? '').localeCompare(
+              b['first-release-date'] ?? ''
+            );
+            return sortAscending ? comparison : -comparison;
+          }
+          const comparison = scoreMusicAlbum(b) - scoreMusicAlbum(a);
+          return sortAscending ? -comparison : comparison;
+        });
+      const related = await getRelatedMusicMediaMap(
         albums.map((album) => album.id),
         req.user
       );
-
       return res.status(200).json({
         page,
-        totalPages: albums.length === itemsPerPage ? page + 1 : page,
-        totalResults: getUnknownTotalResults(page, albums.length, itemsPerPage),
-        results: albums.map((album) =>
-          mapDiscoverAlbumResult(album, relatedMediaMap)
+        totalPages: Math.max(
+          1,
+          Math.ceil(response.totalResults / itemsPerPage)
         ),
+        totalResults: response.totalResults,
+        results: albums.map((album) => mapDiscoverAlbumResult(album, related)),
       });
     }
 
@@ -3232,6 +3346,12 @@ discoverRoutes.get('/music', async (req, res) => {
       ...getErrorLogFields(e),
       requestQuery: getDiscoverLogQuery(req.query),
     });
+    if (query || Object.values(musicFilters).some(Boolean)) {
+      return res.status(503).json({
+        status: 503,
+        message: 'Music search is temporarily unavailable. Please try again.',
+      });
+    }
     return res.status(200).json(emptyDiscoverResponse(page));
   }
 });
@@ -3260,6 +3380,14 @@ discoverRoutes.get('/books', async (req, res) => {
   const parsedSearchQuery = parseOptionalDiscoverString(
     req.query.query,
     'Query'
+  );
+  const parsedAuthorQuery = parseOptionalDiscoverString(
+    req.query.author,
+    'Author'
+  );
+  const parsedNarratorQuery = parseOptionalDiscoverString(
+    req.query.narrator,
+    'Narrator'
   );
   const parsedFirstPublishYear = parseOptionalDiscoverString(
     req.query.firstPublishYear,
@@ -3293,6 +3421,16 @@ discoverRoutes.get('/books', async (req, res) => {
       .status(400)
       .json({ status: 400, message: parsedSearchQuery.error });
   }
+  if ('error' in parsedAuthorQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedAuthorQuery.error });
+  }
+  if ('error' in parsedNarratorQuery) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedNarratorQuery.error });
+  }
   if ('error' in parsedFirstPublishYear) {
     return res
       .status(400)
@@ -3313,6 +3451,14 @@ discoverRoutes.get('/books', async (req, res) => {
   }
 
   const rawSearchQuery = parsedSearchQuery.value ?? '';
+  const authorQuery = parsedAuthorQuery.value ?? '';
+  const narratorQuery = parsedNarratorQuery.value ?? '';
+  if (narratorQuery && parsedFormat.value !== 'audiobook') {
+    return res.status(400).json({
+      status: 400,
+      message: 'Narrator Search requires the audiobook format.',
+    });
+  }
   const legacySubjectQuery = rawSearchQuery
     .match(/^subject:(.+)$/i)?.[1]
     ?.trim();
@@ -3366,6 +3512,7 @@ discoverRoutes.get('/books', async (req, res) => {
           ? 'book'
           : 'all',
     keyword: searchQuery || undefined,
+    ...(narratorQuery ? { narrator: narratorQuery } : {}),
     page,
     pageSize: itemsPerPage,
     sort: sortByValue,
@@ -3384,6 +3531,9 @@ discoverRoutes.get('/books', async (req, res) => {
 
   if (hasSearchQuery && hasSubjectFilter) {
     queryParts.push(`subject:${subjectQuery}`);
+  }
+  if (authorQuery) {
+    queryParts.push(toFieldedBooleanAndQuery(authorQuery, ['author']));
   }
   if (language) {
     queryParts.push(`language:${language}`);
@@ -3408,9 +3558,73 @@ discoverRoutes.get('/books', async (req, res) => {
     : page;
   const providerLimit = providerWindow?.limit ?? itemsPerPage;
 
+  if (narratorQuery) {
+    try {
+      const books = (
+        await searchBookshelfNarrators(getSettings().readarr, narratorQuery)
+      )
+        .filter(
+          (book) =>
+            (!searchQuery ||
+              matchesAllSearchTerms(
+                [book.title, book.author, ...(book.subjects ?? [])],
+                searchQuery
+              )) &&
+            (!authorQuery ||
+              matchesAllSearchTerms([book.author], authorQuery)) &&
+            (!subjectQuery ||
+              matchesAllSearchTerms(book.subjects ?? [], subjectQuery)) &&
+            (!language || book.languages?.includes(language)) &&
+            (parsedRatingNumber === undefined ||
+              (book.ratingsAverage ?? 0) >= parsedRatingNumber) &&
+            (!firstPublishYear ||
+              (firstPublishYear === 'before-1970'
+                ? (book.firstPublishYear ?? Number.POSITIVE_INFINITY) < 1970
+                : book.firstPublishYear === Number(firstPublishYear)))
+        )
+        .sort((left, right) => {
+          const comparison =
+            sortByBase === 'rating'
+              ? (right.ratingsAverage ?? -1) - (left.ratingsAverage ?? -1)
+              : sortByBase === 'editions'
+                ? (right.isbnCandidates?.length ?? 0) -
+                  (left.isbnCandidates?.length ?? 0)
+                : sortByValue === 'newest' || sortByValue === 'oldest'
+                  ? (right.firstPublishYear ?? -1) -
+                    (left.firstPublishYear ?? -1)
+                  : 0;
+          return (
+            (sortAscending || sortByValue === 'oldest'
+              ? -comparison
+              : comparison) || left.title.localeCompare(right.title)
+          );
+        });
+      const offset = (page - 1) * itemsPerPage;
+      return res.status(200).json({
+        page,
+        totalPages: Math.max(Math.ceil(books.length / itemsPerPage), 1),
+        totalResults: books.length,
+        results: books.slice(offset, offset + itemsPerPage),
+      });
+    } catch (error) {
+      logger.error('Failed to search audiobook narrators', {
+        label: 'Discover Books',
+        ...getErrorLogFields(error),
+        discoveryContext: bookDiscoveryContext,
+      });
+      return res.status(503).json({
+        status: 503,
+        message: 'The audiobook catalog is unavailable. Please try again.',
+      });
+    }
+  }
+
   try {
     const openLibrarySort =
-      sortByBase === 'ranked' && !hasSearchQuery && !hasSubjectFilter
+      sortByBase === 'ranked' &&
+      !hasSearchQuery &&
+      !hasSubjectFilter &&
+      !authorQuery
         ? 'random'
         : sortByValue === 'newest'
           ? 'new'

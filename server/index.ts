@@ -175,7 +175,15 @@ Promise.resolve()
     await getSettings().load();
   })
   .then(() => {
-    const app = next({ dev });
+    // Select Webpack independently of filesystem polling for Linux-local previews.
+    const app = next({
+      dev,
+      ...(dev &&
+      (process.env.WATCHPACK_POLLING === 'true' ||
+        process.env.SEERR_DEV_WEBPACK === 'true')
+        ? { webpack: true }
+        : {}),
+    });
     const handle = app.getRequestHandler();
 
     if (!appDataPermissions()) {
@@ -391,7 +399,9 @@ Promise.resolve()
       server.use('/avatarproxy', clearCookies, avatarproxy);
 
       server.get('*path', (req, res) => {
-        setStaticAssetCacheControl(req, res);
+        if (!dev) {
+          setStaticAssetCacheControl(req, res);
+        }
 
         return handle(req, res);
       });

@@ -5,4 +5,5 @@ area: interface
 action: none
 breaking: false
 ---
-Seerr now includes a distinct Seerr palette with navy surfaces and blue/sky accents alongside Seerr Classic. Choose it from the browser-local theme picker without changing another user’s saved palette.
+SeerrNG now provides the default black-to-dark-blue appearance, alongside the
+original Seerr blue-gray palette and the other browser-local theme choices.

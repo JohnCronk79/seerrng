@@ -36,6 +36,8 @@ const messages = defineMessages('components.Settings.SettingsMain', {
     'Configure global and default settings for Seerr.',
   apikey: 'API Key',
   apikeyCopied: 'Copied API key to clipboard.',
+  regenerateApiKey:
+    'Generate a new API key. Apps using the current key will need the new key to connect.',
   applicationTitle: 'Application Title',
   applicationurl: 'Application URL',
   discoverRegion: 'Discover Region',
@@ -309,7 +311,7 @@ const SettingsMain = () => {
               className="settings-page-form"
               data-testid="settings-main-form"
             >
-              <section className="settings-group-card">
+              <section className="app-card-sub settings-group-card">
                 <h3 className="settings-group-heading">
                   {intl.formatMessage(messages.generalsettings)}
                 </h3>
@@ -343,6 +345,9 @@ const SettingsMain = () => {
                               e.preventDefault();
                               regenerate();
                             }}
+                            aria-label={intl.formatMessage(
+                              messages.regenerateApiKey
+                            )}
                             className="input-action"
                             type="button"
                           >
@@ -677,7 +682,7 @@ const SettingsMain = () => {
                   </SettingsFormRow>
                 </div>
               </section>
-              <section className="settings-group-card">
+              <section className="app-card-sub settings-group-card">
                 <h3 className="settings-group-heading">
                   {intl.formatMessage(messages.playlistIntegrations)}
                 </h3>
@@ -745,7 +750,7 @@ const SettingsMain = () => {
                   </SettingsFormRow>
                 </div>
               </section>
-              <section className="settings-group-card">
+              <section className="app-card-sub settings-group-card">
                 <h3 className="settings-group-heading">
                   {intl.formatMessage(messages.comicsMetadata)}
                 </h3>
