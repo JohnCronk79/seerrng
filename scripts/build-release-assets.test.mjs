@@ -13,7 +13,7 @@ const createFixture = async () => {
   temporaryDirectories.add(root);
   const executableDirectory = path.join(root, 'tools');
   await Promise.all([
-    ...['.next', 'bin', 'dist', 'public'].map((directory) =>
+    ...['.next', 'bin', 'dist', 'patches', 'public'].map((directory) =>
       fs.mkdir(path.join(root, directory), { recursive: true })
     ),
     fs.mkdir(path.join(root, '.next', 'cache'), { recursive: true }),
@@ -26,6 +26,10 @@ const createFixture = async () => {
   ]);
   await fs.writeFile(path.join(root, 'dist', 'index.js'), 'fixture\n');
   await fs.writeFile(path.join(root, 'bin', 'prepare.mjs'), 'fixture\n');
+  await fs.writeFile(
+    path.join(root, 'patches', 'eslint-plugin-formatjs@6.6.3.patch'),
+    'fixture patch\n'
+  );
   await fs.writeFile(path.join(root, 'public', 'asset.txt'), 'public\n');
   for (const file of [
     'package.json',
@@ -43,6 +47,7 @@ const createFixture = async () => {
     ),
     ...[
       'dist/index.js',
+      'patches/eslint-plugin-formatjs@6.6.3.patch',
       'public/asset.txt',
       'package.json',
       'pnpm-lock.yaml',
@@ -64,7 +69,7 @@ const createFixture = async () => {
   );
   await fs.writeFile(
     path.join(executableDirectory, 'pnpm'),
-    '#!/bin/sh\nif [ "$1" = install ] && [ "$2" = --prod ]; then\n  ln -s "$PWD/public/asset.txt" "$PWD/public/internal-link"\nfi\nexit 0\n',
+    '#!/bin/sh\nif [ "$1" = install ] && [ "$2" = --prod ]; then\n  test -f "$PWD/patches/eslint-plugin-formatjs@6.6.3.patch" || exit 1\n  ln -s "$PWD/public/asset.txt" "$PWD/public/internal-link"\nfi\nexit 0\n',
     { mode: 0o755 }
   );
   return { executableDirectory, root, script };
@@ -138,6 +143,9 @@ describe('release asset construction', () => {
       code: 'ENOENT',
     });
     await assert.rejects(fs.stat(path.join(root, '.next', 'dev')), {
+      code: 'ENOENT',
+    });
+    await assert.rejects(fs.stat(path.join(root, 'patches')), {
       code: 'ENOENT',
     });
     assert.equal((await fs.stat(root)).mode & 0o777, 0o755);

@@ -7,6 +7,7 @@ import TheMovieDb from '@server/api/themoviedb';
 import { getRepository } from '@server/datasource';
 import { User } from '@server/entity/User';
 import type {
+  ComicServiceOption,
   ServiceCommonServer,
   ServiceCommonServerWithDetails,
 } from '@server/interfaces/api/serviceInterfaces';
@@ -23,7 +24,7 @@ import { isAuthenticated } from '@server/middleware/auth';
 import { authorizedMutation } from '@server/middleware/authorizedMutation';
 import {
   classifyBookshelfProvider,
-  getBookshelfProviderWarning,
+  getBookshelfProviderNotice,
 } from '@server/utils/bookshelfProvider';
 import {
   parseNonNegativeRouteId,
@@ -363,6 +364,32 @@ serviceRoutes.get('/lidarr', async (req, res, next) => {
   }
 });
 
+serviceRoutes.get('/comic', async (req, res, next) => {
+  try {
+    return await runServiceSummaryRead(req, () => {
+      const settings = getExternalRuntimeConfig();
+      const comicServices: ComicServiceOption[] = [
+        ...settings.mylar.map((mylar): ComicServiceOption => ({
+          id: mylar.id,
+          name: mylar.name,
+          isDefault: mylar.isDefault,
+          backendType: 'mylar',
+        })),
+        ...settings.kapowarr.map((kapowarr): ComicServiceOption => ({
+          id: kapowarr.id,
+          name: kapowarr.name,
+          isDefault: kapowarr.isDefault,
+          backendType: 'kapowarr',
+        })),
+      ];
+
+      return res.status(200).json(comicServices);
+    });
+  } catch (error) {
+    return reportServiceSummaryReadError(error, next);
+  }
+});
+
 serviceRoutes.get('/readarr', async (req, res, next) => {
   try {
     return await runServiceSummaryRead(req, (includeOperationalDetails) => {
@@ -440,7 +467,8 @@ serviceRoutes.get<{ readarrId: string }>(
                 activeTags: readarrSettings.tags,
                 serviceType: readarrSettings.serviceType ?? 'ebook',
                 provider,
-                legacyWarning: getBookshelfProviderWarning(provider),
+                providerNotice: getBookshelfProviderNotice(provider),
+                legacyWarning: getBookshelfProviderNotice(provider),
                 metadataSource: development?.metadataSource,
               },
               profiles: profiles.map((profile) => ({

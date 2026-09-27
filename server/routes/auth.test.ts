@@ -19,6 +19,7 @@ import { LinkedAccount } from '@server/entity/LinkedAccount';
 import { User } from '@server/entity/User';
 import { UserSettings } from '@server/entity/UserSettings';
 import PreparedEmail from '@server/lib/email';
+import ImageProxy from '@server/lib/imageproxy';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
@@ -156,6 +157,35 @@ const authenticateQCMock = mock.method(
   'authenticateQuickConnect',
   async () => ({ ...defaultAuthenticateResponse })
 );
+const fakeAvatarBuffer = Buffer.from('fake-quickconnect-avatar-bytes');
+
+const axiosHeadMock = mock.method(axios, 'head', async () => ({
+  status: 200,
+  headers: { 'last-modified': 'Wed, 01 Jan 2025 00:00:00 GMT' },
+}));
+
+const clearCachedImageMock = mock.method(
+  ImageProxy.prototype,
+  'clearCachedImage',
+  async () => undefined
+);
+
+const getImageMock = mock.method(
+  ImageProxy.prototype,
+  'getImage',
+  async () => ({
+    imageBuffer: fakeAvatarBuffer,
+    meta: {
+      revalidateAfter: 3600,
+      curRevalidate: 3600,
+      isStale: false,
+      etag: 'mock-meta-etag',
+      extension: 'jpg',
+      cacheKey: 'mock-cache-key',
+      cacheMiss: true,
+    },
+  })
+);
 
 let app: Express;
 
@@ -244,6 +274,15 @@ describe('POST /auth/jellyfin/quickconnect/initiate', () => {
     assert.strictEqual(res.body.code, '123456');
     assert.strictEqual(res.body.secret, 'abc123def456abc123def456');
     assert.strictEqual(initiateQCMock.mock.callCount(), 1);
+  });
+
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
+
+    const res = await request(app).post('/auth/jellyfin/quickconnect/initiate');
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(initiateQCMock.mock.callCount(), 0);
   });
 
   it('returns 500 when Jellyfin API fails', async () => {
@@ -338,6 +377,17 @@ describe('GET /auth/jellyfin/quickconnect/check', () => {
     assert.strictEqual(checkQCMock.mock.callCount(), 0);
   });
 
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
+
+    const res = await request(app)
+      .get('/auth/jellyfin/quickconnect/check')
+      .query({ secret: 'abc123def456abc123def456' });
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(checkQCMock.mock.callCount(), 0);
+  });
+
   it('returns error when Jellyfin API fails', async () => {
     checkQCMock.mock.mockImplementation(async () => {
       throw new ApiError(500, ApiErrorCode.Unknown);
@@ -357,6 +407,9 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     authenticateQCMock.mock.mockImplementation(async () => ({
       ...defaultAuthenticateResponse,
     }));
+    axiosHeadMock.mock.resetCalls();
+    clearCachedImageMock.mock.resetCalls();
+    getImageMock.mock.resetCalls();
     configureJellyfin();
   });
 
@@ -460,6 +513,39 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     assert.notStrictEqual(updatedUser.jellyfinDeviceId, 'old-device-id');
   });
 
+  it('refreshes avatarVersion/avatarETag when the remote avatar has changed', async () => {
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'qc-avatar-change@seerr.dev',
+      jellyfinUsername: 'quickconnectuser',
+      jellyfinUserId: 'jf-qc-user-001',
+      jellyfinDeviceId: 'old-device-id',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-qc-user-001?v=old',
+      avatarVersion: 'old-version',
+      avatarETag: 'old-etag',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const agent = request.agent(app);
+    const res = await agent
+      .post('/auth/jellyfin/quickconnect/authenticate')
+      .send({ secret: 'abc123def456abc123def456' });
+
+    assert.strictEqual(res.status, 200);
+
+    const updatedUser = await userRepo.findOneOrFail({
+      where: { jellyfinUserId: 'jf-qc-user-001' },
+    });
+    assert.notStrictEqual(updatedUser.avatarVersion, 'old-version');
+    assert.notStrictEqual(updatedUser.avatarETag, 'old-etag');
+    assert.notStrictEqual(
+      updatedUser.avatar,
+      '/avatarproxy/jf-qc-user-001?v=old'
+    );
+  });
+
   it('creates a new user when newPlexLogin is enabled and user does not exist', async () => {
     const settings = getSettings();
     settings.main.newPlexLogin = true;
@@ -495,38 +581,15 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
     assert.strictEqual(meRes.status, 200);
   });
 
-  it('sets userType to EMBY when media server is Emby', async () => {
-    const settings = getSettings();
-    settings.main.mediaServerType = MediaServerType.EMBY;
-    settings.main.newPlexLogin = true;
+  it('returns 403 when the media server is Emby', async () => {
+    getSettings().main.mediaServerType = MediaServerType.EMBY;
 
-    authenticateQCMock.mock.mockImplementation(async () => ({
-      User: {
-        Id: 'emby-new-user',
-        Name: 'embyuser',
-        ServerId: 'server-1',
-        Policy: { IsAdministrator: false },
-      },
-      AccessToken: 'emby-token',
-    }));
-
-    const agent = request.agent(app);
-    const res = await agent
+    const res = await request(app)
       .post('/auth/jellyfin/quickconnect/authenticate')
       .send({ secret: 'abc123def456abc123def456' });
 
-    assert.strictEqual(res.status, 200);
-
-    const meRes = await agent.get('/auth/me');
-    assert.strictEqual(meRes.status, 200);
-    assert.strictEqual(meRes.body.jellyfinUsername, 'embyuser');
-
-    const userRepo = getRepository(User);
-    const user = await userRepo.findOne({
-      where: { jellyfinUserId: 'emby-new-user' },
-    });
-    assert.ok(user);
-    assert.strictEqual(user.userType, UserType.EMBY);
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(authenticateQCMock.mock.callCount(), 0);
   });
 
   it('applies default permissions to newly created users', async () => {
@@ -1154,6 +1217,60 @@ describe('POST /auth/jellyfin', () => {
     assert.strictEqual(settings.jellyfin.apiKey, 'bootstrap-api-key');
   });
 
+  it('keeps the initial Jellyfin setup session available to the next request', async (t) => {
+    const userRepository = getRepository(User);
+    await userRepository.clear();
+    const settings = getSettings();
+    settings.main.mediaServerType = MediaServerType.NOT_CONFIGURED;
+    settings.jellyfin.ip = '';
+    const loginMock = mock.method(JellyfinAPI.prototype, 'login', async () => ({
+      User: {
+        Id: 'aabbccddeeff00112233445566778899',
+        Name: 'session-jellyfin-owner',
+        ServerId: 'session-server',
+        ServerName: 'Session Server',
+        Configuration: { GroupedFolders: [] },
+        Policy: { IsAdministrator: true },
+      },
+      AccessToken: 'session-access-token',
+    }));
+    const tokenMock = mock.method(
+      JellyfinAPI.prototype,
+      'createApiToken',
+      async () => 'session-api-key'
+    );
+    const nameMock = mock.method(
+      JellyfinAPI.prototype,
+      'getServerName',
+      async () => 'Session Server'
+    );
+    t.after(() => {
+      loginMock.mock.restore();
+      tokenMock.mock.restore();
+      nameMock.mock.restore();
+    });
+
+    const agent = request.agent(app);
+    const response = await agent.post('/auth/jellyfin').send({
+      username: 'session-jellyfin-owner',
+      password: 'bootstrap-password',
+      email: 'session-jellyfin-owner@seerr.dev',
+      hostname: '127.0.0.1',
+      port: 8096,
+      useSsl: false,
+      serverType: MediaServerType.JELLYFIN,
+    });
+
+    assert.strictEqual(response.status, 200);
+    const authenticated = await agent.get('/auth/me');
+    assert.strictEqual(authenticated.status, 200);
+    assert.strictEqual(authenticated.body.id, 1);
+    assert.strictEqual(
+      authenticated.body.jellyfinUsername,
+      'session-jellyfin-owner'
+    );
+  });
+
   it('admits only one concurrent Jellyfin bootstrap configuration', async (t) => {
     const userRepository = getRepository(User);
     await userRepository.clear();
@@ -1544,7 +1661,7 @@ describe('POST /auth/local', () => {
   it('allows the non-admin user to log in', async () => {
     const res = await request(app)
       .post('/auth/local')
-      .send({ email: 'friend@seerr.dev', password: 'test1234' });
+      .send({ email: 'demo@seerr.dev', password: 'test1234' });
 
     assert.strictEqual(res.status, 200);
     assert.ok('id' in res.body);
@@ -2063,7 +2180,11 @@ describe('POST /auth/reset-password', () => {
     assert.strictEqual(res.status, 200);
     const persisted = await userRepo.findOneOrFail({
       where: { id: user.id },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
     assert.strictEqual(
       persisted.resetPasswordGuid,
@@ -2076,25 +2197,61 @@ describe('POST /auth/reset-password', () => {
   });
 
   it('sends only one valid link for concurrent reset requests', async () => {
-    const responses = await Promise.all([
-      request(app)
-        .post('/auth/reset-password')
-        .send({ email: 'admin@seerr.dev' }),
-      request(app)
-        .post('/auth/reset-password')
-        .send({ email: 'admin@seerr.dev' }),
+    let deliveryStarted!: () => void;
+    const deliveryStartedPromise = new Promise<void>((resolve) => {
+      deliveryStarted = resolve;
+    });
+    let releaseDelivery: (() => void) | undefined;
+    emailMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDelivery = resolve;
+          deliveryStarted();
+        })
+    );
+
+    const firstResponsePromise = request(app)
+      .post('/auth/reset-password')
+      .send({ email: 'admin@seerr.dev' });
+    let startTimeout: NodeJS.Timeout | undefined;
+    const startResult = await Promise.race([
+      deliveryStartedPromise.then(() => ({ deliveryStarted: true as const })),
+      firstResponsePromise.then((response) => ({ response })),
+      new Promise<{ timedOut: true }>((resolve) => {
+        startTimeout = setTimeout(() => resolve({ timedOut: true }), 2_000);
+      }),
     ]);
+    if (startTimeout) clearTimeout(startTimeout);
+    if ('response' in startResult) {
+      throw new Error(
+        `Reset response arrived before SMTP delivery: ${startResult.response.status} ${JSON.stringify(startResult.response.body)}`
+      );
+    }
+    assert.ok(
+      'deliveryStarted' in startResult,
+      'SMTP delivery did not start within 2 seconds'
+    );
+    const secondResponse = await request(app)
+      .post('/auth/reset-password')
+      .send({ email: 'admin@seerr.dev' });
+
+    assert.strictEqual(secondResponse.status, 200);
+    assert.strictEqual(emailMock.callCount(), 1);
+
+    releaseDelivery?.();
+    const firstResponse = await firstResponsePromise;
     await waitForPendingPasswordResetDeliveries();
 
-    assert.deepEqual(
-      responses.map((response) => response.status),
-      [200, 200]
-    );
+    assert.strictEqual(firstResponse.status, 200);
     assert.strictEqual(emailMock.callCount(), 1);
 
     const user = await getRepository(User).findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
     assert.ok(user.resetPasswordGuid);
     assert.ok(user.recoveryLinkExpirationDate);
@@ -2108,7 +2265,11 @@ describe('POST /auth/reset-password', () => {
     await waitForPendingPasswordResetDeliveries();
     const first = await userRepository.findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
 
     await request(app)
@@ -2117,7 +2278,11 @@ describe('POST /auth/reset-password', () => {
     await waitForPendingPasswordResetDeliveries();
     const second = await userRepository.findOneOrFail({
       where: { id: first.id },
-      select: ['id', 'resetPasswordGuid', 'recoveryLinkExpirationDate'],
+      select: {
+        id: true,
+        resetPasswordGuid: true,
+        recoveryLinkExpirationDate: true,
+      },
     });
 
     assert.ok(first.resetPasswordGuid);
@@ -2313,7 +2478,7 @@ describe('POST /auth/reset-password/:guid', () => {
 
     const persisted = await getRepository(User).findOneOrFail({
       where: { email: 'admin@seerr.dev' },
-      select: ['id', 'password'],
+      select: { id: true, password: true },
     });
     const matchingPasswords = await Promise.all(
       passwords.map((password) => persisted.passwordMatch(password))

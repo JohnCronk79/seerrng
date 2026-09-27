@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<CommunityApplications>
+  <Profile>SeerrNG is a fork of Seerr that extends Seerr's existing movie and TV request workflow with music, ebooks, and audiobooks. This repository provides the Unraid Community Applications template for the SeerrNG fork. The application integrates with Plex, Jellyfin, Emby, Radarr, Sonarr, Lidarr, and Bookshelf or Readarr-compatible services; those services are configured separately.</Profile>
+  <Icon>https://raw.githubusercontent.com/snapetech/seerrng/main/public/android-chrome-512x512.png</Icon>
+  <WebPage>https://github.com/snapetech/seerrng</WebPage>
+  <Forum>https://github.com/snapetech/seerrng/issues</Forum>
+  <Discord>https://discord.gg/5PyXBfvS6T</Discord>
+  <DonateLink>https://ko-fi.com/snapetech</DonateLink>
+  <DonateText>Support SeerrNG development</DonateText>
+</CommunityApplications>

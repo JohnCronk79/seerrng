@@ -1,4 +1,4 @@
-const liveAudit = Cypress.env('RUN_LIVE_AUTH_AUDIT') === true;
+const liveAudit = Cypress.expose('RUN_LIVE_AUTH_AUDIT') === true;
 
 const routes = [
   '/',
@@ -36,7 +36,12 @@ const routes = [
 
 (liveAudit ? describe : describe.skip)('Live authenticated smoke audit', () => {
   beforeEach(() => {
-    cy.login(Cypress.env('LIVE_QA_EMAIL'), Cypress.env('LIVE_QA_PASSWORD'));
+    cy.env<{ LIVE_QA_EMAIL: string; LIVE_QA_PASSWORD: string }>([
+      'LIVE_QA_EMAIL',
+      'LIVE_QA_PASSWORD',
+    ]).then(({ LIVE_QA_EMAIL, LIVE_QA_PASSWORD }) => {
+      cy.login(LIVE_QA_EMAIL, LIVE_QA_PASSWORD);
+    });
   });
 
   routes.forEach((route) => {

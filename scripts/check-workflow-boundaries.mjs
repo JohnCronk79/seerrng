@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 const rootDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -325,9 +325,9 @@ for (const [jobName, stepName] of [
 
 const releaseValidation = workflows
   .get('release.yml')
-  ?.workflow?.jobs?.[
-    'validate-main-tag'
-  ]?.steps?.find((step) => step.name === 'Ensure tag is on main')?.run;
+  ?.workflow?.jobs?.['validate-main-tag']?.steps?.find(
+    (step) => step.name === 'Ensure tag is on main'
+  )?.run;
 check(
   workflows.get('release.yml')?.workflow?.jobs?.['validate-main-tag']?.[
     'runs-on'

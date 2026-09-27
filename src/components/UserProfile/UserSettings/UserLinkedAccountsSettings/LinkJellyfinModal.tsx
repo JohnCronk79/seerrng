@@ -68,11 +68,12 @@ const LinkJellyfinModal = ({
 
   return (
     <Transition
+      as="div"
       appear
       show={show}
       enter="transition ease-in-out duration-300 transform opacity-0"
       enterFrom="opacity-0"
-      enterTo="opacuty-100"
+      enterTo="opacity-100"
       leave="transition ease-in-out duration-300 transform opacity-100"
       leaveFrom="opacity-100"
       leaveTo="opacity-0"
@@ -143,7 +144,7 @@ const LinkJellyfinModal = ({
                 <label htmlFor="username" className="text-label">
                   {intl.formatMessage(messages.username)}
                 </label>
-                <div className="mb-2 mt-1 sm:col-span-2 sm:mt-0">
+                <div className="mt-1 mb-2 sm:col-span-2 sm:mt-0">
                   <div className="flex rounded-md shadow-sm">
                     <Field
                       id="username"
@@ -159,7 +160,7 @@ const LinkJellyfinModal = ({
                 <label htmlFor="password" className="text-label">
                   {intl.formatMessage(messages.password)}
                 </label>
-                <div className="mb-2 mt-1 sm:col-span-2 sm:mt-0">
+                <div className="mt-1 mb-2 sm:col-span-2 sm:mt-0">
                   <div className="flex rounded-md shadow-sm">
                     <Field
                       id="password"
@@ -172,20 +173,23 @@ const LinkJellyfinModal = ({
                     <div className="error">{errors.password}</div>
                   )}
                 </div>
-                <div className="mt-4">
-                  <Button
-                    buttonType="ghost"
-                    type="button"
-                    onClick={() => {
-                      setError(null);
-                      onSwitchToQuickConnect();
-                    }}
-                    className="w-full gap-2"
-                  >
-                    <QrCodeIcon />
-                    <span>{intl.formatMessage(messages.quickConnect)}</span>
-                  </Button>
-                </div>
+                {settings.currentSettings.mediaServerType ===
+                  MediaServerType.JELLYFIN && (
+                  <div className="mt-4">
+                    <Button
+                      buttonType="ghost"
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        onSwitchToQuickConnect();
+                      }}
+                      className="w-full gap-2"
+                    >
+                      <QrCodeIcon />
+                      <span>{intl.formatMessage(messages.quickConnect)}</span>
+                    </Button>
+                  </div>
+                )}
               </Form>
             </Modal>
           );

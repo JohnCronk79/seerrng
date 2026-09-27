@@ -5,10 +5,14 @@ import {
   readDatabaseTlsFile,
 } from '@server/lib/databaseConfig';
 import { secureSqliteDatabaseFiles } from '@server/lib/sqliteFileSecurity';
+import { isPgsql } from '@server/utils/dbType';
 import fs from 'fs';
+import 'reflect-metadata';
 import type { TlsOptions } from 'tls';
 import type { DataSourceOptions, EntityTarget, Repository } from 'typeorm';
 import { DataSource } from 'typeorm';
+
+export { isPgsql };
 
 const getMigrationFiles = (directory: string, extension: 'ts' | 'js') =>
   fs.existsSync(directory)
@@ -86,7 +90,7 @@ function buildSslConfig(): TlsOptions | undefined {
 }
 
 const testConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: ':memory:',
   // Test setup owns schema creation and reset. Enabling these here makes
   // initialize() race seedTestDb() with a second schema synchronization.
@@ -94,12 +98,17 @@ const testConfig: DataSourceOptions = {
   dropSchema: false,
   logging: boolFromEnv('DB_LOG_QUERIES'),
   entities: getRuntimeFiles('server/entity', 'ts'),
-  migrations: getMigrationFiles('server/migration/sqlite', 'ts'),
+  // Vitest transforms entity modules in-process. Loading every migration via
+  // TypeORM's CommonJS loader bypasses that transform and fails on TypeScript
+  // syntax, while migration tests import the classes they exercise directly.
+  migrations: process.env.VITEST
+    ? []
+    : getMigrationFiles('server/migration/sqlite', 'ts'),
   subscribers: getRuntimeFiles('server/subscriber', 'ts'),
 };
 
 const devConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: SQLITE_DATABASE_PATH,
   synchronize: true,
   migrationsRun: false,
@@ -111,7 +120,7 @@ const devConfig: DataSourceOptions = {
 };
 
 const prodConfig: DataSourceOptions = {
-  type: 'sqlite',
+  type: 'better-sqlite3',
   database: SQLITE_DATABASE_PATH,
   synchronize: false,
   migrationsRun: false,
@@ -165,8 +174,6 @@ const postgresProdConfig: DataSourceOptions = {
   migrations: getMigrationFiles('dist/migration/postgres', 'js'),
   subscribers: getRuntimeFiles('dist/subscriber', 'js'),
 };
-
-export const isPgsql = process.env.DB_TYPE === 'postgres';
 
 function getDataSource(): DataSourceOptions {
   if (process.env.NODE_ENV === 'test') {

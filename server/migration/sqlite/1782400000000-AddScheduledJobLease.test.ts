@@ -5,7 +5,7 @@ import { AddScheduledJobLease1782400000000 } from './1782400000000-AddScheduledJ
 
 test('SQLite scheduled job lease migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

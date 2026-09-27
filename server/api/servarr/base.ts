@@ -64,6 +64,7 @@ export interface RootFolder {
 export interface QualityProfile {
   id: number;
   name: string;
+  language?: string;
 }
 
 export interface QueueStatusMessage {
@@ -119,13 +120,59 @@ export const MAX_SERVARR_QUEUE_RESULTS = 10_000;
 export const MAX_SERVARR_QUEUE_PAGE_SIZE = 1_000;
 export const MAX_SERVARR_LIBRARY_RESULTS = 100_000;
 export const MAX_SERVARR_LOOKUP_RESULTS = 1_000;
+export const MAX_SERVARR_COVER_IMAGES = 20;
 const MAX_SERVARR_TEXT_LENGTH = 10_000;
+const MAX_SERVARR_IMAGE_URL_LENGTH = 2_048;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const boundedText = (value: unknown): string =>
   typeof value === 'string' ? value.slice(0, MAX_SERVARR_TEXT_LENGTH) : '';
+
+const boundedImageUrl = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length <= MAX_SERVARR_IMAGE_URL_LENGTH
+    ? value
+    : undefined;
+
+export interface ServarrImage {
+  coverType?: string;
+  url?: string;
+  remoteUrl?: string;
+}
+
+export const sanitizeServarrImages = (value: unknown): ServarrImage[] =>
+  (Array.isArray(value) ? value : [])
+    .slice(0, MAX_SERVARR_COVER_IMAGES)
+    .flatMap((image) =>
+      isRecord(image)
+        ? [
+            {
+              coverType: boundedText(image.coverType) || undefined,
+              url: boundedImageUrl(image.url),
+              remoteUrl: boundedImageUrl(image.remoteUrl),
+            },
+          ]
+        : []
+    );
+
+export const isServarrServiceUrl = (
+  candidateUrl: string,
+  serviceBaseUrl: string
+): boolean => {
+  try {
+    const candidate = new URL(candidateUrl);
+    const service = new URL(serviceBaseUrl);
+
+    return (
+      !candidate.username &&
+      !candidate.password &&
+      candidate.origin === service.origin
+    );
+  } catch {
+    return false;
+  }
+};
 
 export const sanitizeServarrCommand = (value: unknown): ServarrCommand => {
   if (!isRecord(value) || !Number.isSafeInteger(value.id)) {
@@ -187,7 +234,19 @@ export const sanitizeServarrProfiles = (value: unknown): QualityProfile[] =>
         return [];
       }
       const name = boundedText(profile.name);
-      return name ? [{ id: profile.id as number, name }] : [];
+      const profileLanguage = profile.language;
+      const language = isRecord(profileLanguage)
+        ? boundedText(profileLanguage.name)
+        : boundedText(profileLanguage);
+      return name
+        ? [
+            {
+              id: profile.id as number,
+              name,
+              ...(language ? { language } : {}),
+            },
+          ]
+        : [];
     });
 
 export const sanitizeServarrRootFolders = (value: unknown): RootFolder[] =>

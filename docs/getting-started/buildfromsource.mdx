@@ -8,6 +8,10 @@ sidebar_position: 2
 This method is not recommended for most users. It is intended for advanced users who are familiar with managing their own server infrastructure.
 
 Refer to [Configuring Databases](/extending-seerr/database-config#postgresql-options) for details on how to configure your database.
+
+This page builds SeerrNG itself. To build the optional BookshelfNG
+Readarr-compatible backend without Docker, use the [BookshelfNG source-build
+guide](/using-seerr/bookshelf-source-build) instead.
 :::
 
 import Tabs from '@theme/Tabs';
@@ -43,9 +47,10 @@ pnpm start
 ```
 
 :::info
-You can open the interface at `http://localhost:5055`. For authenticated
-sessions, use [built-in HTTPS](/using-seerr/advanced/built-in-tls), an HTTPS
-reverse proxy, or explicitly opt in to the trusted-LAN HTTP fallback.
+You can open the interface at `http://localhost:5055`. Direct HTTP sign-in
+works by default with a warning. Use [built-in
+HTTPS](/using-seerr/advanced/built-in-tls) or an HTTPS reverse proxy for
+encrypted sessions; set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
 :::
 
 #### Extending the installation
@@ -224,9 +229,10 @@ You can add the environment variables to a `.env` file in the Seerr directory.
 :::
 
 :::info
-You can open the interface at `http://localhost:5055`. For authenticated
-sessions, use [built-in HTTPS](/using-seerr/advanced/built-in-tls), an HTTPS
-reverse proxy, or explicitly opt in to the trusted-LAN HTTP fallback.
+You can open the interface at `http://localhost:5055`. Direct HTTP sign-in
+works by default with a warning. Use [built-in
+HTTPS](/using-seerr/advanced/built-in-tls) or an HTTPS reverse proxy for
+encrypted sessions; set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
 :::
 
 #### Extending the installation

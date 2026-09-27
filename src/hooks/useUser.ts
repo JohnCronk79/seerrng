@@ -2,7 +2,10 @@ import { isAuthenticationError } from '@app/utils/auth';
 import { UserType } from '@server/constants/user';
 import type {
   CardTextVisibility,
+  UserMediaFilterPins,
+  UserPreferredLanguages,
   UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import type { PermissionCheckOptions } from '@server/lib/permissions';
 import { Permission, hasPermission } from '@server/lib/permissions';
@@ -37,6 +40,7 @@ export interface UserSettings {
   discoverRegion?: string;
   streamingRegion?: string;
   originalLanguage?: string;
+  preferredLanguages?: UserPreferredLanguages;
   locale?: string;
   notificationTypes: Partial<NotificationAgentTypes>;
   watchlistSyncMovies?: boolean;
@@ -48,6 +52,12 @@ export interface UserSettings {
   cardTextVisibilityAlbum?: CardTextVisibility;
   cardTextVisibilityBook?: CardTextVisibility;
   cardTextVisibility?: UserSettingsCardTextResponse;
+  detailDisclosureCastPinned?: boolean;
+  detailDisclosureCrewPinned?: boolean;
+  detailDisclosureArtistsPinned?: boolean;
+  detailDisclosureSubjectTagsPinned?: boolean;
+  detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
+  mediaFilterPins?: UserMediaFilterPins;
 }
 
 interface UserHookResponse {

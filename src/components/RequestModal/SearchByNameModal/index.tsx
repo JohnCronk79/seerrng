@@ -80,7 +80,7 @@ const SearchByNameModal = ({
         {data?.slice(0, 6).map((item) => (
           <button
             key={item.tvdbId}
-            className="container mx-auto flex h-40 scale-100 transform-gpu cursor-pointer flex-col items-center justify-center space-y-4 rounded-xl outline-none transition hover:scale-105 focus:outline-none focus:ring focus:ring-indigo-500 focus:ring-opacity-70"
+            className="focus:ring-opacity-70 container mx-auto flex h-40 scale-100 transform-gpu cursor-pointer flex-col items-center justify-center space-y-4 rounded-xl transition outline-none hover:scale-105 focus:ring focus:ring-indigo-500 focus:outline-none"
             onClick={() => handleClick(item.tvdbId)}
           >
             <div
@@ -95,16 +95,16 @@ const SearchByNameModal = ({
                     item.remotePoster ?? '/images/seerr_poster_not_found.png'
                   }
                   alt={item.title}
-                  className="w-100 h-auto rounded-md"
+                  className="h-auto w-100 rounded-md"
                   fill
                 />
               </div>
               <div className="flex-grow self-start p-3 text-left">
-                <div className="text-sm font-medium leading-tight">
+                <div className="text-sm leading-tight font-medium">
                   {item.year}
                 </div>
                 <div
-                  className="text-grey-200 text-xl font-bold leading-tight"
+                  className="text-grey-200 text-xl leading-tight font-bold"
                   style={{
                     WebkitLineClamp: 1,
                     display: '-webkit-box',
@@ -117,7 +117,7 @@ const SearchByNameModal = ({
                 </div>
                 {item.overview && (
                   <div
-                    className="whitespace-normal text-xs text-gray-400"
+                    className="text-xs whitespace-normal text-gray-400"
                     style={{
                       WebkitLineClamp: 5,
                       display: '-webkit-box',

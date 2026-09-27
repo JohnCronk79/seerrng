@@ -5,6 +5,7 @@ import type { RadarrMovie } from '@server/api/servarr/radarr';
 import type { AxiosInstance } from 'axios';
 import axios from 'axios';
 
+import { MAX_SERVARR_COVER_IMAGES, MAX_SERVARR_LOOKUP_RESULTS } from './base';
 import RadarrAPI, { sanitizeRadarrMovie } from './radarr';
 
 function buildRadarr(): RadarrAPI {
@@ -16,6 +17,30 @@ function getAxios(radarr: RadarrAPI): AxiosInstance {
 }
 
 describe('Radarr response normalization', () => {
+  it('rejects malformed or incomplete inventories in deletion-check mode', async () => {
+    const radarr = buildRadarr();
+    for (const data of [
+      {},
+      [null],
+      [{ id: 0, tmdbId: 42, title: 'Invalid' }],
+      [{ id: 4, title: 'No canonical ID' }],
+    ]) {
+      const get = mock.method(getAxios(radarr), 'get', async () => ({ data }));
+      await assert.rejects(radarr.getMovies({ strict: true }));
+      get.mock.restore();
+    }
+  });
+  it('accepts a verified empty inventory and sends the canonical filter', async () => {
+    const radarr = buildRadarr();
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: [],
+    }));
+    assert.deepEqual(await radarr.getMovies({ strict: true, tmdbId: 42 }), []);
+    const options = get.mock.calls[0].arguments[1] as
+      { params?: { tmdbId?: number } } | undefined;
+    assert.equal(options?.params?.tmdbId, 42);
+    get.mock.restore();
+  });
   it('returns an exact bounded movie and nested media record', () => {
     const movie = sanitizeRadarrMovie({
       id: 9,
@@ -56,6 +81,72 @@ describe('Radarr response normalization', () => {
     });
     assert.strictEqual(movie?.title.length, 10_000);
     assert.strictEqual(movie?.id, 0);
+  });
+
+  it('bounds advertised cover images and rejects oversized image URLs', () => {
+    const movie = sanitizeRadarrMovie({
+      id: 9,
+      title: 'Movie',
+      tmdbId: 42,
+      images: [
+        {
+          coverType: 'poster',
+          url: '/poster.jpg',
+          remoteUrl: 'https://covers.example/poster.jpg',
+        },
+        {
+          coverType: 'poster',
+          url: 'x'.repeat(2_049),
+          remoteUrl: 'https://covers.example/' + 'x'.repeat(2_049),
+        },
+        ...Array.from({ length: MAX_SERVARR_COVER_IMAGES }, (_, index) => ({
+          coverType: 'banner',
+          url: `/banner-${index}.jpg`,
+        })),
+      ],
+    });
+
+    assert.equal(movie?.images?.length, MAX_SERVARR_COVER_IMAGES);
+    assert.deepEqual(movie?.images?.[0], {
+      coverType: 'poster',
+      url: '/poster.jpg',
+      remoteUrl: 'https://covers.example/poster.jpg',
+    });
+    assert.deepEqual(movie?.images?.[1], {
+      coverType: 'poster',
+      url: undefined,
+      remoteUrl: undefined,
+    });
+  });
+});
+
+describe('RadarrAPI getLibraryMoviesByTmdbId', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('normalizes and bounds movie lookup results', async () => {
+    const radarr = buildRadarr();
+    const records = Array.from(
+      { length: MAX_SERVARR_LOOKUP_RESULTS + 1 },
+      (_, index) => ({
+        id: index + 1,
+        title: `Movie ${index + 1}`,
+        tmdbId: 550,
+        apiKey: 'provider-secret',
+      })
+    );
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: records,
+    }));
+
+    const movies = await radarr.getLibraryMoviesByTmdbId(550);
+
+    assert.equal(movies.length, MAX_SERVARR_LOOKUP_RESULTS);
+    assert.equal(movies[0].tmdbId, 550);
+    assert.ok(!('apiKey' in movies[0]));
+    assert.equal(get.mock.callCount(), 1);
+    const requestConfig = get.mock.calls[0].arguments[1] as
+      { params?: Record<string, unknown> } | undefined;
+    assert.equal(requestConfig?.params?.tmdbId, 550);
   });
 });
 
@@ -272,7 +363,7 @@ describe('RadarrAPI.getMovieCover', () => {
           {
             coverType: 'poster',
             url: '/MediaCover/42/poster.jpg?lastWrite=123',
-            remoteUrl: 'https://image.tmdb.org/t/p/original/poster.jpg',
+            remoteUrl: 'https://8.8.8.8/poster.jpg',
           },
         ],
       })
@@ -300,11 +391,16 @@ describe('RadarrAPI.getMovieCover', () => {
     assert.strictEqual(result.contentType, 'image/jpeg');
     assert.strictEqual(
       remoteGetMock.mock.calls[0].arguments[0],
-      'https://image.tmdb.org/t/p/original/poster.jpg'
+      'https://8.8.8.8/poster.jpg'
     );
-    assert.deepStrictEqual(remoteGetMock.mock.calls[0].arguments[1], {
-      responseType: 'arraybuffer',
-      headers: { Accept: 'image/*' },
-    });
+    const options = remoteGetMock.mock.calls[0].arguments[1] as Record<
+      string,
+      unknown
+    >;
+    assert.strictEqual(options.responseType, 'arraybuffer');
+    assert.strictEqual(options.maxContentLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.maxBodyLength, 10 * 1024 * 1024);
+    assert.strictEqual(options.timeout, 10_000);
+    assert.strictEqual(options.proxy, false);
   });
 });

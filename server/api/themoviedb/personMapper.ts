@@ -13,6 +13,7 @@ import {
 import logger from '@server/logger';
 import { In } from 'typeorm';
 import { getTmdbAuthHeaders, getTmdbAuthParams } from './auth';
+import { logTmdbRequestFailure } from './diagnostics';
 import type { TmdbSearchPersonResponse } from './interfaces';
 
 interface SearchPersonOptions {
@@ -114,6 +115,7 @@ class TmdbPersonMapper extends ExternalAPI {
     super('https://api.themoviedb.org/3', getTmdbAuthParams(), {
       headers: getTmdbAuthHeaders(),
       nodeCache: cacheManager.getCache('tmdb').data,
+      onRequestFailure: logTmdbRequestFailure,
       rateLimit: {
         maxRequests: 20,
         maxRPS: 50,
@@ -139,7 +141,7 @@ class TmdbPersonMapper extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataArtist).findOne({
         where: { mbArtistId: normalizedArtistId },
-        select: ['tmdbPersonId', 'tmdbThumb', 'tmdbUpdatedAt'],
+        select: { tmdbPersonId: true, tmdbThumb: true, tmdbUpdatedAt: true },
       });
 
       if (!metadata) {
@@ -173,7 +175,7 @@ class TmdbPersonMapper extends ExternalAPI {
     try {
       const metadata = await getRepository(MetadataArtist).findOne({
         where: { mbArtistId: normalizedArtistId },
-        select: ['tmdbPersonId', 'tmdbThumb', 'tmdbUpdatedAt'],
+        select: { tmdbPersonId: true, tmdbThumb: true, tmdbUpdatedAt: true },
       });
 
       if (metadata?.tmdbPersonId || metadata?.tmdbThumb) {
@@ -209,7 +211,7 @@ class TmdbPersonMapper extends ExternalAPI {
     try {
       const existingMetadata = await getRepository(MetadataArtist).findOne({
         where: { mbArtistId: normalizedArtistId },
-        select: ['tmdbPersonId', 'tmdbThumb', 'tmdbUpdatedAt'],
+        select: { tmdbPersonId: true, tmdbThumb: true, tmdbUpdatedAt: true },
       });
 
       if (existingMetadata?.tmdbPersonId) {
@@ -261,7 +263,7 @@ class TmdbPersonMapper extends ExternalAPI {
         const tmdbPersonIds = exactMatches.map((match) => match.id.toString());
         const existingMappings = await getRepository(MetadataArtist).find({
           where: { tmdbPersonId: In(tmdbPersonIds) },
-          select: ['mbArtistId', 'tmdbPersonId'],
+          select: { mbArtistId: true, tmdbPersonId: true },
         });
 
         const availableMatches = exactMatches.filter(
@@ -360,7 +362,12 @@ class TmdbPersonMapper extends ExternalAPI {
 
     const existingMetadata = await metadataRepository.find({
       where: { mbArtistId: In(artistIds) },
-      select: ['mbArtistId', 'tmdbPersonId', 'tmdbThumb', 'tmdbUpdatedAt'],
+      select: {
+        mbArtistId: true,
+        tmdbPersonId: true,
+        tmdbThumb: true,
+        tmdbUpdatedAt: true,
+      },
     });
 
     const results: Record<

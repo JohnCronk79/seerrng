@@ -162,7 +162,7 @@ export const PullToRefreshController = ({
 
   return (
     <div
-      className="absolute left-0 right-0 top-0 z-50 m-auto w-fit transition-all ease-out"
+      className="absolute top-0 right-0 left-0 z-50 m-auto w-fit transition-all ease-out"
       id="refreshIcon"
       style={{
         top: passedInitialThreshold
@@ -171,7 +171,7 @@ export const PullToRefreshController = ({
       }}
     >
       <div
-        className={`relative -top-28 h-9 w-9 rounded-full border-4 border-gray-800 bg-gray-800 shadow-md shadow-black ring-1 ring-gray-700 ${
+        className={`relative -top-28 h-9 w-9 rounded-full border-4 border-gray-800 bg-gray-800 shadow-md ring-1 shadow-black ring-gray-700 ${
           loading ? 'animate-spin' : ''
         }`}
         style={{ animationDirection: 'reverse' }}

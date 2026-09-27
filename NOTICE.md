@@ -22,3 +22,7 @@ Do not replace upstream attribution on inherited material. When adding fresh
 SeerrNG-specific files or repo metadata, avoid presenting them as upstream
 Seerr project output unless the content is explicitly documenting upstream
 behavior or compatibility.
+
+The `RemapOverseerrDeletedStatus` migration files are imported from upstream
+Seerr to preserve compatibility with databases created there. Their migration
+names and source issue links are retained intentionally.

@@ -1,23 +1,22 @@
-import Slider from '@app/components/Slider';
+import ThreeItemScroll from '@app/components/Common/ThreeItemScroll';
 import type {
   AssociationEdge,
   AssociationGraph,
 } from '@app/hooks/useAssociations';
 import defineMessages from '@app/utils/defineMessages';
-import Link from 'next/link';
 import { useIntl } from 'react-intl';
-import AssociationCard from './AssociationCard';
+import AssociationDetailCard from './AssociationDetailCard';
 
 const messages = defineMessages('components.Association', {
   similar: 'More like this',
   recommended: 'Recommended',
   similarartists: 'Similar artists',
-  music: 'Connected music',
-  screen: 'On screen',
-  sharedgenre: 'Shared genre',
-  listeneroverlap: 'Listener overlap',
-  relatedbooks: 'Related books',
-  books: 'Same author',
+  music: 'Connected Music',
+  screen: 'On Screen',
+  sharedgenre: 'Shared Genre',
+  listeneroverlap: 'Listener Overlap',
+  relatedbooks: 'Related Books',
+  books: 'Same Author',
   empty: 'No associations found yet',
 });
 
@@ -27,7 +26,13 @@ interface Section {
   match: (edge: AssociationEdge) => boolean;
 }
 
-const AssociationWall = ({ graph }: { graph: AssociationGraph }) => {
+const AssociationWall = ({
+  graph,
+  onSelect,
+}: {
+  graph: AssociationGraph;
+  onSelect?: () => void;
+}) => {
   const intl = useIntl();
   const similarTitle =
     graph.root.mediaType === 'album' || graph.root.mediaType === 'artist'
@@ -96,32 +101,22 @@ const AssociationWall = ({ graph }: { graph: AssociationGraph }) => {
     <div className="space-y-8" data-testid="association-wall">
       {rendered.map(({ section, edges }) => (
         <div key={section.key}>
-          <div className="slider-header">
-            <div className="slider-title">
-              <span>{section.title}</span>
-            </div>
-          </div>
-          <Slider
-            sliderKey={`assoc-${section.key}`}
-            isLoading={false}
-            isEmpty={false}
-            items={edges.map((edge) => (
-              <div
-                key={`${edge.node.mediaType}:${edge.node.id}`}
-                className="space-y-2"
-              >
-                <AssociationCard node={edge.node} />
-                <Link
-                  href={`/associations/${edge.node.mediaType}/${encodeURIComponent(
-                    String(edge.node.id)
-                  )}`}
-                  className="block text-center text-xs font-semibold text-indigo-400 transition hover:text-indigo-300"
-                >
-                  Explore connections
-                </Link>
+          {section.key !== 'similar' && (
+            <div className="slider-header">
+              <div className="slider-title">
+                <span>{section.title}</span>
               </div>
+            </div>
+          )}
+          <ThreeItemScroll label={section.title}>
+            {edges.map((edge) => (
+              <AssociationDetailCard
+                key={`${edge.node.mediaType}:${edge.node.id}`}
+                edge={edge}
+                onSelect={onSelect}
+              />
             ))}
-          />
+          </ThreeItemScroll>
         </div>
       ))}
     </div>

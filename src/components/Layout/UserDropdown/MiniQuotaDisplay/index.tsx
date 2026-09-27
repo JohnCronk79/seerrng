@@ -28,7 +28,7 @@ const MiniQuotaDisplay = ({ userId }: MiniQuotaDisplayProps) => {
     return null;
   }
 
-  if (!data && !error) {
+  if (!data) {
     return <SmallLoadingSpinner />;
   }
 

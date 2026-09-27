@@ -21,8 +21,8 @@ import {
 } from '@app/utils/localStorage';
 import {
   getPushSubscription,
-  subscribeToPushNotifications,
   unsubscribeToPushNotifications,
+  verifyAndResubscribePushSubscription,
   verifyPushSubscription,
 } from '@app/utils/pushSubscriptionHelpers';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
@@ -91,7 +91,7 @@ const UserWebPushSettings = () => {
   // Will only add to the database if subscribing for the first time
   const enablePushNotifications = async () => {
     try {
-      const isSubscribed = await subscribeToPushNotifications(
+      const isSubscribed = await verifyAndResubscribePushSubscription(
         user?.id,
         currentSettings
       );
@@ -122,10 +122,21 @@ const UserWebPushSettings = () => {
   // Deletes/disables corresponding push subscription from database
   const disablePushNotifications = async (endpoint?: string) => {
     try {
-      const unsubscribedEndpoint = await unsubscribeToPushNotifications(
+      // Only touch the browser subscription if it actually belongs to
+      // this user. Otherwise we'd silently kill a sibling user's working
+      // subscription if they happened to be using the same browser.
+      const ownsBrowserSubscription = await verifyPushSubscription(
         user?.id,
-        endpoint
+        currentSettings
       );
+
+      let unsubscribedEndpoint: string | null = null;
+      if (ownsBrowserSubscription) {
+        unsubscribedEndpoint = await unsubscribeToPushNotifications(
+          user?.id,
+          endpoint
+        );
+      }
 
       if (pushPreferenceKey) {
         writeLocalStorageValue(pushPreferenceKey, 'false');
@@ -134,7 +145,7 @@ const UserWebPushSettings = () => {
 
       // Only delete the current browser's subscription, not all devices
       const endpointToDelete = unsubscribedEndpoint || subEndpoint || endpoint;
-      if (endpointToDelete) {
+      if (endpointToDelete && ownsBrowserSubscription) {
         try {
           await axios.delete(
             `/api/v1/user/${user?.id}/pushSubscription/${encodeURIComponent(
@@ -383,7 +394,7 @@ const UserWebPushSettings = () => {
           );
         }}
       </Formik>
-      <div className="mb-6 mt-10">
+      <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.managedevices)}
         </h3>

@@ -5,7 +5,6 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaTypeBadge from '@app/components/Common/MediaTypeBadge';
 import PageTitle from '@app/components/Common/PageTitle';
 import MediaSlider from '@app/components/MediaSlider';
-import BulkRequestModal from '@app/components/RequestModal/BulkRequestModal';
 import TitleCard from '@app/components/TitleCard';
 import { Permission, useUser } from '@app/hooks/useUser';
 import ErrorPage from '@app/pages/_error';
@@ -14,6 +13,7 @@ import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownTrayIcon } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
+import type { AlbumResult } from '@server/models/Search';
 import axios from 'axios';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -45,6 +45,8 @@ interface Album {
   'primary-type'?: string;
   secondary_types?: string[];
   'artist-credit'?: { name: string }[];
+  availableQualities?: ('MP3' | 'FLAC')[];
+  qualityStatuses?: AlbumResult['qualityStatuses'];
   mediaInfo?: Media;
 }
 
@@ -90,7 +92,6 @@ const ArtistDetails = () => {
   const router = useRouter();
   const { hasPermission } = useUser();
   const artistId = router.query.artistId as string | undefined;
-  const [showBulkRequestModal, setShowBulkRequestModal] = useState(false);
   const { data, error } = useSWR<ArtistData>(
     artistId ? `/api/v1/artist/${encodeApiPathSegment(artistId)}` : null,
     { revalidateOnFocus: false, dedupingInterval: 30000 }
@@ -214,16 +215,7 @@ const ArtistDetails = () => {
   return (
     <>
       <PageTitle title={artistName} />
-      {showBulkRequestModal && artistId && (
-        <BulkRequestModal
-          show={showBulkRequestModal}
-          mediaType="music"
-          artistId={artistId}
-          title={artistName}
-          onCancel={() => setShowBulkRequestModal(false)}
-        />
-      )}
-      <div className="relative z-10 mb-10 mt-4 flex flex-col items-center gap-6 text-gray-300 lg:flex-row lg:items-start">
+      <div className="relative z-10 mt-4 mb-10 flex flex-col items-center gap-6 text-gray-300 lg:flex-row lg:items-start">
         {data.artistThumb && (
           <div className="relative h-36 w-36 flex-shrink-0 overflow-hidden rounded-full ring-1 ring-gray-700 lg:h-44 lg:w-44">
             <CachedImage
@@ -238,7 +230,7 @@ const ArtistDetails = () => {
         <div className="min-w-0 text-center lg:text-left">
           <div className="flex min-w-0 flex-wrap items-center justify-center gap-3 lg:justify-start">
             <MediaTypeBadge mediaType="artist" variant="inline" />
-            <h1 className="min-w-0 break-words text-3xl font-bold text-white lg:text-5xl">
+            <h1 className="min-w-0 text-3xl font-bold break-words text-white lg:text-5xl">
               {artistName}
             </h1>
             {artistId && (
@@ -263,7 +255,11 @@ const ArtistDetails = () => {
             <div className="mt-5">
               <Button
                 buttonType="primary"
-                onClick={() => setShowBulkRequestModal(true)}
+                onClick={() =>
+                  void router.push(
+                    `/collections/music/${artistId}?view=discography`
+                  )
+                }
               >
                 <ArrowDownTrayIcon />
                 <span>{intl.formatMessage(messages.requestdiscography)}</span>
@@ -324,6 +320,8 @@ const ArtistDetails = () => {
                         artist={album['artist-credit']?.[0]?.name ?? artistName}
                         type={album['primary-type']}
                         status={album.mediaInfo?.status ?? MediaStatus.UNKNOWN}
+                        availableQualities={album.availableQualities}
+                        qualityStatuses={album.qualityStatuses}
                         inProgress={
                           (album.mediaInfo?.downloadStatus ?? []).length > 0
                         }

@@ -6,20 +6,32 @@ import PageTitle from '@app/components/Common/PageTitle';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import LibraryItem from '@app/components/Settings/LibraryItem';
 import SettingsBadge from '@app/components/Settings/SettingsBadge';
+import Field, {
+  default as SettingsField,
+} from '@app/components/Settings/SettingsField';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
-import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowDownOnSquareIcon,
+  CheckCircleIcon,
+  MinusCircleIcon,
+} from '@heroicons/react/24/outline';
 import {
   ArrowPathIcon,
   MagnifyingGlassIcon,
   XMarkIcon,
 } from '@heroicons/react/24/solid';
+import {
+  createSettingsLibraryUpdateBody,
+  getSettingsLibraryApiPath,
+  getSettingsPlexLibraryTypeApiPath,
+} from '@server/constants/settingsLibraryApi';
 import type { PlexDevice } from '@server/interfaces/api/plexInterfaces';
 import type { PlexSettings, TautulliSettings } from '@server/lib/settings';
 import axios from 'axios';
-import { Field, Formik } from 'formik';
+import { Formik } from 'formik';
 import { useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -40,9 +52,13 @@ const messages = defineMessages('components.Settings', {
   toastPlexRefresh: 'Retrieving server list from Plex…',
   toastPlexRefreshSuccess: 'Plex server list retrieved successfully!',
   toastPlexRefreshFailure: 'Failed to retrieve Plex server list.',
+  toastPlexSyncFailure: 'Failed to sync Plex libraries.',
+  invalidurlerror: 'Unable to connect to {mediaServerName} server.',
+  toggleLibraryFailure: 'Failed to update library.',
   toastPlexConnecting: 'Attempting to connect to Plex…',
   toastPlexConnectingSuccess: 'Plex connection established successfully!',
   toastPlexConnectingFailure: 'Failed to connect to Plex.',
+  toastPlexLibraryUpdateFailure: 'Failed to update Plex libraries.',
   settingUpPlexDescription:
     'To set up Plex, you can either enter the details manually or select a server retrieved from <RegisterPlexTVLink>plex.tv</RegisterPlexTVLink>. Press the button to the right of the dropdown to fetch the list of available servers.',
   hostname: 'Hostname or IP Address',
@@ -53,6 +69,8 @@ const messages = defineMessages('components.Settings', {
     'The libraries Seerr scans for titles. Set up and save your Plex connection settings, then click the button below if no libraries are listed.',
   scanning: 'Syncing…',
   scan: 'Sync Libraries',
+  selectAllLibraries: 'Select All',
+  selectNoLibraries: 'Select None',
   manualscan: 'Manual Library Scan',
   manualscanDescription:
     "Normally, this will only be run once every 24 hours. Seerr will check your Plex server's recently added more aggressively. If this is your first time configuring Plex, a one-time full manual library scan is recommended!",
@@ -65,7 +83,7 @@ const messages = defineMessages('components.Settings', {
   validationPortRequired: 'You must provide a valid port number',
   webAppUrl: '<WebAppLink>Web App</WebAppLink> URL',
   webAppUrlTip:
-    'Optionally direct users to the web app on your server instead of the "hosted" web app',
+    'Optionally direct users to the web app on your server instead of https://app.plex.tv/desktop',
   tautulliSettings: 'Tautulli Settings',
   tautulliSettingsDescription:
     'Optionally configure the settings for your Tautulli server. Seerr fetches watch history data for your Plex media from Tautulli.',
@@ -80,12 +98,18 @@ const messages = defineMessages('components.Settings', {
   toastTautulliSettingsSuccess: 'Tautulli settings saved successfully!',
   toastTautulliSettingsFailure:
     'Something went wrong while saving Tautulli settings.',
+  reclassifyToAudiobook: 'Reclassify as an Audiobooks library',
+  reclassifyToMusic: 'Reclassify as a Music library',
+  audiobooks: 'Audiobooks',
+  toastReclassifyFailure:
+    'Something went wrong while reclassifying the library.',
 });
 
 interface Library {
   id: string;
   name: string;
   enabled: boolean;
+  type: 'show' | 'movie' | 'music' | 'book';
 }
 
 interface SyncStatus {
@@ -107,10 +131,11 @@ interface PresetServerDisplay {
   message?: string;
 }
 interface SettingsPlexProps {
+  isSetupSettings?: boolean;
   onComplete?: () => void;
 }
 
-const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
+const SettingsPlex = ({ isSetupSettings, onComplete }: SettingsPlexProps) => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRefreshingPresets, setIsRefreshingPresets] = useState(false);
   const [availableServers, setAvailableServers] = useState<PlexDevice[] | null>(
@@ -121,12 +146,17 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
     error,
     mutate: revalidate,
   } = useSWR<PlexSettings>('/api/v1/settings/plex');
-  const { data: dataTautulli, mutate: revalidateTautulli } =
-    useSWR<TautulliSettings>('/api/v1/settings/tautulli');
+  const {
+    data: dataTautulli,
+    error: errorTautulli,
+    mutate: revalidateTautulli,
+  } = useSWR<TautulliSettings>(
+    isSetupSettings ? null : '/api/v1/settings/tautulli'
+  );
   const { data: dataSync, mutate: revalidateSync } = useSWR<SyncStatus>(
     '/api/v1/settings/plex/sync',
     {
-      refreshInterval: 1000,
+      refreshInterval: (latestData) => (latestData?.running ? 1000 : 10000),
     }
   );
   const intl = useIntl();
@@ -242,17 +272,30 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
   const syncLibraries = async () => {
     setIsSyncing(true);
 
-    const params: { sync: boolean; enable?: string } = {
-      sync: true,
-    };
-
-    if (activeLibraries.length > 0) {
-      params.enable = activeLibraries.join(',');
+    try {
+      await axios.post(
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({
+          sync: true,
+          enabledLibraryIds: activeLibraries,
+        })
+      );
+    } catch (e) {
+      addToast(
+        e?.response?.data?.message === 'CONNECTION_ERROR'
+          ? intl.formatMessage(messages.invalidurlerror, {
+              mediaServerName: 'Plex',
+            })
+          : intl.formatMessage(messages.toastPlexSyncFailure),
+        {
+          autoDismiss: true,
+          appearance: 'error',
+        }
+      );
+    } finally {
+      setIsSyncing(false);
+      revalidate();
     }
-
-    await axios.post('/api/v1/settings/plex/library', params);
-    setIsSyncing(false);
-    revalidate();
   };
 
   const refreshPresetServers = async () => {
@@ -311,30 +354,78 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
 
   const toggleLibrary = async (libraryId: string) => {
     setIsSyncing(true);
-    if (activeLibraries.includes(libraryId)) {
-      const params: { enable?: string } = {};
+    try {
+      const enabledLibraryIds = activeLibraries.includes(libraryId)
+        ? activeLibraries.filter((id) => id !== libraryId)
+        : [...activeLibraries, libraryId];
 
-      if (activeLibraries.length > 1) {
-        params.enable = activeLibraries
-          .filter((id) => id !== libraryId)
-          .join(',');
+      await axios.post(
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({ enabledLibraryIds })
+      );
+      if (onComplete) {
+        onComplete();
       }
-
-      await axios.post('/api/v1/settings/plex/library', params);
-    } else {
-      await axios.post('/api/v1/settings/plex/library', {
-        enable: [...activeLibraries, libraryId].join(','),
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastPlexLibraryUpdateFailure), {
+        autoDismiss: true,
+        appearance: 'error',
       });
+    } finally {
+      setIsSyncing(false);
     }
-
-    if (onComplete) {
-      onComplete();
-    }
-    setIsSyncing(false);
-    revalidate();
   };
 
-  if ((!data || !dataTautulli) && !error) {
+  const setAllLibrariesEnabled = async (enabled: boolean) => {
+    setIsSyncing(true);
+
+    try {
+      await axios.post(
+        getSettingsLibraryApiPath('plex'),
+        createSettingsLibraryUpdateBody({
+          enabledLibraryIds: enabled
+            ? (data?.libraries.map((library) => library.id) ?? [])
+            : [],
+        })
+      );
+
+      if (onComplete) {
+        onComplete();
+      }
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastPlexLibraryUpdateFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const reclassifyLibrary = async (
+    libraryId: string,
+    nextType: 'music' | 'book'
+  ) => {
+    try {
+      await axios.put(getSettingsPlexLibraryTypeApiPath(libraryId), {
+        type: nextType,
+      });
+      revalidate();
+    } catch {
+      addToast(intl.formatMessage(messages.toastReclassifyFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    }
+  };
+
+  if (
+    (!data || (!isSetupSettings && !dataTautulli)) &&
+    !error &&
+    !errorTautulli
+  ) {
     return <LoadingSpinner />;
   }
   return (
@@ -350,8 +441,8 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
         <p className="description">
           {intl.formatMessage(messages.plexsettingsDescription)}
         </p>
-        {!!onComplete && (
-          <div className="section">
+        {isSetupSettings && (
+          <div className="app-card-sub section">
             <Alert
               title={intl.formatMessage(messages.settingUpPlexDescription, {
                 RegisterPlexTVLink: (msg: React.ReactNode) => (
@@ -431,7 +522,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           isValid,
         }) => {
           return (
-            <form className="section" onSubmit={handleSubmit}>
+            <form className="app-card-sub section" onSubmit={handleSubmit}>
               <div className="form-row">
                 <label htmlFor="preset" className="text-label">
                   {intl.formatMessage(messages.serverpreset)}
@@ -539,7 +630,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
                   <span className="label-required">*</span>
                 </label>
                 <div className="form-input-area">
-                  <Field
+                  <SettingsField
                     type="text"
                     inputMode="numeric"
                     id="port"
@@ -582,9 +673,6 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
                     ),
                   })}
                   <SettingsBadge badgeType="advanced" className="ml-2" />
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.webAppUrlTip)}
-                  </span>
                 </label>
                 <div className="form-input-area">
                   <div className="form-input-field">
@@ -593,7 +681,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
                       inputMode="url"
                       id="webAppUrl"
                       name="webAppUrl"
-                      placeholder="https://app.plex.tv/desktop"
+                      placeholder="https://your-server-fqdn.com/web/index.html"
                     />
                   </div>
                   {errors.webAppUrl &&
@@ -602,6 +690,9 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
                       <div className="error">{errors.webAppUrl}</div>
                     )}
                 </div>
+                <span className="settings-form-row-description">
+                  {intl.formatMessage(messages.webAppUrlTip)}
+                </span>
               </div>
               <div className="actions">
                 <div className="flex justify-end">
@@ -625,47 +716,90 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           );
         }}
       </Formik>
-      <div className="mb-6 mt-10">
+      <section className="app-card-sub settings-group-card">
         <h3 className="heading">
           {intl.formatMessage(messages.plexlibraries)}
         </h3>
         <p className="description">
           {intl.formatMessage(messages.plexlibrariesDescription)}
         </p>
-      </div>
-      <div className="section">
-        <Button
-          onClick={() => syncLibraries()}
-          disabled={isSyncing || !data?.ip || !data?.port}
-        >
-          <ArrowPathIcon
-            className={isSyncing ? 'animate-spin' : ''}
-            style={{ animationDirection: 'reverse' }}
-          />
-          <span>
-            {isSyncing
-              ? intl.formatMessage(messages.scanning)
-              : intl.formatMessage(messages.scan)}
-          </span>
-        </Button>
-        <ul className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
+        <div className="settings-library-actions mt-[5px]">
+          <Button
+            buttonSize="standard"
+            onClick={() => syncLibraries()}
+            disabled={isSyncing || !data?.ip || !data?.port}
+          >
+            <ArrowPathIcon
+              className={isSyncing ? 'animate-spin' : ''}
+              style={{ animationDirection: 'reverse' }}
+            />
+            <span>
+              {isSyncing
+                ? intl.formatMessage(messages.scanning)
+                : intl.formatMessage(messages.scan)}
+            </span>
+          </Button>
+          <Button
+            buttonSize="standard"
+            onClick={() => setAllLibrariesEnabled(true)}
+            disabled={
+              isSyncing ||
+              !data?.libraries.length ||
+              activeLibraries.length === data.libraries.length
+            }
+          >
+            <CheckCircleIcon />
+            <span>{intl.formatMessage(messages.selectAllLibraries)}</span>
+          </Button>
+          <Button
+            buttonSize="standard"
+            onClick={() => setAllLibrariesEnabled(false)}
+            disabled={isSyncing || activeLibraries.length === 0}
+          >
+            <MinusCircleIcon />
+            <span>{intl.formatMessage(messages.selectNoLibraries)}</span>
+          </Button>
+        </div>
+        <ul className="settings-library-grid">
           {data?.libraries.map((library) => (
             <LibraryItem
               name={library.name}
+              type={library.type}
+              typeLabel={
+                library.type === 'book'
+                  ? intl.formatMessage(messages.audiobooks)
+                  : undefined
+              }
               isEnabled={library.enabled}
               key={`setting-library-${library.id}`}
               onToggle={() => toggleLibrary(library.id)}
+              reclassify={
+                library.type === 'music' || library.type === 'book'
+                  ? {
+                      label: intl.formatMessage(
+                        library.type === 'music'
+                          ? messages.reclassifyToAudiobook
+                          : messages.reclassifyToMusic
+                      ),
+                      onReclassify: () =>
+                        reclassifyLibrary(
+                          library.id,
+                          library.type === 'music' ? 'book' : 'music'
+                        ),
+                    }
+                  : undefined
+              }
             />
           ))}
         </ul>
-      </div>
-      <div className="mb-6 mt-10">
+      </section>
+      <div className="mt-10 mb-6">
         <h3 className="heading">{intl.formatMessage(messages.manualscan)}</h3>
         <p className="description">
           {intl.formatMessage(messages.manualscanDescription)}
         </p>
       </div>
-      <div className="section">
+      <div className="app-card-sub section">
         <div className="rounded-md bg-gray-800 p-4">
           <div className="relative mb-6 h-8 w-full overflow-hidden rounded-full bg-gray-600">
             {dataSync?.running && (
@@ -690,7 +824,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
             {dataSync?.running && (
               <>
                 {dataSync.currentLibrary && (
-                  <div className="mb-2 mr-0 flex items-center sm:mb-0 sm:mr-2">
+                  <div className="mr-0 mb-2 flex items-center sm:mr-2 sm:mb-0">
                     <Badge>
                       {intl.formatMessage(messages.currentlibrary, {
                         name: dataSync.currentLibrary.name,
@@ -734,9 +868,9 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
           </div>
         </div>
       </div>
-      {!onComplete && (
+      {!isSetupSettings && (
         <>
-          <div className="mb-6 mt-10">
+          <div className="mt-10 mb-6">
             <h3 className="heading">
               {intl.formatMessage(messages.tautulliSettings)}
             </h3>
@@ -795,7 +929,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
               isValid,
             }) => {
               return (
-                <form className="section" onSubmit={handleSubmit}>
+                <form className="app-card-sub section" onSubmit={handleSubmit}>
                   <div className="form-row">
                     <label htmlFor="tautulliHostname" className="text-label">
                       {intl.formatMessage(messages.hostname)}
@@ -827,7 +961,7 @@ const SettingsPlex = ({ onComplete }: SettingsPlexProps) => {
                       <span className="label-required">*</span>
                     </label>
                     <div className="form-input-area">
-                      <Field
+                      <SettingsField
                         type="text"
                         inputMode="numeric"
                         id="tautulliPort"

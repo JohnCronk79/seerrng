@@ -1,7 +1,6 @@
-import useSearchActivity from '@app/hooks/useSearchActivity';
 import useSearchInput from '@app/hooks/useSearchInput';
 import defineMessages from '@app/utils/defineMessages';
-import { ArrowPathIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import { XCircleIcon } from '@heroicons/react/24/outline';
 import { MagnifyingGlassIcon } from '@heroicons/react/24/solid';
 import type { KeyboardEvent } from 'react';
 import { useCallback } from 'react';
@@ -9,13 +8,11 @@ import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Layout.SearchInput', {
   searchPlaceholder: 'Search movies, series, music, books, and people',
-  searching: 'Searching',
 });
 
 const SearchInput = () => {
   const intl = useIntl();
   const { searchValue, setSearchValue, setIsOpen, clear } = useSearchInput();
-  const isSearching = useSearchActivity();
   const hasSearchValue = searchValue.length > 0;
   const handleBlur = useCallback(() => {
     if (searchValue === '') {
@@ -30,8 +27,8 @@ const SearchInput = () => {
   }, []);
 
   return (
-    <div className="flex flex-1 items-center gap-3">
-      <div className="flex w-1/2 min-w-0">
+    <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex w-full max-w-2xl min-w-0">
         <label htmlFor="search_field" className="sr-only">
           Search
         </label>
@@ -41,9 +38,7 @@ const SearchInput = () => {
           </div>
           <input
             id="search_field"
-            className={`block w-full rounded-full border border-gray-600 bg-gray-900/80 py-2 pl-10 text-white placeholder-gray-300 hover:border-gray-500 focus:border-gray-500 focus:bg-gray-900 focus:placeholder-gray-400 focus:outline-none focus:ring-0 sm:text-base ${
-              hasSearchValue ? 'pr-7' : ''
-            }`}
+            className={`app-search-input ${hasSearchValue ? 'pr-7' : ''}`}
             placeholder={intl.formatMessage(messages.searchPlaceholder)}
             type="search"
             autoComplete="off"
@@ -55,24 +50,15 @@ const SearchInput = () => {
           />
           {hasSearchValue && (
             <button
-              className="absolute inset-y-0 right-2 m-auto h-7 w-7 border-none p-1 text-gray-400 outline-none transition hover:text-white focus:border-none focus:outline-none"
+              className="absolute inset-y-0 right-2 m-auto h-7 w-7 border-none p-1 text-gray-400 transition outline-none hover:text-white focus:border-none focus:outline-none"
               onClick={() => clear()}
+              aria-label="Clear the search text"
             >
               <XCircleIcon className="h-5 w-5" />
             </button>
           )}
         </div>
       </div>
-      {isSearching && (
-        <div
-          className="flex shrink-0 items-center gap-2 text-sm text-gray-200"
-          role="status"
-          aria-live="polite"
-        >
-          <ArrowPathIcon className="h-5 w-5 animate-spin" />
-          <span>{intl.formatMessage(messages.searching)}</span>
-        </div>
-      )}
     </div>
   );
 };

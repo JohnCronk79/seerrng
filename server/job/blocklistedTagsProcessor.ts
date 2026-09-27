@@ -1,5 +1,7 @@
-import type { SortOptions } from '@server/api/themoviedb';
-import { SortOptionsIterable } from '@server/api/themoviedb';
+import {
+  MovieSortOptionsIterable,
+  TvSortOptionsIterable,
+} from '@server/api/themoviedb';
 import type {
   TmdbSearchMovieResponse,
   TmdbSearchTvResponse,
@@ -159,7 +161,10 @@ export class BlocklistedTagProcessor implements RunnableScanner<StatusBase> {
     }
 
     // The maximum number of queries we're expected to execute
-    this.total = 2 * uniqueTags.length * pageLimit * SortOptionsIterable.length;
+    this.total =
+      uniqueTags.length *
+      pageLimit *
+      (MovieSortOptionsIterable.length + TvSortOptionsIterable.length);
 
     for (const tag of uniqueTags) {
       this.assertActive(runId);
@@ -186,52 +191,25 @@ export class BlocklistedTagProcessor implements RunnableScanner<StatusBase> {
       blocklistedTagsArr.push(tag);
     }
 
-    for (const type of [MediaType.MOVIE, MediaType.TV]) {
-      const getDiscover =
-        type === MediaType.MOVIE ? tmdb.getDiscoverMovies : tmdb.getDiscoverTv;
-
-      // Iterate for each tag
-      for (const tag of blocklistedTagsArr) {
-        let queryMax = pageLimit * SortOptionsIterable.length;
-        let fixedSortMode = false; // Set to true when the page limit allows for getting every page of tag
-
-        for (let query = 0; query < queryMax; query++) {
-          const page: number = fixedSortMode
-            ? query + 1
-            : (query % pageLimit) + 1;
-          const sortBy: SortOptions | undefined = fixedSortMode
-            ? undefined
-            : SortOptionsIterable[query % SortOptionsIterable.length];
-
-          this.assertActive(runId);
-
-          try {
-            const response = await getDiscover({
-              page,
-              sortBy,
-              keywords: tag,
-            });
-
-            this.collectResults(response, tag, type, desiredEntries);
-            await this.delay(TMDB_API_DELAY_MS);
-
-            this.progress++;
-            if (page === 1 && response.total_pages <= queryMax) {
-              // We will finish the tag with less queries than expected, move progress accordingly
-              this.progress += queryMax - response.total_pages;
-              fixedSortMode = true;
-              queryMax = response.total_pages;
-            }
-          } catch (error) {
-            failedQueries += 1;
-            logger.error('Error processing keyword in blocklisted tags', {
-              label: 'Blocklisted Tags Processor',
-              keywordId: tag,
-              errorMessage: error.message,
-            });
-          }
-        }
-      }
+    for (const tag of blocklistedTagsArr) {
+      failedQueries += await this.processTagForType(
+        MediaType.MOVIE,
+        tag,
+        runId,
+        tmdb.getDiscoverMovies,
+        MovieSortOptionsIterable,
+        pageLimit,
+        desiredEntries
+      );
+      failedQueries += await this.processTagForType(
+        MediaType.TV,
+        tag,
+        runId,
+        tmdb.getDiscoverTv,
+        TvSortOptionsIterable,
+        pageLimit,
+        desiredEntries
+      );
     }
 
     if (invalidKeywords.size > 0) {
@@ -263,6 +241,61 @@ export class BlocklistedTagProcessor implements RunnableScanner<StatusBase> {
     }
 
     return desiredEntries;
+  }
+
+  private async processTagForType<S extends string>(
+    mediaType: MediaType.MOVIE | MediaType.TV,
+    keywordId: string,
+    runId: symbol,
+    getDiscover: (options: {
+      page: number;
+      sortBy?: S;
+      keywords: string;
+    }) => Promise<TmdbSearchMovieResponse | TmdbSearchTvResponse>,
+    sortOptions: readonly S[],
+    pageLimit: number,
+    desiredEntries: Map<string, DesiredBlocklistEntry>
+  ): Promise<number> {
+    let queryMax = pageLimit * sortOptions.length;
+    let fixedSortMode = false;
+    let failedQueries = 0;
+
+    for (let query = 0; query < queryMax; query++) {
+      const page = fixedSortMode
+        ? query + 1
+        : Math.floor(query / sortOptions.length) + 1;
+      const sortBy = fixedSortMode
+        ? undefined
+        : sortOptions[query % sortOptions.length];
+
+      this.assertActive(runId);
+
+      try {
+        const response = await getDiscover({
+          page,
+          sortBy,
+          keywords: keywordId,
+        });
+        this.collectResults(response, keywordId, mediaType, desiredEntries);
+        await this.delay(TMDB_API_DELAY_MS);
+        this.progress++;
+
+        if (page === 1 && response.total_pages <= queryMax) {
+          this.progress += queryMax - response.total_pages;
+          fixedSortMode = true;
+          queryMax = response.total_pages;
+        }
+      } catch (error) {
+        failedQueries++;
+        logger.error('Error processing keyword in blocklisted tags', {
+          label: 'Blocklisted Tags Processor',
+          keywordId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return failedQueries;
   }
 
   private collectResults(

@@ -1,6 +1,12 @@
 import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
-import { Listbox, Transition } from '@headlessui/react';
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOption,
+  ListboxOptions,
+  Transition,
+} from '@headlessui/react';
 import { CheckIcon, ChevronDownIcon } from '@heroicons/react/24/solid';
 import type { Region } from '@server/lib/settings';
 import { countries } from 'country-flag-icons';
@@ -99,11 +105,11 @@ const RegionSelector = ({
             <span
               className={`inline-block w-full ${compact ? '' : 'rounded-md shadow-sm'}`}
             >
-              <Listbox.Button
-                className={`focus:shadow-outline-blue relative flex w-full cursor-default items-center text-left text-white transition duration-150 ease-in-out focus:outline-none sm:text-sm sm:leading-5 ${
+              <ListboxButton
+                className={`settings-compatible-listbox-button focus:shadow-outline-blue relative flex w-full cursor-default items-center text-left text-white transition duration-150 ease-in-out focus:outline-none ${
                   compact
-                    ? 'h-[30px] rounded-none border-0 bg-transparent py-1 pl-2 pr-8'
-                    : 'rounded-md border border-gray-500 bg-gray-700 py-2 pl-3 pr-10 focus:border-blue-300'
+                    ? 'rounded-none border-0 bg-transparent pr-8 pl-2'
+                    : 'rounded-md border pr-8 pl-2'
                 }`}
               >
                 {((selectedRegion &&
@@ -134,27 +140,28 @@ const RegionSelector = ({
                 <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 text-gray-500">
                   <ChevronDownIcon className="h-5 w-5" />
                 </span>
-              </Listbox.Button>
+              </ListboxButton>
             </span>
 
             <Transition
+              as="div"
               show={open}
               leave="transition-opacity ease-in duration-100"
               leaveFrom="opacity-100"
               leaveTo="opacity-0"
               className="absolute z-50 mt-1 w-full rounded-md bg-gray-800 shadow-lg"
             >
-              <Listbox.Options
+              <ListboxOptions
                 static
-                className={`shadow-xs overflow-auto rounded-md py-1 text-base leading-6 focus:outline-none sm:text-sm sm:leading-5 ${compact ? 'max-h-60 text-xs leading-4 sm:text-xs sm:leading-4' : 'max-h-60'}`}
+                className={`overflow-auto rounded-md py-1 text-base leading-6 shadow-xs focus:outline-none sm:text-sm sm:leading-5 ${compact ? 'max-h-60 text-xs leading-4 sm:text-xs sm:leading-4' : 'max-h-60'}`}
               >
                 {isUserSetting && (
-                  <Listbox.Option value={null}>
+                  <ListboxOption value={null}>
                     {({ selected, active }) => (
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative flex cursor-default select-none items-center pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
+                        } relative flex cursor-default items-center pr-4 pl-8 select-none ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span className="mr-2 text-base">
                           <span
@@ -187,15 +194,15 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 )}
                 {!disableAll && (
-                  <Listbox.Option value={isUserSetting ? allRegion : null}>
+                  <ListboxOption value={isUserSetting ? allRegion : null}>
                     {({ selected, active }) => (
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative cursor-default select-none pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
+                        } relative cursor-default pr-4 pl-8 select-none ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span
                           className={`${
@@ -215,15 +222,15 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 )}
                 {sortedRegions?.map((region) => (
-                  <Listbox.Option key={region.iso_3166_1} value={region}>
+                  <ListboxOption key={region.iso_3166_1} value={region}>
                     {({ selected, active }) => (
                       <div
                         className={`${
                           active ? 'bg-indigo-600 text-white' : 'text-gray-300'
-                        } relative flex cursor-default select-none items-center pl-8 pr-4 ${compact ? 'py-1' : 'py-2'}`}
+                        } relative flex cursor-default items-center pr-4 pl-8 select-none ${compact ? 'py-1' : 'py-2'}`}
                       >
                         <span className="mr-2 text-base">
                           <span
@@ -252,9 +259,9 @@ const RegionSelector = ({
                         )}
                       </div>
                     )}
-                  </Listbox.Option>
+                  </ListboxOption>
                 ))}
-              </Listbox.Options>
+              </ListboxOptions>
             </Transition>
           </div>
         )}

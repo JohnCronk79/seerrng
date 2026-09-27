@@ -27,6 +27,10 @@ export enum MediaIdentifierProvider {
   LIDARR = 'lidarr',
   BOOKSHELF = 'bookshelf',
   AUDIOBOOKSHELF = 'audiobookshelf',
+  COMICVINE = 'comicvine',
+  MYLAR = 'mylar',
+  KAPOWARR = 'kapowarr',
+  LAZYLIBRARIAN = 'lazylibrarian',
 }
 
 @Entity()
@@ -34,7 +38,15 @@ export enum MediaIdentifierProvider {
 @Index('IDX_media_identifier_provider_value', ['provider', 'value'])
 @Index('UQ_media_identifier_canonical_book', ['provider', 'value'], {
   unique: true,
-  where: `"provider" IN ('isbn', 'openlibrary', 'openlibrary_edition')`,
+  where: `"provider" IN ('isbn', 'openlibrary', 'openlibrary_edition', 'bookshelf')`,
+})
+@Index('UQ_media_identifier_canonical_comic', ['provider', 'value'], {
+  unique: true,
+  where: `"provider" = 'comicvine'`,
+})
+@Index('UQ_media_identifier_canonical_magazine', ['provider', 'value'], {
+  unique: true,
+  where: `"provider" = 'lazylibrarian'`,
 })
 class MediaIdentifier {
   @PrimaryGeneratedColumn()

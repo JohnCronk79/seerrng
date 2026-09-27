@@ -62,6 +62,7 @@ import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import { authorizedRouteAccess } from '@server/middleware/authorizedMutation';
 import AsyncLock from '@server/utils/asyncLock';
+import { isUniqueConstraintError } from '@server/utils/databaseError';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import { getHostname } from '@server/utils/getHostname';
 import { normalizeJellyfinGuid } from '@server/utils/jellyfin';
@@ -194,24 +195,7 @@ const runAuthorizedPushSubscriptionMutation = <T>(
 class ProtectedAdministratorMutationError extends Error {}
 class PushSubscriptionLimitError extends Error {}
 
-export const isUniqueConstraintError = (error: unknown): boolean => {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
-  const record = error as {
-    code?: unknown;
-    message?: unknown;
-    driverError?: { code?: unknown; message?: unknown };
-  };
-  const code = String(record.driverError?.code ?? record.code ?? '');
-  const message = String(record.driverError?.message ?? record.message ?? '');
-  return (
-    code === '23505' ||
-    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
-    (code === 'SQLITE_CONSTRAINT' && /UNIQUE constraint failed/i.test(message))
-  );
-};
+export { isUniqueConstraintError } from '@server/utils/databaseError';
 
 const parseStringArray = (
   value: unknown,
@@ -2059,7 +2043,11 @@ router.post(
 
             const admin = await userRepository.findOneOrFail({
               where: { id: 1 },
-              select: ['id', 'jellyfinDeviceId', 'jellyfinUserId'],
+              select: {
+                id: true,
+                jellyfinDeviceId: true,
+                jellyfinUserId: true,
+              },
               order: { id: 'ASC' },
             });
             return {
@@ -2140,7 +2128,7 @@ router.post(
           ],
           async () => {
             const user = await userRepository.findOne({
-              select: ['id', 'jellyfinUserId'],
+              select: { id: true, jellyfinUserId: true },
               where: [
                 { jellyfinUserId },
                 { email: jellyfinUser.Name.toLowerCase() },
@@ -2385,7 +2373,7 @@ router.get<{ id: string }, WatchlistResponse>(
         async () => {
           const user = await getRepository(User).findOneOrFail({
             where: { id: userId },
-            select: ['id', 'plexToken'],
+            select: { id: true, plexToken: true },
           });
 
           return res.json(

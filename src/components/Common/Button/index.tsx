@@ -1,3 +1,8 @@
+import {
+  MagnifyingGlassIcon,
+  TrashIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
 import type { ForwardedRef, JSX } from 'react';
 import React from 'react';
 import { twMerge } from 'tailwind-merge';
@@ -7,6 +12,7 @@ export type ButtonType =
   | 'primary'
   | 'danger'
   | 'warning'
+  | 'externalService'
   | 'success'
   | 'blocklist'
   | 'manage'
@@ -15,6 +21,7 @@ export type ButtonType =
   | 'bulkRequest'
   | 'detailRequest'
   | 'trailer'
+  | 'playback'
   | 'ghost';
 
 // Helper type to override types (overrides onClick)
@@ -31,9 +38,12 @@ type Element<P extends ElementTypes = 'button'> = P extends 'a'
 
 type BaseProps<P> = {
   buttonType?: ButtonType;
-  buttonSize?: 'default' | 'lg' | 'md' | 'sm';
-  /** Explains a state-based disabled action. Displayed as a native tooltip. */
+  buttonSize?: 'standard' | 'default' | 'lg' | 'md' | 'sm';
+  /** Explains a state-based disabled action in the shared styled tooltip. */
   disabledReason?: string;
+  buttonIcon?: 'cancel' | 'browse' | 'delete';
+  /** Uses shared square geometry for an action with only an icon. */
+  iconOnly?: boolean;
   // Had to do declare this manually as typescript would assume e was of type any otherwise
   onClick?: (
     e: React.MouseEvent<P extends 'a' ? HTMLAnchorElement : HTMLButtonElement>
@@ -49,6 +59,7 @@ const buttonTypeStyles: Record<ButtonType, string> = {
   primary: 'app-button-primary',
   danger: 'app-button-danger',
   warning: 'app-button-warning',
+  externalService: 'app-button-external-service',
   success: 'app-button-success',
   blocklist: 'app-button-blocklist',
   manage: 'app-button-manage',
@@ -57,6 +68,7 @@ const buttonTypeStyles: Record<ButtonType, string> = {
   bulkRequest: 'app-button-bulk-request',
   detailRequest: 'app-button-detail-request',
   trailer: 'app-button-trailer',
+  playback: 'app-button-playback',
   ghost: 'app-button-ghost',
 };
 
@@ -64,7 +76,8 @@ const buttonSizeStyles: Record<
   NonNullable<BaseProps<unknown>['buttonSize']>,
   string
 > = {
-  default: 'button-md',
+  standard: 'button-standard',
+  default: 'button-standard',
   md: 'button-md',
   sm: 'button-sm',
   lg: 'button-lg',
@@ -73,11 +86,13 @@ const buttonSizeStyles: Record<
 function Button<P extends ElementTypes = 'button'>(
   {
     buttonType = 'default',
-    buttonSize = 'default',
+    buttonSize = 'standard',
     as,
     children,
     className,
     disabledReason,
+    buttonIcon,
+    iconOnly = false,
     ...props
   }: ButtonProps<P>,
   ref?: React.Ref<Element<P>>
@@ -86,6 +101,7 @@ function Button<P extends ElementTypes = 'button'>(
     'app-button',
     buttonTypeStyles[buttonType],
     buttonSizeStyles[buttonSize],
+    iconOnly && 'app-button-icon-only',
     className
   );
 
@@ -94,9 +110,18 @@ function Button<P extends ElementTypes = 'button'>(
       <a
         className={buttonStyle}
         {...(props as React.ComponentProps<'a'>)}
+        data-button-help={props.title}
+        title={undefined}
         ref={ref as ForwardedRef<HTMLAnchorElement>}
       >
-        <span className="flex items-center">{children}</span>
+        <span className="flex items-center">
+          {buttonIcon === 'cancel' && <XMarkIcon aria-hidden="true" />}
+          {buttonIcon === 'delete' && <TrashIcon aria-hidden="true" />}
+          {buttonIcon === 'browse' && (
+            <MagnifyingGlassIcon aria-hidden="true" />
+          )}
+          {children}
+        </span>
       </a>
     );
   } else {
@@ -109,10 +134,19 @@ function Button<P extends ElementTypes = 'button'>(
       <button
         className={buttonStyle}
         {...buttonProps}
-        title={disabledTitle}
+        data-button-help={buttonProps.title}
+        data-disabled-reason={disabledTitle}
+        title={undefined}
         ref={ref as ForwardedRef<HTMLButtonElement>}
       >
-        <span className="flex max-w-full items-center">{children}</span>
+        <span className="flex max-w-full items-center">
+          {buttonIcon === 'cancel' && <XMarkIcon aria-hidden="true" />}
+          {buttonIcon === 'delete' && <TrashIcon aria-hidden="true" />}
+          {buttonIcon === 'browse' && (
+            <MagnifyingGlassIcon aria-hidden="true" />
+          )}
+          {children}
+        </span>
       </button>
     );
   }

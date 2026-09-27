@@ -30,7 +30,7 @@ const MovieGenreList = () => {
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.moviegenres)} />
-      <div className="mb-5 mt-1">
+      <div className="mt-1 mb-5">
         <Header>{intl.formatMessage(messages.moviegenres)}</Header>
       </div>
       <ul className="cards-horizontal">
@@ -41,7 +41,7 @@ const MovieGenreList = () => {
               image={`https://image.tmdb.org/t/p/w780_filter(duotone,${
                 genreColorMap[genre.id] ?? genreColorMap[0]
               })${genre.backdrops[4]}`}
-              url={`/discover/movies/genre/${genre.id}`}
+              url={`/discover/movies?genre=${genre.id}`}
               canExpand
             />
           </li>

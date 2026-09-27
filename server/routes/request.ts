@@ -47,6 +47,8 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeValidIsbn } from '@server/lib/isbn';
+import { cleanMagazineTitle } from '@server/lib/magazineIdentity';
 import { hydrateMediaRequestRelations } from '@server/lib/mediaRequestHydration';
 import { aliasDownloadId } from '@server/lib/mediaResponse';
 import { Permission } from '@server/lib/permissions';
@@ -78,6 +80,7 @@ import {
 } from '@server/lib/userSecurityMutation';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
+import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
 import { mapWithConcurrency } from '@server/utils/concurrency';
 import { filterEntityResponse } from '@server/utils/entityResponse';
 import {
@@ -109,9 +112,12 @@ const requestMediaTypeFilters = [
   'tv',
   'music',
   'book',
+  'comic',
+  'magazine',
 ] as const;
 const requestStatusFilters = [
   'all',
+  'recent',
   'approved',
   'processing',
   'pending',
@@ -127,6 +133,7 @@ const requestTimelineStatusFilters = [
   'processing',
   'deleted',
   'active',
+  'incomplete',
   'attention',
   'completed',
   ...Object.values(RequestStatusStage),
@@ -190,6 +197,10 @@ const canRemoveRequestFromService = (
             (!hasAudiobookLink || canRemoveAudiobook)
           : canRemoveEbook;
     }
+    case MediaType.COMIC:
+      return media.comicServiceType === 'kapowarr'
+        ? settings.kapowarr.some((server) => server.id === media.serviceId)
+        : settings.mylar.some((server) => server.id === media.serviceId);
     default:
       return false;
   }
@@ -236,6 +247,8 @@ const getRequestLogBody = (body: Partial<MediaRequestBody> | undefined) => ({
   format: body?.format,
   editionId: body?.editionId,
   hasIsbn13: !!body?.isbn13,
+  hasPreferredEdition: !!body?.preferredEditionId,
+  hasPreferredIsbn13: !!body?.preferredIsbn13,
   authorId: body?.authorId,
   userId: body?.userId,
 });
@@ -274,7 +287,9 @@ const normalizeBulkRequestText = (value?: string) =>
 
 const normalizeBulkRequestMediaId = (mediaType: MediaType, mediaId: string) => {
   if (mediaType === MediaType.BOOK) {
-    return normalizeOpenLibraryWorkId(mediaId).toLocaleLowerCase();
+    return parseBookshelfBookId(mediaId)
+      ? mediaId
+      : normalizeOpenLibraryWorkId(mediaId).toLocaleLowerCase();
   }
 
   return normalizeMusicBrainzId(mediaId);
@@ -350,8 +365,7 @@ const parseRequestStatusAction = (
 };
 
 type RequestOptionValidationResult<T> =
-  | { value: T }
-  | { error: { status: number; message: string } };
+  { value: T } | { error: { status: number; message: string } };
 
 const parseOptionalRequestOptionId = (
   value: unknown,
@@ -692,11 +706,17 @@ const sanitizeMediaRequestBody = (
   }
 
   if (mediaType === MediaType.BOOK) {
+    const bookshelfBook =
+      typeof bodyObject.mediaId === 'string'
+        ? parseBookshelfBookId(bodyObject.mediaId)
+        : undefined;
     const bookIds = [
       {
         field: 'mediaId',
         value: bodyObject.mediaId,
-        normalize: normalizeOpenLibraryWorkId,
+        normalize: bookshelfBook
+          ? (value: string) => value
+          : normalizeOpenLibraryWorkId,
       },
       {
         field: 'editionId',
@@ -711,6 +731,10 @@ const sanitizeMediaRequestBody = (
     ];
     for (const { field, value, normalize } of bookIds) {
       if (
+        !(
+          bookshelfBook &&
+          (field === 'mediaId' || field === 'editionId' || field === 'authorId')
+        ) &&
         value !== undefined &&
         (typeof value !== 'string' ||
           !isValidOpenLibraryResourceId(normalize(value)))
@@ -765,6 +789,60 @@ const sanitizeMediaRequestBody = (
     }
     if (mediaId !== undefined) {
       bodyObject.mediaId = mediaId;
+    }
+  }
+
+  if (mediaType === MediaType.COMIC) {
+    const mediaId = parsePositiveRouteId(bodyObject.mediaId, maxRequestIdValue);
+    if (bodyObject.mediaId !== undefined && mediaId === undefined) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId must be a positive integer ComicVine volume ID.',
+        },
+      };
+    }
+    if (options.requireCreateIdentity && mediaId === undefined) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId is required for comic requests.',
+        },
+      };
+    }
+    if (mediaId !== undefined) {
+      bodyObject.mediaId = mediaId;
+    }
+  }
+
+  if (mediaType === MediaType.MAGAZINE) {
+    const parsedTitle = parseOptionalRequestString(
+      bodyObject.mediaId,
+      'mediaId',
+      256
+    );
+    if ('error' in parsedTitle) {
+      return parsedTitle;
+    }
+    if (options.requireCreateIdentity && !parsedTitle.value) {
+      return {
+        error: {
+          status: 400,
+          message: 'mediaId is required for magazine requests.',
+        },
+      };
+    }
+    if (parsedTitle.value !== undefined) {
+      const title = cleanMagazineTitle(parsedTitle.value);
+      if (!title) {
+        return {
+          error: {
+            status: 400,
+            message: 'Magazine title must contain 1 to 256 characters.',
+          },
+        };
+      }
+      bodyObject.mediaId = title;
     }
   }
 
@@ -832,6 +910,47 @@ const sanitizeMediaRequestBody = (
     return format;
   }
 
+  const preferredEditionId = parseOptionalRequestString(
+    bodyObject.preferredEditionId,
+    'preferredEditionId',
+    maxBulkRequestItemTextLength
+  );
+  if ('error' in preferredEditionId) {
+    return preferredEditionId;
+  }
+
+  const preferredIsbn13 = parseOptionalRequestString(
+    bodyObject.preferredIsbn13,
+    'preferredIsbn13',
+    maxBulkRequestItemTextLength
+  );
+  if ('error' in preferredIsbn13) {
+    return preferredIsbn13;
+  }
+  const normalizedPreferredIsbn13 = preferredIsbn13.value
+    ? normalizeValidIsbn(preferredIsbn13.value)
+    : undefined;
+  if (preferredIsbn13.value && !normalizedPreferredIsbn13) {
+    return {
+      error: {
+        status: 400,
+        message: 'preferredIsbn13 must be a valid ISBN.',
+      },
+    };
+  }
+  if (
+    mediaType !== MediaType.BOOK &&
+    (preferredEditionId.value !== undefined ||
+      normalizedPreferredIsbn13 !== undefined)
+  ) {
+    return {
+      error: {
+        status: 400,
+        message: 'Edition preferences are only valid for book requests.',
+      },
+    };
+  }
+
   const tags = parseOptionalRequestTags(bodyObject.tags);
   if ('error' in tags) {
     return tags;
@@ -870,6 +989,8 @@ const sanitizeMediaRequestBody = (
     languageProfileId: languageProfileId.value,
     metadataProfileId: metadataProfileId.value,
     format: format.value,
+    preferredEditionId: preferredEditionId.value,
+    preferredIsbn13: normalizedPreferredIsbn13,
     userId: userId.value,
     tags: tags.value,
     seasons:
@@ -941,6 +1062,7 @@ const sanitizeBulkMediaRequestBody = (
     }
     if (
       body.mediaType === MediaType.BOOK &&
+      !parseBookshelfBookId(mediaId) &&
       !isValidOpenLibraryResourceId(normalizeOpenLibraryWorkId(mediaId))
     ) {
       return {
@@ -988,6 +1110,7 @@ const sanitizeBulkMediaRequestBody = (
     }
     if (
       body.mediaType === MediaType.BOOK &&
+      !parseBookshelfBookId(mediaId) &&
       ((editionId.value !== undefined &&
         !isValidOpenLibraryResourceId(
           normalizeOpenLibraryEditionId(editionId.value)
@@ -1157,6 +1280,46 @@ const validateExternalServiceConfiguration = (
     if (selectedReadarrServiceType !== requestedFormat) {
       throw new ServiceConfigurationError(
         `The selected Bookshelf server is configured for ${selectedReadarrServiceType} requests, not ${requestedFormat} requests.`
+      );
+    }
+  }
+
+  if (requestType === MediaType.COMIC) {
+    if (serverId === undefined || serverId === null) {
+      if (
+        !settings.mylar.some((mylar) => mylar.isDefault) &&
+        !settings.kapowarr.some((kapowarr) => kapowarr.isDefault)
+      ) {
+        throw new ServiceConfigurationError(
+          'No default Mylar or Kapowarr server is configured for comic requests.'
+        );
+      }
+      return;
+    }
+
+    if (
+      !settings.mylar.some((mylar) => mylar.id === serverId) &&
+      !settings.kapowarr.some((kapowarr) => kapowarr.id === serverId)
+    ) {
+      throw new ServiceConfigurationError(
+        'The selected comics server no longer exists.'
+      );
+    }
+  }
+
+  if (requestType === MediaType.MAGAZINE) {
+    if (serverId === undefined || serverId === null) {
+      if (!settings.lazylibrarian.some((service) => service.isDefault)) {
+        throw new ServiceConfigurationError(
+          'No default LazyLibrarian server is configured for magazine requests.'
+        );
+      }
+      return;
+    }
+
+    if (!settings.lazylibrarian.some((service) => service.id === serverId)) {
+      throw new ServiceConfigurationError(
+        'The selected LazyLibrarian server no longer exists.'
       );
     }
   }
@@ -1371,6 +1534,15 @@ requestRoutes.get<
         break;
       case 'deleted':
         mediaStatusFilter = [MediaStatus.DELETED];
+        break;
+      case 'recent':
+        mediaStatusFilter = [
+          MediaStatus.UNKNOWN,
+          MediaStatus.PENDING,
+          MediaStatus.PROCESSING,
+          MediaStatus.PARTIALLY_AVAILABLE,
+          MediaStatus.AVAILABLE,
+        ];
         break;
       default:
         mediaStatusFilter = [
@@ -2138,6 +2310,8 @@ requestRoutes.post<never, BulkMediaRequestResponse, BulkMediaRequestBody>(
               format: body.format,
               isbn13: item.isbn13,
               editionId: item.editionId,
+              preferredIsbn13: item.isbn13,
+              preferredEditionId: item.editionId,
               authorId: item.authorId,
               serverId: body.serverId,
               profileId: body.profileId,
@@ -2895,8 +3069,7 @@ requestRoutes.put<{ requestId: string }>(
                     const requestedSeasons =
                       body.seasons === 'all' ? undefined : body.seasons;
                     const requestedSelections:
-                      | SeasonEpisodeSelection[]
-                      | undefined =
+                      SeasonEpisodeSelection[] | undefined =
                       body.seasonRequests?.length &&
                       body.seasonRequests.length > 0
                         ? body.seasonRequests
@@ -2919,6 +3092,7 @@ requestRoutes.put<{ requestId: string }>(
                         tmdbId: request.media.tmdbId,
                         mediaType: MediaType.TV,
                       },
+                      relations: { seasons: true },
                     });
                     const existingSeasonRequests = await getRepository(
                       SeasonRequest
@@ -2959,9 +3133,27 @@ requestRoutes.put<{ requestId: string }>(
                         );
                         existingEpisodes.set(season.seasonNumber, episodes);
                       });
+                    const currentSeasonNumbers = new Set(
+                      request.seasons.map((season) => season.seasonNumber)
+                    );
+                    const availableSeasonNumbers = new Set(
+                      media.seasons
+                        .filter(
+                          (season) =>
+                            (request.is4k ? season.status4k : season.status) ===
+                            MediaStatus.AVAILABLE
+                        )
+                        .map((season) => season.seasonNumber)
+                    );
                     const filteredSelections = requestedSelections.flatMap(
                       (selection) => {
                         if (fullyRequestedSeasons.has(selection.seasonNumber)) {
+                          return [];
+                        }
+                        if (
+                          !currentSeasonNumbers.has(selection.seasonNumber) &&
+                          availableSeasonNumbers.has(selection.seasonNumber)
+                        ) {
                           return [];
                         }
                         if (!selection.episodeNumbers) {
@@ -2987,10 +3179,21 @@ requestRoutes.put<{ requestId: string }>(
                     }
 
                     const quotas = await requestUser.getQuota();
-                    const existingAllowance = changesRequestUser
-                      ? 0
-                      : request.seasons.length;
+                    const quotaDays = quotas.tv.days ?? 0;
+                    const quotaWindowStart = quotaDays ? new Date() : undefined;
+                    quotaWindowStart?.setDate(
+                      quotaWindowStart.getDate() - quotaDays
+                    );
+                    const existingRequestCountsTowardQuota =
+                      !request.ignoreQuota &&
+                      (!quotaWindowStart ||
+                        request.createdAt > quotaWindowStart);
+                    const existingAllowance =
+                      changesRequestUser || !existingRequestCountsTowardQuota
+                        ? 0
+                        : request.seasons.length;
                     if (
+                      !request.ignoreQuota &&
                       quotas.tv.limit &&
                       filteredSelections.length >
                         (quotas.tv.remaining ?? 0) + existingAllowance
@@ -3038,9 +3241,6 @@ requestRoutes.put<{ requestId: string }>(
                       }
                     }
 
-                    const currentSeasonNumbers = new Set(
-                      request.seasons.map((season) => season.seasonNumber)
-                    );
                     const newSelections = filteredSelections.filter(
                       (selection) =>
                         !currentSeasonNumbers.has(selection.seasonNumber)
@@ -3313,11 +3513,13 @@ requestRoutes.post<{
               request.status === MediaRequestStatus.APPROVED &&
               currentStatus.stage !== RequestStatusStage.UNAVAILABLE &&
               currentStatus.stage !== RequestStatusStage.FAILED;
-            if (
-              currentStatus.stage === RequestStatusStage.REQUESTED ||
-              alreadyQueued ||
-              (!canRetryAny && !currentStatus.retryable)
-            ) {
+            if (currentStatus.stage === RequestStatusStage.REQUESTED) {
+              return next({
+                status: 409,
+                message: 'Only failed or unavailable requests can be retried.',
+              });
+            }
+            if (alreadyQueued || (!canRetryAny && !currentStatus.retryable)) {
               return next({
                 status: 409,
                 message:

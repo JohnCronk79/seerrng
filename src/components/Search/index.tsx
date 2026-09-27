@@ -5,21 +5,44 @@ import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
+import {
+  FilterResetButton,
+  getFilterToggleButtonClass,
+} from '@app/components/Discover/FilterPanel/CompactFilterSelect';
+import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
+import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
+import { prepareFilterValues } from '@app/components/Discover/constants';
 import useDiscover from '@app/hooks/useDiscover';
+import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
 import defineMessages from '@app/utils/defineMessages';
+import { stableSearchResults } from '@app/utils/stableSearchResults';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
+import type { DetailDisclosureMediaType } from '@server/interfaces/api/userSettingsInterfaces';
 import type {
   AlbumResult,
   ArtistResult,
+  AuthorResult,
   BookResult,
+  ComicResult,
+  MagazineResult,
   MovieResult,
   PersonResult,
   TvResult,
 } from '@server/models/Search';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
+import ContextualSearchFilters from './ContextualSearchFilters';
+import {
+  getMusicSearchParams,
+  getSearchCategoryQuery,
+  getSearchEndpoint,
+  getSearchResultFilter,
+  isSearchDataReady,
+  matchesSearchResultFilter,
+  searchContextualFilterKeys,
+} from './searchFilters';
 import {
   getSortField,
   getSortOrder,
@@ -33,13 +56,17 @@ const messages = defineMessages('components.Search', {
   all: 'All',
   movies: 'Movies',
   series: 'Series',
-  ebooks: 'Ebooks',
+  ebooks: 'Books',
   audiobooks: 'Audiobooks',
   music: 'Music',
+  comics: 'Comics',
+  magazines: 'Magazines',
   filter: 'Filters',
+  mediaFilters: 'Media Filters',
   sortBy: 'Sort By',
   title: 'Title',
   author: 'Author',
+  authors: 'Authors',
   artist: 'Artist',
   date: 'Date',
   publisher: 'Publisher',
@@ -54,6 +81,7 @@ const messages = defineMessages('components.Search', {
   searchUnavailableHint: 'The catalog could not be reached. Try again.',
   retrySearch: 'Try again',
   retryingSearch: 'Trying again…',
+  clearFilters: 'Clear Filters',
 });
 
 const searchCategories = [
@@ -73,10 +101,12 @@ const searchCategories = [
     message: messages.audiobooks,
   },
   { key: 'music', type: 'music', message: messages.music },
+  { key: 'comic', type: 'comic', message: messages.comics },
+  { key: 'magazine', type: 'magazine', message: messages.magazines },
+  { key: 'author', type: 'author', message: messages.authors },
 ] as const;
 
 type SearchCategory = (typeof searchCategories)[number];
-type SearchType = Exclude<SearchCategory['type'], undefined>;
 type BookFormat = 'ebook' | 'audiobook';
 type SearchResult =
   | MovieResult
@@ -84,7 +114,13 @@ type SearchResult =
   | PersonResult
   | AlbumResult
   | ArtistResult
-  | BookResult;
+  | BookResult
+  | AuthorResult
+  | ComicResult
+  | MagazineResult;
+
+const getSearchResultKey = (result: SearchResult) =>
+  `${result.mediaType}:${result.id}`;
 
 type SortOption = {
   field: SortField;
@@ -121,6 +157,9 @@ const sortFieldsByCategory: Record<
   music: ['date', 'title', 'artist'],
   book: ['date', 'title', 'author', 'publisher'],
   audiobook: ['date', 'title', 'author', 'publisher'],
+  author: ['title'],
+  comic: ['date', 'title'],
+  magazine: ['date', 'title'],
 };
 
 const getSearchCategory = (
@@ -159,7 +198,11 @@ const getResultTitle = (result: SearchResult): string | undefined => {
     return result.name;
   }
 
-  if (result.mediaType === 'person' || result.mediaType === 'artist') {
+  if (
+    result.mediaType === 'person' ||
+    result.mediaType === 'artist' ||
+    result.mediaType === 'author'
+  ) {
     return result.name;
   }
 
@@ -187,6 +230,11 @@ const getResultArtist = (result: SearchResult): string | undefined => {
 };
 
 const getResultDate = (result: SearchResult): number | undefined => {
+  if (result.mediaType === 'magazine') {
+    const issueDate = Date.parse(result.latestIssue ?? '');
+    return Number.isFinite(issueDate) ? issueDate : undefined;
+  }
+
   const value =
     result.mediaType === 'movie'
       ? result.releaseDate
@@ -196,7 +244,9 @@ const getResultDate = (result: SearchResult): number | undefined => {
           ? (result.releaseDate ?? result['first-release-date'])
           : result.mediaType === 'book'
             ? result.firstPublishYear
-            : undefined;
+            : result.mediaType === 'comic'
+              ? result.startYear
+              : undefined;
   const year =
     typeof value === 'number'
       ? value
@@ -248,7 +298,35 @@ const Search = () => {
   const query =
     typeof router.query.query === 'string' ? router.query.query.trim() : '';
   const category = getSearchCategory(router.query.type, router.query.format);
-  const type = category.type as SearchType | undefined;
+  const filterMediaType: DetailDisclosureMediaType =
+    category.key === 'tv'
+      ? 'tv'
+      : category.key === 'music'
+        ? 'music'
+        : category.key === 'book' || category.key === 'audiobook'
+          ? 'book'
+          : 'movie';
+  const mediaPin = useMediaFilterPin<SearchCategory['key']>({
+    scope: 'search',
+    selected: category.key,
+    values: searchCategories.map((item) => item.key),
+    ready: router.isReady,
+    explicit: Boolean(router.query.type || router.query.format),
+    restore: (value) => {
+      const target = searchCategories.find((item) => item.key === value)!;
+      void router.replace(
+        {
+          pathname: router.pathname,
+          query: getSearchCategoryQuery(router.query, {
+            type: target.type,
+            format: 'format' in target ? target.format : undefined,
+          }),
+        },
+        undefined,
+        { shallow: true, scroll: false }
+      );
+    },
+  });
   const preferredBookFormat =
     'format' in category ? (category.format as BookFormat) : undefined;
   const sortOptions = sortFieldsByCategory[category.key].map(
@@ -261,15 +339,90 @@ const Search = () => {
     ? requestedSortField
     : 'date';
   const sortOrder = getSortOrder(router.query.order, sortField);
-  const searchOptions = useMemo(
-    () => ({
-      query,
-      ...(type ? { type } : {}),
-      ...(preferredBookFormat ? { format: preferredBookFormat } : {}),
-    }),
-    [preferredBookFormat, query, type]
+  const getRoutedString = (key: string) => {
+    const value = router.query[key];
+    return typeof value === 'string' ? value : '';
+  };
+  const resultFilter = getSearchResultFilter(router.query).trim();
+  const combinedQuery = [query, resultFilter].filter(Boolean).join(' ');
+  const preparedVideoFilters = prepareFilterValues(
+    category.key === 'movie' || category.key === 'tv'
+      ? { ...router.query, search: combinedQuery || undefined }
+      : { search: combinedQuery || undefined }
   );
-  const isSearchReady = router.isReady && !!query;
+  const searchEndpoint = getSearchEndpoint(
+    category.key,
+    query,
+    searchContextualFilterKeys.some((key) => Boolean(router.query[key]))
+  );
+  const searchOptions = useMemo(
+    () => {
+      if (searchEndpoint === '/api/v1/search') {
+        return {
+          query: category.key === 'all' ? combinedQuery : query,
+          ...(category.type ? { type: category.type } : {}),
+          ...(preferredBookFormat ? { format: preferredBookFormat } : {}),
+          ...(category.key === 'music' && resultFilter ? { resultFilter } : {}),
+          ...(category.key === 'music'
+            ? getMusicSearchParams(router.query)
+            : {}),
+        };
+      }
+
+      if (category.key === 'movie' || category.key === 'tv') {
+        return preparedVideoFilters;
+      }
+
+      if (category.key === 'music') {
+        return {
+          query: combinedQuery,
+          availability: getRoutedString('availability') || undefined,
+          days: '14',
+          sortBy: 'ranked',
+          genre: getRoutedString('genre'),
+          releaseType: getRoutedString('releaseType'),
+          primaryReleaseDateGte: getRoutedString('primaryReleaseDateGte'),
+          primaryReleaseDateLte: getRoutedString('primaryReleaseDateLte'),
+          artist: getRoutedString('artist'),
+          artistId: getRoutedString('artistId'),
+        };
+      }
+
+      if (category.key === 'book' || category.key === 'audiobook') {
+        return {
+          query: combinedQuery,
+          author: getRoutedString('author'),
+          narrator:
+            category.key === 'audiobook'
+              ? getRoutedString('narrator')
+              : undefined,
+          subject: getRoutedString('subject'),
+          firstPublishYear: getRoutedString('firstPublishYear'),
+          language: getRoutedString('language'),
+          minRating: getRoutedString('minRating'),
+          sortBy: 'ranked',
+          format: preferredBookFormat,
+          responseVersion: 2,
+        };
+      }
+
+      return { query };
+    },
+    // The router query is the source of truth for all contextual controls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [category.key, preferredBookFormat, query, router.query]
+  );
+  const isSearchReady = isSearchDataReady({
+    routerReady: router.isReady,
+    category: category.key,
+    query: combinedQuery,
+  });
+  const hasActiveFilters = Boolean(
+    category.key !== 'all' ||
+    router.query.sort ||
+    router.query.order ||
+    searchContextualFilterKeys.some((key) => router.query[key])
+  );
 
   const {
     isLoadingInitialData,
@@ -281,8 +434,17 @@ const Search = () => {
     fetchMore,
     error,
     mutate,
-  } = useDiscover<SearchResult>(`/api/v1/search`, searchOptions, {
+  } = useDiscover<SearchResult>(searchEndpoint, searchOptions, {
     enabled: isSearchReady,
+    availableQuality:
+      category.key === 'music'
+        ? router.query.availability === 'mp3' ||
+          router.query.availability === 'flac'
+          ? router.query.availability
+          : undefined
+        : category.key === 'movie' || category.key === 'tv'
+          ? preparedVideoFilters.availability
+          : undefined,
     hideAvailable: false,
     hideBlocklisted: true,
     showErrorToast: false,
@@ -294,8 +456,32 @@ const Search = () => {
     return () => setSearchActivity(false);
   }, [isLoadingInitialData, isSearchReady, isValidating]);
   const visibleTitles = useMemo(
-    () => titles.filter((title) => matchesCategory(title, category)),
-    [category, titles]
+    () =>
+      titles
+        .filter((title) => matchesCategory(title, category))
+        .filter((title) =>
+          matchesSearchResultFilter(
+            [
+              getResultTitle(title),
+              getResultAuthor(title),
+              getResultArtist(title),
+              title.mediaType === 'book' ? title.publisher : undefined,
+              title.mediaType === 'book'
+                ? title.narrators?.join(' ')
+                : undefined,
+              title.mediaType === 'book'
+                ? title.subjects?.join(' ')
+                : undefined,
+              title.mediaType === 'author' ? title.topWork : undefined,
+              ...(title.mediaType === 'comic'
+                ? [title.publisher, title.startYear, ...(title.aliases ?? [])]
+                : []),
+              title.mediaType === 'magazine' ? title.latestIssue : undefined,
+            ],
+            resultFilter
+          )
+        ),
+    [category, resultFilter, titles]
   );
   const sortedTitles = useMemo(() => {
     const collator = new Intl.Collator(undefined, {
@@ -355,11 +541,36 @@ const Search = () => {
       );
     });
   }, [sortField, sortOrder, visibleTitles]);
+  const orderKey = `${router.asPath}|${searchEndpoint}|${sortField}:${sortOrder}`;
+  const previousOrder = useRef<{ key: string; ids: string[] }>({
+    key: '',
+    ids: [],
+  });
+  const stableTitles = useMemo(
+    () =>
+      previousOrder.current.key === orderKey
+        ? stableSearchResults(
+            sortedTitles,
+            previousOrder.current.ids,
+            getSearchResultKey
+          )
+        : sortedTitles,
+    [orderKey, sortedTitles]
+  );
+  useEffect(() => {
+    if (stableTitles.length > 0 || previousOrder.current.key !== orderKey) {
+      previousOrder.current = {
+        key: orderKey,
+        ids: stableTitles.map(getSearchResultKey),
+      };
+    }
+  }, [orderKey, stableTitles]);
   const isShowingEmptyState =
     isSearchReady &&
     !isLoadingInitialData &&
     !isLoadingMore &&
-    sortedTitles.length === 0;
+    isReachingEnd &&
+    stableTitles.length === 0;
   const providerErrorMessage = (
     error as { response?: { data?: { message?: string } } } | undefined
   )?.response?.data?.message;
@@ -394,7 +605,7 @@ const Search = () => {
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.search)} />
-      <div className="mb-5 mt-1">
+      <div className="mb-5 flow-root">
         <Header
           subtext={
             preferredBookFormat ? (
@@ -411,58 +622,87 @@ const Search = () => {
           {intl.formatMessage(messages.searchresults)}
         </Header>
       </div>
-      <div className="mb-6">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.filter)}
-        </div>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="mediaFilters"
+        label={intl.formatMessage(messages.mediaFilters)}
+      >
         <div
           className="flex flex-wrap items-center gap-2"
-          aria-label={intl.formatMessage(messages.filter)}
+          aria-label={intl.formatMessage(messages.mediaFilters)}
         >
-          <CardTextVisibilityToggle
-            mediaType={['movie', 'tv', 'album', 'book']}
-          />
           {searchCategories.map((searchCategory) => {
             const isSelected = category.key === searchCategory.key;
 
             return (
-              <button
+              <MediaFilterOption
                 key={searchCategory.key}
-                type="button"
-                className={`h-8 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${isSelected ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
-                aria-pressed={isSelected}
-                onClick={() => {
-                  const nextQuery = { ...router.query };
-
-                  delete nextQuery.format;
-
-                  if (searchCategory.type) {
-                    nextQuery.type = searchCategory.type;
-                  } else {
-                    delete nextQuery.type;
-                  }
-
-                  if ('format' in searchCategory) {
-                    nextQuery.format = searchCategory.format;
-                  }
-
-                  void router.replace(
-                    { pathname: router.pathname, query: nextQuery },
-                    undefined,
-                    { shallow: true, scroll: false }
-                  );
-                }}
+                pin={mediaPin}
+                value={searchCategory.key}
+                label={intl.formatMessage(searchCategory.message)}
+                selected={isSelected}
               >
-                {intl.formatMessage(searchCategory.message)}
-              </button>
+                <button
+                  type="button"
+                  className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    const nextQuery = getSearchCategoryQuery(router.query, {
+                      type: searchCategory.type,
+                      format:
+                        'format' in searchCategory
+                          ? searchCategory.format
+                          : undefined,
+                    });
+
+                    void router.replace(
+                      { pathname: router.pathname, query: nextQuery },
+                      undefined,
+                      { shallow: true, scroll: false }
+                    );
+                  }}
+                >
+                  {intl.formatMessage(searchCategory.message)}
+                </button>
+              </MediaFilterOption>
             );
           })}
         </div>
-      </div>
-      <div className="mb-6">
-        <div className="mb-1 text-sm text-gray-300">
-          {intl.formatMessage(messages.sortBy)}
+      </PinnedFilterSection>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="filters"
+        label={intl.formatMessage(messages.filter)}
+      >
+        <div
+          className="flex flex-wrap items-center gap-2"
+          aria-label={intl.formatMessage(messages.filter)}
+        >
+          <FilterResetButton
+            label={intl.formatMessage(messages.clearFilters)}
+            selected={!hasActiveFilters}
+            onClick={() => {
+              void router.replace(
+                {
+                  pathname: router.pathname,
+                  query: { query: query || undefined },
+                },
+                undefined,
+                { shallow: true, scroll: false }
+              );
+            }}
+          />
+          <CardTextVisibilityToggle
+            mediaType={['movie', 'tv', 'album', 'book']}
+          />
+          <ContextualSearchFilters category={category.key} />
         </div>
+      </PinnedFilterSection>
+      <PinnedFilterSection
+        mediaType={filterMediaType}
+        section="sortBy"
+        label={intl.formatMessage(messages.sortBy)}
+      >
         <div className="flex flex-wrap items-center gap-2">
           {sortOptions.map((sortOption) => {
             const isSelected = sortField === sortOption.field;
@@ -481,7 +721,7 @@ const Search = () => {
               <Tooltip key={sortOption.field} content={directionLabel}>
                 <button
                   type="button"
-                  className={`inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md border px-[9px] text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-indigo-400 ${isSelected ? 'border-indigo-400 bg-indigo-500 text-white' : 'border-gray-600 bg-gray-900/70 text-gray-300 hover:border-gray-400 hover:text-white'}`}
+                  className={getFilterToggleButtonClass(isSelected)}
                   aria-pressed={isSelected}
                   aria-label={`${intl.formatMessage(
                     sortOption.message
@@ -514,14 +754,14 @@ const Search = () => {
             );
           })}
         </div>
-      </div>
-      {error && sortedTitles.length === 0 ? (
+      </PinnedFilterSection>
+      {error && stableTitles.length === 0 ? (
         searchError
       ) : (
         <>
           {error && searchError}
           <ListView
-            items={sortedTitles}
+            items={stableTitles}
             preferredBookFormat={preferredBookFormat}
             emptyMessage={intl.formatMessage(messages.noResultsFound)}
             emptyClassName="mt-6"

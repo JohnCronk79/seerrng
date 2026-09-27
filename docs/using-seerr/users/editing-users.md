@@ -33,6 +33,20 @@ You cannot leave this field blank.
 
 Users can override the [global display language](/using-seerr/settings/general#display-language) to use Seerr in their preferred language.
 
+### Preferred Request Languages
+
+Set **Preferred Language for All Media** to choose a default language for new
+requests. The **Movie Language Override**, **Series Language Override**,
+**Music Language Override**, and **Book Language Override** fields can each
+inherit that default, allow any language, or select a separate language.
+
+When a matching Radarr or Sonarr language profile is available, SeerrNG uses it
+for movie or series requests. For books, a matching edition is selected when
+the catalog provides one. Music language preferences are saved, but connected
+music services do not currently provide a language-based request choice.
+Requesters can still change the destination or book edition in the request
+dialog.
+
 ### Discover Region & Discover Language
 
 Users can override the [global filter settings](/using-seerr/settings/general#discover-region-discover-language--streaming-region) to suit their own preferences.

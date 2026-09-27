@@ -12,6 +12,10 @@ import {
 } from '@server/constants/blocklist';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
+import {
+  SETTINGS_LIBRARY_ROUTE_PATHS,
+  SETTINGS_PLEX_LIBRARY_TYPE_ROUTE_PATH,
+} from '@server/constants/settingsLibraryApi';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
@@ -101,8 +105,11 @@ import { rescheduleJob } from 'node-schedule';
 import path from 'path';
 import semver from 'semver';
 import { URL } from 'url';
+import kapowarrRoutes from './kapowarr';
+import lazyLibrarianRoutes from './lazylibrarian';
 import lidarrRoutes from './lidarr';
 import metadataRoutes from './metadata';
+import mylarRoutes from './mylar';
 import notificationRoutes from './notifications';
 import radarrRoutes from './radarr';
 import readarrRoutes from './readarr';
@@ -773,8 +780,7 @@ export const parseTlsSettingsBody = (
   const effectiveAllowHttpAuth = (tls.allowHttpAuth ??
     current.allowHttpAuth) as boolean;
   const effectiveHttpsPort = (tls.httpsPort ?? current.httpsPort) as
-    | number
-    | undefined;
+    number | undefined;
   if (effectiveMode !== 'disabled' && effectiveHttpsPort !== undefined) {
     let httpPort: number;
     try {
@@ -1093,7 +1099,14 @@ const parseMainSettingsBody = (
     const incomingDefaultQuotas = body.defaultQuotas as Record<string, unknown>;
     const defaultQuotas: Record<string, unknown> = {};
 
-    for (const mediaType of ['movie', 'tv', 'music', 'book'] as const) {
+    for (const mediaType of [
+      'movie',
+      'tv',
+      'music',
+      'book',
+      'comic',
+      'magazine',
+    ] as const) {
       if (incomingDefaultQuotas[mediaType] === undefined) {
         continue;
       }
@@ -1157,6 +1170,7 @@ const parseMainSettingsBody = (
     ['spotifyClientId', 'spotifyClientId'],
     ['spotifyClientSecret', 'spotifyClientSecret'],
     ['youtubeApiKey', 'youtubeApiKey'],
+    ['comicVineApiKey', 'comicVineApiKey'],
   ] as const) {
     const parsed = parsePatchBoundedString(body, key, {
       fieldName,
@@ -1205,7 +1219,9 @@ export const readLogTail = async (
       target === '.' ||
       target === '..'
     ) {
-      throw new Error('Log symlink must target a file in the log directory.');
+      throw new Error('Log symlink must target a file in the log directory.', {
+        cause: error,
+      });
     }
     const filePath = path.join(directory, target);
     handle = await fs.promises.open(
@@ -1343,6 +1359,9 @@ settingsRoutes.use('/radarr', radarrRoutes);
 settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/lidarr', lidarrRoutes);
 settingsRoutes.use('/readarr', readarrRoutes);
+settingsRoutes.use('/mylar', mylarRoutes);
+settingsRoutes.use('/kapowarr', kapowarrRoutes);
+settingsRoutes.use('/lazylibrarian', lazyLibrarianRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 
@@ -1481,7 +1500,19 @@ settingsRoutes.post(
 
         await settings.persistSection('plex', (current) => ({
           ...parsedPlex.value,
-          libraries: current.libraries,
+          // A different machineId means this connection now points at a
+          // different physical Plex server. Stored library ids are only
+          // meaningful within one server (Plex reuses small sequential
+          // keys across installs), so carrying them over risks silently
+          // applying a stale enabled/type classification to an unrelated
+          // library on the new server. Only preserve libraries when we're
+          // re-confirming the same server (or connecting for the first
+          // time, when current.machineId is unset).
+          libraries:
+            current.machineId &&
+            current.machineId !== result.MediaContainer.machineIdentifier
+              ? []
+              : current.libraries,
           machineId: result.MediaContainer.machineIdentifier,
           name: result.MediaContainer.friendlyName,
         }));
@@ -1555,7 +1586,7 @@ settingsRoutes.get('/plex/devices/servers', async (req, res, next) => {
   }
 });
 
-settingsRoutes.get('/plex/library', (req, res) => {
+settingsRoutes.get(SETTINGS_LIBRARY_ROUTE_PATHS.plex, (req, res) => {
   const settings = getSettings();
   if (req.query.sync !== undefined || req.query.enable !== undefined) {
     return res.status(400).json({
@@ -1567,7 +1598,7 @@ settingsRoutes.get('/plex/library', (req, res) => {
 });
 
 settingsRoutes.post(
-  '/plex/library',
+  SETTINGS_LIBRARY_ROUTE_PATHS.plex,
   authorizedMutation(Permission.ADMIN, async (req, res) => {
     const parsedBody = parseSettingsBodyObject(req.body);
     if ('error' in parsedBody) {
@@ -1604,6 +1635,65 @@ settingsRoutes.post(
           ...library,
           enabled: enabledLibraries.value.includes(library.id),
         })),
+      }));
+      return res.status(200).json(plex.libraries);
+    });
+  })
+);
+
+settingsRoutes.put(
+  SETTINGS_PLEX_LIBRARY_TYPE_ROUTE_PATH,
+  authorizedMutation(Permission.ADMIN, async (req, res) => {
+    const libraryId = parseBoundedString(req.params.libraryId, {
+      fieldName: 'Library ID',
+      maxLength: 128,
+    });
+    if ('error' in libraryId) {
+      return res.status(400).json({ message: libraryId.error });
+    }
+
+    const parsedBody = parseSettingsBodyObject(req.body);
+    if ('error' in parsedBody) {
+      return res.status(400).json({ message: parsedBody.error });
+    }
+    const type = parseOptionalAllowedString(parsedBody.value.type, {
+      fieldName: 'Type',
+      allowedValues: ['music', 'book'] as const,
+      maxLength: 16,
+    });
+    if ('error' in type) {
+      return res.status(400).json({ message: type.error });
+    }
+    if (!type.value) {
+      return res.status(400).json({ message: 'Type is required.' });
+    }
+    const nextType = type.value;
+
+    return runWithConfigurationAdmission('plex', async () => {
+      const settings = getSettings();
+      const existing = settings.plex.libraries.find(
+        (library) => library.id === libraryId.value
+      );
+      // Only libraries Plex reports as an 'artist' section (surfaced here
+      // as 'music' or 'book') can be reclassified between the two --
+      // Plex has no separate wire-level type for audiobook libraries.
+      if (
+        !existing ||
+        (existing.type !== 'music' && existing.type !== 'book')
+      ) {
+        return res.status(400).json({
+          message:
+            'Only Music/Audiobook libraries can be reclassified between the two.',
+        });
+      }
+
+      const plex = await settings.persistSection('plex', (current) => ({
+        ...current,
+        libraries: current.libraries.map((library) =>
+          library.id === libraryId.value
+            ? { ...library, type: nextType }
+            : library
+        ),
       }));
       return res.status(200).json(plex.libraries);
     });
@@ -1673,7 +1763,7 @@ settingsRoutes.post(
       try {
         const admin = await userRepository.findOneOrFail({
           where: { id: 1 },
-          select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
+          select: { id: true, jellyfinUserId: true, jellyfinDeviceId: true },
           order: { id: 'ASC' },
         });
 
@@ -1695,7 +1785,13 @@ settingsRoutes.post(
             parsedBody.value.apiKey === REDACTED_SECRET
               ? current.apiKey
               : parsedJellyfin.value.apiKey,
-          libraries: current.libraries,
+          // See the analogous Plex machineId check above: a different
+          // serverId means a different physical server, so stale library
+          // ids must not carry over their enabled state to it.
+          libraries:
+            current.serverId && current.serverId !== result.Id
+              ? []
+              : current.libraries,
           serverId: result.Id,
           name: result.ServerName,
         }));
@@ -1729,7 +1825,7 @@ settingsRoutes.post(
   })
 );
 
-settingsRoutes.get('/jellyfin/library', (req, res) => {
+settingsRoutes.get(SETTINGS_LIBRARY_ROUTE_PATHS.jellyfin, (req, res) => {
   const settings = getSettings();
   if (req.query.sync !== undefined || req.query.enable !== undefined) {
     return res.status(400).json({
@@ -1741,7 +1837,7 @@ settingsRoutes.get('/jellyfin/library', (req, res) => {
 });
 
 settingsRoutes.post(
-  '/jellyfin/library',
+  SETTINGS_LIBRARY_ROUTE_PATHS.jellyfin,
   authorizedMutation(Permission.ADMIN, async (req, res, next) => {
     const parsedBody = parseSettingsBodyObject(req.body);
     if ('error' in parsedBody) {
@@ -1763,7 +1859,7 @@ settingsRoutes.post(
       if (sync.value) {
         const userRepository = getRepository(User);
         const admin = await userRepository.findOneOrFail({
-          select: ['id', 'jellyfinDeviceId', 'jellyfinUserId'],
+          select: { id: true, jellyfinDeviceId: true, jellyfinUserId: true },
           where: { id: 1 },
           order: { id: 'ASC' },
         });
@@ -1798,7 +1894,7 @@ settingsRoutes.post(
 
         const newLibraries: Library[] = libraries.map((library) => {
           const existing = settings.jellyfin.libraries.find(
-            (l) => l.id === library.key && l.name === library.title
+            (l) => l.id === library.key
           );
 
           return {
@@ -1836,7 +1932,7 @@ settingsRoutes.get('/jellyfin/users', async (req, res) =>
 
     const userRepository = getRepository(User);
     const admin = await userRepository.findOneOrFail({
-      select: ['id', 'jellyfinDeviceId', 'jellyfinUserId'],
+      select: { id: true, jellyfinDeviceId: true, jellyfinUserId: true },
       where: { id: 1 },
       order: { id: 'ASC' },
     });

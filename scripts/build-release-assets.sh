@@ -59,8 +59,11 @@ cp -R .next dist public "$stage"/
 cp package.json pnpm-lock.yaml pnpm-workspace.yaml next.config.ts seerr-api.yml LICENSE "$stage"/
 mkdir -p "$stage/bin"
 cp bin/prepare.mjs "$stage/bin/"
+# pnpm-workspace.yaml pins checked-in patches that are required when the
+# production dependency tree is installed inside the staged archive.
+cp -R patches "$stage/"
 (cd "$stage" && CI=true CYPRESS_INSTALL_BINARY=0 pnpm install --prod --frozen-lockfile)
-rm -rf "${stage:?}/.next/cache" "${stage:?}/.next/dev" "${stage:?}/bin" "${stage:?}/cache"
+rm -rf "${stage:?}/.next/cache" "${stage:?}/.next/dev" "${stage:?}/bin" "${stage:?}/cache" "${stage:?}/patches"
 mkdir -p "$stage/config"
 touch "$stage/config/.gitkeep"
 

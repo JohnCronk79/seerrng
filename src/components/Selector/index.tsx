@@ -6,7 +6,7 @@ import { encodeURIExtraParams } from '@app/hooks/useDiscover';
 import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownIcon, ArrowUpIcon } from '@heroicons/react/20/solid';
-import { CheckCircleIcon } from '@heroicons/react/24/solid';
+import { CheckCircleIcon, ChevronDownIcon } from '@heroicons/react/24/solid';
 import type {
   TmdbCompanySearchResponse,
   TmdbGenre,
@@ -22,9 +22,15 @@ import type {
 import axios from 'axios';
 import { useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
-import type { MultiValue, SingleValue } from 'react-select';
+import type {
+  ControlProps,
+  DropdownIndicatorProps,
+  MultiValue,
+  SingleValue,
+} from 'react-select';
 import AsyncSelect from 'react-select/async';
 import useSWR from 'swr';
+import { getGenreSelectorOptions } from './genreOptions';
 
 const messages = defineMessages('components.Selector', {
   any: 'Any',
@@ -48,6 +54,43 @@ const messages = defineMessages('components.Selector', {
 type SingleVal = {
   label: string;
   value: number;
+};
+
+const CompactSelectControl = <Option, IsMulti extends boolean>({
+  children,
+  innerRef,
+  innerProps,
+  isDisabled,
+  isFocused,
+  menuIsOpen,
+}: ControlProps<Option, IsMulti>) => (
+  <div
+    ref={innerRef}
+    {...innerProps}
+    className={[
+      'react-select__control',
+      isDisabled && 'react-select__control--is-disabled',
+      isFocused && 'react-select__control--is-focused',
+      menuIsOpen && 'react-select__control--menu-is-open',
+    ]
+      .filter(Boolean)
+      .join(' ')}
+  >
+    {children}
+  </div>
+);
+
+const CompactDropdownIndicator = <Option, IsMulti extends boolean>({
+  innerProps,
+}: DropdownIndicatorProps<Option, IsMulti>) => (
+  <div {...innerProps} className="react-select__dropdown-indicator">
+    <ChevronDownIcon className="app-filter-select-chevron" aria-hidden="true" />
+  </div>
+);
+
+export const compactSelectComponents = {
+  Control: CompactSelectControl,
+  DropdownIndicator: CompactDropdownIndicator,
 };
 
 type BaseSelectorMultiProps = {
@@ -141,7 +184,10 @@ export const CompanySelector = ({
       key={`company-selector-${defaultDataValue}`}
       className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
+      unstyled={compact}
+      components={compact ? compactSelectComponents : undefined}
       isMulti={isMulti}
+      hideSelectedOptions={!isMulti}
       isDisabled={isDisabled}
       defaultValue={defaultDataValue}
       defaultOptions
@@ -177,6 +223,12 @@ export const GenreSelector = ({
   type,
 }: GenreSelectorProps) => {
   const intl = useIntl();
+  const genreUrl = `/api/v1/genres/${type}`;
+  const { data: availableGenres } = useSWR<TmdbGenre[]>(genreUrl);
+  const availableGenreOptions = useMemo(
+    () => getGenreSelectorOptions(availableGenres ?? []),
+    [availableGenres]
+  );
   const [defaultDataValue, setDefaultDataValue] = useState<
     { label: string; value: number }[] | null
   >(null);
@@ -226,27 +278,24 @@ export const GenreSelector = ({
   }, [defaultValue, type]);
 
   const loadGenreOptions = async (inputValue: string) => {
-    const results = await axios.get<TmdbGenre[]>(`/api/v1/genres/${type}`);
+    const genres =
+      availableGenres ?? (await axios.get<TmdbGenre[]>(genreUrl)).data;
 
-    return results.data
-      .map((result) => ({
-        label: result.name,
-        value: result.id,
-      }))
-      .filter(({ label }) =>
-        label.toLowerCase().includes(inputValue.toLowerCase())
-      );
+    return getGenreSelectorOptions(genres, inputValue);
   };
 
   return (
     <AsyncSelect
-      key={`genre-select-${type}-${defaultDataValue}`}
+      key={`genre-select-${type}-${defaultDataValue}-${availableGenreOptions.length}`}
       className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
+      unstyled={compact}
+      components={compact ? compactSelectComponents : undefined}
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
-      defaultOptions
+      defaultOptions={availableGenreOptions}
       cacheOptions
       isMulti={isMulti}
+      hideSelectedOptions={!isMulti}
       isDisabled={isDisabled}
       loadOptions={loadGenreOptions}
       placeholder={intl.formatMessage(
@@ -315,9 +364,12 @@ export const StatusSelector = ({
       key={`status-select-${defaultDataValue}`}
       className={`react-select-container ${compact ? 'discover-compact-select' : ''}`}
       classNamePrefix="react-select"
+      unstyled={compact}
+      components={compact ? compactSelectComponents : undefined}
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
       defaultOptions
       isMulti={isMulti}
+      hideSelectedOptions={!isMulti}
       isDisabled={isDisabled}
       loadOptions={loadStatusOptions}
       placeholder={intl.formatMessage(
@@ -412,6 +464,7 @@ export const KeywordSelector = ({
     <AsyncSelect
       inputId="data"
       isMulti={isMulti}
+      hideSelectedOptions={!isMulti}
       isDisabled={isDisabled}
       className="react-select-container"
       classNamePrefix="react-select"
@@ -555,7 +608,7 @@ export const WatchProviderSelector = ({
                     role="button"
                     tabIndex={0}
                   >
-                    <div className="relative m-2 aspect-1">
+                    <div className="aspect-1 relative m-2">
                       <CachedImage
                         type="tmdb"
                         src={`https://image.tmdb.org/t/p/w185${provider.logoPath}`}
@@ -565,7 +618,7 @@ export const WatchProviderSelector = ({
                       />
                     </div>
                     {isActive && (
-                      <div className="pointer-events-none absolute -left-1 -top-1 flex items-center justify-center text-indigo-100 opacity-90">
+                      <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                         <CheckCircleIcon className="h-6 w-6" />
                       </div>
                     )}
@@ -598,7 +651,7 @@ export const WatchProviderSelector = ({
                       role="button"
                       tabIndex={0}
                     >
-                      <div className="relative m-2 aspect-1">
+                      <div className="aspect-1 relative m-2">
                         <CachedImage
                           type="tmdb"
                           src={`https://image.tmdb.org/t/p/w185${provider.logoPath}`}
@@ -608,7 +661,7 @@ export const WatchProviderSelector = ({
                         />
                       </div>
                       {isActive && (
-                        <div className="pointer-events-none absolute -left-1 -top-1 flex items-center justify-center text-indigo-100 opacity-90">
+                        <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                           <CheckCircleIcon className="h-6 w-6" />
                         </div>
                       )}
@@ -726,6 +779,7 @@ export const UserSelector = ({
       defaultOptions
       cacheOptions
       isMulti={isMulti}
+      hideSelectedOptions={!isMulti}
       isDisabled={isDisabled}
       loadOptions={loadUserOptions}
       placeholder={intl.formatMessage(messages.searchUsers)}

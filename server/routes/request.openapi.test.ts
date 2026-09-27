@@ -32,6 +32,7 @@ describe('request status routes behind the OpenAPI validator', () => {
         counts: {
           total: 0,
           active: 0,
+          incomplete: 0,
           attention: 0,
           completed: 0,
           unavailable: 0,

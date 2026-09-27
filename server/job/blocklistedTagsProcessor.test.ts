@@ -89,8 +89,7 @@ describe('BlocklistedTagProcessor', () => {
       'persistSection',
       async (_section: unknown, update: unknown) => {
         const mainUpdate = update as
-          | MainSettings
-          | ((current: MainSettings) => MainSettings);
+          MainSettings | ((current: MainSettings) => MainSettings);
         const updated =
           typeof mainUpdate === 'function'
             ? mainUpdate(settings.main)

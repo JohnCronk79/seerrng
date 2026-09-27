@@ -7,6 +7,10 @@ import OpenLibraryAPI from '@server/api/openlibrary';
 import RadarrAPI from '@server/api/servarr/radarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import TheMovieDb from '@server/api/themoviedb';
+import type {
+  TmdbMovieDetails,
+  TmdbTvDetails,
+} from '@server/api/themoviedb/interfaces';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -38,6 +42,7 @@ import {
 import requestWorkCleanupManager, {
   RequestWorkCleanupError,
 } from '@server/lib/requestWorkCleanup';
+import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
 import { checkUser } from '@server/middleware/auth';
@@ -51,6 +56,106 @@ import type { EntitySubscriberInterface, InsertEvent } from 'typeorm';
 import { In } from 'typeorm';
 import authRoutes from './auth';
 import requestRoutes, { REQUEST_SERVICE_PROFILE_CONCURRENCY } from './request';
+
+const getMovieImpl: (args: {
+  movieId: number;
+  language?: string;
+}) => Promise<TmdbMovieDetails> = async ({ movieId }) => fakeTmdbMovie(movieId);
+
+const getTvShowImpl: (args: {
+  tvId: number;
+  language?: string;
+}) => Promise<TmdbTvDetails> = async ({ tvId }) => fakeTmdbShow(tvId);
+
+function installDefaultTmdbTestDoubles(): void {
+  Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+    get() {
+      return async (args: { movieId: number; language?: string }) =>
+        getMovieImpl(args);
+    },
+    set() {},
+    configurable: true,
+  });
+
+  Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+    get() {
+      return async (args: { tvId: number; language?: string }) =>
+        getTvShowImpl(args);
+    },
+    set() {},
+    configurable: true,
+  });
+}
+
+installDefaultTmdbTestDoubles();
+
+function fakeTmdbMovie(tmdbId: number): TmdbMovieDetails {
+  return {
+    id: tmdbId,
+    genres: [],
+    original_language: 'en',
+    keywords: { keywords: [] },
+    external_ids: {},
+  } as unknown as TmdbMovieDetails;
+}
+
+function fakeTmdbShow(tmdbId: number): TmdbTvDetails {
+  return {
+    id: tmdbId,
+    genres: [],
+    original_language: 'en',
+    keywords: { results: [] },
+    external_ids: {},
+  } as unknown as TmdbTvDetails;
+}
+
+function configureRadarr(overrides: Partial<RadarrSettings>[]): void {
+  const settings = getSettings();
+  settings.radarr = overrides.map((o, i) => ({
+    id: i,
+    name: `Radarr ${i}`,
+    hostname: 'localhost',
+    port: 7878,
+    apiKey: 'test-key',
+    baseUrl: '',
+    useSsl: false,
+    activeProfileId: 1,
+    activeDirectory: '/movies',
+    is4k: false,
+    minimumAvailability: 'released',
+    tags: [],
+    isDefault: i === 0,
+    syncEnabled: true,
+    preventSearch: false,
+    externalUrl: '',
+    ...o,
+  })) as RadarrSettings[];
+}
+
+function configureSonarr(overrides: Partial<SonarrSettings>[]): void {
+  const settings = getSettings();
+  settings.sonarr = overrides.map((o, i) => ({
+    id: i,
+    name: `Sonarr ${i}`,
+    hostname: 'localhost',
+    port: 8989,
+    apiKey: 'test-key',
+    baseUrl: '',
+    useSsl: false,
+    activeProfileId: 1,
+    activeDirectory: '/tv',
+    activeLanguageProfileId: 1,
+    animeTags: [],
+    is4k: false,
+    enableSeasonFolders: true,
+    tags: [],
+    isDefault: i === 0,
+    syncEnabled: true,
+    preventSearch: false,
+    externalUrl: '',
+    ...o,
+  })) as SonarrSettings[];
+}
 
 let app: Express;
 let cleanupShouldFail = false;
@@ -90,7 +195,15 @@ before(async () => {
 });
 
 beforeEach(() => {
+  // Several request cases replace these descriptors and delete them in t.after.
+  // Reinstall the suite defaults so later cases never reach the real TMDB client.
+  installDefaultTmdbTestDoubles();
   cleanupShouldFail = false;
+  const settings = getSettings();
+  settings.radarr = [];
+  settings.sonarr = [];
+  settings.lidarr = [];
+  settings.readarr = [];
   mock.method(MediaRequest, 'sendNotification', async () => undefined);
   mock.method(requestDispatchManager, 'enqueue', async () => undefined);
   mock.method(requestWorkCleanupManager, 'cleanup', async () => {
@@ -121,17 +234,37 @@ async function loginAs(email: string, password: string) {
   }
 }
 
+async function loginCookieAs(email: string, password: string) {
+  const settings = getSettings();
+  const priorLocalLogin = settings.main.localLogin;
+  settings.main.localLogin = true;
+
+  try {
+    const res = await request(app)
+      .post('/auth/local')
+      .send({ email, password });
+    assert.strictEqual(res.status, 200);
+    const cookies = res.headers['set-cookie'];
+    const cookie = Array.isArray(cookies) ? cookies.join('; ') : cookies;
+    assert.ok(cookie);
+    return cookie;
+  } finally {
+    settings.main.localLogin = priorLocalLogin;
+  }
+}
+
 async function seedRequest(
   status = MediaRequestStatus.PENDING,
   createdAt?: Date,
-  tmdbId = 12345
+  tmdbId = 12345,
+  requesterEmail = 'friend@seerr.dev'
 ) {
   const userRepo = getRepository(User);
   const mediaRepo = getRepository(Media);
   const requestRepo = getRepository(MediaRequest);
 
   const requestedBy = await userRepo.findOneOrFail({
-    where: { email: 'friend@seerr.dev' },
+    where: { email: requesterEmail },
   });
 
   const media = await mediaRepo.save(
@@ -552,6 +685,52 @@ describe('GET /request/status', () => {
     assert.strictEqual(response.body.results[0].status.stage, 'available');
   });
 
+  it('exposes partially fulfilled requests as incomplete', async () => {
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+    await getRepository(Media).update(mediaRequest.media.id, {
+      status: MediaStatus.PARTIALLY_AVAILABLE,
+      serviceId: 10,
+      externalServiceId: 20,
+    });
+    const completeRequest = await seedRequest(
+      MediaRequestStatus.APPROVED,
+      undefined,
+      12346
+    );
+    await getRepository(Media).update(completeRequest.media.id, {
+      status: MediaStatus.AVAILABLE,
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.get('/request/status').query({
+      filter: 'incomplete',
+      sort: 'incomplete',
+      sortDirection: 'desc',
+    });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.pageInfo.results, 1);
+    assert.strictEqual(response.body.results[0].request.id, mediaRequest.id);
+    assert.strictEqual(response.body.results[0].status.stage, 'searching');
+    assert.match(
+      response.body.results[0].status.message,
+      /Waiting for a usable release/
+    );
+    assert.strictEqual(response.body.counts.incomplete, 1);
+
+    const sortedResponse = await agent.get('/request/status').query({
+      sort: 'incomplete',
+      sortDirection: 'desc',
+    });
+    assert.strictEqual(sortedResponse.status, 200);
+    assert.deepStrictEqual(
+      sortedResponse.body.results.map(
+        (result: { request: { id: number } }) => result.request.id
+      ),
+      [mediaRequest.id, completeRequest.id]
+    );
+  });
+
   it('evaluates selected TV seasons from the status page query', async () => {
     const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
     const media = await getRepository(Media).save(
@@ -729,7 +908,7 @@ describe('DELETE /request/:requestId', () => {
   it('allows an admin to delete any pending request', async () => {
     const mediaRequest = await seedRequest();
 
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
     const res = await agent.delete(`/request/${mediaRequest.id}`);
 
     assert.strictEqual(res.status, 204);
@@ -832,7 +1011,7 @@ describe('DELETE /request/:requestId', () => {
       })
     );
 
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
     const res = await agent.delete(`/request/${mediaRequest.id}`);
 
     assert.strictEqual(res.status, 401);
@@ -1141,17 +1320,36 @@ describe('GET /request', () => {
   });
 
   it('accepts the recent requests slider query', async () => {
+    const deletedRequest = await seedRequest(
+      MediaRequestStatus.COMPLETED,
+      undefined,
+      987654
+    );
+    deletedRequest.media.status = MediaStatus.DELETED;
+    await getRepository(Media).save(deletedRequest.media);
+
     const agent = await loginAs('admin@seerr.dev', 'test1234');
     const res = await agent.get('/request').query({
-      filter: 'all',
+      filter: 'recent',
       take: 10,
-      sort: 'modified',
+      sort: 'added',
       sortDirection: 'desc',
       skip: 0,
     });
 
     assert.strictEqual(res.status, 200);
     assert.ok(Array.isArray(res.body.results));
+    assert.ok(
+      !res.body.results.some(
+        (item: { id: number }) => item.id === deletedRequest.id
+      )
+    );
+    assert.ok(
+      res.body.results.every(
+        (item: { is4k: boolean; media: Media }) =>
+          item.media[item.is4k ? 'status4k' : 'status'] !== MediaStatus.DELETED
+      )
+    );
   });
 
   it('rejects malformed request list query filters', async () => {
@@ -1377,8 +1575,10 @@ describe('POST /request', () => {
 
   it('uses an explicitly selected zero-valued screen service without a default', async (t) => {
     const settings = getSettings();
+    const legacyStandardSettings = createRadarrSettings(0, false);
+    Reflect.deleteProperty(legacyStandardSettings, 'is4k');
     settings.radarr = [
-      createRadarrSettings(0, false),
+      legacyStandardSettings,
       { ...createRadarrSettings(1, false), is4k: true },
     ];
     const providerMediaIds: number[] = [];
@@ -1844,7 +2044,7 @@ describe('POST /request', () => {
     assert.equal(persistedMedia.status, MediaStatus.PROCESSING);
   });
 
-  it('uses the selected request owner permissions instead of the acting administrator permissions', async (t) => {
+  it("lets an administrator request any tier for another user while preserving that user's approval permissions", async (t) => {
     Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
       configurable: true,
       get: () => async () =>
@@ -1868,7 +2068,7 @@ describe('POST /request', () => {
       {
         mediaType: MediaType.MOVIE,
         mediaId: 553,
-        is4k: false,
+        is4k: true,
         userId: requestOwner.id,
       },
       adminUser
@@ -1877,7 +2077,317 @@ describe('POST /request', () => {
     assert.equal(mediaRequest.requestedBy.id, requestOwner.id);
     assert.equal(mediaRequest.status, MediaRequestStatus.PENDING);
     assert.equal(mediaRequest.modifiedBy == null, true);
-    assert.equal(mediaRequest.media.status, MediaStatus.PENDING);
+    assert.equal(mediaRequest.media.status, MediaStatus.UNKNOWN);
+    assert.equal(mediaRequest.media.status4k, MediaStatus.PENDING);
+  });
+
+  it('promotes matching pending Movie, Series, Music, and Book requests without replacing their requester or timeline', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(41)];
+    settings.sonarr = [createSonarrSettings(42)];
+    settings.lidarr = [createLidarrSettings(43)];
+    settings.readarr = [createReadarrSettings(44, 'ebook')];
+
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 560,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 561,
+          external_ids: { tvdb_id: 9561 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [{ season_number: 1 }],
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'pending-release-group',
+          release_group_metadata: {
+            release_group: { name: 'Pending Album' },
+            artist: { name: 'Pending Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OLPENDINGW',
+          title: 'Pending Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () => ({ size: 0, entries: [] })
+    );
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      getAlbumMock.mock.restore();
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.radarr = [];
+      settings.sonarr = [];
+      settings.lidarr = [];
+      settings.readarr = [];
+    });
+
+    const userRepository = getRepository(User);
+    const mediaRepository = getRepository(Media);
+    const requestRepository = getRepository(MediaRequest);
+    const originalRequester = await userRepository.findOneByOrFail({ id: 2 });
+    const movie = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 560,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const series = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 561,
+        tvdbId: 9561,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const music = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'pending-release-group',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const book = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OLPENDINGW',
+            canonical: true,
+          }),
+        ],
+      })
+    );
+
+    const pendingRequests = await requestRepository.save([
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        media: movie,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 41,
+        profileId: 0,
+        rootFolder: '/selected-movies',
+        serviceTargets: [
+          {
+            serviceType: 'radarr',
+            format: 'standard',
+            serverId: 41,
+            profileId: 0,
+            rootFolder: '/selected-movies',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media: series,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 42,
+        profileId: 20,
+        languageProfileId: 1,
+        rootFolder: '/tv',
+        serviceTargets: [
+          {
+            serviceType: 'sonarr',
+            format: 'standard',
+            serverId: 42,
+            profileId: 20,
+            languageProfileId: 1,
+            rootFolder: '/tv',
+            status: MediaStatus.PENDING,
+          },
+        ],
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: music,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 43,
+        profileId: 20,
+        metadataProfileId: 30,
+        rootFolder: '/music',
+        serviceTargets: [
+          {
+            serviceType: 'lidarr',
+            format: 'music',
+            serverId: 43,
+            profileId: 20,
+            metadataProfileId: 30,
+            rootFolder: '/music',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: book,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 44,
+        profileId: 22,
+        metadataProfileId: 33,
+        rootFolder: '/books',
+        bookFormat: 'ebook',
+        serviceTargets: [
+          {
+            serviceType: 'readarr',
+            format: 'ebook',
+            serverId: 44,
+            profileId: 22,
+            metadataProfileId: 33,
+            rootFolder: '/books',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+    ]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const responses = [
+      await admin.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 560,
+        is4k: false,
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 561,
+        seasons: [1],
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.MUSIC,
+        mediaId: 'pending-release-group',
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.BOOK,
+        mediaId: 'OLPENDINGW',
+        format: 'ebook',
+      }),
+    ];
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status),
+      [201, 201, 201, 201]
+    );
+    assert.deepStrictEqual(
+      responses.map((response) => response.body.id).sort((a, b) => a - b),
+      pendingRequests.map((pending) => pending.id).sort((a, b) => a - b)
+    );
+    assert.strictEqual(await requestRepository.count(), 4);
+
+    const promoted = await requestRepository.find({
+      order: { id: 'ASC' },
+    });
+    assert.ok(
+      promoted.every(
+        (request) =>
+          request.status === MediaRequestStatus.APPROVED &&
+          request.requestedBy.id === originalRequester.id &&
+          request.modifiedBy?.id === 1
+      )
+    );
+  });
+
+  it('allows an auto-approved actor to fulfill another user pending request', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(45)];
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 562,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+
+    const pending = await seedRequest(
+      MediaRequestStatus.PENDING,
+      undefined,
+      562
+    );
+    const userRepository = getRepository(User);
+    const originalRequester = await userRepository.findOneByOrFail({ id: 1 });
+    pending.requestedBy = originalRequester;
+    await getRepository(MediaRequest).save(pending);
+    const fulfillingUser = await userRepository.findOneByOrFail({ id: 2 });
+    fulfillingUser.permissions |= Permission.AUTO_APPROVE_MOVIE;
+    await userRepository.save(fulfillingUser);
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 562,
+      is4k: false,
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.body.id, pending.id);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+    const promoted = await getRepository(MediaRequest).findOneByOrFail({
+      id: pending.id,
+    });
+    assert.strictEqual(promoted.status, MediaRequestStatus.APPROVED);
+    assert.strictEqual(promoted.requestedBy.id, originalRequester.id);
+    assert.strictEqual(promoted.modifiedBy?.id, fulfillingUser.id);
   });
 
   it('serializes different music releases resolving to one release group', async (t) => {
@@ -2016,24 +2526,24 @@ describe('POST /request', () => {
       delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
       delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
     });
-    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const cookie = await loginCookieAs('friend@seerr.dev', 'test1234');
 
     const responses = await Promise.all([
-      agent.post('/request').send({ mediaId: 1 }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({ mediaId: 1 }),
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.MOVIE,
         mediaId: 'not-an-id',
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.TV,
         mediaId: 2,
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: MediaType.TV,
         mediaId: 2,
         seasons: [],
       }),
-      agent.post('/request').send({
+      request(app).post('/request').set('Cookie', cookie).send({
         mediaType: 'podcast',
         mediaId: 3,
       }),
@@ -2518,6 +3028,57 @@ describe('POST /request', () => {
 
     assert.strictEqual(duplicateResponse.status, 409);
     assert.match(duplicateResponse.body.message, /already available/i);
+  });
+
+  it('allows simultaneous active music requests for different Lidarr destinations', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(0, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'simultaneous-quality-music-release-group';
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Two Quality Album' },
+            artist: { name: 'Two Quality Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const mp3Response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+    const flacResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 0,
+    });
+
+    assert.strictEqual(mp3Response.status, 201);
+    assert.strictEqual(flacResponse.status, 201);
+    assert.strictEqual(mp3Response.body.serverId, 10);
+    assert.strictEqual(flacResponse.body.serverId, 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
   });
 
   it('allows an MP3 request when the FLAC destination is already available', async (t) => {
@@ -3357,6 +3918,8 @@ describe('POST /request', () => {
   });
 
   it('blocks duplicate book requests that resolve to an existing ISBN', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
     const userRepo = getRepository(User);
     const mediaRepo = getRepository(Media);
     const requestRepo = getRepository(MediaRequest);
@@ -3419,6 +3982,7 @@ describe('POST /request', () => {
     t.after(() => {
       getWorkMock.mock.restore();
       getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
     });
 
     const agent = await loginAs('friend@seerr.dev', 'test1234');
@@ -3638,6 +4202,11 @@ describe('POST /request', () => {
   });
 
   it('blocks a both-formats book request when either format already has an active request', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      createReadarrSettings(21, 'ebook'),
+      createReadarrSettings(22, 'audiobook'),
+    ];
     const userRepo = getRepository(User);
     const mediaRepo = getRepository(Media);
     const requestRepo = getRepository(MediaRequest);
@@ -3701,6 +4270,7 @@ describe('POST /request', () => {
     t.after(() => {
       getWorkMock.mock.restore();
       getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
     });
 
     const agent = await loginAs('friend@seerr.dev', 'test1234');
@@ -3717,6 +4287,8 @@ describe('POST /request', () => {
   });
 
   it('blocks duplicate book requests when Open Library only returns ISBN-10', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
     const userRepo = getRepository(User);
     const mediaRepo = getRepository(Media);
     const requestRepo = getRepository(MediaRequest);
@@ -3779,6 +4351,7 @@ describe('POST /request', () => {
     t.after(() => {
       getWorkMock.mock.restore();
       getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
     });
 
     const agent = await loginAs('friend@seerr.dev', 'test1234');
@@ -3793,6 +4366,8 @@ describe('POST /request', () => {
   });
 
   it('blocks duplicate book requests that resolve to an existing edition', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
     const userRepo = getRepository(User);
     const mediaRepo = getRepository(Media);
     const requestRepo = getRepository(MediaRequest);
@@ -3854,6 +4429,7 @@ describe('POST /request', () => {
     t.after(() => {
       getWorkMock.mock.restore();
       getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
     });
 
     const agent = await loginAs('friend@seerr.dev', 'test1234');
@@ -4447,6 +5023,482 @@ describe('PUT /request/:requestId', () => {
     assert.strictEqual(persisted.metadataProfileId, 30);
     assert.strictEqual(persisted.rootFolder, '/music');
     assert.deepStrictEqual(persisted.tags, [7, 8]);
+  });
+
+  it('refuses to modify a request that is no longer pending', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      serverId: 3,
+      rootFolder: '/updated/movies',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /pending/i);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.serverId, null);
+    assert.strictEqual(saved.rootFolder, null);
+  });
+});
+
+async function seedUser(
+  email: string,
+  quotas: {
+    movieQuotaLimit?: number;
+    tvQuotaLimit?: number;
+    tvQuotaDays?: number;
+  } = {}
+) {
+  const userRepo = getRepository(User);
+  const user = await userRepo.findOneOrFail({ where: { email } });
+  Object.assign(user, quotas);
+
+  return userRepo.save(user);
+}
+
+async function seedTvMedia(tmdbId: number) {
+  const mediaRepo = getRepository(Media);
+
+  return (
+    (await mediaRepo.findOne({
+      where: { tmdbId, mediaType: MediaType.TV },
+    })) ??
+    (await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    ))
+  );
+}
+
+async function seedMediaSeasons(
+  tmdbId: number,
+  seasons: { seasonNumber: number; status: MediaStatus }[]
+) {
+  const media = await seedTvMedia(tmdbId);
+  media.seasons = seasons.map(
+    ({ seasonNumber, status }) =>
+      new Season({ seasonNumber, status, status4k: MediaStatus.UNKNOWN })
+  );
+
+  return getRepository(Media).save(media);
+}
+
+async function seedTvRequest(
+  requestedBy: User,
+  seasons: number[],
+  { tmdbId = 67890, ignoreQuota = false, createdAt = new Date() } = {}
+) {
+  return getRepository(MediaRequest).save(
+    new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.PENDING,
+      media: await seedTvMedia(tmdbId),
+      requestedBy,
+      is4k: false,
+      ignoreQuota,
+      createdAt,
+      seasons: seasons.map(
+        (seasonNumber) =>
+          new SeasonRequest({
+            seasonNumber,
+            status: MediaRequestStatus.PENDING,
+          })
+      ),
+    })
+  );
+}
+
+describe('PUT /request/:requestId (tv)', () => {
+  it('does not add a season held by another request', async () => {
+    const requestRepo = getRepository(MediaRequest);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const otherUser = await seedUser('demo@seerr.dev');
+
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+    const otherRequest = await seedTvRequest(otherUser, [3]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+
+    const otherSaved = await requestRepo.findOneOrFail({
+      where: { id: otherRequest.id },
+    });
+    assert.deepStrictEqual(
+      otherSaved.seasons.map((s) => s.seasonNumber),
+      [3]
+    );
+  });
+
+  it('gives a season to only one of two concurrent edits', async () => {
+    const requestRepo = getRepository(MediaRequest);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const otherUser = await seedUser('demo@seerr.dev');
+
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    const otherRequest = await seedTvRequest(otherUser, [3]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const friend = await loginAs('demo@seerr.dev', 'test1234');
+
+    const [adminRes, friendRes] = await Promise.all([
+      admin
+        .put(`/request/${mediaRequest.id}`)
+        .send({ mediaType: MediaType.TV, seasons: [1, 2] }),
+      friend
+        .put(`/request/${otherRequest.id}`)
+        .send({ mediaType: MediaType.TV, seasons: [3, 2] }),
+    ]);
+
+    assert.strictEqual(adminRes.status, 200);
+    assert.strictEqual(friendRes.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    const otherSaved = await requestRepo.findOneOrFail({
+      where: { id: otherRequest.id },
+    });
+
+    const holders = [saved, otherSaved].filter((r) =>
+      r.seasons.some((s) => s.seasonNumber === 2)
+    );
+    assert.strictEqual(holders.length, 1);
+
+    assert.deepStrictEqual(
+      [...saved.seasons, ...otherSaved.seasons]
+        .map((s) => s.seasonNumber)
+        .sort((a, b) => a - b),
+      [1, 2, 3]
+    );
+  });
+});
+
+describe('PUT /request/:requestId (season availability)', () => {
+  it('does not add a season the media already has', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 3]
+    );
+  });
+
+  it('returns 202 when every requested season is already covered', async () => {
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [2],
+    });
+
+    assert.strictEqual(res.status, 202);
+  });
+
+  it('keeps the seasons it already holds once they are available', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 1, status: MediaStatus.AVAILABLE },
+      { seasonNumber: 2, status: MediaStatus.PROCESSING },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('does not charge quota for a season the media already has', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber),
+      [1]
+    );
+  });
+});
+
+describe('PUT /request/:requestId (quota)', () => {
+  it('rejects adding seasons beyond the season limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('rejects adding seasons to a request older than the quota window', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', {
+      tvQuotaLimit: 2,
+      tvQuotaDays: 7,
+    });
+    const mediaRequest = await seedTvRequest(owner, [1, 2], {
+      createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('allows swapping seasons at the season limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [3, 4],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [3, 4]
+    );
+  });
+
+  it('rejects reassignment to a user without room for the existing seasons', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const target = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+  });
+
+  it('rejects reassignment of a movie request to a user at their limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const mediaRepo = getRepository(Media);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const target = await seedUser('demo@seerr.dev', { movieQuotaLimit: 1 });
+
+    // Uses up the target's single movie request
+    await seedRequest(
+      MediaRequestStatus.PENDING,
+      undefined,
+      12345,
+      'demo@seerr.dev'
+    );
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 55555,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: owner,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+  });
+
+  it('allows reassignment to a user who bypasses quotas', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const target = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, target.id);
+  });
+
+  it('allows an edit that exceeds the limit when the request ignores quota', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+
+    await seedTvRequest(owner, [1, 2], { tmdbId: 77777 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2], {
+      ignoreQuota: true,
+    });
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2, 3]
+    );
+  });
+
+  it('charges only the net increase when an edit both adds and removes', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 4 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2, 3]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 4, 5],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2, 4, 5]
+    );
   });
 });
 
@@ -5053,8 +6105,22 @@ describe('POST /request/bulk', () => {
         } as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>;
       }
     );
+    const getReleaseGroupDetailsMock = mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () => {
+        throw new Error('MusicBrainz unavailable');
+      }
+    );
+    const getReleaseGroupMock = mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroup',
+      async () => null
+    );
     t.after(() => {
       getAlbumMock.mock.restore();
+      getReleaseGroupDetailsMock.mock.restore();
+      getReleaseGroupMock.mock.restore();
       settings.lidarr = [];
     });
 
@@ -5711,6 +6777,36 @@ describe('POST /request/bulk', () => {
     assert.strictEqual(getAlbumMock.mock.callCount(), 0);
     assert.strictEqual(await getRepository(MediaRequest).count(), 0);
   });
+
+  it('refuses to retry a request that has not failed', async () => {
+    const repo = getRepository(MediaRequest);
+    const pending = await seedRequest();
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${pending.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /failed/i);
+
+    const persisted = await repo.findOneOrFail({ where: { id: pending.id } });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+  });
+
+  it('serializes concurrent retry attempts so only one is accepted', async () => {
+    const repo = getRepository(MediaRequest);
+    const failed = await seedRequest(MediaRequestStatus.FAILED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const results = await Promise.all([
+      admin.post(`/request/${failed.id}/retry`),
+      admin.post(`/request/${failed.id}/retry`),
+    ]);
+
+    assert.deepStrictEqual(results.map((r) => r.status).sort(), [200, 409]);
+
+    const persisted = await repo.findOneOrFail({ where: { id: failed.id } });
+    assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+  });
 });
 
 describe('DELETE /request/:requestId, deleted media status restoration', () => {
@@ -5980,5 +7076,308 @@ describe('DELETE /request/:requestId, deleted media status restoration', () => {
 
     const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
     assert.strictEqual(updated.status, MediaStatus.PARTIALLY_AVAILABLE);
+  });
+});
+
+describe('POST /request (movie), override rules', () => {
+  it('applies an override rule when the default Radarr server id differs from its array index', async () => {
+    configureRadarr([{ id: 5, isDefault: true, is4k: false }]);
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 5,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88001,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/movies');
+  });
+
+  it('applies an override rule when the default Radarr server id matches its array index (sanity check)', async () => {
+    configureRadarr([{ id: 0, isDefault: true, is4k: false }]);
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 0,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88002,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/movies');
+  });
+
+  it('does not apply an unrelated override rule when there is no default Radarr server configured', async () => {
+    getSettings().radarr = [];
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 999,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88005,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('POST /request (tv), override rules', () => {
+  it('applies an override rule when the default Sonarr server id differs from its array index', async () => {
+    configureSonarr([{ id: 5, isDefault: true, is4k: false }]);
+    getSettings().radarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 5,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88003,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/tv');
+  });
+
+  it('applies an override rule when the default Sonarr server id matches its array index (sanity check)', async () => {
+    configureSonarr([{ id: 0, isDefault: true, is4k: false }]);
+    getSettings().radarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 0,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88004,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/tv');
+  });
+
+  it('does not apply an unrelated override rule when there is no default Sonarr server configured', async () => {
+    getSettings().radarr = [];
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 999,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88006,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('DELETE /request/:requestId, orphaned season status reset', () => {
+  async function seedTvShow(
+    tmdbId: number,
+    seasons: Partial<Season>[]
+  ): Promise<Media> {
+    const mediaRepo = getRepository(Media);
+
+    return mediaRepo.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.UNKNOWN,
+        seasons: seasons.map((season) => new Season(season)),
+      })
+    );
+  }
+
+  async function seedTvRequest(
+    media: Media,
+    seasonNumbers: number[]
+  ): Promise<MediaRequest> {
+    const userRepo = getRepository(User);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    return requestRepo.save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: admin,
+        is4k: false,
+        seasons: seasonNumbers.map(
+          (seasonNumber) =>
+            new SeasonRequest({
+              seasonNumber,
+              status: MediaRequestStatus.APPROVED,
+            })
+        ),
+      })
+    );
+  }
+
+  it('resets a request-covered PROCESSING season to UNKNOWN so it can be re-requested', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99101, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.UNKNOWN);
+
+    const friend = await loginAs('demo@seerr.dev', 'test1234');
+    const reRequest = await friend.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 99101,
+      seasons: [1],
+    });
+    assert.strictEqual(reRequest.status, 201);
+  });
+
+  it('does not touch PROCESSING seasons the deleted request did not cover', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99102, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+      { seasonNumber: 2, status: MediaStatus.PROCESSING },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    const seasonOne = updated.seasons.find((s) => s.seasonNumber === 1);
+    const seasonTwo = updated.seasons.find((s) => s.seasonNumber === 2);
+    assert.strictEqual(seasonOne?.status, MediaStatus.UNKNOWN);
+    assert.strictEqual(seasonTwo?.status, MediaStatus.PROCESSING);
+  });
+
+  it('keeps a season PROCESSING while another active request still covers it', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99103, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+    ]);
+    const firstRequest = await seedTvRequest(media, [1]);
+    await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${firstRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.PROCESSING);
+  });
+
+  it('leaves season status4k untouched when deleting a non-4K request', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99104, [
+      {
+        seasonNumber: 1,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.PROCESSING,
+      },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.UNKNOWN);
+    assert.strictEqual(updated.seasons[0].status4k, MediaStatus.PROCESSING);
   });
 });

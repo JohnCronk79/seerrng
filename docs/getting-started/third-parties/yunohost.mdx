@@ -1,0 +1,67 @@
+---
+title: YunoHost
+description: Install SeerrNG on YunoHost
+sidebar_position: 3
+---
+
+# YunoHost
+
+:::warning
+The YunoHost package is maintained in the SeerrNG repository, but it is not yet
+listed in YunoHost's official app catalog. Catalog inclusion is reviewed and
+managed by the YunoHost community.
+:::
+
+## Requirements
+
+- YunoHost 12.1.17 or newer.
+- An `amd64` or `arm64` server.
+- A dedicated domain or subdomain. SeerrNG must be installed at the domain root;
+  it does not support installation under a URL path such as `/seerrng`.
+
+The package runs the official SeerrNG Linux release archive as an unprivileged
+service, stores the database and settings in YunoHost's persistent app data
+directory, and configures YunoHost's Nginx reverse proxy and HTTPS certificate.
+YunoHost's LDAP login and single sign-on are not used. Sign-in and user access
+are managed by SeerrNG and the media server you connect during setup.
+
+## Install the package branch
+
+The package is available for manual installation from the `yunohost` branch:
+
+```bash
+sudo yunohost app install https://github.com/snapetech/seerrng/tree/yunohost --debug
+```
+
+Choose the dedicated domain and `/` as the installation path. After installation,
+open the app URL and complete SeerrNG's first-run setup.
+
+## Upgrade and backups
+
+Use YunoHost's normal app upgrade and backup/restore tools. The package pins
+each upstream release archive by SHA-256 and supports YunoHost's app backup and
+restore lifecycle. The Node.js 22 runtime is managed by YunoHost.
+
+Application logs are available from YunoHost's service page and in
+`/home/yunohost.app/seerrng/logs/seerr.log` (the data directory uses a different
+instance name for additional installations). To inspect service output over
+SSH, run `sudo journalctl -u seerrng`.
+
+## Request official catalog inclusion
+
+To make the package available in the YunoHost app catalog, follow YunoHost's
+[catalog submission guide](https://doc.yunohost.org/dev/packaging/publish/).
+Fork `YunoHost/apps` and add this entry to `apps.toml`:
+
+```toml
+[seerrng]
+url = "https://github.com/snapetech/seerrng"
+branch = "yunohost"
+category = "multimedia"
+state = "inprogress"
+```
+
+Copy [`public/android-chrome-512x512.png`](https://github.com/snapetech/seerrng/blob/main/public/android-chrome-512x512.png)
+to `logos/seerrng.png`, then open a pull request. Do not set `level`; YunoHost's
+CI determines it. The YunoHost maintainers may ask for changes or for the
+package to move to a dedicated `YunoHost-Apps` repository.

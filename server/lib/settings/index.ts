@@ -34,7 +34,7 @@ export interface Library {
   id: string;
   name: string;
   enabled: boolean;
-  type: 'show' | 'movie' | 'music';
+  type: 'show' | 'movie' | 'music' | 'book';
   lastScan?: number;
 }
 
@@ -149,6 +149,31 @@ export interface ReadarrSettings extends DVRSettings {
   serviceType?: 'ebook' | 'audiobook';
 }
 
+export interface CollectorServiceSettings {
+  id: number;
+  name: string;
+  hostname: string;
+  port: number;
+  apiKey: string;
+  useSsl: boolean;
+  baseUrl?: string;
+  isDefault: boolean;
+  externalUrl?: string;
+  tags: number[];
+  syncEnabled: boolean;
+  preventSearch: boolean;
+}
+
+export interface MylarSettings extends CollectorServiceSettings {
+  rootFolder?: string;
+}
+
+export interface KapowarrSettings extends CollectorServiceSettings {
+  rootFolder?: string;
+}
+
+export type LazyLibrarianSettings = CollectorServiceSettings;
+
 interface Quota {
   quotaLimit?: number;
   quotaDays?: number;
@@ -187,9 +212,12 @@ export interface MainSettings {
     tv: Quota;
     music: Quota;
     book: Quota;
+    comic: Quota;
+    magazine: Quota;
   };
   hideAvailable: boolean;
   hideBlocklisted: boolean;
+  hideRequested: boolean;
   localLogin: boolean;
   mediaServerLogin: boolean;
   oidcLogin: boolean;
@@ -210,6 +238,7 @@ export interface MainSettings {
   spotifyClientId?: string;
   spotifyClientSecret?: string;
   youtubeApiKey?: string;
+  comicVineApiKey?: string;
 }
 
 export interface ProxySettings {
@@ -248,12 +277,15 @@ interface FullPublicSettings extends PublicSettings {
   applicationUrl: string;
   hideAvailable: boolean;
   hideBlocklisted: boolean;
+  hideRequested: boolean;
   localLogin: boolean;
   mediaServerLogin: boolean;
   movie4kEnabled: boolean;
   series4kEnabled: boolean;
   musicEnabled: boolean;
   booksEnabled: boolean;
+  comicsEnabled: boolean;
+  magazinesEnabled: boolean;
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;
@@ -369,6 +401,7 @@ export interface NotificationAgentNtfy extends NotificationAgentConfig {
   options: {
     url: string;
     topic: string;
+    tags?: string;
     authMethodUsernamePassword?: boolean;
     username?: string;
     password?: string;
@@ -424,6 +457,9 @@ export type JobId =
   | 'lidarr-scan'
   | 'readarr-scan'
   | 'readarr-request-retry'
+  | 'mylar-scan'
+  | 'kapowarr-scan'
+  | 'magazine-scan'
   | 'download-sync'
   | 'download-recovery'
   | 'download-sync-reset'
@@ -447,6 +483,9 @@ export interface AllSettings {
   sonarr: SonarrSettings[];
   lidarr: LidarrSettings[];
   readarr: ReadarrSettings[];
+  mylar: MylarSettings[];
+  kapowarr: KapowarrSettings[];
+  lazylibrarian: LazyLibrarianSettings[];
   public: PublicSettings;
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
@@ -490,9 +529,12 @@ class Settings {
           tv: {},
           music: {},
           book: {},
+          comic: {},
+          magazine: {},
         },
         hideAvailable: false,
         hideBlocklisted: false,
+        hideRequested: false,
         localLogin: true,
         mediaServerLogin: true,
         oidcLogin: false,
@@ -513,6 +555,7 @@ class Settings {
         spotifyClientId: '',
         spotifyClientSecret: '',
         youtubeApiKey: '',
+        comicVineApiKey: '',
       },
       plex: {
         name: '',
@@ -545,6 +588,9 @@ class Settings {
       sonarr: [],
       lidarr: [],
       readarr: [],
+      mylar: [],
+      kapowarr: [],
+      lazylibrarian: [],
       public: {
         initialized: false,
       },
@@ -649,6 +695,7 @@ class Settings {
             options: {
               url: '',
               topic: '',
+              tags: '',
               priority: 3,
               locale: 'en',
             },
@@ -682,6 +729,15 @@ class Settings {
         },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
+        },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
+        },
+        'magazine-scan': {
+          schedule: '0 30 5 * * *',
         },
         'availability-sync': {
           schedule: '0 0 5 * * *',
@@ -721,8 +777,8 @@ class Settings {
           keyFile: '',
           caFile: '',
           redirectHttpToHttps: false,
-          allowHttpAuth: false,
-          httpAuthAcknowledged: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
         },
         proxy: {
           enabled: false,
@@ -976,6 +1032,30 @@ class Settings {
     this.data.sonarr = data;
   }
 
+  get mylar(): MylarSettings[] {
+    return this.data.mylar;
+  }
+
+  set mylar(data: MylarSettings[]) {
+    this.data.mylar = data;
+  }
+
+  get kapowarr(): KapowarrSettings[] {
+    return this.data.kapowarr;
+  }
+
+  set kapowarr(data: KapowarrSettings[]) {
+    this.data.kapowarr = data;
+  }
+
+  get lazylibrarian(): LazyLibrarianSettings[] {
+    return this.data.lazylibrarian;
+  }
+
+  set lazylibrarian(data: LazyLibrarianSettings[]) {
+    this.data.lazylibrarian = data;
+  }
+
   get public(): PublicSettings {
     return this.data.public;
   }
@@ -991,6 +1071,7 @@ class Settings {
       applicationUrl: this.data.main.applicationUrl,
       hideAvailable: this.data.main.hideAvailable,
       hideBlocklisted: this.data.main.hideBlocklisted,
+      hideRequested: this.data.main.hideRequested,
       localLogin: this.data.main.localLogin,
       mediaServerLogin: this.data.main.mediaServerLogin,
       jellyfinExternalHost: this.data.jellyfin.externalHostname,
@@ -1003,6 +1084,9 @@ class Settings {
       ),
       musicEnabled: this.data.lidarr.length > 0,
       booksEnabled: this.data.readarr.length > 0,
+      comicsEnabled:
+        this.data.mylar.length > 0 || this.data.kapowarr.length > 0,
+      magazinesEnabled: this.data.lazylibrarian.length > 0,
       discoverRegion: this.data.main.discoverRegion,
       streamingRegion: this.data.main.streamingRegion,
       originalLanguage: this.data.main.originalLanguage,
@@ -1226,9 +1310,12 @@ class Settings {
           tv: {},
           music: {},
           book: {},
+          comic: {},
+          magazine: {},
         },
         hideAvailable: false,
         hideBlocklisted: false,
+        hideRequested: false,
         localLogin: true,
         mediaServerLogin: true,
         oidcLogin: false,
@@ -1278,6 +1365,9 @@ class Settings {
       sonarr: [],
       lidarr: [],
       readarr: [],
+      mylar: [],
+      kapowarr: [],
+      lazylibrarian: [],
       public: {
         initialized: false,
       },
@@ -1416,6 +1506,15 @@ class Settings {
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
         },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
+        },
+        'magazine-scan': {
+          schedule: '0 30 5 * * *',
+        },
         'availability-sync': {
           schedule: '0 0 5 * * *',
         },
@@ -1454,8 +1553,8 @@ class Settings {
           keyFile: '',
           caFile: '',
           redirectHttpToHttps: false,
-          allowHttpAuth: false,
-          httpAuthAcknowledged: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
         },
         proxy: {
           enabled: false,

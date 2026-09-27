@@ -626,9 +626,9 @@ export const assertRasterPixelBudget = ({
 };
 
 export const prepareRasterImageForCache = async (
-  input: Buffer,
+  input: Buffer<ArrayBufferLike>,
   contentType: string
-): Promise<{ buffer: Buffer; extension: string }> => {
+): Promise<{ buffer: Buffer<ArrayBufferLike>; extension: string }> => {
   const image = sharp(input, {
     animated: true,
     limitInputPixels: MAX_IMAGE_PIXELS,
@@ -1104,7 +1104,10 @@ class ImageProxy {
         }
       );
 
-      let buffer = Buffer.from(response.data, 'binary');
+      let buffer: Buffer<ArrayBufferLike> = Buffer.from(
+        response.data,
+        'binary'
+      );
       if (buffer.length > MAX_IMAGE_BYTES) {
         throw new Error('Image exceeds maximum allowed size');
       }

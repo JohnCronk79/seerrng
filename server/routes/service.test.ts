@@ -22,7 +22,9 @@ import { Permission } from '@server/lib/permissions';
 import { runWithServarrServiceAdmission } from '@server/lib/serviceAdmission';
 import type {
   AllSettings,
+  KapowarrSettings,
   LidarrSettings,
+  MylarSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -160,6 +162,43 @@ function makeLidarr(overrides: Partial<LidarrSettings> = {}): LidarrSettings {
   };
 }
 
+function makeMylar(overrides: Partial<MylarSettings> = {}): MylarSettings {
+  return {
+    id: 0,
+    name: 'Mylar3',
+    hostname: 'localhost',
+    port: 8090,
+    apiKey: 'test-key',
+    useSsl: false,
+    baseUrl: '',
+    isDefault: true,
+    tags: [],
+    syncEnabled: true,
+    preventSearch: false,
+    ...overrides,
+  };
+}
+
+function makeKapowarr(
+  overrides: Partial<KapowarrSettings> = {}
+): KapowarrSettings {
+  return {
+    id: 0,
+    name: 'Kapowarr',
+    hostname: 'localhost',
+    port: 5656,
+    apiKey: 'test-key',
+    useSsl: false,
+    baseUrl: '',
+    isDefault: true,
+    tags: [],
+    syncEnabled: true,
+    preventSearch: false,
+    rootFolder: '/comics',
+    ...overrides,
+  };
+}
+
 function makeRadarr(overrides: Partial<RadarrSettings> = {}): RadarrSettings {
   return {
     ...baseServerSettings,
@@ -235,6 +274,8 @@ beforeEach(() => {
   settings.sonarr = [];
   settings.lidarr = [];
   settings.readarr = [];
+  settings.mylar = [];
+  settings.kapowarr = [];
   mock.method(settings, 'save', async () => undefined);
 });
 
@@ -1232,6 +1273,32 @@ describe('Lidarr settings routes', () => {
   });
 });
 
+describe('GET /service/comic', () => {
+  it('combines Mylar3 and Kapowarr instances into one list', async () => {
+    getSettings().mylar = [
+      makeMylar({ id: 1, name: 'Mylar3', isDefault: true }),
+    ];
+    getSettings().kapowarr = [
+      makeKapowarr({ id: 2, name: 'Kapowarr', isDefault: false }),
+    ];
+
+    const res = await request(app).get('/service/comic');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, [
+      { id: 1, name: 'Mylar3', isDefault: true, backendType: 'mylar' },
+      { id: 2, name: 'Kapowarr', isDefault: false, backendType: 'kapowarr' },
+    ]);
+  });
+
+  it('returns an empty list when no comics backend is configured', async () => {
+    const res = await request(app).get('/service/comic');
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, []);
+  });
+});
+
 describe('Bookshelf settings routes', () => {
   it('rejects malformed Bookshelf settings bodies', async () => {
     const res = await request(app).post('/settings/readarr').send([]);
@@ -1477,6 +1544,47 @@ describe('Bookshelf settings routes', () => {
     );
   });
 
+  it('promotes another Bookshelf server for the same format when editing away the default', async () => {
+    getSettings().readarr = [
+      makeReadarr({ id: 7, name: 'Primary Ebook', isDefault: true }),
+      makeReadarr({ id: 8, name: 'Backup Ebook', isDefault: false }),
+    ];
+
+    const res = await request(app)
+      .put('/settings/readarr/7')
+      .send(
+        makeReadarr({
+          name: 'Primary Ebook',
+          isDefault: true,
+          serviceType: 'audiobook',
+        })
+      );
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(
+      getSettings().readarr.map(({ id, name, isDefault, serviceType }) => ({
+        id,
+        name,
+        isDefault,
+        serviceType,
+      })),
+      [
+        {
+          id: 7,
+          name: 'Primary Ebook',
+          isDefault: true,
+          serviceType: 'audiobook',
+        },
+        {
+          id: 8,
+          name: 'Backup Ebook',
+          isDefault: true,
+          serviceType: 'ebook',
+        },
+      ]
+    );
+  });
+
   it('returns Bookshelf/Readarr service summaries with metadata profile and tags', async () => {
     getSettings().readarr = [
       makeReadarr({
@@ -1581,6 +1689,39 @@ describe('Bookshelf settings routes', () => {
     assert.strictEqual(res.body.ok, false);
     assert.strictEqual(res.body.category, 'lookup_empty');
     assert.strictEqual(res.body.lookupCount, 0);
+  });
+
+  it('reports metadata provider lookup failures as a provider error', async () => {
+    mock.method(ReadarrAPI.prototype, 'getSystemStatus', async () => ({
+      appName: 'Bookshelf',
+      version: '0.4.20.10',
+      urlBase: '',
+    }));
+    mock.method(ReadarrAPI.prototype, 'getDevelopmentConfig', async () => ({
+      id: 1,
+      metadataSource: 'http://127.0.0.1:8790',
+    }));
+    mock.method(ReadarrAPI.prototype, 'getProfiles', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getMetadataProfiles', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getRootFolders', async () => []);
+    mock.method(ReadarrAPI.prototype, 'lookupBook', async () => {
+      throw new Error(
+        "Search for 'Stephen King' failed. Invalid response received from Goodreads."
+      );
+    });
+
+    const res = await request(app)
+      .post('/settings/readarr/diagnose')
+      .send({
+        ...makeReadarr(),
+        term: 'Stephen King',
+      });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.ok, false);
+    assert.strictEqual(res.body.category, 'provider_failed');
+    assert.match(res.body.message, /metadata provider failed/i);
+    assert.strictEqual(res.body.provider, 'softcover');
   });
 
   it('diagnoses incomplete Bookshelf lookups', async () => {

@@ -14,6 +14,9 @@ describe('GitHub update response normalization', () => {
         { name: {} },
         ...Array.from({ length: 150 }, (_, index) => ({
           name: `Release ${index}`,
+          tag_name: `v3.0.${index}`,
+          prerelease: false,
+          draft: false,
           body: 'provider-only',
         })),
       ],
@@ -21,7 +24,12 @@ describe('GitHub update response normalization', () => {
     );
 
     assert.strictEqual(releases.length, 98);
-    assert.deepStrictEqual(releases[0], { name: 'Release 0' });
+    assert.deepStrictEqual(releases[0], {
+      name: 'Release 0',
+      tag_name: 'v3.0.0',
+      prerelease: false,
+      draft: false,
+    });
   });
 
   it('caps commits and drops malformed nested commit data', () => {

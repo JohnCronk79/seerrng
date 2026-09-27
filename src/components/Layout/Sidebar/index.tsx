@@ -6,7 +6,7 @@ import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import { isOptionalCatalogPathEnabled } from '@app/utils/serviceAvailability';
 import versionedAsset from '@app/utils/versionedAsset';
-import { Transition } from '@headlessui/react';
+import { Transition, TransitionChild } from '@headlessui/react';
 import {
   BookOpenIcon,
   ClockIcon,
@@ -15,7 +15,10 @@ import {
   EyeSlashIcon,
   FilmIcon,
   MusicalNoteIcon,
+  NewspaperIcon,
   SparklesIcon,
+  SpeakerWaveIcon,
+  Square3Stack3DIcon,
   TvIcon,
   UsersIcon,
   XMarkIcon,
@@ -31,12 +34,14 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   browsemovies: 'Movies',
   browsemusic: 'Music',
   browsebooks: 'Books',
+  browseaudiobooks: 'Audiobooks',
+  browsecomics: 'Comics',
+  browsemagazines: 'Magazines',
   browsetv: 'Series',
   requests: 'Requests',
-  requeststatus: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
-  users: 'Users',
+  users: 'User List',
   settings: 'Settings',
 });
 
@@ -92,10 +97,28 @@ const SidebarLinks: SidebarLinkProps[] = [
     activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
   },
   {
-    href: '/requests/status',
-    messagesKey: 'requeststatus',
+    href: '/discover/audiobooks',
+    messagesKey: 'browseaudiobooks',
+    svgIcon: <SpeakerWaveIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/discover\/audiobooks$/,
+  },
+  {
+    href: '/discover/comics',
+    messagesKey: 'browsecomics',
+    svgIcon: <Square3Stack3DIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/comics(?:\/.*)?|comic\/)/,
+  },
+  {
+    href: '/discover/magazines',
+    messagesKey: 'browsemagazines',
+    svgIcon: <NewspaperIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/magazines(?:\/.*)?|magazine\/)/,
+  },
+  {
+    href: '/requests',
+    messagesKey: 'requests',
     svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
-    activeRegExp: /^\/requests\/status/,
+    activeRegExp: /^\/requests\/?$/,
   },
   {
     href: '/blocklist',
@@ -183,7 +206,7 @@ const Sidebar = ({
       <div className="lg:hidden">
         <Transition as={Fragment} show={open}>
           <div className="fixed inset-0 z-40 flex">
-            <Transition.Child
+            <TransitionChild
               as="div"
               enter="transition-opacity ease-linear duration-300"
               enterFrom="opacity-0"
@@ -195,8 +218,8 @@ const Sidebar = ({
               <div className="fixed inset-0">
                 <div className="absolute inset-0 bg-gray-900 opacity-90" />
               </div>
-            </Transition.Child>
-            <Transition.Child
+            </TransitionChild>
+            <TransitionChild
               as="div"
               enter="transition-transform ease-in-out duration-300"
               enterFrom="-translate-x-full"
@@ -218,7 +241,7 @@ const Sidebar = ({
                   </div>
                   <div
                     ref={navRef}
-                    className="flex flex-1 flex-col overflow-y-auto pb-8 pt-4 sm:pb-4"
+                    className="flex flex-1 flex-col overflow-y-auto pt-4 pb-8 sm:pb-4"
                   >
                     <div className="flex flex-shrink-0 items-center px-2">
                       <span className="w-full px-4 text-xl text-gray-50">
@@ -248,10 +271,10 @@ const Sidebar = ({
                             }}
                             role="button"
                             tabIndex={0}
-                            className={`flex items-center rounded-md px-2 py-2 text-base font-medium leading-6 text-white transition duration-150 ease-in-out focus:outline-none ${
+                            className={`flex items-center rounded-md px-2 py-2 text-base leading-6 font-medium text-white transition duration-150 ease-in-out focus:outline-none ${
                               router.pathname.match(sidebarLink.activeRegExp)
-                                ? 'bg-gradient-to-br from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500'
-                                : 'sidebar-link-idle'
+                                ? 'main-menu-link sidebar-link-selected'
+                                : 'main-menu-link sidebar-link-idle'
                             } `}
                             data-testid={`${sidebarLink.dataTestId}-mobile`}
                           >
@@ -274,12 +297,12 @@ const Sidebar = ({
                   {/* <!-- Force sidebar to shrink to fit close icon --> */}
                 </div>
               </>
-            </Transition.Child>
+            </TransitionChild>
           </div>
         </Transition>
       </div>
 
-      <div className="fixed bottom-0 left-0 top-0 z-30 hidden lg:flex lg:flex-shrink-0">
+      <div className="fixed top-0 bottom-0 left-0 z-30 hidden lg:flex lg:flex-shrink-0">
         <div className="sidebar flex w-64 flex-col">
           <div className="flex h-0 flex-1 flex-col">
             <div className="flex flex-1 flex-col overflow-y-auto pb-4">
@@ -304,10 +327,10 @@ const Sidebar = ({
                       href={sidebarLink.href}
                       as={sidebarLink.as}
                       prefetch={false}
-                      className={`group flex items-center rounded-md px-2 py-2 text-lg font-medium leading-6 text-white transition duration-150 ease-in-out focus:outline-none ${
+                      className={`group flex items-center rounded-md px-2 py-2 text-lg leading-6 font-medium text-white transition duration-150 ease-in-out focus:outline-none ${
                         router.pathname.match(sidebarLink.activeRegExp)
-                          ? 'bg-gradient-to-br from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500'
-                          : 'sidebar-link-idle'
+                          ? 'main-menu-link sidebar-link-selected'
+                          : 'main-menu-link sidebar-link-idle'
                       } `}
                       data-testid={sidebarLink.dataTestId}
                     >

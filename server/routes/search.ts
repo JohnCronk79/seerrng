@@ -1,4 +1,8 @@
+import ComicVineAPI from '@server/api/comicvine';
 import CoverArtArchive from '@server/api/coverartarchive';
+import LazyLibrarianAPI, {
+  type LazyLibrarianMagazine,
+} from '@server/api/lazylibrarian';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import TheAudioDb from '@server/api/theaudiodb';
@@ -12,31 +16,59 @@ import {
   findBookMediaForBookResults,
   findBookMediaForSearchDocs,
 } from '@server/lib/bookMediaMatcher';
+import { findComicMediaByComicVineIds } from '@server/lib/comicMediaMatcher';
 import {
   normalizeMusicBrainzId,
   normalizeOpenLibraryWorkId,
 } from '@server/lib/externalIds';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
+import { findMagazineMediaByTitles } from '@server/lib/magazineMediaMatcher';
+import {
+  getAvailableMusicQualities,
+  getMusicQualityStatuses,
+} from '@server/lib/musicQualityAvailability';
 import {
   findSearchProvider,
   type CombinedSearchResponse,
 } from '@server/lib/search';
+import { runWithServarrServiceSnapshot } from '@server/lib/serviceAdmission';
+import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
-import { mapOpenLibrarySearchDoc } from '@server/models/Book';
-import { mapSearchResults } from '@server/models/Search';
+import {
+  mapOpenLibraryAuthorSearchDoc,
+  mapOpenLibrarySearchDoc,
+  type AuthorResult,
+} from '@server/models/Book';
+import { mapComicVineVolumeResult } from '@server/models/Comic';
+import { mapLazyLibrarianMagazine } from '@server/models/Magazine';
+import { mapArtistResult, mapSearchResults } from '@server/models/Search';
 import { trackBackgroundTask } from '@server/utils/backgroundTasks';
 import {
+  searchBookshelfAuthors,
+  searchBookshelfCatalogs,
+} from '@server/utils/bookshelfCatalog';
+import {
+  BoundedTaskQueue,
   mapWithConcurrency,
   settlePromisesWithin,
 } from '@server/utils/concurrency';
+import { getHttpErrorDetails, hasHttpStatus } from '@server/utils/httpError';
+import {
+  buildArtistAutocompleteQuery,
+  buildMusicAlbumSearchQuery,
+  parseMusicSearchFilters,
+} from '@server/utils/musicSearchFilters';
 import { parsePositiveInt } from '@server/utils/pagination';
 import {
   matchesAllSearchTerms,
   toFieldedBooleanAndQuery,
+  toMusicAlbumRefinementQuery,
 } from '@server/utils/searchTerms';
 import {
   parseBoundedString,
   parseOptionalAllowedString,
+  parseOptionalBoundedString,
   parseOptionalLanguage,
 } from '@server/utils/validation';
 import { Router } from 'express';
@@ -52,7 +84,15 @@ export const SEARCH_RATE_LIMIT = {
 export const MAX_SEARCH_RESULTS_PER_PROVIDER = 20;
 export const MAX_COMBINED_SEARCH_RESULTS = 100;
 export const SEARCH_PROVIDER_TIMEOUT_MS = 5_000;
-export const SEARCH_CREDIT_LOOKUP_CONCURRENCY = 4;
+export const SEARCH_CREDIT_LOOKUP_CONCURRENCY = parsePositiveInt(
+  process.env.SEARCH_CREDIT_CONCURRENCY,
+  10,
+  40
+);
+const searchCreditLookupQueue = new BoundedTaskQueue(
+  SEARCH_CREDIT_LOOKUP_CONCURRENCY,
+  MAX_COMBINED_SEARCH_RESULTS
+);
 const searchRateLimit = rateLimit({
   ...SEARCH_RATE_LIMIT,
   standardHeaders: true,
@@ -82,7 +122,10 @@ const searchTypes = [
   'album',
   'artist',
   'book',
+  'author',
   'music',
+  'comic',
+  'magazine',
 ] as const;
 type SearchType = (typeof searchTypes)[number];
 const bookFormats = ['ebook', 'audiobook'] as const;
@@ -101,6 +144,62 @@ const normalizeSearchText = (value?: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+type MagazineCatalogSearchResults = {
+  totalResults: number;
+  results: LazyLibrarianMagazine[];
+};
+
+const searchLazyLibrarianCatalogs = async (
+  services: ReturnType<typeof getExternalRuntimeConfig>['lazylibrarian'],
+  query: string,
+  page: number
+): Promise<MagazineCatalogSearchResults> => {
+  const settled = await Promise.allSettled(
+    services.map((service) =>
+      runWithServarrServiceSnapshot('lazylibrarian', service, (current) =>
+        new LazyLibrarianAPI({
+          url: LazyLibrarianAPI.buildUrl(current),
+          apiKey: current.apiKey,
+        }).getMagazines()
+      )
+    )
+  );
+  const successful = settled.flatMap((result) =>
+    result.status === 'fulfilled' ? [result.value] : []
+  );
+  const failures = settled.filter(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  );
+
+  if (successful.length === 0 && failures.length > 0) {
+    throw failures[0].reason;
+  }
+  if (failures.length > 0) {
+    logger.warn('Some LazyLibrarian instances failed during magazine search', {
+      label: 'Search',
+      failedServices: failures.map(({ reason }) => getHttpErrorDetails(reason)),
+    });
+  }
+
+  const magazinesByTitle = new Map<string, LazyLibrarianMagazine>();
+  for (const magazine of successful.flat()) {
+    const key = normalizeMagazineTitle(magazine.title);
+    if (key && !magazinesByTitle.has(key)) {
+      magazinesByTitle.set(key, magazine);
+    }
+  }
+
+  const matched = [...magazinesByTitle.values()]
+    .filter((magazine) => matchesAllSearchTerms([magazine.title], query))
+    .sort((left, right) => left.title.localeCompare(right.title));
+  const offset = (page - 1) * MAX_SEARCH_RESULTS_PER_PROVIDER;
+
+  return {
+    totalResults: matched.length,
+    results: matched.slice(offset, offset + MAX_SEARCH_RESULTS_PER_PROVIDER),
+  };
+};
 
 const WRITING_JOBS = new Set(['Screenplay', 'Story', 'Teleplay', 'Writer']);
 
@@ -186,6 +285,8 @@ searchRoutes.get('/', async (req, res, next) => {
   }
 
   const queryString = parsedQuery.value;
+  let typeSpecificTotalResults: number | undefined;
+  let typeSpecificTotalPages: number | undefined;
   const page = parsePositiveInt(req.query.page, 1, 500);
   const parsedLanguage = parseOptionalLanguage(req.query.language);
   if ('error' in parsedLanguage) {
@@ -204,6 +305,31 @@ searchRoutes.get('/', async (req, res, next) => {
     return res.status(400).json({ status: 400, message: parsedType.error });
   }
   const typeFilter = parsedType.value;
+  const parsedMusicFilters = parseMusicSearchFilters(req.query);
+  if ('error' in parsedMusicFilters)
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedMusicFilters.error });
+  const musicFilters = parsedMusicFilters.value;
+  const hasMusicFilters = Object.keys(musicFilters).length > 0;
+  if (hasMusicFilters && typeFilter !== 'music' && typeFilter !== 'album')
+    return res.status(400).json({
+      status: 400,
+      message: 'Music filters require the Music media type.',
+    });
+  const parsedResultFilter = parseOptionalBoundedString(
+    req.query.resultFilter,
+    {
+      fieldName: 'Result filter',
+      maxLength: MAX_SEARCH_QUERY_LENGTH,
+    }
+  );
+  if ('error' in parsedResultFilter) {
+    return res
+      .status(400)
+      .json({ status: 400, message: parsedResultFilter.error });
+  }
+  const resultFilter = parsedResultFilter.value;
   const parsedFormat = req.query.format
     ? parseOptionalAllowedString(req.query.format, {
         fieldName: 'Format',
@@ -228,6 +354,9 @@ searchRoutes.get('/', async (req, res, next) => {
         (server) => (server.serviceType ?? 'ebook') === bookFormat
       )
     : settings.readarr.length > 0;
+  const comicVineApiKey = getSettings().main.comicVineApiKey;
+  const comicsEnabled = !!comicVineApiKey;
+  const magazinesEnabled = settings.lazylibrarian.length > 0;
 
   if (
     (typeFilter === 'album' ||
@@ -243,7 +372,25 @@ searchRoutes.get('/', async (req, res, next) => {
     });
   }
 
-  if (typeFilter === 'book' && !booksEnabled) {
+  if ((typeFilter === 'book' || typeFilter === 'author') && !booksEnabled) {
+    return res.status(200).json({
+      page,
+      totalPages: 1,
+      totalResults: 0,
+      results: [],
+    });
+  }
+
+  if (typeFilter === 'comic' && !comicsEnabled) {
+    return res.status(200).json({
+      page,
+      totalPages: 1,
+      totalResults: 0,
+      results: [],
+    });
+  }
+
+  if (typeFilter === 'magazine' && !magazinesEnabled) {
     return res.status(200).json({
       page,
       totalPages: 1,
@@ -269,6 +416,9 @@ searchRoutes.get('/', async (req, res, next) => {
     } else {
       const musicbrainz = new MusicBrainz();
       const openLibrary = new OpenLibraryAPI();
+      const comicVine = comicVineApiKey
+        ? new ComicVineAPI(comicVineApiKey)
+        : undefined;
       const theAudioDb = new TheAudioDb();
       const coverArtArchive = new CoverArtArchive();
       const personMapper = new TmdbPersonMapper();
@@ -285,6 +435,20 @@ searchRoutes.get('/', async (req, res, next) => {
         typeFilter === 'artist' ||
         typeFilter === 'music';
       const shouldSearchBooks = !typeFilter || typeFilter === 'book';
+      const shouldSearchAuthors = !typeFilter || typeFilter === 'author';
+      const shouldSearchComics = !typeFilter || typeFilter === 'comic';
+      const shouldSearchMagazines = !typeFilter || typeFilter === 'magazine';
+      const providerNames = [
+        'TMDB',
+        'MusicBrainz albums',
+        'MusicBrainz artists',
+        'Open Library books',
+        'Bookshelf books',
+        'Open Library authors',
+        'Bookshelf authors',
+        'ComicVine',
+        'LazyLibrarian magazines',
+      ];
       const providerPromises: Promise<unknown>[] = [
         shouldSearchVideo
           ? tmdb.searchMulti({
@@ -298,20 +462,31 @@ searchRoutes.get('/', async (req, res, next) => {
               total_pages: 1,
               total_results: 0,
             }),
-        shouldSearchMusic && musicEnabled
-          ? musicbrainz.searchAlbum({
-              query: queryString,
+        shouldSearchMusic && musicEnabled && typeFilter !== 'artist'
+          ? musicbrainz.searchAlbumWithTotal({
+              query: hasMusicFilters
+                ? buildMusicAlbumSearchQuery(
+                    queryString,
+                    musicFilters,
+                    resultFilter
+                  )
+                : typeFilter === 'music' && resultFilter
+                  ? toMusicAlbumRefinementQuery(queryString, resultFilter)
+                  : queryString,
               limit: 20,
               offset: musicOffset,
             })
-          : Promise.resolve([]),
-        shouldSearchMusic && musicEnabled
-          ? musicbrainz.searchArtist({
-              query: queryString,
+          : Promise.resolve({ results: [], totalResults: 0 }),
+        shouldSearchMusic && musicEnabled && !resultFilter && !hasMusicFilters
+          ? musicbrainz.searchArtistWithTotal({
+              query:
+                typeFilter === 'artist'
+                  ? buildArtistAutocompleteQuery(queryString)
+                  : queryString,
               limit: 20,
               offset: musicOffset,
             })
-          : Promise.resolve([]),
+          : Promise.resolve({ results: [], totalResults: 0 }),
         shouldSearchBooks && booksEnabled
           ? openLibrary.searchBooks({
               query: toFieldedBooleanAndQuery(queryString, ['title', 'author']),
@@ -319,19 +494,81 @@ searchRoutes.get('/', async (req, res, next) => {
               limit: 20,
             })
           : Promise.resolve({ numFound: 0, start: 0, docs: [] }),
+        shouldSearchBooks && booksEnabled
+          ? searchBookshelfCatalogs(
+              getSettings().readarr,
+              queryString,
+              bookFormat === 'ebook' || bookFormat === 'audiobook'
+                ? bookFormat
+                : undefined
+            )
+          : Promise.resolve([]),
+        // Choosing a validated search type selects a provider; it does not
+        // bypass provider authorization or transport policy.
+        // codeql[js/user-controlled-bypass]
+        shouldSearchAuthors && booksEnabled
+          ? openLibrary.searchAuthors({
+              query: queryString,
+              page,
+              limit: 20,
+            })
+          : Promise.resolve({ numFound: 0, start: 0, docs: [] }),
+        // Choosing a validated search type selects a provider; it does not
+        // bypass provider authorization or transport policy.
+        // codeql[js/user-controlled-bypass]
+        shouldSearchAuthors && booksEnabled
+          ? searchBookshelfAuthors(getSettings().readarr, queryString)
+          : Promise.resolve([]),
+        shouldSearchComics && comicsEnabled && comicVine
+          ? comicVine.searchVolumes({
+              query: queryString,
+              page,
+              limit: 20,
+            })
+          : Promise.resolve({
+              error: 'OK',
+              limit: 20,
+              offset: 0,
+              number_of_page_results: 0,
+              number_of_total_results: 0,
+              status_code: 1,
+              results: [],
+            }),
+        shouldSearchMagazines && magazinesEnabled
+          ? searchLazyLibrarianCatalogs(
+              settings.lazylibrarian,
+              queryString,
+              page
+            )
+          : Promise.resolve({ totalResults: 0, results: [] }),
       ];
       type SearchProviderResult = {
         index: number;
         result: PromiseSettledResult<unknown>;
       };
       type TmdbSearchResults = Awaited<ReturnType<TheMovieDb['searchMulti']>>;
-      type AlbumSearchResults = Awaited<ReturnType<MusicBrainz['searchAlbum']>>;
+      type AlbumSearchResults = Awaited<
+        ReturnType<MusicBrainz['searchAlbumWithTotal']>
+      >;
       type ArtistSearchResults = Awaited<
-        ReturnType<MusicBrainz['searchArtist']>
+        ReturnType<MusicBrainz['searchArtistWithTotal']>
       >;
       type BookSearchResults = Awaited<
         ReturnType<OpenLibraryAPI['searchBooks']>
       >;
+      type BookshelfSearchResults = Awaited<
+        ReturnType<typeof searchBookshelfCatalogs>
+      >;
+      type AuthorSearchResults = Awaited<
+        ReturnType<OpenLibraryAPI['searchAuthors']>
+      >;
+      type BookshelfAuthorSearchResults = Awaited<
+        ReturnType<typeof searchBookshelfAuthors>
+      >;
+      type ComicSearchResults = Awaited<
+        ReturnType<ComicVineAPI['searchVolumes']>
+      >;
+      type MagazineSearchResults = MagazineCatalogSearchResults;
 
       const providerResponses =
         await settlePromisesWithin<SearchProviderResult>(
@@ -359,6 +596,31 @@ searchRoutes.get('/', async (req, res, next) => {
           )
           .map(({ value }) => [value.index, value.result])
       );
+      const failedProviders = providerNames.flatMap((provider, index) => {
+        const response = providerResults.get(index);
+        if (response?.status === 'rejected') {
+          return [{ provider, ...getHttpErrorDetails(response.reason) }];
+        }
+
+        return !response && providerResponses.timedOut
+          ? [
+              {
+                provider,
+                timedOut: true,
+                timeoutMs: SEARCH_PROVIDER_TIMEOUT_MS,
+                errorCode: 'SEARCH_PROVIDER_TIMEOUT',
+                errorMessage:
+                  'Provider did not finish before the global search deadline.',
+              },
+            ]
+          : [];
+      });
+      if (failedProviders.length > 0) {
+        logger.warn('One or more global search providers failed', {
+          label: 'API',
+          failedProviders,
+        });
+      }
       const getProviderValue = <T>(index: number, fallback: T): T => {
         const response = providerResults.get(index);
         return response?.status === 'fulfilled'
@@ -367,16 +629,87 @@ searchRoutes.get('/', async (req, res, next) => {
       };
 
       const bookProviderResponse = providerResults.get(3);
+      const bookshelfProviderResponse = providerResults.get(4);
+      const authorProviderResponse = providerResults.get(5);
+      const bookshelfAuthorProviderResponse = providerResults.get(6);
+      const albumProviderResponse = providerResults.get(1);
+      const artistProviderResponse = providerResults.get(2);
+      if (
+        typeFilter === 'artist' &&
+        musicEnabled &&
+        (!artistProviderResponse ||
+          artistProviderResponse.status === 'rejected')
+      )
+        return next({
+          status: 503,
+          message:
+            'Artist search is temporarily unavailable. Please try again.',
+        });
+      if (
+        (typeFilter === 'music' || typeFilter === 'album') &&
+        musicEnabled &&
+        (!albumProviderResponse || albumProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'MusicBrainz, the service used for music searches, timed out or is unavailable. Please try again.',
+        });
+      }
       if (
         typeFilter === 'book' &&
         shouldSearchBooks &&
         booksEnabled &&
-        (!bookProviderResponse || bookProviderResponse.status === 'rejected')
+        (!bookProviderResponse || bookProviderResponse.status === 'rejected') &&
+        (!bookshelfProviderResponse ||
+          bookshelfProviderResponse.status === 'rejected')
       ) {
         return next({
           status: 503,
           message:
             'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+        });
+      }
+      if (
+        typeFilter === 'author' &&
+        shouldSearchAuthors &&
+        booksEnabled &&
+        (!authorProviderResponse ||
+          authorProviderResponse.status === 'rejected') &&
+        (!bookshelfAuthorProviderResponse ||
+          bookshelfAuthorProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'The author catalogs timed out or are unavailable. Please try again.',
+        });
+      }
+      const comicProviderResponse = providerResults.get(7);
+      if (
+        typeFilter === 'comic' &&
+        shouldSearchComics &&
+        comicsEnabled &&
+        (!comicProviderResponse || comicProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'ComicVine, the service used for comic searches, timed out or is unavailable. Please try again.',
+        });
+      }
+      const magazineProviderResponse = providerResults.get(8);
+      if (
+        typeFilter === 'magazine' &&
+        shouldSearchMagazines &&
+        magazinesEnabled &&
+        (!magazineProviderResponse ||
+          magazineProviderResponse.status === 'rejected')
+      ) {
+        return next({
+          status: 503,
+          message:
+            'LazyLibrarian, the service used for magazine searches, is unavailable. Please try again.',
         });
       }
 
@@ -402,17 +735,76 @@ searchRoutes.get('/', async (req, res, next) => {
           MAX_SEARCH_RESULTS_PER_PROVIDER
         ),
       };
-      const albumResults = capSearchProviderResults<AlbumSearchResults[number]>(
-        getProviderValue<AlbumSearchResults>(1, [])
-      );
+      const rawAlbumResults = getProviderValue<AlbumSearchResults>(1, {
+        results: [],
+        totalResults: 0,
+      });
+      const albumResults = capSearchProviderResults<
+        AlbumSearchResults['results'][number]
+      >(rawAlbumResults.results);
+      const rawArtistResults = getProviderValue<ArtistSearchResults>(2, {
+        results: [],
+        totalResults: 0,
+      });
       const artistResults = capSearchProviderResults<
-        ArtistSearchResults[number]
-      >(getProviderValue<ArtistSearchResults>(2, []));
+        ArtistSearchResults['results'][number]
+      >(rawArtistResults.results);
+      // Artist selection needs exact MusicBrainz IDs, including artists linked
+      // to TMDB people. It does not need slower poster/person enrichment.
+      if (typeFilter === 'artist') {
+        return res.status(200).json({
+          page,
+          totalPages: Math.max(
+            1,
+            Math.ceil(rawArtistResults.totalResults / 20)
+          ),
+          totalResults: rawArtistResults.totalResults,
+          results: artistResults.map(mapArtistResult),
+        });
+      }
       const rawBookResults = getProviderValue<BookSearchResults>(3, {
         numFound: 0,
         start: 0,
         docs: [],
       });
+      const rawBookshelfResults = getProviderValue<BookshelfSearchResults>(
+        4,
+        []
+      );
+      const rawAuthorResults = getProviderValue<AuthorSearchResults>(5, {
+        numFound: 0,
+        start: 0,
+        docs: [],
+      });
+      const rawBookshelfAuthorResults =
+        getProviderValue<BookshelfAuthorSearchResults>(6, []);
+      const rawComicResults = getProviderValue<ComicSearchResults>(7, {
+        error: 'OK',
+        limit: 20,
+        offset: 0,
+        number_of_page_results: 0,
+        number_of_total_results: 0,
+        status_code: 1,
+        results: [],
+      });
+      const rawMagazineResults = getProviderValue<MagazineSearchResults>(8, {
+        totalResults: 0,
+        results: [],
+      });
+      if (typeFilter === 'comic') {
+        typeSpecificTotalResults = rawComicResults.number_of_total_results;
+      } else if (typeFilter === 'magazine') {
+        typeSpecificTotalResults = rawMagazineResults.totalResults;
+      }
+      if (typeSpecificTotalResults !== undefined) {
+        typeSpecificTotalPages = Math.max(
+          1,
+          Math.ceil(typeSpecificTotalResults / MAX_SEARCH_RESULTS_PER_PROVIDER)
+        );
+      }
+      const comicVolumes = capSearchProviderResults<
+        ComicSearchResults['results'][number]
+      >(rawComicResults.results);
       const bookResults = {
         ...rawBookResults,
         docs: capSearchProviderResults<BookSearchResults['docs'][number]>(
@@ -434,6 +826,19 @@ searchRoutes.get('/', async (req, res, next) => {
             queryString
           )
       );
+      const dedupedAuthors = new Map<string, AuthorResult>();
+      for (const author of [
+        ...capSearchProviderResults<AuthorSearchResults['docs'][number]>(
+          rawAuthorResults.docs
+        ).map(mapOpenLibraryAuthorSearchDoc),
+        ...capSearchProviderResults<AuthorResult>(rawBookshelfAuthorResults),
+      ]) {
+        const key = normalizeSearchText(author.name);
+        if (key && !dedupedAuthors.has(key)) {
+          dedupedAuthors.set(key, author);
+        }
+      }
+      const authorResults = [...dedupedAuthors.values()];
 
       const albumIds = dedupedAlbumResults.map((album) =>
         normalizeMusicBrainzId(album.id)
@@ -451,32 +856,36 @@ searchRoutes.get('/', async (req, res, next) => {
             ? getRepository(MetadataArtist).find({
                 where: { tmdbPersonId: In(personIds) },
                 cache: true,
-                select: ['tmdbPersonId', 'tadbThumb', 'tadbCover'],
+                select: {
+                  tmdbPersonId: true,
+                  tadbThumb: true,
+                  tadbCover: true,
+                },
               })
             : [],
           albumIds.length > 0
             ? getRepository(MetadataAlbum).find({
                 where: { mbAlbumId: In(albumIds) },
-                select: ['mbAlbumId', 'caaUrl'],
+                select: { mbAlbumId: true, caaUrl: true },
               })
             : [],
           artistIds.length > 0
             ? getRepository(MetadataArtist).find({
                 where: { mbArtistId: In(artistIds) },
                 cache: true,
-                select: [
-                  'mbArtistId',
-                  'tmdbPersonId',
-                  'tadbThumb',
-                  'tadbCover',
-                ],
+                select: {
+                  mbArtistId: true,
+                  tmdbPersonId: true,
+                  tadbThumb: true,
+                  tadbCover: true,
+                },
               })
             : [],
           tmdbPersonIds.length > 0
             ? getRepository(MetadataArtist).find({
                 where: { tmdbPersonId: In(tmdbPersonIds) },
                 cache: true,
-                select: ['mbArtistId', 'tmdbPersonId'],
+                select: { mbArtistId: true, tmdbPersonId: true },
               })
             : [],
         ]);
@@ -604,10 +1013,20 @@ searchRoutes.get('/', async (req, res, next) => {
         (a, b) => (b.score || 0) - (a.score || 0)
       );
 
+      const musicTotalResults = Math.max(
+        musicResults.length,
+        rawAlbumResults.totalResults + rawArtistResults.totalResults
+      );
+      const bookshelfBookResults = rawBookshelfResults;
       const totalItems =
         tmdbResults.total_results +
-        musicResults.length +
-        dedupedBookDocs.length;
+        musicTotalResults +
+        bookResults.numFound +
+        bookshelfBookResults.length +
+        rawAuthorResults.numFound +
+        rawBookshelfAuthorResults.length +
+        rawComicResults.number_of_total_results +
+        rawMagazineResults.totalResults;
       const totalPages = Math.max(
         tmdbResults.total_pages,
         Math.ceil(totalItems / 20)
@@ -624,10 +1043,33 @@ searchRoutes.get('/', async (req, res, next) => {
         )
       );
 
+      const comicMediaMap = await findComicMediaByComicVineIds(
+        comicVolumes.map((volume) => volume.id),
+        req.user
+      );
+      const mappedComicResults = comicVolumes.map((volume) =>
+        mapComicVineVolumeResult(volume, comicMediaMap.get(volume.id))
+      );
+      const magazineMediaMap = await findMagazineMediaByTitles(
+        rawMagazineResults.results.map((magazine) => magazine.title),
+        req.user
+      );
+      const mappedMagazineResults = rawMagazineResults.results.map((magazine) =>
+        mapLazyLibrarianMagazine(
+          magazine,
+          [],
+          magazineMediaMap.get(normalizeMagazineTitle(magazine.title))
+        )
+      );
+
       const combinedResults = [
         ...tmdbResults.results,
         ...musicResults,
         ...mappedBookResults,
+        ...bookshelfBookResults,
+        ...authorResults,
+        ...mappedComicResults,
+        ...mappedMagazineResults,
       ];
 
       results = {
@@ -663,7 +1105,10 @@ searchRoutes.get('/', async (req, res, next) => {
         'mediaType' in result && result.mediaType === 'book'
     );
     const bookIds = bookResults
-      .filter((result) => result.mediaInfo === undefined)
+      .filter(
+        (result) =>
+          result.mediaInfo === undefined && result.provider !== 'bookshelf'
+      )
       .map((result) => normalizeOpenLibraryWorkId(result.id));
 
     const [movieTvMedia, musicMedia, bookMediaMap] = await Promise.all([
@@ -687,10 +1132,27 @@ searchRoutes.get('/', async (req, res, next) => {
     );
 
     const mappedResults = await mapSearchResults(results.results, media);
+    const qualityEnrichedResults = mappedResults.map((result) =>
+      result.mediaType === 'album'
+        ? {
+            ...result,
+            availableQualities: getAvailableMusicQualities(
+              result.mediaInfo,
+              result.mediaInfo?.requests ?? [],
+              getSettings().lidarr
+            ),
+            qualityStatuses: getMusicQualityStatuses(
+              result.mediaInfo,
+              result.mediaInfo?.requests ?? [],
+              getSettings().lidarr
+            ),
+          }
+        : result
+    );
     const creditEnrichedResults =
       typeFilter === 'movie' || typeFilter === 'tv'
         ? await mapWithConcurrency(
-            mappedResults,
+            qualityEnrichedResults,
             SEARCH_CREDIT_LOOKUP_CONCURRENCY,
             async (result) => {
               if (result.mediaType !== typeFilter) {
@@ -698,25 +1160,38 @@ searchRoutes.get('/', async (req, res, next) => {
               }
 
               try {
-                const details =
+                const details = await searchCreditLookupQueue.run(async () =>
                   result.mediaType === 'movie'
                     ? await tmdb.getMovie({ movieId: result.id, language })
-                    : await tmdb.getTvShow({ tvId: result.id, language });
+                    : await tmdb.getTvShow({ tvId: result.id, language })
+                );
 
                 return { ...result, ...extractSearchCrew(details) };
-              } catch {
+              } catch (error) {
+                if (hasHttpStatus(error, 429)) {
+                  logger.warn(
+                    'TMDB rate limit reached during search credit enrichment; returning results without credits.',
+                    {
+                      label: 'Search',
+                      mediaId: result.id,
+                      ...getHttpErrorDetails(error),
+                    }
+                  );
+                }
                 return result;
               }
             }
           )
-        : mappedResults;
+        : qualityEnrichedResults;
 
     const capabilityResults = creditEnrichedResults.filter(
       (result) =>
         !('mediaType' in result) ||
         (((result.mediaType !== 'album' && result.mediaType !== 'artist') ||
           musicEnabled) &&
-          (result.mediaType !== 'book' || booksEnabled))
+          (result.mediaType !== 'book' || booksEnabled) &&
+          (result.mediaType !== 'comic' || comicsEnabled) &&
+          (result.mediaType !== 'magazine' || magazinesEnabled))
     );
 
     const filteredResults = typeFilter
@@ -734,11 +1209,12 @@ searchRoutes.get('/', async (req, res, next) => {
 
     return res.status(200).json({
       page: results.page,
-      totalPages: results.total_pages,
+      totalPages: typeSpecificTotalPages ?? results.total_pages,
       totalResults:
-        typeFilter || capabilityFiltered
+        typeSpecificTotalResults ??
+        ((typeFilter || capabilityFiltered) && !hasMusicFilters
           ? filteredResults.length
-          : results.total_results,
+          : results.total_results),
       results: filteredResults,
     });
   } catch (e) {

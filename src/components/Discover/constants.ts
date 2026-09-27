@@ -98,6 +98,7 @@ export const sliderTitles = defineMessages('components.Discover', {
 export const QueryFilterOptions = z.object({
   sortBy: z.string().optional(),
   search: z.string().optional(),
+  availability: z.enum(['hd', '4k']).optional(),
   primaryReleaseDateGte: z.string().optional(),
   primaryReleaseDateLte: z.string().optional(),
   firstAirDateGte: z.string().optional(),
@@ -155,6 +156,10 @@ export const prepareFilterValues = (
 
   if (values.search) {
     filterValues.search = values.search;
+  }
+
+  if (values.availability) {
+    filterValues.availability = values.availability;
   }
 
   if (values.primaryReleaseDateGte) {

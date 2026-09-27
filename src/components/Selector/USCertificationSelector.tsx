@@ -1,3 +1,4 @@
+import { getFilterToggleButtonClass } from '@app/components/Discover/FilterPanel/CompactFilterSelect';
 import React, { useEffect, useState } from 'react';
 
 interface USCertificationSelectorProps {
@@ -69,11 +70,9 @@ const USCertificationSelector: React.FC<USCertificationSelectorProps> = ({
           <button
             key={rating}
             onClick={() => toggleRating(rating)}
-            className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+            className={`${getFilterToggleButtonClass(
               selectedRatings.includes(rating)
-                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-            }`}
+            )} rounded-full px-3 text-sm`}
             type="button"
           >
             {rating}

@@ -4,6 +4,7 @@ import { afterEach, describe, it, mock } from 'node:test';
 
 import MusicBrainz, {
   MAX_MUSICBRAINZ_ARTIST_CREDITS,
+  MAX_MUSICBRAINZ_LABELS,
   MAX_MUSICBRAINZ_PAGE_SIZE,
   MAX_MUSICBRAINZ_RECORDING_RELEASES,
   MAX_MUSICBRAINZ_RELEASES,
@@ -14,6 +15,7 @@ import MusicBrainz, {
   sanitizeMusicBrainzAlbum,
   sanitizeMusicBrainzArtist,
   sanitizeMusicBrainzRecording,
+  sanitizeMusicBrainzReleaseLabels,
 } from './musicbrainz';
 
 afterEach(() => mock.restoreAll());
@@ -88,6 +90,52 @@ describe('MusicBrainz response boundaries', () => {
     assert.ok(!('unexpectedProviderSecret' in results[0]));
   });
 
+  it('exposes the provider match count separately from the capped page', async () => {
+    const musicBrainz = new MusicBrainz();
+    Object.defineProperty(musicBrainz, 'get', {
+      configurable: true,
+      value: async () => ({
+        count: 4200,
+        'release-groups': [album(0)],
+      }),
+    });
+
+    const { results, totalResults } = await musicBrainz.searchAlbumWithTotal({
+      query: 'album',
+      limit: 30,
+    });
+
+    assert.strictEqual(results.length, 1);
+    assert.strictEqual(totalResults, 4200);
+  });
+
+  it('exposes the provider artist match count separately from the capped page', async () => {
+    const musicBrainz = new MusicBrainz();
+    Object.defineProperty(musicBrainz, 'get', {
+      configurable: true,
+      value: async () => ({
+        count: 900,
+        artists: [
+          {
+            id: 'artist-0',
+            name: 'Artist 0',
+            type: 'Group',
+            'sort-name': 'Artist 0',
+            score: 100,
+          },
+        ],
+      }),
+    });
+
+    const { results, totalResults } = await musicBrainz.searchArtistWithTotal({
+      query: 'artist',
+      limit: 30,
+    });
+
+    assert.strictEqual(results.length, 1);
+    assert.strictEqual(totalResults, 900);
+  });
+
   it('rejects malformed albums and normalizes artist records', () => {
     assert.strictEqual(sanitizeMusicBrainzAlbum(null), undefined);
     assert.strictEqual(
@@ -109,6 +157,51 @@ describe('MusicBrainz response boundaries', () => {
     assert.strictEqual(artist.type, 'Person');
     assert.strictEqual(artist.aliases?.length, 100);
     assert.ok(!('raw' in artist));
+  });
+
+  it('sanitizes aggregate release-group ratings and rejects invalid values', () => {
+    const ratedAlbum = sanitizeMusicBrainzAlbum({
+      id: 'rated-album',
+      title: 'Rated Album',
+      'primary-type': 'Album',
+      rating: { value: 4.25, 'votes-count': 32 },
+    });
+    const invalidRatingAlbum = sanitizeMusicBrainzAlbum({
+      id: 'invalid-rating-album',
+      title: 'Invalid Rating Album',
+      'primary-type': 'Album',
+      rating: { value: 12, 'votes-count': -1 },
+    });
+
+    assert.deepStrictEqual(ratedAlbum?.rating, {
+      value: 4.25,
+      'votes-count': 32,
+    });
+    assert.strictEqual(invalidRatingAlbum?.rating, undefined);
+  });
+
+  it('requests aggregate ratings with release-group details', async () => {
+    const musicBrainz = new MusicBrainz();
+    let requestedInc = '';
+    Object.defineProperty(musicBrainz, 'get', {
+      configurable: true,
+      value: async (_path: string, options: { params?: { inc?: string } }) => {
+        requestedInc = options.params?.inc ?? '';
+        return {
+          id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+          title: 'Rated Album',
+          'primary-type': 'Album',
+          rating: { value: 4, 'votes-count': 10 },
+        };
+      },
+    });
+
+    const result = await musicBrainz.getReleaseGroupDetails({
+      releaseGroupId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    });
+
+    assert.match(requestedInc, /(?:^|\+)ratings(?:\+|$)/);
+    assert.deepStrictEqual(result.rating, { value: 4, 'votes-count': 10 });
   });
 
   it('sanitizes recording releases used by playlist matching', () => {
@@ -147,6 +240,49 @@ describe('MusicBrainz response boundaries', () => {
       sanitizeMusicBrainzRecording({ id: 'missing-title' }),
       undefined
     );
+  });
+
+  it('sanitizes release labels and bounds provider output', () => {
+    const labels = sanitizeMusicBrainzReleaseLabels({
+      'label-info': [
+        { label: { name: '  Label One  ' } },
+        { label: { name: '' } },
+        { label: { name: 'Label Two' } },
+        { label: { name: 'x'.repeat(300) } },
+        ...Array.from({ length: MAX_MUSICBRAINZ_LABELS + 10 }, (_, index) => ({
+          label: { name: `Label ${index + 3}` },
+        })),
+      ],
+    });
+
+    assert.equal(labels[0], 'Label One');
+    assert.equal(labels[1], 'Label Two');
+    assert.equal(labels[2].length, 256);
+    assert.equal(labels.length, MAX_MUSICBRAINZ_LABELS - 1);
+    assert.deepStrictEqual(sanitizeMusicBrainzReleaseLabels(null), []);
+  });
+
+  it('requests release labels from the MusicBrainz release endpoint', async () => {
+    const musicBrainz = new MusicBrainz();
+    Object.defineProperty(musicBrainz, 'get', {
+      configurable: true,
+      value: async (
+        path: string,
+        options: { params: Record<string, string> }
+      ) => {
+        assert.equal(path, '/release/00000000-0000-0000-0000-000000000001');
+        assert.deepStrictEqual(options.params, { inc: 'labels', fmt: 'json' });
+        return {
+          'label-info': [{ label: { name: 'Example Label' } }],
+        };
+      },
+    });
+
+    const labels = await musicBrainz.getReleaseLabels({
+      releaseId: '00000000-0000-0000-0000-000000000001',
+    });
+
+    assert.deepStrictEqual(labels, ['Example Label']);
   });
 
   it('sanitizes and bounds Wikipedia extracts and rejects provider URLs', async () => {

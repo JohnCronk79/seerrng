@@ -34,6 +34,8 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -63,32 +65,41 @@ const messages = defineMessages('components.RequestCard', {
   deleterequest: 'Delete Request',
   unknowntitle: 'Unknown Title',
   bookFormat: 'Format',
-  ebook: 'Ebook',
+  ebook: 'Book',
   audiobook: 'Audiobook',
   both: 'Both',
   partialBookService: 'Partial Bookshelf link',
 });
 
-const isMovie = (
-  media: MovieDetails | TvDetails | MusicDetails | BookDetails
-): media is MovieDetails => {
+type RequestCardTitle =
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
+
+const isMovie = (media: RequestCardTitle): media is MovieDetails => {
   return (
-    (media as MovieDetails).title !== undefined &&
-    (media as MusicDetails).artist === undefined
+    (media as MovieDetails).releaseDate !== undefined &&
+    (media as MovieDetails).originalTitle !== undefined
   );
 };
 
-const isMusic = (
-  media: MovieDetails | TvDetails | MusicDetails | BookDetails
-): media is MusicDetails => {
+const isMusic = (media: RequestCardTitle): media is MusicDetails => {
   return (media as MusicDetails).artist !== undefined;
 };
 
-const isBook = (
-  media: MovieDetails | TvDetails | MusicDetails | BookDetails
-): media is BookDetails => {
+const isBook = (media: RequestCardTitle): media is BookDetails => {
   return (media as BookDetails).mediaType === 'book';
 };
+
+const isComic = (media: RequestCardTitle): media is ComicDetails => {
+  return (media as ComicDetails).mediaType === 'comic';
+};
+
+const isMagazine = (media: RequestCardTitle): media is MagazineDetails =>
+  (media as MagazineDetails).mediaType === 'magazine';
 
 const getBookId = (request: NonFunctionProperties<MediaRequest>) =>
   request.media.identifiers?.find(
@@ -102,6 +113,17 @@ const getNormalizedBookId = (request: NonFunctionProperties<MediaRequest>) => {
 
 const getNormalizedMusicId = (request: NonFunctionProperties<MediaRequest>) =>
   request.media.mbId ? normalizeMusicBrainzId(request.media.mbId) : undefined;
+
+const getComicId = (request: NonFunctionProperties<MediaRequest>) =>
+  request.media.identifiers?.find(
+    (identifier) => identifier.provider === 'comicvine'
+  )?.value;
+
+const getMagazineId = (request: NonFunctionProperties<MediaRequest>) =>
+  request.media.externalServiceSlug ??
+  request.media.identifiers?.find(
+    (identifier) => identifier.provider === 'lazylibrarian'
+  )?.value;
 
 const getRequestDetailHref = (
   request: NonFunctionProperties<MediaRequest>,
@@ -118,6 +140,8 @@ const getRequestDetailHref = (
   const suffix = query ? `?${query}` : '';
   const bookId = getNormalizedBookId(request);
   const musicId = getNormalizedMusicId(request);
+  const comicId = getComicId(request);
+  const magazineId = getMagazineId(request);
 
   if (request.type === 'music' && musicId) {
     return `/music/${encodeApiPathSegment(musicId)}${suffix}`;
@@ -125,6 +149,13 @@ const getRequestDetailHref = (
 
   if (request.type === 'book' && bookId) {
     return `/book/${encodeApiPathSegment(bookId)}${suffix}`;
+  }
+
+  if (request.type === 'comic' && comicId) {
+    return `/comic/${encodeApiPathSegment(comicId)}${suffix}`;
+  }
+  if (request.type === 'magazine' && magazineId) {
+    return `/magazine/${encodeApiPathSegment(magazineId)}${suffix}`;
   }
 
   return `/${request.type}/${request.media.tmdbId}${suffix}`;
@@ -213,11 +244,22 @@ const getRequestMediaStatus = (
     : request.media.status;
 };
 
-const RequestCardPlaceholder = () => {
+interface RequestCardPlaceholderProps {
+  compact?: boolean;
+}
+
+const RequestCardPlaceholder = ({ compact }: RequestCardPlaceholderProps) => {
   return (
-    <div className="relative min-h-[17rem] w-72 animate-pulse rounded-xl bg-gray-700 p-4 sm:w-96">
-      <div className="w-20 sm:w-28">
-        <div className="w-full" style={{ paddingBottom: '150%' }} />
+    <div
+      className={`relative w-72 animate-pulse rounded-xl bg-gray-700 p-4 sm:w-96 ${
+        compact ? 'h-[9.5rem]' : 'min-h-[17rem]'
+      }`}
+    >
+      <div className={compact ? 'h-full w-20 sm:w-28' : 'w-20 sm:w-28'}>
+        <div
+          className={compact ? 'h-full w-full' : 'w-full'}
+          style={compact ? undefined : { paddingBottom: '150%' }}
+        />
       </div>
     </div>
   );
@@ -254,7 +296,7 @@ const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
         <div className="w-full" style={{ paddingBottom: '150%' }}>
           <div className="absolute inset-0 z-10 flex min-w-0 flex-1 flex-col p-4">
             <div
-              className="whitespace-normal text-base font-bold text-white sm:text-lg"
+              className="text-base font-bold whitespace-normal text-white sm:text-lg"
               data-testid="request-card-title"
             >
               {intl.formatMessage(messages.mediaerror, {
@@ -381,13 +423,17 @@ const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
 
 interface RequestCardProps {
   request: NonFunctionProperties<MediaRequest>;
-  onTitleData?: (
-    requestId: number,
-    title: MovieDetails | TvDetails | MusicDetails | BookDetails
-  ) => void;
+  compact?: boolean;
+  showApprovalActions?: boolean;
+  onTitleData?: (requestId: number, title: RequestCardTitle) => void;
 }
 
-const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
+const RequestCard = ({
+  request,
+  compact = false,
+  showApprovalActions = true,
+  onTitleData,
+}: RequestCardProps) => {
   const { ref, inView } = useInView({
     triggerOnce: true,
   });
@@ -403,6 +449,9 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
     request.type === 'book' ? getNormalizedBookId(request) : undefined;
   const musicId =
     request.type === 'music' ? getNormalizedMusicId(request) : undefined;
+  const comicId = request.type === 'comic' ? getComicId(request) : undefined;
+  const magazineId =
+    request.type === 'magazine' ? getMagazineId(request) : undefined;
   const url =
     request.type === 'movie'
       ? `/api/v1/movie/${request.media.tmdbId}`
@@ -412,11 +461,13 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
           ? `/api/v1/music/${encodeApiPathSegment(musicId)}`
           : request.type === 'book' && bookId
             ? `/api/v1/book/${encodeApiPathSegment(bookId)}`
-            : null;
+            : request.type === 'comic' && comicId
+              ? `/api/v1/comic/${encodeApiPathSegment(comicId)}`
+              : request.type === 'magazine' && magazineId
+                ? `/api/v1/magazine/${encodeApiPathSegment(magazineId)}`
+                : null;
 
-  const { data: title, error } = useSWR<
-    MovieDetails | TvDetails | MusicDetails | BookDetails
-  >(inView ? url : null);
+  const { data: title, error } = useSWR<RequestCardTitle>(inView ? url : null);
   const {
     data: requestData,
     error: requestError,
@@ -500,13 +551,21 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
   if (!title && !error) {
     return (
       <div ref={ref}>
-        <RequestCardPlaceholder />
+        <RequestCardPlaceholder compact={compact} />
       </div>
     );
   }
 
   if (!requestData && !requestError) {
     return <RequestCardError />;
+  }
+
+  if (
+    requestError &&
+    axios.isAxiosError(requestError) &&
+    requestError.response?.status === 404
+  ) {
+    return null;
   }
 
   if (!title || !requestData) {
@@ -519,20 +578,29 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
         <RequestModal
           show={showEditModal}
           tmdbId={
-            request.type === 'music' || request.type === 'book'
+            request.type === 'music' ||
+            request.type === 'book' ||
+            request.type === 'comic' ||
+            request.type === 'magazine'
               ? undefined
               : request.media.tmdbId
           }
           mbId={request.type === 'music' ? musicId : undefined}
           bookId={request.type === 'book' ? bookId : undefined}
+          comicId={request.type === 'comic' ? comicId : undefined}
+          magazineTitle={magazineId}
           type={
             request.type === 'music'
               ? 'music'
               : request.type === 'book'
                 ? 'book'
-                : request.type === 'tv'
-                  ? 'tv'
-                  : 'movie'
+                : request.type === 'comic'
+                  ? 'comic'
+                  : request.type === 'magazine'
+                    ? 'magazine'
+                    : request.type === 'tv'
+                      ? 'tv'
+                      : 'movie'
           }
           is4k={request.is4k}
           editRequest={request}
@@ -544,29 +612,37 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
         />
       )}
       <div
-        className="relative flex min-h-[17rem] w-72 overflow-hidden rounded-xl bg-gray-800 bg-cover bg-center p-4 text-gray-400 shadow ring-1 ring-gray-700 sm:w-96"
+        className={`app-card-main relative flex w-72 overflow-hidden rounded-xl bg-gray-800 bg-cover bg-center p-4 text-gray-400 shadow ring-1 ring-gray-700 sm:w-96 ${
+          compact ? 'min-h-0' : 'min-h-[17rem]'
+        }`}
         data-testid="request-card"
       >
-        {!isMusic(title) && !isBook(title) && title.backdropPath && (
-          <div className="absolute inset-0 z-0">
-            <CachedImage
-              type="tmdb"
-              alt=""
-              src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              fill
-            />
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundImage:
-                  'linear-gradient(135deg, rgba(17, 24, 39, 0.47) 0%, rgba(17, 24, 39, 1) 75%)',
-              }}
-            />
-          </div>
-        )}
+        {!isMusic(title) &&
+          !isBook(title) &&
+          !isComic(title) &&
+          !isMagazine(title) &&
+          title.backdropPath && (
+            <div className="absolute inset-0 z-0">
+              <CachedImage
+                type="tmdb"
+                alt=""
+                src={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${title.backdropPath}`}
+                className="object-cover"
+                fill
+              />
+              <div className="request-card-artwork-gradient" />
+            </div>
+          )}
         <div
-          className="relative z-10 flex min-w-0 flex-1 flex-col pr-4"
+          className={`relative z-10 flex min-w-0 flex-1 flex-col pr-4 ${
+            !isMusic(title) &&
+            !isBook(title) &&
+            !isComic(title) &&
+            !isMagazine(title) &&
+            title.backdropPath
+              ? 'request-card-artwork-copy'
+              : ''
+          }`}
           data-testid="request-card-title"
         >
           <div className="flex flex-wrap items-center gap-1 text-xs font-medium text-white">
@@ -586,7 +662,11 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                   ? title.releaseDate
                   : isBook(title)
                     ? title.firstPublishYear?.toString()
-                    : title.firstAirDate
+                    : isComic(title)
+                      ? title.startYear
+                      : isMagazine(title)
+                        ? title.latestIssue
+                        : title.firstAirDate
               )?.slice(0, 4)}
             </span>
             {isMusic(title) && (
@@ -601,10 +681,22 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                 <span className="truncate">{title.author}</span>
               </>
             )}
+            {isComic(title) && title.publisher && (
+              <>
+                <span className="mx-2">-</span>
+                <span className="truncate">{title.publisher}</span>
+              </>
+            )}
+            {isMagazine(title) && title.latestIssue && (
+              <>
+                <span className="mx-2">-</span>
+                <span className="truncate">{title.latestIssue}</span>
+              </>
+            )}
           </div>
           <Link
             href={getRequestDetailHref(requestData)}
-            className="overflow-hidden overflow-ellipsis whitespace-nowrap text-base font-bold text-white hover:underline sm:text-lg"
+            className="overflow-hidden text-base font-bold overflow-ellipsis whitespace-nowrap text-white hover:underline sm:text-lg"
           >
             {isMovie(title)
               ? title.title
@@ -612,7 +704,11 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                 ? title.title
                 : isBook(title)
                   ? title.title
-                  : title.name}
+                  : isComic(title)
+                    ? title.title
+                    : isMagazine(title)
+                      ? title.title
+                      : title.name}
           </Link>
           {hasPermission(
             [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
@@ -719,18 +815,23 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                       ? title.title
                       : isBook(title)
                         ? title.title
-                        : title.name
+                        : isComic(title)
+                          ? title.title
+                          : isMagazine(title)
+                            ? title.title
+                            : title.name
                 }
                 inProgress={
                   (getRequestDownloadStatus(requestData) ?? []).length > 0
                 }
                 is4k={requestData.is4k}
                 tmdbId={
-                  requestData.type === 'music'
+                  requestData.type === 'music' ||
+                  requestData.type === 'book' ||
+                  requestData.type === 'comic' ||
+                  requestData.type === 'magazine'
                     ? undefined
-                    : requestData.type === 'book'
-                      ? undefined
-                      : requestData.media.tmdbId
+                    : requestData.media.tmdbId
                 }
                 mbId={
                   requestData.type === 'music'
@@ -740,16 +841,24 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                 externalId={
                   requestData.type === 'book'
                     ? getBookId(requestData)
-                    : undefined
+                    : requestData.type === 'comic'
+                      ? getComicId(requestData)
+                      : requestData.type === 'magazine'
+                        ? getMagazineId(requestData)
+                        : undefined
                 }
                 mediaType={
                   requestData.type === 'music'
                     ? 'music'
                     : requestData.type === 'book'
                       ? 'book'
-                      : requestData.type === 'tv'
-                        ? 'tv'
-                        : 'movie'
+                      : requestData.type === 'comic'
+                        ? 'comic'
+                        : requestData.type === 'magazine'
+                          ? 'magazine'
+                          : requestData.type === 'tv'
+                            ? 'tv'
+                            : 'movie'
                 }
                 bookFormat={
                   requestData.type === 'book'
@@ -779,7 +888,8 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                   </span>
                 </Button>
               )}
-            {requestData.status === MediaRequestStatus.PENDING &&
+            {showApprovalActions &&
+              requestData.status === MediaRequestStatus.PENDING &&
               hasPermission(Permission.MANAGE_REQUESTS) && (
                 <>
                   <div>
@@ -902,7 +1012,9 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
         </div>
         <Link
           href={getRequestDetailHref(requestData)}
-          className="w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer overflow-hidden rounded-md shadow-sm transition duration-300 hover:scale-105 hover:shadow-md sm:w-28"
+          className={`relative w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer self-start overflow-hidden rounded-md shadow-sm ring-1 ring-gray-700 transition duration-300 hover:scale-105 hover:shadow-md sm:w-28 ${
+            isMusic(title) ? 'aspect-square' : 'aspect-[2/3]'
+          }`}
         >
           <CachedImage
             type={isBook(title) ? 'book' : isMusic(title) ? 'music' : 'tmdb'}
@@ -915,9 +1027,8 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
             }
             alt=""
             sizes="100vw"
-            style={{ width: '100%', height: 'auto' }}
-            width={600}
-            height={900}
+            className="object-cover"
+            fill
           />
         </Link>
       </div>

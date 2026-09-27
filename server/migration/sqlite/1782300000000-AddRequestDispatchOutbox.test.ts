@@ -5,7 +5,7 @@ import { AddRequestDispatchOutbox1782300000000 } from './1782300000000-AddReques
 
 test('SQLite request dispatch outbox migration is reversible', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

@@ -221,7 +221,12 @@ artistRoutes.get('/:id', async (req, res, next) => {
       listenbrainz.getArtist(artistId),
       getRepository(MetadataArtist).findOne({
         where: { mbArtistId: artistId },
-        select: ['mbArtistId', 'tadbThumb', 'tadbCover', 'tmdbThumb'],
+        select: {
+          mbArtistId: true,
+          tadbThumb: true,
+          tadbCover: true,
+          tmdbThumb: true,
+        },
       }),
     ]);
 

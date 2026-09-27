@@ -10,11 +10,20 @@ import { User } from '@server/entity/User';
 import { ALL_NOTIFICATIONS, UserSettings } from '@server/entity/UserSettings';
 import type {
   CardTextVisibility,
+  DetailDisclosureMediaType,
+  UserPreferredLanguages,
   UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosureResponse,
   UserSettingsGeneralResponse,
   UserSettingsLinkedAccount,
   UserSettingsLinkedAccountResponse,
   UserSettingsNotificationsResponse,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import {
+  mediaFilterScopes,
+  mediaFilterValues,
+  type MediaFilterScope,
+  type MediaFilterValue,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import {
   getAuthAccountAdmissionResource,
@@ -68,6 +77,103 @@ import { IsNull, Not, Raw, type FindOptionsWhere } from 'typeorm';
 import { canMakePermissionsChange, isUniqueConstraintError } from '.';
 
 const userSettingsRoutes = Router({ mergeParams: true });
+
+const updateMediaFilterPin = (
+  current: Partial<Record<MediaFilterScope, MediaFilterValue>> | undefined,
+  scope: MediaFilterScope,
+  value: MediaFilterValue | null
+): Partial<Record<MediaFilterScope, MediaFilterValue>> => {
+  const pins = { ...current };
+
+  // Keep request-derived property names out of object writes. The explicit
+  // cases also make additions to MediaFilterScope fail closed until handled.
+  switch (scope) {
+    case 'books': {
+      if (value !== null) return { ...pins, books: value };
+      const remaining = { ...pins };
+      delete remaining.books;
+      return remaining;
+    }
+    case 'trending': {
+      if (value !== null) return { ...pins, trending: value };
+      const remaining = { ...pins };
+      delete remaining.trending;
+      return remaining;
+    }
+    case 'search': {
+      if (value !== null) return { ...pins, search: value };
+      const remaining = { ...pins };
+      delete remaining.search;
+      return remaining;
+    }
+    case 'blocklist': {
+      if (value !== null) return { ...pins, blocklist: value };
+      const remaining = { ...pins };
+      delete remaining.blocklist;
+      return remaining;
+    }
+    case 'issues': {
+      if (value !== null) return { ...pins, issues: value };
+      const remaining = { ...pins };
+      delete remaining.issues;
+      return remaining;
+    }
+    case 'requests': {
+      if (value !== null) return { ...pins, requests: value };
+      const remaining = { ...pins };
+      delete remaining.requests;
+      return remaining;
+    }
+  }
+};
+
+userSettingsRoutes.post<{ id: string; scope: string }>(
+  '/media-filter-pins/:scope',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const scope = req.params.scope as MediaFilterScope;
+    const value = req.body?.value;
+    if (
+      !mediaFilterScopes.includes(scope) ||
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'value') ||
+      (value !== null && !mediaFilterValues.includes(value))
+    ) {
+      return next({ status: 400, message: 'Invalid media filter pin.' });
+    }
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!canModifyUser(user, actor))
+            return next({ status: 403, message: 'Access denied.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          const pins = updateMediaFilterPin(
+            user.settings.mediaFilterPins,
+            scope,
+            value as MediaFilterValue | null
+          );
+          user.settings.mediaFilterPins = pins;
+          await repository.save(user);
+          return res.status(200).json(pins);
+        }
+      );
+    } catch (error) {
+      next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save media filter pin.',
+      });
+    }
+  }
+);
 const MAX_USER_SETTINGS_ID_VALUE = 1_000_000_000;
 const MAX_LINKED_ACCOUNT_TOKEN_LENGTH = 4096;
 const MAX_LINKED_ACCOUNT_USERNAME_LENGTH = 512;
@@ -196,6 +302,86 @@ const parseCardTextVisibilityBody = (
   return { value };
 };
 
+const serializeDetailDisclosurePins = (
+  settings?: UserSettings
+): UserSettingsDetailDisclosureResponse => ({
+  cast: settings?.detailDisclosureCastPinned === true,
+  crew: settings?.detailDisclosureCrewPinned === true,
+  artists: settings?.detailDisclosureArtistsPinned === true,
+  subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
+});
+
+const detailDisclosureMediaTypes: DetailDisclosureMediaType[] = [
+  'movie',
+  'tv',
+  'music',
+  'book',
+];
+
+const isDetailDisclosureMediaType = (
+  value: string
+): value is DetailDisclosureMediaType =>
+  detailDisclosureMediaTypes.includes(value as DetailDisclosureMediaType);
+
+const serializeScopedDetailDisclosurePins = (
+  settings: UserSettings | undefined,
+  mediaType: DetailDisclosureMediaType
+): UserSettingsDetailDisclosureResponse => {
+  const legacyPins: UserSettingsDetailDisclosureResponse = {
+    details: false,
+    ...(mediaType === 'movie' ? { collection: false } : {}),
+    cast:
+      mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
+    crew:
+      mediaType === 'movie' && settings?.detailDisclosureCrewPinned === true,
+    artists:
+      mediaType === 'music' && settings?.detailDisclosureArtistsPinned === true,
+    subjectTags:
+      mediaType === 'movie' &&
+      settings?.detailDisclosureSubjectTagsPinned === true,
+  };
+
+  return {
+    ...legacyPins,
+    ...settings?.detailDisclosurePins?.[mediaType],
+  };
+};
+
+const parseDetailDisclosurePinsBody = (
+  body: unknown,
+  includeCollection = false,
+  includeDetails = false
+): { value: UserSettingsDetailDisclosureResponse } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const value: UserSettingsDetailDisclosureResponse = {};
+  const keys = ['cast', 'crew', 'artists', 'subjectTags'] as const;
+  const allowedKeys: (keyof UserSettingsDetailDisclosureResponse)[] = [
+    ...keys,
+    ...(includeDetails ? (['details'] as const) : []),
+    'advancedOptions',
+    'filters',
+    'mediaFilters',
+    'sortBy',
+    ...(includeCollection ? (['collection'] as const) : []),
+  ];
+  for (const key of allowedKeys) {
+    if (!hasOwn(parsedBody.value, key)) {
+      continue;
+    }
+    if (typeof parsedBody.value[key] !== 'boolean') {
+      return { error: `${key} must be a boolean.` };
+    }
+    value[key] = parsedBody.value[key];
+  }
+
+  return { value };
+};
+
 type GeneralStringField =
   | 'username'
   | 'email'
@@ -251,6 +437,58 @@ const parseOptionalDiscordIds = (
   }
 
   return { value: ids };
+};
+
+const preferredLanguageMediaTypes = ['movie', 'tv', 'music', 'book'] as const;
+
+const parsePreferredLanguages = (
+  value: unknown
+): { value: UserPreferredLanguages | undefined } | { error: string } => {
+  if (value === undefined || value === null) {
+    return { value: undefined };
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'preferredLanguages must be an object.' };
+  }
+
+  const input = value as Record<string, unknown>;
+  const allowedKeys = new Set(['all', ...preferredLanguageMediaTypes]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+    return { error: 'preferredLanguages contains an unsupported media type.' };
+  }
+
+  const parsed: UserPreferredLanguages = {};
+  for (const fieldName of ['all', ...preferredLanguageMediaTypes] as const) {
+    if (!hasOwn(input, fieldName)) {
+      continue;
+    }
+
+    const fieldValue = input[fieldName];
+    if (fieldValue === null || fieldValue === '') {
+      if (fieldName !== 'all') {
+        parsed[fieldName] = null;
+      }
+      continue;
+    }
+
+    const language = parseBoundedString(fieldValue, {
+      fieldName: `preferredLanguages.${fieldName}`,
+      maxLength: USER_SETTINGS_LIMITS.language,
+    });
+    if ('error' in language) {
+      return language;
+    }
+    if (!/^[a-z]{2}$/i.test(language.value)) {
+      return {
+        error: `preferredLanguages.${fieldName} must be a two-letter language code.`,
+      };
+    }
+
+    parsed[fieldName] = language.value.toLowerCase();
+  }
+
+  return { value: parsed };
 };
 
 const parseGeneralSettingsBody = (
@@ -317,6 +555,16 @@ const parseGeneralSettingsBody = (
     value[fieldName] = parsed.value;
   }
 
+  if (hasOwn(bodyObject, 'preferredLanguages')) {
+    const preferredLanguages = parsePreferredLanguages(
+      bodyObject.preferredLanguages
+    );
+    if ('error' in preferredLanguages) {
+      return preferredLanguages;
+    }
+    value.preferredLanguages = preferredLanguages.value;
+  }
+
   if (hasOwn(bodyObject, 'discordIds')) {
     const discordIds = parseOptionalDiscordIds(bodyObject.discordIds);
     if ('error' in discordIds) {
@@ -334,6 +582,8 @@ const parseGeneralSettingsBody = (
     'musicQuotaDays',
     'bookQuotaLimit',
     'bookQuotaDays',
+    'comicQuotaLimit',
+    'comicQuotaDays',
   ] as const) {
     const rawValue = bodyObject[fieldName];
     if (!hasOwn(bodyObject, fieldName)) {
@@ -602,6 +852,46 @@ const parseJellyfinLinkBody = (
   return { value: { username: username.value, password: password.value } };
 };
 
+userSettingsRoutes.get<
+  { id: string },
+  UserPreferredLanguages | { status: number; message: string }
+>('/preferred-languages', isAuthenticated(), async (req, res, next) => {
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    const actor = req.user!;
+    if (
+      actor.id !== userId &&
+      !actor.hasPermission(
+        [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+        { type: 'or' }
+      )
+    ) {
+      return res.status(403).json({ status: 403, message: 'Access denied.' });
+    }
+
+    const targetUser = await getRepository(User).findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    return res.status(200).json(targetUser.settings?.preferredLanguages ?? {});
+  } catch (error) {
+    next({
+      status: 500,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to read language preferences.',
+    });
+  }
+});
+
 userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
   '/main',
   isOwnProfileOrAdmin(),
@@ -638,6 +928,7 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             discoverRegion: user.settings?.discoverRegion,
             streamingRegion: user.settings?.streamingRegion,
             originalLanguage: user.settings?.originalLanguage,
+            preferredLanguages: user.settings?.preferredLanguages,
             movieQuotaLimit: user.movieQuotaLimit,
             movieQuotaDays: user.movieQuotaDays,
             tvQuotaLimit: user.tvQuotaLimit,
@@ -646,6 +937,8 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             musicQuotaDays: user.musicQuotaDays,
             bookQuotaLimit: user.bookQuotaLimit,
             bookQuotaDays: user.bookQuotaDays,
+            comicQuotaLimit: user.comicQuotaLimit,
+            comicQuotaDays: user.comicQuotaDays,
             globalMovieQuotaDays: defaultQuotas.movie.quotaDays,
             globalMovieQuotaLimit: defaultQuotas.movie.quotaLimit,
             globalTvQuotaDays: defaultQuotas.tv.quotaDays,
@@ -654,6 +947,8 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             globalMusicQuotaLimit: defaultQuotas.music.quotaLimit,
             globalBookQuotaDays: defaultQuotas.book.quotaDays,
             globalBookQuotaLimit: defaultQuotas.book.quotaLimit,
+            globalComicQuotaDays: defaultQuotas.comic.quotaDays,
+            globalComicQuotaLimit: defaultQuotas.comic.quotaLimit,
             watchlistSyncMovies: user.settings?.watchlistSyncMovies,
             watchlistSyncTv: user.settings?.watchlistSyncTv,
             watchlistSyncMusic: user.settings?.watchlistSyncMusic,
@@ -755,6 +1050,8 @@ userSettingsRoutes.post<
               'musicQuotaLimit',
               'bookQuotaDays',
               'bookQuotaLimit',
+              'comicQuotaDays',
+              'comicQuotaLimit',
             ] as const) {
               if (hasOwn(body, fieldName)) {
                 Object.assign(user, { [fieldName]: body[fieldName] ?? null });
@@ -772,6 +1069,7 @@ userSettingsRoutes.post<
             'discoverRegion',
             'streamingRegion',
             'originalLanguage',
+            'preferredLanguages',
             'watchlistSyncMovies',
             'watchlistSyncTv',
             'watchlistSyncMusic',
@@ -810,6 +1108,7 @@ userSettingsRoutes.post<
             discoverRegion: savedUser.settings?.discoverRegion,
             streamingRegion: savedUser.settings?.streamingRegion,
             originalLanguage: savedUser.settings?.originalLanguage,
+            preferredLanguages: savedUser.settings?.preferredLanguages,
             watchlistSyncMovies: savedUser.settings?.watchlistSyncMovies,
             watchlistSyncTv: savedUser.settings?.watchlistSyncTv,
             watchlistSyncMusic: savedUser.settings?.watchlistSyncMusic,
@@ -842,6 +1141,145 @@ userSettingsRoutes.post<
     return next({ status: 500, message: e.message });
   }
 });
+
+userSettingsRoutes.get<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(user.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+    const parsedBody = parseDetailDisclosurePinsBody(
+      req.body,
+      mediaType === 'movie',
+      true
+    );
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+          if (!canModifyUser(user, actor)) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's settings.",
+            });
+          }
+          if (!user.settings) {
+            user.settings = new UserSettings({ user });
+          }
+
+          const currentPins = serializeScopedDetailDisclosurePins(
+            user.settings,
+            mediaType
+          );
+          const nextPins = {
+            ...user.settings.detailDisclosurePins,
+          };
+          const updatedPins = { ...currentPins, ...parsedBody.value };
+          switch (mediaType) {
+            case 'movie':
+              nextPins.movie = updatedPins;
+              break;
+            case 'tv':
+              nextPins.tv = updatedPins;
+              break;
+            case 'music':
+              nextPins.music = updatedPins;
+              break;
+            case 'book':
+              nextPins.book = updatedPins;
+              break;
+          }
+          user.settings.detailDisclosurePins = nextPins;
+
+          const savedUser = await userRepository.save(user);
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(savedUser.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: "You do not have permission to modify this user's settings.",
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
 
 userSettingsRoutes.get<{ id: string }, UserSettingsCardTextResponse>(
   '/card-text',
@@ -953,6 +1391,119 @@ userSettingsRoutes.post<
   }
 });
 
+userSettingsRoutes.get<{ id: string }, UserSettingsDetailDisclosureResponse>(
+  '/detail-disclosures',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(serializeDetailDisclosurePins(user.settings));
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>('/detail-disclosures', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseDetailDisclosurePinsBody(req.body);
+
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
+  }
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    return await runUserSecurityMutationWithActor(
+      req.user!.id,
+      userId,
+      Permission.MANAGE_USERS,
+      async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUser(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's settings.",
+          });
+        }
+
+        if (!user.settings) {
+          user.settings = new UserSettings({ user });
+        }
+
+        const body = parsedBody.value;
+        if (body.cast !== undefined) {
+          user.settings.detailDisclosureCastPinned = body.cast;
+        }
+        if (body.crew !== undefined) {
+          user.settings.detailDisclosureCrewPinned = body.crew;
+        }
+        if (body.artists !== undefined) {
+          user.settings.detailDisclosureArtistsPinned = body.artists;
+        }
+        if (body.subjectTags !== undefined) {
+          user.settings.detailDisclosureSubjectTagsPinned = body.subjectTags;
+        }
+
+        const savedUser = await userRepository.save(user);
+        return res
+          .status(200)
+          .json(serializeDetailDisclosurePins(savedUser.settings));
+      }
+    );
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    next({ status: 500, message: e.message });
+  }
+});
+
 userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
   '/password',
   isOwnProfileOrAdmin(),
@@ -972,7 +1523,7 @@ userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
         async () => {
           const user = await userRepository.findOne({
             where: { id: userId },
-            select: ['id', 'password'],
+            select: { id: true, password: true },
           });
 
           if (!user) {
@@ -1024,7 +1575,7 @@ userSettingsRoutes.post<
         });
 
         const userWithPassword = await userRepository.findOne({
-          select: ['id', 'password'],
+          select: { id: true, password: true },
           where: { id: userId },
         });
 
@@ -1174,7 +1725,9 @@ userSettingsRoutes.post<{ authToken: string }>(
                 .status(409)
                 .json({ message: 'Media server configuration changed.' });
             }
-            if (await userRepository.exist({ where: { plexId: account.id } })) {
+            if (
+              await userRepository.exists({ where: { plexId: account.id } })
+            ) {
               return res.status(422).json({
                 message: 'This Plex account is already linked to a Seerr user',
               });
@@ -1369,7 +1922,7 @@ userSettingsRoutes.post<{ username: string; password: string }>(
                 .json({ message: 'Media server configuration changed.' });
             }
             if (
-              await userRepository.exist({
+              await userRepository.exists({
                 where: { jellyfinUserId },
               })
             ) {
@@ -1664,6 +2217,12 @@ userSettingsRoutes.post<{ secret: string }>(
         .json({ message: 'Jellyfin/Emby login is disabled' });
     }
 
+    if (settings.main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return res
+        .status(403)
+        .json({ message: 'Quick Connect is only supported by Jellyfin.' });
+    }
+
     const hostname = getHostname();
     const jellyfinServer = new JellyfinAPI(hostname);
 
@@ -1671,7 +2230,7 @@ userSettingsRoutes.post<{ secret: string }>(
       const account = await jellyfinServer.authenticateQuickConnect(secret);
 
       if (
-        await userRepository.exist({
+        await userRepository.exists({
           where: { jellyfinUserId: account.User.Id },
         })
       ) {
@@ -1685,10 +2244,7 @@ userSettingsRoutes.post<{ secret: string }>(
         user.id === 1 ? 'BOT_seerr' : `BOT_seerr_${user.username ?? ''}`
       ).toString('base64');
 
-      user.userType =
-        settings.main.mediaServerType === MediaServerType.EMBY
-          ? UserType.EMBY
-          : UserType.JELLYFIN;
+      user.userType = UserType.JELLYFIN;
       user.jellyfinUserId = account.User.Id;
       user.jellyfinUsername = account.User.Name;
       user.jellyfinAuthToken = account.AccessToken;

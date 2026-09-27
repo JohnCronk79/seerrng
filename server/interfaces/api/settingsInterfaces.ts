@@ -32,12 +32,15 @@ export interface PublicSettingsResponse {
   applicationUrl: string;
   hideAvailable: boolean;
   hideBlocklisted: boolean;
+  hideRequested: boolean;
   localLogin: boolean;
   mediaServerLogin: boolean;
   movie4kEnabled: boolean;
   series4kEnabled: boolean;
   musicEnabled: boolean;
   booksEnabled: boolean;
+  comicsEnabled: boolean;
+  magazinesEnabled: boolean;
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;

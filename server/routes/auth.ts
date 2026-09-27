@@ -50,6 +50,7 @@ import {
   mapWithConcurrency,
 } from '@server/utils/concurrency';
 import { getHostname } from '@server/utils/getHostname';
+import { getHttpErrorDetails } from '@server/utils/httpError';
 import { normalizeJellyfinGuid } from '@server/utils/jellyfin';
 import { oidcSafeFetch } from '@server/utils/oidcHttp';
 import { parseOidcIdentity } from '@server/utils/oidcIdentity';
@@ -99,6 +100,11 @@ const DUMMY_LOGIN_PASSWORD_HASH =
 export const LOCAL_LOGIN_FAILURE_LIMIT = 10;
 export const LOCAL_LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const localLoginAttemptLock = new AsyncLock();
+const passwordResetPreparationLock = new AsyncLock();
+const passwordResetGenerations = new Map<
+  string,
+  { activeRequests: number; prepared: boolean }
+>();
 const pendingPasswordResetDeliveries = new Set<Promise<void>>();
 const pendingPasswordResetDeliveriesByUser = new Map<number, Promise<void>>();
 let passwordResetDeliveryRecoveryRunning = false;
@@ -110,6 +116,29 @@ const passwordResetDeliveryQueue = new BoundedTaskQueue(
   PASSWORD_RESET_DELIVERY_CONCURRENCY,
   MAX_PASSWORD_RESET_DELIVERY_QUEUE
 );
+
+const beginPasswordResetGeneration = (key: string) => {
+  const generation = passwordResetGenerations.get(key) ?? {
+    activeRequests: 0,
+    prepared: false,
+  };
+  generation.activeRequests += 1;
+  passwordResetGenerations.set(key, generation);
+  return generation;
+};
+
+const endPasswordResetGeneration = (
+  key: string,
+  generation: { activeRequests: number; prepared: boolean }
+) => {
+  generation.activeRequests -= 1;
+  if (
+    generation.activeRequests === 0 &&
+    passwordResetGenerations.get(key) === generation
+  ) {
+    passwordResetGenerations.delete(key);
+  }
+};
 
 export const waitForPendingPasswordResetDeliveries =
   async (): Promise<void> => {
@@ -219,7 +248,10 @@ export const resumePendingPasswordResetDeliveries = async (): Promise<void> => {
               return;
             }
 
-            const delivery = await user.preparePasswordResetDelivery();
+            const delivery = await user.preparePasswordResetDelivery(
+              userRepository,
+              { allowPending: true }
+            );
             if (delivery) {
               await delivery();
             } else {
@@ -524,7 +556,8 @@ authRoutes.post('/plex/pin', authRateLimit, async (req, res, next) => {
   } catch (e) {
     logger.error('Unable to create Plex OAuth PIN', {
       label: 'Auth',
-      error: e instanceof Error ? e.message : String(e),
+      ...getHttpErrorDetails(e),
+      errorStack: e instanceof Error ? e.stack : undefined,
     });
     return next({ status: 502, message: 'Unable to contact Plex.' });
   }
@@ -579,7 +612,8 @@ authRoutes.get(
       logger.warn('Unable to poll Plex OAuth PIN', {
         label: 'Auth',
         pinId,
-        error: e instanceof Error ? e.message : String(e),
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
       });
       return next({ status: 502, message: 'Unable to contact Plex.' });
     }
@@ -1379,6 +1413,30 @@ authRoutes.post('/jellyfin', authRateLimit, async (req, res, next) => {
           message: e.errorCode,
         });
 
+      case ApiErrorCode.ConnectionError:
+        logger.error(
+          `Unable to reach the ${
+            settings.main.mediaServerType === MediaServerType.JELLYFIN
+              ? ServerType.JELLYFIN
+              : ServerType.EMBY
+          } server.`,
+          {
+            label: 'Auth',
+            error: e.errorCode,
+            status: e.statusCode,
+            hostname: getHostname({
+              useSsl: body.useSsl,
+              ip: body.hostname,
+              port: body.port,
+              urlBase: body.urlBase,
+            }),
+          }
+        );
+        return next({
+          status: e.statusCode,
+          message: e.errorCode,
+        });
+
       case ApiErrorCode.InvalidCredentials:
         logger.warn(
           'Failed sign-in attempt from user with incorrect Jellyfin credentials',
@@ -1444,6 +1502,13 @@ authRoutes.post(
   '/jellyfin/quickconnect/initiate',
   authRateLimit,
   async (req, res, next) => {
+    if (getSettings().main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return next({
+        status: 403,
+        message: 'Quick Connect is only supported by Jellyfin.',
+      });
+    }
+
     try {
       const hostname = getHostname();
       const jellyfinServer = new JellyfinAPI(
@@ -1475,6 +1540,13 @@ authRoutes.get(
   '/jellyfin/quickconnect/check',
   authRateLimit,
   async (req, res, next) => {
+    if (getSettings().main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return next({
+        status: 403,
+        message: 'Quick Connect is only supported by Jellyfin.',
+      });
+    }
+
     const result = quickConnectSecret.safeParse(req.query);
     if (!result.success) {
       return next({
@@ -1528,6 +1600,13 @@ authRoutes.post(
       return next({
         status: 403,
         message: 'Quick Connect is not available during initial setup.',
+      });
+    }
+
+    if (settings.main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return next({
+        status: 403,
+        message: 'Quick Connect is only supported by Jellyfin.',
       });
     }
 
@@ -1591,13 +1670,30 @@ authRoutes.post(
           jellyfinUserId: account.User.Id,
           jellyfinDeviceId: deviceId,
           permissions: settings.main.defaultPermissions,
-          userType:
-            settings.main.mediaServerType === MediaServerType.JELLYFIN
-              ? UserType.JELLYFIN
-              : UserType.EMBY,
+          userType: UserType.JELLYFIN,
         });
         user.avatar = getUserAvatarUrl(user);
         await userRepository.save(user);
+      }
+
+      if (user.jellyfinUserId) {
+        try {
+          const { changed } = await checkAvatarChanged(user);
+
+          if (changed) {
+            user.avatar = getUserAvatarUrl(user);
+            await userRepository.save(user);
+            logger.debug('Avatar updated during Quick Connect login', {
+              userId: user.id,
+              jellyfinUserId: user.jellyfinUserId,
+            });
+          }
+        } catch (error) {
+          logger.error('Error handling avatar during Quick Connect login', {
+            label: 'Auth',
+            errorMessage: error.message,
+          });
+        }
       }
 
       // Set session
@@ -2759,44 +2855,69 @@ authRoutes.post(
       });
     }
 
-    const settings = getSettings();
-    if (
-      !settings.main.applicationUrl ||
-      !settings.notifications.agents.email.enabled
-    ) {
-      return next({
-        status: 503,
-        message: 'Password reset email delivery is not configured.',
-      });
-    }
+    const generationKey = email.value.toLowerCase();
+    const generation = beginPasswordResetGeneration(generationKey);
+    try {
+      const settings = getSettings();
+      if (
+        !settings.main.applicationUrl ||
+        !settings.notifications.agents.email.enabled
+      ) {
+        return next({
+          status: 503,
+          message: 'Password reset email delivery is not configured.',
+        });
+      }
 
-    const user = await userRepository
-      .createQueryBuilder('user')
-      .addSelect(['user.resetPasswordGuid', 'user.recoveryLinkExpirationDate'])
-      .where('user.email = :email', { email: email.value.toLowerCase() })
-      .getOne();
+      const user = await userRepository
+        .createQueryBuilder('user')
+        .addSelect([
+          'user.resetPasswordGuid',
+          'user.recoveryLinkExpirationDate',
+          'user.resetPasswordDeliveryPending',
+        ])
+        .where('user.email = :email', { email: generationKey })
+        .getOne();
 
-    // Do not wait for SMTP here. Awaiting a real delivery only for known users
-    // makes response time an account-existence oracle. Both branches enqueue
-    // an indistinguishable task and return after the same bounded lookup path.
-    const delivery = user
-      ? await user.preparePasswordResetDelivery()
-      : await userRepository
-          // Match the known-account write path without creating durable state.
-          // This keeps the response boundary from becoming a database-write
-          // timing oracle after delivery intent moved ahead of the response.
-          .update({ id: -1 }, { resetPasswordDeliveryPending: false })
-          .then(() => undefined);
-    enqueuePasswordResetDelivery(
-      user,
-      {
+      // Do not wait for SMTP here. Awaiting a real delivery only for known
+      // users makes response time an account-existence oracle. Both branches
+      // enqueue an indistinguishable task and return after the same bounded
+      // lookup path.
+      const deliveryContext = {
         email: email.value,
         ip: req.ip,
-      },
-      delivery
-    );
+      };
+      if (user) {
+        await passwordResetPreparationLock.dispatch(generationKey, async () => {
+          // Keep concurrent requests in one local generation. A fast SMTP
+          // provider can finish the first task before the next request reaches
+          // the durable pending flag, but it must not turn one request burst
+          // into multiple messages.
+          if (
+            generation.prepared ||
+            pendingPasswordResetDeliveriesByUser.has(user.id)
+          ) {
+            return;
+          }
+          const delivery = await user.preparePasswordResetDelivery();
+          generation.prepared = true;
+          enqueuePasswordResetDelivery(user, deliveryContext, delivery);
+        });
+      } else {
+        // Match the known-account write path without creating durable state.
+        // This keeps the response boundary from becoming a database-write
+        // timing oracle after delivery intent moved ahead of the response.
+        await userRepository.update(
+          { id: -1 },
+          { resetPasswordDeliveryPending: false }
+        );
+        enqueuePasswordResetDelivery(null, deliveryContext);
+      }
 
-    return res.status(200).json({ status: 'ok' });
+      return res.status(200).json({ status: 'ok' });
+    } finally {
+      endPasswordResetGeneration(generationKey, generation);
+    }
   }
 );
 

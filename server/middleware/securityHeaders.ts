@@ -28,16 +28,25 @@ export const SECURITY_RESPONSE_HEADERS = {
   'Origin-Agent-Cluster': '?1',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   'Referrer-Policy': 'same-origin',
-  'Strict-Transport-Security': 'max-age=31536000',
   'X-Content-Type-Options': 'nosniff',
   'X-DNS-Prefetch-Control': 'off',
   'X-Frame-Options': 'DENY',
   'X-Permitted-Cross-Domain-Policies': 'none',
 } as const;
 
-const securityHeaders: Middleware = (_req, res, next) => {
+export const STRICT_TRANSPORT_SECURITY_HEADER = 'max-age=31536000';
+
+const securityHeaders: Middleware = (req, res, next) => {
   for (const [name, value] of Object.entries(SECURITY_RESPONSE_HEADERS)) {
     res.setHeader(name, value);
+  }
+  if (req.secure) {
+    res.setHeader(
+      'Strict-Transport-Security',
+      STRICT_TRANSPORT_SECURITY_HEADER
+    );
+  } else {
+    res.removeHeader('Strict-Transport-Security');
   }
   res.removeHeader('X-Powered-By');
   next();

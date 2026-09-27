@@ -1,6 +1,10 @@
 import type {
+  CollectorServiceSettings,
   DVRSettings,
+  KapowarrSettings,
+  LazyLibrarianSettings,
   LidarrSettings,
+  MylarSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -493,4 +497,117 @@ export const parseReadarrSettings = (
       serviceType,
     },
   };
+};
+
+const parseCollectorSettings = (
+  body: unknown,
+  current?: CollectorServiceSettings
+): { value: CollectorServiceSettings } | { error: string } => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'settings must be an object.' };
+  }
+
+  const settings = body as Partial<CollectorServiceSettings>;
+  const name = parseRequiredServiceString(settings.name, 'name');
+  if ('error' in name) return name;
+
+  const hostname = parseRequiredServiceString(settings.hostname, 'hostname');
+  if ('error' in hostname) return hostname;
+  const normalizedHostname = normalizeServiceHostname(hostname.value);
+  if (!normalizedHostname) {
+    return { error: 'hostname is invalid.' };
+  }
+
+  const apiKey = parseRequiredServiceString(settings.apiKey, 'apiKey');
+  if ('error' in apiKey) return apiKey;
+
+  const baseUrl = parseOptionalUrlBase(settings.baseUrl);
+  if ('error' in baseUrl) return baseUrl;
+
+  const externalUrl = parseOptionalExternalUrl(settings.externalUrl);
+  if ('error' in externalUrl) return externalUrl;
+
+  const tags = parseNumberArray(settings.tags, 'tags');
+  if ('error' in tags) return tags;
+
+  const useSsl = parseServiceBoolean(settings.useSsl, 'useSsl');
+  if ('error' in useSsl) return useSsl;
+  const isDefault = parseServiceBoolean(settings.isDefault, 'isDefault');
+  if ('error' in isDefault) return isDefault;
+  const syncEnabled = parseServiceBoolean(settings.syncEnabled, 'syncEnabled');
+  if ('error' in syncEnabled) return syncEnabled;
+  const preventSearch = parseServiceBoolean(
+    settings.preventSearch,
+    'preventSearch'
+  );
+  if ('error' in preventSearch) return preventSearch;
+
+  const port = parseOptionalNonNegativeInteger(settings.port, MAX_SERVICE_PORT);
+  if (port === undefined || port < 1) {
+    return { error: 'port is invalid.' };
+  }
+
+  return {
+    value: {
+      id: current?.id ?? 0,
+      name: name.value,
+      hostname: normalizedHostname,
+      port,
+      apiKey: apiKey.value,
+      useSsl: useSsl.value,
+      baseUrl: baseUrl.value,
+      isDefault: isDefault.value,
+      externalUrl: externalUrl.value,
+      tags: tags.value,
+      syncEnabled: syncEnabled.value,
+      preventSearch: preventSearch.value,
+    },
+  };
+};
+
+export const parseMylarSettings = (
+  body: unknown,
+  current?: MylarSettings
+): { value: MylarSettings } | { error: string } => {
+  const parsed = parseCollectorSettings(body, current);
+  if ('error' in parsed) return parsed;
+  const settings = body as Partial<MylarSettings>;
+
+  const rootFolder = parseOptionalServiceString(
+    settings.rootFolder,
+    'rootFolder',
+    MAX_SERVICE_PATH_LENGTH
+  );
+  if ('error' in rootFolder) return rootFolder;
+
+  return { value: { ...parsed.value, rootFolder: rootFolder.value } };
+};
+
+export const parseKapowarrSettings = (
+  body: unknown,
+  current?: KapowarrSettings
+): { value: KapowarrSettings } | { error: string } => {
+  const parsed = parseCollectorSettings(body, current);
+  if ('error' in parsed) return parsed;
+  const settings = body as Partial<KapowarrSettings>;
+
+  // Required, unlike Mylar's - dispatchComicRequest has no fallback and
+  // throws a clear error at dispatch time if this is missing, but failing
+  // fast here at save time is a better admin experience.
+  const rootFolder = parseRequiredServiceString(
+    settings.rootFolder,
+    'rootFolder',
+    MAX_SERVICE_PATH_LENGTH
+  );
+  if ('error' in rootFolder) return rootFolder;
+
+  return { value: { ...parsed.value, rootFolder: rootFolder.value } };
+};
+
+export const parseLazyLibrarianSettings = (
+  body: unknown,
+  current?: LazyLibrarianSettings
+): { value: LazyLibrarianSettings } | { error: string } => {
+  const parsed = parseCollectorSettings(body, current);
+  return 'error' in parsed ? parsed : { value: parsed.value };
 };

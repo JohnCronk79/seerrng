@@ -5,7 +5,7 @@ import { RequeueFailedBookRequests1783200000000 } from './1783200000000-RequeueF
 
 test('SQLite failed book request migration seeds only missing failed books', async () => {
   const dataSource = await new DataSource({
-    type: 'sqlite',
+    type: 'better-sqlite3',
     database: ':memory:',
   }).initialize();
   const queryRunner = dataSource.createQueryRunner();

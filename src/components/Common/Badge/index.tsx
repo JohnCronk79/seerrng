@@ -4,25 +4,30 @@ import React from 'react';
 
 interface BadgeProps {
   badgeType?:
-    | 'default'
-    | 'primary'
-    | 'danger'
-    | 'warning'
-    | 'success'
-    | 'dark'
-    | 'light';
+    'default' | 'primary' | 'danger' | 'warning' | 'success' | 'dark' | 'light';
   className?: string;
+  shape?: 'pill' | 'standard';
   href?: string;
   children: React.ReactNode;
 }
 
 const Badge = (
-  { badgeType = 'default', className, href, children }: BadgeProps,
+  {
+    badgeType = 'default',
+    className,
+    shape = 'pill',
+    href,
+    children,
+  }: BadgeProps,
   ref?: React.Ref<HTMLElement>
 ) => {
   const badgeStyle = [
-    'px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap',
+    'compact-control inline-flex items-center px-2 text-xs leading-none font-semibold whitespace-nowrap',
   ];
+
+  badgeStyle.push(
+    shape === 'standard' ? 'app-control-standard-radius' : 'rounded-full'
+  );
 
   if (href) {
     badgeStyle.push('transition cursor-pointer !no-underline');
@@ -32,45 +37,45 @@ const Badge = (
 
   switch (badgeType) {
     case 'danger':
-      badgeStyle.push('bg-red-600/80 border-red-500 border !text-red-100');
+      badgeStyle.push('bg-red-600/35 border-red-500 border !text-red-100');
       if (href) {
-        badgeStyle.push('hover:bg-red-500');
+        badgeStyle.push('hover:bg-red-500/55 active:bg-red-500/70');
       }
       break;
     case 'warning':
       badgeStyle.push(
-        'bg-yellow-500/80 border-yellow-500 border !text-yellow-100'
+        'bg-yellow-500/35 border-yellow-500 border !text-yellow-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-yellow-500');
+        badgeStyle.push('hover:bg-yellow-500/55 active:bg-yellow-500/70');
       }
       break;
     case 'success':
       badgeStyle.push(
-        'bg-green-500/80 border border-green-500 !text-green-100'
+        'bg-green-500/35 border border-green-500 !text-green-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-green-500');
+        badgeStyle.push('hover:bg-green-500/55 active:bg-green-500/70');
       }
       break;
     case 'dark':
-      badgeStyle.push('bg-gray-900 !text-gray-400');
+      badgeStyle.push('bg-gray-900/35 !text-gray-400');
       if (href) {
-        badgeStyle.push('hover:bg-gray-800');
+        badgeStyle.push('hover:bg-gray-800/55 active:bg-gray-800/70');
       }
       break;
     case 'light':
-      badgeStyle.push('bg-gray-700 !text-gray-300');
+      badgeStyle.push('bg-gray-700/35 !text-gray-300');
       if (href) {
-        badgeStyle.push('hover:bg-gray-600');
+        badgeStyle.push('hover:bg-gray-600/55 active:bg-gray-600/70');
       }
       break;
     default:
       badgeStyle.push(
-        'bg-indigo-500/80 border border-indigo-500 !text-indigo-100'
+        'bg-indigo-500/35 border border-indigo-500 !text-indigo-100'
       );
       if (href) {
-        badgeStyle.push('hover:bg-indigo-500');
+        badgeStyle.push('hover:bg-indigo-500/55 active:bg-indigo-500/70');
       }
   }
 

@@ -33,6 +33,10 @@ is_exempt_path() {
     docs/migration-guide.mdx|docs/using-seerr/advanced/verifying-signed-artifacts.mdx)
       return 0
       ;;
+    server/migration/postgres/1789254652580-RemapOverseerrDeletedStatus.ts|server/migration/sqlite/1789254652493-RemapOverseerrDeletedStatus.ts)
+      # These import-compatibility migrations retain their upstream names and issue links; see NOTICE.md.
+      return 0
+      ;;
     gen-docs/blog/*|src/i18n/locale/*)
       return 0
       ;;

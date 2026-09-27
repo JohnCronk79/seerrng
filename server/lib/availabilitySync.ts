@@ -6,7 +6,7 @@ import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import type { SonarrSeason, SonarrSeries } from '@server/api/servarr/sonarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
-import type { TmdbTvDetails } from '@server/api/themoviedb/interfaces';
+import type { TmdbTvScanDetails } from '@server/api/themoviedb/interfaces';
 import { MediaStatus } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
@@ -20,7 +20,12 @@ import {
 } from '@server/lib/configurationAdmission';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import {
+  LibraryDeletionReconciler,
+  mediaServerDeletionPresence,
+} from '@server/lib/libraryDeletionReconciliation';
+import {
   captureMediaServerUserAuthority,
+  runWithMediaServerUserAuthority,
   type MediaServerUserAuthoritySnapshot,
 } from '@server/lib/mediaServerUserAuthority';
 import { runWithServarrServiceSnapshots } from '@server/lib/serviceAdmission';
@@ -80,12 +85,8 @@ class AvailabilitySync {
         );
         this.plexSettingsSnapshot = structuredClone(settings.plex);
         this.jellyfinSettingsSnapshot = structuredClone(settings.jellyfin);
-        this.radarrServers = structuredClone(
-          settings.radarr.filter((server) => server.syncEnabled)
-        );
-        this.sonarrServers = structuredClone(
-          settings.sonarr.filter((server) => server.syncEnabled)
-        );
+        this.radarrServers = structuredClone(settings.radarr);
+        this.sonarrServers = structuredClone(settings.sonarr);
         this.enable4kMovie = this.radarrServers.some((server) => server.is4k);
         this.enable4kShow = this.sonarrServers.some((server) => server.is4k);
       });
@@ -165,6 +166,27 @@ class AvailabilitySync {
           return;
       }
 
+      const deletionReconciler = new LibraryDeletionReconciler({
+        radarr: this.radarrServers,
+        sonarr: this.sonarrServers,
+        mediaServerPresence: (media, is4k) =>
+          mediaServerDeletionPresence(
+            media,
+            is4k,
+            mediaServerType,
+            this.plexClient,
+            this.jellyfinClient,
+            this.plexSettingsSnapshot.machineId
+          ),
+        withOwnerAuthority: (callback) =>
+          runWithMediaServerUserAuthority(
+            this.ownerAuthoritySnapshot,
+            callback
+          ),
+        withAuthority: (media, callback) =>
+          this.withAuthoritySnapshot(media.mediaType, callback),
+        cancelled: () => !this.running,
+      });
       for await (const media of this.loadAvailableMediaPaginated(pageSize)) {
         if (!this.running) {
           break;
@@ -380,14 +402,14 @@ class AvailabilitySync {
           }
 
           // We need to fetch from TMDB to get the episode count for each season
-          let tvShow: TmdbTvDetails | undefined;
+          let tvShow: TmdbTvScanDetails | undefined;
           try {
             if (media.tmdbId) {
-              tvShow = await this.tmdb.getTvShow({
+              tvShow = await this.tmdb.getTvShowForScan({
                 tvId: Number(media.tmdbId),
               });
             } else if (media.tvdbId) {
-              tvShow = await this.tmdb.getShowByTvdbId({
+              tvShow = await this.tmdb.getShowByTvdbIdForScan({
                 tvdbId: Number(media.tvdbId),
               });
             }
@@ -425,9 +447,10 @@ class AvailabilitySync {
             });
           }
 
-          // Availability reconciliation is read-only. Missing or stale
-          // upstream records must not mutate request or library status.
+          // Episode-level completeness remains separate from confirmed removal
+          // of an entire quality/library entry.
         }
+        await deletionReconciler.reconcile(media);
       }
     } catch (ex) {
       logger.error('Failed to complete availability sync.', {
@@ -455,6 +478,9 @@ class AvailabilitySync {
       { status: MediaStatus.PARTIALLY_AVAILABLE },
       { status4k: MediaStatus.AVAILABLE },
       { status4k: MediaStatus.PARTIALLY_AVAILABLE },
+      { status: MediaStatus.DELETED },
+      { status4k: MediaStatus.DELETED },
+      { status: MediaStatus.BLOCKLISTED },
       { seasons: { status: MediaStatus.AVAILABLE } },
       { seasons: { status: MediaStatus.PARTIALLY_AVAILABLE } },
       { seasons: { status4k: MediaStatus.AVAILABLE } },
@@ -492,7 +518,6 @@ class AvailabilitySync {
           callback,
           {
             requireExactAuthoritySet: true,
-            includeCurrent: (server) => server.syncEnabled,
           }
         );
       }
@@ -503,7 +528,6 @@ class AvailabilitySync {
           callback,
           {
             requireExactAuthoritySet: true,
-            includeCurrent: (server) => server.syncEnabled,
           }
         );
       }

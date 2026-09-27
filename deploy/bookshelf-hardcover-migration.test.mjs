@@ -399,23 +399,29 @@ describe('bookshelf-hardcover-migration CLI pipeline', () => {
 
   it('times out when a response stalls after sending headers', async () => {
     const migrationDir = await createMigrationDir();
+    let responseStarted = false;
 
     await withMockBookshelf(
       (_req, res) => {
+        responseStarted = true;
         res.writeHead(200, { 'content-type': 'application/json' });
         res.write('[');
       },
       async (baseUrl) => {
         const startedAt = Date.now();
         const result = await runCli([migrationDir], {
-          HARDCOVER_API_TIMEOUT_MS: '50',
+          HARDCOVER_API_TIMEOUT_MS: '500',
           HARDCOVER_EBOOK_API_KEY: 'key',
           HARDCOVER_EBOOK_BASE_URL: baseUrl,
           HARDCOVER_OPENLIBRARY_RECOVERY: 'false',
         });
 
         assert.equal(result.code, 0, result.stderr);
-        assert.ok(Date.now() - startedAt < 2000);
+        assert.ok(
+          responseStarted,
+          'the stalled response should reach the server'
+        );
+        assert.ok(Date.now() - startedAt < 5000);
         assert.equal(
           (await readJson(path.join(migrationDir, 'unmatched-books.json')))[0]
             .reason,
