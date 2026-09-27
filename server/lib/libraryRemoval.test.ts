@@ -2,7 +2,7 @@ import { MediaType } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { resolveLibraryRemoval } from './libraryRemoval';
+import { libraryServiceType, resolveLibraryRemoval } from './libraryRemoval';
 
 const fixture = vi.hoisted(() => ({
   albums: [] as { id?: number; foreignAlbumId: string }[],
@@ -155,6 +155,13 @@ vi.mock('@server/api/lazylibrarian', () => ({
 }));
 
 const media = { id: 42, mediaType: MediaType.MUSIC, mbId: 'album-id' } as Media;
+it('does not assume a comic backend when its service type is unknown', () => {
+  expect(() => libraryServiceType(MediaType.COMIC)).toThrow(
+    'Cannot safely identify the comic backend.'
+  );
+  expect(libraryServiceType(MediaType.COMIC, 'mylar')).toBe('mylar');
+});
+
 beforeEach(() => {
   fixture.albums = [];
   fixture.series = [];

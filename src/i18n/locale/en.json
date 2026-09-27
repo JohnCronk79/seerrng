@@ -909,7 +909,7 @@
   "components.ManageMediaActions.issueLink": "Issue #{id} — {status}",
   "components.ManageMediaActions.issues": "Issues",
   "components.ManageMediaActions.issuesDescription": "Close Open Issues marks its open issues as resolved and keeps their history. Delete All Issues permanently removes all its issues and their comments, including resolved issues.",
-  "components.ManageMediaActions.libraryLookupFailed": "Unable to verify all library services. Retry before deleting.",
+  "components.ManageMediaActions.libraryLookupFailed": "Unable to verify all library services or identify this comic’s backend. Refresh its metadata or check service availability before deleting.",
   "components.ManageMediaActions.missingBlocklistId": "This title has no valid blocklist identifier.",
   "components.ManageMediaActions.noIssues": "There are no issues for this media.",
   "components.ManageMediaActions.noOpenIssues": "There are no open issues to close for this media.",

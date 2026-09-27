@@ -34,7 +34,12 @@ export const libraryServiceType = (
     case MediaType.BOOK:
       return 'readarr';
     case MediaType.COMIC:
-      return comicServiceType === 'kapowarr' ? 'kapowarr' : 'mylar';
+      if (comicServiceType !== 'mylar' && comicServiceType !== 'kapowarr') {
+        throw new Error(
+          'Cannot safely identify the comic backend. Refresh its metadata before deleting.'
+        );
+      }
+      return comicServiceType;
     case MediaType.MAGAZINE:
       return 'lazylibrarian';
     default:

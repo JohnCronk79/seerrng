@@ -12,7 +12,6 @@
 .pnpm-store
 .husky
 .npmrc
-!/.npmrc
 .next
 .prettierignore
 .vscode

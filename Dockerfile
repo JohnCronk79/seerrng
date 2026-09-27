@@ -13,16 +13,16 @@ RUN apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat bash && 
   npm config set fetch-retries 5 && \
   npm config set fetch-retry-mintimeout 20000 && \
   npm config set fetch-retry-maxtimeout 120000 && \
-  npm install --global node-gyp@13.0.1 pnpm@10.24.0
+  npm install --global node-gyp@13.0.2 pnpm@10.24.0
 
 FROM target-base AS prod-deps
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
 COPY patches ./patches
 
-RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store CI=true pnpm install --prod --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-prod,target=/pnpm/store CI=true pnpm --config.engine-strict=true install --prod --frozen-lockfile
 
 # Remove large native modules for linux-x64-gnu platform (we use alpine which is musl-based)
 # not supported in pnpm for now due to this bug: https://github.com/pnpm/pnpm/issues/9654
@@ -54,7 +54,7 @@ RUN apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat bash && 
   npm config set fetch-retries 5 && \
   npm config set fetch-retry-mintimeout 20000 && \
   npm config set fetch-retry-maxtimeout 120000 && \
-  npm install --global node-gyp@13.0.1 pnpm@10.24.0
+  npm install --global node-gyp@13.0.2 pnpm@10.24.0
 
 FROM build-base AS build
 
@@ -64,11 +64,11 @@ ENV COMMIT_TAG=${COMMIT_TAG}
 ENV BUILD_VERSION=${BUILD_VERSION}
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY bin/prepare.mjs ./bin/prepare.mjs
 COPY patches ./patches
 
-RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_BINARY=0 pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-build,target=/pnpm/store CI=true CYPRESS_INSTALL_BINARY=0 pnpm --config.engine-strict=true install --frozen-lockfile
 
 COPY . .
 

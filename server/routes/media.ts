@@ -546,8 +546,8 @@ mediaRoutes.delete(
 
 mediaRoutes.get(
   '/:id/library',
-  isAuthenticated(Permission.MANAGE_REQUESTS),
-  authorizedRouteAccess(Permission.MANAGE_REQUESTS),
+  isAuthenticated(Permission.ADMIN),
+  authorizedRouteAccess(Permission.ADMIN),
   async (req, res, next) => {
     const id = parseMediaRouteId(req.params.id);
     const media = id
@@ -573,7 +573,7 @@ mediaRoutes.get(
 
 mediaRoutes.delete(
   '/:id/library',
-  isAuthenticated(Permission.MANAGE_REQUESTS),
+  isAuthenticated(Permission.ADMIN),
   async (req, res, next) => {
     const id = parseMediaRouteId(req.params.id);
     if (
@@ -594,7 +594,7 @@ mediaRoutes.delete(
       return await runAuthorizedUserSecurityMutation(
         req.user!.id,
         req.user!.id,
-        Permission.MANAGE_REQUESTS,
+        Permission.ADMIN,
         () =>
           runMediaEntityMutation(initial, async () =>
             runWithServarrServiceCollectionMutationAdmission(
