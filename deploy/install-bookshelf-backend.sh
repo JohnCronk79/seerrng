@@ -468,7 +468,7 @@ resolve_backend() {
     auto)
       existing_backend="$(env_file_value "${INSTALL_DIR}/.env" "BOOKSHELF_BACKEND")"
       if [ "$BOOKSHELF_BACKEND_EXPLICIT" != "x" ] &&
-        [ -n "$existing_instance_mode" ] &&
+        [ -n "$existing_backend" ] &&
         { [ "$existing_backend" = "hardcover" ] || [ "$existing_backend" = "softcover" ]; }; then
         BOOKSHELF_BACKEND_RESOLVED="$existing_backend"
       elif has_existing_bookshelf_config; then
@@ -1078,11 +1078,7 @@ write_env_file() {
   elif [ "$has_existing_metadata_sources" = "true" ] && [ "$existing_metadata_sources" != "loc,googlebooks,europeana" ] && [ "$existing_metadata_sources" != "loc,gutendex,googlebooks,europeana" ]; then
     BOOKSHELF_EBOOKS_METADATA_SOURCES="$existing_metadata_sources"
   else
-    if [ "$SINGLE_INSTANCE" = "true" ]; then
-      BOOKSHELF_EBOOKS_METADATA_SOURCES="loc,gutendex,googlebooks,europeana"
-    else
-      BOOKSHELF_EBOOKS_METADATA_SOURCES="gutendex,googlebooks,europeana"
-    fi
+    BOOKSHELF_EBOOKS_METADATA_SOURCES="gutendex,googlebooks,europeana"
   fi
 
   if [ "$BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES_EXPLICIT" = "x" ]; then
@@ -1708,6 +1704,8 @@ fi
 ensure_bookshelf_config "$BOOKSHELF_EBOOKS_CONFIG_DIR" "$BOOKSHELF_EBOOKS_PORT" "ebook"
 if [ "$SINGLE_INSTANCE" != "true" ]; then
   ensure_bookshelf_config "$BOOKSHELF_AUDIOBOOKS_CONFIG_DIR" "$BOOKSHELF_AUDIOBOOKS_PORT" "audiobook"
+elif [ -f "${BOOKSHELF_AUDIOBOOKS_CONFIG_DIR}/config.xml" ]; then
+  ensure_bookshelf_config "$BOOKSHELF_AUDIOBOOKS_CONFIG_DIR" "$BOOKSHELF_AUDIOBOOKS_PORT" "inactive audiobook"
 fi
 
 if [ "$NO_STOP_READARR" != "true" ] && [ -n "$STOP_OLD_READARR_CONTAINER" ]; then
