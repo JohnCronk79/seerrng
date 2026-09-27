@@ -2013,26 +2013,34 @@
     border-width: 0 !important;
   }
 
+  .app-card-main {
+    border-radius: 0.75rem;
+  }
+
   :is(.app-card-sub, .app-card-inset),
   .manage-media-card-sections > div {
     --app-card-frame-width: 1px;
+    border-radius: 0.5rem;
   }
 
   :is(.app-card-main, .app-card-sub, .app-card-inset)::after,
   .manage-media-card-sections > div::after {
+    box-sizing: border-box;
     position: absolute;
     inset: 0;
     z-index: 50;
     border-radius: inherit;
-    background:
-      var(--app-card-frame-top) top / 100% var(--app-card-frame-width) no-repeat,
-      var(--app-card-frame-right) right / var(--app-card-frame-width) 100%
-        no-repeat,
-      var(--app-card-frame-bottom) bottom / 100% var(--app-card-frame-width)
-        no-repeat,
-      var(--app-card-frame-left) left / var(--app-card-frame-width) 100%
-        no-repeat;
+    padding: var(--app-card-frame-width);
+    background: var(--app-card-frame-background);
     content: '';
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
     pointer-events: none;
   }
 
