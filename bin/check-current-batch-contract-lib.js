@@ -1905,11 +1905,13 @@ const validateCurrentBatchContract = (files) => {
     'the selectable pin must precede the disclosure label and unfold icon'
   );
 
-  requireText(
-    'src/hooks/useDetailDisclosurePins.ts',
-    '/settings/detail-disclosures/${mediaType}',
-    'detail disclosure pins must use the authenticated category-scoped per-user settings endpoint'
-  );
+  for (const mediaType of ['movie', 'tv', 'music', 'book']) {
+    requireText(
+      'src/hooks/useDetailDisclosurePins.ts',
+      `/settings/detail-disclosures/${mediaType}`,
+      'detail disclosure pins must use the authenticated category-scoped per-user settings endpoint'
+    );
+  }
   requireText(
     'src/hooks/useDetailDisclosurePins.ts',
     'optimisticData: mutation.next',
