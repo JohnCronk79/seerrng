@@ -58,10 +58,6 @@ const useCollectionAvailability = <
     MediaServerType.JELLYFIN,
     MediaServerType.EMBY,
   ].includes(settings.currentSettings.mediaServerType);
-  const endpoint =
-    kind === 'movie'
-      ? `/api/v1/collection/${id}`
-      : `/api/v1/collection-catalog/${kind}/${id}`;
   const enabled = supported && visible && !!user && /^[a-zA-Z0-9-]+$/.test(id);
   const key =
     enabled && user
@@ -70,6 +66,15 @@ const useCollectionAvailability = <
   const result = useSWR<CollectionAvailabilityResponse<T>>(
     key,
     async () => {
+      if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+        throw new Error('Invalid collection identifier.');
+      }
+      const endpoint =
+        kind === 'movie'
+          ? `/api/v1/collection/${encodeURIComponent(id)}`
+          : `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
+      // Same-origin API path with an allowlisted kind and restricted ID.
+      // codeql[js/request-forgery]
       const response = await axios.post<CollectionAvailabilityResponse<T>>(
         `${endpoint}/availability`,
         {},

@@ -1093,12 +1093,7 @@ const AdvancedRequester = ({
                     value: tag.id,
                   }))}
                   isMulti
-                  isDisabled={isValidating || !serverData}
-                  placeholder={
-                    isValidating || !serverData
-                      ? intl.formatMessage(globalMessages.loading)
-                      : intl.formatMessage(messages.selecttags)
-                  }
+                  placeholder={intl.formatMessage(messages.selecttags)}
                   className="react-select-container react-select-container-dark discover-compact-select"
                   classNamePrefix="react-select"
                   value={

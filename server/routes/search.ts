@@ -529,13 +529,19 @@ searchRoutes.get('/', async (req, res, next) => {
               bookFormatForProviderSearch
             )
           : Promise.resolve([]),
-        shouldSearchAuthors && (ebookEnabled || audiobookEnabled)
+        // Choosing a validated search type selects a provider; it does not
+        // bypass provider authorization or transport policy.
+        // codeql[js/user-controlled-bypass]
+        shouldSearchAuthors && booksEnabled
           ? openLibrary.searchAuthors({
               query: queryString,
               page,
               limit: 20,
             })
           : Promise.resolve({ numFound: 0, start: 0, docs: [] }),
+        // Choosing a validated search type selects a provider; it does not
+        // bypass provider authorization or transport policy.
+        // codeql[js/user-controlled-bypass]
         shouldSearchAuthors && booksEnabled
           ? searchBookshelfAuthors(getSettings().readarr, queryString)
           : Promise.resolve([]),

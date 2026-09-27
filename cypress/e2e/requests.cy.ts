@@ -18,6 +18,7 @@ describe('Requests', () => {
     cy.contains('[role=option]', 'All time').click();
     cy.location('search').should('not.contain', 'timeFrame=');
 
+    cy.contains('button', 'Media Filters').click();
     cy.contains('button', 'Books').should('be.visible');
     cy.contains('button', 'Audiobooks').click();
     cy.location('search').should('contain', 'mediaType=audiobook');

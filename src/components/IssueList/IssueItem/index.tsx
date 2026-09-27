@@ -18,7 +18,8 @@ import {
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
-import { EyeIcon } from '@heroicons/react/24/outline';
+import { getSafeHref } from '@app/utils/safeUrl';
+import { EyeIcon, ServerIcon } from '@heroicons/react/24/outline';
 import { IssueStatus } from '@server/constants/issue';
 import { MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
@@ -64,6 +65,10 @@ const messages = defineMessages('components.IssueList.IssueItem', {
   unknownissuetype: 'Unknown',
   unavailable: 'Not available',
   latestIssue: 'Latest Issue',
+  openarr: 'Open in {arr}',
+  openarrFormat: 'Open {format} in {arr}',
+  ebook: 'Book',
+  audiobook: 'Audiobook',
 });
 
 type IssueTitle =
@@ -326,6 +331,33 @@ const IssueItem = ({
     issue.media.mediaType,
     issue.is4k
   );
+  const issueServiceLinks = [
+    issue.media.serviceUrl
+      ? {
+          key: 'primary',
+          url: getSafeHref(issue.media.serviceUrl),
+          label:
+            issue.media.mediaType === MediaType.BOOK
+              ? intl.formatMessage(messages.openarrFormat, {
+                  arr: 'Bookshelf',
+                  format: intl.formatMessage(messages.ebook),
+                })
+              : undefined,
+        }
+      : undefined,
+    issue.media.mediaType === MediaType.BOOK && issue.media.audiobookServiceUrl
+      ? {
+          key: 'audiobook',
+          url: getSafeHref(issue.media.audiobookServiceUrl),
+          label: intl.formatMessage(messages.openarrFormat, {
+            arr: 'Bookshelf',
+            format: intl.formatMessage(messages.audiobook),
+          }),
+        }
+      : undefined,
+  ].filter((link): link is { key: string; url: string; label: string } =>
+    Boolean(link?.url && link.label)
+  );
   return (
     <article
       className={
@@ -522,6 +554,23 @@ const IssueItem = ({
           className="issue-discussion-content card-spacing-before"
           aria-label={intl.formatMessage(messages.viewDetails)}
         >
+          {hasPermission(Permission.ADMIN) && issueServiceLinks.length > 0 && (
+            <div className="card-spacing-after flex flex-wrap gap-2">
+              {issueServiceLinks.map((link) => (
+                <a
+                  key={`issue-service-link-${link.key}`}
+                  href={link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Button buttonType="success" buttonSize="sm">
+                    <ServerIcon aria-hidden="true" />
+                    {link.label}
+                  </Button>
+                </a>
+              ))}
+            </div>
+          )}
           {issueError ? (
             <div role="alert" className="card-stack">
               <p>{intl.formatMessage(messages.loadFailed)}</p>

@@ -13,6 +13,7 @@ import type {
   CollectionDestination,
   CollectionSyncStatus,
 } from '@server/interfaces/api/collectionSync';
+import type { CollectionKind } from '@server/models/CuratedCollection';
 import axios from 'axios';
 import { Fragment, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -58,7 +59,7 @@ const CollectionServerActions = ({
   error,
   revalidate,
   visibleItemIds,
-  endpoint,
+  kind = 'movie',
 }: {
   id: string;
   title: string;
@@ -67,7 +68,7 @@ const CollectionServerActions = ({
   revalidate: () => Promise<unknown>;
   selectedIds?: string[];
   visibleItemIds?: string[];
-  endpoint?: string;
+  kind?: CollectionKind;
 }) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -123,11 +124,19 @@ const CollectionServerActions = ({
     if (busy || !action || !selectedChoices.length) return;
     setBusy(true);
     try {
-      const actionEndpoint =
-        (endpoint ?? '/api/v1/collection/' + id) + '/server';
+      if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+        throw new Error('Invalid collection identifier.');
+      }
+      const collectionEndpoint =
+        kind === 'movie'
+          ? `/api/v1/collection/${encodeURIComponent(id)}`
+          : `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
+      const actionEndpoint = `${collectionEndpoint}/server`;
       const result =
         action === 'remove'
-          ? await axios.delete<CollectionSyncStatus>(actionEndpoint, {
+          ? // Same-origin API path with an allowlisted kind and restricted ID.
+            // codeql[js/request-forgery]
+            await axios.delete<CollectionSyncStatus>(actionEndpoint, {
               data: {
                 destinations: selectedChoices.map(
                   ({ libraryId, removalToken }) => ({ libraryId, removalToken })
@@ -135,7 +144,9 @@ const CollectionServerActions = ({
               },
               timeout: 60000,
             })
-          : await axios.post<CollectionSyncStatus>(
+          : // Same-origin API path with an allowlisted kind and restricted ID.
+            // codeql[js/request-forgery]
+            await axios.post<CollectionSyncStatus>(
               actionEndpoint,
               {
                 libraryIds: selectedChoices.map((entry) => entry.libraryId),

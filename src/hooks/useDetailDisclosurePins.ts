@@ -55,9 +55,11 @@ const fromUserSettings = (
 
 const useDetailDisclosurePins = (mediaType: DetailDisclosureMediaType) => {
   const { user, revalidate: revalidateUser } = useUser();
-  const userKey = `${user?.id ? String(user.id) : 'anonymous'}:${mediaType}`;
-  const endpoint = user?.id
-    ? `/api/v1/user/${user.id}/settings/detail-disclosures/${mediaType}`
+  const userId =
+    Number.isSafeInteger(user?.id) && (user?.id ?? 0) > 0 ? user!.id : null;
+  const userKey = `${userId ? String(userId) : 'anonymous'}:${mediaType}`;
+  const endpoint = userId
+    ? `/api/v1/user/${userId}/settings/detail-disclosures/${mediaType}`
     : null;
   const { data, mutate } = useSWR<UserSettingsDetailDisclosureResponse>(
     endpoint,
@@ -87,6 +89,9 @@ const useDetailDisclosurePins = (mediaType: DetailDisclosureMediaType) => {
       try {
         const savedPins = await mutate(
           async () => {
+            // Same-origin API path built from a positive integer identity and
+            // the closed DetailDisclosureMediaType union.
+            // codeql[js/request-forgery]
             const response =
               await axios.post<UserSettingsDetailDisclosureResponse>(endpoint, {
                 [section]: pinned,

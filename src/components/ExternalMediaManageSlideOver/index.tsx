@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
 import DownloadBlock from '@app/components/DownloadBlock';
 import IssueMediaSummary from '@app/components/IssueDetails/IssueMediaSummary';
@@ -12,7 +13,9 @@ import {
   normalizeOpenLibraryWorkId,
 } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
+import { getSafeHref } from '@app/utils/safeUrl';
 import { Transition } from '@headlessui/react';
+import { ServerIcon } from '@heroicons/react/24/solid';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -64,6 +67,12 @@ type ExternalMediaManageSlideOverProps = {
   revalidate: () => void;
 };
 
+type ServiceLink = {
+  key: string;
+  url: string;
+  formatLabel?: string;
+};
+
 const ExternalMediaManageSlideOver = ({
   show,
   mediaType,
@@ -75,6 +84,14 @@ const ExternalMediaManageSlideOver = ({
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const { hasPermission } = useUser();
   const mediaInfo = data.mediaInfo;
+  const arrName =
+    mediaType === MediaType.MUSIC
+      ? 'Lidarr'
+      : mediaType === MediaType.COMIC
+        ? 'Mylar'
+        : mediaType === MediaType.MAGAZINE
+          ? 'Kapowarr'
+          : 'Bookshelf';
   const externalId =
     mediaType === MediaType.MUSIC
       ? normalizeMusicBrainzId((data as MusicDetails).mbId)
@@ -122,6 +139,31 @@ const ExternalMediaManageSlideOver = ({
     }
   };
   const isMusic = mediaType === MediaType.MUSIC;
+  const serviceLinks = (
+    [
+      mediaInfo?.serviceUrl
+        ? {
+            key: 'primary',
+            url: mediaInfo.serviceUrl,
+            formatLabel:
+              mediaType === MediaType.BOOK
+                ? intl.formatMessage(messages.ebook)
+                : undefined,
+          }
+        : undefined,
+      mediaType === MediaType.BOOK && mediaInfo?.audiobookServiceUrl
+        ? {
+            key: 'audiobook',
+            url: mediaInfo.audiobookServiceUrl,
+            formatLabel: intl.formatMessage(messages.audiobook),
+          }
+        : undefined,
+    ] as (ServiceLink | undefined)[]
+  )
+    .map((link) =>
+      link ? { ...link, url: getSafeHref(link.url) ?? '' } : undefined
+    )
+    .filter((link): link is ServiceLink => Boolean(link?.url));
 
   return (
     <Transition appear show={Boolean(show)} as={Fragment}>
@@ -263,6 +305,26 @@ const ExternalMediaManageSlideOver = ({
                   className="card-stack"
                   data-testid="manage-advanced-actions"
                 >
+                  {serviceLinks.map((link) => (
+                    <a
+                      key={`external-service-link-${link.key}`}
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Button buttonType="success">
+                        <ServerIcon />
+                        {link.formatLabel
+                          ? intl.formatMessage(messages.openarrFormat, {
+                              arr: arrName,
+                              format: link.formatLabel,
+                            })
+                          : intl.formatMessage(messages.openarr, {
+                              arr: arrName,
+                            })}
+                      </Button>
+                    </a>
+                  ))}
                   {mediaInfo && (
                     <ManageMediaActions
                       media={mediaInfo}
