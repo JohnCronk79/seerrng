@@ -183,10 +183,7 @@ describe('GET /book/:id', () => {
       assert.strictEqual(response.body.id, id);
       assert.strictEqual(response.body.title, 'The Fellowship of the Ring');
       assert.strictEqual(lookup.mock.callCount(), 1);
-      assert.strictEqual(
-        lookup.mock.calls[0].arguments[0],
-        'The Fellowship of the Ring'
-      );
+      assert.strictEqual(lookup.mock.calls[0].arguments[0], 'work:139773');
     } finally {
       settings.readarr = priorReadarr;
     }
@@ -235,7 +232,7 @@ describe('GET /book/:id', () => {
       assert.strictEqual(response.body.title, 'The Return of the King');
       assert.deepStrictEqual(
         lookup.mock.calls.map((call) => call.arguments[0]),
-        ['374541', 'hardcover:374541']
+        ['work:374541', '374541', 'hardcover:374541']
       );
     } finally {
       settings.readarr = priorReadarr;
