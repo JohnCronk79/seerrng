@@ -33,6 +33,12 @@ describe('getImageCacheWarmProvider', () => {
     );
     assert.equal(
       getImageCacheWarmProvider(
+        new URL('https://static.tvmaze.com/uploads/poster.jpg')
+      ),
+      'tvmaze'
+    );
+    assert.equal(
+      getImageCacheWarmProvider(
         new URL('https://coverartarchive.org/release/id/front-250')
       ),
       'coverartarchive'
@@ -54,6 +60,18 @@ describe('getImageCacheWarmProvider', () => {
         new URL('https://covers.openlibrary.org/b/id/123-L.jpg')
       ),
       'openlibrarycovers'
+    );
+    assert.equal(
+      getImageCacheWarmProvider(
+        new URL('https://comicvine1.cbsistatic.com/a/cover.jpg')
+      ),
+      'comicvinestatic1'
+    );
+    assert.equal(
+      getImageCacheWarmProvider(
+        new URL('https://images.igdb.com/igdb/image/upload/cover.jpg')
+      ),
+      'igdb'
     );
   });
 
@@ -80,6 +98,10 @@ describe('isImageCacheWarmUrl', () => {
   it('accepts supported image provider URLs', () => {
     assert.equal(
       isImageCacheWarmUrl('https://image.tmdb.org/t/p/w300/poster.jpg'),
+      true
+    );
+    assert.equal(
+      isImageCacheWarmUrl('https://static.tvmaze.com/uploads/poster.jpg'),
       true
     );
   });

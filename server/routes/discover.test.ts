@@ -4,6 +4,8 @@ import { afterEach, before, describe, it, mock } from 'node:test';
 import ComicVineAPI from '@server/api/comicvine';
 import CoverArtArchive from '@server/api/coverartarchive';
 import ExternalAPI from '@server/api/externalapi';
+import GoogleBooksAPI from '@server/api/googlebooks';
+import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
@@ -18,6 +20,8 @@ import {
 } from '@server/constants/media';
 import { UserType } from '@server/constants/user';
 import { getRepository } from '@server/datasource';
+import { ComicCatalogScan } from '@server/entity/ComicCatalogScan';
+import { ComicCatalogVolume } from '@server/entity/ComicCatalogVolume';
 import Media from '@server/entity/Media';
 import MediaIdentifier, {
   MediaIdentifierProvider,
@@ -28,6 +32,7 @@ import { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
   getSettings,
+  type LazyLibrarianSettings,
   type RadarrSettings,
   type ReadarrSettings,
 } from '@server/lib/settings';
@@ -181,6 +186,46 @@ async function login(email = 'admin@seerr.dev') {
   }
 }
 
+describe('media category availability guards', () => {
+  it('hides disabled movie discovery at the API boundary', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      movie: false,
+    };
+
+    try {
+      const agent = await login();
+      const response = await agent.get('/discover/movies');
+
+      assert.strictEqual(response.status, 404);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+    }
+  });
+
+  it('hides a disabled book format at the API boundary', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      ebook: false,
+    };
+
+    try {
+      const agent = await login();
+      const ebook = await agent.get('/discover/books?format=ebook');
+      const audiobook = await agent.get('/discover/books?format=audiobook');
+
+      assert.strictEqual(ebook.status, 404);
+      assert.notStrictEqual(audiobook.status, 404);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+    }
+  });
+});
+
 describe('GET /discover/movies', () => {
   it('discovers locally available movies without contacting TMDB', async () => {
     const media = await getRepository(Media).save(
@@ -219,6 +264,122 @@ describe('GET /discover/movies', () => {
     assert.strictEqual(
       (tmdbGet as { mock: { callCount: () => number } }).mock.callCount(),
       0
+    );
+  });
+
+  it('serves the last successful home movie feed when TMDB is down', async () => {
+    let calls = 0;
+    mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
+      assert.strictEqual(endpoint, '/discover/movie');
+      calls += 1;
+      if (calls > 1) {
+        throw new Error('TMDB is offline');
+      }
+
+      return {
+        page: 1,
+        total_pages: 1,
+        total_results: 1,
+        results: [
+          {
+            id: 501,
+            media_type: 'movie',
+            title: 'Saved Home Movie',
+            original_title: 'Saved Home Movie',
+            release_date: '2026-10-02',
+            adult: false,
+            video: false,
+            popularity: 10,
+            poster_path: '/saved-home-movie.jpg',
+            backdrop_path: '/saved-home-movie-backdrop.jpg',
+            vote_count: 25,
+            vote_average: 7.5,
+            genre_ids: [],
+            overview: 'Saved movie feed data.',
+            original_language: 'en',
+          },
+        ],
+      };
+    });
+
+    const agent = await login();
+    const fresh = await agent.get('/discover/movies');
+    const stale = await agent.get('/discover/movies');
+
+    assert.strictEqual(fresh.status, 200);
+    assert.strictEqual(fresh.body.stale, false);
+    assert.strictEqual(stale.status, 200);
+    assert.strictEqual(stale.body.stale, true);
+    assert.strictEqual(stale.body.results[0].title, 'Saved Home Movie');
+    assert.match(stale.body.results[0].posterPath, /saved-home-movie\.jpg/);
+  });
+
+  it('keeps only unreleased titles from a saved Upcoming shelf', async () => {
+    let calls = 0;
+    mockPrivate(ExternalAPI.prototype, 'get', async (endpoint: unknown) => {
+      assert.strictEqual(endpoint, '/discover/movie');
+      calls += 1;
+      if (calls > 1) {
+        throw new Error('TMDB is offline');
+      }
+
+      return {
+        page: 1,
+        total_pages: 1,
+        total_results: 2,
+        results: [
+          {
+            id: 502,
+            media_type: 'movie',
+            title: 'Already Released',
+            original_title: 'Already Released',
+            release_date: '2026-10-02',
+            adult: false,
+            video: false,
+            popularity: 20,
+            poster_path: '/already-released.jpg',
+            backdrop_path: '/already-released-backdrop.jpg',
+            vote_count: 25,
+            vote_average: 7.5,
+            genre_ids: [],
+            overview: 'This title is no longer upcoming.',
+            original_language: 'en',
+          },
+          {
+            id: 503,
+            media_type: 'movie',
+            title: 'Still Upcoming',
+            original_title: 'Still Upcoming',
+            release_date: '2026-10-20',
+            adult: false,
+            video: false,
+            popularity: 15,
+            poster_path: '/still-upcoming.jpg',
+            backdrop_path: '/still-upcoming-backdrop.jpg',
+            vote_count: 15,
+            vote_average: 7,
+            genre_ids: [],
+            overview: 'This title is still upcoming.',
+            original_language: 'en',
+          },
+        ],
+      };
+    });
+
+    const agent = await login();
+    const fresh = await agent.get(
+      '/discover/movies?primaryReleaseDateGte=2026-10-01'
+    );
+    const stale = await agent.get(
+      '/discover/movies?primaryReleaseDateGte=2026-10-03'
+    );
+
+    assert.strictEqual(fresh.status, 200);
+    assert.strictEqual(stale.status, 200);
+    assert.strictEqual(stale.body.stale, true);
+    assert.deepStrictEqual(
+      stale.body.results.map((result: { title: string }) => result.title),
+      ['Still Upcoming']
     );
   });
 
@@ -3265,7 +3426,7 @@ describe('GET /discover/books', () => {
     const searchBooks = mock.method(
       OpenLibraryAPI.prototype,
       'searchBooks',
-      async ({ query }) => {
+      async ({ query }: { query: string }) => {
         assert.match(query, /author:"stephen"/);
         assert.match(query, /author:"king"/);
         assert.match(query, /subject:horror/);
@@ -3349,6 +3510,336 @@ describe('GET /discover/books', () => {
       assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
     } finally {
       getSettings().readarr = [];
+    }
+  });
+
+  it('browses existing audiobook catalog titles without querying ebook sources', async () => {
+    getSettings().readarr = [
+      {
+        id: 0,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+      {
+        id: 1,
+        hostname: 'ebookshelf.test',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const getBooks = mock.method(ReadarrAPI.prototype, 'getBooks');
+    const getBooksPage = mock.method(
+      ReadarrAPI.prototype,
+      'getBooksPage',
+      async (offset: number, pageSize: number) => {
+        assert.strictEqual(offset, 50);
+        assert.strictEqual(pageSize, 50);
+        return {
+          books: [
+            {
+              id: 51,
+              title: 'Existing Audio Edition',
+              foreignBookId: 'hardcover:audio-work',
+              author: { authorName: 'Writer One' },
+              narrators: ['Reader One'],
+            },
+            {
+              id: 52,
+              title: 'Unidentified Audio Edition',
+              author: { authorName: 'Writer Two' },
+            },
+          ],
+          totalCount: 300,
+        };
+      }
+    );
+
+    try {
+      const agent = await login();
+      const result = await agent
+        .get('/discover/books')
+        .query({ format: 'audiobook', page: 2 });
+
+      assert.strictEqual(result.status, 200);
+      assert.deepStrictEqual(
+        result.body.results.map((book: { title: string }) => book.title),
+        ['Existing Audio Edition']
+      );
+      assert.strictEqual(result.body.totalResults, 300);
+      assert.strictEqual(result.body.totalPages, 6);
+      assert.strictEqual(getBooksPage.mock.callCount(), 1);
+      assert.strictEqual(getBooks.mock.callCount(), 0);
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+    } finally {
+      getSettings().readarr = [];
+    }
+  });
+
+  it('keeps combined audiobook catalog paging global across multiple services', async () => {
+    getSettings().readarr = [
+      {
+        id: 0,
+        hostname: 'audiobookshelf-one.test',
+        port: 8787,
+        apiKey: 'audio-key-one',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+      {
+        id: 1,
+        hostname: 'audiobookshelf-two.test',
+        port: 8787,
+        apiKey: 'audio-key-two',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const catalog = Array.from({ length: 70 }, (_, index) => ({
+      id: index + 1,
+      title: `Audiobook ${String(index + 1).padStart(2, '0')}`,
+      foreignBookId: `hardcover:audiobook-${index + 1}`,
+      author: { authorName: 'Fixture Author' },
+    }));
+    const getBooks = mock.method(
+      ReadarrAPI.prototype,
+      'getBooks',
+      async () => catalog
+    );
+    const getBooksPage = mock.method(
+      ReadarrAPI.prototype,
+      'getBooksPage',
+      async () => {
+        throw new Error('combined libraries must use global paging');
+      }
+    );
+
+    try {
+      const agent = await login();
+      const result = await agent
+        .get('/discover/books')
+        .query({ format: 'audiobook', page: 2 });
+
+      assert.strictEqual(result.status, 200);
+      assert.strictEqual(result.body.totalResults, 140);
+      assert.strictEqual(result.body.results.length, 50);
+      assert.strictEqual(result.body.results[0].title, 'Audiobook 26');
+      assert.strictEqual(getBooks.mock.callCount(), 2);
+      assert.strictEqual(getBooksPage.mock.callCount(), 0);
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+    } finally {
+      getSettings().readarr = [];
+    }
+  });
+
+  it('searches audiobook keywords only in audiobook Bookshelf services', async () => {
+    getSettings().readarr = [
+      {
+        id: 0,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+      {
+        id: 1,
+        hostname: 'ebookshelf.test',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const searchBookshelf = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBook',
+      async () => [
+        {
+          id: 1,
+          title: 'The Da Vinci Code Audiobook',
+          foreignBookId: 'hardcover:da-vinci-code-audio',
+          author: { authorName: 'Dan Brown' },
+          narrators: ['Paul Michael'],
+        },
+      ]
+    );
+    const getBooks = mock.method(ReadarrAPI.prototype, 'getBooks');
+
+    try {
+      const agent = await login();
+      const result = await agent.get('/discover/books').query({
+        format: 'audiobook',
+        query: 'The Da Vinci Code',
+      });
+
+      assert.strictEqual(result.status, 200);
+      assert.deepStrictEqual(
+        result.body.results.map((book: { title: string }) => book.title),
+        ['The Da Vinci Code Audiobook']
+      );
+      assert.strictEqual(searchBookshelf.mock.callCount(), 1);
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+      assert.strictEqual(getBooks.mock.callCount(), 0);
+    } finally {
+      getSettings().readarr = [];
+    }
+  });
+
+  it('returns ebook and audiobook results together for all-format discovery', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    const originalReadarr = settings.readarr;
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      ebook: true,
+      audiobook: true,
+    };
+    settings.readarr = [
+      {
+        id: 31,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks',
+      async () => ({
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL-da-vinci-code',
+            title: 'The Da Vinci Code',
+            author_name: ['Dan Brown'],
+          },
+        ],
+      })
+    );
+    const searchBookshelf = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBook',
+      async () => [
+        {
+          title: 'The Da Vinci Code',
+          foreignBookId: 'hardcover:da-vinci-code-audiobook',
+          author: { authorName: 'Dan Brown' },
+          narrators: ['Paul Michael'],
+        },
+      ]
+    );
+
+    try {
+      const agent = await login();
+      const result = await agent
+        .get('/discover/books')
+        .query({ query: 'The Da Vinci Code' });
+
+      assert.strictEqual(result.status, 200);
+      assert.deepStrictEqual(
+        result.body.results.map(
+          (book: { title: string; bookFormat: string }) => [
+            book.title,
+            book.bookFormat,
+          ]
+        ),
+        [
+          ['The Da Vinci Code', 'audiobook'],
+          ['The Da Vinci Code', 'ebook'],
+        ]
+      );
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 1);
+      assert.strictEqual(searchBookshelf.mock.callCount(), 1);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+      settings.readarr = originalReadarr;
+    }
+  });
+
+  it('searches only audiobook catalogs when ebook discovery is disabled', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    const originalReadarr = settings.readarr;
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      ebook: false,
+      audiobook: true,
+    };
+    settings.readarr = [
+      {
+        id: 32,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const searchOpenLibrary = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const searchBookshelf = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBook',
+      async () => [
+        {
+          title: 'The Da Vinci Code Audiobook',
+          foreignBookId: 'hardcover:da-vinci-code-audiobook',
+          author: { authorName: 'Dan Brown' },
+        },
+      ]
+    );
+
+    try {
+      const agent = await login();
+      const result = await agent
+        .get('/discover/books')
+        .query({ query: 'The Da Vinci Code' });
+
+      assert.strictEqual(result.status, 200);
+      assert.deepStrictEqual(
+        result.body.results.map(
+          (book: { title: string; bookFormat: string }) => [
+            book.title,
+            book.bookFormat,
+          ]
+        ),
+        [['The Da Vinci Code Audiobook', 'audiobook']]
+      );
+      assert.strictEqual(searchOpenLibrary.mock.callCount(), 0);
+      assert.strictEqual(searchBookshelf.mock.callCount(), 1);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+      settings.readarr = originalReadarr;
     }
   });
 
@@ -4058,7 +4549,7 @@ describe('GET /discover/books', () => {
     const agent = await login();
     const res = await agent.get('/discover/books').query({
       page: 3,
-      format: 'audiobook',
+      format: 'ebook',
       query: 'space opera',
       sortBy: 'rating',
       subject: 'science_fiction',
@@ -4080,7 +4571,7 @@ describe('GET /discover/books', () => {
       label: 'Discover Books',
       errorMessage: 'provider unavailable',
       discoveryContext: {
-        format: 'audiobook',
+        format: 'book',
         keyword: 'space opera',
         page: 3,
         pageSize: 50,
@@ -4207,6 +4698,7 @@ describe('GET /discover/comics', () => {
       totalPages: 0,
       totalResults: 0,
       results: [],
+      comicVineConfigured: false,
     });
   });
 
@@ -4297,6 +4789,289 @@ describe('GET /discover/comics', () => {
       res.body.results[0].mediaInfo.status,
       MediaStatus.AVAILABLE
     );
+  });
+
+  it('filters a completed volume index before paginating', async () => {
+    getSettings().main.comicVineApiKey = 'test-key';
+    await getRepository(ComicCatalogScan).save({
+      id: 'global',
+      scanGeneration: 1,
+      completeGeneration: 1,
+      nextPage: 2,
+      totalResults: 22,
+      indexedResults: 22,
+      lastVolumeId: 22,
+      lastAttemptAt: Math.floor(Date.now() / 1000),
+      lastCompletedAt: Math.floor(Date.now() / 1000),
+    });
+    await getRepository(ComicCatalogVolume).save(
+      Array.from({ length: 22 }, (_, index) => {
+        const id = index + 1;
+        const volume = {
+          id,
+          name: `Batman ${String(id).padStart(2, '0')}`,
+          aliases: ['Dark Knight'],
+          publisher: { id: 10, name: index === 21 ? 'Marvel' : 'DC Comics' },
+          start_year: index === 20 ? '1995' : '1994',
+          count_of_issues: index === 19 ? 1 : 12,
+          resource_type: 'volume' as const,
+        };
+        return {
+          generation: 1,
+          id,
+          title: volume.name,
+          searchText: `${volume.name.toLowerCase()} dark knight`,
+          publisherKey: volume.publisher.name.toLowerCase(),
+          startYear: Number(volume.start_year),
+          issueCount: volume.count_of_issues,
+          payload: JSON.stringify(volume),
+        };
+      })
+    );
+
+    const response = await (await login()).get('/discover/comics').query({
+      query: 'Dark Knight',
+      publisher: 'DC',
+      startYear: 1994,
+      minIssues: 10,
+      page: 2,
+    });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.indexing, false);
+    assert.strictEqual(response.body.totalResults, 19);
+    assert.strictEqual(response.body.totalPages, 1);
+    assert.deepStrictEqual(response.body.results, []);
+
+    const firstPage = await (await login()).get('/discover/comics').query({
+      query: 'Dark Knight',
+      publisher: 'DC',
+      startYear: 1994,
+      minIssues: 10,
+    });
+    assert.strictEqual(firstPage.body.results.length, 19);
+    assert.strictEqual(firstPage.body.comicVineConfigured, true);
+    assert.strictEqual(firstPage.body.results[0].title, 'Batman 01');
+  });
+
+  it('reports first-scan progress without presenting partial filtered results', async () => {
+    getSettings().main.comicVineApiKey = 'test-key';
+    await getRepository(ComicCatalogScan).save({
+      id: 'global',
+      scanGeneration: 1,
+      completeGeneration: 0,
+      nextPage: 2,
+      totalResults: 1000,
+      indexedResults: 100,
+      lastVolumeId: 100,
+      lastAttemptAt: Math.floor(Date.now() / 1000),
+      lastCompletedAt: 0,
+    });
+    const response = await (
+      await login()
+    )
+      .get('/discover/comics')
+      .query({ publisher: 'DC' });
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.indexing, true);
+    assert.strictEqual(response.body.indexedResults, 100);
+    assert.strictEqual(response.body.expectedResults, 1000);
+    assert.deepStrictEqual(response.body.results, []);
+  });
+
+  it('rejects invalid comic index filters', async () => {
+    getSettings().main.comicVineApiKey = 'test-key';
+    const response = await (
+      await login()
+    )
+      .get('/discover/comics')
+      .query({ publisher: 'DC', minIssues: 20, maxIssues: 10 });
+    assert.strictEqual(response.status, 400);
+  });
+});
+
+describe('GET /discover/magazines', () => {
+  const magazineService = (id: number): LazyLibrarianSettings => ({
+    id,
+    name: `LazyLibrarian ${id}`,
+    hostname: `lazylibrarian-${id}.test`,
+    port: 5299,
+    apiKey: 'test-key',
+    useSsl: false,
+    isDefault: id === 1,
+    tags: [],
+    syncEnabled: false,
+    preventSearch: false,
+  });
+
+  afterEach(() => {
+    getSettings().main.googleBooksApiKey = '';
+    getSettings().lazylibrarian = [];
+  });
+
+  it('keeps tracked titles from a healthy service when another fails', async () => {
+    getSettings().lazylibrarian = [magazineService(1), magazineService(2)];
+    let calls = 0;
+    const getMagazines = mock.method(
+      LazyLibrarianAPI.prototype,
+      'getMagazines',
+      async () => {
+        if (++calls === 1) {
+          throw new Error('First service is unavailable');
+        }
+        return [{ title: 'Science Monthly' }];
+      }
+    );
+
+    const agent = await login();
+    const res = await agent
+      .get('/discover/magazines')
+      .query({ catalog: 'tracked' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(getMagazines.mock.callCount(), 2);
+    assert.strictEqual(res.body.results[0].title, 'Science Monthly');
+  });
+
+  it('bounds concurrent requests across tracked catalogs', async () => {
+    getSettings().lazylibrarian = Array.from({ length: 5 }, (_, index) =>
+      magazineService(index + 1)
+    );
+    let activeRequests = 0;
+    let maximumActiveRequests = 0;
+    let calls = 0;
+    mock.method(LazyLibrarianAPI.prototype, 'getMagazines', async () => {
+      const call = ++calls;
+      activeRequests += 1;
+      maximumActiveRequests = Math.max(maximumActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeRequests -= 1;
+      return [{ title: 'Science Monthly ' + call }];
+    });
+
+    const agent = await login();
+    const res = await agent
+      .get('/discover/magazines')
+      .query({ catalog: 'tracked' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(calls, 5);
+    assert.ok(maximumActiveRequests <= 2);
+    assert.strictEqual(res.body.results.length, 5);
+  });
+
+  it('keeps responsive catalog results and stops scheduling after the deadline', async () => {
+    getSettings().lazylibrarian = Array.from({ length: 5 }, (_, index) =>
+      magazineService(index + 1)
+    );
+    const controller = new AbortController();
+    const timeout = mock.method(
+      AbortSignal,
+      'timeout',
+      () => controller.signal
+    );
+    let calls = 0;
+    mock.method(
+      LazyLibrarianAPI.prototype,
+      'getMagazines',
+      async (signal?: AbortSignal) => {
+        assert.strictEqual(signal, controller.signal);
+        const call = ++calls;
+        controller.abort();
+        return [{ title: `Responsive Magazine ${call}` }];
+      }
+    );
+
+    const agent = await login();
+    const res = await agent
+      .get('/discover/magazines')
+      .query({ catalog: 'tracked' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(timeout.mock.calls[0].arguments[0], 19_000);
+    assert.ok(calls > 0 && calls <= 2);
+    assert.strictEqual(res.body.totalResults, calls);
+  });
+
+  it('reports an unavailable catalog when every service fails', async () => {
+    getSettings().lazylibrarian = [magazineService(1)];
+    mock.method(LazyLibrarianAPI.prototype, 'getMagazines', async () => {
+      throw new Error('Service is unavailable');
+    });
+
+    const agent = await login();
+    const res = await agent.get('/discover/magazines');
+
+    assert.strictEqual(res.status, 503);
+    assert.match(res.body.message, /LazyLibrarian is unavailable/);
+  });
+
+  it('explains how to enable public catalog search when no key is configured', async () => {
+    const agent = await login();
+    const res = await agent
+      .get('/discover/magazines')
+      .query({ catalog: 'public', query: 'Science' });
+
+    assert.strictEqual(res.status, 503);
+    assert.match(res.body.message, /Google Books API key/);
+  });
+
+  it('searches the public magazine catalog and keeps request identity title-based', async () => {
+    getSettings().main.googleBooksApiKey = 'google-books-test-key';
+    const searchMagazines = mock.method(
+      GoogleBooksAPI.prototype,
+      'searchMagazines',
+      async ({
+        query,
+        page,
+        limit,
+      }: {
+        query: string;
+        page?: number;
+        limit?: number;
+      }) => {
+        assert.strictEqual(query, 'The New Yorker');
+        assert.strictEqual(page, 2);
+        assert.strictEqual(limit, 20);
+
+        return {
+          totalItems: 21,
+          results: [
+            {
+              id: 'new-yorker-2026',
+              title: 'The New Yorker',
+              publisher: 'Condé Nast',
+              publishedDate: '2026-09',
+              imageUrl:
+                'https://books.google.com/books/content?id=new-yorker-2026',
+              infoUrl: 'https://books.google.com/books?id=new-yorker-2026',
+            },
+          ],
+        };
+      }
+    );
+
+    const agent = await login();
+    const res = await agent.get('/discover/magazines').query({
+      catalog: 'public',
+      query: 'The New Yorker',
+      page: 2,
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(searchMagazines.mock.callCount(), 1);
+    assert.strictEqual(res.body.totalResults, 21);
+    assert.strictEqual(res.body.totalPages, 2);
+    assert.deepStrictEqual(res.body.results[0], {
+      id: 'The New Yorker',
+      provider: 'googlebooks',
+      mediaType: 'magazine',
+      title: 'The New Yorker',
+      posterPath: 'https://books.google.com/books/content?id=new-yorker-2026',
+      publisher: 'Condé Nast',
+      firstPublishYear: 2026,
+      latestIssue: '2026-09',
+      requestable: false,
+    });
   });
 });
 

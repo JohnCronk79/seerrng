@@ -47,7 +47,7 @@ const messages = defineMessages('components.Settings.LazyLibrarianModal', {
   syncEnabledHelp:
     'Scan LazyLibrarian magazines and issue files to show current availability.',
   enableSearchHelp:
-    'Start a search for this magazine in LazyLibrarian after its request is approved.',
+    'Start a search for this magazine in LazyLibrarian after its request is approved. Prowlarr can sync indexers to LazyLibrarian; verify synced indexers appear and work in your LazyLibrarian build. SeerrNG also offers a separate manual Prowlarr search for users with Manage Requests.',
 });
 
 interface LazyLibrarianModalProps {
@@ -149,17 +149,7 @@ const LazyLibrarianModal = ({
   );
 
   return (
-    <Transition
-      as="div"
-      appear
-      show
-      enter="transition-opacity ease-in-out duration-300"
-      enterFrom="opacity-0"
-      enterTo="opacity-100"
-      leave="transition-opacity ease-in-out duration-300"
-      leaveFrom="opacity-100"
-      leaveTo="opacity-0"
-    >
+    <Transition as="div" appear show>
       <Formik
         initialValues={{
           name: lazylibrarian?.name ?? '',

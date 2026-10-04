@@ -263,3 +263,55 @@ test('renderer bumps and packages multiple changed charts', () => {
     fs.rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
+
+test('CodeQL models the awaited image cache validation barrier', () => {
+  const codeqlWorkflow = yaml.load(
+    fs.readFileSync(
+      path.join(rootDirectory, '.github', 'workflows', 'codeql.yml'),
+      'utf8'
+    )
+  );
+  const codeqlModelDirectory = path.join(
+    rootDirectory,
+    '.github',
+    'codeql',
+    'model-pack'
+  );
+  const modelPack = yaml.load(
+    fs.readFileSync(path.join(codeqlModelDirectory, 'qlpack.yml'), 'utf8')
+  );
+  const securityModels = yaml.load(
+    fs.readFileSync(
+      path.join(codeqlModelDirectory, 'models', 'security.yml'),
+      'utf8'
+    )
+  );
+  const modelPackReference = codeqlWorkflow.jobs.analyze.steps.find(
+    (step) => step.name === 'Initialize CodeQL'
+  ).with.packs;
+  const imageCacheBarriers = securityModels.extensions
+    .filter(({ addsTo }) => addsTo.extensible === 'barrierModel')
+    .flatMap(({ data }) => data)
+    .filter(([module]) => module === '@server/lib/imageproxy');
+
+  assert.ok(
+    modelPackReference.includes(
+      `snapetech/seerrng-codeql-models@${modelPack.version}`
+    )
+  );
+  assert.deepEqual(
+    imageCacheBarriers.sort(([left], [right]) => left.localeCompare(right)),
+    [
+      [
+        '@server/lib/imageproxy',
+        'Member[prepareRasterImageForCache].ReturnValue.Awaited',
+        'http-to-file-access',
+      ],
+      [
+        '@server/lib/imageproxy',
+        'Member[prepareRasterImageForCache].ReturnValue.Awaited.Member[buffer]',
+        'http-to-file-access',
+      ],
+    ].sort(([left], [right]) => left.localeCompare(right))
+  );
+});

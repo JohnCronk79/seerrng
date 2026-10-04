@@ -6,6 +6,18 @@ sidebar_position: 22
 
 # Bookshelf Hardcover Migration
 
+This runbook covers existing Readarr-compatible source databases, including
+installations that kept ebooks and audiobooks in separate Bookshelf instances.
+That split is not required for format support: one BookshelfNG instance can
+manage both formats. The current migration helper processes each configured
+source and target separately; it does not merge two existing databases into
+one.
+
+After consolidating the library, administrators can use the separate
+[Bookshelf media path mover](./bookshelf-media-path-migration.md) to reorganize
+ebook and audiobook paths inside the combined target instance. The path mover
+does not merge databases or copy files between separate Bookshelf instances.
+
 SeerrNG can migrate an existing Readarr-compatible ebook/audiobook library into
 Bookshelf instances backed by Hardcover metadata. The migration is layered and
 resumable: it keeps strict Hardcover matches, retries transient failures, uses

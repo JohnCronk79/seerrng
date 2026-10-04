@@ -15,6 +15,22 @@ export interface KapowarrVolume {
   root_folder?: number;
   issue_count: number;
   issues_downloaded: number;
+  issues?: KapowarrIssue[];
+}
+
+export interface KapowarrIssueFile {
+  id: number;
+  filepath: string;
+  size: number;
+}
+
+export interface KapowarrIssue {
+  id: number;
+  volume_id: number;
+  issue_number?: string;
+  title?: string;
+  releaseDate?: string;
+  files: KapowarrIssueFile[];
 }
 
 export interface KapowarrSystemAbout {
@@ -25,6 +41,16 @@ export interface KapowarrSystemAbout {
 export interface KapowarrRootFolder {
   id: number;
   folder: string;
+}
+
+export interface KapowarrQueueItem {
+  id: number;
+  volumeId: number;
+  title: string;
+  size: number;
+  status: string;
+  progress: number;
+  speed: number;
 }
 
 interface KapowarrEnvelope<T> {
@@ -56,6 +82,47 @@ const boundedInteger = (value: unknown): number | undefined =>
     ? value
     : undefined;
 
+const boundedNonNegativeNumber = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+
+const sanitizeIssueFile = (value: unknown): KapowarrIssueFile | undefined => {
+  if (!isRecord(value)) return undefined;
+  const id = boundedInteger(value.id);
+  const filepath =
+    typeof value.filepath === 'string' &&
+    value.filepath.length > 0 &&
+    value.filepath.length <= 4_096 &&
+    !value.filepath.includes('\0')
+      ? value.filepath
+      : undefined;
+  const size = boundedInteger(value.size);
+  return id !== undefined && filepath && size !== undefined
+    ? { id, filepath, size }
+    : undefined;
+};
+
+const sanitizeIssue = (value: unknown): KapowarrIssue | undefined => {
+  if (!isRecord(value)) return undefined;
+  const id = boundedInteger(value.id);
+  const volumeId = boundedInteger(value.volume_id);
+  if (id === undefined || volumeId === undefined) return undefined;
+  return {
+    id,
+    volume_id: volumeId,
+    issue_number: boundedString(value.issue_number, 64),
+    title: boundedString(value.title, 1_000),
+    releaseDate: boundedString(value.date, 32),
+    files: (Array.isArray(value.files) ? value.files : [])
+      .slice(0, 100)
+      .flatMap((file) => {
+        const normalized = sanitizeIssueFile(file);
+        return normalized ? [normalized] : [];
+      }),
+  };
+};
+
 const sanitizeVolume = (value: unknown): KapowarrVolume | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -79,6 +146,12 @@ const sanitizeVolume = (value: unknown): KapowarrVolume | undefined => {
     root_folder: boundedInteger(value.root_folder),
     issue_count: boundedInteger(value.issue_count) ?? 0,
     issues_downloaded: boundedInteger(value.issues_downloaded) ?? 0,
+    issues: (Array.isArray(value.issues) ? value.issues : [])
+      .slice(0, 10_000)
+      .flatMap((issue) => {
+        const normalized = sanitizeIssue(issue);
+        return normalized ? [normalized] : [];
+      }),
   };
 };
 
@@ -89,6 +162,26 @@ const sanitizeRootFolder = (value: unknown): KapowarrRootFolder | undefined => {
   const id = boundedInteger(value.id);
   const folder = boundedString(value.folder, 2048);
   return id !== undefined && folder ? { id, folder } : undefined;
+};
+
+const sanitizeQueueItem = (value: unknown): KapowarrQueueItem | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const id = boundedInteger(value.id);
+  const volumeId = boundedInteger(value.volume_id);
+  if (id === undefined || volumeId === undefined) {
+    return undefined;
+  }
+  return {
+    id,
+    volumeId,
+    title: boundedString(value.title, 1_000) ?? '',
+    size: boundedNonNegativeNumber(value.size) ?? 0,
+    status: boundedString(value.status, 64) ?? 'queued',
+    progress: boundedNonNegativeNumber(value.progress) ?? 0,
+    speed: boundedNonNegativeNumber(value.speed) ?? 0,
+  };
 };
 
 class KapowarrAPI extends ExternalAPI {
@@ -145,11 +238,14 @@ class KapowarrAPI extends ExternalAPI {
       .filter((volume): volume is KapowarrVolume => !!volume);
   }
 
-  public async getVolume(id: number): Promise<KapowarrVolume | undefined> {
+  public async getVolume(
+    id: number,
+    ttl = 0
+  ): Promise<KapowarrVolume | undefined> {
     const response = await this.get<KapowarrEnvelope<unknown>>(
       `/api/volumes/${id}`,
       {},
-      0
+      ttl
     );
     return isRecord(response) ? sanitizeVolume(response.result) : undefined;
   }
@@ -264,6 +360,32 @@ class KapowarrAPI extends ExternalAPI {
       }
       throw error;
     }
+  }
+
+  // Confirmed live and from source (frontend/api.py's api_downloads /
+  // api_delete_download): unlike Radarr/Sonarr/Lidarr, Kapowarr's queue
+  // delete takes a JSON body ({"blocklist": bool}), not a query param.
+  public async getQueue(): Promise<KapowarrQueueItem[]> {
+    const response = await this.get<KapowarrEnvelope<unknown>>(
+      '/api/activity/queue',
+      {},
+      0
+    );
+    if (!isRecord(response) || !Array.isArray(response.result)) {
+      return [];
+    }
+    return response.result
+      .map(sanitizeQueueItem)
+      .filter((item): item is KapowarrQueueItem => !!item);
+  }
+
+  public async removeQueueItem(
+    downloadId: number,
+    blocklist = false
+  ): Promise<void> {
+    await this.request('DELETE', `/api/activity/queue/${downloadId}`, {
+      blocklist,
+    });
   }
 }
 

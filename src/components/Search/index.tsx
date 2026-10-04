@@ -12,10 +12,17 @@ import {
 import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
 import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import { prepareFilterValues } from '@app/components/Discover/constants';
+import SoftwareCatalog from '@app/components/SoftwareCatalog';
 import useDiscover from '@app/hooks/useDiscover';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
 import { setSearchActivity } from '@app/hooks/useSearchActivity';
+import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
+import {
+  isAnySoftwareCategoryEnabled,
+  isConfiguredMediaCategoryEnabled,
+  isOptionalCatalogPathEnabled,
+} from '@app/utils/serviceAvailability';
 import { stableSearchResults } from '@app/utils/stableSearchResults';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { DetailDisclosureMediaType } from '@server/interfaces/api/userSettingsInterfaces';
@@ -34,6 +41,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef } from 'react';
 import { useIntl } from 'react-intl';
 import ContextualSearchFilters from './ContextualSearchFilters';
+import SoftwareSearchPreview from './SoftwareSearchPreview';
 import {
   getMusicSearchParams,
   getSearchCategoryQuery,
@@ -44,6 +52,7 @@ import {
   searchContextualFilterKeys,
 } from './searchFilters';
 import {
+  getBookSearchRelevance,
   getSortField,
   getSortOrder,
   type SortField,
@@ -61,9 +70,11 @@ const messages = defineMessages('components.Search', {
   music: 'Music',
   comics: 'Comics',
   magazines: 'Magazines',
+  software: 'Software',
   filter: 'Filters',
   mediaFilters: 'Media Filters',
   sortBy: 'Sort By',
+  relevance: 'Best Match',
   title: 'Title',
   author: 'Author',
   authors: 'Authors',
@@ -103,6 +114,7 @@ const searchCategories = [
   { key: 'music', type: 'music', message: messages.music },
   { key: 'comic', type: 'comic', message: messages.comics },
   { key: 'magazine', type: 'magazine', message: messages.magazines },
+  { key: 'software', type: 'software', message: messages.software },
   { key: 'author', type: 'author', message: messages.authors },
 ] as const;
 
@@ -129,6 +141,11 @@ type SortOption = {
 };
 
 const sortOptionDefinitions: Record<SortField, SortOption> = {
+  relevance: {
+    field: 'relevance',
+    message: messages.relevance,
+    defaultOrder: 'desc',
+  },
   date: { field: 'date', message: messages.date, defaultOrder: 'desc' },
   title: { field: 'title', message: messages.title, defaultOrder: 'asc' },
   rating: { field: 'rating', message: messages.rating, defaultOrder: 'desc' },
@@ -155,11 +172,12 @@ const sortFieldsByCategory: Record<
   movie: ['date', 'title', 'rating', 'writer', 'director'],
   tv: ['date', 'title', 'rating', 'writer', 'director'],
   music: ['date', 'title', 'artist'],
-  book: ['date', 'title', 'author', 'publisher'],
-  audiobook: ['date', 'title', 'author', 'publisher'],
+  book: ['relevance', 'date', 'title', 'author', 'publisher'],
+  audiobook: ['relevance', 'date', 'title', 'author', 'publisher'],
   author: ['title'],
   comic: ['date', 'title'],
   magazine: ['date', 'title'],
+  software: [],
 };
 
 const getSearchCategory = (
@@ -189,6 +207,8 @@ const matchesCategory = (result: SearchResult, category: SearchCategory) => {
   if (category.type === 'music') {
     return result.mediaType === 'album' || result.mediaType === 'artist';
   }
+
+  if (category.type === 'software') return false;
 
   return result.mediaType === category.type;
 };
@@ -295,9 +315,63 @@ const compareOptional = <T,>(
 const Search = () => {
   const intl = useIntl();
   const router = useRouter();
+  const { currentSettings } = useSettings();
   const query =
     typeof router.query.query === 'string' ? router.query.query.trim() : '';
-  const category = getSearchCategory(router.query.type, router.query.format);
+  const hasRoutedSearchParams = Object.keys(router.query).length > 0;
+  const requestedCategory = getSearchCategory(
+    router.query.type,
+    router.query.format
+  );
+  const visibleSearchCategories = searchCategories.filter((searchCategory) => {
+    switch (searchCategory.key) {
+      case 'movie':
+        return isConfiguredMediaCategoryEnabled('movie', currentSettings);
+      case 'tv':
+        return isConfiguredMediaCategoryEnabled('tv', currentSettings);
+      case 'book':
+        return isOptionalCatalogPathEnabled('/discover/books', currentSettings);
+      case 'audiobook':
+        return isOptionalCatalogPathEnabled(
+          '/discover/audiobooks',
+          currentSettings
+        );
+      case 'author':
+        return isOptionalCatalogPathEnabled('/author/', currentSettings);
+      case 'music':
+        return isOptionalCatalogPathEnabled('/discover/music', currentSettings);
+      case 'comic':
+        return isOptionalCatalogPathEnabled(
+          '/discover/comics',
+          currentSettings
+        );
+      case 'magazine':
+        return isOptionalCatalogPathEnabled(
+          '/discover/magazines',
+          currentSettings
+        );
+      case 'software':
+        return isAnySoftwareCategoryEnabled(currentSettings);
+      default:
+        return true;
+    }
+  });
+  const category = visibleSearchCategories.some(
+    (searchCategory) => searchCategory.key === requestedCategory.key
+  )
+    ? requestedCategory
+    : searchCategories[0];
+  useEffect(() => {
+    if (!router.isReady || category.key === requestedCategory.key) return;
+    void router.replace(
+      {
+        pathname: router.pathname,
+        query: { query: query || undefined },
+      },
+      undefined,
+      { shallow: true, scroll: false }
+    );
+  }, [category.key, query, requestedCategory.key, router]);
   const filterMediaType: DetailDisclosureMediaType =
     category.key === 'tv'
       ? 'tv'
@@ -309,11 +383,13 @@ const Search = () => {
   const mediaPin = useMediaFilterPin<SearchCategory['key']>({
     scope: 'search',
     selected: category.key,
-    values: searchCategories.map((item) => item.key),
+    values: visibleSearchCategories.map((item) => item.key),
     ready: router.isReady,
     explicit: Boolean(router.query.type || router.query.format),
     restore: (value) => {
-      const target = searchCategories.find((item) => item.key === value)!;
+      const target = visibleSearchCategories.find(
+        (item) => item.key === value
+      )!;
       void router.replace(
         {
           pathname: router.pathname,
@@ -333,11 +409,13 @@ const Search = () => {
     (field) => sortOptionDefinitions[field]
   );
   const requestedSortField = getSortField(router.query.sort);
-  const sortField = sortOptions.some(
-    (option) => option.field === requestedSortField
-  )
-    ? requestedSortField
-    : 'date';
+  const sortField =
+    !router.query.sort &&
+    (category.key === 'book' || category.key === 'audiobook')
+      ? 'relevance'
+      : sortOptions.some((option) => option.field === requestedSortField)
+        ? requestedSortField
+        : 'date';
   const sortOrder = getSortOrder(router.query.order, sortField);
   const getRoutedString = (key: string) => {
     const value = router.query[key];
@@ -490,6 +568,13 @@ const Search = () => {
     });
 
     return [...visibleTitles].sort((left, right) => {
+      if (sortField === 'relevance') {
+        const score = (result: SearchResult) => {
+          if (result.mediaType !== 'book') return 0;
+          return getBookSearchRelevance(result.title, query);
+        };
+        return (score(right) - score(left)) * (sortOrder === 'desc' ? 1 : -1);
+      }
       if (sortField === 'date') {
         return compareOptional(
           getResultDate(left),
@@ -540,7 +625,7 @@ const Search = () => {
         sortOrder
       );
     });
-  }, [sortField, sortOrder, visibleTitles]);
+  }, [query, sortField, sortOrder, visibleTitles]);
   const orderKey = `${router.asPath}|${searchEndpoint}|${sortField}:${sortOrder}`;
   const previousOrder = useRef<{ key: string; ids: string[] }>({
     key: '',
@@ -605,7 +690,7 @@ const Search = () => {
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.search)} />
-      <div className="mb-5 flow-root">
+      <div>
         <Header
           subtext={
             preferredBookFormat ? (
@@ -628,10 +713,10 @@ const Search = () => {
         label={intl.formatMessage(messages.mediaFilters)}
       >
         <div
-          className="flex flex-wrap items-center gap-2"
+          className="app-filter-row"
           aria-label={intl.formatMessage(messages.mediaFilters)}
         >
-          {searchCategories.map((searchCategory) => {
+          {visibleSearchCategories.map((searchCategory) => {
             const isSelected = category.key === searchCategory.key;
 
             return (
@@ -644,7 +729,7 @@ const Search = () => {
               >
                 <button
                   type="button"
-                  className="app-control-shadow-exempt app-filter-segment-focus flex h-full items-center px-2"
+                  className="app-control-shadow-exempt app-filter-segment-focus"
                   aria-pressed={isSelected}
                   onClick={() => {
                     const nextQuery = getSearchCategoryQuery(router.query, {
@@ -669,97 +754,106 @@ const Search = () => {
           })}
         </div>
       </PinnedFilterSection>
-      <PinnedFilterSection
-        mediaType={filterMediaType}
-        section="filters"
-        label={intl.formatMessage(messages.filter)}
-      >
-        <div
-          className="flex flex-wrap items-center gap-2"
-          aria-label={intl.formatMessage(messages.filter)}
+      {category.key !== 'software' && (
+        <PinnedFilterSection
+          mediaType={filterMediaType}
+          section="filters"
+          label={intl.formatMessage(messages.filter)}
         >
-          <FilterResetButton
-            label={intl.formatMessage(messages.clearFilters)}
-            selected={!hasActiveFilters}
-            onClick={() => {
-              void router.replace(
-                {
-                  pathname: router.pathname,
-                  query: { query: query || undefined },
-                },
-                undefined,
-                { shallow: true, scroll: false }
+          <div
+            className="app-filter-row"
+            aria-label={intl.formatMessage(messages.filter)}
+          >
+            <FilterResetButton
+              label={intl.formatMessage(messages.clearFilters)}
+              selected={!hasActiveFilters}
+              onClick={() => {
+                void router.replace(
+                  {
+                    pathname: router.pathname,
+                    query: { query: query || undefined },
+                  },
+                  undefined,
+                  { shallow: true, scroll: false }
+                );
+              }}
+            />
+            <CardTextVisibilityToggle
+              mediaType={['movie', 'tv', 'album', 'book']}
+            />
+            <ContextualSearchFilters category={category.key} />
+          </div>
+        </PinnedFilterSection>
+      )}
+      {category.key !== 'software' && (
+        <PinnedFilterSection
+          mediaType={filterMediaType}
+          section="sortBy"
+          label={intl.formatMessage(messages.sortBy)}
+        >
+          <div className="app-filter-row">
+            {sortOptions.map((sortOption) => {
+              const isSelected = sortField === sortOption.field;
+              const displayedOrder = isSelected
+                ? sortOrder
+                : sortOption.defaultOrder;
+              const directionLabel = intl.formatMessage(
+                displayedOrder === 'asc'
+                  ? messages.ascending
+                  : messages.descending
               );
-            }}
-          />
-          <CardTextVisibilityToggle
-            mediaType={['movie', 'tv', 'album', 'book']}
-          />
-          <ContextualSearchFilters category={category.key} />
-        </div>
-      </PinnedFilterSection>
-      <PinnedFilterSection
-        mediaType={filterMediaType}
-        section="sortBy"
-        label={intl.formatMessage(messages.sortBy)}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          {sortOptions.map((sortOption) => {
-            const isSelected = sortField === sortOption.field;
-            const displayedOrder = isSelected
-              ? sortOrder
-              : sortOption.defaultOrder;
-            const directionLabel = intl.formatMessage(
-              displayedOrder === 'asc'
-                ? messages.ascending
-                : messages.descending
-            );
-            const SortDirectionIcon =
-              displayedOrder === 'asc' ? BarsArrowUpIcon : BarsArrowDownIcon;
+              const SortDirectionIcon =
+                displayedOrder === 'asc' ? BarsArrowUpIcon : BarsArrowDownIcon;
 
-            return (
-              <Tooltip key={sortOption.field} content={directionLabel}>
-                <button
-                  type="button"
-                  className={getFilterToggleButtonClass(isSelected)}
-                  aria-pressed={isSelected}
-                  aria-label={`${intl.formatMessage(
-                    sortOption.message
-                  )}: ${directionLabel}`}
-                  onClick={() => {
-                    const nextOrder = isSelected
-                      ? sortOrder === 'asc'
-                        ? 'desc'
-                        : 'asc'
-                      : sortOption.defaultOrder;
+              return (
+                <Tooltip key={sortOption.field} content={directionLabel}>
+                  <button
+                    type="button"
+                    className={getFilterToggleButtonClass(isSelected)}
+                    aria-pressed={isSelected}
+                    aria-label={`${intl.formatMessage(
+                      sortOption.message
+                    )}: ${directionLabel}`}
+                    onClick={() => {
+                      const nextOrder = isSelected
+                        ? sortOrder === 'asc'
+                          ? 'desc'
+                          : 'asc'
+                        : sortOption.defaultOrder;
 
-                    void router.replace(
-                      {
-                        pathname: router.pathname,
-                        query: {
-                          ...router.query,
-                          sort: sortOption.field,
-                          order: nextOrder,
+                      void router.replace(
+                        {
+                          pathname: router.pathname,
+                          query: {
+                            ...router.query,
+                            sort: sortOption.field,
+                            order: nextOrder,
+                          },
                         },
-                      },
-                      undefined,
-                      { shallow: true, scroll: false }
-                    );
-                  }}
-                >
-                  {intl.formatMessage(sortOption.message)}
-                  <SortDirectionIcon className="h-4 w-4 flex-shrink-0" />
-                </button>
-              </Tooltip>
-            );
-          })}
-        </div>
-      </PinnedFilterSection>
-      {error && stableTitles.length === 0 ? (
+                        undefined,
+                        { shallow: true, scroll: false }
+                      );
+                    }}
+                  >
+                    {intl.formatMessage(sortOption.message)}
+                    <SortDirectionIcon />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        </PinnedFilterSection>
+      )}
+      {category.key === 'software' ? (
+        <SoftwareCatalog externalQuery={query} embedded />
+      ) : error && stableTitles.length === 0 ? (
         searchError
       ) : (
         <>
           {error && searchError}
+          {category.key === 'all' && query && (
+            <SoftwareSearchPreview query={query} />
+          )}
           <ListView
             items={stableTitles}
             preferredBookFormat={preferredBookFormat}
@@ -767,7 +861,7 @@ const Search = () => {
             emptyClassName="mt-6"
             isEmpty={isShowingEmptyState || (isSearchReady && isEmpty)}
             isLoading={
-              !router.isReady ||
+              (!router.isReady && hasRoutedSearchParams) ||
               (isSearchReady &&
                 (isLoadingInitialData ||
                   (isLoadingMore && (titles?.length ?? 0) > 0)))

@@ -14,6 +14,7 @@ area: bookshelf
 action: none
 breaking: false
 ---
+
 Hardcover-backed book searches now keep working from cached metadata during a short upstream outage.
 ```
 
@@ -32,8 +33,9 @@ the audience. Keep it to 30-400 characters, start with a capitalized sentence,
 and end with punctuation. Do not paste commit messages, logs, issue fragments,
 or implementation-only details.
 
-Fragment files are append-only. Add a new file instead of rewriting a fragment
-that was already released. Preview the exact notes that will be published with:
+Released fragments are immutable. You may refine an upcoming release fragment
+before its version tag; after tagging, add a new file instead of rewriting the
+shipped history. Preview the exact notes that will be published with:
 
 ```bash
 pnpm release-notes:preview --base origin/main --head HEAD
@@ -49,3 +51,8 @@ For an internal-only commit pushed directly to `main` (including a merge whose
 new diff contains only internal work), add `release-note: none` to the commit
 message. Push validation uses the commit message when no pull-request body is
 available.
+
+Dependabot prefixes ordinary dependency-update titles with the same marker so
+push validation retains it after a merge. Grouped CodeQL-action updates use the
+`release-note-none-codeql-action` group identifier because Dependabot builds
+grouped pull-request titles from the group name.

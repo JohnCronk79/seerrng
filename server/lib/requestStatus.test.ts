@@ -371,6 +371,11 @@ test('tracked Bookshelf operations report observed lifecycle stages', () => {
     getRequestStatus(bookRequest, { bookSearchState: 'searching' }).stage,
     RequestStatusStage.SEARCHING
   );
+  const monitoring = getRequestStatus(bookRequest, {
+    bookSearchState: 'monitoring',
+  });
+  assert.equal(monitoring.stage, RequestStatusStage.SEARCHING);
+  assert.match(monitoring.message ?? '', /preparing a Bookshelf search/);
   assert.equal(
     getRequestStatus(bookRequest, { bookSearchState: 'grabbed' }).stage,
     RequestStatusStage.DOWNLOADING

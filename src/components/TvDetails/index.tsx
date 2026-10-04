@@ -1,10 +1,14 @@
 import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
-import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import IndexerSearchLink from '@app/components/Common/IndexerSearchLink';
+import { PageStatus } from '@app/components/Common/LoadingSpinner';
 import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
+import PageErrorMessage from '@app/components/Common/PageErrorMessage';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
+import MediaServerCollectionButton from '@app/components/MediaDetails/MediaServerCollectionButton';
+import MediaServerWatchlistButton from '@app/components/MediaDetails/MediaServerWatchlistButton';
 import RequestButton from '@app/components/RequestButton';
 import SeriesDetailsLayout from '@app/components/TvDetails/SeriesDetailsLayout';
 import useSettings from '@app/hooks/useSettings';
@@ -25,14 +29,14 @@ import {
   MinusCircleIcon,
   StarIcon,
 } from '@heroicons/react/24/outline';
-import type { RTRating } from '@server/api/rating/rottentomatoes';
+import type { RatingResponse } from '@server/api/ratings';
 import {
   MediaRequestStatus,
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
 import type { TvDetails as TvDetailsType } from '@server/models/Tv';
-import axios from 'axios';
+import axios, { type AxiosError } from 'axios';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import {
@@ -57,7 +61,14 @@ const ManageSlideOver = dynamic(
 );
 
 const messages = defineMessages('components.TvDetails', {
+  pageHeading: 'Series Details',
+  loading: 'Loading Series Details',
+  loadError: 'Series Details Could Not Be Loaded',
+  loadErrorHint: 'Series details could not be fetched, please try again.',
+  retryMetadataTooltip:
+    'Fetch the series metadata again and check for updated information.',
   watchtrailer: 'Watch Trailer',
+  trailer: 'Trailer',
   reportissue: 'Report an Issue',
   manageseries: 'Manage Series',
   watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
@@ -71,14 +82,35 @@ const messages = defineMessages('components.TvDetails', {
 
 interface TvDetailsProps {
   tv?: TvDetailsType;
+  seasonBrowser?: ReactNode;
+  showRelated?: boolean;
+  expandInformation?: boolean;
+  collapseInformation?: boolean;
+  showOverview?: boolean;
+  showInformationControls?: boolean;
+  showPageTitle?: boolean;
+  embedded?: boolean;
+  additionalLoading?: boolean;
 }
 
-const TvDetails = ({ tv }: TvDetailsProps) => {
+const TvDetails = ({
+  tv,
+  seasonBrowser,
+  showRelated,
+  expandInformation,
+  collapseInformation,
+  showOverview,
+  showInformationControls,
+  showPageTitle = true,
+  embedded = false,
+  additionalLoading = false,
+}: TvDetailsProps) => {
   const settings = useSettings();
   const { user, hasPermission } = useUser();
   const router = useRouter();
   const intl = useIntl();
   const [showManager, setShowManager] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [toggleWatchlist, setToggleWatchlist] = useState(!tv?.onUserWatchlist);
@@ -96,7 +128,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<TvDetailsType>(tvId ? `/api/v1/tv/${tvId}` : null, {
+    isValidating: seriesLoading,
+  } = useSWR<TvDetailsType, AxiosError>(tvId ? `/api/v1/tv/${tvId}` : null, {
     fallbackData: tv,
     refreshInterval: refreshIntervalHelper(
       {
@@ -106,9 +139,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
       15000
     ),
   });
-  const { data: ratingData } = useSWR<RTRating>(
-    tvId ? `/api/v1/tv/${tvId}/ratings` : null
-  );
+  const { data: ratingData, isValidating: ratingsLoading } =
+    useSWR<RatingResponse>(tvId ? `/api/v1/tv/${tvId}/ratingscombined` : null);
   const sortedCrew = useMemo(
     () => sortCrewPriority(data?.credits.crew ?? []),
     [data]
@@ -142,11 +174,54 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     data?.mediaInfo?.status === MediaStatus.BLOCKLISTED
   );
 
+  const pageHeading = showPageTitle && (
+    <div className="page-title-row">
+      <h1 className="page-title">{intl.formatMessage(messages.pageHeading)}</h1>
+      <PageStatus
+        active={
+          seriesLoading ||
+          ratingsLoading ||
+          detailsLoading ||
+          checkingBlocklist ||
+          additionalLoading
+        }
+        label={intl.formatMessage(messages.loading)}
+      />
+    </div>
+  );
+  const metadataRetry = {
+    onClick: () => revalidate(),
+    tooltip: intl.formatMessage(messages.retryMetadataTooltip),
+    busy: seriesLoading,
+  };
+  const loadErrorMessage = (
+    <PageErrorMessage
+      title={intl.formatMessage(messages.loadError)}
+      description={intl.formatMessage(messages.loadErrorHint)}
+      retry={metadataRetry}
+    />
+  );
+
   if (!data && !error) {
-    return <LoadingSpinner />;
+    return (
+      <>
+        <PageTitle title={intl.formatMessage(messages.pageHeading)} />
+        {pageHeading}
+      </>
+    );
   }
   if (!data) {
-    return <ErrorPage statusCode={404} />;
+    return (
+      <>
+        <PageTitle title={intl.formatMessage(messages.pageHeading)} />
+        {pageHeading}
+        {error?.response?.status === 404 ? (
+          <ErrorPage statusCode={404} />
+        ) : (
+          loadErrorMessage
+        )}
+      </>
+    );
   }
 
   const trailerVideo = data.relatedVideos
@@ -344,7 +419,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
       )
     : undefined;
 
-  const primaryActions = (
+  const indexerCompanionActions = (
     <>
       {canUseBlocklist && (
         <Tooltip
@@ -384,7 +459,6 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
             disabledReason={intl.formatMessage(
               globalMessages.manageUnavailable
             )}
-            className="relative"
             aria-label={intl.formatMessage(messages.manageseries)}
           >
             <CogIcon />
@@ -392,6 +466,11 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const reportIssueAction = (
+    <>
       {canUseReportIssue && (
         <Tooltip
           content={intl.formatMessage(
@@ -415,6 +494,11 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const primaryActions = (
+    <>
       {safeTrailerUrl && (
         <Button
           as="a"
@@ -423,24 +507,33 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
           rel="noopener noreferrer"
           buttonType="trailer"
           buttonSize="sm"
+          title={intl.formatMessage(messages.watchtrailer)}
+          aria-label={intl.formatMessage(messages.watchtrailer)}
         >
           <FilmIcon />
-          <span>{intl.formatMessage(messages.watchtrailer)}</span>
+          <span>{intl.formatMessage(messages.trailer)}</span>
         </Button>
       )}
       <AssociationBadge mediaType="tv" id={data.id} variant="button" />
-      <RequestButton
-        buttonSize="sm"
-        buttonType="detailRequest"
-        className="ml-0"
-        mediaType="tv"
-        onUpdate={() => revalidate()}
-        tmdbId={data.id}
-        media={data.mediaInfo}
-        isShowComplete={isComplete}
-        is4kShowComplete={is4kComplete}
-      />
     </>
+  );
+
+  const requestAction = (
+    <RequestButton
+      singleRequestEntry
+      buttonSize="sm"
+      buttonType="detailRequest"
+      mediaType="tv"
+      onUpdate={() => revalidate()}
+      tmdbId={data.id}
+      media={data.mediaInfo}
+      isShowComplete={isComplete}
+      is4kShowComplete={is4kComplete}
+    />
+  );
+
+  const indexerSearchAction = (
+    <IndexerSearchLink category="tv" title={data.name} />
   );
 
   const secondaryActions = (
@@ -471,7 +564,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
               {isUpdating ? (
                 <Spinner />
               ) : toggleWatchlist ? (
-                <StarIcon className="text-amber-300" />
+                <StarIcon data-icon-tone="accent" />
               ) : (
                 <MinusCircleIcon />
               )}
@@ -484,6 +577,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   return (
     <>
       <PageTitle title={data.name} />
+      {pageHeading}
+      {error && loadErrorMessage}
       {showBlocklistModal && (
         <BlocklistModal
           tmdbId={data.id}
@@ -518,6 +613,15 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         />
       )}
       <SeriesDetailsLayout
+        seasonBrowser={seasonBrowser}
+        showRelated={showRelated}
+        expandInformation={expandInformation}
+        collapseInformation={collapseInformation}
+        showOverview={showOverview}
+        showInformationControls={showInformationControls}
+        embedded={embedded}
+        metadataRetry={metadataRetry}
+        onLoadingChange={setDetailsLoading}
         data={data}
         ratingData={ratingData}
         sortedCrew={sortedCrew}
@@ -535,7 +639,33 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        indexerSearchAction={indexerSearchAction}
+        indexerCompanionActions={indexerCompanionActions}
+        reportIssueAction={reportIssueAction}
+        requestAction={requestAction}
         playbackActions={playbackActions}
+        mediaServerWatchlistAction={
+          !embedded
+            ? (is4k, onLoadingChange) => (
+                <MediaServerWatchlistButton
+                  tvId={data.id}
+                  is4k={is4k}
+                  onLoadingChange={onLoadingChange}
+                />
+              )
+            : undefined
+        }
+        mediaServerCollectionAction={
+          !embedded
+            ? (is4k, onLoadingChange) => (
+                <MediaServerCollectionButton
+                  tvId={data.id}
+                  is4k={is4k}
+                  onLoadingChange={onLoadingChange}
+                />
+              )
+            : undefined
+        }
       />
     </>
   );

@@ -9,6 +9,7 @@ lcov.info
 
 # next.js
 /.next/
+/.next-webpack-dev/
 /out/
 /next-env.d.ts
 
@@ -74,6 +75,7 @@ config/db/db.sqlite3-journal
 # Cypress
 cypress.env.json
 cypress/runtime-config
+cypress/downloads
 cypress/videos
 cypress/screenshots
 

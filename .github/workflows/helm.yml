@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GHCR_IMAGE: ghcr.io/snapetech/seerrng
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,7 +41,7 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Install Oras
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -66,7 +69,7 @@ jobs:
               echo "Invalid chart identity in $chart_path/Chart.yaml" >&2
               exit 1
             fi
-            if oras manifest fetch "ghcr.io/${GITHUB_REPOSITORY}/${chart_name}:${current_version}" >/dev/null 2>&1; then
+            if oras manifest fetch "${GHCR_IMAGE}/${chart_name}:${current_version}" >/dev/null 2>&1; then
               echo "No version change for $chart_name. Skipping."
             else
               helm dependency build "$chart_path"
@@ -112,7 +115,7 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
 
       - name: Install Oras
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -157,13 +160,13 @@ jobs:
             helm_push_output="$(mktemp "$RUNNER_TEMP/helm-push.XXXXXX")"
             oras_push_output="$(mktemp "$RUNNER_TEMP/oras-push.XXXXXX")"
             trap 'rm -f "$helm_push_output" "$oras_push_output"' EXIT
-            helm push "$chart_path" "oci://ghcr.io/${GITHUB_REPOSITORY}" |& tee "$helm_push_output"
+            helm push "$chart_path" "oci://${GHCR_IMAGE}" |& tee "$helm_push_output"
             chart_digest="$(awk -F '[, ]+' '/Digest/{print $NF}' "$helm_push_output" | tail -n 1)"
             if [[ ! "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "Helm returned an invalid chart digest for $chart_name:$chart_version" >&2
               exit 1
             fi
-            cosign sign "ghcr.io/${GITHUB_REPOSITORY}/${chart_name}@${chart_digest}"
+            cosign sign "${GHCR_IMAGE}/${chart_name}@${chart_digest}"
 
             metadata_file="charts/$chart_name/artifacthub-repo.yml"
             if [[ ! -f "$metadata_file" || -L "$metadata_file" ]] ||
@@ -172,7 +175,7 @@ jobs:
               exit 1
             fi
             oras push \
-              "ghcr.io/${GITHUB_REPOSITORY}/${chart_name}:artifacthub.io" \
+              "${GHCR_IMAGE}/${chart_name}:artifacthub.io" \
               --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
               "$metadata_file:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml" \
               |& tee "$oras_push_output"
@@ -181,7 +184,7 @@ jobs:
               echo "ORAS returned an invalid metadata digest for $chart_name" >&2
               exit 1
             fi
-            cosign sign "ghcr.io/${GITHUB_REPOSITORY}/${chart_name}:artifacthub.io@${artifacthub_digest}"
+            cosign sign "${GHCR_IMAGE}/${chart_name}:artifacthub.io@${artifacthub_digest}"
             rm -f "$helm_push_output" "$oras_push_output"
             trap - EXIT
           done
@@ -239,7 +242,7 @@ jobs:
               echo "Invalid packaged chart identity: $chart_path" >&2
               exit 1
             fi
-            cosign verify "ghcr.io/${GITHUB_REPOSITORY}/${chart_name}:${version}" \
+            cosign verify "${GHCR_IMAGE}/${chart_name}:${version}" \
               --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
           done

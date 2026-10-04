@@ -26,9 +26,25 @@ export interface QuotaResponse {
   book: QuotaStatus;
   comic: QuotaStatus;
   magazine: QuotaStatus;
+  software: QuotaStatus;
 }
 
 export interface UserWatchDataResponse {
   recentlyWatched: Media[];
   playCount: number;
+}
+
+export interface UserBulkUpdateSettings {
+  watchlistSyncMovies?: boolean;
+  watchlistSyncTv?: boolean;
+  watchlistSyncMusic?: boolean;
+  watchlistSyncBooks?: boolean;
+  watchlistSyncComics?: boolean;
+  watchlistSyncMagazines?: boolean;
+}
+
+export interface UserBulkUpdateRequest {
+  ids: number[];
+  permissions?: number;
+  settings?: UserBulkUpdateSettings;
 }

@@ -5,10 +5,12 @@ import type {
   TmdbMovieResult,
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
+import type { MediaCategoryKey } from '@server/constants/mediaCategories';
 import dataSource, { getRepository } from '@server/datasource';
 import DiscoverSlider from '@server/entity/DiscoverSlider';
 import { User } from '@server/entity/User';
 import type { StatusResponse } from '@server/interfaces/api/settingsInterfaces';
+import { isMediaCategoryEnabled } from '@server/lib/mediaCategories';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import {
@@ -46,7 +48,7 @@ import {
   parseOptionalLanguage,
   parseOptionalQueryBoolean,
 } from '@server/utils/validation';
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import rateLimit from 'express-rate-limit';
 import semver from 'semver';
 import artistRoutes from './artist';
@@ -55,11 +57,15 @@ import authRoutes from './auth';
 import authorRoutes from './author';
 import blocklistRoutes from './blocklist';
 import bookRoutes from './book';
+import calendarRoutes from './calendar';
 import collectionRoutes from './collection';
 import collectionCatalogRoutes from './collectionCatalog';
 import comicRoutes from './comic';
+import desktopRoutes from './desktop';
 import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
+import discoveryIntegrationRoutes from './discoveryIntegrations';
 import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
+import indexerSearchRoutes from './indexerSearch';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
 import magazineRoutes from './magazine';
@@ -69,10 +75,12 @@ import musicRoutes from './music';
 import personRoutes from './person';
 import playbackRoutes from './playback';
 import playlistRoutes from './playlist';
+import queueInterventionRoutes from './queueInterventions';
 import requestRoutes from './request';
 import searchRoutes from './search';
 import seriesRoutes from './series';
 import serviceRoutes from './service';
+import softwareRoutes from './software';
 import tvRoutes from './tv';
 import user from './user';
 
@@ -80,6 +88,22 @@ const router = Router();
 const maxTmdbId = 1_000_000_000;
 const MAX_PUSHOVER_TOKEN_LENGTH = 256;
 const MAX_WATCH_REGION_LENGTH = 16;
+
+const categoryAvailabilityGuard =
+  (
+    categories: readonly MediaCategoryKey[],
+    mode: 'all' | 'any' = 'all'
+  ): RequestHandler =>
+  (_req, res, next) => {
+    const available =
+      mode === 'all'
+        ? categories.every(isMediaCategoryEnabled)
+        : categories.some(isMediaCategoryEnabled);
+    if (!available) {
+      return res.status(404).json({ status: 404, message: 'Not found.' });
+    }
+    return next();
+  };
 
 const parseTmdbRouteId = (id: unknown): number | undefined =>
   parsePositiveRouteId(id, maxTmdbId);
@@ -409,11 +433,29 @@ router.get(
   }
 );
 router.use('/settings', isAuthenticated(Permission.ADMIN), settingsRoutes);
+router.use(
+  '/indexer-search',
+  isAuthenticated(Permission.MANAGE_REQUESTS),
+  indexerSearchRoutes
+);
 router.use('/search', isAuthenticated(), searchRoutes);
 router.use('/discover', isAuthenticated(), discoverRoutes);
 router.use('/request', isAuthenticated(), requestRoutes);
+router.use('/request/software', softwareRoutes);
+router.use('/calendar', isAuthenticated(), calendarRoutes);
+router.use(
+  '/downloads/interventions',
+  isAuthenticated(),
+  queueInterventionRoutes
+);
+router.use(
+  '/integrations/discovery',
+  isAuthenticated(),
+  discoveryIntegrationRoutes
+);
 router.use('/playlist', isAuthenticated(), playlistRoutes);
 router.use('/playback', isAuthenticated(), playbackRoutes);
+router.use('/desktop', desktopRoutes);
 router.use('/watchlist', isAuthenticated(), watchlistRoutes);
 router.use('/blocklist', isAuthenticated(), blocklistRoutes);
 router.use(
@@ -426,26 +468,66 @@ router.use(
   }),
   blocklistRoutes
 );
-router.use('/movie', isAuthenticated(), externalMetadataRateLimit, movieRoutes);
-router.use('/tv', isAuthenticated(), externalMetadataRateLimit, tvRoutes);
-router.use('/music', isAuthenticated(), externalMetadataRateLimit, musicRoutes);
-router.use('/book', isAuthenticated(), bookRoutes);
-router.use('/comic', isAuthenticated(), comicRoutes);
+router.use(
+  '/movie',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['movie']),
+  externalMetadataRateLimit,
+  movieRoutes
+);
+router.use(
+  '/tv',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['tv']),
+  externalMetadataRateLimit,
+  tvRoutes
+);
+router.use(
+  '/music',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['music']),
+  externalMetadataRateLimit,
+  musicRoutes
+);
+router.use(
+  '/book',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['ebook', 'audiobook'], 'any'),
+  bookRoutes
+);
+router.use(
+  '/comic',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['comic']),
+  comicRoutes
+);
 router.use(
   '/magazine',
   isAuthenticated(),
+  categoryAvailabilityGuard(['magazine']),
   externalMetadataRateLimit,
   magazineRoutes
 );
 router.use(
   '/artist',
   isAuthenticated(),
+  categoryAvailabilityGuard(['music']),
   externalMetadataRateLimit,
   artistRoutes
 );
 router.use('/association', isAuthenticated(), associationRoutes);
-router.use('/author', isAuthenticated(), authorRoutes);
-router.use('/series', isAuthenticated(), seriesRoutes);
+router.use(
+  '/author',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['ebook', 'audiobook'], 'any'),
+  authorRoutes
+);
+router.use(
+  '/series',
+  isAuthenticated(),
+  categoryAvailabilityGuard(['tv']),
+  seriesRoutes
+);
 router.use('/media', isAuthenticated(), mediaRoutes);
 router.use(
   '/person',

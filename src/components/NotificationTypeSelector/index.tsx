@@ -28,6 +28,16 @@ const messages = defineMessages('components.NotificationTypeSelector', {
     'Send notifications when media requests become available.',
   usermediaavailableDescription:
     'Get notified when your media requests become available.',
+  softwareavailable: 'Software Request Available',
+  softwareavailableDescription:
+    'Send notifications when requested ROMs and PC games are ready to download.',
+  usersoftwareavailableDescription:
+    'Get notified when your requested ROMs and PC games are ready to download.',
+  softwareStatus: 'Software Request Updates',
+  softwareStatusDescription:
+    'Send notifications for software requests awaiting approval or that were approved, declined, or failed.',
+  userSoftwareStatusDescription:
+    'Get notified when your software request is awaiting approval or is approved, declined, or fails.',
   mediafailed: 'Request Processing Failed',
   mediafailedDescription:
     'Send notifications when media requests fail to be added to Radarr, Sonarr, Lidarr, or Bookshelf.',
@@ -105,6 +115,8 @@ export enum Notification {
   ISSUE_RESOLVED = 1024,
   ISSUE_REOPENED = 2048,
   MEDIA_AUTO_REQUESTED = 4096,
+  SOFTWARE_AVAILABLE = 8192,
+  SOFTWARE_STATUS = 16384,
 }
 
 export const ALL_NOTIFICATIONS = Object.values(Notification)
@@ -215,7 +227,9 @@ const NotificationTypeSelector = ({
           (!user.settings?.watchlistSyncMovies &&
             !user.settings?.watchlistSyncTv &&
             !user.settings?.watchlistSyncMusic &&
-            !user.settings?.watchlistSyncBooks) ||
+            !user.settings?.watchlistSyncBooks &&
+            !user.settings?.watchlistSyncComics &&
+            !user.settings?.watchlistSyncMagazines) ||
           !hasPermission(
             [
               Permission.AUTO_REQUEST,
@@ -223,6 +237,8 @@ const NotificationTypeSelector = ({
               Permission.AUTO_REQUEST_TV,
               Permission.AUTO_REQUEST_MUSIC,
               Permission.AUTO_REQUEST_BOOK,
+              Permission.AUTO_REQUEST_COMIC,
+              Permission.AUTO_REQUEST_MAGAZINE,
             ],
             { type: 'or' }
           ),
@@ -285,6 +301,28 @@ const NotificationTypeSelector = ({
             : messages.mediaavailableDescription
         ),
         value: Notification.MEDIA_AVAILABLE,
+        hasNotifyUser: true,
+      },
+      {
+        id: 'software-available',
+        name: intl.formatMessage(messages.softwareavailable),
+        description: intl.formatMessage(
+          user
+            ? messages.usersoftwareavailableDescription
+            : messages.softwareavailableDescription
+        ),
+        value: Notification.SOFTWARE_AVAILABLE,
+        hasNotifyUser: true,
+      },
+      {
+        id: 'software-status',
+        name: intl.formatMessage(messages.softwareStatus),
+        description: intl.formatMessage(
+          user
+            ? messages.userSoftwareStatusDescription
+            : messages.softwareStatusDescription
+        ),
+        value: Notification.SOFTWARE_STATUS,
         hasNotifyUser: true,
       },
       {

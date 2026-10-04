@@ -1,3 +1,4 @@
+import BackIssueAPI from '@server/api/comics/backissue';
 import KapowarrAPI, {
   KapowarrTaskRunningError,
 } from '@server/api/comics/kapowarr';
@@ -10,6 +11,7 @@ import SonarrAPI from '@server/api/servarr/sonarr';
 import TautulliAPI, { isTautulliNoDataError } from '@server/api/tautulli';
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaStatus, MediaType } from '@server/constants/media';
+import type { MediaCategoryKey } from '@server/constants/mediaCategories';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
@@ -26,6 +28,7 @@ import {
   libraryServiceType,
   resolveLibraryRemoval,
 } from '@server/lib/libraryRemoval';
+import { areMediaCategoriesEnabled } from '@server/lib/mediaCategories';
 import { runMediaEntityMutation } from '@server/lib/mediaMutation';
 import { Permission } from '@server/lib/permissions';
 import {
@@ -82,6 +85,27 @@ const mediaListPermissions: Permission[] = [
   Permission.MANAGE_REQUESTS,
   Permission.RECENT_VIEW,
 ];
+const mediaTypeCategories: Record<
+  MediaType,
+  { categories: MediaCategoryKey[]; mode?: 'all' | 'any' }
+> = {
+  [MediaType.MOVIE]: { categories: ['movie'] },
+  [MediaType.TV]: { categories: ['tv'] },
+  [MediaType.MUSIC]: { categories: ['music'] },
+  [MediaType.BOOK]: { categories: ['ebook', 'audiobook'], mode: 'any' },
+  [MediaType.COMIC]: { categories: ['comic'] },
+  [MediaType.MAGAZINE]: { categories: ['magazine'] },
+};
+const isMediaTypeCategoryEnabled = (mediaType: MediaType): boolean => {
+  const config = mediaTypeCategories[mediaType];
+  return config
+    ? areMediaCategoriesEnabled(config.categories, config.mode ?? 'all')
+    : true;
+};
+const areAllMediaTypeCategoriesEnabled = (mediaType: MediaType): boolean => {
+  const config = mediaTypeCategories[mediaType];
+  return config ? areMediaCategoriesEnabled(config.categories) : true;
+};
 
 const projectMediaListItem = (media: Media): MediaListItem => ({
   id: media.id,
@@ -93,6 +117,16 @@ const projectMediaListItem = (media: Media): MediaListItem => ({
   ...(media.imdbId != null ? { imdbId: media.imdbId } : {}),
   ...(media.mbId != null ? { mbId: media.mbId } : {}),
   ...(media.mediaAddedAt != null ? { mediaAddedAt: media.mediaAddedAt } : {}),
+  ...(media.searchMetadata?.title ? { title: media.searchMetadata.title } : {}),
+  ...(media.searchMetadata?.overview
+    ? { overview: media.searchMetadata.overview }
+    : {}),
+  ...(media.searchMetadata?.posterPath
+    ? { posterPath: media.searchMetadata.posterPath }
+    : {}),
+  ...(media.searchMetadata?.releaseDate
+    ? { releaseDate: media.searchMetadata.releaseDate }
+    : {}),
 });
 
 export const parseTautulliPlexUserIds = (value: unknown): number[] => {
@@ -269,6 +303,12 @@ mediaRoutes.get(
     if ('error' in parsedMediaTypes) {
       return next({ status: 400, message: parsedMediaTypes.error });
     }
+    if (
+      parsedMediaTypes.value?.some((type) => !isMediaTypeCategoryEnabled(type))
+    ) {
+      return res.status(404).json({ status: 404, message: 'Not found.' });
+    }
+    const enabledMediaTypes = mediaListTypes.filter(isMediaTypeCategoryEnabled);
     const filter = parsedFilter.value;
     const sort = parsedSort.value;
 
@@ -333,12 +373,27 @@ mediaRoutes.get(
         parsedMediaTypes.value.length === 1
           ? parsedMediaTypes.value[0]
           : In(parsedMediaTypes.value);
+    } else if (enabledMediaTypes.length < mediaListTypes.length) {
+      if (enabledMediaTypes.length === 0) {
+        return res.status(200).json({
+          pageInfo: {
+            pages: 0,
+            pageSize,
+            results: 0,
+            page: 1,
+          },
+          results: [],
+        } as MediaResultsResponse);
+      }
+      whereClause = whereClause ?? {};
+      whereClause.mediaType = In(enabledMediaTypes);
     }
 
     try {
       const [media, mediaCount] = await mediaRepository.findAndCount({
         order: sortFilter,
         where: whereClause,
+        relations: { searchMetadata: true },
         take: pageSize,
         skip,
       });
@@ -394,7 +449,7 @@ mediaRoutes.post<
       where: { id: mediaId },
       relations: { identifiers: true },
     });
-    if (!initialMedia) {
+    if (!initialMedia || !isMediaTypeCategoryEnabled(initialMedia.mediaType)) {
       return next({ status: 404, message: 'Media does not exist.' });
     }
 
@@ -504,6 +559,9 @@ mediaRoutes.delete(
         where: { id: mediaId },
         relations: { identifiers: true },
       });
+      if (!isMediaTypeCategoryEnabled(initialMedia.mediaType)) {
+        return next({ status: 404, message: 'Media not found' });
+      }
       return await runAuthorizedUserSecurityMutation(
         req.user!.id,
         req.user!.id,
@@ -546,8 +604,8 @@ mediaRoutes.delete(
 
 mediaRoutes.get(
   '/:id/library',
-  isAuthenticated(Permission.MANAGE_REQUESTS),
-  authorizedRouteAccess(Permission.MANAGE_REQUESTS),
+  isAuthenticated(Permission.ADMIN),
+  authorizedRouteAccess(Permission.ADMIN),
   async (req, res, next) => {
     const id = parseMediaRouteId(req.params.id);
     const media = id
@@ -557,6 +615,8 @@ mediaRoutes.get(
         })
       : null;
     if (!media) return next({ status: 404, message: 'Media not found.' });
+    if (!isMediaTypeCategoryEnabled(media.mediaType))
+      return next({ status: 404, message: 'Media not found.' });
     try {
       return await runWithServarrServiceCollectionMutationAdmission(
         libraryServiceType(media.mediaType, media.comicServiceType),
@@ -573,7 +633,7 @@ mediaRoutes.get(
 
 mediaRoutes.delete(
   '/:id/library',
-  isAuthenticated(Permission.MANAGE_REQUESTS),
+  isAuthenticated(Permission.ADMIN),
   async (req, res, next) => {
     const id = parseMediaRouteId(req.params.id);
     if (
@@ -591,10 +651,12 @@ mediaRoutes.delete(
         where: { id },
         relations: { identifiers: true },
       });
+      if (!areAllMediaTypeCategoriesEnabled(initial.mediaType))
+        return next({ status: 404, message: 'Media not found.' });
       return await runAuthorizedUserSecurityMutation(
         req.user!.id,
         req.user!.id,
-        Permission.MANAGE_REQUESTS,
+        Permission.ADMIN,
         () =>
           runMediaEntityMutation(initial, async () =>
             runWithServarrServiceCollectionMutationAdmission(
@@ -703,6 +765,9 @@ mediaRoutes.delete(
         where: { id: mediaId },
         relations: { identifiers: true },
       });
+      if (!isMediaTypeCategoryEnabled(initialMedia.mediaType)) {
+        return next({ status: 404, message: 'Media not found' });
+      }
       return await runAuthorizedUserSecurityMutation(
         req.user!.id,
         req.user!.id,
@@ -738,6 +803,14 @@ mediaRoutes.delete(
               return next({ status: 400, message: parsedBookFormat.error });
             }
             const bookFormat = parsedBookFormat.value ?? 'both';
+            if (
+              isBook &&
+              !areMediaCategoriesEnabled(
+                bookFormat === 'both' ? ['ebook', 'audiobook'] : [bookFormat]
+              )
+            ) {
+              return next({ status: 404, message: 'Media not found.' });
+            }
 
             const specificServiceId = is4k
               ? media.serviceId4k
@@ -826,9 +899,14 @@ mediaRoutes.delete(
                             ? settings.kapowarr.find(
                                 (kapowarr) => kapowarr.id === selectedServiceId
                               )
-                            : settings.mylar.find(
-                                (mylar) => mylar.id === selectedServiceId
-                              )
+                            : media.comicServiceType === 'backissue'
+                              ? settings.backissue.find(
+                                  (backissue) =>
+                                    backissue.id === selectedServiceId
+                                )
+                              : settings.mylar.find(
+                                  (mylar) => mylar.id === selectedServiceId
+                                )
                           : settings.sonarr.find(
                               (sonarr) => sonarr.id === selectedServiceId
                             );
@@ -856,7 +934,9 @@ mediaRoutes.delete(
                           : isComic
                             ? media.comicServiceType === 'kapowarr'
                               ? 'Kapowarr'
-                              : 'Mylar3'
+                              : media.comicServiceType === 'backissue'
+                                ? 'BackIssue'
+                                : 'Mylar3'
                             : 'Sonarr';
                   logger.warn(
                     `There is no configured ${is4k ? '4K ' : ''}${serviceName} server for this media item.`,
@@ -894,10 +974,15 @@ mediaRoutes.delete(
                           apiKey: serviceSettings!.apiKey,
                           url: KapowarrAPI.buildUrl(serviceSettings!),
                         })
-                      : new MylarAPI({
-                          apiKey: serviceSettings!.apiKey,
-                          url: MylarAPI.buildUrl(serviceSettings!),
-                        });
+                      : media.comicServiceType === 'backissue'
+                        ? new BackIssueAPI({
+                            apiKey: serviceSettings!.apiKey,
+                            url: BackIssueAPI.buildUrl(serviceSettings!),
+                          })
+                        : new MylarAPI({
+                            apiKey: serviceSettings!.apiKey,
+                            url: MylarAPI.buildUrl(serviceSettings!),
+                          });
                 } else if (!isBook) {
                   service = new SonarrAPI({
                     apiKey: serviceSettings!.apiKey,
@@ -1063,6 +1148,10 @@ mediaRoutes.delete(
                       await (service as KapowarrAPI).removeVolume(
                         media.externalServiceId
                       );
+                    } else if (media.comicServiceType === 'backissue') {
+                      await (service as BackIssueAPI).removeSeries(
+                        media.externalServiceId
+                      );
                     } else {
                       await (service as MylarAPI).removeComic(
                         media.externalServiceSlug ??
@@ -1155,6 +1244,9 @@ mediaRoutes.get<{ id: string }, MediaWatchDataResponse>(
     });
 
     if (!media) {
+      return next({ status: 404, message: 'Media does not exist.' });
+    }
+    if (!isMediaTypeCategoryEnabled(media.mediaType)) {
       return next({ status: 404, message: 'Media does not exist.' });
     }
 

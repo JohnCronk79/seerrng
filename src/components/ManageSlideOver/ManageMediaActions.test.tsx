@@ -24,6 +24,7 @@ import {
 
 const state = vi.hoisted(() => ({
   permission: true,
+  adminPermission: true,
   blocklistPermission: true,
   libraryPlan: { token: 'test-token', targets: [] } as LibraryRemovalPlan,
   remove: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('next/router', () => ({
 }));
 vi.mock('@app/hooks/useUser', () => ({
   Permission: {
+    ADMIN: 2,
     MANAGE_REQUESTS: 32,
     MANAGE_ISSUES: 64,
     VIEW_ISSUES: 128,
@@ -48,7 +50,9 @@ vi.mock('@app/hooks/useUser', () => ({
   },
   useUser: () => ({
     hasPermission: (permission: number) =>
-      state.permission && (permission !== 256 || state.blocklistPermission),
+      permission === 2
+        ? state.adminPermission
+        : state.permission && (permission !== 256 || state.blocklistPermission),
   }),
 }));
 vi.mock('swr', () => ({
@@ -101,6 +105,7 @@ const render = (value: React.ReactNode) =>
 beforeEach(() => {
   vi.stubGlobal('React', React);
   state.permission = true;
+  state.adminPermission = true;
   state.blocklistPermission = true;
   state.libraryPlan = { token: 'test-token', targets: [] };
   state.remove.mockReset();
@@ -372,6 +377,32 @@ it('hides destructive actions without request-management permission', () => {
     )
   ).toBe('');
 });
+it('hides connected-library links and deletion from request managers who are not admins', () => {
+  state.permission = true;
+  state.adminPermission = false;
+  state.libraryPlan.targets = [
+    {
+      key: 'primary',
+      service: 'Radarr-HD',
+      serviceType: 'radarr',
+      serviceId: 1,
+      externalId: 9,
+      quality: 'HD',
+      url: 'http://nas:7878/movie/test',
+    },
+  ];
+
+  const html = render(
+    <ManageMediaActions
+      media={media()}
+      mediaType={MediaType.MOVIE}
+      title="Movie"
+      onUpdate={vi.fn()}
+    />
+  );
+  expect(html).not.toContain('Delete From Library');
+  expect(html).not.toContain('Open title in Radarr-HD');
+});
 it('shares permanent-delete wording and green cancel/red confirmation', () => {
   const html = render(
     <RequestActionConfirmation
@@ -385,7 +416,7 @@ it('shares permanent-delete wording and green cancel/red confirmation', () => {
   );
   expect(html).toContain('data-confirm="danger"');
   expect(html).toContain('data-cancel="success"');
-  expect(html).toContain('Permanently delete Movie from Radarr (4K)?');
+  expect(html).toContain('<h1>Permanently Delete Movie from Radarr (4K)?</h1>');
   expect(html).toContain(
     'permanently delete its media files and remove its library entry'
   );

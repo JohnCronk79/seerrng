@@ -155,7 +155,7 @@ const PersonDetails = () => {
   const cast = (sortedCast ?? []).length > 0 && (
     <>
       <div className="slider-header">
-        <div className="slider-title">
+        <div className="page-heading">
           <span>{intl.formatMessage(messages.appearsin)}</span>
         </div>
       </div>
@@ -168,6 +168,7 @@ const PersonDetails = () => {
                 id={media.id}
                 title={media.mediaType === 'movie' ? media.title : media.name}
                 userScore={media.voteAverage}
+                voteCount={media.voteCount}
                 year={
                   media.mediaType === 'movie'
                     ? media.releaseDate
@@ -201,7 +202,7 @@ const PersonDetails = () => {
   const crew = (sortedCrew ?? []).length > 0 && (
     <>
       <div className="slider-header">
-        <div className="slider-title">
+        <div className="page-heading">
           <span>{intl.formatMessage(messages.crewmember)}</span>
         </div>
       </div>
@@ -214,6 +215,7 @@ const PersonDetails = () => {
                 id={media.id}
                 title={media.mediaType === 'movie' ? media.title : media.name}
                 userScore={media.voteAverage}
+                voteCount={media.voteCount}
                 year={
                   media.mediaType === 'movie'
                     ? media.releaseDate

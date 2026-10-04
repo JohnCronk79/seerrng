@@ -9,6 +9,7 @@ import { redactSecrets } from '@server/utils/security';
 import ServarrBase, {
   isServarrServiceUrl,
   MAX_SERVARR_CONFIGURATION_RESULTS,
+  MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
   sanitizeServarrImages,
@@ -173,6 +174,33 @@ const sanitizeSonarrEpisode = (value: unknown): EpisodeResult | undefined => {
     absoluteEpisodeNumber: integer(value.absoluteEpisodeNumber),
     unverifiedSceneNumbering: boolean(value.unverifiedSceneNumbering),
     id,
+  };
+};
+
+export interface SonarrEpisodeFile {
+  id: number;
+  seriesId: number;
+  seasonNumber: number;
+  relativePath?: string;
+  path?: string;
+  size: number;
+}
+
+const sanitizeSonarrEpisodeFile = (
+  value: unknown
+): SonarrEpisodeFile | undefined => {
+  if (!isRecord(value)) return undefined;
+  const id = integer(value.id);
+  const seriesId = integer(value.seriesId);
+  const seasonNumber = integer(value.seasonNumber);
+  if (id <= 0 || seriesId <= 0 || seasonNumber < 0) return undefined;
+  return {
+    id,
+    seriesId,
+    seasonNumber,
+    relativePath: text(value.relativePath) || undefined,
+    path: text(value.path) || undefined,
+    size: finiteNumber(value.size),
   };
 };
 
@@ -399,7 +427,10 @@ class SonarrAPI extends ServarrBase<{
         'GET',
         '/series',
         undefined,
-        tvdbId ? { params: { tvdbId } } : undefined
+        {
+          ...(tvdbId ? { params: { tvdbId } } : {}),
+          maxContentLength: MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+        }
       );
 
       const series = sanitizeServarrRecordArray<Record<string, unknown>>(
@@ -866,6 +897,18 @@ class SonarrAPI extends ServarrBase<{
   }
 
   public async searchSeries(seriesId: number): Promise<void> {
+    return this.executeSeriesSearch(seriesId, false);
+  }
+
+  /** Run a series search and let callers handle a provider command failure. */
+  public async searchSeriesOrThrow(seriesId: number): Promise<void> {
+    return this.executeSeriesSearch(seriesId, true);
+  }
+
+  private async executeSeriesSearch(
+    seriesId: number,
+    throwOnError: boolean
+  ): Promise<void> {
     logger.info('Executing series search command.', {
       label: 'Sonarr API',
       seriesId,
@@ -882,6 +925,11 @@ class SonarrAPI extends ServarrBase<{
           seriesId,
         }
       );
+      if (throwOnError) {
+        throw new Error('Failed to execute Sonarr series search.', {
+          cause: e,
+        });
+      }
     }
   }
 
@@ -907,6 +955,31 @@ class SonarrAPI extends ServarrBase<{
         seriesId,
       });
       throw new Error('Failed to get episodes', { cause: e });
+    }
+  }
+
+  public async getEpisodeFiles(seriesId: number): Promise<SonarrEpisodeFile[]> {
+    try {
+      const response = await this.request<unknown[]>(
+        'GET',
+        '/episodefile',
+        undefined,
+        { params: { seriesId } }
+      );
+      return sanitizeServarrRecordArray<Record<string, unknown>>(
+        response.data,
+        MAX_SERVARR_LIBRARY_RESULTS
+      ).flatMap((file) => {
+        const normalized = sanitizeSonarrEpisodeFile(file);
+        return normalized ? [normalized] : [];
+      });
+    } catch (error) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve episode files: ${error.message}`,
+        {
+          cause: error,
+        }
+      );
     }
   }
 

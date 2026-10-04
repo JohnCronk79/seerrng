@@ -1,15 +1,25 @@
+import MdblistAPI from '@server/api/mdblist';
 import IMDBRadarrProxy from '@server/api/rating/imdbRadarrProxy';
 import RottenTomatoes from '@server/api/rating/rottentomatoes';
-import { type RatingResponse } from '@server/api/ratings';
+import {
+  hasMdblistRatingScores,
+  parseMdblistRatingBatchIds,
+  type RatingResponse,
+} from '@server/api/ratings';
 import RadarrAPI from '@server/api/servarr/radarr';
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
+import { enqueueImageCacheWarm } from '@server/lib/imageCacheWarmer';
 import { upsertMediaSearchMetadata } from '@server/lib/mediaSearchMetadata';
 import { getSettings, type RadarrSettings } from '@server/lib/settings';
 import { rankTmdbMovieResults } from '@server/lib/tmdbRank';
+import {
+  getAggregatedMovieMetadata,
+  VideoMetadataNotFoundError,
+} from '@server/lib/videoMetadataCatalog';
 import logger from '@server/logger';
 import { mapMovieDetails } from '@server/models/Movie';
 import { mapMovieResult } from '@server/models/Search';
@@ -20,15 +30,28 @@ import {
   parsePositiveInt,
 } from '@server/utils/pagination';
 import { parsePositiveRouteId } from '@server/utils/routeId';
+import { getRateLimitKey } from '@server/utils/security';
 import {
   parseOptionalBoundedString,
   parseOptionalLanguage,
 } from '@server/utils/validation';
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 
 const movieRoutes = Router();
 const maxTmdbId = 1_000_000_000;
 const maxShuffleSeedLength = 128;
+
+const mdblistRatingBatchRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) =>
+    req.user?.id ? `user:${req.user.id}` : getRateLimitKey(req),
+  skip: () =>
+    process.env.NODE_ENV === 'test' || process.env.E2E_TESTS === 'true',
+});
 
 const parseTmdbRouteId = (id: unknown): number | undefined =>
   parsePositiveRouteId(id, maxTmdbId);
@@ -98,8 +121,45 @@ const getMovieCoverService = (
   return undefined;
 };
 
+movieRoutes.post(
+  '/ratings/mdblist/batch',
+  mdblistRatingBatchRateLimit,
+  async (req, res) => {
+    const ids = parseMdblistRatingBatchIds(req.body?.ids);
+    if (!ids) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Provide 1 to 200 valid TMDB movie IDs.',
+      });
+    }
+
+    try {
+      const ratings = await MdblistAPI.getInstance().getBatchRatings(
+        'movie',
+        ids.map((tmdbId) => ({ tmdbId }))
+      );
+      return res
+        .status(200)
+        .json(
+          Object.fromEntries(
+            [...ratings].filter(([, rating]) => hasMdblistRatingScores(rating))
+          )
+        );
+    } catch (e) {
+      logger.debug('Something went wrong retrieving MDBList rating batch', {
+        label: 'API',
+        errorMessage: e instanceof Error ? e.message : String(e),
+        itemCount: ids.length,
+      });
+      return res.status(502).json({
+        status: 502,
+        message: 'MDBList ratings are temporarily unavailable.',
+      });
+    }
+  }
+);
+
 movieRoutes.get('/:id', async (req, res, next) => {
-  const tmdb = new TheMovieDb();
   const movieId = parseTmdbRouteId(req.params.id);
   if (!movieId) {
     return next({ status: 404, message: 'Movie not found.' });
@@ -111,10 +171,10 @@ movieRoutes.get('/:id', async (req, res, next) => {
   const language = parsedLanguage.value ?? req.locale;
 
   try {
-    const tmdbMovie = await tmdb.getMovie({
+    const { details: tmdbMovie, provenance } = await getAggregatedMovieMetadata(
       movieId,
-      language,
-    });
+      language
+    );
 
     const media = await Media.getMedia(tmdbMovie.id, MediaType.MOVIE, req.user);
 
@@ -132,6 +192,8 @@ movieRoutes.get('/:id', async (req, res, next) => {
 
     await upsertMediaSearchMetadata(media?.id, {
       title: data.title,
+      overview: data.overview,
+      posterPath: data.posterPath,
       alternateTitle: data.originalTitle,
       releaseDate: data.releaseDate,
       genres: data.genres.map((genre) => genre.name).join(', '),
@@ -150,18 +212,33 @@ movieRoutes.get('/:id', async (req, res, next) => {
         .map((company) => company.name)
         .join(', '),
       format: 'Movie',
-      provider: 'TMDB',
-      externalIds: [data.id, data.imdbId].filter(Boolean).join(' '),
+      provider: provenance.sources
+        .map((source) => source.source.toUpperCase())
+        .join(' '),
+      videoMetadataExpiresAt: new Date(provenance.expiresAt),
+      externalIds: [
+        data.id,
+        data.imdbId,
+        tmdbMovie.external_ids.tvdb_id,
+        tmdbMovie.external_ids.wikidata_id,
+      ]
+        .filter(Boolean)
+        .join(' '),
     });
 
-    // TMDB issue where it doesnt fallback to English when no overview is available in requested locale.
-    if (!data.overview) {
-      const tvEnglish = await tmdb.getMovie({ movieId });
-      data.overview = tvEnglish.overview;
+    data.metadataSources = provenance.sources;
+    data.metadataProvenance = provenance.fields;
+    data.supplementalMetadata = provenance.supplemental;
+    if (provenance.supplemental.posterUrl) {
+      enqueueImageCacheWarm([provenance.supplemental.posterUrl]);
     }
+    data.metadataExpiresAt = provenance.expiresAt;
 
     return res.status(200).json(filterEntityResponse(data, req.user));
   } catch (e) {
+    if (e instanceof VideoMetadataNotFoundError) {
+      return next({ status: 404, message: 'Movie not found.', cause: e });
+    }
     logger.debug('Something went wrong retrieving movie', {
       label: 'API',
       errorMessage: e.message,
@@ -438,6 +515,7 @@ movieRoutes.get('/:id/ratingscombined', async (req, res, next) => {
   const tmdb = new TheMovieDb();
   const rtapi = new RottenTomatoes();
   const imdbApi = new IMDBRadarrProxy();
+  const mdblistApi = MdblistAPI.getInstance();
   const movieId = parseTmdbRouteId(req.params.id);
   if (!movieId) {
     return next({ status: 404, message: 'Movie not found.' });
@@ -448,26 +526,39 @@ movieRoutes.get('/:id/ratingscombined', async (req, res, next) => {
       movieId,
     });
 
-    const rtratings = await rtapi.getMovieRatings(
-      movie.title,
-      Number(movie.release_date.slice(0, 4))
-    );
+    const [rtResult, imdbResult, mdblistResult] = await Promise.allSettled([
+      rtapi.getMovieRatings(
+        movie.title,
+        Number(movie.release_date.slice(0, 4))
+      ),
+      movie.imdb_id ? imdbApi.getMovieRatings(movie.imdb_id) : null,
+      mdblistApi.getRatings('movie', movieId),
+    ]);
+    const rtratings = rtResult.status === 'fulfilled' ? rtResult.value : null;
+    const imdbRatings =
+      imdbResult.status === 'fulfilled' ? imdbResult.value : null;
+    const mdblistRatings =
+      mdblistResult.status === 'fulfilled' &&
+      hasMdblistRatingScores(mdblistResult.value)
+        ? mdblistResult.value
+        : undefined;
 
-    let imdbRatings;
-    if (movie.imdb_id) {
-      imdbRatings = await imdbApi.getMovieRatings(movie.imdb_id);
-    }
-
-    if (!rtratings && !imdbRatings) {
+    if (!rtratings && !imdbRatings && !mdblistRatings) {
+      const providerFailed = [rtResult, imdbResult, mdblistResult].some(
+        (result) => result.status === 'rejected'
+      );
       return next({
-        status: 404,
-        message: 'No ratings found.',
+        status: providerFailed ? 502 : 404,
+        message: providerFailed
+          ? 'Rating providers are temporarily unavailable.'
+          : 'No ratings found.',
       });
     }
 
     const ratings: RatingResponse = {
       ...(rtratings ? { rt: rtratings } : {}),
       ...(imdbRatings ? { imdb: imdbRatings } : {}),
+      ...(mdblistRatings ? { mdblist: mdblistRatings } : {}),
     };
 
     return res.status(200).json(ratings);

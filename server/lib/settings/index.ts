@@ -1,3 +1,11 @@
+import {
+  DEFAULT_ENABLED_MEDIA_CATEGORIES,
+  type EnabledMediaCategories,
+} from '@server/constants/mediaCategories';
+import {
+  defaultProwlarrCategoryMappings,
+  type ProwlarrCategoryMappings,
+} from '@server/constants/prowlarr';
 import { MediaServerType } from '@server/constants/server';
 import { assertNoSymlinkDirectoryComponents } from '@server/lib/pathSecurity';
 import { Permission } from '@server/lib/permissions';
@@ -71,6 +79,8 @@ export interface JellyfinSettings {
   libraries: Library[];
   serverId: string;
   apiKey: string;
+  bridgeLoginEnabled?: boolean;
+  bridgeLoginGeneration?: number;
 }
 
 export type OidcProvider = {
@@ -98,6 +108,27 @@ export interface TautulliSettings {
   urlBase?: string;
   apiKey?: string;
   externalUrl?: string;
+}
+
+export interface SoftwareProviderSettings {
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export type EmulationSystemGroup = 'retro' | 'modern';
+
+export interface SoftwareAcquisitionSettings {
+  romarr: SoftwareProviderSettings;
+  questarr: SoftwareProviderSettings;
+  emulationCatalogProvider: 'questarr' | 'romarr';
+  emulationSystemGroups: Record<string, EmulationSystemGroup>;
+}
+
+export interface ProwlarrSettings extends SoftwareProviderSettings {
+  categoryMappings: ProwlarrCategoryMappings;
 }
 
 export interface DVRSettings {
@@ -172,6 +203,8 @@ export interface KapowarrSettings extends CollectorServiceSettings {
   rootFolder?: string;
 }
 
+export type BackIssueSettings = CollectorServiceSettings;
+
 export type LazyLibrarianSettings = CollectorServiceSettings;
 
 interface Quota {
@@ -189,6 +222,16 @@ export interface MetadataSettings {
   anime: MetadataProviderType;
 }
 
+export type DownloadPathService =
+  'radarr' | 'sonarr' | 'readarr' | 'lazylibrarian' | 'kapowarr' | 'backissue';
+
+export interface DownloadPathMapping {
+  serviceType: DownloadPathService;
+  serviceId?: number;
+  remoteRoot: string;
+  localRoot: string;
+}
+
 export interface ProxySettings {
   enabled: boolean;
   hostname: string;
@@ -202,6 +245,7 @@ export interface ProxySettings {
 
 export interface MainSettings {
   apiKey: string;
+  downloadPathMappings: DownloadPathMapping[];
   applicationTitle: string;
   applicationUrl: string;
   cacheImages: boolean;
@@ -214,7 +258,9 @@ export interface MainSettings {
     book: Quota;
     comic: Quota;
     magazine: Quota;
+    software: Quota;
   };
+  enabledMediaCategories: EnabledMediaCategories;
   hideAvailable: boolean;
   hideBlocklisted: boolean;
   hideRequested: boolean;
@@ -239,6 +285,7 @@ export interface MainSettings {
   spotifyClientSecret?: string;
   youtubeApiKey?: string;
   comicVineApiKey?: string;
+  googleBooksApiKey?: string;
 }
 
 export interface ProxySettings {
@@ -284,8 +331,13 @@ interface FullPublicSettings extends PublicSettings {
   series4kEnabled: boolean;
   musicEnabled: boolean;
   booksEnabled: boolean;
+  ebookServiceEnabled: boolean;
+  audiobookServiceEnabled: boolean;
   comicsEnabled: boolean;
   magazinesEnabled: boolean;
+  softwareEnabled: boolean;
+  romarrEnabled: boolean;
+  enabledMediaCategories: EnabledMediaCategories;
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;
@@ -459,15 +511,34 @@ export type JobId =
   | 'readarr-request-retry'
   | 'mylar-scan'
   | 'kapowarr-scan'
+  | 'backissue-scan'
   | 'magazine-scan'
   | 'download-sync'
+  | 'software-request-reconciliation'
   | 'download-recovery'
   | 'download-sync-reset'
   | 'jellyfin-recently-added-scan'
   | 'jellyfin-full-scan'
+  | 'jellyfin-watch-ahead'
   | 'image-cache-cleanup'
+  | 'release-calendar-history'
   | 'availability-sync'
   | 'process-blocklisted-tags';
+
+export interface DiscoveryIntegrationsSettings {
+  trakt: { clientId: string; clientSecret: string };
+  anilist: { clientId: string; clientSecret: string };
+  simkl: { clientId: string };
+  mdblist: { apiKey: string };
+}
+
+export const defaultDiscoveryIntegrations =
+  (): DiscoveryIntegrationsSettings => ({
+    trakt: { clientId: '', clientSecret: '' },
+    anilist: { clientId: '', clientSecret: '' },
+    simkl: { clientId: '' },
+    mdblist: { apiKey: '' },
+  });
 
 export interface AllSettings {
   clientId: string;
@@ -485,7 +556,11 @@ export interface AllSettings {
   readarr: ReadarrSettings[];
   mylar: MylarSettings[];
   kapowarr: KapowarrSettings[];
+  backissue: BackIssueSettings[];
   lazylibrarian: LazyLibrarianSettings[];
+  softwareAcquisition: SoftwareAcquisitionSettings;
+  prowlarr: ProwlarrSettings;
+  discoveryIntegrations: DiscoveryIntegrationsSettings;
   public: PublicSettings;
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
@@ -519,6 +594,7 @@ class Settings {
       vapidPublic: '',
       main: {
         apiKey: '',
+        downloadPathMappings: [],
         applicationTitle: 'Seerr',
         applicationUrl: '',
         cacheImages: true,
@@ -531,7 +607,9 @@ class Settings {
           book: {},
           comic: {},
           magazine: {},
+          software: {},
         },
+        enabledMediaCategories: { ...DEFAULT_ENABLED_MEDIA_CATEGORIES },
         hideAvailable: false,
         hideBlocklisted: false,
         hideRequested: false,
@@ -556,6 +634,7 @@ class Settings {
         spotifyClientSecret: '',
         youtubeApiKey: '',
         comicVineApiKey: '',
+        googleBooksApiKey: '',
       },
       plex: {
         name: '',
@@ -575,6 +654,8 @@ class Settings {
         libraries: [],
         serverId: '',
         apiKey: '',
+        bridgeLoginEnabled: false,
+        bridgeLoginGeneration: 0,
       },
       oidc: {
         providers: [],
@@ -590,7 +671,35 @@ class Settings {
       readarr: [],
       mylar: [],
       kapowarr: [],
+      backissue: [],
       lazylibrarian: [],
+      discoveryIntegrations: defaultDiscoveryIntegrations(),
+      softwareAcquisition: {
+        romarr: {
+          hostname: '',
+          port: 6868,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        questarr: {
+          hostname: '',
+          port: 3000,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        emulationCatalogProvider: 'questarr',
+        emulationSystemGroups: {},
+      },
+      prowlarr: {
+        hostname: '',
+        port: 9696,
+        useSsl: false,
+        baseUrl: '',
+        apiKey: '',
+        categoryMappings: defaultProwlarrCategoryMappings(),
+      },
       public: {
         initialized: false,
       },
@@ -736,6 +845,9 @@ class Settings {
         'kapowarr-scan': {
           schedule: '0 15 5 * * *',
         },
+        'backissue-scan': {
+          schedule: '0 30 5 * * *',
+        },
         'magazine-scan': {
           schedule: '0 30 5 * * *',
         },
@@ -743,6 +855,9 @@ class Settings {
           schedule: '0 0 5 * * *',
         },
         'download-sync': {
+          schedule: '0 * * * * *',
+        },
+        'software-request-reconciliation': {
           schedule: '0 * * * * *',
         },
         'download-recovery': {
@@ -758,8 +873,14 @@ class Settings {
         'jellyfin-full-scan': {
           schedule: '0 0 3 * * *',
         },
+        'jellyfin-watch-ahead': {
+          schedule: '*/30 * * * * *',
+        },
         'image-cache-cleanup': {
           schedule: '0 0 5 * * *',
+        },
+        'release-calendar-history': {
+          schedule: '0 0 4 * * *',
         },
         'process-blocklisted-tags': {
           schedule: '0 30 1 */7 * *',
@@ -1048,12 +1169,43 @@ class Settings {
     this.data.kapowarr = data;
   }
 
+  get backissue(): BackIssueSettings[] {
+    return this.data.backissue;
+  }
+
+  set backissue(data: BackIssueSettings[]) {
+    this.data.backissue = data;
+  }
+
   get lazylibrarian(): LazyLibrarianSettings[] {
     return this.data.lazylibrarian;
   }
 
   set lazylibrarian(data: LazyLibrarianSettings[]) {
     this.data.lazylibrarian = data;
+  }
+
+  get discoveryIntegrations(): DiscoveryIntegrationsSettings {
+    return this.data.discoveryIntegrations ?? defaultDiscoveryIntegrations();
+  }
+
+  get softwareAcquisition(): SoftwareAcquisitionSettings {
+    return this.data.softwareAcquisition;
+  }
+
+  set softwareAcquisition(data: SoftwareAcquisitionSettings) {
+    this.data.softwareAcquisition = mergeSettings(
+      this.data.softwareAcquisition,
+      data
+    );
+  }
+
+  get prowlarr(): ProwlarrSettings {
+    return this.data.prowlarr;
+  }
+
+  set prowlarr(data: ProwlarrSettings) {
+    this.data.prowlarr = mergeSettings(this.data.prowlarr, data);
   }
 
   get public(): PublicSettings {
@@ -1084,9 +1236,29 @@ class Settings {
       ),
       musicEnabled: this.data.lidarr.length > 0,
       booksEnabled: this.data.readarr.length > 0,
+      ebookServiceEnabled: this.data.readarr.some(
+        (service) => (service.serviceType ?? 'ebook') === 'ebook'
+      ),
+      audiobookServiceEnabled: this.data.readarr.some(
+        (service) => service.serviceType === 'audiobook'
+      ),
       comicsEnabled:
-        this.data.mylar.length > 0 || this.data.kapowarr.length > 0,
+        this.data.mylar.length > 0 ||
+        this.data.kapowarr.length > 0 ||
+        this.data.backissue.length > 0,
       magazinesEnabled: this.data.lazylibrarian.length > 0,
+      softwareEnabled: Boolean(
+        this.data.softwareAcquisition.questarr.hostname &&
+        this.data.softwareAcquisition.questarr.apiKey
+      ),
+      romarrEnabled: Boolean(
+        this.data.softwareAcquisition.romarr.hostname &&
+        this.data.softwareAcquisition.romarr.apiKey
+      ),
+      enabledMediaCategories: {
+        ...DEFAULT_ENABLED_MEDIA_CATEGORIES,
+        ...this.data.main.enabledMediaCategories,
+      },
       discoverRegion: this.data.main.discoverRegion,
       streamingRegion: this.data.main.streamingRegion,
       originalLanguage: this.data.main.originalLanguage,
@@ -1300,6 +1472,7 @@ class Settings {
       vapidPublic: '',
       main: {
         apiKey: '',
+        downloadPathMappings: [],
         applicationTitle: 'Seerr',
         applicationUrl: '',
         cacheImages: false,
@@ -1312,7 +1485,9 @@ class Settings {
           book: {},
           comic: {},
           magazine: {},
+          software: {},
         },
+        enabledMediaCategories: { ...DEFAULT_ENABLED_MEDIA_CATEGORIES },
         hideAvailable: false,
         hideBlocklisted: false,
         hideRequested: false,
@@ -1352,6 +1527,8 @@ class Settings {
         libraries: [],
         serverId: '',
         apiKey: '',
+        bridgeLoginEnabled: false,
+        bridgeLoginGeneration: 0,
       },
       oidc: {
         providers: [],
@@ -1367,7 +1544,35 @@ class Settings {
       readarr: [],
       mylar: [],
       kapowarr: [],
+      backissue: [],
       lazylibrarian: [],
+      discoveryIntegrations: defaultDiscoveryIntegrations(),
+      softwareAcquisition: {
+        romarr: {
+          hostname: '',
+          port: 6868,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        questarr: {
+          hostname: '',
+          port: 3000,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        emulationCatalogProvider: 'questarr',
+        emulationSystemGroups: {},
+      },
+      prowlarr: {
+        hostname: '',
+        port: 9696,
+        useSsl: false,
+        baseUrl: '',
+        apiKey: '',
+        categoryMappings: defaultProwlarrCategoryMappings(),
+      },
       public: {
         initialized: false,
       },
@@ -1512,6 +1717,9 @@ class Settings {
         'kapowarr-scan': {
           schedule: '0 15 5 * * *',
         },
+        'backissue-scan': {
+          schedule: '0 30 5 * * *',
+        },
         'magazine-scan': {
           schedule: '0 30 5 * * *',
         },
@@ -1519,6 +1727,9 @@ class Settings {
           schedule: '0 0 5 * * *',
         },
         'download-sync': {
+          schedule: '0 * * * * *',
+        },
+        'software-request-reconciliation': {
           schedule: '0 * * * * *',
         },
         'download-recovery': {
@@ -1534,8 +1745,14 @@ class Settings {
         'jellyfin-full-scan': {
           schedule: '0 0 3 * * *',
         },
+        'jellyfin-watch-ahead': {
+          schedule: '*/30 * * * * *',
+        },
         'image-cache-cleanup': {
           schedule: '0 0 5 * * *',
+        },
+        'release-calendar-history': {
+          schedule: '0 0 4 * * *',
         },
         'process-blocklisted-tags': {
           schedule: '0 30 1 */7 * *',

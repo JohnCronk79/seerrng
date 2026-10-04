@@ -12,6 +12,7 @@ import type {
   CardTextVisibility,
   DetailDisclosureMediaType,
   UserPreferredLanguages,
+  UserRequestRootFolders,
   UserSettingsCardTextResponse,
   UserSettingsDetailDisclosureResponse,
   UserSettingsGeneralResponse,
@@ -49,7 +50,13 @@ import { isAuthenticated } from '@server/middleware/auth';
 import { quickConnectSecret } from '@server/routes/auth';
 import { ApiError } from '@server/types/error';
 import { isAvailableLocale } from '@server/types/languages';
+import { validateAdvancedThemeOverrides } from '@server/utils/advancedThemeOverrides';
 import AsyncLock from '@server/utils/asyncLock';
+import {
+  normalizeSeriesDisclosureOrder,
+  parseSeriesDisclosureOrder,
+  type SeriesDisclosureRole,
+} from '@server/utils/detailDisclosureOrder';
 import { normalizeDiscordSnowflake } from '@server/utils/discord';
 import { getHostname } from '@server/utils/getHostname';
 import { normalizeJellyfinGuid } from '@server/utils/jellyfin';
@@ -61,9 +68,11 @@ import {
 import { parsePositiveRouteId } from '@server/utils/routeId';
 import {
   getRateLimitKey,
+  hasAsciiControlCharacters,
   preserveRedactedSecrets,
   redactSecrets,
 } from '@server/utils/security';
+import { parseThemePalette } from '@server/utils/themePreference';
 import {
   parseBoundedString,
   parseOptionalBodyBoolean,
@@ -77,6 +86,104 @@ import { IsNull, Not, Raw, type FindOptionsWhere } from 'typeorm';
 import { canMakePermissionsChange, isUniqueConstraintError } from '.';
 
 const userSettingsRoutes = Router({ mergeParams: true });
+
+userSettingsRoutes.get<
+  { id: string; mediaType: string },
+  SeriesDisclosureRole[]
+>(
+  '/detail-disclosure-order/:mediaType',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (req.params.mediaType !== 'tv')
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    const userId = parsePositiveRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await getRepository(User).findOne({
+            where: { id: userId },
+          });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          return res
+            .status(200)
+            .json(
+              normalizeSeriesDisclosureOrder(
+                user.settings?.detailDisclosureOrder?.tv
+              )
+            );
+        }
+      );
+    } catch (e) {
+      return next({
+        status: e instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message:
+          e instanceof UserMutationActorUnauthorizedError
+            ? 'Access denied.'
+            : e.message,
+      });
+    }
+  }
+);
+userSettingsRoutes.post<
+  { id: string; mediaType: string },
+  SeriesDisclosureRole[],
+  { order?: unknown }
+>(
+  '/detail-disclosure-order/:mediaType',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (req.params.mediaType !== 'tv')
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    const order =
+      req.body && Object.keys(req.body).length === 1
+        ? parseSeriesDisclosureOrder(req.body.order)
+        : null;
+    if (!order)
+      return next({ status: 400, message: 'Invalid disclosure order.' });
+    const userId = parsePositiveRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          // Preferences are exclusively self-owned, including for administrators.
+          if (actor.id !== userId)
+            return next({ status: 403, message: 'Access denied.' });
+          const repo = getRepository(User);
+          const user = await repo.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          user.settings.detailDisclosureOrder = {
+            ...user.settings.detailDisclosureOrder,
+            tv: order,
+          };
+          const saved = await repo.save(user);
+          return res
+            .status(200)
+            .json(
+              normalizeSeriesDisclosureOrder(
+                saved.settings?.detailDisclosureOrder?.tv
+              )
+            );
+        }
+      );
+    } catch (e) {
+      return next({
+        status: e instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message:
+          e instanceof UserMutationActorUnauthorizedError
+            ? 'Access denied.'
+            : e.message,
+      });
+    }
+  }
+);
 
 const updateMediaFilterPin = (
   current: Partial<Record<MediaFilterScope, MediaFilterValue>> | undefined,
@@ -174,6 +281,94 @@ userSettingsRoutes.post<{ id: string; scope: string }>(
     }
   }
 );
+
+userSettingsRoutes.post<{ id: string }>(
+  '/theme',
+  isOwnProfile(),
+  async (req, res, next) => {
+    const palette =
+      req.body && !Array.isArray(req.body) && Object.keys(req.body).length === 1
+        ? parseThemePalette(req.body.palette)
+        : null;
+    if (!palette)
+      return next({ status: 400, message: 'Invalid theme palette.' });
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          user.settings.themePalette = palette;
+          await repository.save(user);
+          return res.status(200).json({ themePalette: palette });
+        },
+        {
+          expectedCredentialVersion:
+            req.session?.userId === req.user!.id
+              ? (req.session.credentialVersion ?? 0)
+              : undefined,
+        }
+      );
+    } catch (error) {
+      return next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save theme preference.',
+      });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ id: string }>(
+  '/advanced-theme',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'overrides') ||
+      !hasOwn(req.body, 'overrides')
+    ) {
+      return next({ status: 400, message: 'Invalid advanced theme settings.' });
+    }
+
+    const validation = validateAdvancedThemeOverrides(req.body.overrides);
+    if ('error' in validation) {
+      return next({ status: 400, message: validation.error });
+    }
+
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+
+    try {
+      const repository = getRepository(User);
+      const user = await repository.findOne({
+        where: { id: userId },
+        relations: { settings: true },
+      });
+      if (!user) return next({ status: 404, message: 'User not found.' });
+
+      if (!user.settings) user.settings = new UserSettings({ user });
+      user.settings.advancedThemeOverrides = validation.value;
+      await repository.save(user);
+
+      return res.status(200).json({
+        advancedThemeOverrides: validation.value,
+      });
+    } catch {
+      return next({
+        status: 500,
+        message: 'Could not save advanced theme settings.',
+      });
+    }
+  }
+);
+
 const MAX_USER_SETTINGS_ID_VALUE = 1_000_000_000;
 const MAX_LINKED_ACCOUNT_TOKEN_LENGTH = 4096;
 const MAX_LINKED_ACCOUNT_USERNAME_LENGTH = 512;
@@ -330,6 +525,7 @@ const serializeScopedDetailDisclosurePins = (
   const legacyPins: UserSettingsDetailDisclosureResponse = {
     details: false,
     ...(mediaType === 'movie' ? { collection: false } : {}),
+    ...(mediaType === 'tv' ? { mediaServer: false, overview: false } : {}),
     cast:
       mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
     crew:
@@ -350,7 +546,9 @@ const serializeScopedDetailDisclosurePins = (
 const parseDetailDisclosurePinsBody = (
   body: unknown,
   includeCollection = false,
-  includeDetails = false
+  includeDetails = false,
+  includeMediaServer = false,
+  includeOverview = false
 ): { value: UserSettingsDetailDisclosureResponse } | { error: string } => {
   const parsedBody = parseUserSettingsBodyObject(body);
 
@@ -364,10 +562,13 @@ const parseDetailDisclosurePinsBody = (
     ...keys,
     ...(includeDetails ? (['details'] as const) : []),
     'advancedOptions',
+    'taskFilters',
     'filters',
     'mediaFilters',
     'sortBy',
     ...(includeCollection ? (['collection'] as const) : []),
+    ...(includeMediaServer ? (['mediaServer'] as const) : []),
+    ...(includeOverview ? (['overview'] as const) : []),
   ];
   for (const key of allowedKeys) {
     if (!hasOwn(parsedBody.value, key)) {
@@ -491,6 +692,44 @@ const parsePreferredLanguages = (
   return { value: parsed };
 };
 
+const MAX_REQUEST_ROOT_FOLDER_SERVICE_ID = 1_000_000_000;
+const requestRootFolderKeyPattern =
+  /^(?:radarr|sonarr|lidarr|readarr|comic-kapowarr):(0|[1-9]\d{0,9})$/;
+const parseRequestRootFolders = (
+  input: unknown
+): { value: UserRequestRootFolders } | { error: string } => {
+  if (input === null || input === undefined) return { value: {} };
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return { error: 'requestRootFolders must be an object.' };
+  }
+
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > 100) {
+    return {
+      error: 'requestRootFolders cannot contain more than 100 entries.',
+    };
+  }
+
+  const value: UserRequestRootFolders = {};
+  for (const [key, rawPath] of entries) {
+    const keyMatch = requestRootFolderKeyPattern.exec(key);
+    if (!keyMatch || Number(keyMatch[1]) > MAX_REQUEST_ROOT_FOLDER_SERVICE_ID) {
+      return { error: 'requestRootFolders contains an invalid service key.' };
+    }
+    if (
+      typeof rawPath !== 'string' ||
+      rawPath.length > 4096 ||
+      rawPath.trim().length === 0 ||
+      hasAsciiControlCharacters(rawPath)
+    ) {
+      return { error: 'requestRootFolders paths must be valid folder paths.' };
+    }
+    value[key] = rawPath;
+  }
+
+  return { value };
+};
+
 const parseGeneralSettingsBody = (
   body: unknown
 ):
@@ -515,16 +754,18 @@ const parseGeneralSettingsBody = (
   ];
   const value: UserSettingsGeneralResponse = {};
 
-  const username = parseBoundedString(bodyObject.username, {
-    fieldName: 'username',
-    maxLength: USER_SETTINGS_LIMITS.username,
-  });
+  if (hasOwn(bodyObject, 'username')) {
+    const username = parseBoundedString(bodyObject.username, {
+      fieldName: 'username',
+      maxLength: USER_SETTINGS_LIMITS.username,
+    });
 
-  if ('error' in username) {
-    return username;
+    if ('error' in username) {
+      return username;
+    }
+
+    value.username = username.value;
   }
-
-  value.username = username.value;
 
   for (const [fieldName, maxLength] of boundedFields) {
     if (fieldName === 'username') {
@@ -584,6 +825,10 @@ const parseGeneralSettingsBody = (
     'bookQuotaDays',
     'comicQuotaLimit',
     'comicQuotaDays',
+    'magazineQuotaLimit',
+    'magazineQuotaDays',
+    'softwareQuotaLimit',
+    'softwareQuotaDays',
   ] as const) {
     const rawValue = bodyObject[fieldName];
     if (!hasOwn(bodyObject, fieldName)) {
@@ -609,6 +854,8 @@ const parseGeneralSettingsBody = (
     'watchlistSyncTv',
     'watchlistSyncMusic',
     'watchlistSyncBooks',
+    'watchlistSyncComics',
+    'watchlistSyncMagazines',
   ] as const) {
     if (!hasOwn(bodyObject, fieldName)) {
       continue;
@@ -630,6 +877,16 @@ const parseGeneralSettingsBody = (
     }
 
     value.cardTextVisibility = parsedCardTextVisibility.value;
+  }
+
+  if (hasOwn(bodyObject, 'requestRootFolders')) {
+    const parsedRequestRootFolders = parseRequestRootFolders(
+      bodyObject.requestRootFolders
+    );
+    if ('error' in parsedRequestRootFolders) {
+      return parsedRequestRootFolders;
+    }
+    value.requestRootFolders = parsedRequestRootFolders.value;
   }
 
   return { value };
@@ -892,6 +1149,40 @@ userSettingsRoutes.get<
   }
 });
 
+userSettingsRoutes.get<
+  { id: string },
+  UserRequestRootFolders | { status: number; message: string }
+>('/request-root-folders', isAuthenticated(), async (req, res, next) => {
+  const userId = parseUserSettingsRouteId(req.params.id);
+  if (!userId) {
+    return res.status(404).json({ status: 404, message: 'User not found.' });
+  }
+
+  const actor = req.user!;
+  if (
+    actor.id !== userId &&
+    !actor.hasPermission(
+      [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+      { type: 'or' }
+    )
+  ) {
+    return res.status(403).json({ status: 403, message: 'Access denied.' });
+  }
+
+  try {
+    const targetUser = await getRepository(User).findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    return res.status(200).json(targetUser.settings?.requestRootFolders ?? {});
+  } catch {
+    return next({ status: 500, message: 'Unable to read request folders.' });
+  }
+});
+
 userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
   '/main',
   isOwnProfileOrAdmin(),
@@ -939,6 +1230,10 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             bookQuotaDays: user.bookQuotaDays,
             comicQuotaLimit: user.comicQuotaLimit,
             comicQuotaDays: user.comicQuotaDays,
+            magazineQuotaLimit: user.magazineQuotaLimit,
+            magazineQuotaDays: user.magazineQuotaDays,
+            softwareQuotaLimit: user.softwareQuotaLimit,
+            softwareQuotaDays: user.softwareQuotaDays,
             globalMovieQuotaDays: defaultQuotas.movie.quotaDays,
             globalMovieQuotaLimit: defaultQuotas.movie.quotaLimit,
             globalTvQuotaDays: defaultQuotas.tv.quotaDays,
@@ -949,11 +1244,18 @@ userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
             globalBookQuotaLimit: defaultQuotas.book.quotaLimit,
             globalComicQuotaDays: defaultQuotas.comic.quotaDays,
             globalComicQuotaLimit: defaultQuotas.comic.quotaLimit,
+            globalMagazineQuotaDays: defaultQuotas.magazine.quotaDays,
+            globalMagazineQuotaLimit: defaultQuotas.magazine.quotaLimit,
+            globalSoftwareQuotaDays: defaultQuotas.software.quotaDays,
+            globalSoftwareQuotaLimit: defaultQuotas.software.quotaLimit,
             watchlistSyncMovies: user.settings?.watchlistSyncMovies,
             watchlistSyncTv: user.settings?.watchlistSyncTv,
             watchlistSyncMusic: user.settings?.watchlistSyncMusic,
             watchlistSyncBooks: user.settings?.watchlistSyncBooks,
+            watchlistSyncComics: user.settings?.watchlistSyncComics,
+            watchlistSyncMagazines: user.settings?.watchlistSyncMagazines,
             cardTextVisibility: serializeCardTextVisibility(user.settings),
+            requestRootFolders: user.settings?.requestRootFolders ?? {},
           });
         }
       );
@@ -1025,7 +1327,9 @@ userSettingsRoutes.post<
             });
           }
 
-          user.username = body.username;
+          if (body.username !== undefined) {
+            user.username = body.username;
+          }
           user.email = nextEmail;
 
           const existingUser = await userRepository.findOne({
@@ -1052,6 +1356,10 @@ userSettingsRoutes.post<
               'bookQuotaLimit',
               'comicQuotaDays',
               'comicQuotaLimit',
+              'magazineQuotaDays',
+              'magazineQuotaLimit',
+              'softwareQuotaDays',
+              'softwareQuotaLimit',
             ] as const) {
               if (hasOwn(body, fieldName)) {
                 Object.assign(user, { [fieldName]: body[fieldName] ?? null });
@@ -1074,6 +1382,8 @@ userSettingsRoutes.post<
             'watchlistSyncTv',
             'watchlistSyncMusic',
             'watchlistSyncBooks',
+            'watchlistSyncComics',
+            'watchlistSyncMagazines',
           ] as const) {
             if (hasOwn(body, fieldName)) {
               Object.assign(user.settings, {
@@ -1099,6 +1409,10 @@ userSettingsRoutes.post<
               user.settings.cardTextVisibilityBook;
           }
 
+          if (hasOwn(body, 'requestRootFolders')) {
+            user.settings.requestRootFolders = body.requestRootFolders ?? {};
+          }
+
           const savedUser = await userRepository.save(user);
 
           return res.status(200).json({
@@ -1113,7 +1427,10 @@ userSettingsRoutes.post<
             watchlistSyncTv: savedUser.settings?.watchlistSyncTv,
             watchlistSyncMusic: savedUser.settings?.watchlistSyncMusic,
             watchlistSyncBooks: savedUser.settings?.watchlistSyncBooks,
+            watchlistSyncComics: savedUser.settings?.watchlistSyncComics,
+            watchlistSyncMagazines: savedUser.settings?.watchlistSyncMagazines,
             cardTextVisibility: serializeCardTextVisibility(savedUser.settings),
+            requestRootFolders: savedUser.settings?.requestRootFolders ?? {},
             email: savedUser.email,
           });
         }
@@ -1201,7 +1518,9 @@ userSettingsRoutes.post<
     const parsedBody = parseDetailDisclosurePinsBody(
       req.body,
       mediaType === 'movie',
-      true
+      true,
+      mediaType === 'tv',
+      mediaType === 'tv'
     );
 
     if (!isDetailDisclosureMediaType(mediaType)) {

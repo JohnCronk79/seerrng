@@ -492,24 +492,27 @@ const UserProfile = () => {
         (!requests || !!requests.results.length) &&
         !requestError && (
           <>
-            <div className="slider-header">
-              <Link
-                href={
-                  currentHasPermission(
-                    [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
-                    { type: 'or' }
-                  )
-                    ? `/users/${user?.id}/requests?filter=all`
-                    : '/requests'
-                }
-                className="slider-title"
-              >
-                <span>{intl.formatMessage(messages.recentrequests)}</span>
-                <ArrowRightCircleIcon />
-              </Link>
-            </div>
             <Slider
+              heading={
+                <>
+                  <Link
+                    href={
+                      currentHasPermission(
+                        [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+                        { type: 'or' }
+                      )
+                        ? `/users/${user?.id}/requests?filter=all`
+                        : '/requests'
+                    }
+                    className="page-heading"
+                  >
+                    <span>{intl.formatMessage(messages.recentrequests)}</span>
+                    <ArrowRightCircleIcon />
+                  </Link>
+                </>
+              }
               sliderKey="requests"
+              disableItemContentVisibility
               isLoading={!requests}
               items={(requests?.results ?? []).map((request) => (
                 <RequestCard
@@ -533,23 +536,26 @@ const UserProfile = () => {
             (user.settings?.watchlistSyncMovies ||
               user.settings?.watchlistSyncTv ||
               user.settings?.watchlistSyncMusic ||
-              user.settings?.watchlistSyncBooks))) &&
+              user.settings?.watchlistSyncBooks ||
+              user.settings?.watchlistSyncComics))) &&
         !watchlistError && (
           <>
-            <div className="slider-header">
-              <Link
-                href={
-                  user.id === currentUser?.id
-                    ? '/profile/watchlist'
-                    : `/users/${user.id}/watchlist`
-                }
-                className="slider-title"
-              >
-                <span>{watchlistSliderTitle}</span>
-                <ArrowRightCircleIcon />
-              </Link>
-            </div>
             <Slider
+              heading={
+                <>
+                  <Link
+                    href={
+                      user.id === currentUser?.id
+                        ? '/profile/watchlist'
+                        : `/users/${user.id}/watchlist`
+                    }
+                    className="page-heading"
+                  >
+                    <span>{watchlistSliderTitle}</span>
+                    <ArrowRightCircleIcon />
+                  </Link>
+                </>
+              }
               sliderKey="watchlist"
               isLoading={!watchlistItems}
               isEmpty={!!watchlistItems && watchlistItems.results.length === 0}
@@ -570,11 +576,19 @@ const UserProfile = () => {
                       mediaType="book"
                       isAddedToWatchlist={true}
                     />
+                  ) : item.mediaType === 'comic' && item.externalId ? (
+                    <TitleCard
+                      id={item.externalId}
+                      title={item.title}
+                      mediaType="comic"
+                      isAddedToWatchlist={true}
+                    />
                   ) : item.tmdbId ? (
                     <TmdbTitleCard
                       id={item.tmdbId}
                       tmdbId={item.tmdbId}
                       type={item.mediaType === 'tv' ? 'tv' : 'movie'}
+                      title={item.title}
                     />
                   ) : null}
                 </div>
@@ -588,12 +602,14 @@ const UserProfile = () => {
         (!watchData || !!watchData.recentlyWatched?.length) &&
         !watchDataError && (
           <>
-            <div className="slider-header">
-              <div className="slider-title">
-                <span>{intl.formatMessage(messages.recentlywatched)}</span>
-              </div>
-            </div>
             <Slider
+              heading={
+                <>
+                  <div className="page-heading">
+                    <span>{intl.formatMessage(messages.recentlywatched)}</span>
+                  </div>
+                </>
+              }
               sliderKey="media"
               isLoading={!watchData}
               items={watchData?.recentlyWatched
@@ -608,6 +624,10 @@ const UserProfile = () => {
                     tmdbId={item.tmdbId}
                     tvdbId={item.tvdbId}
                     type={item.mediaType === 'tv' ? 'tv' : 'movie'}
+                    title={item.searchMetadata?.title ?? undefined}
+                    posterPath={item.searchMetadata?.posterPath ?? undefined}
+                    summary={item.searchMetadata?.overview ?? undefined}
+                    year={item.searchMetadata?.releaseDate?.slice(0, 4)}
                   />
                 ))}
             />

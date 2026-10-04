@@ -22,6 +22,8 @@ export interface PlexLibraryItem {
   parentRatingKey?: string;
   grandparentRatingKey?: string;
   title: string;
+  year?: number;
+  viewOffset?: number;
   parentTitle?: string;
   guid: string;
   parentGuid?: string;
@@ -32,7 +34,23 @@ export interface PlexLibraryItem {
     id: string;
   }[];
   type: 'movie' | 'show' | 'season' | 'episode' | 'artist' | 'album' | 'track';
+  leafCount?: number;
+  viewedLeafCount?: number;
+  viewCount?: number;
   Media: Media[];
+}
+
+export interface PlexPlaybackSession {
+  ratingKey: string;
+  grandparentRatingKey?: string;
+  type: 'episode';
+  index: number;
+  parentIndex: number;
+  viewOffset: number;
+  duration: number;
+  userId?: string;
+  username?: string;
+  state?: string;
 }
 
 export interface PlexLibrary {
@@ -280,6 +298,8 @@ export const sanitizePlexLibraryItem = (
     grandparentRatingKey:
       boundedPlexText(value.grandparentRatingKey, 128) || undefined,
     title: boundedPlexText(value.title, 512),
+    year: plexInteger(value.year) || undefined,
+    viewOffset: plexInteger(value.viewOffset),
     parentTitle: boundedPlexText(value.parentTitle, 512) || undefined,
     guid: boundedPlexText(value.guid, 512),
     parentGuid: boundedPlexText(value.parentGuid, 512) || undefined,
@@ -288,12 +308,56 @@ export const sanitizePlexLibraryItem = (
     updatedAt: plexInteger(value.updatedAt),
     Guid: sanitizePlexGuids(value.Guid),
     type: value.type as PlexLibraryItem['type'],
+    leafCount: plexInteger(value.leafCount),
+    viewedLeafCount: plexInteger(value.viewedLeafCount),
+    viewCount: plexInteger(value.viewCount),
     Media: (Array.isArray(value.Media) ? value.Media : [])
       .slice(0, MAX_PLEX_MEDIA_VARIANTS)
       .flatMap((media) => {
         const normalized = sanitizePlexMedia(media);
         return normalized ? [normalized] : [];
       }),
+  };
+};
+
+export const sanitizePlexPlaybackSession = (
+  value: unknown
+): PlexPlaybackSession | undefined => {
+  if (!isRecord(value) || value.type !== 'episode') return undefined;
+
+  const ratingKey = boundedPlexText(value.ratingKey, 128);
+  const user = isRecord(value.User) ? value.User : undefined;
+  const player = isRecord(value.Player) ? value.Player : undefined;
+  const index = plexInteger(value.index);
+  const parentIndex = plexInteger(value.parentIndex);
+  const viewOffset = plexInteger(value.viewOffset);
+  const duration = plexInteger(value.duration);
+  if (
+    !ratingKey ||
+    !Number.isSafeInteger(index) ||
+    index < 0 ||
+    !Number.isSafeInteger(parentIndex) ||
+    parentIndex < 0 ||
+    !Number.isSafeInteger(viewOffset) ||
+    viewOffset < 0 ||
+    !Number.isSafeInteger(duration) ||
+    duration <= 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    ratingKey,
+    grandparentRatingKey:
+      boundedPlexText(value.grandparentRatingKey, 128) || undefined,
+    type: 'episode',
+    index,
+    parentIndex,
+    viewOffset,
+    duration,
+    userId: boundedPlexText(user?.id, 128) || undefined,
+    username: boundedPlexText(user?.title, 512) || undefined,
+    state: boundedPlexText(player?.state, 64) || undefined,
   };
 };
 
@@ -450,6 +514,25 @@ class PlexAPI extends ExternalAPI {
       return isLoopback
         ? { ...client, connectionUri: this.configuredServerUrl }
         : client;
+    });
+  }
+
+  public async getPlaybackSessions(): Promise<PlexPlaybackSession[]> {
+    const response = await this.get<unknown>('/status/sessions', undefined, 0);
+    const mediaContainer =
+      isRecord(response) && isRecord(response.MediaContainer)
+        ? response.MediaContainer
+        : {};
+    const sessions = [
+      ...(Array.isArray(mediaContainer.Metadata)
+        ? mediaContainer.Metadata
+        : []),
+      ...(Array.isArray(mediaContainer.Video) ? mediaContainer.Video : []),
+    ];
+
+    return sessions.slice(0, 100).flatMap((session) => {
+      const normalized = sanitizePlexPlaybackSession(session);
+      return normalized ? [normalized] : [];
     });
   }
 
@@ -822,10 +905,12 @@ class PlexAPI extends ExternalAPI {
       offset = 0,
       size = 50,
       libraryType,
+      isWatched,
     }: {
       offset?: number;
       size?: number;
       libraryType?: 'show' | 'movie' | 'music' | 'book';
+      isWatched?: boolean;
     } = {}
   ): Promise<{ totalSize: number; items: PlexLibraryItem[] }> {
     const safeOffset =
@@ -843,6 +928,10 @@ class PlexAPI extends ExternalAPI {
     const params: Record<string, number> = { includeGuids: 1 };
     if (libraryType === 'music' || libraryType === 'book') {
       params.type = 9;
+    }
+    if (isWatched !== undefined) {
+      // Plex interprets unwatched=0 as watched and unwatched=1 as unplayed.
+      params.unwatched = isWatched ? 0 : 1;
     }
     const response = await this.get<unknown>(
       `/library/sections/${encodeURIComponent(boundedPlexText(id, 128))}/all`,

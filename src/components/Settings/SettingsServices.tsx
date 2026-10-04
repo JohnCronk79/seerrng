@@ -9,6 +9,8 @@ import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import OverrideRuleTiles from '@app/components/Settings/OverrideRule/OverrideRuleTiles';
 import { useSettingsPageAction } from '@app/components/Settings/SettingsLayout';
+import SettingsProwlarr from '@app/components/Settings/SettingsProwlarr';
+import SettingsSoftwareAcquisition from '@app/components/Settings/SettingsSoftwareAcquisition';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { getSafeHref } from '@app/utils/safeUrl';
@@ -24,6 +26,7 @@ import {
 import type OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
 import type {
+  BackIssueSettings,
   KapowarrSettings,
   LazyLibrarianSettings,
   LidarrSettings,
@@ -40,6 +43,9 @@ import useSWR, { mutate } from 'swr';
 
 const KapowarrModal = dynamic(
   () => import('@app/components/Settings/KapowarrModal')
+);
+const BackIssueModal = dynamic(
+  () => import('@app/components/Settings/BackIssueModal')
 );
 const LazyLibrarianModal = dynamic(
   () => import('@app/components/Settings/LazyLibrarianModal')
@@ -72,7 +78,17 @@ const messages = defineMessages('components.Settings', {
   musicServiceSettingsDescription:
     'Configure your {serverType} server(s) below. You can connect multiple {serverType} servers, but only one of them can be marked as default. Administrators are able to override the server used to process new requests prior to approval.',
   bookServiceSettingsDescription:
-    'Configure your {serverType} server(s) below. You can connect multiple {serverType} servers, with one default for each configured book format. Administrators are able to override the server used to process new requests prior to approval.',
+    'Add one connection for Books and one for Audiobooks to enable both request formats. Both connections can point to the same {serverType} instance; select a different Book Format on each and mark one default for each format. Administrators can override the server before approval.',
+  bookFreshSetup:
+    'Recommended for a new setup: run one BookshelfNG instance for both formats. Add the Book connection first, then use the same instance for Audiobooks.',
+  bookAddMissingFormat:
+    'This Bookshelf can handle both formats. Add the missing {format} connection using the same instance, or add a different server.',
+  bookAddOtherFormat: 'Use this instance for {format} requests',
+  bookSharedSetup:
+    'These two SeerrNG connections route requests to one BookshelfNG instance and share its library.',
+  bookSplitUpgrade:
+    'Your Book and Audiobook connections use different addresses. Upgrades keep them as configured. If they use separate databases, migrate the audiobook library before pointing both connections to one BookshelfNG instance.',
+  bookCombineGuide: 'Bookshelf deployment options',
   deleteserverconfirm: 'Are you sure you want to delete this server?',
   ssl: 'SSL',
   default: 'Default',
@@ -88,6 +104,7 @@ const messages = defineMessages('components.Settings', {
   addreadarr: 'Add Bookshelf Server',
   addmylar: 'Add Mylar Server',
   addkapowarr: 'Add Kapowarr Server',
+  addbackissue: 'Add BackIssue Server',
   addlazylibrarian: 'Add LazyLibrarian Server',
   lazylibrariansettings: 'LazyLibrarian Settings',
   magazineServiceSettingsDescription:
@@ -95,8 +112,9 @@ const messages = defineMessages('components.Settings', {
   mediaTypeMagazine: 'magazine',
   mylarsettings: 'Mylar Settings',
   kapowarrsettings: 'Kapowarr Settings',
+  backissuesettings: 'BackIssue Settings',
   comicServiceSettingsDescription:
-    'Configure your {serverType} server(s) below. Mylar and Kapowarr instances share one pool of default selection: only one comics server across both can be marked as default.',
+    'Configure your {serverType} server(s) below. Mylar, Kapowarr, and BackIssue share one default: choose one comics destination for requests without a server selection.',
   mediaTypeComic: 'comic',
   noDefaultServer:
     'At least one {serverType} server must be marked as default in order for {mediaType} requests to be processed.',
@@ -330,6 +348,11 @@ const SettingsServices = () => {
     mutate: revalidateKapowarr,
   } = useSWR<KapowarrSettings[]>('/api/v1/settings/kapowarr');
   const {
+    data: backissueData,
+    error: backissueError,
+    mutate: revalidateBackIssue,
+  } = useSWR<BackIssueSettings[]>('/api/v1/settings/backissue');
+  const {
     data: lazyLibrarianData,
     error: lazyLibrarianError,
     mutate: revalidateLazyLibrarian,
@@ -360,6 +383,8 @@ const SettingsServices = () => {
   const [editReadarrModal, setEditReadarrModal] = useState<{
     open: boolean;
     readarr: ReadarrSettings | null;
+    copyFrom?: ReadarrSettings | null;
+    copyFormat?: 'ebook' | 'audiobook';
   }>({
     open: false,
     readarr: null,
@@ -378,6 +403,10 @@ const SettingsServices = () => {
     open: false,
     kapowarr: null,
   });
+  const [editBackIssueModal, setEditBackIssueModal] = useState<{
+    open: boolean;
+    backissue: BackIssueSettings | null;
+  }>({ open: false, backissue: null });
   const [editLazyLibrarianModal, setEditLazyLibrarianModal] = useState<{
     open: boolean;
     lazylibrarian: LazyLibrarianSettings | null;
@@ -394,6 +423,7 @@ const SettingsServices = () => {
       | 'readarr'
       | 'mylar'
       | 'kapowarr'
+      | 'backissue'
       | 'lazylibrarian';
     serverId: number | null;
   }>({
@@ -436,6 +466,30 @@ const SettingsServices = () => {
   const hasDefaultReadarrAudiobook = readarrData?.some(
     (readarr) => readarr.serviceType === 'audiobook' && readarr.isDefault
   );
+  const missingBookFormat =
+    hasReadarrEbook && !hasReadarrAudiobook
+      ? 'audiobook'
+      : hasReadarrAudiobook && !hasReadarrEbook
+        ? 'ebook'
+        : undefined;
+  const bookConnectionToCopy =
+    readarrData?.find((readarr) => readarr.isDefault) ?? readarrData?.[0];
+  const ebookConnections =
+    readarrData?.filter(
+      (readarr) => (readarr.serviceType ?? 'ebook') === 'ebook'
+    ) ?? [];
+  const audiobookConnections =
+    readarrData?.filter((readarr) => readarr.serviceType === 'audiobook') ?? [];
+  const hasSharedBookshelf = ebookConnections.some((ebook) =>
+    audiobookConnections.some(
+      (audiobook) =>
+        ebook.hostname.trim().toLowerCase() ===
+          audiobook.hostname.trim().toLowerCase() &&
+        ebook.port === audiobook.port &&
+        ebook.useSsl === audiobook.useSsl &&
+        (ebook.baseUrl ?? '') === (audiobook.baseUrl ?? '')
+    )
+  );
 
   const deleteServer = async () => {
     await axios.delete(
@@ -448,6 +502,7 @@ const SettingsServices = () => {
     revalidateReadarr();
     revalidateMylar();
     revalidateKapowarr();
+    revalidateBackIssue();
     revalidateLazyLibrarian();
     mutate('/api/v1/settings/public');
   };
@@ -512,6 +567,8 @@ const SettingsServices = () => {
       {editReadarrModal.open && (
         <ReadarrModal
           readarr={editReadarrModal.readarr}
+          copyFrom={editReadarrModal.copyFrom}
+          copyFormat={editReadarrModal.copyFormat}
           onClose={() => setEditReadarrModal({ open: false, readarr: null })}
           onSave={() => {
             revalidateReadarr();
@@ -527,6 +584,7 @@ const SettingsServices = () => {
           onSave={() => {
             revalidateMylar();
             revalidateKapowarr();
+            revalidateBackIssue();
             mutate('/api/v1/settings/public');
             setEditMylarModal({ open: false, mylar: null });
           }}
@@ -539,8 +597,24 @@ const SettingsServices = () => {
           onSave={() => {
             revalidateKapowarr();
             revalidateMylar();
+            revalidateBackIssue();
             mutate('/api/v1/settings/public');
             setEditKapowarrModal({ open: false, kapowarr: null });
+          }}
+        />
+      )}
+      {editBackIssueModal.open && (
+        <BackIssueModal
+          backissue={editBackIssueModal.backissue}
+          onClose={() =>
+            setEditBackIssueModal({ open: false, backissue: null })
+          }
+          onSave={() => {
+            revalidateBackIssue();
+            revalidateMylar();
+            revalidateKapowarr();
+            mutate('/api/v1/settings/public');
+            setEditBackIssueModal({ open: false, backissue: null });
           }}
         />
       )}
@@ -557,16 +631,7 @@ const SettingsServices = () => {
           }}
         />
       )}
-      <Transition
-        as={Fragment}
-        show={deleteServerModal.open}
-        enter="transition-opacity ease-in-out duration-300"
-        enterFrom="opacity-0"
-        enterTo="opacity-100"
-        leave="transition-opacity ease-in-out duration-300"
-        leaveFrom="opacity-100"
-        leaveTo="opacity-0"
-      >
+      <Transition as={Fragment} show={deleteServerModal.open}>
         <Modal
           okText={intl.formatMessage(globalMessages.delete)}
           okButtonType="danger"
@@ -587,7 +652,9 @@ const SettingsServices = () => {
                   ? 'Sonarr'
                   : deleteServerModal.type === 'lidarr'
                     ? 'Lidarr'
-                    : 'Bookshelf',
+                    : deleteServerModal.type === 'backissue'
+                      ? 'BackIssue'
+                      : 'Bookshelf',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -838,6 +905,63 @@ const SettingsServices = () => {
         {!readarrData && !readarrError && <LoadingSpinner />}
         {readarrData && !readarrError && (
           <>
+            {readarrData.length === 0 && (
+              <p className="mb-4 text-sm text-gray-300">
+                {intl.formatMessage(messages.bookFreshSetup)}
+              </p>
+            )}
+            {missingBookFormat && bookConnectionToCopy && (
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <p className="text-sm text-gray-300">
+                  {intl.formatMessage(messages.bookAddMissingFormat, {
+                    format: intl.formatMessage(
+                      missingBookFormat === 'ebook'
+                        ? messages.ebook
+                        : messages.audiobook
+                    ),
+                  })}
+                </p>
+                <Button
+                  buttonType="primary"
+                  buttonSize="sm"
+                  onClick={() =>
+                    setEditReadarrModal({
+                      open: true,
+                      readarr: null,
+                      copyFrom: bookConnectionToCopy,
+                      copyFormat: missingBookFormat,
+                    })
+                  }
+                >
+                  {intl.formatMessage(messages.bookAddOtherFormat, {
+                    format: intl.formatMessage(
+                      missingBookFormat === 'ebook'
+                        ? messages.ebook
+                        : messages.audiobook
+                    ),
+                  })}
+                </Button>
+              </div>
+            )}
+            {hasReadarrEbook && hasReadarrAudiobook && (
+              <p className="mb-4 text-sm text-gray-300">
+                {intl.formatMessage(
+                  hasSharedBookshelf
+                    ? messages.bookSharedSetup
+                    : messages.bookSplitUpgrade
+                )}{' '}
+                {!hasSharedBookshelf && (
+                  <a
+                    className="text-primary-400 hover:underline"
+                    href="https://github.com/snapetech/seerrng/blob/main/docs/using-seerr/bookshelf-backend.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {intl.formatMessage(messages.bookCombineGuide)}
+                  </a>
+                )}
+              </p>
+            )}
             {readarrData.length > 0 && (
               <>
                 {hasReadarrEbook && !hasDefaultReadarrEbook && (
@@ -919,20 +1043,24 @@ const SettingsServices = () => {
           })}
         </p>
       </div>
+      {mylarData &&
+        kapowarrData &&
+        backissueData &&
+        mylarData.length + kapowarrData.length + backissueData.length > 0 &&
+        !mylarData.some((mylar) => mylar.isDefault) &&
+        !kapowarrData.some((kapowarr) => kapowarr.isDefault) &&
+        !backissueData.some((backissue) => backissue.isDefault) && (
+          <Alert
+            title={intl.formatMessage(messages.noDefaultServer, {
+              serverType: 'Mylar, Kapowarr, or BackIssue',
+              mediaType: intl.formatMessage(messages.mediaTypeComic),
+            })}
+          />
+        )}
       <div className="app-card-sub section settings-service-section">
         {!mylarData && !mylarError && <LoadingSpinner />}
         {mylarData && !mylarError && (
           <>
-            {mylarData.length > 0 &&
-              !mylarData.some((mylar) => mylar.isDefault) &&
-              !kapowarrData?.some((kapowarr) => kapowarr.isDefault) && (
-                <Alert
-                  title={intl.formatMessage(messages.noDefaultServer, {
-                    serverType: 'Mylar/Kapowarr',
-                    mediaType: intl.formatMessage(messages.mediaTypeComic),
-                  })}
-                />
-              )}
             <ul className="settings-service-grid">
               {mylarData.map((mylar) => (
                 <ServerInstance
@@ -1029,6 +1157,57 @@ const SettingsServices = () => {
       </div>
       <div className="mt-10 mb-6">
         <h3 className="heading">
+          {intl.formatMessage(messages.backissuesettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.comicServiceSettingsDescription, {
+            serverType: 'BackIssue',
+          })}
+        </p>
+      </div>
+      <div className="app-card-sub section settings-service-section">
+        {!backissueData && !backissueError && <LoadingSpinner />}
+        {backissueData && !backissueError && (
+          <ul className="settings-service-grid">
+            {backissueData.map((backissue) => (
+              <ServerInstance
+                key={`backissue-config-${backissue.id}`}
+                name={backissue.name}
+                hostname={backissue.hostname}
+                port={backissue.port}
+                isSSL={backissue.useSsl}
+                isComics={true}
+                isDefault={backissue.isDefault}
+                externalUrl={backissue.externalUrl}
+                onEdit={() => setEditBackIssueModal({ open: true, backissue })}
+                onDelete={() =>
+                  setDeleteServerModal({
+                    open: true,
+                    serverId: backissue.id,
+                    type: 'backissue',
+                  })
+                }
+              />
+            ))}
+            <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+              <div className="flex h-full w-full items-center justify-center">
+                <Button
+                  buttonType="success"
+                  buttonSize="standard"
+                  onClick={() =>
+                    setEditBackIssueModal({ open: true, backissue: null })
+                  }
+                >
+                  <PlusIcon />
+                  <span>{intl.formatMessage(messages.addbackissue)}</span>
+                </Button>
+              </div>
+            </li>
+          </ul>
+        )}
+      </div>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
           {intl.formatMessage(messages.lazylibrariansettings)}
         </h3>
         <p className="description">
@@ -1120,6 +1299,8 @@ const SettingsServices = () => {
           )}
         </ul>
       </div>
+      <SettingsProwlarr />
+      <SettingsSoftwareAcquisition />
       {overrideRuleModal.open &&
         radarrData &&
         sonarrData &&

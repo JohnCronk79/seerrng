@@ -68,6 +68,17 @@ install or manage Lidarr, Bookshelf, Readarr, Sonarr, Radarr, Plex, Jellyfin, or
 Emby. Those services remain optional external integrations configured from
 SeerrNG after installation.
 
+The Windows Chocolatey package installs the x64 release as the `SeerrNG`
+service and installs Node.js 24 and NSSM as dependencies. It stores the
+database, settings, and logs under `%ProgramData%\SeerrNG\config`; package
+removal preserves this directory. The release workflow submits each stable
+package to Chocolatey Community Repository moderation and requires the
+`CHOCOLATEY_API_KEY` repository secret. This is a required release gate; set
+the secret with `gh secret set CHOCOLATEY_API_KEY --repo snapetech/seerrng`.
+Use the **Publish Chocolatey** workflow to submit or retry a stable tag created
+from a commit that includes `packaging/chocolatey` and its Windows release
+archive.
+
 ## Live Test Deployment
 
 `request.snape.tech` is not connected to a developer's local checkout or local
@@ -181,3 +192,16 @@ For package smoke tests against a non-default PPA:
 ```bash
 PPA=ppa:keefshape/seerrng packaging/smoke/package-smoke seerrng ppa v3.2.7 --arch amd64
 ```
+
+The PPA workflow uses the repository's existing `GPG_PRIVATE_KEY` to sign the
+source upload and `LAUNCHPAD_PPA` to select the destination. A successful
+`dput` is source transfer only, so the workflow reads Launchpad's public API
+until the exact source publication and Jammy/Noble `seerrng` binaries are
+Published. No Launchpad OAuth secret is required.
+
+The workflow retries only the classified source-publication race, with at most
+two signed uploads per Ubuntu series. A long-running nonterminal build or a
+missing source-publication record is not by itself evidence that an upload
+failed, so the workflow keeps waiting until its monitoring timeout instead of
+creating a duplicate source version. If that timeout expires, the package
+channel stays red and points to the Launchpad logs for operator review.

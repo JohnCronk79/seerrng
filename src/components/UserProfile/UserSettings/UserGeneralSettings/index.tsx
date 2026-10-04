@@ -5,6 +5,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import LanguageSelector from '@app/components/LanguageSelector';
 import QuotaSelector from '@app/components/QuotaSelector';
 import RegionSelector from '@app/components/RegionSelector';
+import RequestRootFolderSettings from '@app/components/UserProfile/UserSettings/UserGeneralSettings/RequestRootFolderSettings';
 import { availableLanguages } from '@app/context/LanguageContext';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
@@ -63,6 +64,8 @@ const messages = defineMessages(
     musicrequestlimit: 'Music Request Limit',
     bookrequestlimit: 'Book Request Limit',
     comicrequestlimit: 'Comic Request Limit',
+    magazinerequestlimit: 'Magazine Request Limit',
+    softwarerequestlimit: 'Software Request Limit',
     enableOverride: 'Override Global Limit',
     applanguage: 'Display Language',
     languageDefault: 'Default ({language})',
@@ -89,6 +92,12 @@ const messages = defineMessages(
     bookwatchlistsync: 'Auto-Request Books',
     bookwatchlistsynctip:
       'Automatically request books added to SeerrNG book watchlists when a supported book watchlist source is available.',
+    comicwatchlistsync: 'Auto-Request Comics',
+    comicwatchlistsynctip:
+      'Automatically request comics added to your SeerrNG comic watchlist.',
+    magazinewatchlistsync: 'Auto-Request Magazines',
+    magazinewatchlistsynctip:
+      'Automatically request magazines added to your SeerrNG magazine watchlist.',
     cardTextVisibility: 'Card Titles',
     cardTextVisibilityTip:
       'Choose when each media type shows title text on poster cards.',
@@ -110,6 +119,8 @@ const UserGeneralSettings = () => {
   const [musicQuotaEnabled, setMusicQuotaEnabled] = useState(false);
   const [bookQuotaEnabled, setBookQuotaEnabled] = useState(false);
   const [comicQuotaEnabled, setComicQuotaEnabled] = useState(false);
+  const [magazineQuotaEnabled, setMagazineQuotaEnabled] = useState(false);
+  const [softwareQuotaEnabled, setSoftwareQuotaEnabled] = useState(false);
   const router = useRouter();
   const userId = getPositiveQueryParamNumber(router.query.userId);
   const {
@@ -185,6 +196,14 @@ const UserGeneralSettings = () => {
     );
     setComicQuotaEnabled(
       data?.comicQuotaLimit != undefined && data?.comicQuotaDays != undefined
+    );
+    setMagazineQuotaEnabled(
+      data?.magazineQuotaLimit != undefined &&
+        data?.magazineQuotaDays != undefined
+    );
+    setSoftwareQuotaEnabled(
+      data?.softwareQuotaLimit != undefined &&
+        data?.softwareQuotaDays != undefined
     );
   }, [data]);
 
@@ -265,23 +284,29 @@ const UserGeneralSettings = () => {
           bookQuotaDays: data?.bookQuotaDays,
           comicQuotaLimit: data?.comicQuotaLimit,
           comicQuotaDays: data?.comicQuotaDays,
+          magazineQuotaLimit: data?.magazineQuotaLimit,
+          magazineQuotaDays: data?.magazineQuotaDays,
+          softwareQuotaLimit: data?.softwareQuotaLimit,
+          softwareQuotaDays: data?.softwareQuotaDays,
           watchlistSyncMovies: data?.watchlistSyncMovies,
           watchlistSyncTv: data?.watchlistSyncTv,
           watchlistSyncMusic: data?.watchlistSyncMusic,
           watchlistSyncBooks: data?.watchlistSyncBooks,
+          watchlistSyncComics: data?.watchlistSyncComics,
+          watchlistSyncMagazines: data?.watchlistSyncMagazines,
           cardTextVisibilityMovie: data?.cardTextVisibility?.movie ?? 'hover',
           cardTextVisibilityTv: data?.cardTextVisibility?.tv ?? 'hover',
           cardTextVisibilityAlbum: data?.cardTextVisibility?.album ?? 'always',
           cardTextVisibilityBook: data?.cardTextVisibility?.book ?? 'always',
+          requestRootFolders: data?.requestRootFolders ?? {},
         }}
         validationSchema={UserGeneralSettingsSchema}
         enableReinitialize
         onSubmit={async (values) => {
           try {
             await axios.post(`/api/v1/user/${user?.id}/settings/main`, {
-              username: values.displayName,
-              email:
-                values.email || user?.jellyfinUsername || user?.plexUsername,
+              username: values.displayName?.trim() || undefined,
+              email: values.email || undefined,
               locale: values.locale,
               preferredLanguages: {
                 all: values.preferredLanguageAll || null,
@@ -329,16 +354,31 @@ const UserGeneralSettings = () => {
                 ? values.comicQuotaLimit
                 : null,
               comicQuotaDays: comicQuotaEnabled ? values.comicQuotaDays : null,
+              magazineQuotaLimit: magazineQuotaEnabled
+                ? values.magazineQuotaLimit
+                : null,
+              magazineQuotaDays: magazineQuotaEnabled
+                ? values.magazineQuotaDays
+                : null,
+              softwareQuotaLimit: softwareQuotaEnabled
+                ? values.softwareQuotaLimit
+                : null,
+              softwareQuotaDays: softwareQuotaEnabled
+                ? values.softwareQuotaDays
+                : null,
               watchlistSyncMovies: values.watchlistSyncMovies,
               watchlistSyncTv: values.watchlistSyncTv,
               watchlistSyncMusic: values.watchlistSyncMusic,
               watchlistSyncBooks: values.watchlistSyncBooks,
+              watchlistSyncComics: values.watchlistSyncComics,
+              watchlistSyncMagazines: values.watchlistSyncMagazines,
               cardTextVisibility: {
                 movie: values.cardTextVisibilityMovie,
                 tv: values.cardTextVisibilityTv,
                 album: values.cardTextVisibilityAlbum,
                 book: values.cardTextVisibilityBook,
               },
+              requestRootFolders: values.requestRootFolders,
             });
 
             if (currentUser?.id === user?.id && setLocale) {
@@ -844,6 +884,90 @@ const UserGeneralSettings = () => {
                         </div>
                       </div>
                     </div>
+                    <div className="form-row">
+                      <div className="text-label">
+                        <span>
+                          {intl.formatMessage(messages.magazinerequestlimit)}
+                        </span>
+                      </div>
+                      <div className="form-input-area">
+                        <div className="flex flex-col">
+                          <div className="mb-4 flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={magazineQuotaEnabled}
+                              onChange={() =>
+                                setMagazineQuotaEnabled((enabled) => !enabled)
+                              }
+                            />
+                            <span className="ml-2 text-gray-300">
+                              {intl.formatMessage(messages.enableOverride)}
+                            </span>
+                          </div>
+                          <QuotaSelector
+                            isDisabled={!magazineQuotaEnabled}
+                            dayFieldName="magazineQuotaDays"
+                            limitFieldName="magazineQuotaLimit"
+                            mediaType="magazine"
+                            onChange={setFieldValue}
+                            defaultDays={values.magazineQuotaDays}
+                            defaultLimit={values.magazineQuotaLimit}
+                            dayOverride={
+                              !magazineQuotaEnabled
+                                ? data?.globalMagazineQuotaDays
+                                : undefined
+                            }
+                            limitOverride={
+                              !magazineQuotaEnabled
+                                ? data?.globalMagazineQuotaLimit
+                                : undefined
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="text-label">
+                        <span>
+                          {intl.formatMessage(messages.softwarerequestlimit)}
+                        </span>
+                      </div>
+                      <div className="form-input-area">
+                        <div className="flex flex-col">
+                          <div className="mb-4 flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={softwareQuotaEnabled}
+                              onChange={() =>
+                                setSoftwareQuotaEnabled((enabled) => !enabled)
+                              }
+                            />
+                            <span className="ml-2 text-gray-300">
+                              {intl.formatMessage(messages.enableOverride)}
+                            </span>
+                          </div>
+                          <QuotaSelector
+                            isDisabled={!softwareQuotaEnabled}
+                            dayFieldName="softwareQuotaDays"
+                            limitFieldName="softwareQuotaLimit"
+                            mediaType="software"
+                            onChange={setFieldValue}
+                            defaultDays={values.softwareQuotaDays}
+                            defaultLimit={values.softwareQuotaLimit}
+                            dayOverride={
+                              !softwareQuotaEnabled
+                                ? data?.globalSoftwareQuotaDays
+                                : undefined
+                            }
+                            limitOverride={
+                              !softwareQuotaEnabled
+                                ? data?.globalSoftwareQuotaLimit
+                                : undefined
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </>
                 )}
               {hasPermission(
@@ -1001,6 +1125,68 @@ const UserGeneralSettings = () => {
                   </div>
                 </div>
               )}
+              {hasPermission(
+                [Permission.AUTO_REQUEST, Permission.AUTO_REQUEST_COMIC],
+                { type: 'or' }
+              ) && (
+                <div className="form-row">
+                  <label
+                    htmlFor="watchlistSyncComics"
+                    className="checkbox-label"
+                  >
+                    <span>
+                      {intl.formatMessage(messages.comicwatchlistsync)}
+                    </span>
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.comicwatchlistsynctip)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      type="checkbox"
+                      id="watchlistSyncComics"
+                      name="watchlistSyncComics"
+                      onChange={() => {
+                        setFieldValue(
+                          'watchlistSyncComics',
+                          !values.watchlistSyncComics
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+              {hasPermission(
+                [Permission.AUTO_REQUEST, Permission.AUTO_REQUEST_MAGAZINE],
+                { type: 'or' }
+              ) && (
+                <div className="form-row">
+                  <label
+                    htmlFor="watchlistSyncMagazines"
+                    className="checkbox-label"
+                  >
+                    <span>
+                      {intl.formatMessage(messages.magazinewatchlistsync)}
+                    </span>
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.magazinewatchlistsynctip)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      type="checkbox"
+                      id="watchlistSyncMagazines"
+                      name="watchlistSyncMagazines"
+                      onChange={() => {
+                        setFieldValue(
+                          'watchlistSyncMagazines',
+                          !values.watchlistSyncMagazines
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="form-row">
                 <label htmlFor="cardTextVisibilityMovie" className="text-label">
                   <span>{intl.formatMessage(messages.cardTextVisibility)}</span>
@@ -1042,6 +1228,16 @@ const UserGeneralSettings = () => {
                   </div>
                 </div>
               </div>
+              <RequestRootFolderSettings
+                canEdit={currentHasPermission(
+                  [Permission.MANAGE_REQUESTS, Permission.REQUEST_ADVANCED],
+                  { type: 'or' }
+                )}
+                value={values.requestRootFolders ?? {}}
+                onChange={(requestRootFolders) =>
+                  void setFieldValue('requestRootFolders', requestRootFolders)
+                }
+              />
               <div className="actions">
                 <div className="flex justify-end">
                   <span className="ml-3 inline-flex rounded-md shadow-sm">

@@ -52,6 +52,19 @@ const messages = defineMessages('components.CollectionDetails.ServerActions', {
     'Some collections could not be verified. Retrying automatically; do not assume the operation completed.',
 });
 
+const collectionServerEndpoint = (id: string, kind: CollectionKind): string => {
+  const pattern =
+    kind === 'music' ? /^[A-Za-z0-9_-]{1,128}$/ : /^[1-9]\d{0,8}$/;
+  const safeId = id.match(pattern)?.[0];
+  if (!safeId || safeId !== id) {
+    throw new Error('Invalid collection identifier.');
+  }
+
+  if (kind === 'movie') return `/api/v1/collection/${safeId}/server`;
+  if (kind === 'tv') return `/api/v1/collection-catalog/tv/${safeId}/server`;
+  return `/api/v1/collection-catalog/music/${safeId}/server`;
+};
+
 const CollectionServerActions = ({
   id,
   title,
@@ -124,19 +137,10 @@ const CollectionServerActions = ({
     if (busy || !action || !selectedChoices.length) return;
     setBusy(true);
     try {
-      if (!/^[a-zA-Z0-9-]+$/.test(id)) {
-        throw new Error('Invalid collection identifier.');
-      }
-      const collectionEndpoint =
-        kind === 'movie'
-          ? `/api/v1/collection/${encodeURIComponent(id)}`
-          : `/api/v1/collection-catalog/${kind}/${encodeURIComponent(id)}`;
-      const actionEndpoint = `${collectionEndpoint}/server`;
+      const actionEndpoint = collectionServerEndpoint(id, kind);
       const result =
         action === 'remove'
-          ? // Same-origin API path with an allowlisted kind and restricted ID.
-            // codeql[js/request-forgery]
-            await axios.delete<CollectionSyncStatus>(actionEndpoint, {
+          ? await axios.delete<CollectionSyncStatus>(actionEndpoint, {
               data: {
                 destinations: selectedChoices.map(
                   ({ libraryId, removalToken }) => ({ libraryId, removalToken })
@@ -144,9 +148,7 @@ const CollectionServerActions = ({
               },
               timeout: 60000,
             })
-          : // Same-origin API path with an allowlisted kind and restricted ID.
-            // codeql[js/request-forgery]
-            await axios.post<CollectionSyncStatus>(
+          : await axios.post<CollectionSyncStatus>(
               actionEndpoint,
               {
                 libraryIds: selectedChoices.map((entry) => entry.libraryId),

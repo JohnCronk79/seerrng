@@ -128,6 +128,16 @@ class BookRequestSearchManager {
       mediaType: operation.format,
     });
 
+    if (operation.providerManagedSearch) {
+      await this.reconcileProviderManagedSearch(operation, readarr);
+      return;
+    }
+
+    if (operation.state === 'monitoring') {
+      await this.reconcileMonitoringOperation(operation, readarr);
+      return;
+    }
+
     if (
       operation.state === 'pending' ||
       operation.bookId == null ||
@@ -243,6 +253,82 @@ class BookRequestSearchManager {
     );
   }
 
+  private async reconcileMonitoringOperation(
+    operation: BookRequestSearch,
+    readarr: ReadarrAPI
+  ): Promise<void> {
+    const providerBookId = await this.getProviderBookId(operation);
+    const providerEditionId =
+      operation.providerEditionId ??
+      operation.request.preferredEditionId ??
+      undefined;
+    const book = await this.getBookAfterSearch(
+      operation,
+      readarr,
+      providerBookId,
+      providerEditionId
+    );
+
+    if ((book?.statistics?.bookFileCount ?? 0) > 0) {
+      await this.setState(operation, 'available');
+      await this.finalizeRequest(operation.requestId);
+      return;
+    }
+
+    if (operation.commandId != null) {
+      await this.setState(operation, 'searching');
+      return;
+    }
+
+    const bookId = operation.bookId ?? book?.id;
+    if (bookId == null) return;
+
+    // The add endpoint only creates the monitored Book/Author records. In
+    // particular, Seerr's Bookshelf payload disables the backend's deferred
+    // search flag, so a BookSearch command must be started explicitly. Do it
+    // from this retryable job so a temporary command API failure cannot turn a
+    // successful add into a failed request or leave it silently unsearched.
+    const command = await readarr.startBookSearch(bookId);
+    if (!Number.isSafeInteger(command.id) || command.id <= 0) {
+      throw new Error('Bookshelf returned an invalid BookSearch command ID.');
+    }
+
+    const updatedAt = new Date();
+    await getRepository(BookRequestSearch).update(operation.id, {
+      commandId: command.id,
+      state: 'searching',
+      updatedAt,
+    });
+    operation.commandId = command.id;
+    operation.state = 'searching';
+    operation.updatedAt = updatedAt;
+  }
+
+  private async reconcileProviderManagedSearch(
+    operation: BookRequestSearch,
+    readarr: ReadarrAPI
+  ): Promise<void> {
+    const providerBookId = await this.getProviderBookId(operation);
+    const providerEditionId =
+      operation.providerEditionId ??
+      operation.request.preferredEditionId ??
+      undefined;
+    const book = await this.getBookAfterSearch(
+      operation,
+      readarr,
+      providerBookId,
+      providerEditionId
+    );
+
+    if ((book?.statistics?.bookFileCount ?? 0) > 0) {
+      await this.setState(operation, 'available');
+      await this.finalizeRequest(operation.requestId);
+      return;
+    }
+
+    await this.setState(operation, 'monitoring');
+  }
+
   private async reconcilePendingOperation(
     operation: BookRequestSearch,
     readarr: ReadarrAPI,
@@ -322,6 +408,7 @@ class BookRequestSearchManager {
         createdBook: false,
         createdAuthor: false,
         state: 'pending',
+        providerManagedSearch: false,
         updatedAt: new Date(),
       });
       operation.bookId = null;
@@ -353,7 +440,8 @@ class BookRequestSearchManager {
       authorId: result.authorId ?? result.author?.id ?? null,
       createdBook: result.createdBook,
       createdAuthor: result.createdAuthor,
-      state: 'pending',
+      providerManagedSearch: true,
+      state: 'monitoring',
       updatedAt: new Date(),
     });
     operation.bookId = bookId;
@@ -364,21 +452,9 @@ class BookRequestSearchManager {
     operation.authorId = result.authorId ?? result.author?.id ?? null;
     operation.createdBook = result.createdBook;
     operation.createdAuthor = result.createdAuthor;
-    operation.state = 'pending';
+    operation.providerManagedSearch = true;
+    operation.state = 'monitoring';
     await this.storeBookServiceLink(operation, result);
-
-    const command = await readarr.startBookSearch(bookId);
-    const searchStartedAt = new Date();
-    await getRepository(BookRequestSearch).update(operation.id, {
-      commandId: command.id,
-      state: 'searching',
-      createdAt: searchStartedAt,
-      updatedAt: searchStartedAt,
-    });
-    operation.commandId = command.id;
-    operation.state = 'searching';
-    operation.createdAt = searchStartedAt;
-    operation.updatedAt = searchStartedAt;
   }
 
   private getPendingFormatStatus(
@@ -458,7 +534,7 @@ class BookRequestSearchManager {
           : edition.monitored,
       })),
       useRequestedEdition: !!requestedEdition,
-      addOptions: { searchForNewBook: false },
+      addOptions: { searchForNewBook: true },
     };
   }
 

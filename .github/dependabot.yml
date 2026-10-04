@@ -1,4 +1,6 @@
 version: 2
+# Dependency-only bot PRs carry the internal-only marker into their merge
+# commit so push validation can enforce the release-note contract.
 updates:
   - package-ecosystem: "npm"
     directory: "/"
@@ -7,6 +9,8 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    commit-message:
+      prefix: "release-note: none"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -14,7 +18,9 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+    commit-message:
+      prefix: "release-note: none"
     groups:
-      codeql-action:
+      release-note-none-codeql-action:
         patterns:
           - "github/codeql-action/*"

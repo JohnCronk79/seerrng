@@ -8,6 +8,8 @@ import {
   formatCaptureMetadata,
   formatCuratedNotes,
   hasExplicitNoReleaseNote,
+  isReleaseNoteShipped,
+  isShippedReleaseNoteChanged,
   readReleaseNotes,
 } from './release-notes.mjs';
 
@@ -34,10 +36,19 @@ if (!base || !head || !bodyFile) {
 }
 
 const entries = changedReleaseNoteFiles(base, head);
-const modified = entries.filter((entry) => entry.status !== 'A');
-const { notes, errors } = readReleaseNotes(
-  entries.filter((entry) => entry.status === 'A')
+const modified = entries.filter(
+  (entry) =>
+    entry.status !== 'A' && isShippedReleaseNoteChanged(entry.file, head)
 );
+const updatedUnshipped = entries
+  .filter(
+    (entry) => entry.status === 'M' && !isReleaseNoteShipped(entry.file, head)
+  )
+  .map((entry) => ({ ...entry, status: 'A' }));
+const { notes, errors } = readReleaseNotes([
+  ...entries.filter((entry) => entry.status === 'A'),
+  ...updatedUnshipped,
+]);
 const body = fs.readFileSync(bodyFile, 'utf8');
 const explicitNoReleaseNote = hasExplicitNoReleaseNote(body);
 const allowMixedPushBatch = args.has('--allow-mixed-push-batch');

@@ -11,7 +11,6 @@ import {
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useIntl } from 'react-intl';
-import { twMerge } from 'tailwind-merge';
 
 export type MediaTypeBadgeType =
   | 'movie'
@@ -24,14 +23,14 @@ export type MediaTypeBadgeType =
   | 'magazine';
 
 export const mediaTypeBadgeTone: Record<MediaTypeBadgeType, string> = {
-  movie: 'border-blue-500/70 bg-blue-700/35 text-blue-50',
-  tv: 'border-violet-300/90 bg-purple-700/35 text-purple-50',
-  collection: 'border-blue-500/70 bg-blue-700/35 text-blue-50',
-  album: 'border-emerald-500/70 bg-emerald-700/35 text-emerald-50',
-  artist: 'border-fuchsia-500/70 bg-fuchsia-700/35 text-fuchsia-50',
-  book: 'border-amber-500/70 bg-amber-700/35 text-amber-50',
-  comic: 'border-rose-500/70 bg-rose-700/35 text-rose-50',
-  magazine: 'border-cyan-400/70 bg-cyan-700/35 text-cyan-50',
+  movie: 'media-type-badge-tone-movie',
+  tv: 'media-type-badge-tone-tv',
+  collection: 'media-type-badge-tone-movie',
+  album: 'media-type-badge-tone-album',
+  artist: 'media-type-badge-tone-artist',
+  book: 'media-type-badge-tone-book',
+  comic: 'media-type-badge-tone-comic',
+  magazine: 'media-type-badge-tone-magazine',
 };
 
 export const getMediaTypeBadgeType = (
@@ -59,7 +58,7 @@ export const getMediaTypeBadgeType = (
 
 interface MediaTypeBadgeProps {
   mediaType: MediaTypeBadgeType;
-  variant?: 'card' | 'compact' | 'inline';
+  variant?: 'card' | 'compact' | 'inline' | 'button';
   className?: string;
   showIcon?: boolean;
   /**
@@ -122,9 +121,10 @@ const badgeConfig = {
 >;
 
 const variantClasses = {
-  card: 'poster-control shadow-md',
-  compact: 'px-2 py-1 text-[11px]',
-  inline: 'px-2 py-1 text-xs',
+  card: 'poster-control media-type-badge-card',
+  compact: 'media-type-badge-compact',
+  inline: 'media-type-badge-inline',
+  button: 'app-button button-sm',
 } as const;
 
 const posterToneClass: Record<MediaTypeBadgeType, string> = {
@@ -138,6 +138,17 @@ const posterToneClass: Record<MediaTypeBadgeType, string> = {
   magazine: 'poster-control-type-magazine',
 };
 
+const buttonToneClass: Record<MediaTypeBadgeType, string> = {
+  movie: 'app-button-media-type-movie',
+  tv: 'app-button-media-type-tv',
+  collection: 'app-button-media-type-collection',
+  album: 'app-button-media-type-album',
+  artist: 'app-button-media-type-artist',
+  book: 'app-button-media-type-book',
+  comic: 'app-button-media-type-comic',
+  magazine: 'app-button-media-type-magazine',
+};
+
 const MediaTypeBadge = ({
   mediaType,
   variant = 'compact',
@@ -149,25 +160,27 @@ const MediaTypeBadge = ({
   const config = badgeConfig[mediaType];
   const label = labelOverride ?? intl.formatMessage(config.message);
   const Icon = config.icon;
+  const badgeClassName = [
+    variant === 'card' || variant === 'button'
+      ? 'media-type-badge-width'
+      : 'media-type-badge media-type-badge-width',
+    variantClasses[variant],
+    variant === 'card'
+      ? posterToneClass[mediaType]
+      : variant === 'button'
+        ? buttonToneClass[mediaType]
+        : config.tone,
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   const badge = (
-    <span
-      className={twMerge(
-        variant === 'card'
-          ? 'max-w-full'
-          : 'inline-flex max-w-full items-center gap-1 rounded-full border leading-none font-semibold',
-        variantClasses[variant],
-        variant === 'card' ? posterToneClass[mediaType] : config.tone,
-        className
-      )}
-    >
+    <span className={badgeClassName}>
       {showIcon && (
-        <Icon
-          className="h-3.5 w-3.5 shrink-0 -translate-y-px"
-          aria-hidden="true"
-        />
+        <Icon className="media-type-badge-icon" aria-hidden="true" />
       )}
-      <span className="truncate">{label}</span>
+      <span className="media-type-badge-label">{label}</span>
     </span>
   );
 

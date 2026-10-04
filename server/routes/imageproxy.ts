@@ -99,6 +99,18 @@ function initTvdbImageProxy() {
   }
   return _tvdbImageProxy;
 }
+let _tvmazeImageProxy: ImageProxy;
+function initTvmazeImageProxy() {
+  if (!_tvmazeImageProxy) {
+    _tvmazeImageProxy = new ImageProxy('tvmaze', 'https://static.tvmaze.com', {
+      rateLimitOptions: {
+        maxRequests: 10,
+        maxRPS: 10,
+      },
+    });
+  }
+  return _tvmazeImageProxy;
+}
 let _coverArtArchiveImageProxy: ImageProxy;
 function initCoverArtArchiveImageProxy() {
   if (!_coverArtArchiveImageProxy) {
@@ -165,12 +177,25 @@ function initOpenLibraryCoversImageProxy() {
 }
 
 let fanartImageProxy: ImageProxy;
+let comicVineImageProxy: ImageProxy;
+let comicVineStaticImageProxy: ImageProxy;
+let comicVineStatic1ImageProxy: ImageProxy;
+let igdbImageProxy: ImageProxy;
+let anilistImageProxy: ImageProxy;
 const getImageProxy = (type: string): ImageProxy | null => {
   switch (type) {
+    case 'anilist':
+      return (anilistImageProxy ??= new ImageProxy(
+        'anilist',
+        'https://s4.anilist.co',
+        { rateLimitOptions: { maxRequests: 5, maxRPS: 5 } }
+      ));
     case 'tmdb':
       return initTmdbImageProxy();
     case 'tvdb':
       return initTvdbImageProxy();
+    case 'tvmaze':
+      return initTvmazeImageProxy();
     case 'coverartarchive':
       return initCoverArtArchiveImageProxy();
     case 'archiveorg':
@@ -185,6 +210,30 @@ const getImageProxy = (type: string): ImageProxy | null => {
       ));
     case 'openlibrarycovers':
       return initOpenLibraryCoversImageProxy();
+    case 'comicvine':
+      return (comicVineImageProxy ??= new ImageProxy(
+        'comicvine',
+        'https://comicvine.gamespot.com',
+        { rateLimitOptions: { maxRequests: 5, maxRPS: 5 } }
+      ));
+    case 'comicvinestatic':
+      return (comicVineStaticImageProxy ??= new ImageProxy(
+        'comicvinestatic',
+        'https://comicvine.cbsistatic.com',
+        { rateLimitOptions: { maxRequests: 5, maxRPS: 5 } }
+      ));
+    case 'comicvinestatic1':
+      return (comicVineStatic1ImageProxy ??= new ImageProxy(
+        'comicvinestatic1',
+        'https://comicvine1.cbsistatic.com',
+        { rateLimitOptions: { maxRequests: 5, maxRPS: 5 } }
+      ));
+    case 'igdb':
+      return (igdbImageProxy ??= new ImageProxy(
+        'igdb',
+        'https://images.igdb.com',
+        { rateLimitOptions: { maxRequests: 10, maxRPS: 10 } }
+      ));
     default:
       return null;
   }

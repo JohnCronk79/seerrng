@@ -41,6 +41,12 @@ const messages = defineMessages('components.Settings', {
   jellyfinSettings: '{mediaServerName} Settings',
   jellyfinSettingsDescription:
     'Optionally configure the internal and external endpoints for your {mediaServerName} server. In most cases, the external URL is different to the internal URL. A custom password reset URL can also be set for {mediaServerName} login, in case you would like to redirect to a different password reset page. You can also change the Jellyfin API key, which was automatically generated previously.',
+  seerrngBridgeLogin: 'Enable SeerrNG sign-in from Jellyfin',
+  seerrngBridgeLoginDescription:
+    'Allow Jellyfin administrators to open SeerrNG from the Jellyfin dashboard and sign in with an already linked account while Jellyfin is active and media-server sign-in is enabled. Regular users should sign in on SeerrNG with Jellyfin. Disabling the bridge revokes its sessions; turning it back on does not restore them.',
+  seerrngBridgeLoginSuccess: 'SeerrNG Jellyfin sign-in setting saved.',
+  seerrngBridgeLoginFailure:
+    'Unable to save the SeerrNG Jellyfin sign-in setting.',
   externalUrl: 'External URL',
   hostname: 'Hostname or IP Address',
   port: 'Port',
@@ -103,6 +109,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
   onComplete,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSavingBridgeLogin, setIsSavingBridgeLogin] = useState(false);
   const {
     data,
     error,
@@ -236,6 +243,26 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
       cancel: true,
     });
     revalidateSync();
+  };
+
+  const updateBridgeLogin = async (enabled: boolean) => {
+    setIsSavingBridgeLogin(true);
+    try {
+      await axios.post('/api/v1/settings/jellyfin/bridge-login', { enabled });
+      await revalidate();
+      addToast(intl.formatMessage(messages.seerrngBridgeLoginSuccess), {
+        autoDismiss: true,
+        appearance: 'success',
+      });
+    } catch {
+      await revalidate();
+      addToast(intl.formatMessage(messages.seerrngBridgeLoginFailure), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setIsSavingBridgeLogin(false);
+    }
   };
 
   const toggleLibrary = async (libraryId: string) => {
@@ -398,7 +425,6 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
               {!dataSync?.running && (
                 <Button buttonType="warning" onClick={() => startScan()}>
                   <svg
-                    className="mr-1 h-5 w-5"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -698,6 +724,45 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           );
         }}
       </Formik>
+      {!isSetupSettings && (
+        <>
+          <div className="mt-10 mb-6">
+            <h3 className="heading">
+              {intl.formatMessage(messages.seerrngBridgeLogin)}
+            </h3>
+            <p className="description">
+              {intl.formatMessage(messages.seerrngBridgeLoginDescription)}
+            </p>
+          </div>
+          <div className="app-card-sub section">
+            <div className="form-row">
+              <label htmlFor="bridgeLoginEnabled" className="checkbox-label">
+                {intl.formatMessage(messages.seerrngBridgeLogin)}
+              </label>
+              <div className="form-input-area">
+                <input
+                  type="checkbox"
+                  id="bridgeLoginEnabled"
+                  name="bridgeLoginEnabled"
+                  checked={data?.bridgeLoginEnabled ?? false}
+                  disabled={
+                    !data ||
+                    isSavingBridgeLogin ||
+                    ((!data.serverId ||
+                      settings.currentSettings.mediaServerType !==
+                        MediaServerType.JELLYFIN ||
+                      settings.currentSettings.mediaServerLogin === false) &&
+                      !data.bridgeLoginEnabled)
+                  }
+                  onChange={(event) =>
+                    void updateBridgeLogin(event.currentTarget.checked)
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 };

@@ -139,6 +139,7 @@ type RequestMediaLike = {
   externalServiceId4k?: number | null;
   audiobookServiceId?: number | null;
   audiobookExternalServiceId?: number | null;
+  comicServiceType?: 'mylar' | 'kapowarr' | 'backissue' | null;
   seasons?: {
     seasonNumber: number;
     status: MediaStatus;
@@ -286,7 +287,11 @@ const hasRequestedServiceLink = (request: RequestLike): boolean => {
     return hasRequestedBookFormat(request.media, 'ebook');
   }
 
-  if (request.type === MediaType.MOVIE || request.type === MediaType.TV) {
+  if (
+    request.type === MediaType.MOVIE ||
+    request.type === MediaType.TV ||
+    request.type === MediaType.COMIC
+  ) {
     return request.is4k
       ? hasLink(request.media.serviceId4k, request.media.externalServiceId4k)
       : hasLink(request.media.serviceId, request.media.externalServiceId);
@@ -408,10 +413,25 @@ const calculateDownloadMetrics = (downloads: DownloadingItem[]) => {
     (total, item) => total + Math.min(item.size, item.sizeLeft),
     0
   );
+  const reportedPercents = downloads
+    .map((item) => item.percent)
+    .filter(
+      (percent): percent is number =>
+        typeof percent === 'number' &&
+        Number.isFinite(percent) &&
+        percent >= 0 &&
+        percent <= 100
+    );
   const percent =
     hasCompleteSizeData && size > 0
       ? Math.round(((size - sizeLeft) / size) * 1000) / 10
-      : null;
+      : downloads.length > 0 && reportedPercents.length === downloads.length
+        ? Math.round(
+            (reportedPercents.reduce((total, value) => total + value, 0) /
+              reportedPercents.length) *
+              10
+          ) / 10
+        : null;
   const completionTimes = downloads
     .map((item) => item.estimatedCompletionTime)
     .filter(
@@ -494,6 +514,22 @@ const getDownloadItems = (request: RequestLike): DownloadingItem[] => {
       ? downloadTracker.getMusicProgress(
           target.serverId,
           target.externalServiceId
+        )
+      : [];
+  }
+  if (request.type === MediaType.COMIC) {
+    // Kapowarr and BackIssue expose live download queues; Mylar3 does not
+    // (and cannot cancel an individual queued download), so a Mylar-backed
+    // comic never has live progress data here.
+    return (media.comicServiceType === 'kapowarr' ||
+      media.comicServiceType === 'backissue') &&
+      media.serviceId !== null &&
+      media.serviceId !== undefined &&
+      media.externalServiceId !== null &&
+      media.externalServiceId !== undefined
+      ? downloadTracker.getComicProgress(
+          media.serviceId,
+          media.externalServiceId
         )
       : [];
   }
@@ -607,6 +643,17 @@ const getServiceName = (request: RequestLike): string | null => {
   } else if (request.type === MediaType.MUSIC) {
     const target = getMusicTarget(request);
     add(settings.lidarr.find((server) => server.id === target?.serverId)?.name);
+  } else if (request.type === MediaType.COMIC) {
+    const comicServices =
+      request.media.comicServiceType === 'kapowarr'
+        ? settings.kapowarr
+        : request.media.comicServiceType === 'backissue'
+          ? settings.backissue
+          : settings.mylar;
+    add(
+      comicServices.find((server) => server.id === request.media.serviceId)
+        ?.name
+    );
   } else {
     const formats =
       request.bookFormat === 'both'
@@ -646,6 +693,17 @@ const getMessage = (
       return queueFailure
         ? 'The connected book service reported a download or import failure. Check its queue or logs for the cause, fix it there, then retry here.'
         : 'The connected book service could not accept this request. Check its connection and metadata provider settings, then retry.';
+    }
+  }
+
+  if (mediaType === MediaType.COMIC) {
+    if (stage === RequestStatusStage.UNAVAILABLE) {
+      return 'No usable release is available from the connected comics service. Check the requested comic and the service catalog or acquisition sources, then retry when they are ready.';
+    }
+    if (stage === RequestStatusStage.FAILED) {
+      return queueFailure
+        ? 'The connected comics service reported a download or import failure. Check its queue or logs for the cause, fix it there, then retry here.'
+        : 'The connected comics service could not accept this request. Check its connection and ComicVine metadata settings, then retry.';
     }
   }
 
@@ -786,6 +844,15 @@ const getStageFromRequest = (
       queueFailure: false,
       downloads,
       message: 'Waiting for Bookshelf to prepare the requested book.',
+    };
+  }
+  if (options.bookSearchState === 'monitoring') {
+    return {
+      stage: RequestStatusStage.SEARCHING,
+      queueFailure: false,
+      downloads,
+      message:
+        'SeerrNG is preparing a Bookshelf search for this title. Availability will update after a library scan finds the book.',
     };
   }
 
@@ -1012,18 +1079,28 @@ const getBookSearchState = async (
   const records = await (
     manager?.getRepository(BookRequestSearch) ??
     getRepository(BookRequestSearch)
-  ).find({ where: { requestId }, select: { state: true } });
-  if (records.some((record) => record.state === 'importing'))
+  ).find({
+    where: { requestId },
+    select: { state: true, providerManagedSearch: true },
+  });
+  const trackedSearches = records.filter(
+    (record) => !record.providerManagedSearch
+  );
+  if (trackedSearches.some((record) => record.state === 'importing'))
     return 'importing';
-  if (records.some((record) => record.state === 'grabbed')) return 'grabbed';
+  if (trackedSearches.some((record) => record.state === 'grabbed'))
+    return 'grabbed';
   if (
-    records.some(
+    trackedSearches.some(
       (record) => record.state === 'searching' || record.state === 'settling'
     )
   ) {
     return 'searching';
   }
-  if (records.some((record) => record.state === 'pending')) return 'pending';
+  if (trackedSearches.some((record) => record.state === 'pending'))
+    return 'pending';
+  if (trackedSearches.some((record) => record.state === 'monitoring'))
+    return 'monitoring';
   return undefined;
 };
 
@@ -1196,6 +1273,50 @@ export const recordRequestStatusOverride = async (
   await persistStatusEvent(request, status, latestEvent ?? undefined);
 };
 
+export const recordRequestRetry = async (requestId: number): Promise<void> => {
+  const request = await loadRequest(requestId);
+  if (!request) {
+    return;
+  }
+
+  const repository = getStatusEventRepository();
+  const latestEvent = await getLatestStatusEvent(requestId);
+  const attempt = latestEvent?.attempt ?? 0;
+  const fingerprint = `retry:${latestEvent?.id ?? 0}:${attempt}`.slice(0, 255);
+
+  try {
+    await repository.insert(
+      new MediaRequestStatusEvent({
+        requestId: request.id,
+        requestedById: request.requestedBy.id,
+        mediaId: request.media.id,
+        mediaType: request.type,
+        stage: RequestStatusStage.APPROVED,
+        attempt,
+        format: request.bookFormat ?? null,
+        service: getServiceName(request) ?? latestEvent?.service ?? null,
+        message: 'The request was retried and is waiting to be dispatched.',
+        percent: null,
+        size: null,
+        sizeLeft: null,
+        estimatedCompletionTime: null,
+        downloadCount: 0,
+        downloadId: null,
+        fingerprint,
+      })
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLocaleLowerCase().includes('unique')) {
+      logger.warn('Unable to persist request retry event', {
+        label: 'Request Status',
+        requestId,
+        errorMessage: message,
+      });
+    }
+  }
+};
+
 export const recordRequestCancellation = async (
   request: Pick<
     RequestLike,
@@ -1348,10 +1469,15 @@ const getBookSearchStates = async (
   if (requestIds.length === 0) return new Map();
   const records = await getRepository(BookRequestSearch).find({
     where: { requestId: In(requestIds) },
-    select: { requestId: true, state: true },
+    select: {
+      requestId: true,
+      state: true,
+      providerManagedSearch: true,
+    },
   });
   const states = new Map<number, BookRequestSearch['state']>();
   for (const record of records) {
+    if (record.providerManagedSearch) continue;
     if (
       record.state === 'available' ||
       record.state === 'unavailable' ||
@@ -1362,13 +1488,18 @@ const getBookSearchStates = async (
     const nextState =
       record.state === 'settling' ? ('searching' as const) : record.state;
     const current = states.get(record.requestId);
-    if (
-      !current ||
-      nextState === 'importing' ||
-      (nextState === 'grabbed' &&
-        (current === 'searching' || current === 'pending')) ||
-      (nextState === 'searching' && current === 'pending')
-    ) {
+    const statePriority: Record<BookRequestSearch['state'], number> = {
+      monitoring: 1,
+      pending: 2,
+      searching: 3,
+      settling: 3,
+      grabbed: 4,
+      importing: 5,
+      available: 6,
+      unavailable: 6,
+      failed: 6,
+    };
+    if (!current || statePriority[nextState] > statePriority[current]) {
       states.set(record.requestId, nextState);
     }
   }
@@ -1596,6 +1727,7 @@ const getRequestStatusOlderCount = async (options: {
 export const getRequestStatusPage = async (options: {
   take: number;
   skip: number;
+  requestId?: number;
   ownerId?: number;
   mediaType?: MediaType;
   bookFormat?: 'ebook' | 'audiobook';
@@ -1615,6 +1747,11 @@ export const getRequestStatusPage = async (options: {
     .leftJoinAndSelect('request.modifiedBy', 'modifiedBy')
     .leftJoinAndSelect('request.seasons', 'seasons');
 
+  if (options.requestId) {
+    query.andWhere('request.id = :requestId', {
+      requestId: options.requestId,
+    });
+  }
   if (options.ownerId) {
     query.andWhere('requestedBy.id = :ownerId', { ownerId: options.ownerId });
   }

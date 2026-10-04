@@ -105,6 +105,24 @@ const messages = defineMessages('components.Settings.SettingsMain', {
   comicsMetadata: 'Comics Metadata',
   comicsMetadataDescription:
     'Configure the metadata provider used to discover and request comics.',
+  magazinesMetadata: 'Magazine Catalog',
+  magazinesMetadataDescription:
+    'Add public magazine discovery alongside titles tracked by LazyLibrarian.',
+  googleBooksApiKey: 'Google Books API Key',
+  googleBooksApiKeyTip:
+    'A Google Books API key enables searches of the public magazine catalog.',
+  downloadCopies: 'Download Copies',
+  downloadCopiesDescription:
+    'Allow SeerrNG to serve imported files through Request Status. Path mappings connect a manager-reported library path to a read-only path mounted inside SeerrNG.',
+  downloadPathMappings: 'Library Path Mappings',
+  downloadPathMappingsTip:
+    'Enter a JSON array. Each mapping has serviceType, optional serviceId, remoteRoot, and localRoot. Use narrow library roots; SeerrNG only offers files that resolve inside a mapped root.',
+  downloadPathMappingsExample:
+    '[\n  {\n    "serviceType": "radarr",\n    "serviceId": 1,\n    "remoteRoot": "/movies",\n    "localRoot": "/mnt/media/movies"\n  }\n]',
+  downloadPathMappingsJsonError:
+    'Enter a JSON array with at most 100 path mappings.',
+  validationDownloadPathMappingsJson:
+    'Enter a JSON array with at most 100 path mappings.',
   comicVineApiKey: 'ComicVine API Key',
   comicVineApiKeyTip:
     'A free ComicVine API key is required for comic discovery and requests.',
@@ -157,6 +175,18 @@ const SettingsMain = () => {
         intl.formatMessage(messages.validationUrlTrailingSlash),
         (value) => !value || !value.endsWith('/')
       ),
+    downloadPathMappingsJson: Yup.string().test(
+      'download-path-mappings-json',
+      intl.formatMessage(messages.validationDownloadPathMappingsJson),
+      (value) => {
+        try {
+          const parsed = JSON.parse(value || '[]');
+          return Array.isArray(parsed) && parsed.length <= 100;
+        } catch {
+          return false;
+        }
+      }
+    ),
   });
 
   const regenerate = async () => {
@@ -212,6 +242,12 @@ const SettingsMain = () => {
           spotifyClientSecret: data?.spotifyClientSecret ?? '',
           youtubeApiKey: data?.youtubeApiKey ?? '',
           comicVineApiKey: data?.comicVineApiKey ?? '',
+          googleBooksApiKey: data?.googleBooksApiKey ?? '',
+          downloadPathMappingsJson: JSON.stringify(
+            data?.downloadPathMappings ?? [],
+            null,
+            2
+          ),
         }}
         enableReinitialize
         validationSchema={MainSettingsSchema}
@@ -240,6 +276,10 @@ const SettingsMain = () => {
               spotifyClientSecret: values.spotifyClientSecret,
               youtubeApiKey: values.youtubeApiKey,
               comicVineApiKey: values.comicVineApiKey,
+              googleBooksApiKey: values.googleBooksApiKey,
+              downloadPathMappings: JSON.parse(
+                values.downloadPathMappingsJson || '[]'
+              ),
             });
             mutate('/api/v1/settings/public');
             mutate('/api/v1/status?checkUpdateAvailable=false');
@@ -747,6 +787,78 @@ const SettingsMain = () => {
                         }
                       />
                     </div>
+                  </SettingsFormRow>
+                </div>
+              </section>
+              <section className="settings-group-card">
+                <h3 className="settings-group-heading">
+                  {intl.formatMessage(messages.magazinesMetadata)}
+                </h3>
+                <p className="settings-group-description">
+                  {intl.formatMessage(messages.magazinesMetadataDescription)}
+                </p>
+                <div className="settings-group-content">
+                  <SettingsFormRow
+                    htmlFor="googleBooksApiKey"
+                    label={intl.formatMessage(messages.googleBooksApiKey)}
+                    description={intl.formatMessage(
+                      messages.googleBooksApiKeyTip
+                    )}
+                  >
+                    <div className="form-input-field">
+                      <SensitiveInput
+                        as="field"
+                        id="googleBooksApiKey"
+                        name="googleBooksApiKey"
+                        type="text"
+                        value={values.googleBooksApiKey}
+                        onChange={(
+                          event: React.ChangeEvent<HTMLInputElement>
+                        ) =>
+                          setFieldValue('googleBooksApiKey', event.target.value)
+                        }
+                      />
+                    </div>
+                  </SettingsFormRow>
+                </div>
+              </section>
+              <section className="settings-group-card">
+                <h3 className="settings-group-heading">
+                  {intl.formatMessage(messages.downloadCopies)}
+                </h3>
+                <p className="settings-group-description">
+                  {intl.formatMessage(messages.downloadCopiesDescription)}
+                </p>
+                <div className="settings-group-content">
+                  <SettingsFormRow
+                    htmlFor="downloadPathMappingsJson"
+                    label={intl.formatMessage(messages.downloadPathMappings)}
+                    description={intl.formatMessage(
+                      messages.downloadPathMappingsTip
+                    )}
+                    badge={<SettingsBadge badgeType="advanced" />}
+                  >
+                    <div className="form-input-field">
+                      <Field
+                        as="textarea"
+                        id="downloadPathMappingsJson"
+                        name="downloadPathMappingsJson"
+                        rows={8}
+                        spellCheck={false}
+                        placeholder={intl.formatMessage(
+                          messages.downloadPathMappingsExample
+                        )}
+                        className="w-full font-mono text-xs"
+                      />
+                    </div>
+                    {errors.downloadPathMappingsJson &&
+                      touched.downloadPathMappingsJson && (
+                        <div className="error">
+                          {intl.formatMessage(
+                            messages.downloadPathMappingsJsonError
+                          )}
+                        </div>
+                      )}
                   </SettingsFormRow>
                 </div>
               </section>

@@ -24,11 +24,14 @@ export interface ComicIssueReference {
   id: string;
   name?: string;
   issueNumber?: string;
+  coverDate?: string;
+  coverUrl?: string;
 }
 
 export interface ComicDetails extends ComicResult {
   description?: string;
   issues?: ComicIssueReference[];
+  onUserWatchlist?: boolean;
 }
 
 const pickPosterPath = (
@@ -36,12 +39,15 @@ const pickPosterPath = (
 ): string | undefined =>
   image?.super_url ?? image?.medium_url ?? image?.small_url ?? image?.icon_url;
 
-const mapIssueSummary = (
+export const mapComicVineIssueResult = (
   issue: ComicVineIssueSummary
 ): ComicIssueReference => ({
   id: String(issue.id),
   name: issue.name,
   issueNumber: issue.issue_number,
+  coverDate: issue.cover_date,
+  coverUrl:
+    issue.image?.medium_url ?? issue.image?.small_url ?? issue.image?.icon_url,
 });
 
 export const mapComicVineVolumeResult = (
@@ -64,9 +70,11 @@ export const mapComicVineVolumeResult = (
 
 export const mapComicVineVolumeDetails = (
   volume: ComicVineVolumeDetails,
-  media?: Media
+  media?: Media,
+  onUserWatchlist?: boolean
 ): ComicDetails => ({
   ...mapComicVineVolumeResult(volume, media),
   description: volume.description,
-  issues: volume.issues?.map(mapIssueSummary),
+  issues: volume.issues?.map(mapComicVineIssueResult),
+  onUserWatchlist,
 });

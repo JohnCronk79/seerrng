@@ -17,9 +17,11 @@ import useDebouncedState from '@app/hooks/useDebouncedState';
 import useDiscover from '@app/hooks/useDiscover';
 import useDiscoverScrollRestoration from '@app/hooks/useDiscoverScrollRestoration';
 import { useSearchActivityReporter } from '@app/hooks/useSearchActivity';
+import useSettings from '@app/hooks/useSettings';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import defineMessages from '@app/utils/defineMessages';
 import { parseQueryFromPath } from '@app/utils/routeQuery';
+import { isOptionalCatalogPathEnabled } from '@app/utils/serviceAvailability';
 import { BarsArrowDownIcon, BarsArrowUpIcon } from '@heroicons/react/24/solid';
 import type { BookResult } from '@server/models/Book';
 import { useRouter } from 'next/router';
@@ -62,6 +64,7 @@ const DiscoverBooks = ({
 }: DiscoverBooksProps) => {
   const intl = useIntl();
   const router = useRouter();
+  const { currentSettings } = useSettings();
   const [currentPath, setCurrentPath] = useState<string>();
   useEffect(() => {
     const syncCurrentPath = () => {
@@ -98,7 +101,67 @@ const DiscoverBooks = ({
     routeQuery.format === 'audiobook'
       ? routeQuery.format
       : undefined;
-  const activeFormat = routedFormat ?? format;
+  const ebookEnabled = isOptionalCatalogPathEnabled(
+    '/discover/books',
+    currentSettings
+  );
+  const audiobookEnabled = isOptionalCatalogPathEnabled(
+    '/discover/audiobooks',
+    currentSettings
+  );
+  const availableFormats: BookDiscoveryFormat[] = [
+    ...(ebookEnabled && audiobookEnabled ? ['all' as const] : []),
+    ...(ebookEnabled ? ['ebook' as const] : []),
+    ...(audiobookEnabled ? ['audiobook' as const] : []),
+  ];
+  const requestedFormat = routedFormat ?? format;
+  const activeFormat =
+    requestedFormat === 'all' && !(ebookEnabled && audiobookEnabled)
+      ? ebookEnabled
+        ? 'ebook'
+        : 'audiobook'
+      : requestedFormat === 'ebook' && !ebookEnabled && audiobookEnabled
+        ? 'audiobook'
+        : requestedFormat === 'audiobook' && !audiobookEnabled && ebookEnabled
+          ? 'ebook'
+          : requestedFormat;
+  const hasEnabledBookFormat = ebookEnabled || audiobookEnabled;
+
+  useEffect(() => {
+    if (
+      !currentPath ||
+      !hasEnabledBookFormat ||
+      activeFormat === requestedFormat
+    ) {
+      return;
+    }
+
+    const target = new URL(currentPath, window.location.origin);
+    if (router.pathname === '/discover/trending') {
+      target.searchParams.set(
+        'mediaType',
+        activeFormat === 'audiobook' ? 'audiobook' : 'book'
+      );
+    } else {
+      target.pathname =
+        activeFormat === 'audiobook'
+          ? '/discover/audiobooks'
+          : '/discover/books';
+      if (activeFormat === 'ebook') {
+        target.searchParams.set('format', 'ebook');
+      } else {
+        target.searchParams.delete('format');
+      }
+    }
+
+    void router.replace(`${target.pathname}${target.search}${target.hash}`);
+  }, [
+    activeFormat,
+    currentPath,
+    hasEnabledBookFormat,
+    requestedFormat,
+    router,
+  ]);
   const [search, debouncedSearch, setSearch] = useDebouncedState(query);
   const routedSearchRef = useRef(query.trim());
   useEffect(() => {
@@ -134,12 +197,12 @@ const DiscoverBooks = ({
       minRating,
       sortBy,
       format: activeFormat === 'all' ? undefined : activeFormat,
-      // One-time response contract bump prevents browsers from substituting
-      // the old stale-on-error empty response after this behavior changed.
-      responseVersion: 2,
+      // Bump the cached contract because all-format discovery now returns
+      // format-tagged results from both Open Library and Bookshelf catalogs.
+      responseVersion: 3,
     },
     {
-      enabled: isRouteReady,
+      enabled: isRouteReady && hasEnabledBookFormat,
       randomizeOrder:
         sortBy === 'ranked' || sortBy === 'ranked.asc' || sortBy === 'random',
       showErrorToast: false,
@@ -216,7 +279,7 @@ const DiscoverBooks = ({
   return (
     <>
       <PageTitle title={title} />
-      <div className="mb-4">
+      <div className="app-filter-section-gap">
         <Header>{title}</Header>
         {mediaFilters}
         {showFormatTabs && (
@@ -227,6 +290,7 @@ const DiscoverBooks = ({
           >
             <BookFormatTabs
               format={activeFormat}
+              availableFormats={availableFormats}
               query={routeQuery}
               currentPath={currentPath}
             />
@@ -237,7 +301,7 @@ const DiscoverBooks = ({
           section="filters"
           label={intl.formatMessage(messages.filters)}
         >
-          <div className="flex flex-wrap gap-2">
+          <div className="app-filter-row">
             <FilterResetButton
               label={intl.formatMessage(messages.clearFilters)}
               selected={!hasActiveFilters}
@@ -292,7 +356,7 @@ const DiscoverBooks = ({
           section="sortBy"
           label={intl.formatMessage(messages.sortBy)}
         >
-          <div className="flex flex-wrap gap-2">
+          <div className="app-filter-row">
             <button
               className={getFilterToggleButtonClass(
                 sortBy === 'ranked' || sortBy === 'ranked.asc'
@@ -305,9 +369,9 @@ const DiscoverBooks = ({
             >
               {intl.formatMessage(messages.recommended)}
               {sortBy === 'ranked.asc' ? (
-                <BarsArrowUpIcon className="h-4 w-4" />
+                <BarsArrowUpIcon className="app-action-icon" />
               ) : (
-                <BarsArrowDownIcon className="h-4 w-4" />
+                <BarsArrowDownIcon className="app-action-icon" />
               )}
             </button>
             <button
@@ -333,9 +397,9 @@ const DiscoverBooks = ({
             >
               {intl.formatMessage(messages.rating)}
               {sortBy === 'rating.asc' ? (
-                <BarsArrowUpIcon className="h-4 w-4" />
+                <BarsArrowUpIcon className="app-action-icon" />
               ) : (
-                <BarsArrowDownIcon className="h-4 w-4" />
+                <BarsArrowDownIcon className="app-action-icon" />
               )}
             </button>
             <button
@@ -350,9 +414,9 @@ const DiscoverBooks = ({
             >
               {intl.formatMessage(messages.editions)}
               {sortBy === 'editions.asc' ? (
-                <BarsArrowUpIcon className="h-4 w-4" />
+                <BarsArrowUpIcon className="app-action-icon" />
               ) : (
-                <BarsArrowDownIcon className="h-4 w-4" />
+                <BarsArrowDownIcon className="app-action-icon" />
               )}
             </button>
             <button
@@ -365,9 +429,9 @@ const DiscoverBooks = ({
             >
               {intl.formatMessage(messages.date)}
               {sortBy === 'oldest' ? (
-                <BarsArrowUpIcon className="h-4 w-4" />
+                <BarsArrowUpIcon className="app-action-icon" />
               ) : (
-                <BarsArrowDownIcon className="h-4 w-4" />
+                <BarsArrowDownIcon className="app-action-icon" />
               )}
             </button>
             <button
@@ -379,7 +443,7 @@ const DiscoverBooks = ({
               }
             >
               {intl.formatMessage(messages.random)}
-              <BarsArrowDownIcon className="h-4 w-4" />
+              <BarsArrowDownIcon className="app-action-icon" />
             </button>
           </div>
         </PinnedFilterSection>

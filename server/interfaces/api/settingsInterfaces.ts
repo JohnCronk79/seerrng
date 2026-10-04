@@ -1,3 +1,4 @@
+import type { EnabledMediaCategories } from '@server/constants/mediaCategories';
 import type { PublicOidcProvider } from '@server/lib/settings';
 import type { DnsEntries, DnsStats } from 'dns-caching';
 import type { PaginatedResponse } from './common';
@@ -39,8 +40,13 @@ export interface PublicSettingsResponse {
   series4kEnabled: boolean;
   musicEnabled: boolean;
   booksEnabled: boolean;
+  ebookServiceEnabled: boolean;
+  audiobookServiceEnabled: boolean;
   comicsEnabled: boolean;
   magazinesEnabled: boolean;
+  softwareEnabled: boolean;
+  romarrEnabled?: boolean;
+  enabledMediaCategories?: EnabledMediaCategories;
   discoverRegion: string;
   streamingRegion: string;
   originalLanguage: string;

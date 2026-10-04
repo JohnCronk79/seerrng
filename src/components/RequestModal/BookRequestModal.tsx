@@ -18,6 +18,7 @@ import {
   isRequestDestinationRequested,
 } from '@app/components/RequestModal/requestAvailability';
 import useAdvancedOptionsDisclosure from '@app/hooks/useAdvancedOptionsDisclosure';
+import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -136,6 +137,7 @@ const BookRequestModal = ({
 }: BookRequestModalProps) => {
   const intl = useIntl();
   const { addToast } = useToasts();
+  const { currentSettings } = useSettings();
   const { user, hasPermission } = useUser();
   const [isUpdating, setIsUpdating] = useState(false);
   const [bookFormat, setBookFormat] = useState<'ebook' | 'audiobook'>(
@@ -375,12 +377,32 @@ const BookRequestModal = ({
   const hasAudiobookServer = (bookServices ?? []).some(
     (service) => service.serviceType === 'audiobook'
   );
+  const hasEnabledEbookCategory =
+    currentSettings.enabledMediaCategories?.ebook !== false ||
+    (editRequest?.bookFormat !== undefined &&
+      (editRequest.bookFormat === 'ebook' ||
+        editRequest.bookFormat === 'both'));
+  const hasEnabledAudiobookCategory =
+    currentSettings.enabledMediaCategories?.audiobook !== false ||
+    (editRequest?.bookFormat !== undefined &&
+      (editRequest.bookFormat === 'audiobook' ||
+        editRequest.bookFormat === 'both'));
   const formatAvailable = useMemo(
     () => ({
-      ebook: hasEbookServer,
-      audiobook: hasAudiobookServer,
+      ebook: hasEbookServer && hasEnabledEbookCategory,
+      audiobook: hasAudiobookServer && hasEnabledAudiobookCategory,
+      both:
+        hasEbookServer &&
+        hasAudiobookServer &&
+        hasEnabledEbookCategory &&
+        hasEnabledAudiobookCategory,
     }),
-    [hasAudiobookServer, hasEbookServer]
+    [
+      hasAudiobookServer,
+      hasEbookServer,
+      hasEnabledAudiobookCategory,
+      hasEnabledEbookCategory,
+    ]
   );
 
   useEffect(() => {
@@ -392,17 +414,17 @@ const BookRequestModal = ({
       return;
     }
 
-    if (hasEbookServer) {
+    if (formatAvailable.ebook) {
       setBookFormat('ebook');
-    } else if (hasAudiobookServer) {
+    } else if (formatAvailable.audiobook) {
       setBookFormat('audiobook');
     }
   }, [
     bookFormat,
     bookServices,
     formatAvailable,
-    hasAudiobookServer,
-    hasEbookServer,
+    formatAvailable.audiobook,
+    formatAvailable.ebook,
   ]);
 
   useEffect(() => {
@@ -1041,7 +1063,7 @@ const BookRequestModal = ({
             data-testid="modal-cancel-button"
             className="app-button app-button-danger button-standard"
           >
-            <XMarkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            <XMarkIcon aria-hidden="true" />
             {intl.formatMessage(globalMessages.cancel)}
           </button>
           <button
@@ -1056,7 +1078,7 @@ const BookRequestModal = ({
             }
             className="app-button app-button-success button-standard"
           >
-            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            <ArrowDownTrayIcon aria-hidden="true" />
             {requestButtonLabel}
           </button>
         </div>

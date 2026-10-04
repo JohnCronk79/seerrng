@@ -43,6 +43,7 @@ const messages = defineMessages('notifications.agents.webpush', {
   issueResolved: 'The {issueType} was marked as resolved by {userName}!',
   issueReopened: 'The {issueType} was reopened by {userName}.',
   viewIssue: 'View Issue',
+  viewRequestStatus: 'View Request Status',
   viewMedia: 'View Media',
 });
 
@@ -163,6 +164,10 @@ class WebPushAgent
           mediaType,
         });
         break;
+      case Notification.SOFTWARE_AVAILABLE:
+      case Notification.SOFTWARE_STATUS:
+        message = payload.message;
+        break;
       case Notification.MEDIA_DECLINED:
         message = intl.formatMessage(messages.declined, {
           quality,
@@ -215,13 +220,20 @@ class WebPushAgent
 
     const actionUrl = payload.issue
       ? `/issues/${payload.issue.id}`
-      : payload.media
+      : payload.media || payload.mediaUrl
         ? getNotificationMediaUrl(payload)
         : undefined;
 
     const actionUrlTitle = actionUrl
       ? intl.formatMessage(
-          payload.issue ? messages.viewIssue : messages.viewMedia
+          payload.issue
+            ? messages.viewIssue
+            : payload.mediaUrl?.startsWith('/requests/status?requestId=') ||
+                payload.mediaUrl?.startsWith(
+                  '/requests/status?softwareRequestId='
+                )
+              ? messages.viewRequestStatus
+              : messages.viewMedia
         )
       : undefined;
 

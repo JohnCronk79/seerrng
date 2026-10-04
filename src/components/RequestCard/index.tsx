@@ -8,7 +8,9 @@ import CachedImage from '@app/components/Common/CachedImage';
 import MediaTypeBadge, {
   getMediaTypeBadgeType,
 } from '@app/components/Common/MediaTypeBadge';
+import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
+import { canRetryRequest } from '@app/components/RequestCard/retryPermissions';
 import StatusBadge from '@app/components/StatusBadge';
 import useDeepLinks from '@app/hooks/useDeepLinks';
 import useToasts from '@app/hooks/useToasts';
@@ -24,7 +26,12 @@ import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
 import { withProperties } from '@app/utils/typeHelpers';
 import {
-  ArrowPathIcon,
+  CheckIcon as AvailableStatusIcon,
+  ExclamationTriangleIcon as FailedStatusIcon,
+  ClockIcon as PendingStatusIcon,
+  ArrowPathIcon as ProcessingStatusIcon,
+} from '@heroicons/react/24/outline';
+import {
   CheckIcon,
   PencilIcon,
   TrashIcon,
@@ -52,8 +59,9 @@ const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
 });
 
 const messages = defineMessages('components.RequestCard', {
-  seasons: '{seasonCount, plural, one {Season} other {Seasons}}',
   failedretry: 'Something went wrong while retrying the request.',
+  retry: 'Retry',
+  retryRequest: 'Retry this request',
   failedmodify: 'Something went wrong while modifying the request.',
   mediaerror: '{mediaType} Not Found',
   tmdbid: 'TMDB ID',
@@ -249,17 +257,19 @@ interface RequestCardPlaceholderProps {
 }
 
 const RequestCardPlaceholder = ({ compact }: RequestCardPlaceholderProps) => {
+  if (compact) {
+    return (
+      <div
+        className="request-card-placeholder request-card-compact-layout"
+        aria-hidden="true"
+      />
+    );
+  }
+
   return (
-    <div
-      className={`relative w-72 animate-pulse rounded-xl bg-gray-700 p-4 sm:w-96 ${
-        compact ? 'h-[9.5rem]' : 'min-h-[17rem]'
-      }`}
-    >
-      <div className={compact ? 'h-full w-20 sm:w-28' : 'w-20 sm:w-28'}>
-        <div
-          className={compact ? 'h-full w-full' : 'w-full'}
-          style={compact ? undefined : { paddingBottom: '150%' }}
-        />
+    <div className="relative min-h-[17rem] w-72 animate-pulse rounded-xl bg-gray-700 p-4 sm:w-96">
+      <div className="w-20 sm:w-28">
+        <div className="w-full" style={{ paddingBottom: '150%' }} />
       </div>
     </div>
   );
@@ -272,14 +282,12 @@ interface RequestCardErrorProps {
 const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
   const { hasPermission } = useUser();
   const intl = useIntl();
-
   const { mediaUrl: plexUrl, mediaUrl4k: plexUrl4k } = useDeepLinks({
     mediaUrl: requestData?.media?.mediaUrl,
     mediaUrl4k: requestData?.media?.mediaUrl4k,
     iOSPlexUrl: requestData?.media?.iOSPlexUrl,
     iOSPlexUrl4k: requestData?.media?.iOSPlexUrl4k,
   });
-
   const deleteRequest = async () => {
     await axios.delete(`/api/v1/media/${requestData?.media.id}`);
     mutate('/api/v1/media?filter=allavailable&take=20&sort=mediaAdded');
@@ -491,16 +499,34 @@ const RequestCard = ({
     requestData.bookFormat === 'both' &&
     !!(
       requestData.media.serviceId !== requestData.media.audiobookServiceId &&
-      (requestData.media.serviceId || requestData.media.audiobookServiceId)
+      ((requestData.media.serviceId !== null &&
+        requestData.media.serviceId !== undefined) ||
+        (requestData.media.audiobookServiceId !== null &&
+          requestData.media.audiobookServiceId !== undefined))
     );
-
+  const canRetry =
+    requestData &&
+    user &&
+    canRetryRequest({
+      requestType: requestData.type,
+      is4k: requestData.is4k,
+      requestedById: requestData.requestedBy.id,
+      userId: user.id,
+      permissions: user.permissions,
+    });
+  const canFailDownload = Boolean(
+    requestData &&
+    requestData.status === MediaRequestStatus.APPROVED &&
+    (requestData.type === 'movie' || requestData.type === 'tv') &&
+    getRequestDownloadStatus(requestData)?.some((item) => item.downloadId) &&
+    canRetry
+  );
   const { mediaUrl: plexUrl, mediaUrl4k: plexUrl4k } = useDeepLinks({
     mediaUrl: requestData?.media?.mediaUrl,
     mediaUrl4k: requestData?.media?.mediaUrl4k,
     iOSPlexUrl: requestData?.media?.iOSPlexUrl,
     iOSPlexUrl4k: requestData?.media?.iOSPlexUrl4k,
   });
-
   const modifyRequest = async (type: 'approve' | 'decline') => {
     setUpdatingType(type);
     try {
@@ -572,6 +598,40 @@ const RequestCard = ({
     return <RequestCardError requestData={requestData} />;
   }
 
+  const visibleMediaStatuses = [
+    MediaStatus.PENDING,
+    MediaStatus.PROCESSING,
+    MediaStatus.PARTIALLY_AVAILABLE,
+    MediaStatus.AVAILABLE,
+    MediaStatus.BLOCKLISTED,
+    MediaStatus.DELETED,
+  ];
+  const requestedMediaStatus = getRequestMediaStatus(requestData);
+  const requestedQualityStatus = visibleMediaStatuses.includes(
+    requestedMediaStatus
+  )
+    ? requestedMediaStatus
+    : requestData.status === MediaRequestStatus.PENDING
+      ? MediaStatus.PENDING
+      : MediaStatus.PROCESSING;
+  const availabilityQualityBadges =
+    requestData.type === 'movie' || requestData.type === 'tv'
+      ? [
+          {
+            quality: requestData.is4k ? ('4K' as const) : ('HD' as const),
+            status: requestedQualityStatus,
+            inProgress:
+              (getRequestDownloadStatus(requestData) ?? []).length > 0,
+          },
+        ]
+      : [
+          {
+            quality: undefined,
+            status: getRequestMediaStatus(requestData),
+            inProgress:
+              (getRequestDownloadStatus(requestData) ?? []).length > 0,
+          },
+        ].filter((badge) => visibleMediaStatuses.includes(badge.status));
   return (
     <>
       {showEditModal && (
@@ -612,8 +672,8 @@ const RequestCard = ({
         />
       )}
       <div
-        className={`app-card-main relative flex w-72 overflow-hidden rounded-xl bg-gray-800 bg-cover bg-center p-4 text-gray-400 shadow ring-1 ring-gray-700 sm:w-96 ${
-          compact ? 'min-h-0' : 'min-h-[17rem]'
+        className={`app-card-main relative flex overflow-hidden rounded-xl bg-gray-800 bg-cover bg-center p-4 text-gray-400 shadow ring-1 ring-gray-700 ${
+          compact ? 'request-card-compact-layout' : 'min-h-[17rem] w-72 sm:w-96'
         }`}
         data-testid="request-card"
       >
@@ -649,11 +709,8 @@ const RequestCard = ({
             {requestData.type !== 'book' && (
               <MediaTypeBadge
                 mediaType={getMediaTypeBadgeType(requestData.type) ?? 'movie'}
-                variant="compact"
+                variant="button"
               />
-            )}
-            {requestData.type !== 'book' && requestData.is4k && (
-              <Badge badgeType="warning">4K</Badge>
             )}
             <span>
               {(isMovie(title)
@@ -735,29 +792,6 @@ const RequestCard = ({
               </Link>
             </div>
           )}
-          {!isMovie(title) &&
-            !isMusic(title) &&
-            !isBook(title) &&
-            request.seasons.length > 0 && (
-              <div className="my-0.5 hidden items-center text-sm sm:my-1 sm:flex">
-                <span className="mr-2 font-bold">
-                  {intl.formatMessage(messages.seasons, {
-                    seasonCount: request.seasons.length,
-                  })}
-                </span>
-                <div className="hide-scrollbar overflow-x-scroll">
-                  {request.seasons.map((season) => (
-                    <span key={`season-${season.id}`} className="mr-2">
-                      <Badge>
-                        {season.seasonNumber === 0
-                          ? intl.formatMessage(globalMessages.specials)
-                          : season.seasonNumber}
-                      </Badge>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
           {requestData.type === 'book' && (
             <div className="card-field">
               <span className="card-field-name">
@@ -775,27 +809,124 @@ const RequestCard = ({
                 {intl.formatMessage(messages.partialBookService)}
               </span>
               <span className="flex truncate text-sm text-gray-300">
-                {requestData.media.serviceId
+                {requestData.media.serviceId !== null &&
+                requestData.media.serviceId !== undefined
                   ? intl.formatMessage(messages.ebook)
                   : intl.formatMessage(messages.audiobook)}
               </span>
             </div>
           )}
-          <div className="mt-2 flex items-center text-sm sm:mt-1">
-            <span className="mr-2 hidden font-bold sm:block">
-              {intl.formatMessage(globalMessages.status)}
-            </span>
-            {requestData.status === MediaRequestStatus.DECLINED ? (
+          <div className="request-status-action-row mt-2 flex flex-wrap items-center text-sm sm:mt-1">
+            {requestData.type === 'movie' || requestData.type === 'tv' ? (
+              requestData.status === MediaRequestStatus.FAILED ? (
+                <Link
+                  className="request-status-control request-status-control-link request-status-control-danger"
+                  href={getRequestDetailHref(requestData, true)}
+                >
+                  <FailedStatusIcon
+                    className="request-status-control-icon"
+                    aria-hidden="true"
+                  />
+                  {intl.formatMessage(globalMessages.failed)}
+                </Link>
+              ) : requestData.status === MediaRequestStatus.DECLINED ? (
+                <Link
+                  className="request-status-control request-status-control-link request-status-control-danger"
+                  href={getRequestDetailHref(requestData, true)}
+                >
+                  <FailedStatusIcon
+                    className="request-status-control-icon"
+                    aria-hidden="true"
+                  />
+                  {intl.formatMessage(globalMessages.declined)}
+                </Link>
+              ) : canFailDownload ? (
+                <StatusBadge
+                  status={getRequestMediaStatus(requestData)}
+                  downloadItem={getRequestDownloadStatus(requestData)}
+                  title={
+                    isMovie(title)
+                      ? title.title
+                      : isMusic(title)
+                        ? title.title
+                        : isBook(title)
+                          ? title.title
+                          : isComic(title)
+                            ? title.title
+                            : isMagazine(title)
+                              ? title.title
+                              : title.name
+                  }
+                  inProgress={
+                    (getRequestDownloadStatus(requestData) ?? []).length > 0
+                  }
+                  is4k={requestData.is4k}
+                  tmdbId={requestData.media.tmdbId}
+                  mediaType={requestData.type === 'tv' ? 'tv' : 'movie'}
+                  plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
+                  serviceUrl={getRequestServiceUrl(requestData)}
+                  requestId={requestData.id}
+                  canFailDownload
+                  showQuality={false}
+                  className="request-status-control request-status-control-link request-status-control-warning"
+                  leadingIcon={
+                    <ProcessingStatusIcon
+                      className="request-status-control-icon"
+                      aria-hidden="true"
+                    />
+                  }
+                />
+              ) : requestedQualityStatus === MediaStatus.AVAILABLE ? (
+                <Link
+                  className="request-status-control request-status-control-link request-status-control-success"
+                  href={getRequestDetailHref(requestData, true)}
+                >
+                  <AvailableStatusIcon
+                    className="request-status-control-icon"
+                    aria-hidden="true"
+                  />
+                  {intl.formatMessage(globalMessages.available)}
+                </Link>
+              ) : requestData.status === MediaRequestStatus.PENDING ? (
+                <Link
+                  className="request-status-control request-status-control-link request-status-control-pending"
+                  href={getRequestDetailHref(requestData, true)}
+                >
+                  <PendingStatusIcon
+                    className="request-status-control-icon"
+                    aria-hidden="true"
+                  />
+                  {intl.formatMessage(globalMessages.pending)}
+                </Link>
+              ) : (
+                <Link
+                  className="request-status-control request-status-control-link request-status-control-warning"
+                  href={getRequestDetailHref(requestData, true)}
+                >
+                  <ProcessingStatusIcon
+                    className="request-status-control-icon"
+                    aria-hidden="true"
+                  />
+                  {intl.formatMessage(globalMessages.processing)}
+                </Link>
+              )
+            ) : requestData.status === MediaRequestStatus.DECLINED ? (
               <Badge badgeType="danger">
                 {intl.formatMessage(globalMessages.declined)}
               </Badge>
             ) : requestData.status === MediaRequestStatus.FAILED ? (
-              <Badge
-                badgeType="danger"
+              <Button
+                as="a"
+                buttonType="danger"
+                buttonSize="sm"
                 href={getRequestDetailHref(requestData, true)}
               >
+                <FailedStatusIcon
+                  className="request-status-control-icon"
+                  aria-hidden="true"
+                />
                 {intl.formatMessage(globalMessages.failed)}
-              </Badge>
+              </Button>
             ) : requestData.status === MediaRequestStatus.PENDING &&
               getRequestMediaStatus(requestData) === MediaStatus.DELETED ? (
               <Badge
@@ -805,89 +936,44 @@ const RequestCard = ({
                 {intl.formatMessage(globalMessages.pending)}
               </Badge>
             ) : (
-              <StatusBadge
-                status={getRequestMediaStatus(requestData)}
-                downloadItem={getRequestDownloadStatus(requestData)}
-                title={
-                  isMovie(title)
-                    ? title.title
-                    : isMusic(title)
-                      ? title.title
-                      : isBook(title)
-                        ? title.title
-                        : isComic(title)
-                          ? title.title
-                          : isMagazine(title)
-                            ? title.title
-                            : title.name
-                }
-                inProgress={
-                  (getRequestDownloadStatus(requestData) ?? []).length > 0
-                }
-                is4k={requestData.is4k}
-                tmdbId={
-                  requestData.type === 'music' ||
-                  requestData.type === 'book' ||
-                  requestData.type === 'comic' ||
-                  requestData.type === 'magazine'
-                    ? undefined
-                    : requestData.media.tmdbId
-                }
-                mbId={
-                  requestData.type === 'music'
-                    ? (requestData.media.mbId ?? undefined)
-                    : undefined
-                }
-                externalId={
-                  requestData.type === 'book'
-                    ? getBookId(requestData)
-                    : requestData.type === 'comic'
-                      ? getComicId(requestData)
-                      : requestData.type === 'magazine'
-                        ? getMagazineId(requestData)
-                        : undefined
-                }
-                mediaType={
-                  requestData.type === 'music'
-                    ? 'music'
-                    : requestData.type === 'book'
-                      ? 'book'
-                      : requestData.type === 'comic'
-                        ? 'comic'
-                        : requestData.type === 'magazine'
-                          ? 'magazine'
-                          : requestData.type === 'tv'
-                            ? 'tv'
-                            : 'movie'
-                }
-                bookFormat={
-                  requestData.type === 'book'
-                    ? getRequestedBookFormat(requestData.bookFormat)
-                    : undefined
-                }
-                plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
-                serviceUrl={getRequestServiceUrl(requestData)}
-              />
+              availabilityQualityBadges.map((badge) => (
+                <StatusBadgeMini
+                  key={badge.quality ?? 'availability'}
+                  status={badge.status}
+                  quality={badge.quality}
+                  inProgress={badge.inProgress}
+                  shrink
+                  buttonStyle
+                />
+              ))
+            )}
+            {(requestData.type === 'movie' || requestData.type === 'tv') &&
+              availabilityQualityBadges.map((badge) => (
+                <StatusBadgeMini
+                  key={badge.quality ?? 'availability'}
+                  status={badge.status}
+                  quality={badge.quality}
+                  inProgress={badge.inProgress}
+                  shrink
+                  buttonStyle
+                />
+              ))}
+            {requestData.status === MediaRequestStatus.FAILED && canRetry && (
+              <Tooltip content={intl.formatMessage(messages.retryRequest)}>
+                <Button
+                  buttonType="warning"
+                  buttonSize="sm"
+                  disabled={isRetrying}
+                  buttonIcon="retry"
+                  aria-busy={isRetrying}
+                  onClick={() => retryRequest()}
+                >
+                  {intl.formatMessage(messages.retry)}
+                </Button>
+              </Tooltip>
             )}
           </div>
           <div className="flex flex-1 items-end space-x-2">
-            {requestData.status === MediaRequestStatus.FAILED &&
-              hasPermission(Permission.MANAGE_REQUESTS) && (
-                <Button
-                  buttonType="primary"
-                  buttonSize="sm"
-                  disabled={isRetrying}
-                  onClick={() => retryRequest()}
-                >
-                  <ArrowPathIcon
-                    className={isRetrying ? 'animate-spin' : ''}
-                    style={{ marginRight: '0', animationDirection: 'reverse' }}
-                  />
-                  <span className="ml-1.5 hidden sm:block">
-                    {intl.formatMessage(globalMessages.retry)}
-                  </span>
-                </Button>
-              )}
             {showApprovalActions &&
               requestData.status === MediaRequestStatus.PENDING &&
               hasPermission(Permission.MANAGE_REQUESTS) && (
@@ -1012,9 +1098,7 @@ const RequestCard = ({
         </div>
         <Link
           href={getRequestDetailHref(requestData)}
-          className={`relative w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer self-start overflow-hidden rounded-md shadow-sm ring-1 ring-gray-700 transition duration-300 hover:scale-105 hover:shadow-md sm:w-28 ${
-            isMusic(title) ? 'aspect-square' : 'aspect-[2/3]'
-          }`}
+          className="relative w-20 flex-shrink-0 scale-100 transform-gpu cursor-pointer self-stretch overflow-hidden rounded-md shadow-sm ring-1 ring-gray-700 transition duration-300 hover:scale-105 hover:shadow-md sm:w-28"
         >
           <CachedImage
             type={isBook(title) ? 'book' : isMusic(title) ? 'music' : 'tmdb'}

@@ -1,7 +1,20 @@
+import { useUser } from '@app/hooks/useUser';
+import { getAdvancedThemePreset } from '@app/utils/advancedThemePresets';
 import {
   readLocalStorageValue,
   writeLocalStorageValue,
 } from '@app/utils/localStorage';
+import type { AdvancedThemeOverrides } from '@server/utils/advancedThemeOverrides';
+import {
+  ADVANCED_THEME_COLOR_TOKENS,
+  getAdvancedThemeCssValue,
+  validateAdvancedThemeOverrides,
+} from '@server/utils/advancedThemeOverrides';
+import {
+  DEFAULT_THEME_PALETTE_ID,
+  parseThemePalette,
+} from '@server/utils/themePreference';
+import axios from 'axios';
 import type { ReactNode } from 'react';
 import {
   createContext,
@@ -12,6 +25,7 @@ import {
   useRef,
   useState,
 } from 'react';
+export { DEFAULT_THEME_PALETTE_ID } from '@server/utils/themePreference';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -215,8 +229,6 @@ export const themePalettes: ThemePalette[] = [
     secondary: 'sietchNeon',
   },
 ];
-
-export const DEFAULT_THEME_PALETTE_ID = 'seerr';
 
 const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
@@ -793,9 +805,13 @@ const getThemeChromeTokens = (
 type ThemeContextValue = {
   mode: ThemeMode;
   palette: string;
+  advancedThemeOverrides: AdvancedThemeOverrides | null;
   setMode: (mode: ThemeMode) => void;
-  setPalette: (palette: string) => void;
+  setPalette: (palette: string) => Promise<void>;
   toggleMode: () => void;
+  saveAdvancedThemeOverrides: (
+    overrides: AdvancedThemeOverrides | null
+  ) => Promise<void>;
 };
 
 const THEME_MODE_KEY = 'seerr-theme-mode';
@@ -808,20 +824,50 @@ const getStoredMode = (): ThemeMode => {
   return storedMode === 'light' || storedMode === 'dark' ? storedMode : 'dark';
 };
 
-const getStoredPalette = (): string => {
-  const storedPalette = readLocalStorageValue(THEME_PALETTE_KEY);
-  return storedPalette &&
-    themePalettes.some((palette) => palette.id === storedPalette)
-    ? storedPalette
-    : DEFAULT_THEME_PALETTE_ID;
-};
-
 const getThemePalette = (palette: string): ThemePalette =>
   themePalettes.find((themePalette) => themePalette.id === palette) ??
   themePalettes.find(
     (themePalette) => themePalette.id === DEFAULT_THEME_PALETTE_ID
   ) ??
   themePalettes[0];
+
+const advancedThemeTokens = [
+  ...ADVANCED_THEME_COLOR_TOKENS,
+  '--theme-page-spotlight-strength',
+  '--theme-page-gradient-main-stop',
+  '--theme-detail-divider-shadow',
+];
+
+const applyAdvancedThemeOverrides = (
+  root: HTMLElement,
+  overrides: AdvancedThemeOverrides | null,
+  mode: ThemeMode
+) => {
+  const validation = validateAdvancedThemeOverrides(overrides);
+  if ('error' in validation || !validation.value) return;
+
+  const preset = getAdvancedThemePreset(validation.value.preset);
+  if (preset) {
+    root.dataset.themePreset = preset.id;
+    Object.entries(preset.chromeByMode[mode]).forEach(([token, value]) => {
+      if (value !== undefined) {
+        root.style.setProperty(token, getAdvancedThemeCssValue(token, value));
+      }
+    });
+  } else {
+    delete root.dataset.themePreset;
+  }
+
+  Object.entries(validation.value).forEach(([token, value]) => {
+    if (token === 'preset') return;
+    root.style.setProperty(token, getAdvancedThemeCssValue(token, value));
+  });
+};
+
+const resetAdvancedThemeOverrides = (root: HTMLElement) => {
+  advancedThemeTokens.forEach((token) => root.style.removeProperty(token));
+  delete root.dataset.themePreset;
+};
 
 export const getThemeTokens = (mode: ThemeMode, palette: string) => {
   const activePalette = getThemePalette(palette);
@@ -895,13 +941,18 @@ export const getThemeTokens = (mode: ThemeMode, palette: string) => {
   };
 };
 
-const applyTheme = (mode: ThemeMode, palette: string) => {
+const applyTheme = (
+  mode: ThemeMode,
+  palette: string,
+  overrides: AdvancedThemeOverrides | null = null
+) => {
   if (typeof window === 'undefined') {
     return;
   }
 
   const themeTokens = getThemeTokens(mode, palette);
 
+  resetAdvancedThemeOverrides(document.documentElement);
   document.documentElement.dataset.themeMode = mode;
   document.documentElement.dataset.themePalette = themeTokens.activePaletteId;
   document.documentElement.classList.toggle('dark', mode === 'dark');
@@ -910,9 +961,24 @@ const applyTheme = (mode: ThemeMode, palette: string) => {
   applyScale(document.documentElement, 'purple', themeTokens.secondaryScale);
   applyScale(document.documentElement, 'gray', themeTokens.surfaceScale);
   applyThemeChrome(document.documentElement, themeTokens);
+  applyAdvancedThemeOverrides(document.documentElement, overrides, mode);
+  const presetSidebarStart = getAdvancedThemePreset(overrides?.preset)
+    ?.chromeByMode[mode]['--theme-sidebar-start'];
+  const sidebarStartOverride =
+    overrides?.['--theme-sidebar-start'] ?? presetSidebarStart;
   document
     .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-    ?.setAttribute('content', rgbToHex(themeTokens.sidebarStart));
+    ?.setAttribute(
+      'content',
+      rgbToHex(
+        sidebarStartOverride !== undefined
+          ? getAdvancedThemeCssValue(
+              '--theme-sidebar-start',
+              sidebarStartOverride
+            )
+          : themeTokens.sidebarStart
+      )
+    );
   writeLocalStorageValue(THEME_MODE_KEY, mode);
   writeLocalStorageValue(THEME_PALETTE_KEY, themeTokens.activePaletteId);
 };
@@ -922,63 +988,165 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   // browser preferences only after hydration to avoid replacing the SSR tree.
   const [mode, setModeState] = useState<ThemeMode>('dark');
   const [palette, setPaletteState] = useState(DEFAULT_THEME_PALETTE_ID);
+  const [advancedThemeOverrides, setAdvancedThemeOverrides] =
+    useState<AdvancedThemeOverrides | null>(null);
   const hasRestoredTheme = useRef(false);
+  const { user, revalidate } = useUser();
+  const currentUserId = useRef(user?.id);
+  currentUserId.current = user?.id;
+  const currentMode = useRef(mode);
+  currentMode.current = mode;
+  const themeSaveActive = useRef(false);
+
+  useEffect(() => {
+    const validation = validateAdvancedThemeOverrides(
+      user?.settings?.advancedThemeOverrides ?? null
+    );
+    const savedOverrides = 'error' in validation ? null : validation.value;
+    const savedPalette =
+      parseThemePalette(user?.settings?.themePalette) ??
+      DEFAULT_THEME_PALETTE_ID;
+    const restoredMode = hasRestoredTheme.current
+      ? currentMode.current
+      : getStoredMode();
+    // Old browser palettes must not override the one-time account migration.
+    // Later logins and releases restore the user's newly saved account choice.
+    hasRestoredTheme.current = true;
+    setModeState(restoredMode);
+    setPaletteState(savedPalette);
+    setAdvancedThemeOverrides(savedOverrides);
+    applyTheme(restoredMode, savedPalette, savedOverrides);
+  }, [
+    user?.id,
+    user?.settings?.themePalette,
+    user?.settings?.advancedThemeOverrides,
+  ]);
 
   useEffect(() => {
     if (!hasRestoredTheme.current) {
       return;
     }
 
-    applyTheme(mode, palette);
-  }, [mode, palette]);
-
-  useEffect(() => {
-    const storedMode = getStoredMode();
-    const storedPalette = getStoredPalette();
-
-    hasRestoredTheme.current = true;
-    setModeState(storedMode);
-    setPaletteState(storedPalette);
-    applyTheme(storedMode, storedPalette);
-  }, []);
+    applyTheme(mode, palette, advancedThemeOverrides);
+  }, [mode, palette, advancedThemeOverrides]);
 
   const setMode = useCallback(
     (nextMode: ThemeMode) => {
       setModeState(nextMode);
-      applyTheme(nextMode, palette);
+      applyTheme(nextMode, palette, advancedThemeOverrides);
     },
-    [palette]
+    [palette, advancedThemeOverrides]
   );
 
   const setPalette = useCallback(
-    (nextPalette: string) => {
-      const activePalette = getThemePalette(nextPalette);
-
-      setPaletteState(activePalette.id);
-      applyTheme(mode, activePalette.id);
+    async (nextPalette: string) => {
+      const userId = user?.id;
+      const selectedPalette = parseThemePalette(nextPalette);
+      if (!userId || !selectedPalette || themeSaveActive.current) {
+        throw new Error(
+          'Sign in and choose a valid theme after the current save finishes.'
+        );
+      }
+      themeSaveActive.current = true;
+      try {
+        const { data } = await axios.post<{ themePalette: string }>(
+          `/api/v1/user/${userId}/settings/theme`,
+          { palette: selectedPalette }
+        );
+        if (data.themePalette !== selectedPalette)
+          throw new Error('Theme preference was not confirmed.');
+        // A delayed response from a previous login must not affect another user.
+        if (currentUserId.current !== userId) return;
+        setPaletteState(selectedPalette);
+        await revalidate(
+          (currentUser) =>
+            currentUser?.id === userId
+              ? {
+                  ...currentUser,
+                  settings: {
+                    ...currentUser.settings,
+                    notificationTypes:
+                      currentUser.settings?.notificationTypes ?? {},
+                    themePalette: selectedPalette,
+                  },
+                }
+              : currentUser,
+          false
+        );
+      } finally {
+        themeSaveActive.current = false;
+      }
     },
-    [mode]
+    [revalidate, user?.id]
   );
 
   const toggleMode = useCallback(() => {
     setModeState((currentMode) => {
       const nextMode = currentMode === 'dark' ? 'light' : 'dark';
 
-      applyTheme(nextMode, palette);
+      applyTheme(nextMode, palette, advancedThemeOverrides);
 
       return nextMode;
     });
-  }, [palette]);
+  }, [palette, advancedThemeOverrides]);
+
+  const saveAdvancedThemeOverrides = useCallback(
+    async (overrides: AdvancedThemeOverrides | null) => {
+      if (!user?.id) {
+        throw new Error('Sign in to save advanced theme settings.');
+      }
+
+      const validation = validateAdvancedThemeOverrides(overrides);
+      if ('error' in validation) {
+        throw new Error(validation.error);
+      }
+
+      const { data } = await axios.post<{
+        advancedThemeOverrides: AdvancedThemeOverrides | null;
+      }>(`/api/v1/user/${user.id}/settings/advanced-theme`, {
+        overrides: validation.value,
+      });
+
+      setAdvancedThemeOverrides(data.advancedThemeOverrides);
+      applyTheme(mode, palette, data.advancedThemeOverrides);
+      await revalidate(
+        (currentUser) =>
+          currentUser
+            ? {
+                ...currentUser,
+                settings: {
+                  ...currentUser.settings,
+                  notificationTypes:
+                    currentUser.settings?.notificationTypes ?? {},
+                  advancedThemeOverrides: data.advancedThemeOverrides,
+                },
+              }
+            : currentUser,
+        false
+      );
+    },
+    [mode, palette, revalidate, user?.id]
+  );
 
   const value = useMemo(
     () => ({
       mode,
       palette,
+      advancedThemeOverrides,
       setMode,
       setPalette,
       toggleMode,
+      saveAdvancedThemeOverrides,
     }),
-    [mode, palette, setMode, setPalette, toggleMode]
+    [
+      mode,
+      palette,
+      advancedThemeOverrides,
+      setMode,
+      setPalette,
+      toggleMode,
+      saveAdvancedThemeOverrides,
+    ]
   );
 
   return (

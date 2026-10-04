@@ -20,6 +20,8 @@ tags:
     description: Endpoints related to user management.
   - name: search
     description: Endpoints related to search and discovery.
+  - name: admin
+    description: Administrator-managed instance-wide configuration and tools.
   - name: request
     description: Endpoints related to request management.
   - name: movies
@@ -44,6 +46,10 @@ tags:
     description: Cross-medium related media graph endpoints.
   - name: playlist
     description: Endpoints for importing Spotify and YouTube playlists as music requests.
+  - name: native desktop
+    description: Optional protocol-v1 Jellyfin playback for compatible native desktop clients.
+  - name: indexer search
+    description: Direct manual searches through an administrator-configured Prowlarr instance.
 servers:
   - url: '{server}/api/v1'
     variables:
@@ -52,6 +58,844 @@ servers:
 
 components:
   schemas:
+    SoftwareProviderSettingsInput:
+      type: object
+      properties:
+        hostname:
+          type: string
+          maxLength: 255
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+          maxLength: 512
+        apiKey:
+          type: string
+          maxLength: 2048
+    SoftwareProviderSettingsView:
+      type: object
+      properties:
+        hostname:
+          type: string
+        port:
+          type: integer
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+        apiKey:
+          type: string
+          description: Always redacted when configured.
+        apiKeyConfigured:
+          type: boolean
+    SoftwareRequestActions:
+      type: object
+      nullable: true
+      required: [retry, cancel]
+      properties:
+        retry:
+          type: boolean
+        cancel:
+          type: boolean
+        cancelReason:
+          type: string
+          nullable: true
+    MediaRatings:
+      type: object
+      properties:
+        rt:
+          type: object
+          properties:
+            title:
+              type: string
+            year:
+              type: number
+            url:
+              type: string
+            criticsScore:
+              type: number
+            criticsRating:
+              type: string
+              enum: ['Rotten', 'Fresh', 'Certified Fresh']
+            audienceScore:
+              type: number
+            audienceRating:
+              type: string
+              enum: ['Spilled', 'Upright']
+        imdb:
+          type: object
+          properties:
+            title:
+              type: string
+            url:
+              type: string
+            criticsScore:
+              type: number
+            criticsScoreCount:
+              type: integer
+        mdblist:
+          type: object
+          properties:
+            imdbId:
+              type: string
+            imdbRating:
+              type: number
+            imdbVotes:
+              type: integer
+            rtRating:
+              type: number
+            rtUserRating:
+              type: number
+            metacriticRating:
+              type: number
+            traktRating:
+              type: number
+            traktVotes:
+              type: integer
+            tmdbRating:
+              type: number
+    MdblistRatingBatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+    MdblistRatings:
+      type: object
+      properties:
+        imdbId:
+          type: string
+        imdbRating:
+          type: number
+        imdbVotes:
+          type: integer
+        rtRating:
+          type: number
+        rtUserRating:
+          type: number
+        metacriticRating:
+          type: number
+        traktRating:
+          type: number
+        traktVotes:
+          type: integer
+        tmdbRating:
+          type: number
+    MdblistRatingsBatchResponse:
+      type: object
+      additionalProperties:
+        $ref: '#/components/schemas/MdblistRatings'
+    QueueIntervention:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - serviceType
+        - serviceId
+        - serviceName
+        - title
+        - warnings
+        - state
+        - resolution
+        - actorId
+        - manualImportCapable
+        - createdAt
+        - lastSeenAt
+        - actionAt
+        - resolvedAt
+        - actions
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        serviceType:
+          type: string
+          enum:
+            - radarr
+            - sonarr
+            - lidarr
+            - readarr
+        serviceId:
+          type: integer
+        serviceName:
+          type: string
+        title:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          enum:
+            - active
+            - failed
+            - importing
+            - rejecting
+            - resolved
+        resolution:
+          type: string
+          nullable: true
+        actorId:
+          type: integer
+          nullable: true
+        manualImportCapable:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        actionAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        actions:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - at
+              - actorId
+              - action
+              - state
+              - options
+            properties:
+              at:
+                type: string
+                format: date-time
+              actorId:
+                type: integer
+              action:
+                type: string
+                enum:
+                  - import
+                  - reject
+              state:
+                type: string
+              options:
+                type: object
+                additionalProperties: false
+                properties:
+                  importMode:
+                    type: string
+                    enum:
+                      - copy
+                      - move
+                  fileCount:
+                    type: integer
+                  blocklist:
+                    type: boolean
+                  removeFromClient:
+                    type: boolean
+    DiscoveryAccount:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - username
+        - providerUserId
+        - allowWrites
+        - linkedAt
+        - expiresAt
+      properties:
+        provider:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - simkl
+        username:
+          type: string
+        providerUserId:
+          type: string
+        allowWrites:
+          type: boolean
+        linkedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: integer
+          nullable: true
+    DiscoveryConfiguration:
+      type: object
+      additionalProperties: false
+      required:
+        - trakt
+        - anilist
+        - simkl
+        - mdblist
+      properties:
+        trakt:
+          type: object
+          additionalProperties: false
+          required:
+            - configured
+            - clientId
+          properties:
+            configured:
+              type: boolean
+            clientId:
+              type: string
+        anilist:
+          type: object
+          additionalProperties: false
+          required:
+            - configured
+            - clientId
+          properties:
+            configured:
+              type: boolean
+            clientId:
+              type: string
+        simkl:
+          type: object
+          additionalProperties: false
+          required:
+            - configured
+            - clientId
+          properties:
+            configured:
+              type: boolean
+            clientId:
+              type: string
+        mdblist:
+          type: object
+          additionalProperties: false
+          required:
+            - configured
+          properties:
+            configured:
+              type: boolean
+    DiscoveryAccounts:
+      type: object
+      additionalProperties: false
+      required: [accounts, mediaServer]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryAccount'
+        mediaServer:
+          type: object
+          nullable: true
+          additionalProperties: false
+          required: [provider, connected]
+          properties:
+            provider:
+              type: string
+              enum: [plex, jellyfin, emby]
+            connected:
+              type: boolean
+    DiscoveryFeedItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - source
+        - sourceId
+        - title
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - mdblist
+        sourceId:
+          type: string
+        title:
+          type: string
+        mediaType:
+          type: string
+          enum:
+            - movie
+            - tv
+        tmdbId:
+          type: integer
+          minimum: 1
+        year:
+          type: integer
+        imageUrl:
+          type: string
+        identityMapped:
+          type: boolean
+        identityResolution:
+          type: string
+          enum: [personal, curated, external-id]
+        mappingAvailable:
+          type: boolean
+    DiscoveryFeedPage:
+      type: object
+      additionalProperties: false
+      required:
+        - page
+        - hasMore
+        - items
+        - missingMappings
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          maximum: 100
+        hasMore:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryFeedItem'
+        missingMappings:
+          type: integer
+          minimum: 0
+    DiscoveryProviderError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - PROVIDER_RATE_LIMITED
+            - RECONNECT_REQUIRED
+            - PROVIDER_SETUP_REQUIRED
+            - PROVIDER_LIST_NOT_FOUND
+            - PROVIDER_TEMPORARILY_UNAVAILABLE
+        message:
+          type: string
+    PersonalLibraryItem:
+      type: object
+      additionalProperties: false
+      required: [id, source, sourceId, title]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          enum: [trakt, anilist, simkl, plex, jellyfin, emby]
+        sourceId:
+          type: string
+        title:
+          type: string
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        tmdbId:
+          type: integer
+          minimum: 1
+        identityMapped:
+          type: boolean
+        identityResolution:
+          type: string
+          enum: [personal, curated, external-id]
+        imageUrl:
+          type: string
+        year:
+          type: integer
+        status:
+          type: string
+          enum:
+            [planning, watching, watched, completed, unwatched, paused, dropped]
+        rating:
+          type: number
+          minimum: 0
+          maximum: 10
+        progress:
+          type: integer
+          minimum: 0
+        totalEpisodes:
+          type: integer
+          minimum: 0
+    PersonalLibraryPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, hasMore, allowWrites, missingMappings, truncated]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalLibraryItem'
+        page:
+          type: integer
+          minimum: 1
+          maximum: 500
+        nextCursor:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: Resume a media-server in-progress shelf from this offset.
+        total:
+          type: integer
+          minimum: 0
+        hasMore:
+          type: boolean
+        allowWrites:
+          type: boolean
+        missingMappings:
+          type: integer
+          minimum: 0
+        truncated:
+          type: boolean
+        libraries:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, type]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              type:
+                type: string
+                enum: [show, movie]
+    ProviderLibraryRepairRequest:
+      type: object
+      additionalProperties: false
+      required: [shelf, startPage, pageCount]
+      properties:
+        shelf:
+          type: string
+          enum: [all, watchlist, watched, in-progress, completed, rated]
+        startPage:
+          type: integer
+          minimum: 1
+          maximum: 500
+        pageCount:
+          type: integer
+          minimum: 1
+          maximum: 5
+        mediaType:
+          type: string
+          enum: [movie, tv]
+    ProviderLibraryRepairResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          startPage,
+          nextPage,
+          pagesScanned,
+          scanned,
+          matched,
+          saved,
+          hasMore,
+          truncated,
+          limitReached,
+        ]
+      properties:
+        startPage:
+          type: integer
+          minimum: 1
+          maximum: 500
+        nextPage:
+          type: integer
+          minimum: 1
+          maximum: 501
+        pagesScanned:
+          type: integer
+          minimum: 0
+          maximum: 5
+        scanned:
+          type: integer
+          minimum: 0
+          maximum: 200
+        matched:
+          type: integer
+          minimum: 0
+          maximum: 200
+        saved:
+          type: integer
+          minimum: 0
+          maximum: 200
+        hasMore:
+          type: boolean
+        truncated:
+          type: boolean
+        limitReached:
+          type: boolean
+    DiscoveryIdentityMappingRequest:
+      type: object
+      additionalProperties: false
+      required: [identity, tmdbId, mediaType]
+      properties:
+        identity:
+          type: string
+          minLength: 3
+          maxLength: 256
+        tmdbId:
+          type: integer
+          minimum: 1
+          maximum: 1000000000
+        mediaType:
+          type: string
+          enum: [movie, tv]
+    DiscoveryIdentityMapping:
+      type: object
+      additionalProperties: false
+      required: [identity, tmdbId, mediaType, updatedAt]
+      properties:
+        identity:
+          type: string
+          maxLength: 256
+        tmdbId:
+          type: integer
+          minimum: 1
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        updatedAt:
+          type: string
+          format: date-time
+    PersonalIdentityMappingPackEntry:
+      type: object
+      additionalProperties: false
+      required: [identity, tmdbId, mediaType]
+      properties:
+        identity:
+          type: string
+          minLength: 3
+          maxLength: 256
+        tmdbId:
+          type: integer
+          minimum: 1
+          maximum: 1000000000
+        mediaType:
+          type: string
+          enum: [movie, tv]
+    PersonalIdentityMappingPack:
+      type: object
+      additionalProperties: false
+      required: [format, version, exportedAt, entries]
+      properties:
+        format:
+          type: string
+          enum: [seerrng.personal-title-matches]
+        version:
+          type: integer
+          enum: [1]
+        exportedAt:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/PersonalIdentityMappingPackEntry'
+    PersonalIdentityMappingPackImportResult:
+      type: object
+      additionalProperties: false
+      required: [imported, updated, unchanged, total]
+      properties:
+        imported:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        unchanged:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    CuratedIdentityMappingPack:
+      type: object
+      additionalProperties: false
+      required: [format, version, packId, name, exportedAt, entries]
+      properties:
+        format:
+          type: string
+          enum: [seerrng.curated-title-matches]
+        version:
+          type: integer
+          enum: [1]
+        packId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        exportedAt:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: '#/components/schemas/PersonalIdentityMappingPackEntry'
+    CuratedIdentityPackSummary:
+      type: object
+      additionalProperties: false
+      required: [packId, name, version, count, updatedAt]
+      properties:
+        packId:
+          type: string
+          maxLength: 64
+        name:
+          type: string
+          maxLength: 128
+        version:
+          type: integer
+          enum: [1]
+        count:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        updatedAt:
+          type: string
+          format: date-time
+    CuratedIdentityPackList:
+      type: object
+      additionalProperties: false
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CuratedIdentityPackSummary'
+    CuratedIdentityPackImportResult:
+      type: object
+      additionalProperties: false
+      required: [packId, name, imported, updated, unchanged, removed, total]
+      properties:
+        packId:
+          type: string
+          maxLength: 64
+        name:
+          type: string
+          maxLength: 128
+        imported:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        unchanged:
+          type: integer
+          minimum: 0
+        removed:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          maximum: 10000
+    DiscoveryTrackingRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, action, value]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [watched, rating, progress]
+        value:
+          anyOf:
+            - type: boolean
+            - type: number
+              minimum: 0
+              maximum: 100000
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        tmdbId:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        anilistId:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        episode:
+          type: object
+          additionalProperties: false
+          required: [season, episode]
+          properties:
+            season:
+              type: integer
+              minimum: 0
+              maximum: 10000
+            episode:
+              type: integer
+              minimum: 1
+              maximum: 2147483647
+    DiscoveryTrackingAction:
+      type: object
+      additionalProperties: false
+      required: [requestId, provider, state, createdAt]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        provider:
+          type: string
+          enum: [trakt, anilist, simkl]
+        state:
+          type: string
+          enum: [pending, succeeded, unknown]
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+    ProviderEpisodeWatchState:
+      type: object
+      additionalProperties: false
+      required: [available, season, episodes]
+      properties:
+        available:
+          type: boolean
+        season:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        episodes:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            additionalProperties: false
+            required: [episode, watched]
+            properties:
+              episode:
+                type: integer
+                minimum: 1
+                maximum: 2147483647
+              watched:
+                type: boolean
+
     MusicSourceRating:
       type: object
       required: [score, votes, url, source]
@@ -81,6 +925,23 @@ components:
           example: 1
         title:
           type: string
+        externalId:
+          type: string
+          description: Canonical external title ID, or normalized magazine title.
+        externalProvider:
+          type: string
+          enum:
+            [
+              musicbrainz,
+              openlibrary,
+              openlibrary_edition,
+              isbn,
+              comicvine,
+              lazylibrarian,
+            ]
+        mediaType:
+          type: string
+          enum: [movie, tv, music, book, comic, magazine]
         media:
           $ref: '#/components/schemas/MediaInfo'
         userId:
@@ -96,6 +957,15 @@ components:
         tmdbId:
           type: number
           example: 1
+        mbId:
+          type: string
+          description: MusicBrainz release group ID.
+        externalId:
+          type: string
+          description: Open Library work ID, ComicVine volume ID, or magazine title.
+        mediaType:
+          type: string
+          enum: [movie, tv, music, book, comic, magazine]
         ratingKey:
           type: string
         type:
@@ -166,6 +1036,9 @@ components:
     UserSettings:
       type: object
       properties:
+        themePalette:
+          type: string
+          description: Account theme preference. SeerrNG is adopted once on installation or upgrade; subsequent user choices survive later upgrades.
         username:
           type: string
           nullable: true
@@ -239,6 +1112,26 @@ components:
           nullable: true
           description: 'Time period in days for TV quota'
           example: 14
+        softwareQuotaLimit:
+          type: number
+          nullable: true
+          description: 'Maximum number of software requests allowed'
+          example: 5
+        softwareQuotaDays:
+          type: number
+          nullable: true
+          description: 'Time period in days for software quota'
+          example: 7
+        globalSoftwareQuotaLimit:
+          type: number
+          nullable: true
+          description: 'Global software quota limit setting'
+          example: 5
+        globalSoftwareQuotaDays:
+          type: number
+          nullable: true
+          description: 'Global software quota days setting'
+          example: 7
         globalMovieQuotaDays:
           type: number
           nullable: true
@@ -279,8 +1172,23 @@ components:
           nullable: true
           description: 'Enable watchlist sync for books'
           example: true
+        watchlistSyncComics:
+          type: boolean
+          nullable: true
+          description: 'Enable watchlist sync for comics'
+          example: false
+        watchlistSyncMagazines:
+          type: boolean
+          nullable: true
+          description: 'Enable watchlist sync for magazines'
+          example: false
         cardTextVisibility:
           $ref: '#/components/schemas/CardTextVisibilitySettings'
+        requestRootFolders:
+          type: object
+          description: Per-user root-folder defaults keyed by service type and instance id, such as radarr:1.
+          additionalProperties:
+            type: string
         detailDisclosureCastPinned:
           type: boolean
           description: 'Keep Cast open by default on supported detail pages'
@@ -293,6 +1201,18 @@ components:
           type: boolean
           description: 'Keep Subject Tags open by default on supported detail pages'
           example: false
+        detailDisclosureOrder:
+          type: object
+          additionalProperties: false
+          description: Independent per-media disclosure order for this user.
+          properties:
+            tv:
+              type: array
+              uniqueItems: true
+              maxItems: 6
+              items:
+                type: string
+                enum: [cast, crew, subjectTags, details, mediaServer, overview]
     CardTextVisibilitySettings:
       type: object
       properties:
@@ -724,6 +1644,15 @@ components:
         serverID:
           type: string
           readOnly: true
+        bridgeLoginEnabled:
+          type: boolean
+          readOnly: true
+          description: Whether linked Jellyfin users may sign in through the optional SeerrNG Jellyfin plugin.
+        bridgeLoginGeneration:
+          type: integer
+          minimum: 0
+          readOnly: true
+          description: Changes when bridge sign-in is enabled or disabled, revoking sessions created before the change.
     MetadataSettings:
       type: object
       properties:
@@ -946,6 +1875,54 @@ components:
         - isDefault
         - syncEnabled
         - rootFolder
+    BackIssueSettings:
+      type: object
+      properties:
+        id:
+          type: number
+          example: 0
+          readOnly: true
+        name:
+          type: string
+          example: 'BackIssue'
+        hostname:
+          type: string
+          example: '127.0.0.1'
+        port:
+          type: number
+          example: 8787
+        apiKey:
+          type: string
+          example: 'exampleapikey'
+        useSsl:
+          type: boolean
+          example: false
+        baseUrl:
+          type: string
+        isDefault:
+          type: boolean
+          example: false
+        externalUrl:
+          type: string
+          example: http://backissue.example.com
+        tags:
+          type: array
+          items:
+            type: number
+        syncEnabled:
+          type: boolean
+          example: false
+        preventSearch:
+          type: boolean
+          example: false
+      required:
+        - name
+        - hostname
+        - port
+        - apiKey
+        - useSsl
+        - isDefault
+        - syncEnabled
     LazyLibrarianSettings:
       type: object
       properties:
@@ -1094,6 +2071,469 @@ components:
         restricted:
           type: boolean
           example: false
+    ProwlarrSearchResult:
+      type: object
+      required:
+        [
+          title,
+          indexer,
+          indexerId,
+          size,
+          seeders,
+          leechers,
+          grabs,
+          protocol,
+          publishDate,
+          infoUrl,
+          categories,
+        ]
+      properties:
+        title:
+          type: string
+        indexer:
+          type: string
+        indexerId:
+          type: integer
+          nullable: true
+        size:
+          type: number
+          nullable: true
+        seeders:
+          type: number
+          nullable: true
+        leechers:
+          type: number
+          nullable: true
+        grabs:
+          type: number
+          nullable: true
+        protocol:
+          type: string
+        publishDate:
+          type: string
+          format: date-time
+          nullable: true
+        infoUrl:
+          type: string
+          format: uri
+          nullable: true
+        categories:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+    ProwlarrCategoryIds:
+      type: array
+      minItems: 1
+      maxItems: 32
+      items:
+        type: integer
+        minimum: 1
+        maximum: 1000000
+    ProwlarrCategoryMappings:
+      type: object
+      required:
+        [
+          movie,
+          tv,
+          music,
+          ebook,
+          audiobook,
+          comic,
+          magazine,
+          retro,
+          modern,
+          game,
+        ]
+      properties:
+        movie:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        tv:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        music:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        ebook:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        audiobook:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        comic:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        magazine:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        retro:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        modern:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+        game:
+          $ref: '#/components/schemas/ProwlarrCategoryIds'
+    ProwlarrIndexerCategorySummary:
+      type: object
+      required: [id, name, indexerCount]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        indexerCount:
+          type: integer
+    ProwlarrInventory:
+      type: object
+      required:
+        [
+          success,
+          totalIndexers,
+          enabledSearchableIndexers,
+          categories,
+          categoryCatalog,
+        ]
+      properties:
+        success:
+          type: boolean
+        version:
+          type: string
+        totalIndexers:
+          type: integer
+        enabledSearchableIndexers:
+          type: integer
+        categories:
+          type: object
+          additionalProperties:
+            type: integer
+        categoryCatalog:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProwlarrIndexerCategorySummary'
+        diagnostics:
+          type: array
+          description: Results of the explicit per-indexer connection test.
+          items:
+            $ref: '#/components/schemas/ProwlarrIndexerDiagnostic'
+    ProwlarrIndexerDiagnostic:
+      type: object
+      required: [name, layer, success]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        layer:
+          type: string
+          enum: [indexer-feed]
+        success:
+          type: boolean
+        status:
+          type: integer
+        error:
+          type: string
+        disabledTill:
+          type: string
+          format: date-time
+          nullable: true
+        mostRecentFailure:
+          type: string
+          format: date-time
+          nullable: true
+    ProwlarrSearchResultsResponse:
+      type: object
+      required: [category, query, offset, limit, results, hasMore]
+      properties:
+        category:
+          type: string
+          enum:
+            [
+              movie,
+              tv,
+              music,
+              ebook,
+              audiobook,
+              comic,
+              magazine,
+              retro,
+              modern,
+              game,
+            ]
+        query:
+          type: string
+        offset:
+          type: integer
+        limit:
+          type: integer
+        hasMore:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProwlarrSearchResult'
+    SoftwareRequest:
+      type: object
+      required:
+        [id, category, provider, status, title, attempt, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        requestedBy:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            displayName:
+              type: string
+            avatar:
+              type: string
+              nullable: true
+        approvedById:
+          type: integer
+          nullable: true
+        category:
+          type: string
+          enum: [retro, modern, game]
+        provider:
+          type: string
+          enum: [romarr, questarr]
+          description: Acquisition provider. PC games use QuestarrNG; emulation requests use ROMarrNG.
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              approved,
+              searching,
+              downloading,
+              importing,
+              available,
+              failed,
+              declined,
+              cancelled,
+            ]
+        title:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        coverUrl:
+          type: string
+          nullable: true
+        catalogId:
+          type: integer
+          nullable: true
+        actions:
+          $ref: '#/components/schemas/SoftwareRequestActions'
+        platform:
+          type: object
+          nullable: true
+          properties:
+            slug:
+              type: string
+            name:
+              type: string
+              nullable: true
+            catalogId:
+              type: integer
+              nullable: true
+        variant:
+          type: object
+          nullable: true
+          properties:
+            operatingSystem:
+              type: string
+              enum: [windows, linux, macos]
+            architecture:
+              type: string
+              enum: [x64, arm64, x86, universal]
+        attempt:
+          type: integer
+        percent:
+          type: number
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SoftwareRequestAsset:
+      type: object
+      required: [id, name, size, url]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        url:
+          type: string
+          description: Same-origin authenticated SeerrNG download route.
+    SoftwareRequestStatusEvent:
+      type: object
+      required: [id, requestId, requestedById, status, fingerprint, createdAt]
+      properties:
+        id:
+          type: integer
+        requestId:
+          type: integer
+        requestedById:
+          type: integer
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              approved,
+              searching,
+              downloading,
+              importing,
+              available,
+              failed,
+              declined,
+              cancelled,
+            ]
+        message:
+          type: string
+          nullable: true
+        percent:
+          type: number
+          nullable: true
+        fingerprint:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    SoftwareRequestStatusResult:
+      type: object
+      required: [request, status, message, assets]
+      properties:
+        request:
+          $ref: '#/components/schemas/SoftwareRequest'
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              approved,
+              searching,
+              downloading,
+              importing,
+              available,
+              failed,
+              declined,
+              cancelled,
+            ]
+        message:
+          type: string
+          nullable: true
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoftwareRequestAsset'
+    SoftwareRequestPageInfo:
+      type: object
+      required: [page, pages, pageSize, results]
+      properties:
+        page:
+          type: integer
+        pages:
+          type: integer
+        pageSize:
+          type: integer
+        results:
+          type: integer
+          description: Number of requests on the current page.
+    SoftwareRequestsResponse:
+      type: object
+      required: [results, pageInfo]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoftwareRequestStatusResult'
+        pageInfo:
+          $ref: '#/components/schemas/SoftwareRequestPageInfo'
+    SoftwareRequestDetailResponse:
+      type: object
+      required: [request, status, message, history, assets]
+      properties:
+        request:
+          $ref: '#/components/schemas/SoftwareRequest'
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              approved,
+              searching,
+              downloading,
+              importing,
+              available,
+              failed,
+              declined,
+              cancelled,
+            ]
+        message:
+          type: string
+          nullable: true
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoftwareRequestStatusEvent'
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoftwareRequestAsset'
+    SoftwareRequestMutationResponse:
+      type: object
+      required: [request]
+      properties:
+        request:
+          $ref: '#/components/schemas/SoftwareRequest'
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              approved,
+              searching,
+              downloading,
+              importing,
+              available,
+              failed,
+              declined,
+              cancelled,
+            ]
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SoftwareRequestAsset'
+    KapowarrRootFolder:
+      type: object
+      required: [id, path]
+      properties:
+        id:
+          type: integer
+        path:
+          type: string
+    KapowarrRootFoldersResponse:
+      type: object
+      required: [defaultRootFolder, rootFolders]
+      properties:
+        defaultRootFolder:
+          type: string
+          nullable: true
+        rootFolders:
+          type: array
+          items:
+            $ref: '#/components/schemas/KapowarrRootFolder'
     PublicSettings:
       type: object
       required:
@@ -1112,6 +2552,43 @@ components:
           type: boolean
           description: Whether a LazyLibrarian instance is configured.
           example: true
+        ebookServiceEnabled:
+          type: boolean
+          description: Whether a Bookshelf-compatible ebook service is configured.
+          example: true
+        audiobookServiceEnabled:
+          type: boolean
+          description: Whether a Bookshelf-compatible audiobook service is configured.
+          example: false
+        romarrEnabled:
+          type: boolean
+          description: Whether a ROMarrNG instance is configured.
+          example: true
+        enabledMediaCategories:
+          type: object
+          description: Administrator-controlled visibility and request availability for each media category.
+          additionalProperties: false
+          properties:
+            movie:
+              type: boolean
+            tv:
+              type: boolean
+            music:
+              type: boolean
+            ebook:
+              type: boolean
+            audiobook:
+              type: boolean
+            comic:
+              type: boolean
+            magazine:
+              type: boolean
+            retro:
+              type: boolean
+            modern:
+              type: boolean
+            game:
+              type: boolean
     MovieResult:
       type: object
       required:
@@ -1377,6 +2854,8 @@ components:
         title:
           type: string
           example: Batman
+        onUserWatchlist:
+          type: boolean
         aliases:
           type: array
           items:
@@ -1416,7 +2895,22 @@ components:
           type: boolean
         backendType:
           type: string
-          enum: [mylar, kapowarr]
+          enum: [mylar, kapowarr, backissue]
+    MagazineServiceOption:
+      type: object
+      required:
+        - id
+        - name
+        - isDefault
+      properties:
+        id:
+          type: number
+          example: 1
+        name:
+          type: string
+          example: LazyLibrarian
+        isDefault:
+          type: boolean
     MagazineIssueReference:
       type: object
       required:
@@ -1447,6 +2941,9 @@ components:
           enum: [magazine]
         title:
           type: string
+        posterPath:
+          type: string
+          description: SeerrNG magazine cover URL when LazyLibrarian has a cached cover.
         status:
           type: string
         latestIssue:
@@ -1462,6 +2959,8 @@ components:
           required:
             - issues
           properties:
+            onUserWatchlist:
+              type: boolean
             issues:
               type: array
               items:
@@ -2327,6 +3826,15 @@ components:
         is4k:
           type: boolean
           example: false
+        watchAheadEpisodeCount:
+          type: integer
+          minimum: 0
+          maximum: 5
+          description: Number of upcoming episodes to keep requested by Jellyfin watch-ahead.
+        watchAheadParentRequestId:
+          type: integer
+          nullable: true
+          description: Parent TV request ID when this request was generated by watch-ahead.
         serverId:
           type: number
         profileId:
@@ -2542,6 +4050,263 @@ components:
               type: string
             metadataSource:
               type: string
+    BookshelfMediaMoveAuthor:
+      type: object
+      required: [id, name, path, currentFormatPath, bookFileCount]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        path:
+          type: string
+        currentFormatPath:
+          type: string
+        bookFileCount:
+          type: integer
+          minimum: 0
+    BookshelfMediaMoveRootFolder:
+      type: object
+      required: [id, path, accessible]
+      properties:
+        id:
+          type: integer
+        path:
+          type: string
+        accessible:
+          type: boolean
+    BookshelfMediaMoveConfiguration:
+      type: object
+      required:
+        - serviceId
+        - serviceName
+        - configuredFormat
+        - format
+        - truncated
+        - authors
+        - rootFolders
+      properties:
+        serviceId:
+          type: integer
+        serviceName:
+          type: string
+        configuredFormat:
+          type: string
+          enum: [ebook, audiobook]
+        format:
+          type: string
+          enum: [ebook, audiobook]
+        truncated:
+          type: boolean
+          description: True when more than 10,000 author records were found.
+        authors:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookshelfMediaMoveAuthor'
+        rootFolders:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookshelfMediaMoveRootFolder'
+    BookshelfMediaMovePreviewRequest:
+      type: object
+      required: [authorIds, format, destinationRootPath]
+      properties:
+        authorIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+        format:
+          type: string
+          enum: [ebook, audiobook]
+        sourceRootPath:
+          type: string
+          maxLength: 4096
+        destinationRootPath:
+          type: string
+          maxLength: 4096
+    BookshelfMediaMoveStartRequest:
+      allOf:
+        - $ref: '#/components/schemas/BookshelfMediaMovePreviewRequest'
+        - type: object
+          required: [previewToken]
+          properties:
+            previewToken:
+              type: string
+              minLength: 1
+              maxLength: 512
+    BookshelfMediaMoveFile:
+      type: object
+      required:
+        - fileType
+        - sourcePath
+        - destinationPath
+        - status
+        - sourceExists
+        - destinationExists
+        - size
+      properties:
+        fileType:
+          type: string
+          enum: [media, metadata, extra]
+        sourcePath:
+          type: string
+        destinationPath:
+          type: string
+        status:
+          type: string
+          enum: [ready, missing, alreadyAtDestination, conflict]
+        sourceExists:
+          type: boolean
+        destinationExists:
+          type: boolean
+        size:
+          type: integer
+          minimum: 0
+    BookshelfMediaMoveAuthorPreview:
+      type: object
+      required:
+        - authorId
+        - authorName
+        - format
+        - sourcePath
+        - destinationPath
+        - mediaFileCount
+        - sidecarFileCount
+        - missingFileCount
+        - alreadyAtDestinationCount
+        - totalSize
+        - requiredCopyBytes
+        - canMove
+        - warnings
+        - conflicts
+        - files
+      properties:
+        authorId:
+          type: integer
+        authorName:
+          type: string
+        format:
+          type: string
+          enum: [ebook, audiobook]
+        sourcePath:
+          type: string
+        destinationPath:
+          type: string
+        mediaFileCount:
+          type: integer
+          minimum: 0
+        sidecarFileCount:
+          type: integer
+          minimum: 0
+        missingFileCount:
+          type: integer
+          minimum: 0
+        alreadyAtDestinationCount:
+          type: integer
+          minimum: 0
+        totalSize:
+          type: integer
+          minimum: 0
+        requiredCopyBytes:
+          type: integer
+          minimum: 0
+        availableSpace:
+          type: integer
+          minimum: 0
+        canMove:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+        conflicts:
+          type: array
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookshelfMediaMoveFile'
+    BookshelfMediaMoveBatchPreview:
+      type: object
+      required:
+        - format
+        - destinationRootPath
+        - previewToken
+        - authorCount
+        - mediaFileCount
+        - sidecarFileCount
+        - missingFileCount
+        - totalSize
+        - requiredCopyBytes
+        - canMove
+        - warnings
+        - conflicts
+        - authors
+      properties:
+        format:
+          type: string
+          enum: [ebook, audiobook]
+        destinationRootPath:
+          type: string
+        previewToken:
+          type: string
+        authorCount:
+          type: integer
+        mediaFileCount:
+          type: integer
+        sidecarFileCount:
+          type: integer
+        missingFileCount:
+          type: integer
+        totalSize:
+          type: integer
+        requiredCopyBytes:
+          type: integer
+        availableSpace:
+          type: integer
+        canMove:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+        conflicts:
+          type: array
+          items:
+            type: string
+        authors:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookshelfMediaMoveAuthorPreview'
+    BookshelfMediaMoveCommand:
+      type: object
+      required: [id, name, status]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            [queued, started, completed, failed, aborted, cancelled, orphaned]
+        message:
+          type: string
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+        queued:
+          type: string
+        started:
+          type: string
+        ended:
+          type: string
     ServarrServiceDetails:
       type: object
       properties:
@@ -3245,6 +5010,10 @@ components:
         issueType:
           type: number
           example: 1
+        issueSubtype:
+          type: string
+          nullable: true
+          example: missing_issue
         problemSeason:
           type: number
           example: 2
@@ -3661,6 +5430,78 @@ components:
         - name
         - client
         - serverType
+    DesktopAuthTicketIssueRequest:
+      type: object
+      properties:
+        challenge:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 challenge generated by the native client.
+        protocolVersion:
+          type: integer
+          enum: [1]
+      required:
+        - challenge
+        - protocolVersion
+    DesktopAuthTicketIssueResponse:
+      type: object
+      properties:
+        ticket:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Short-lived opaque ticket for the native client.
+        expiresIn:
+          type: integer
+          description: Ticket lifetime in milliseconds.
+      required:
+        - ticket
+        - expiresIn
+    DesktopAuthTicketRedeemRequest:
+      type: object
+      properties:
+        ticket:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        verifier:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Native-only PKCE verifier matching the challenge.
+        protocolVersion:
+          type: integer
+          enum: [1]
+      required:
+        - ticket
+        - verifier
+        - protocolVersion
+    DesktopAuthBootstrapResponse:
+      type: object
+      description: Sensitive bootstrap payload returned only to the native HTTP client.
+      properties:
+        serverUrl:
+          type: string
+          format: uri
+        fallbackServerUrl:
+          type: string
+          format: uri
+        serverId:
+          type: string
+        userId:
+          type: string
+        deviceId:
+          type: string
+          description: Native-only Jellyfin device identifier.
+        accessToken:
+          type: string
+          description: Native-only Jellyfin access token; never return this to browser JavaScript.
+        bootstrapGeneration:
+          type: string
+      required:
+        - serverUrl
+        - serverId
+        - userId
+        - deviceId
+        - accessToken
+        - bootstrapGeneration
     PlaybackCatalogItem:
       type: object
       properties:
@@ -3871,6 +5712,67 @@ components:
       name: X-Api-Key
 
 paths:
+  /desktop/auth-tickets:
+    post:
+      summary: Issue a one-time native desktop authentication ticket
+      description: Creates a 60-second, single-use ticket bound to the signed-in session and linked Jellyfin identity. This operation requires a browser session cookie; API keys are not accepted.
+      tags:
+        - native desktop
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesktopAuthTicketIssueRequest'
+      responses:
+        '201':
+          description: Native ticket issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopAuthTicketIssueResponse'
+        '400':
+          description: Invalid protocol challenge.
+        '403':
+          description: A current browser session and HTTPS transport are required.
+        '409':
+          description: A linked Jellyfin account or protocol-compatible credentials are required.
+        '429':
+          description: Ticket issue rate limit reached.
+  /desktop/auth-tickets/redeem:
+    post:
+      summary: Redeem a native desktop ticket for a Jellyfin session
+      description: Redeems the single-use ticket and PKCE verifier from a native HTTP client. Browser-origin requests are rejected. The response contains sensitive Jellyfin credentials and must never be exposed to browser JavaScript.
+      tags:
+        - native desktop
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesktopAuthTicketRedeemRequest'
+      responses:
+        '200':
+          description: Native-only Jellyfin playback bootstrap.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopAuthBootstrapResponse'
+        '400':
+          description: Invalid ticket redemption request.
+        '401':
+          description: Ticket, verifier, session, or Jellyfin identity is invalid or expired.
+        '403':
+          description: HTTPS is required and browser-origin redemption is not allowed.
+        '409':
+          description: Ticket has already been consumed or the configured media server is unsupported.
+        '429':
+          description: Ticket redemption rate limit reached.
+        '503':
+          description: Jellyfin could not be reached to validate the linked account.
   /association/{mediaType}/{id}:
     get:
       summary: Get cross-medium associations
@@ -3912,6 +5814,46 @@ paths:
                 $ref: '#/components/schemas/AssociationGraph'
         '400':
           description: Invalid association media type.
+  /imageproxy/warm:
+    post:
+      summary: Warm the image cache for visible media
+      description: Queues a bounded set of image URLs for authenticated, background cache warming. The response confirms the URLs were accepted, not that upstream downloads have completed.
+      tags:
+        - other
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - urls
+              properties:
+                urls:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    maxLength: 2048
+      responses:
+        '202':
+          description: Image URLs were accepted for background cache warming.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - accepted
+                properties:
+                  accepted:
+                    type: boolean
+                    enum: [true]
+        '400':
+          description: The image URL list is invalid or exceeds the request limits.
+        '403':
+          description: Authentication is required.
+        '429':
+          description: The cache warming request rate limit was exceeded.
   /status:
     get:
       summary: Get Seerr status
@@ -4204,6 +6146,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JellyfinSettings'
+  /settings/jellyfin/bridge-login:
+    post:
+      summary: Enable or disable Jellyfin bridge sign-in
+      description: Changes the optional SeerrNG Jellyfin plugin sign-in setting without contacting Jellyfin, so administrators can revoke bridge sessions during a server outage.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Bridge login setting updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bridgeLoginEnabled]
+                properties:
+                  bridgeLoginEnabled:
+                    type: boolean
+        '400':
+          description: Invalid setting value, or Jellyfin is not connected and active with media-server sign-in enabled.
+        '403':
+          description: An administrator account is required.
   /settings/jellyfin/library:
     get:
       summary: Get Jellyfin libraries
@@ -4892,6 +6866,349 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublicSettings'
+  /settings/software-acquisition:
+    get:
+      summary: Get software acquisition provider settings
+      description: Returns ROMarrNG and QuestarrNG connection settings with API keys redacted, the selected emulation catalog provider, and administrator-assigned Retro and Modern system groups.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Software acquisition settings returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  romarr:
+                    $ref: '#/components/schemas/SoftwareProviderSettingsView'
+                  questarr:
+                    $ref: '#/components/schemas/SoftwareProviderSettingsView'
+                  emulationCatalogProvider:
+                    type: string
+                    enum: [questarr, romarr]
+                  emulationSystemGroups:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      enum: [retro, modern]
+    put:
+      summary: Update software acquisition settings
+      description: Updates provider connections, the selected emulation IGDB catalog, and per-system emulation groups. API keys stay server-side and are redacted in responses.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                romarr:
+                  $ref: '#/components/schemas/SoftwareProviderSettingsInput'
+                questarr:
+                  $ref: '#/components/schemas/SoftwareProviderSettingsInput'
+                emulationCatalogProvider:
+                  type: string
+                  enum: [questarr, romarr]
+                emulationSystemGroups:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    enum: [retro, modern]
+      responses:
+        '200':
+          description: Software acquisition settings updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  romarr:
+                    $ref: '#/components/schemas/SoftwareProviderSettingsView'
+                  questarr:
+                    $ref: '#/components/schemas/SoftwareProviderSettingsView'
+                  emulationCatalogProvider:
+                    type: string
+                    enum: [questarr, romarr]
+                  emulationSystemGroups:
+                    type: object
+                    additionalProperties:
+                      type: string
+                      enum: [retro, modern]
+        '400':
+          description: Invalid provider or system-group settings
+  /settings/software-acquisition/test/{provider}:
+    post:
+      summary: Test a software acquisition provider connection
+      description: Checks the selected NG provider's authenticated integration contract without saving the submitted settings.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [romarr, questarr]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, port, useSsl]
+              properties:
+                hostname:
+                  type: string
+                port:
+                  type: integer
+                useSsl:
+                  type: boolean
+                baseUrl:
+                  type: string
+                apiKey:
+                  type: string
+      responses:
+        '200':
+          description: Provider connection and integration contract verified
+        '400':
+          description: Invalid provider settings
+        '502':
+          description: Provider did not return a supported integration contract
+  /settings/prowlarr:
+    get:
+      summary: Get Prowlarr connection settings
+      description: Returns the Prowlarr connection and category mapping. The API key is always redacted.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Prowlarr settings returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hostname:
+                    type: string
+                  port:
+                    type: integer
+                  useSsl:
+                    type: boolean
+                  baseUrl:
+                    type: string
+                  apiKey:
+                    type: string
+                    description: Redacted when a key is saved.
+                  apiKeyConfigured:
+                    type: boolean
+                  categoryMappings:
+                    $ref: '#/components/schemas/ProwlarrCategoryMappings'
+    put:
+      summary: Update Prowlarr connection settings
+      description: Saves the Prowlarr address, API key, and per-medium category filters. The API key remains server-side.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, port, useSsl, baseUrl, categoryMappings]
+              properties:
+                hostname:
+                  type: string
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                useSsl:
+                  type: boolean
+                baseUrl:
+                  type: string
+                apiKey:
+                  type: string
+                clearApiKey:
+                  type: boolean
+                categoryMappings:
+                  $ref: '#/components/schemas/ProwlarrCategoryMappings'
+      responses:
+        '200':
+          description: Prowlarr settings updated
+        '400':
+          description: Invalid Prowlarr settings
+  /settings/prowlarr/test:
+    post:
+      summary: Test a Prowlarr connection
+      description: Checks Prowlarr connectivity and category coverage, then tests each enabled searchable indexer with bounded concurrency. Tests contact the indexer but do not grab or download releases. The submitted connection settings are not saved. Omit apiKey to use the saved key. Requires administrator permission.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname, port, useSsl]
+              properties:
+                hostname:
+                  type: string
+                port:
+                  type: integer
+                useSsl:
+                  type: boolean
+                baseUrl:
+                  type: string
+                apiKey:
+                  type: string
+                categoryMappings:
+                  $ref: '#/components/schemas/ProwlarrCategoryMappings'
+      responses:
+        '200':
+          description: Prowlarr management connection, indexer coverage, and per-indexer test results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProwlarrInventory'
+        '400':
+          description: Invalid Prowlarr settings
+        '502':
+          description: Prowlarr management API unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  diagnostics:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProwlarrIndexerDiagnostic'
+  /settings/prowlarr/coverage:
+    get:
+      summary: Get Prowlarr indexer coverage
+      description: Returns enabled searchable indexers and the categories they advertise. This does not confirm grabs or imports.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Prowlarr coverage returned, or not configured
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [configured]
+                    properties:
+                      configured:
+                        type: boolean
+                        enum: [false]
+                  - allOf:
+                      - type: object
+                        required: [configured]
+                        properties:
+                          configured:
+                            type: boolean
+                            enum: [true]
+                      - $ref: '#/components/schemas/ProwlarrInventory'
+        '502':
+          description: Prowlarr inventory unavailable
+  /indexer-search/configuration:
+    get:
+      summary: Get direct indexer search availability
+      description: Returns whether Prowlarr is configured and the selected category IDs. Requires Manage Requests permission.
+      tags:
+        - indexer search
+      responses:
+        '200':
+          description: Prowlarr search configuration returned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [configured, categories]
+                properties:
+                  configured:
+                    type: boolean
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      required: [category, categoryIds]
+                      properties:
+                        category:
+                          type: string
+                          enum:
+                            [
+                              movie,
+                              tv,
+                              music,
+                              ebook,
+                              audiobook,
+                              comic,
+                              magazine,
+                              retro,
+                              modern,
+                              game,
+                            ]
+                        categoryIds:
+                          $ref: '#/components/schemas/ProwlarrCategoryIds'
+  /indexer-search/search:
+    post:
+      summary: Search Prowlarr indexers
+      description: Runs a bounded manual release search in Prowlarr for a SeerrNG medium. Results are informational and are not grabbed or imported.
+      tags:
+        - indexer search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, query]
+              properties:
+                category:
+                  type: string
+                  enum:
+                    [
+                      movie,
+                      tv,
+                      music,
+                      ebook,
+                      audiobook,
+                      comic,
+                      magazine,
+                      retro,
+                      modern,
+                      game,
+                    ]
+                query:
+                  type: string
+                  minLength: 2
+                  maxLength: 256
+                offset:
+                  type: integer
+                  minimum: 0
+                  maximum: 2000
+                  multipleOf: 50
+      responses:
+        '200':
+          description: Prowlarr results returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProwlarrSearchResultsResponse'
+        '400':
+          description: Invalid search input
+        '409':
+          description: Prowlarr is not configured for this category
+        '429':
+          description: Search rate limit reached
+        '502':
+          description: Prowlarr search failed
   /settings/initialize:
     post:
       summary: Initialize application
@@ -5975,6 +8292,36 @@ paths:
               required:
                 - username
                 - password
+  /auth/jellyfin/bridge:
+    post:
+      summary: Sign in to SeerrNG from a Jellyfin session
+      description: Validates the current Jellyfin user's access token against the configured server and creates a SeerrNG session only for an already-linked account. The token is accepted in a form body and is never stored.
+      security: []
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '303':
+          description: SeerrNG session created; redirects to the configured application URL.
+        '400':
+          description: The form body or Jellyfin token is invalid.
+        '403':
+          description: Bridge login is disabled, the Jellyfin token is invalid, or the account is not linked.
+        '409':
+          description: Jellyfin settings changed during authentication.
+        '502':
+          description: SeerrNG could not validate the session with Jellyfin.
   /auth/jellyfin/quickconnect/initiate:
     post:
       summary: Initiate Jellyfin Quick Connect
@@ -6374,7 +8721,7 @@ paths:
     put:
       summary: Update batch of users
       description: |
-        Update users with given IDs with provided values in request `body.settings`. You cannot update users' Plex tokens through this request.
+        Update permissions and supported per-user Auto-Request settings for users with the given IDs. Omitted settings are left unchanged. You cannot update users' Plex tokens through this request.
 
         Requires the `MANAGE_USERS` permission.
       tags:
@@ -6392,6 +8739,22 @@ paths:
                     type: integer
                 permissions:
                   type: integer
+                settings:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    watchlistSyncMovies:
+                      type: boolean
+                    watchlistSyncTv:
+                      type: boolean
+                    watchlistSyncMusic:
+                      type: boolean
+                    watchlistSyncBooks:
+                      type: boolean
+                    watchlistSyncComics:
+                      type: boolean
+                    watchlistSyncMagazines:
+                      type: boolean
       responses:
         '200':
           description: Successfully updated user details
@@ -6773,6 +9136,8 @@ paths:
                     $ref: '#/components/schemas/QuotaStatus'
                   magazine:
                     $ref: '#/components/schemas/QuotaStatus'
+                  software:
+                    $ref: '#/components/schemas/QuotaStatus'
   /blocklist:
     get:
       summary: Returns blocklisted items
@@ -6814,7 +9179,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [all, movie, tv, music, book]
+            enum: [all, movie, tv, music, book, comic, magazine]
             default: all
         - in: query
           name: sort
@@ -6908,6 +9273,8 @@ paths:
               - tv
               - music
               - book
+              - comic
+              - magazine
       responses:
         '200':
           description: Blocklist details in JSON
@@ -6933,6 +9300,8 @@ paths:
               - tv
               - music
               - book
+              - comic
+              - magazine
       responses:
         '204':
           description: Succesfully removed media item
@@ -7045,6 +9414,8 @@ paths:
               - tv
               - music
               - book
+              - comic
+              - magazine
       responses:
         '200':
           description: Blocklist details in JSON
@@ -7137,7 +9508,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Watchlist'
-  /watchlist/{tmdbId}:
+  /watchlist/{mediaId}:
     delete:
       summary: Delete watchlist item
       description: Removes a watchlist item.
@@ -7145,8 +9516,8 @@ paths:
         - watchlist
       parameters:
         - in: path
-          name: tmdbId
-          description: tmdbId ID
+          name: mediaId
+          description: TMDB ID, external media ID, or magazine title
           required: true
           example: '1'
           schema:
@@ -7159,6 +9530,10 @@ paths:
             enum:
               - movie
               - tv
+              - music
+              - book
+              - comic
+              - magazine
       responses:
         '204':
           description: Succesfully removed watchlist item
@@ -7253,6 +9628,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserSettings'
+  /user/{userId}/settings/request-root-folders:
+    get:
+      summary: Get a user's default request folders
+      description: Returns root-folder preferences for that user. Other users' preferences are visible to request managers and user managers.
+      tags:
+        - users
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: Request-folder preferences returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        '403':
+          description: Caller may not view this user's preferences
+        '404':
+          description: User not found
   /user/{userId}/settings/preferred-languages:
     get:
       summary: Get preferred languages for a user
@@ -7429,6 +9829,79 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DetailDisclosurePinSettings'
+  /user/{id}/settings/detail-disclosure-order/{mediaType}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - in: path
+        name: mediaType
+        required: true
+        schema:
+          type: string
+          enum: [tv]
+    get:
+      summary: Get the current user's Series detail disclosure order
+      description: Self-only, including administrators. Returns all six roles in normalized order. Overview defaults first when absent; explicitly saved placement is preserved.
+      tags: [users]
+      responses:
+        '200':
+          description: Normalized disclosure order
+          content:
+            application/json:
+              schema: &detailDisclosureOrder
+                type: array
+                minItems: 6
+                maxItems: 6
+                uniqueItems: true
+                items:
+                  type: string
+                  enum:
+                    [cast, crew, subjectTags, details, mediaServer, overview]
+        '400':
+          description: Invalid media category
+        '403':
+          description: Not the current authenticated user
+        '404':
+          description: Invalid or nonexistent user
+    post:
+      summary: Save the current user's Series detail disclosure order
+      description: Self-only authenticated operation, protected by the application's cookie and CSRF middleware. Overview defaults first when absent; other missing roles are appended in their default order. Explicitly saved placements and the relative order of existing roles are preserved.
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [order]
+              properties:
+                order:
+                  type: array
+                  maxItems: 6
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum:
+                      [cast, crew, subjectTags, details, mediaServer, overview]
+      responses:
+        '200':
+          description: Saved normalized disclosure order
+          content:
+            application/json:
+              schema: *detailDisclosureOrder
+        '400':
+          description: Invalid media category or order
+        '403':
+          description: Not the current authenticated user
+        '404':
+          description: Invalid or nonexistent user
+        '500':
+          description: Disclosure order could not be saved
   /user/{userId}/settings/media-filter-pins/{scope}:
     post:
       summary: Remember or unpin a media filter selection for one page
@@ -7457,7 +9930,24 @@ paths:
                 value:
                   type: string
                   nullable: true
-                  enum: [all, movie, tv, music, book, ebook, audiobook, null]
+                  enum:
+                    [
+                      all,
+                      movie,
+                      tv,
+                      music,
+                      book,
+                      ebook,
+                      audiobook,
+                      comic,
+                      magazine,
+                      author,
+                      software,
+                      retro,
+                      modern,
+                      game,
+                      null,
+                    ]
       responses:
         '200':
           description: Updated account media filter pins
@@ -7467,6 +9957,88 @@ paths:
                 type: object
                 additionalProperties:
                   type: string
+  /user/{userId}/settings/theme:
+    post:
+      summary: Save the signed-in user's theme preference
+      tags: [users]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [palette]
+              properties:
+                palette:
+                  type: string
+                  maxLength: 32
+      responses:
+        '200':
+          description: Confirmed account theme preference
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [themePalette]
+                properties:
+                  themePalette:
+                    type: string
+        '400':
+          description: Invalid theme palette
+        '403':
+          description: Only the signed-in user can change their theme
+  /user/{userId}/settings/advanced-theme:
+    post:
+      summary: Save or clear a user's advanced theme overrides
+      description: Stores supported visual theme token overrides for the signed-in user. Send null to clear the overrides.
+      tags: [users]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [overrides]
+              properties:
+                overrides:
+                  nullable: true
+                  type: object
+                  additionalProperties:
+                    oneOf:
+                      - type: string
+                      - type: number
+      responses:
+        '200':
+          description: Saved theme overrides returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [advancedThemeOverrides]
+                properties:
+                  advancedThemeOverrides:
+                    nullable: true
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - type: string
+                        - type: number
   /user/{userId}/settings/password:
     get:
       summary: Get password page informatiom
@@ -8238,6 +10810,9 @@ paths:
                   totalResults:
                     type: number
                     example: 200
+                  stale:
+                    type: boolean
+                    description: True when saved results are served because TMDB is unavailable.
                   results:
                     type: array
                     items:
@@ -8956,7 +11531,6 @@ paths:
           schema:
             type: string
             example: subject:fiction
-            default: subject:fiction
         - in: query
           name: author
           schema:
@@ -8974,13 +11548,11 @@ paths:
           schema:
             type: string
             example: fiction
-            default: fiction
         - in: query
           name: format
           schema:
             type: string
             enum: [ebook, audiobook]
-            default: ebook
           description: Format context for book requests from this discovery view.
         - in: query
           name: sortBy
@@ -9028,8 +11600,8 @@ paths:
           description: Client response-contract version used to retire incompatible browser cache entries.
           schema:
             type: integer
-            enum: [2]
-            default: 2
+            enum: [2, 3]
+            default: 3
       responses:
         '200':
           description: Book discovery results
@@ -9054,7 +11626,7 @@ paths:
   /discover/comics:
     get:
       summary: Discover comics
-      description: Returns comic discovery results from ComicVine. Empty if no ComicVine API key is configured.
+      description: Returns comic discovery results from ComicVine. Publisher, start-year, and issue-count filters use a durable local volume index; while its first scan runs, the response includes indexing progress and no filtered results. Empty if no ComicVine API key is configured.
       tags:
         - search
       parameters:
@@ -9069,6 +11641,29 @@ paths:
           schema:
             type: string
             example: Batman
+        - in: query
+          name: publisher
+          schema:
+            type: string
+            maxLength: 128
+        - in: query
+          name: startYear
+          schema:
+            type: integer
+            minimum: 1800
+            maximum: 2200
+        - in: query
+          name: minIssues
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100000
+        - in: query
+          name: maxIssues
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100000
       responses:
         '200':
           description: Comic discovery results
@@ -9086,6 +11681,25 @@ paths:
                   totalResults:
                     type: number
                     example: 200
+                  comicVineConfigured:
+                    type: boolean
+                    description: Whether a ComicVine API key is configured.
+                  indexing:
+                    type: boolean
+                    description: True while the first complete filtered catalog index is building.
+                  indexedResults:
+                    type: integer
+                    description: Volumes scanned so far when indexing is true.
+                  expectedResults:
+                    type: integer
+                    description: ComicVine's reported volume count when indexing is true.
+                  indexError:
+                    type: string
+                    nullable: true
+                    description: A safe, non-secret code describing the most recent index retry.
+                  lastIndexedAt:
+                    type: integer
+                    description: Unix timestamp of the last complete index used for filtered results.
                   results:
                     type: array
                     items:
@@ -9093,10 +11707,19 @@ paths:
   /discover/magazines:
     get:
       summary: Discover magazines
-      description: Returns magazines tracked by configured LazyLibrarian instances.
+      description: Returns magazines tracked by configured LazyLibrarian instances, or public Google Books results when catalog is public.
       tags:
         - search
       parameters:
+        - in: query
+          name: catalog
+          description: Select the tracked LazyLibrarian catalog or the public Google Books catalog.
+          schema:
+            type: string
+            enum:
+              - tracked
+              - public
+            default: tracked
         - in: query
           name: page
           schema:
@@ -9505,6 +12128,44 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/BookResult'
+  /comic/{comicId}/issues:
+    get:
+      summary: List issues in a comic volume
+      description: Returns a paged ComicVine issue list for browsing a volume. Comic requests continue to target the full volume.
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: comicId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: Comic issue page returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  page:
+                    type: integer
+                  totalPages:
+                    type: integer
+                  totalResults:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+        '503':
+          description: ComicVine is unavailable
   /comic/{comicId}:
     get:
       summary: Get comic details
@@ -9530,6 +12191,35 @@ paths:
           description: Comic not found
         '503':
           description: ComicVine is not configured on this server
+  /magazine/cover/{serviceId}/{coverId}:
+    get:
+      summary: Get a magazine cover
+      description: Returns a cached LazyLibrarian magazine cover through SeerrNG.
+      tags:
+        - search
+      parameters:
+        - in: path
+          name: serviceId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: path
+          name: coverId
+          required: true
+          schema:
+            type: string
+            pattern: '^(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{40})$'
+      responses:
+        '200':
+          description: Magazine cover image returned
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Magazine cover not found
   /magazine/{title}:
     get:
       summary: Get magazine details
@@ -9794,6 +12484,44 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ComicServiceOption'
+  /service/comic/{id}/rootfolders:
+    get:
+      summary: List Kapowarr comic root folders
+      description: Returns a Kapowarr instance's configured folders for requesters with Advanced Request or Manage Requests permission.
+      tags:
+        - service
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Kapowarr folders and the configured default returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KapowarrRootFoldersResponse'
+        '403':
+          description: Advanced Request or Manage Requests permission is required
+        '404':
+          description: Kapowarr service not found
+  /service/magazine:
+    get:
+      summary: Get LazyLibrarian magazine service summaries
+      tags:
+        - service
+      responses:
+        '200':
+          description: Magazine services returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MagazineServiceOption'
   /service/readarr:
     get:
       summary: Get Bookshelf service summaries
@@ -10020,6 +12748,143 @@ paths:
                     type: string
                   lookupCount:
                     type: number
+  /settings/readarr/{readarrId}/media-move/configuration:
+    get:
+      summary: List Bookshelf library details for a path move
+      description: Admin-only. Reads authors and accessible root folders from one Bookshelf instance. It does not merge separate Bookshelf databases.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: readarrId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: format
+          required: true
+          schema:
+            type: string
+            enum: [ebook, audiobook]
+      responses:
+        '200':
+          description: Bookshelf library and accessible destination folders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookshelfMediaMoveConfiguration'
+        '400':
+          description: Unsupported format
+        '403':
+          description: Administrator permission required
+        '409':
+          description: BookshelfNG does not support this operation
+        '502':
+          description: Bookshelf library details could not be loaded
+  /settings/readarr/{readarrId}/media-move/preview:
+    post:
+      summary: Preview a bulk Bookshelf media path move
+      description: Admin-only. Returns file paths, conflicts, missing files, and space estimates for selected authors in one Bookshelf instance. The preview token expires when the underlying move inputs change.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: readarrId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookshelfMediaMovePreviewRequest'
+      responses:
+        '200':
+          description: Fresh batch preview and preview token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookshelfMediaMoveBatchPreview'
+        '400':
+          description: Invalid selection, source folder, or destination
+        '403':
+          description: Administrator permission required
+        '409':
+          description: BookshelfNG does not support this operation
+        '502':
+          description: BookshelfNG could not produce a preview
+  /settings/readarr/{readarrId}/media-move/start:
+    post:
+      summary: Start a previewed bulk Bookshelf media path move
+      description: Admin-only. Requires the preview token and queues the move in the selected Bookshelf instance. Preview again if the library changes.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: readarrId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookshelfMediaMoveStartRequest'
+      responses:
+        '202':
+          description: BookshelfNG accepted the move command
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [command]
+                properties:
+                  command:
+                    $ref: '#/components/schemas/BookshelfMediaMoveCommand'
+        '400':
+          description: Invalid move request or missing preview token
+        '403':
+          description: Administrator permission required
+        '409':
+          description: Preview is stale, destination changed, or BookshelfNG lacks move support
+        '502':
+          description: BookshelfNG could not start the move
+  /settings/readarr/{readarrId}/media-move/commands/{commandId}:
+    get:
+      summary: Read a Bookshelf media move command
+      description: Admin-only. Returns the queued move command status from the selected Bookshelf instance.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: readarrId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: commandId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Current Bookshelf command status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [command]
+                properties:
+                  command:
+                    $ref: '#/components/schemas/BookshelfMediaMoveCommand'
+        '403':
+          description: Administrator permission required
+        '404':
+          description: Bookshelf or command not found
+        '502':
+          description: Bookshelf command status could not be loaded
   /settings/readarr/{readarrId}:
     put:
       summary: Update Bookshelf settings
@@ -10256,6 +13121,102 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/KapowarrSettings'
+  /settings/backissue:
+    get:
+      summary: Get BackIssue settings
+      description: Returns all BackIssue settings in a JSON array.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Values were returned
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BackIssueSettings'
+    post:
+      summary: Create BackIssue instance
+      description: Creates a new BackIssue instance from the request body.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackIssueSettings'
+      responses:
+        '201':
+          description: New BackIssue instance created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackIssueSettings'
+  /settings/backissue/test:
+    post:
+      summary: Test BackIssue configuration
+      description: Tests if the BackIssue configuration is valid.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServarrConnectionSettings'
+      responses:
+        '200':
+          description: Successfully connected to BackIssue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+  /settings/backissue/{id}:
+    put:
+      summary: Update BackIssue instance
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackIssueSettings'
+      responses:
+        '200':
+          description: BackIssue instance updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackIssueSettings'
+    delete:
+      summary: Delete BackIssue instance
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: BackIssue instance deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackIssueSettings'
   /settings/lazylibrarian:
     get:
       summary: Get LazyLibrarian settings
@@ -10418,6 +13379,12 @@ paths:
             enum: [movie, tv, music, book, comic, magazine, all]
             nullable: true
             default: all
+        - in: query
+          name: category
+          description: Restrict results to one software request category.
+          schema:
+            type: string
+            enum: [retro, modern, game]
       responses:
         '200':
           description: Requests returned
@@ -10473,6 +13440,11 @@ paths:
                   description: Exact season and episode selections. Omit episodeNumbers to request an entire season.
                   items:
                     $ref: '#/components/schemas/SeasonEpisodeSelection'
+                watchAheadEpisodeCount:
+                  type: integer
+                  minimum: 0
+                  maximum: 5
+                  description: Optional Jellyfin watch-ahead buffer for the requesting user's TV request.
                 is4k:
                   type: boolean
                   example: false
@@ -10482,6 +13454,7 @@ paths:
                   type: number
                 rootFolder:
                   type: string
+                  description: For an advanced Kapowarr comic request, choose a path returned by /service/comic/{id}/rootfolders. If omitted, the service's configured default is used.
                 languageProfileId:
                   type: number
                 metadataProfileId:
@@ -10579,6 +13552,562 @@ paths:
                     type: number
                   completed:
                     type: number
+  /request/software:
+    post:
+      summary: Submit a ROM or PC game request
+      description: Creates a SeerrNG software request from the configured IGDB catalog. Emulation uses the selected QuestarrNG or ROMarrNG catalog and is acquired by ROMarrNG; PC game requests use QuestarrNG and require operating system and architecture.
+      tags:
+        - request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, catalogId]
+              properties:
+                category:
+                  type: string
+                  enum: [retro, modern, game]
+                catalogId:
+                  type: integer
+                  minimum: 1
+                platformSlug:
+                  type: string
+                variant:
+                  type: object
+                  required: [operatingSystem, architecture]
+                  properties:
+                    operatingSystem:
+                      type: string
+                      enum: [windows, linux, macos]
+                    architecture:
+                      type: string
+                      enum: [x64, arm64, x86, universal]
+      responses:
+        '201':
+          description: Software request submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '400':
+          description: Invalid title, category, system, or PC target
+        '403':
+          description: Caller lacks request permission or has reached the software request quota
+        '409':
+          description: Matching request already exists
+  /request/software/catalog/systems:
+    get:
+      summary: List ROMarrNG-supported emulation systems
+      description: Returns ROMarrNG-supported platform slugs and the Retro or Modern group assigned by an administrator. Unassigned systems are not requestable, regardless of which service supplies the emulation IGDB catalog.
+      tags:
+        - request
+      responses:
+        '200':
+          description: Supported emulation systems returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+  /request/software/catalog/search:
+    get:
+      summary: Search ROM and PC game catalog
+      description: Searches the selected QuestarrNG or ROMarrNG IGDB catalog for emulation categories, or QuestarrNG for PC games. Results are filtered to the requested emulation group or PC platform and include availability (available, tracked, downloading, missing, or unknown) and ROM availableSystems when known. Pass the returned nextCursor to load the next page.
+      tags:
+        - request
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - in: query
+          name: category
+          required: true
+          schema:
+            type: string
+            enum: [retro, modern, game]
+        - in: query
+          name: system
+          description: ROMarrNG system slug for Retro or Modern results.
+          schema:
+            type: string
+            maxLength: 64
+        - in: query
+          name: platform
+          description: PC operating-system platform for game results.
+          schema:
+            type: string
+            enum: [windows, linux, macos]
+        - in: query
+          name: genre
+          description: IGDB genre name, matched before pagination.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - in: query
+          name: releaseYear
+          description: UTC release year, matched before pagination.
+          schema:
+            type: integer
+            minimum: 1950
+            maximum: 2200
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 24
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            maxLength: 20000
+      responses:
+        '200':
+          description: Matching catalog titles returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                  nextCursor:
+                    type: string
+                    nullable: true
+        '503':
+          description: Selected emulation catalog is unavailable, unconfigured, or needs the SeerrNG integration contract.
+  /request/software/catalog/popular:
+    get:
+      summary: List popular ROM and PC game catalog titles
+      description: Returns popular titles from the selected QuestarrNG or ROMarrNG IGDB catalog for emulation, or QuestarrNG for PC games. Results are filtered to the selected emulation group or PC platform and include provider and SeerrNG request availability. Pass the returned nextOffset to load the next page.
+      tags:
+        - request
+      parameters:
+        - in: query
+          name: category
+          required: true
+          schema:
+            type: string
+            enum: [retro, modern, game]
+        - in: query
+          name: system
+          description: ROMarrNG system slug for Retro or Modern results.
+          schema:
+            type: string
+            maxLength: 64
+        - in: query
+          name: platform
+          description: PC operating-system platform for game results.
+          schema:
+            type: string
+            enum: [windows, linux, macos]
+        - in: query
+          name: genre
+          description: IGDB genre name, matched before pagination.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - in: query
+          name: releaseYear
+          description: UTC release year, matched before pagination.
+          schema:
+            type: integer
+            minimum: 1950
+            maximum: 2200
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 24
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+      responses:
+        '200':
+          description: Popular catalog titles returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                  nextOffset:
+                    type: integer
+                    nullable: true
+        '503':
+          description: Selected emulation catalog is unavailable, unconfigured, or needs the SeerrNG integration contract.
+  /request/software/catalog/games/{id}:
+    get:
+      summary: Get one ROM or PC game catalog title
+      description: Returns metadata from the selected QuestarrNG or ROMarrNG IGDB catalog for emulation, or QuestarrNG for PC games, with supported request targets, screenshots, video IDs, rating normalized to a 0-10 scale, and provider or SeerrNG request availability.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: category
+          required: true
+          schema:
+            type: string
+            enum: [retro, modern, game]
+      responses:
+        '200':
+          description: Software catalog title returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    type: object
+        '404':
+          description: Title not found in the selected category
+        '503':
+          description: Selected emulation catalog is unavailable or unconfigured
+  /request/software/status:
+    get:
+      summary: List software request status
+      description: Returns request ownership, lifecycle state, verified available assets, and pageInfo. Users with request-view permission may inspect other users' software requests.
+      tags:
+        - request
+      parameters:
+        - in: query
+          name: take
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: skip
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - in: query
+          name: requestedBy
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: requestId
+          description: Restrict the result to a single software request, as used by availability notification links.
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: filter
+          description: Filter software requests using the Requests page status groups. Groups without a software equivalent, such as incomplete and unavailable, return no software requests.
+          schema:
+            type: string
+            enum:
+              [
+                all,
+                pending,
+                approved,
+                processing,
+                active,
+                incomplete,
+                attention,
+                completed,
+                unavailable,
+                requested,
+                searching,
+                downloading,
+                importing,
+                library,
+                available,
+                failed,
+                declined,
+                cancelled,
+              ]
+            default: all
+      responses:
+        '200':
+          description: Software request status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestsResponse'
+  /request/software/status/{id}:
+    get:
+      summary: Get software request status and history
+      description: Returns one software request and its lifecycle history when the caller may view it.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Software request details returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestDetailResponse'
+        '404':
+          description: Request not found or caller may not view it
+    delete:
+      summary: Clear a cancelled software request
+      description: Permanently removes the caller's cancelled software request and saved status history. Request managers may clear any cancelled request.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '204':
+          description: Cancelled software request cleared
+        '404':
+          description: Request not found or caller may not clear it
+        '409':
+          description: Request is not cancelled
+  /request/software/status/{id}/approve:
+    post:
+      summary: Approve a software request
+      description: Approves a pending software request and dispatches it idempotently to its acquisition provider. Requires MANAGE_REQUESTS.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Software request approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '409':
+          description: Request is no longer pending
+  /request/software/status/{id}/decline:
+    post:
+      summary: Decline a software request
+      description: Declines a pending software request. Requires MANAGE_REQUESTS.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Software request declined
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '409':
+          description: Request is no longer pending
+  /request/software/status/{id}/withdraw:
+    post:
+      summary: Withdraw a pending software request
+      description: Allows the requester to withdraw their own request before provider dispatch. Requires REQUEST permission.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Software request withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '403':
+          description: Request permission is required
+        '404':
+          description: Request not found or caller is not the requester
+        '409':
+          description: Request is no longer pending
+  /request/software/status/{id}/cancel:
+    post:
+      summary: Cancel an active software request
+      description: Lets the original requester with REQUEST permission or an administrator with MANAGE_REQUESTS cancel provider work. QuestarrNG stops only downloads correlated to this request; ROMarrNG cancellation is available before download handoff. An interrupted handoff can require explicit confirmation after checking the download queue and history.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirmNoExistingDownload:
+                  type: boolean
+                  description: Set true only after checking the download client queue and history for a matching download.
+      responses:
+        '200':
+          description: Provider confirmed that the request was cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '403':
+          description: Caller does not have permission to manage this request
+        '404':
+          description: Request not found or caller may not view it
+        '409':
+          description: Provider cannot safely cancel the request in its current state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  confirmationRequired:
+                    type: string
+                    enum: [confirmNoExistingDownload]
+                  error:
+                    type: string
+        '502':
+          description: Acquisition provider is unavailable
+  /request/software/status/{id}/retry:
+    post:
+      summary: Retry a failed software request
+      description: Retries a failed provider request using its existing idempotency key. The original requester must still have REQUEST permission, or the caller must have MANAGE_REQUESTS. QuestarrNG or ROMarrNG can require explicit confirmation when a restart interrupted a download handoff.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirmNoExistingDownload:
+                  type: boolean
+                  description: Set true only after checking the download client queue and history for a matching download.
+      responses:
+        '200':
+          description: Software request retry started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftwareRequestMutationResponse'
+        '409':
+          description: Request is not failed or the provider requires a download handoff confirmation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  confirmationRequired:
+                    type: string
+                    enum: [confirmNoExistingDownload]
+                  error:
+                    type: string
+  /request/software/status/{id}/downloads:
+    get:
+      summary: List available files for a software request
+      description: Returns verified, imported request assets only. Provider URLs and local paths are never returned.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Downloadable software files returned
+          content:
+            application/json:
+              schema:
+                type: object
+  /request/software/status/{id}/downloads/{assetId}:
+    get:
+      summary: Download a software request asset through SeerrNG
+      description: Streams one verified, request-scoped provider asset after checking request access and current availability.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: path
+          name: assetId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Asset bytes streamed to the caller
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Requested byte range streamed when supported by the provider
+        '404':
+          description: Request or asset not found or no longer available
   /request/status:
     get:
       summary: Get request lifecycle status
@@ -10604,6 +14133,12 @@ paths:
             default: 0
         - in: query
           name: requestedBy
+          schema:
+            type: number
+            minimum: 1
+        - in: query
+          name: requestId
+          description: Restrict results to one request; used by Request Status notification links.
           schema:
             type: number
             minimum: 1
@@ -10758,6 +14293,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RequestStatusDetail'
+  /request/status/{requestId}/downloads:
+    get:
+      summary: List downloadable copies for a request
+      description: Returns verified imported files only when the caller may view the request and its current lifecycle stage is available. Filesystem paths and provider credentials are never returned.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          description: Request ID
+          schema:
+            type: string
+            example: '1'
+      responses:
+        '200':
+          description: Downloadable copies returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          description: Opaque, request-scoped asset ID.
+                        name:
+                          type: string
+                        size:
+                          type: integer
+                          minimum: 0
+                      required: [id, name]
+                required: [results]
+        '403':
+          description: Caller may not view this request
+        '404':
+          description: Request not found
+  /request/status/{requestId}/downloads/{assetId}:
+    get:
+      summary: Download a request asset through SeerrNG
+      description: Streams one verified request asset after rechecking request access and availability. Provider URLs, credentials, and filesystem paths stay server-side.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          description: Request ID
+          schema:
+            type: string
+            example: '1'
+        - in: path
+          name: assetId
+          required: true
+          description: Opaque asset ID returned by the downloads listing.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Asset bytes streamed to the caller
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Requested byte range streamed for a filesystem-backed asset
+        '403':
+          description: Caller may not view this request
+        '404':
+          description: Request or asset not found or no longer available
   /request/{requestId}:
     get:
       summary: Get MediaRequest
@@ -10807,6 +14417,11 @@ paths:
                   items:
                     type: number
                     minimum: 0
+                watchAheadEpisodeCount:
+                  type: integer
+                  minimum: 0
+                  maximum: 5
+                  description: Jellyfin watch-ahead buffer for a pending TV request.
                 is4k:
                   type: boolean
                   example: false
@@ -10858,6 +14473,102 @@ paths:
       responses:
         '204':
           description: Succesfully removed request
+  /request/{requestId}/watch-ahead:
+    put:
+      summary: Update Jellyfin episode watch-ahead
+      description: |
+        Sets the number of upcoming episodes to keep requested for a Jellyfin-linked TV request. Only the request owner can enable or change the buffer; setting episodeCount to 0 disables future watch-ahead requests.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          description: TV request ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [episodeCount]
+              properties:
+                episodeCount:
+                  type: integer
+                  minimum: 0
+                  maximum: 5
+      responses:
+        '200':
+          description: Updated TV request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaRequest'
+        '400':
+          description: The request is not eligible for watch-ahead
+        '403':
+          description: Only the request owner can enable watch-ahead
+        '404':
+          description: Request not found
+        '409':
+          description: Jellyfin or Sonarr is not configured, the series has no TVDB identity, or the request cannot be enrolled
+  /request/{requestId}/fail-download:
+    post:
+      summary: Fail an active request download and search again
+      description: |
+        Removes and blocklists the selected active Radarr or Sonarr release, then starts a fresh search. The request owner may use this action while they still have permission to request the media; users with `MANAGE_REQUESTS` may use it on any request.
+      tags:
+        - request
+      parameters:
+        - in: path
+          name: requestId
+          description: Request ID
+          required: true
+          schema:
+            type: string
+            example: '1'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [downloadId]
+              properties:
+                downloadId:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: Identifier of the active Radarr or Sonarr queue download.
+      responses:
+        '200':
+          description: Release removed and a new search started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+                    enum: [true]
+        '400':
+          description: Invalid download identifier or unsupported request media type
+        '401':
+          description: Authentication required
+        '403':
+          description: Caller may not manage this request download
+        '404':
+          description: Request not found
+        '409':
+          description: Request is not active, the selected download is stale, or its acquisition service changed
+        '502':
+          description: The release was removed but a new search could not be started, or the acquisition service failed
   /request/{requestId}/retry:
     post:
       summary: Retry failed or unavailable request
@@ -11147,10 +14858,33 @@ paths:
                   audienceRating:
                     type: string
                     enum: ['Spilled', 'Upright']
+  /movie/ratings/mdblist/batch:
+    post:
+      summary: Get MDBList movie ratings for a batch
+      description: Looks up MDBList ratings for up to 200 TMDB movie IDs and primes the shared title-rating cache.
+      tags:
+        - movies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MdblistRatingBatchRequest'
+      responses:
+        '200':
+          description: Available ratings keyed by TMDB movie ID. Titles without ratings are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MdblistRatingsBatchResponse'
+        '400':
+          description: The batch contains invalid TMDB IDs.
+        '502':
+          description: MDBList ratings are temporarily unavailable.
   /movie/{movieId}/ratingscombined:
     get:
-      summary: Get RT and IMDB movie ratings combined
-      description: Returns ratings from RottenTomatoes and IMDB based on the provided movieId in a JSON object.
+      summary: Get combined movie ratings
+      description: Returns available Rotten Tomatoes, IMDb, and MDBList ratings for the provided movieId. MDBList is optional and best-effort.
       tags:
         - movies
       parameters:
@@ -11166,44 +14900,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  rt:
-                    type: object
-                    properties:
-                      title:
-                        type: string
-                        example: Mulan
-                      year:
-                        type: number
-                        example: 2020
-                      url:
-                        type: string
-                        example: 'http://www.rottentomatoes.com/m/mulan_2020/'
-                      criticsScore:
-                        type: number
-                        example: 85
-                      criticsRating:
-                        type: string
-                        enum: ['Rotten', 'Fresh', 'Certified Fresh']
-                      audienceScore:
-                        type: number
-                        example: 65
-                      audienceRating:
-                        type: string
-                        enum: ['Spilled', 'Upright']
-                  imdb:
-                    type: object
-                    properties:
-                      title:
-                        type: string
-                        example: I am Legend
-                      url:
-                        type: string
-                        example: 'https://www.imdb.com/title/tt0480249'
-                      criticsScore:
-                        type: number
-                        example: 6.5
+                $ref: '#/components/schemas/MediaRatings'
   /tv/{tvId}:
     get:
       summary: Get TV details
@@ -11229,6 +14926,271 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TvDetails'
+  /tv/{tvId}/media-server-saved-item:
+    parameters:
+      - in: path
+        name: tvId
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000000000
+    get:
+      summary: Get the current account's native Series saved state
+      description: Reads Plex Universal Watchlist or Jellyfin/Emby Favorites for the authenticated user's linked native account. Favorites use the trusted Series item for the selected quality, without falling back to a different quality. Plex Watchlist is format-independent. Does not mutate provider state or the Seerr watchlist. Provider credentials and catalog identities are resolved server-side and never returned.
+      tags: [tv]
+      parameters:
+        - in: query
+          name: is4k
+          schema:
+            type: boolean
+            default: false
+          description: Select the trusted 4K Series root for native Favorites. Accepts only true or false. Ignored by format-independent Plex Watchlist.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Native account capability and saved state
+          content:
+            application/json:
+              schema: &mediaServerSavedItemStatus
+                type: object
+                required: [serverType, kind, available]
+                properties:
+                  serverType:
+                    type: integer
+                    enum: [1, 2, 3, 4]
+                  kind:
+                    type: string
+                    enum: [watchlist, favorites]
+                  available:
+                    type: boolean
+                  saved:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum: [account-not-linked, series-not-found]
+        '400':
+          description: Invalid Series ID
+        '401':
+          description: Authentication required
+        '403':
+          description: Current account authority changed
+        '429':
+          description: Too many saved-state requests
+        '502':
+          description: Sanitized provider failure; no saved success is asserted
+          content:
+            application/json:
+              schema: &mediaServerSavedItemFailure
+                type: object
+                additionalProperties: false
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                  diagnostic:
+                    type: object
+                    additionalProperties: false
+                    required: [phase, category]
+                    properties:
+                      phase:
+                        type: string
+                        enum:
+                          [
+                            series-metadata,
+                            account,
+                            catalog-search,
+                            catalog-identity,
+                            watchlist-state,
+                            watchlist-write,
+                            watchlist-confirmation,
+                          ]
+                      category:
+                        type: string
+                        enum:
+                          [
+                            http,
+                            transport,
+                            invalid-response,
+                            identity-mismatch,
+                            confirmation-mismatch,
+                            unexpected,
+                          ]
+                      upstreamStatus:
+                        type: integer
+                        minimum: 400
+                        maximum: 599
+    post:
+      summary: Set the current account's native Series saved state
+      description: Adds or removes the entire Series from Plex Universal Watchlist or Jellyfin/Emby Favorites using only the authenticated user's fresh linked credentials. Strict desired-state mutation is idempotent and verified by provider readback. Selected seasons and episodes are not added separately. Does not create Seerr requests, change auto-request settings, or move/synchronize membership with any other list. Existing Plex Watchlist auto-request behavior may independently observe membership. Uses application cookie authentication and existing CSRF protection.
+      tags: [tv]
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [saved]
+              properties:
+                saved:
+                  type: boolean
+                is4k:
+                  type: boolean
+                  default: false
+                  description: Select the trusted 4K Series root for Favorites, without other-quality fallback. Plex Watchlist is format-independent.
+      responses:
+        '200':
+          description: Confirmed native saved state
+          content:
+            application/json:
+              schema: *mediaServerSavedItemStatus
+        '400':
+          description: Invalid Series ID or mutation body
+        '401':
+          description: Authentication required
+        '403':
+          description: Current account authority changed or CSRF rejection
+        '409':
+          description: Linked account or matching native Series is unavailable
+        '429':
+          description: Too many saved-state requests
+        '502':
+          description: Sanitized provider failure or unconfirmed write
+          content:
+            application/json:
+              schema: *mediaServerSavedItemFailure
+  /tv/{tvId}/media-server-collections:
+    get:
+      summary: Get existing authorized media-server Collections for this Series
+      description: Lists existing eligible Collections and whole-Series membership using only the authenticated user's linked native credentials. Collections may be shared server/library assets, not private watchlists. Uses a trusted quality-selected Series root. Plex requires current-account ownership of the configured PMS; Jellyfin/Emby require native Collection-management permission. Smart Collections and unsupported media types are excluded. No Collection is created, and no membership is synchronized with Watchlist or Favorites.
+      tags: [tv]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+        - in: query
+          name: is4k
+          schema:
+            type: boolean
+            default: false
+          description: Select the trusted 4K Series root. Accepts only true or false; no other-quality fallback.
+      responses:
+        '200':
+          description: Native Collection capability and confirmed existing membership
+          content:
+            application/json:
+              schema: &mediaServerCollectionsStatus
+                type: object
+                required: [serverType, available, collections]
+                properties:
+                  serverType:
+                    type: integer
+                    enum: [1, 2, 3, 4]
+                  available:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum:
+                      [
+                        account-not-linked,
+                        not-authorized,
+                        series-not-found,
+                        unsupported-server,
+                        collection-limit,
+                      ]
+                  collections:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, member]
+                      properties:
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                          pattern: '^[a-zA-Z0-9-]+$'
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 512
+                        member:
+                          type: boolean
+        '400':
+          description: Invalid Series ID or strict quality query
+        '401':
+          description: Authentication required
+        '403':
+          description: Current account authority changed
+        '429':
+          description: Too many native Collection requests
+        '502':
+          description: Sanitized provider failure or incomplete native response
+  /tv/{tvId}/media-server-collections/{collectionId}:
+    post:
+      summary: Set whole-Series membership in one existing authorized Collection
+      description: Idempotently adds or removes the trusted quality-selected Series root in an existing eligible media-server Collection using fresh current-user native authority. Revalidates Collection and Series identities and verifies membership after any write. Does not create or delete a Collection, add selected episodes, synchronize other list membership, or directly create Seerr requests. Uses application cookie authentication and existing CSRF protection. Tokens, native Series item IDs and user IDs are never client parameters.
+      tags: [tv]
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000000
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9-]+$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [member]
+              properties:
+                member:
+                  type: boolean
+                is4k:
+                  type: boolean
+                  default: false
+                  description: Select the trusted 4K Series root, without other-quality fallback.
+      responses:
+        '200':
+          description: Refreshed native Collection membership
+          content:
+            application/json:
+              schema: *mediaServerCollectionsStatus
+        '400':
+          description: Invalid Series or Collection ID, unexpected query, or mutation body
+        '401':
+          description: Authentication required
+        '403':
+          description: Current account authority changed, native permission denied, or CSRF rejection
+        '409':
+          description: Linked account, selected-quality Series, or eligible Collection is unavailable
+        '429':
+          description: Too many native Collection requests
+        '502':
+          description: Sanitized provider failure or unconfirmed write
   /tv/{tvId}/cover:
     get:
       summary: Get linked Sonarr cover image
@@ -11440,6 +15402,49 @@ paths:
                   criticsRating:
                     type: string
                     enum: ['Rotten', 'Fresh']
+  /tv/ratings/mdblist/batch:
+    post:
+      summary: Get MDBList TV ratings for a batch
+      description: Looks up MDBList ratings for up to 200 TMDB series IDs and primes the shared title-rating cache.
+      tags:
+        - tv
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MdblistRatingBatchRequest'
+      responses:
+        '200':
+          description: Available ratings keyed by TMDB series ID. Titles without ratings are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MdblistRatingsBatchResponse'
+        '400':
+          description: The batch contains invalid TMDB IDs.
+        '502':
+          description: MDBList ratings are temporarily unavailable.
+  /tv/{tvId}/ratingscombined:
+    get:
+      summary: Get combined TV ratings
+      description: Returns available Rotten Tomatoes and MDBList ratings for the provided tvId. MDBList is optional and best-effort.
+      tags:
+        - tv
+      parameters:
+        - in: path
+          name: tvId
+          required: true
+          schema:
+            type: number
+            example: 76479
+      responses:
+        '200':
+          description: Ratings returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaRatings'
   /person/{personId}:
     get:
       summary: Get person details
@@ -12447,7 +16452,7 @@ paths:
           name: mediaType
           schema:
             type: string
-            enum: [all, movie, tv, music, book, comic]
+            enum: [all, movie, tv, music, book, comic, magazine]
             default: all
         - in: query
           name: issueType
@@ -12490,6 +16495,17 @@ paths:
               properties:
                 issueType:
                   type: number
+                issueSubtype:
+                  type: string
+                  maxLength: 64
+                  enum:
+                    - missing_content
+                    - missing_issue
+                    - wrong_edition
+                    - wrong_issue
+                    - damaged_file
+                    - incorrect_metadata
+                    - other
                 message:
                   type: string
                 mediaId:
@@ -13311,6 +17327,1316 @@ paths:
           description: No media server is configured.
         '502':
           description: The media-server playlist could not be replaced.
+  /integrations/discovery/configuration:
+    get:
+      summary: Get discovery integration availability
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Integration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryConfiguration'
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+    put:
+      summary: Configure discovery integrations
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                trakt:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    clientId:
+                      type: string
+                      maxLength: 4096
+                    clientSecret:
+                      type: string
+                      maxLength: 4096
+                anilist:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    clientId:
+                      type: string
+                      maxLength: 4096
+                    clientSecret:
+                      type: string
+                      maxLength: 4096
+                simkl:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    clientId:
+                      type: string
+                      maxLength: 4096
+                mdblist:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    apiKey:
+                      type: string
+                      maxLength: 4096
+      responses:
+        '200':
+          description: Integration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryConfiguration'
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/accounts:
+    get:
+      summary: Get your connected discovery accounts
+      tags:
+        - user
+      responses:
+        '200':
+          description: Integration response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryAccounts'
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/accounts/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - simkl
+    delete:
+      summary: Disconnect your discovery account
+      tags:
+        - user
+      responses:
+        '204':
+          description: Operation completed
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/accounts/{provider}/preferences:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - simkl
+    put:
+      summary: Set personal tracking write consent
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - allowWrites
+              properties:
+                allowWrites:
+                  type: boolean
+      responses:
+        '204':
+          description: Operation completed
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/accounts/{provider}/connect:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - simkl
+    post:
+      summary: Begin connecting your discovery account
+      tags:
+        - user
+      responses:
+        '200':
+          description: Integration response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/accounts/{provider}/complete:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+            - trakt
+            - anilist
+            - simkl
+    post:
+      summary: Complete your discovery account connection
+      tags:
+        - user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                code:
+                  type: string
+                  maxLength: 4096
+      responses:
+        '200':
+          description: Integration response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '202':
+          description: Authorization pending or rejected
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+        '401':
+          description: Authentication required
+        '403':
+          description: Permission denied
+        '409':
+          description: Integration configuration or account state changed
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/feeds/{provider}/{feed}:
+    get:
+      summary: Browse provider discovery feeds
+      tags:
+        - discover
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - trakt
+              - anilist
+              - mdblist
+        - name: feed
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - watchlist
+              - history
+              - recommendations-movie
+              - recommendations-tv
+              - library
+              - trending
+              - popular
+              - top
+              - next-season
+              - list
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: list
+          in: query
+          schema:
+            type: string
+            maxLength: 2048
+      responses:
+        '200':
+          description: A bounded provider feed page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryFeedPage'
+        '400':
+          description: Invalid feed
+        '404':
+          description: The requested public MDBList list could not be found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryProviderError'
+        '409':
+          description: Reconnect the account or configure MDBList
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryProviderError'
+        '429':
+          description: Provider quota reached; wait for Retry-After before retrying
+          headers:
+            Retry-After:
+              description: Minimum number of seconds before retrying, capped at one hour
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 3600
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryProviderError'
+        '502':
+          description: Provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryProviderError'
+
+  /integrations/discovery/library/{provider}:
+    get:
+      summary: Browse a page of your personal provider or media server library
+      description: For Plex, Jellyfin, and Emby in-progress shelves, pass the previous response's nextCursor as cursor to continue a bounded scan. Other providers use page pagination.
+      tags:
+        - user
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [trakt, anilist, simkl, plex, jellyfin, emby]
+        - name: shelf
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                all,
+                watchlist,
+                watched,
+                unwatched,
+                in-progress,
+                completed,
+                rated,
+              ]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 1
+        - name: cursor
+          in: query
+          description: Cursor returned by the prior media-server in-progress page.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100000
+        - name: mediaType
+          in: query
+          schema:
+            type: string
+            enum: [movie, tv]
+        - name: libraryId
+          in: query
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        '200':
+          description: A bounded page from the current user's personal library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalLibraryPage'
+        '400':
+          description: Invalid library shelf or page
+        '403':
+          description: Browser session or media permission required
+        '409':
+          description: Provider account needs to be connected
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/library/{provider}/repair:
+    post:
+      summary: Save exact external-ID matches across bounded provider-library pages
+      description: Scans up to five pages per request. Only unique confirmed IMDb or TVDB matches are stored as private user mappings; existing personal or curated matches are not overwritten.
+      tags:
+        - user
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [trakt, anilist, simkl]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderLibraryRepairRequest'
+      responses:
+        '200':
+          description: Completed bounded provider-library identity scan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderLibraryRepairResult'
+        '400':
+          description: Invalid provider, shelf, or scan range
+        '403':
+          description: Browser session or media permission required
+        '409':
+          description: Provider account needs to be connected
+        '429':
+          description: Provider or scan quota reached; continue later
+        '502':
+          description: Provider unavailable
+  /integrations/discovery/mappings:
+    put:
+      summary: Match a personal library item to a TMDB title
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoveryIdentityMappingRequest'
+      responses:
+        '200':
+          description: Personal title match saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryIdentityMapping'
+        '400':
+          description: Invalid library identity or TMDB match
+        '403':
+          description: Browser session or enabled media category required
+        '409':
+          description: Source account is disconnected or the mapping limit was reached
+        '429':
+          description: Mapping update rate limit reached
+        '502':
+          description: TMDB could not confirm the selected title
+  /integrations/discovery/mappings/pack:
+    get:
+      summary: Export the current user's private title matches
+      tags:
+        - user
+      responses:
+        '200':
+          description: Versioned personal title-match pack without provider credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalIdentityMappingPack'
+        '403':
+          description: Browser session required
+    post:
+      summary: Import a versioned pack of private title matches
+      tags:
+        - user
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              maxLength: 5242880
+              description: UTF-8 JSON text containing a PersonalIdentityMappingPack
+      responses:
+        '200':
+          description: Imported, updated, and unchanged mapping totals
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalIdentityMappingPackImportResult'
+        '400':
+          description: Invalid or unsupported pack
+        '403':
+          description: Browser session required
+        '409':
+          description: Per-user saved title-match limit reached
+        '413':
+          description: Pack exceeds the 5 MiB upload limit
+        '429':
+          description: Pack import rate limit reached
+  /integrations/discovery/mappings/packs:
+    get:
+      summary: List administrator-managed title-match packs shared by all accounts
+      tags:
+        - admin
+      responses:
+        '200':
+          description: Shared mapping-pack names, update times, and entry counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuratedIdentityPackList'
+        '403':
+          description: Administrator permission required
+    post:
+      summary: Import or replace an administrator-managed shared title-match pack
+      tags:
+        - admin
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              maxLength: 5242880
+              description: UTF-8 JSON text containing a CuratedIdentityMappingPack
+      responses:
+        '200':
+          description: Shared entries imported, updated, retained, or removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuratedIdentityPackImportResult'
+        '400':
+          description: Invalid or unsupported pack
+        '403':
+          description: Administrator permission and browser session required
+        '409':
+          description: Another shared pack owns one of these provider identities or the pack limit is reached
+        '413':
+          description: Pack exceeds the 5 MiB upload limit
+        '429':
+          description: Shared pack import rate limit reached
+  /integrations/discovery/mappings/packs/{packId}:
+    get:
+      summary: Export an administrator-managed shared title-match pack
+      tags:
+        - admin
+      parameters:
+        - name: packId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'
+      responses:
+        '200':
+          description: Versioned shared pack without provider credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CuratedIdentityMappingPack'
+        '403':
+          description: Administrator permission required
+        '404':
+          description: Shared pack not found
+    delete:
+      summary: Delete a shared title-match pack for every account
+      tags:
+        - admin
+      parameters:
+        - name: packId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'
+      responses:
+        '200':
+          description: Shared pack removed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [removed]
+                properties:
+                  removed:
+                    type: boolean
+                    enum: [true]
+        '403':
+          description: Administrator permission and browser session required
+        '404':
+          description: Shared pack not found
+        '429':
+          description: Shared pack modification rate limit reached
+  /integrations/discovery/mappings/{identity}:
+    delete:
+      summary: Remove a personal library title match
+      tags:
+        - user
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 256
+      responses:
+        '200':
+          description: Mapping removed, if present
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [removed]
+                properties:
+                  removed:
+                    type: boolean
+        '400':
+          description: Invalid library identity
+        '403':
+          description: Browser session required
+        '409':
+          description: Source account is disconnected
+        '429':
+          description: Mapping update rate limit reached
+  /integrations/discovery/tracking/{provider}:
+    post:
+      summary: Update watched status, progress, or rating in your linked account
+      tags:
+        - user
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [trakt, anilist, simkl]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoveryTrackingRequest'
+      responses:
+        '200':
+          description: Provider confirmed the tracking action
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryTrackingAction'
+        '400':
+          description: Invalid title or tracking value
+        '403':
+          description: Browser session, permission, or explicit write consent required
+        '409':
+          description: Account changed or a previous action has an uncertain outcome
+        '429':
+          description: Provider quota reached; retry later
+        '502':
+          description: Provider did not confirm the action
+  /integrations/discovery/tracking/{provider}/episodes:
+    get:
+      summary: Read watched status for one show's episodes in your linked account
+      tags:
+        - user
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [trakt, simkl]
+        - name: sourceId
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[1-9][0-9]{0,9}$'
+        - name: tmdbId
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+        - name: season
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+      responses:
+        '200':
+          description: Provider watch state for the selected series season
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderEpisodeWatchState'
+        '400':
+          description: Invalid provider title or season
+        '403':
+          description: Browser session or enabled series category required
+        '409':
+          description: Provider account needs reconnection or the catalog identity changed
+        '429':
+          description: Episode watch-state lookup rate limit reached
+        '502':
+          description: Provider or catalog unavailable
+  /integrations/discovery/tracking/actions/{requestId}:
+    get:
+      summary: Check the outcome of one of your tracking actions
+      tags:
+        - user
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current user's tracking action state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryTrackingAction'
+        '403':
+          description: Browser session required
+        '404':
+          description: Tracking action not found
+
+  /calendar:
+    get:
+      summary: Browse releases for your requests and shared acquisition services
+      tags:
+        - discover
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: end
+          in: query
+          schema:
+            type: string
+            pattern: ^\d{4}-\d{2}-\d{2}$
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum:
+              - mine
+              - all
+            default: mine
+        - name: mediaType
+          in: query
+          schema:
+            type: string
+            enum:
+              - movie
+              - tv
+              - music
+              - book
+              - comic
+              - magazine
+              - software
+        - name: includeUnmonitored
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: timeZone
+          in: query
+          schema:
+            type: string
+            maxLength: 64
+            default: UTC
+          description: >-
+            IANA time zone for episode month boundaries; all-day movie, album, book, comic, magazine, and game releases retain their calendar dates.
+      responses:
+        '200':
+          description: Release calendar with unavailable sources indicated
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - results
+                  - partialSources
+                  - truncated
+                properties:
+                  results:
+                    type: array
+                    maxItems: 5000
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - source
+                        - mediaType
+                        - title
+                        - startsAt
+                        - dateType
+                        - allDay
+                        - available
+                        - is4k
+                      properties:
+                        id:
+                          type: string
+                        source:
+                          type: string
+                          enum:
+                            - radarr
+                            - sonarr
+                            - lidarr
+                            - readarr
+                            - mylar
+                            - kapowarr
+                            - lazylibrarian
+                            - questarr
+                            - romarr
+                        mediaType:
+                          type: string
+                          enum:
+                            - movie
+                            - tv
+                            - music
+                            - book
+                            - comic
+                            - magazine
+                            - software
+                        title:
+                          type: string
+                        startsAt:
+                          type: string
+                          format: date-time
+                        dateType:
+                          type: string
+                          enum:
+                            - air
+                            - digital
+                            - physical
+                            - theatrical
+                            - album
+                            - book
+                            - issue
+                            - game
+                        allDay:
+                          type: boolean
+                        tmdbId:
+                          type: integer
+                        tvdbId:
+                          type: integer
+                        mbId:
+                          type: string
+                        artistName:
+                          type: string
+                        bookId:
+                          type: string
+                          description: Service-scoped Bookshelf ID suitable for the book details route.
+                        foreignBookId:
+                          type: string
+                          description: Provider-native Readarr-compatible book identity used for personal request matching.
+                        foreignEditionId:
+                          type: string
+                          description: Provider-native edition identity used for personal request matching.
+                        isbnCandidates:
+                          type: array
+                          maxItems: 24
+                          items:
+                            type: string
+                          description: Public ISBN identities available from Readarr book editions, used for matching personal requests.
+                        bookFormat:
+                          type: string
+                          enum:
+                            - ebook
+                            - audiobook
+                        authorName:
+                          type: string
+                        comicId:
+                          type: string
+                          description: ComicVine identity suitable for the comic details route.
+                        magazineTitle:
+                          type: string
+                          description: LazyLibrarian magazine title suitable for the magazine details route.
+                        issueNumber:
+                          type: string
+                        softwareCategory:
+                          type: string
+                          enum:
+                            - game
+                            - retro
+                            - modern
+                        igdbId:
+                          type: integer
+                        platformName:
+                          type: string
+                          description: Requested PC target or emulation system.
+                        seasonNumber:
+                          type: integer
+                        episodeNumber:
+                          type: integer
+                        episodeTitle:
+                          type: string
+                        available:
+                          type: boolean
+                        is4k:
+                          type: boolean
+                        dateChanges:
+                          type: array
+                          maxItems: 3
+                          description: Recent provider date or air-time changes captured by the background calendar history job.
+                          items:
+                            type: object
+                            required:
+                              - previousStartsAt
+                              - startsAt
+                              - changedAt
+                              - previousAllDay
+                              - allDay
+                            properties:
+                              previousStartsAt:
+                                type: string
+                                format: date-time
+                              startsAt:
+                                type: string
+                                format: date-time
+                              changedAt:
+                                type: string
+                                format: date-time
+                              previousAllDay:
+                                type: boolean
+                              allDay:
+                                type: boolean
+                  partialSources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source:
+                          type: string
+                        serverId:
+                          type: integer
+                  truncated:
+                    type: boolean
+        '400':
+          description: Invalid calendar range or filters
+        '403':
+          description: Calendar scope not permitted
+        '502':
+          description: Calendar unavailable
+
+  /downloads/interventions:
+    get:
+      tags:
+        - Downloads
+      summary: List download warnings or action history
+      description:
+        Requires Manage Downloads permission. Admins have this permission
+        automatically.
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum:
+              - active
+              - history
+            default: active
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 1
+      responses:
+        '200':
+          description: Download intervention result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - results
+                  - total
+                  - page
+                  - partialSources
+                  - truncated
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QueueIntervention'
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                    minimum: 1
+                  partialSources:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        serviceType:
+                          type: string
+                        serviceId:
+                          type: integer
+                  truncated:
+                    type: boolean
+        '400':
+          description: Invalid input
+        '403':
+          description: Download management permission required
+        '409':
+          description: Download or backend changed; refresh before retrying
+        '502':
+          description: Backend unavailable
+  /downloads/interventions/{id}/preview:
+    get:
+      tags:
+        - Downloads
+      summary: Preview files for a confirmed library match
+      description:
+        Requires Manage Downloads permission. Admins have this permission
+        automatically.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: targetId
+          required: false
+          description: Existing movie, series, album, or book ID from this backend's library
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        '200':
+          description: Download intervention result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - target
+                  - candidates
+                  - fingerprint
+                properties:
+                  target:
+                    type: object
+                    nullable: true
+                    additionalProperties: false
+                    required:
+                      - id
+                      - title
+                      - subtitle
+                    properties:
+                      id:
+                        type: integer
+                        minimum: 1
+                      title:
+                        type: string
+                      subtitle:
+                        type: string
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - id
+                        - name
+                        - size
+                        - rejections
+                        - eligible
+                      properties:
+                        id:
+                          type: integer
+                          minimum: 1
+                        name:
+                          type: string
+                        size:
+                          type: number
+                        rejections:
+                          type: array
+                          items:
+                            type: string
+                        eligible:
+                          type: boolean
+                  fingerprint:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+        '400':
+          description: Invalid input
+        '403':
+          description: Download management permission required
+        '409':
+          description: Download or backend changed; refresh before retrying
+        '502':
+          description: Backend unavailable
+  /downloads/interventions/{id}/targets:
+    get:
+      tags:
+        - Downloads
+      summary: Search existing manual-import targets in the acquisition library
+      description:
+        Searches titles already tracked by the selected acquisition service.
+        This does not add media to that service. Requires Manage Downloads
+        permission. Admins have this permission automatically.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 120
+      responses:
+        '200':
+          description: Existing import targets
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - id
+                    - title
+                    - subtitle
+                  properties:
+                    id:
+                      type: integer
+                      minimum: 1
+                    title:
+                      type: string
+                    subtitle:
+                      type: string
+        '400':
+          description: Invalid search input
+        '403':
+          description: Download management permission required
+        '409':
+          description: Download or backend changed; refresh before retrying
+        '502':
+          description: Backend unavailable
+  /downloads/interventions/{id}/reject:
+    post:
+      tags:
+        - Downloads
+      summary: Reject a download with explicit client removal and blocklist choices
+      description:
+        Requires Manage Downloads permission. Admins have this permission
+        automatically.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Download intervention result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueIntervention'
+        '400':
+          description: Invalid input
+        '403':
+          description: Download management permission required
+        '409':
+          description: Download or backend changed; refresh before retrying
+        '502':
+          description: Backend unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - blocklist
+                - removeFromClient
+              properties:
+                blocklist:
+                  type: boolean
+                removeFromClient:
+                  type: boolean
+  /downloads/interventions/{id}/import:
+    post:
+      tags:
+        - Downloads
+      summary: Submit selected files for import and track backend confirmation
+      description:
+        Requires Manage Downloads permission. Admins have this permission
+        automatically.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Download intervention result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueIntervention'
+        '400':
+          description: Invalid input
+        '403':
+          description: Download management permission required
+        '409':
+          description: Download or backend changed; refresh before retrying
+        '502':
+          description: Backend unavailable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - candidateIds
+                - importMode
+                - fingerprint
+              properties:
+                candidateIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items:
+                    type: integer
+                    minimum: 1
+                fingerprint:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+                importMode:
+                  type: string
+                  enum:
+                    - copy
+                    - move
+                targetId:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+
 security:
   - cookieAuth: []
   - apiKey: []

@@ -2,6 +2,7 @@ import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
 import FormatRequestControl from '@app/components/Common/FormatRequestControl';
+import IndexerSearchLink from '@app/components/Common/IndexerSearchLink';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
@@ -394,7 +395,7 @@ const MusicDetails = () => {
     </>
   );
 
-  const primaryActions = (
+  const indexerCompanionActions = (
     <>
       {canUseBlocklist && (
         <Tooltip
@@ -442,6 +443,11 @@ const MusicDetails = () => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const reportIssueAction = (
+    <>
       {canUseReportIssue && (
         <Tooltip
           content={intl.formatMessage(
@@ -465,7 +471,17 @@ const MusicDetails = () => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const primaryActions = (
+    <>
       <AssociationBadge mediaType="album" id={albumId} variant="button" />
+    </>
+  );
+
+  const requestAction = (
+    <>
       {activeMusicRequest && (
         <Button
           buttonType="ghost"
@@ -484,6 +500,10 @@ const MusicDetails = () => {
         <FormatRequestControl options={musicRequestOptions} />
       )}
     </>
+  );
+
+  const indexerSearchAction = (
+    <IndexerSearchLink category="music" title={data.title} />
   );
 
   const secondaryActions = (
@@ -601,6 +621,10 @@ const MusicDetails = () => {
         data={data}
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        indexerSearchAction={indexerSearchAction}
+        indexerCompanionActions={indexerCompanionActions}
+        reportIssueAction={reportIssueAction}
+        requestAction={requestAction}
         catalogActions={catalogActions}
         playbackActions={playbackActions}
         ratingData={ratingData}

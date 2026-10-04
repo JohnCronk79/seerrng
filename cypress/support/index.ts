@@ -7,6 +7,21 @@ declare global {
       login(email?: string, password?: string): Chainable<Element>;
       loginAsAdmin(): Chainable<Element>;
       loginAsUser(): Chainable<Element>;
+      mockConfiguredMediaAvailability(
+        overrides: Partial<
+          Record<
+            | 'musicEnabled'
+            | 'booksEnabled'
+            | 'ebookServiceEnabled'
+            | 'audiobookServiceEnabled'
+            | 'comicsEnabled'
+            | 'magazinesEnabled'
+            | 'softwareEnabled'
+            | 'romarrEnabled',
+            boolean
+          >
+        >
+      ): Chainable<null>;
     }
   }
 }

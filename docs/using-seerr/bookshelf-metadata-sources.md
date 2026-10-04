@@ -26,7 +26,7 @@ and source identity through search, details, and book requests.
 
 | Source or path | Ordinary Bookshelf search/details | Migration recovery | Authentication and cost | Notes |
 | --- | --- | --- | --- | --- |
-| Hardcover native | Yes, in the `hardcover` image when `HARDCOVER=true` | Yes; primary target for remapping | Hardcover token; subject to Hardcover service availability and limits | Set the token in BookshelfNG **Settings > Metadata** or with `HARDCOVER_AUTH` / `HARDCOVER_API_KEY`. Bookshelf-native Hardcover IDs are used for works, authors, and editions. |
+| Hardcover native | Yes, in the `hardcover` image when `HARDCOVER=true` | Yes; primary target for remapping | Hardcover token; subject to Hardcover service availability and limits | Create a token in [Hardcover account API settings](https://hardcover.app/account/api), then set it in BookshelfNG **Settings > Metadata** or with `HARDCOVER_AUTH` / `HARDCOVER_API_KEY`. Bookshelf-native Hardcover IDs are used for works, authors, and editions. |
 | rreading-glasses / compatible `METADATA_URL` | Yes, when configured as the Bookshelf metadata endpoint | Yes, when configured as a Bookshelf/Softcover recovery endpoint | Depends on the hosted or self-hosted endpoint | A compatible endpoint must implement the API Bookshelf expects. |
 | Goodreads-compatible / Softcover | Yes, through the compatible Bookshelf mode/image | Yes, when its endpoint is configured | Provider-specific; Goodreads no longer issues public API keys | Legacy Goodreads IDs remain provider-specific and cannot be converted by changing the image tag. |
 | Open Library | Yes; SeerrNG queries it directly alongside configured Bookshelf services | Yes | No key for basic API access; observe Open Library's published low-volume request policy | Search results provide a fallback when a Bookshelf source is unavailable, subject to SeerrNG's provider deadline. |
@@ -76,12 +76,14 @@ BookshelfNG has two broad runtime paths:
   are configured. Internet Archive and NDL Search are opt-in, while a selected
   Apify Goodreads-compatible Actor is queried only when explicitly enabled.
   `BOOKSHELF_METADATA_SOURCES` replaces these defaults; setting it to an empty
-  value disables all additional Bookshelf catalogs. The managed SeerrNG
-  two-instance deployment enables LOC only on its audiobook service by default
-  to coordinate request pacing; both services enable Gutendex. It permits
-  separate overrides with `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
-  `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES`. See the BookshelfNG README for
-  credentials, cache lifetimes, request pacing, and the Actor input template.
+  value disables all additional Bookshelf catalogs. The bundled SeerrNG
+  installer currently offers an optional split deployment with LOC enabled on
+  the audiobook process to coordinate request pacing. A single BookshelfNG
+  instance uses one source selection for both formats. Per-process overrides
+  `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+  `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` apply only to the split deployment.
+  See the BookshelfNG README for credentials, cache lifetimes, request pacing,
+  and the Actor input template.
 
 SeerrNG merges Open Library search results with results from configured
 BookshelfNG services. Each Bookshelf result uses a service-qualified SeerrNG ID
@@ -132,11 +134,10 @@ of creating a duplicate.
 Library of Congress is queried by default in a standalone BookshelfNG
 deployment and needs no API key. Its public JSON API enforces rate limits;
 Bookshelf paces requests to one per 3.2 seconds per process and caches
-successful search/detail responses for one day. Two Bookshelf processes sharing
-an outbound IP should avoid both querying LOC. The SeerrNG installer handles
-this by enabling LOC on the audiobook instance by default; both instances also
-enable Gutendex. Google Books and Europeana run on both when keys are available.
-Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
+successful search/detail responses for one day. A single process handles both
+ebook and audiobook formats. The optional split SeerrNG deployment enables LOC
+on one process to coordinate pacing across the two. Google Books and Europeana
+run when keys are available. Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
 `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` for per-service overrides, or use the
 legacy `BOOKSHELF_METADATA_SOURCES` variable as a shared override when running
 the installer.

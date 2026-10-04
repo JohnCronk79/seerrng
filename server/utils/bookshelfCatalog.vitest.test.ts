@@ -2,8 +2,9 @@ import ReadarrAPI, {
   type ReadarrBookLookupResult,
 } from '@server/api/servarr/readarr';
 import type { ReadarrSettings } from '@server/lib/settings';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  getBookshelfAudiobookLibraryPage,
   getBookshelfBookDetails,
   getBookshelfMetadataSource,
   makeBookshelfAuthorId,
@@ -11,9 +12,14 @@ import {
   mapBookshelfBook,
   parseBookshelfAuthorId,
   parseBookshelfBookId,
+  searchBookshelfCatalogs,
 } from './bookshelfCatalog';
 
 describe('Bookshelf catalog identities', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('round trips provider-qualified foreign IDs with their service identity', () => {
     const id = makeBookshelfBookId(27, 'googlebooks:volume/a+b=');
 
@@ -69,6 +75,82 @@ describe('Bookshelf catalog identities', () => {
     });
     expect(mapped.editionId).toBe('loc-edition:encoded');
     expect(mapped.isbn13).toBe('9780306406157');
+  });
+
+  it('keeps matching titles from ebook and audiobook catalogs as distinct results', async () => {
+    const servers = [
+      {
+        id: 51,
+        hostname: 'ebookshelf.test',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      },
+      {
+        id: 52,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audiobook-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      },
+    ] as ReadarrSettings[];
+    vi.spyOn(ReadarrAPI.prototype, 'lookupBook').mockResolvedValue([
+      {
+        title: 'Shared Work',
+        foreignBookId: 'hardcover:shared-work',
+        author: { authorName: 'A. Writer' },
+      },
+    ]);
+
+    const results = await searchBookshelfCatalogs(servers, 'Shared Work');
+
+    expect(results.map((result) => result.bookFormat)).toEqual([
+      'ebook',
+      'audiobook',
+    ]);
+    expect(new Set(results.map((result) => result.id)).size).toBe(2);
+  });
+
+  it('maps only the requested audiobook library page and retains its total', async () => {
+    const server = {
+      id: 53,
+      hostname: 'audiobookshelf.test',
+      port: 8787,
+      apiKey: 'audiobook-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'audiobook',
+    } as ReadarrSettings;
+    const getBooksPage = vi
+      .spyOn(ReadarrAPI.prototype, 'getBooksPage')
+      .mockResolvedValue({
+        books: [
+          {
+            id: 51,
+            title: 'Page 2 Story',
+            foreignBookId: 'hardcover:page-2',
+            author: { authorName: 'Writer Two' },
+          },
+          {
+            id: 52,
+            title: 'Unidentified Story',
+            foreignBookId: '',
+          },
+        ],
+        totalCount: 5000,
+      });
+
+    const page = await getBookshelfAudiobookLibraryPage([server], 50, 50);
+
+    expect(getBooksPage).toHaveBeenCalledOnce();
+    expect(getBooksPage).toHaveBeenCalledWith(50, 50);
+    expect(page.totalCount).toBe(5000);
+    expect(page.books.map((book) => book.title)).toEqual(['Page 2 Story']);
+    expect(page.books[0]?.bookFormat).toBe('audiobook');
   });
 
   it('keeps Europeana IDs opaque when wrapping them for Seerr details and authors', () => {
@@ -132,6 +214,175 @@ describe('Bookshelf catalog identities', () => {
     expect(details).toBeUndefined();
   });
 
+  it('opens a catalog result when a later provider lookup omits that edition', async () => {
+    const lookup = vi
+      .spyOn(ReadarrAPI.prototype, 'lookupBook')
+      .mockResolvedValue([]);
+    const server = {
+      id: 42,
+      hostname: 'bookshelf.test',
+      port: 8787,
+      apiKey: 'test-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'ebook',
+    } as ReadarrSettings;
+    const book = mapBookshelfBook(
+      {
+        title: 'A catalog edition',
+        foreignBookId: 'googlebooks:edition-42',
+        editions: [],
+      },
+      server.id,
+      server
+    );
+
+    const details = await getBookshelfBookDetails([server], book.id);
+
+    expect(details).toMatchObject({ id: book.id, title: book.title });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('reuses recent catalog results for Bookshelf detail requests', async () => {
+    const server = {
+      id: 113,
+      hostname: 'bookshelf.test',
+      port: 8787,
+      apiKey: 'test-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'ebook',
+    } as ReadarrSettings;
+    const result: ReadarrBookLookupResult = {
+      title: 'Cached catalog book',
+      foreignBookId: 'googlebooks:cached-volume',
+      editions: [],
+    };
+    const id = makeBookshelfBookId(server.id, result.foreignBookId);
+    mapBookshelfBook(result, server.id, server);
+    const lookupBook = vi.spyOn(ReadarrAPI.prototype, 'lookupBook');
+
+    const details = await getBookshelfBookDetails([server], id);
+
+    expect(lookupBook).not.toHaveBeenCalled();
+    expect(details).toMatchObject({
+      id,
+      title: 'Cached catalog book',
+    });
+  });
+
+  it('does not reuse catalog results after Bookshelf settings change', async () => {
+    const server = {
+      id: 114,
+      hostname: 'bookshelf.test',
+      port: 8787,
+      apiKey: 'test-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'ebook',
+    } as ReadarrSettings;
+    const replacements = [
+      { ...server, hostname: 'replacement-bookshelf.test' },
+      { ...server, apiKey: 'rotated-key' },
+      { ...server, serviceType: 'audiobook' as const },
+    ];
+    const lookupBook = vi
+      .spyOn(ReadarrAPI.prototype, 'lookupBook')
+      .mockResolvedValue([]);
+
+    for (const [index, replacement] of replacements.entries()) {
+      const result: ReadarrBookLookupResult = {
+        title: `Cached catalog book ${index}`,
+        foreignBookId: `googlebooks:changed-${index}`,
+        editions: [],
+      };
+      const id = makeBookshelfBookId(server.id, result.foreignBookId);
+      mapBookshelfBook(result, server.id, server);
+
+      await getBookshelfBookDetails([replacement], id);
+    }
+
+    expect(lookupBook).toHaveBeenCalledTimes(replacements.length);
+  });
+
+  it('deduplicates catalog editions without collapsing titles missing authors', async () => {
+    const server = {
+      id: 115,
+      hostname: 'bookshelf.test',
+      port: 8787,
+      apiKey: 'test-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'ebook',
+    } as ReadarrSettings;
+    vi.spyOn(ReadarrAPI.prototype, 'lookupBook').mockResolvedValue([
+      {
+        title: 'The Café Book',
+        foreignBookId: 'provider:edition-1',
+        author: { authorName: 'A. Writer' },
+      },
+      {
+        title: 'The Cafe Book!',
+        foreignBookId: 'provider:edition-2',
+        author: { authorName: 'A. Writer' },
+      },
+      { title: 'Untitled Work', foreignBookId: 'provider:unknown-1' },
+      { title: 'Untitled Work', foreignBookId: 'provider:unknown-2' },
+    ]);
+
+    const results = await searchBookshelfCatalogs([server], 'book');
+
+    expect(results).toHaveLength(3);
+    expect(results.map((result) => result.title)).toEqual([
+      'The Café Book',
+      'Untitled Work',
+      'Untitled Work',
+    ]);
+  });
+
+  it('uses the explicit work lookup for numeric Bookshelf book IDs', async () => {
+    const lookupBook = vi
+      .spyOn(ReadarrAPI.prototype, 'lookupBook')
+      .mockImplementation(async (term) =>
+        term === 'work:139773'
+          ? [
+              {
+                title: 'The Fellowship of the Ring',
+                foreignBookId: '139773',
+                seriesTitle: 'The Lord of the Rings #1',
+                author: {
+                  foreignAuthorId: '1077326',
+                  authorName: 'J.R.R. Tolkien',
+                },
+                editions: [],
+              },
+            ]
+          : []
+      );
+    const server = {
+      id: 9,
+      name: 'BookshelfNG-Audiobooks',
+      hostname: 'bookshelf.test',
+      port: 8787,
+      apiKey: 'test-key',
+      useSsl: false,
+      baseUrl: '',
+      serviceType: 'audiobook',
+    } as ReadarrSettings;
+
+    const details = await getBookshelfBookDetails(
+      [server],
+      makeBookshelfBookId(server.id, '139773')
+    );
+
+    expect(lookupBook).toHaveBeenCalledOnce();
+    expect(lookupBook).toHaveBeenCalledWith('work:139773');
+    expect(details).toMatchObject({
+      title: 'The Fellowship of the Ring',
+      series: [{ title: 'The Lord of the Rings', position: '1' }],
+    });
+  });
+
   it('uses a title hint but accepts only the exact Bookshelf book identity', async () => {
     const lookup = vi
       .spyOn(ReadarrAPI.prototype, 'lookupBook')
@@ -143,6 +394,11 @@ describe('Bookshelf catalog identities', () => {
                 title: 'The Fellowship of the Ring',
                 foreignBookId: '139773',
                 seriesTitle: 'The Lord of the Rings #1',
+                author: {
+                  foreignAuthorId: '1077326',
+                  authorName: 'J.R.R. Tolkien',
+                },
+                editions: [],
               },
             ]
           : []
@@ -157,20 +413,16 @@ describe('Bookshelf catalog identities', () => {
       serviceType: 'ebook',
     } as ReadarrSettings;
 
-    try {
-      const id = makeBookshelfBookId(0, '139773');
-      const details = await getBookshelfBookDetails(
-        [server],
-        id,
-        'The Fellowship of the Ring'
-      );
+    const id = makeBookshelfBookId(0, '139773');
+    const details = await getBookshelfBookDetails(
+      [server],
+      id,
+      'The Fellowship of the Ring'
+    );
 
-      expect(details?.id).toBe(id);
-      expect(details?.title).toBe('The Fellowship of the Ring');
-      expect(lookup).toHaveBeenCalledWith('The Fellowship of the Ring');
-      expect(lookup).toHaveBeenCalledTimes(1);
-    } finally {
-      lookup.mockRestore();
-    }
+    expect(details?.id).toBe(id);
+    expect(details?.title).toBe('The Fellowship of the Ring');
+    expect(lookup).toHaveBeenNthCalledWith(1, 'work:139773');
+    expect(lookup).toHaveBeenNthCalledWith(2, 'The Fellowship of the Ring');
   });
 });

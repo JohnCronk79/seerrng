@@ -60,6 +60,8 @@ const messages = defineMessages('components.Settings.ReadarrModal', {
   serviceType: 'Book Format',
   ebook: 'Book',
   audiobook: 'Audiobook',
+  serviceTypeHelp:
+    'To handle both books and audiobooks with one Bookshelf instance, add this same server twice: choose Books here and Audiobooks on the second connection.',
   compatibilityNote:
     'Bookshelf is the recommended book backend. Readarr-compatible servers, including Chaptarr, can also be used. For Chaptarr, set Book Format to match the configured root folder; Seerr sends that format explicitly on every request.',
   migrationNote:
@@ -132,11 +134,19 @@ interface DiagnosticResponse {
 
 interface ReadarrModalProps {
   readarr: ReadarrSettings | null;
+  copyFrom?: ReadarrSettings | null;
+  copyFormat?: 'ebook' | 'audiobook';
   onClose: () => void;
   onSave: () => void;
 }
 
-const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
+const ReadarrModal = ({
+  onClose,
+  readarr,
+  copyFrom,
+  copyFormat,
+  onSave,
+}: ReadarrModalProps) => {
   const intl = useIntl();
   const initialLoad = useRef(false);
   const { addToast } = useToasts();
@@ -276,47 +286,38 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
   );
 
   useEffect(() => {
-    if (readarr) {
+    const connection = readarr ?? copyFrom;
+    if (connection) {
       testConnection({
-        id: readarr.id,
-        apiKey: readarr.apiKey,
-        hostname: readarr.hostname,
-        port: readarr.port,
-        baseUrl: readarr.baseUrl,
-        useSsl: readarr.useSsl,
-        serviceType: readarr.serviceType ?? 'ebook',
+        id: readarr?.id,
+        apiKey: connection.apiKey,
+        hostname: connection.hostname,
+        port: connection.port,
+        baseUrl: connection.baseUrl,
+        useSsl: connection.useSsl,
+        serviceType: copyFormat ?? connection.serviceType ?? 'ebook',
       });
     }
-  }, [readarr, testConnection]);
+  }, [copyFormat, copyFrom, readarr, testConnection]);
 
   return (
-    <Transition
-      as="div"
-      appear
-      show
-      enter="transition-opacity ease-in-out duration-300"
-      enterFrom="opacity-0"
-      enterTo="opacity-100"
-      leave="transition-opacity ease-in-out duration-300"
-      leaveFrom="opacity-100"
-      leaveTo="opacity-0"
-    >
+    <Transition as="div" appear show>
       <Formik
         initialValues={{
           name: readarr?.name ?? '',
-          hostname: readarr?.hostname ?? '',
-          port: readarr?.port ?? 8787,
-          ssl: readarr?.useSsl ?? false,
-          apiKey: readarr?.apiKey ?? '',
-          baseUrl: readarr?.baseUrl ?? '',
+          hostname: readarr?.hostname ?? copyFrom?.hostname ?? '',
+          port: readarr?.port ?? copyFrom?.port ?? 8787,
+          ssl: readarr?.useSsl ?? copyFrom?.useSsl ?? false,
+          apiKey: readarr?.apiKey ?? copyFrom?.apiKey ?? '',
+          baseUrl: readarr?.baseUrl ?? copyFrom?.baseUrl ?? '',
           activeProfileId: readarr?.activeProfileId ?? '',
           rootFolder: readarr?.activeDirectory ?? '',
-          isDefault: readarr?.isDefault ?? false,
-          externalUrl: readarr?.externalUrl ?? '',
-          syncEnabled: readarr?.syncEnabled ?? false,
-          enableSearch: !readarr?.preventSearch,
+          isDefault: readarr?.isDefault ?? Boolean(copyFrom),
+          externalUrl: readarr?.externalUrl ?? copyFrom?.externalUrl ?? '',
+          syncEnabled: readarr?.syncEnabled ?? copyFrom?.syncEnabled ?? false,
+          enableSearch: !(readarr?.preventSearch ?? copyFrom?.preventSearch),
           activeMetadataProfileId: readarr?.activeMetadataProfileId ?? '',
-          serviceType: readarr?.serviceType ?? 'ebook',
+          serviceType: readarr?.serviceType ?? copyFormat ?? 'ebook',
         }}
         validationSchema={ReadarrSettingsSchema}
         onSubmit={async (values) => {
@@ -432,7 +433,7 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
               <p className="description mt-2">
                 {intl.formatMessage(messages.migrationNote)}{' '}
                 <a
-                  href="https://docs.seerr.dev/using-seerr/bookshelf-hardcover-migration"
+                  href="https://github.com/snapetech/seerrng/blob/main/docs/using-seerr/bookshelf-hardcover-migration.md"
                   target="_blank"
                   rel="noreferrer"
                   className="text-indigo-500 transition duration-300 hover:text-indigo-400"
@@ -563,6 +564,9 @@ const ReadarrModal = ({ onClose, readarr, onSave }: ReadarrModalProps) => {
                       </option>
                     </Field>
                   </div>
+                  <p className="mt-2 text-sm text-gray-400">
+                    {intl.formatMessage(messages.serviceTypeHelp)}
+                  </p>
                 </div>
               </div>
               <div className="form-row">

@@ -8,6 +8,7 @@ import axios from 'axios';
 import {
   MAX_SERVARR_CONFIGURATION_RESULTS,
   MAX_SERVARR_COVER_IMAGES,
+  MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
   MAX_SERVARR_LOOKUP_RESULTS,
 } from './base';
 import SonarrAPI, {
@@ -45,8 +46,9 @@ describe('Sonarr deletion-check inventory', () => {
     );
     assert.deepEqual(await api.getSeries({ strict: true, tvdbId: 33 }), []);
     const options = get.mock.calls[0].arguments[1] as
-      { params?: { tvdbId?: number } } | undefined;
+      { maxContentLength?: number; params?: { tvdbId?: number } } | undefined;
     assert.equal(options?.params?.tvdbId, 33);
+    assert.equal(options?.maxContentLength, MAX_SERVARR_LIBRARY_RESPONSE_BYTES);
   });
 });
 
@@ -142,6 +144,29 @@ describe('Sonarr response normalization', () => {
 
     assert.strictEqual(profiles.length, MAX_SERVARR_CONFIGURATION_RESULTS - 2);
     assert.deepStrictEqual(profiles[0], { id: 0, name: 'Profile 0' });
+  });
+});
+
+describe('Sonarr series search errors', () => {
+  it('keeps existing best-effort behavior and exposes a strict search method', async (t) => {
+    const api = buildSonarr();
+    const runCommand = mock.method(
+      api as unknown as {
+        runCommand: (command: string, payload: unknown) => Promise<void>;
+      },
+      'runCommand',
+      async () => {
+        throw new Error('Sonarr command rejected');
+      }
+    );
+    t.after(() => runCommand.mock.restore());
+
+    await api.searchSeries(42);
+    await assert.rejects(
+      api.searchSeriesOrThrow(42),
+      /Failed to execute Sonarr series search/
+    );
+    assert.strictEqual(runCommand.mock.callCount(), 2);
   });
 });
 

@@ -18,6 +18,7 @@ import defineMessages from '@app/utils/defineMessages';
 import { MediaStatus } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
+import type { ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.StatusBadge', {
@@ -46,6 +47,10 @@ interface StatusBadgeProps {
   title?: string | string[];
   statusLabelOverride?: string;
   className?: string;
+  requestId?: number;
+  canFailDownload?: boolean;
+  showQuality?: boolean;
+  leadingIcon?: ReactNode;
 }
 
 const StatusBadge = ({
@@ -63,10 +68,20 @@ const StatusBadge = ({
   title,
   statusLabelOverride,
   className,
+  requestId,
+  canFailDownload = false,
+  showQuality = true,
+  leadingIcon,
 }: StatusBadgeProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
   const settings = useSettings();
+  const formatStatusLabel = (statusText: string) =>
+    showQuality
+      ? intl.formatMessage(is4k ? messages.status4k : messages.status, {
+          status: statusText,
+        })
+      : statusText;
 
   let mediaLink: string | undefined;
   let mediaLinkDescription: string | undefined;
@@ -188,6 +203,8 @@ const StatusBadge = ({
         downloadItem={downloadItem[0]}
         title={Array.isArray(title) ? title[0] : title}
         is4k={is4k}
+        requestId={requestId}
+        canFailDownload={canFailDownload}
       />
     ) : (
       <ul>
@@ -201,11 +218,56 @@ const StatusBadge = ({
               title={Array.isArray(title) ? title[index] : title}
               is4k={is4k}
               bookFormat={mediaType === 'book' ? bookFormat : undefined}
+              requestId={requestId}
+              canFailDownload={canFailDownload}
             />
           </li>
         ))}
       </ul>
     );
+
+  // When the badge opens a manual-fail tooltip, reserve its tap/click for that
+  // action. Keep playback/service navigation beside the fail button instead
+  // of making the same control both a link and a tooltip trigger.
+  const opensManualFailTooltip =
+    canFailDownload &&
+    inProgress &&
+    (status === MediaStatus.AVAILABLE ||
+      status === MediaStatus.PARTIALLY_AVAILABLE ||
+      status === MediaStatus.PROCESSING ||
+      status === MediaStatus.DELETED);
+  const statusBadgeLink = opensManualFailTooltip ? undefined : mediaLink;
+  const downloadTooltipContent =
+    opensManualFailTooltip && mediaLink && mediaLinkDescription ? (
+      <>
+        {tooltipContent}
+        <div className="px-4 pb-4">
+          <Badge href={mediaLink} className="min-h-11">
+            {mediaLinkDescription}
+          </Badge>
+        </div>
+      </>
+    ) : (
+      tooltipContent
+    );
+
+  const downloadTooltipClassName = inProgress
+    ? `scrollable-card ${
+        canFailDownload ? '' : 'hidden sm:block'
+      } max-h-96 w-96 max-w-[calc(100vw-2rem)] overflow-y-auto`
+    : undefined;
+  const downloadTooltipConfig = inProgress
+    ? {
+        interactive: true,
+        delayHide: 100,
+        ...(canFailDownload && {
+          trigger: ['hover', 'click', 'focus'] as (
+            'hover' | 'click' | 'focus'
+          )[],
+          followCursor: false,
+        }),
+      }
+    : undefined;
 
   const badgeDownloadProgress = (
     <div
@@ -228,18 +290,13 @@ const StatusBadge = ({
     case MediaStatus.AVAILABLE:
       return (
         <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
-          className={`${
-            inProgress &&
-            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
-          }`}
-          tooltipConfig={{
-            ...(inProgress && { interactive: true, delayHide: 100 }),
-          }}
+          content={inProgress ? downloadTooltipContent : mediaLinkDescription}
+          className={downloadTooltipClassName}
+          tooltipConfig={downloadTooltipConfig}
         >
           <Badge
             badgeType="success"
-            href={mediaLink}
+            href={statusBadgeLink}
             className={`${className ?? ''} ${
               inProgress &&
               'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
@@ -247,18 +304,16 @@ const StatusBadge = ({
           >
             {inProgress && badgeDownloadProgress}
             <div
-              className={`relative z-20 flex items-center ${
+              className={`request-status-control-content relative z-20 flex items-center ${
                 inProgress && 'px-2'
               }`}
             >
+              {leadingIcon}
               <span>
-                {intl.formatMessage(
-                  is4k ? messages.status4k : messages.status,
-                  {
-                    status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.available),
-                  }
+                {formatStatusLabel(
+                  inProgress
+                    ? intl.formatMessage(globalMessages.processing)
+                    : intl.formatMessage(globalMessages.available)
                 )}
               </span>
               {inProgress && (
@@ -295,18 +350,13 @@ const StatusBadge = ({
     case MediaStatus.PARTIALLY_AVAILABLE:
       return (
         <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
-          className={`${
-            inProgress &&
-            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
-          }`}
-          tooltipConfig={{
-            ...(inProgress && { interactive: true, delayHide: 100 }),
-          }}
+          content={inProgress ? downloadTooltipContent : mediaLinkDescription}
+          className={downloadTooltipClassName}
+          tooltipConfig={downloadTooltipConfig}
         >
           <Badge
             badgeType="success"
-            href={mediaLink}
+            href={statusBadgeLink}
             className={`${className ?? ''} ${
               inProgress &&
               'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
@@ -314,18 +364,16 @@ const StatusBadge = ({
           >
             {inProgress && badgeDownloadProgress}
             <div
-              className={`relative z-20 flex items-center ${
+              className={`request-status-control-content relative z-20 flex items-center ${
                 inProgress && 'px-2'
               }`}
             >
+              {leadingIcon}
               <span>
-                {intl.formatMessage(
-                  is4k ? messages.status4k : messages.status,
-                  {
-                    status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.partiallyavailable),
-                  }
+                {formatStatusLabel(
+                  inProgress
+                    ? intl.formatMessage(globalMessages.processing)
+                    : intl.formatMessage(globalMessages.partiallyavailable)
                 )}
               </span>
               {inProgress && (
@@ -362,18 +410,13 @@ const StatusBadge = ({
     case MediaStatus.PROCESSING:
       return (
         <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
-          className={`${
-            inProgress &&
-            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
-          }`}
-          tooltipConfig={{
-            ...(inProgress && { interactive: true, delayHide: 100 }),
-          }}
+          content={inProgress ? downloadTooltipContent : mediaLinkDescription}
+          className={downloadTooltipClassName}
+          tooltipConfig={downloadTooltipConfig}
         >
           <Badge
             badgeType="primary"
-            href={mediaLink}
+            href={statusBadgeLink}
             className={`${className ?? ''} ${
               inProgress &&
               'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
@@ -381,18 +424,16 @@ const StatusBadge = ({
           >
             {inProgress && badgeDownloadProgress}
             <div
-              className={`relative z-20 flex items-center ${
+              className={`request-status-control-content relative z-20 flex items-center ${
                 inProgress && 'px-2'
               }`}
             >
+              {leadingIcon}
               <span>
-                {intl.formatMessage(
-                  is4k ? messages.status4k : messages.status,
-                  {
-                    status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.requested),
-                  }
+                {formatStatusLabel(
+                  inProgress
+                    ? intl.formatMessage(globalMessages.processing)
+                    : intl.formatMessage(globalMessages.requested)
                 )}
               </span>
               {inProgress && (
@@ -429,10 +470,12 @@ const StatusBadge = ({
     case MediaStatus.PENDING:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="warning" href={mediaLink} className={className}>
-            {intl.formatMessage(is4k ? messages.status4k : messages.status, {
-              status: intl.formatMessage(globalMessages.pending),
-            })}
+          <Badge
+            badgeType="warning"
+            href={statusBadgeLink}
+            className={className}
+          >
+            {formatStatusLabel(intl.formatMessage(globalMessages.pending))}
           </Badge>
         </Tooltip>
       );
@@ -440,12 +483,15 @@ const StatusBadge = ({
     case MediaStatus.BLOCKLISTED:
       return (
         <Tooltip content={mediaLinkDescription}>
-          <Badge badgeType="danger" href={mediaLink} className={className}>
-            {intl.formatMessage(is4k ? messages.status4k : messages.status, {
-              status:
-                statusLabelOverride ??
-                intl.formatMessage(globalMessages.blocklisted),
-            })}
+          <Badge
+            badgeType="danger"
+            href={statusBadgeLink}
+            className={className}
+          >
+            {formatStatusLabel(
+              statusLabelOverride ??
+                intl.formatMessage(globalMessages.blocklisted)
+            )}
           </Badge>
         </Tooltip>
       );
@@ -453,18 +499,13 @@ const StatusBadge = ({
     case MediaStatus.DELETED:
       return (
         <Tooltip
-          content={inProgress ? tooltipContent : mediaLinkDescription}
-          className={`${
-            inProgress &&
-            'scrollable-card hidden max-h-96 w-96 overflow-y-auto sm:block'
-          }`}
-          tooltipConfig={{
-            ...(inProgress && { interactive: true, delayHide: 100 }),
-          }}
+          content={inProgress ? downloadTooltipContent : mediaLinkDescription}
+          className={downloadTooltipClassName}
+          tooltipConfig={downloadTooltipConfig}
         >
           <Badge
             badgeType="danger"
-            href={mediaLink}
+            href={statusBadgeLink}
             className={`${className ?? ''} ${
               inProgress &&
               'relative !bg-gray-700/35 !px-0 hover:!bg-gray-700/55'
@@ -472,18 +513,16 @@ const StatusBadge = ({
           >
             {inProgress && badgeDownloadProgress}
             <div
-              className={`relative z-20 flex items-center ${
+              className={`request-status-control-content relative z-20 flex items-center ${
                 inProgress && 'px-2'
               }`}
             >
+              {leadingIcon}
               <span>
-                {intl.formatMessage(
-                  is4k ? messages.status4k : messages.status,
-                  {
-                    status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
-                      : intl.formatMessage(globalMessages.deleted),
-                  }
+                {formatStatusLabel(
+                  inProgress
+                    ? intl.formatMessage(globalMessages.processing)
+                    : intl.formatMessage(globalMessages.deleted)
                 )}
               </span>
               {inProgress && (

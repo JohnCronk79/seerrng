@@ -138,6 +138,14 @@ export interface JellyfinLibraryItemExtended extends JellyfinLibraryItem {
   Height?: number;
   IsHD?: boolean;
   DateCreated?: string;
+  ProductionYear?: number;
+  RunTimeTicks?: number;
+  UserData?: {
+    Played: boolean;
+    PlayCount?: number;
+    PlaybackPositionTicks?: number;
+    PlayedPercentage?: number;
+  };
 }
 
 type EpisodeReturn<T> = T extends { includeMediaInfo: true }
@@ -162,6 +170,11 @@ export interface JellyfinSession {
   SupportsRemoteControl: boolean;
   PlayableMediaTypes: string[];
   SupportedCommands: string[];
+  NowPlayingItem?: JellyfinLibraryItemExtended;
+  PlayState?: {
+    PositionTicks?: number;
+    IsPaused?: boolean;
+  };
 }
 
 export interface JellyfinPlaylist {
@@ -193,6 +206,14 @@ const optionalJellyfinInteger = (value: unknown): number | undefined =>
   Number.isSafeInteger(value) &&
   value >= 0 &&
   value <= 10_000_000
+    ? value
+    : undefined;
+
+// Jellyfin stores playback offsets and runtimes in 100-nanosecond ticks.
+// Those values are routinely in the tens of billions, so they must not use
+// the small bound intended for episode numbers and other ordinary integers.
+const optionalJellyfinTicks = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
 
@@ -343,6 +364,24 @@ export const sanitizeJellyfinLibraryItem = (
     Height: optionalJellyfinInteger(value.Height),
     IsHD: typeof value.IsHD === 'boolean' ? value.IsHD : undefined,
     DateCreated: boundedJellyfinText(value.DateCreated, 128) || undefined,
+    ProductionYear: optionalJellyfinInteger(value.ProductionYear),
+    RunTimeTicks: optionalJellyfinTicks(value.RunTimeTicks),
+    UserData: isRecord(value.UserData)
+      ? {
+          Played: value.UserData.Played === true,
+          PlayCount: optionalJellyfinInteger(value.UserData.PlayCount),
+          PlaybackPositionTicks: optionalJellyfinTicks(
+            value.UserData.PlaybackPositionTicks
+          ),
+          PlayedPercentage:
+            typeof value.UserData.PlayedPercentage === 'number' &&
+            Number.isFinite(value.UserData.PlayedPercentage) &&
+            value.UserData.PlayedPercentage >= 0 &&
+            value.UserData.PlayedPercentage <= 100
+              ? value.UserData.PlayedPercentage
+              : undefined,
+        }
+      : undefined,
   };
 };
 
@@ -474,6 +513,17 @@ export const sanitizeJellyfinSession = (
       .slice(0, 100)
       .map((item) => boundedJellyfinText(item, 64))
       .filter(Boolean),
+    NowPlayingItem: sanitizeJellyfinLibraryItem(value.NowPlayingItem, true) as
+      JellyfinLibraryItemExtended | undefined,
+    PlayState: isRecord(value.PlayState)
+      ? {
+          PositionTicks: optionalJellyfinTicks(value.PlayState.PositionTicks),
+          IsPaused:
+            typeof value.PlayState.IsPaused === 'boolean'
+              ? value.PlayState.IsPaused
+              : undefined,
+        }
+      : undefined,
   };
 };
 
@@ -830,6 +880,102 @@ class JellyfinAPI extends ExternalAPI {
     }
   }
 
+  /**
+   * Return only the views visible to the linked user. Do not fall back to
+   * /Library/MediaFolders here: that endpoint can expose the server-wide
+   * library list when called with an administrator credential.
+   */
+  public async getUserLibraries(): Promise<JellyfinLibrary[]> {
+    if (!this.userId) {
+      throw new ApiError(409, ApiErrorCode.InvalidAuthToken);
+    }
+    try {
+      const response = await this.get<unknown>(
+        `/Users/${encodeURIComponent(this.userId)}/Views`
+      );
+      return this.mapLibraries(isRecord(response) ? response.Items : undefined);
+    } catch (e) {
+      logger.error(
+        `Something went wrong while getting user libraries from the Jellyfin server: ${e.message}`,
+        { label: 'Jellyfin API', error: e.response?.status }
+      );
+      if (!e.response) {
+        throw new ApiError(502, ApiErrorCode.ConnectionError);
+      }
+      throw new ApiError(e.response.status, ApiErrorCode.InvalidAuthToken);
+    }
+  }
+
+  public async getUserLibraryContents(
+    id: string,
+    libraryType: 'show' | 'movie',
+    {
+      offset = 0,
+      size = 20,
+      isPlayed,
+    }: { offset?: number; size?: number; isPlayed?: boolean } = {}
+  ): Promise<JellyfinItemsReponse> {
+    if (!this.userId) {
+      throw new ApiError(409, ApiErrorCode.InvalidAuthToken);
+    }
+    const safeOffset =
+      Number.isSafeInteger(offset) && offset >= 0
+        ? Math.min(offset, MAX_JELLYFIN_LIBRARY_ITEMS)
+        : 0;
+    const safeSize =
+      Number.isSafeInteger(size) && size > 0 ? Math.min(size, 100) : 20;
+    try {
+      // Use the current /Items query with an explicit userId. The linked
+      // user's own token and user scope are both required for UserData.
+      const response = await this.get<unknown>('/Items', {
+        params: {
+          userId: this.userId,
+          parentId: boundedJellyfinText(id, 128),
+          recursive: true,
+          includeItemTypes: libraryType === 'movie' ? 'Movie' : 'Series',
+          fields: 'ProviderIds,UserData',
+          enableUserData: true,
+          enableTotalRecordCount: true,
+          enableImages: false,
+          sortBy: 'SortName',
+          sortOrder: 'Ascending',
+          startIndex: safeOffset,
+          limit: safeSize,
+          ...(isPlayed === undefined ? {} : { isPlayed }),
+        },
+      });
+      if (!isRecord(response)) {
+        throw new Error('Jellyfin returned an invalid user library response.');
+      }
+      const items = sanitizeJellyfinLibraryItems(response.Items, safeSize, {
+        includeExtended: true,
+        excludeVirtual: true,
+      }) as JellyfinLibraryItemExtended[];
+      const totalRecordCount =
+        Number.isSafeInteger(response.TotalRecordCount) &&
+        Number(response.TotalRecordCount) >= 0
+          ? Math.min(
+              Number(response.TotalRecordCount),
+              MAX_JELLYFIN_LIBRARY_ITEMS
+            )
+          : items.length;
+      return {
+        Items: items,
+        TotalRecordCount: totalRecordCount,
+        StartIndex: safeOffset,
+      };
+    } catch (e) {
+      logger.error(
+        `Something went wrong while getting user library content from the Jellyfin server: ${e.message}`,
+        { label: 'Jellyfin API', error: e.response?.status }
+      );
+      if (!e.response) {
+        throw new ApiError(502, ApiErrorCode.ConnectionError);
+      }
+      throw new ApiError(e.response.status, ApiErrorCode.InvalidAuthToken);
+    }
+  }
+
   private mapLibraries(mediaFolders: unknown): JellyfinLibrary[] {
     const excludedTypes = ['books', 'musicvideos', 'homevideos', 'boxsets'];
 
@@ -1061,6 +1207,40 @@ class JellyfinAPI extends ExternalAPI {
           session.SupportsMediaControl &&
           session.SupportsRemoteControl
       );
+  }
+
+  public async getPlaybackSessions(): Promise<JellyfinSession[]> {
+    const response = await this.get<unknown>('/Sessions', {
+      params: { ActiveWithinSeconds: 300 },
+    });
+
+    return (Array.isArray(response) ? response : [])
+      .slice(0, 100)
+      .flatMap((session) => {
+        const normalized = sanitizeJellyfinSession(session);
+        return normalized?.IsActive && normalized.NowPlayingItem
+          ? [normalized]
+          : [];
+      });
+  }
+
+  public async getUserPlaybackItem(
+    userId: string,
+    itemId: string
+  ): Promise<JellyfinLibraryItemExtended | undefined> {
+    const safeUserId = boundedJellyfinText(userId, 128);
+    const safeItemId = boundedJellyfinText(itemId, 128);
+    if (!safeUserId || !safeItemId) {
+      return undefined;
+    }
+
+    const response = await this.get<unknown>(
+      `/Users/${encodeURIComponent(safeUserId)}/Items/${encodeURIComponent(safeItemId)}`,
+      { params: { fields: 'UserData,ProviderIds,RunTimeTicks' } }
+    );
+    const item = sanitizeJellyfinLibraryItem(response, true) as
+      JellyfinLibraryItemExtended | undefined;
+    return item?.Id === safeItemId ? item : undefined;
   }
 
   public async playOnSession(

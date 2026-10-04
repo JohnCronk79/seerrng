@@ -1,7 +1,13 @@
 import MediaFilterOption from '@app/components/Discover/MediaFilterOption';
 import PinnedFilterSection from '@app/components/Discover/PinnedFilterSection';
 import useMediaFilterPin from '@app/hooks/useMediaFilterPin';
+import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
+import type { DiscoverMediaType as DiscoverMediaCategory } from '@app/utils/serviceAvailability';
+import {
+  DISCOVER_MEDIA_TYPES,
+  isDiscoverMediaTypeEnabled,
+} from '@app/utils/serviceAvailability';
 import {
   BookOpenIcon,
   FilmIcon,
@@ -14,8 +20,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useIntl } from 'react-intl';
 
-export type DiscoverMediaType =
-  'all' | 'movie' | 'tv' | 'music' | 'book' | 'audiobook';
+export type DiscoverMediaType = 'all' | DiscoverMediaCategory;
 
 interface DiscoverMediaTabsProps {
   selected?: DiscoverMediaType;
@@ -68,6 +73,10 @@ const tabs = [
 
 const DiscoverMediaTabs = ({ selected, basePath }: DiscoverMediaTabsProps) => {
   const intl = useIntl();
+  const { currentSettings } = useSettings();
+  const availableTypes = DISCOVER_MEDIA_TYPES.filter((type) =>
+    isDiscoverMediaTypeEnabled(type, currentSettings)
+  );
   const router = useRouter();
   const pin = useMediaFilterPin<DiscoverMediaType>({
     scope: 'trending',
@@ -95,35 +104,41 @@ const DiscoverMediaTabs = ({ selected, basePath }: DiscoverMediaTabsProps) => {
       section="mediaFilters"
       label={intl.formatMessage(messages.mediaFilters)}
     >
-      <nav className="flex flex-wrap gap-2" data-testid="discover-media-tabs">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const isSelected = selected === tab.type;
+      <nav className="app-filter-row" data-testid="discover-media-tabs">
+        {tabs
+          .filter(
+            (tab) =>
+              tab.type === 'all' ||
+              availableTypes.includes(tab.type as DiscoverMediaCategory)
+          )
+          .map((tab) => {
+            const Icon = tab.icon;
+            const isSelected = selected === tab.type;
 
-          return (
-            <MediaFilterOption
-              key={tab.type}
-              pin={pin}
-              value={tab.type}
-              label={intl.formatMessage(tab.label)}
-              selected={isSelected}
-            >
-              <Link
-                href={
-                  basePath
-                    ? { pathname: basePath, query: { mediaType: tab.type } }
-                    : tab.href
-                }
-                aria-current={isSelected ? 'page' : undefined}
-                className="app-filter-segment-focus flex h-full items-center gap-1.5 px-2"
-                data-testid={`discover-media-tab-${tab.type}`}
+            return (
+              <MediaFilterOption
+                key={tab.type}
+                pin={pin}
+                value={tab.type}
+                label={intl.formatMessage(tab.label)}
+                selected={isSelected}
               >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                <span>{intl.formatMessage(tab.label)}</span>
-              </Link>
-            </MediaFilterOption>
-          );
-        })}
+                <Link
+                  href={
+                    basePath
+                      ? { pathname: basePath, query: { mediaType: tab.type } }
+                      : tab.href
+                  }
+                  aria-current={isSelected ? 'page' : undefined}
+                  className="app-control-shadow-exempt app-filter-segment-focus"
+                  data-testid={`discover-media-tab-${tab.type}`}
+                >
+                  <Icon className="app-action-icon" aria-hidden="true" />
+                  <span>{intl.formatMessage(tab.label)}</span>
+                </Link>
+              </MediaFilterOption>
+            );
+          })}
       </nav>
     </PinnedFilterSection>
   );

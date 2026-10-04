@@ -12,6 +12,7 @@ import {
   formatCuratedNotes,
   hasExplicitNoReleaseNote,
   injectCuratedNotes,
+  isReleaseNoteShipped,
   parseReleaseNote,
   readReleaseNotes,
 } from './release-notes.mjs';
@@ -73,6 +74,20 @@ test('release-note fragments reject unsupported metadata', () => {
   assert.match(note.errors.join('\n'), /not supported/u);
 });
 
+test('release-note areas require lowercase slugs without spaces', () => {
+  const invalid = parseReleaseNote(
+    'release-notes/library-removal.md',
+    validContent.replace('area: metadata', 'area: library management')
+  );
+  const valid = parseReleaseNote(
+    'release-notes/library-removal.md',
+    validContent.replace('area: metadata', 'area: library-removal')
+  );
+
+  assert.match(invalid.errors.join('\n'), /area must be a 2-32 character/u);
+  assert.deepEqual(valid.errors, []);
+});
+
 test('breaking notes require an explicit upgrade action', () => {
   const note = parseReleaseNote(
     'release-notes/breaking.md',
@@ -121,6 +136,12 @@ test('internal-only work has an explicit opt-out marker', () => {
   assert.equal(hasExplicitNoReleaseNote('release-note: none'), true);
   assert.equal(
     hasExplicitNoReleaseNote(
+      'Bump the release-note-none-codeql-action group across dependencies.'
+    ),
+    true
+  );
+  assert.equal(
+    hasExplicitNoReleaseNote(
       '- [x] This change is internal-only and does not need a user-facing release note.'
     ),
     true
@@ -147,6 +168,7 @@ test('release-note range discovery distinguishes additions from edits', () => {
     runGit('add', '.');
     runGit('commit', '--quiet', '-m', 'chore: initialize test repository');
     const base = runGit('rev-parse', 'HEAD');
+    runGit('tag', 'v3.0.0', base);
 
     const fragment = path.join(repository, 'release-notes', 'books.md');
     fs.writeFileSync(fragment, validContent);
@@ -205,6 +227,65 @@ test('release-note range discovery distinguishes additions from edits', () => {
     assert.deepEqual(
       changedReleaseNoteFiles(firstHead, secondHead, repository),
       [{ status: 'M', file: 'release-notes/books.md' }]
+    );
+    assert.equal(
+      isReleaseNoteShipped('release-notes/books.md', secondHead, repository),
+      false
+    );
+
+    const updatedPreview = execFileSync(
+      process.execPath,
+      [previewScript, '--base', firstHead, '--head', secondHead],
+      { cwd: repository, encoding: 'utf8' }
+    );
+    assert.match(updatedPreview, /cached metadata/u);
+
+    execFileSync(
+      process.execPath,
+      [
+        checkScript,
+        '--base',
+        firstHead,
+        '--head',
+        secondHead,
+        '--pr-body',
+        bodyFile,
+      ],
+      { cwd: repository, encoding: 'utf8' }
+    );
+
+    runGit('tag', 'v3.0.1', secondHead);
+    fs.writeFileSync(
+      fragment,
+      validContent.replace('short upstream outage.', 'brief upstream outage.')
+    );
+    runGit('add', '.');
+    runGit('commit', '--quiet', '-m', 'fix: alter a shipped release note');
+    const thirdHead = runGit('rev-parse', 'HEAD');
+    assert.equal(
+      isReleaseNoteShipped('release-notes/books.md', thirdHead, repository),
+      true
+    );
+    assert.throws(
+      () =>
+        execFileSync(
+          process.execPath,
+          [
+            checkScript,
+            '--base',
+            secondHead,
+            '--head',
+            thirdHead,
+            '--pr-body',
+            bodyFile,
+          ],
+          { cwd: repository, encoding: 'utf8' }
+        ),
+      (error) =>
+        error.status === 1 &&
+        error.stderr
+          .toString()
+          .includes('release-note fragments are append-only')
     );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });

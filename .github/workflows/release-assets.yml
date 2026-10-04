@@ -12,6 +12,21 @@ on:
         description: Release tag, for example v0.1.0
         required: true
         type: string
+      reuse_from_run_id:
+        description: Validated prior release run whose successful builder artifacts can be reused
+        required: false
+        type: string
+        default: ''
+      reuse_windows_x64_artifact:
+        description: Reuse the successful Windows x64 artifact from the prior run
+        required: false
+        type: boolean
+        default: false
+      reuse_windows_arm64_artifact:
+        description: Reuse the successful Windows ARM64 artifact from the prior run
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -58,6 +73,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
     strategy:
       fail-fast: false
@@ -66,31 +82,100 @@ jobs:
           - runner: ubuntu-latest
             os: linux
             arch: x64
+            pnpm_version: 10.24.0
           - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
+            pnpm_version: 10.24.0
           - runner: macos-15
             os: macos
             arch: arm64
-          - runner: windows-latest
+            pnpm_version: 10.24.0
+          - runner: macos-15-intel
+            os: macos
+            arch: x64
+            pnpm_version: 10.24.0
+          - runner: windows-2022
             os: windows
             arch: x64
+            pnpm_version: 10.24.0
+            msvs_version: auto
+          - runner: windows-11-vs2026-arm
+            os: windows
+            arch: arm64
+            pnpm_version: 10.24.0
+            msvs_version: '2026'
     steps:
+      - name: Download validated artifacts from previous run
+        if: inputs.reuse_from_run_id != '' && (matrix.os != 'windows' || (matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact == true) || (matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact == true))
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: seerrng-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist-release
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reuse_from_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
         with:
           ref: ${{ needs.resolve.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Pnpm Setup
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
         with:
-          node-version: '22.22.2'
+          node-version-file: 'package.json'
           package-manager-cache: false
 
+      - name: Checkout release tooling
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Prepare isolated pnpm package metadata
+        if: (inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)) && matrix.os == 'windows'
+        shell: bash
+        run: |
+          cat > .github/release-pnpm-tooling.json <<'JSON'
+          {
+            "name": "seerrng-release-tooling",
+            "private": true
+          }
+          JSON
+
+      - name: Pnpm Setup
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: ${{ matrix.pnpm_version }}
+          package_json_file: ${{ matrix.os == 'windows' && '.github/release-pnpm-tooling.json' || 'package.json' }}
+
+      - name: Verify pinned pnpm runtime
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
+        shell: bash
+        env:
+          EXPECTED_PNPM_VERSION: ${{ matrix.pnpm_version }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_PNPM_VERSION" in
+            10.*) export npm_config_manage_package_manager_versions=false ;;
+            *) echo "Unsupported pnpm version for release build: $EXPECTED_PNPM_VERSION" >&2; exit 1 ;;
+          esac
+          actual_version="$(pnpm --version)"
+          printf 'Using pnpm %s from %s\n' "$actual_version" "$(command -v pnpm)"
+          [[ "$actual_version" == "$EXPECTED_PNPM_VERSION" ]] || {
+            echo "Expected pnpm $EXPECTED_PNPM_VERSION, got $actual_version." >&2
+            exit 1
+          }
+
       - name: Verify runner platform
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
         shell: bash
         env:
           EXPECTED_OS: ${{ matrix.os }}
@@ -114,20 +199,145 @@ jobs:
             exit 1
           }
 
-      - name: Build archive
+      - name: Install node-gyp for Visual Studio 2026
+        if: matrix.os == 'windows' && matrix.arch == 'arm64' && (inputs.reuse_from_run_id == '' || inputs.reuse_windows_arm64_artifact != true)
         shell: bash
-        run: ./scripts/build-release-assets.sh "${TAG}" dist-release
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts node-gyp@13.0.1
+          npm_root="$(npm root --global | tr -d '\r')"
+          node_gyp_js="$(cygpath -u "$npm_root")/node-gyp/bin/node-gyp.js"
+          test -f "$node_gyp_js"
+          node_gyp_version="$(node "$node_gyp_js" --version)"
+          printf 'Using node-gyp %s from %s\n' "$node_gyp_version" "$node_gyp_js"
+          [[ "$node_gyp_version" == 'v13.0.1' ]]
+          printf 'npm_config_node_gyp=%s\n' "$(cygpath -w "$node_gyp_js")" >> "$GITHUB_ENV"
+          printf 'npm_config_msvs_version=2026\n' >> "$GITHUB_ENV"
+
+      - name: Build archive
+        if: inputs.reuse_from_run_id == '' || (matrix.os == 'windows' && matrix.arch == 'x64' && inputs.reuse_windows_x64_artifact != true) || (matrix.os == 'windows' && matrix.arch == 'arm64' && inputs.reuse_windows_arm64_artifact != true)
+        shell: bash
         env:
+          EXPECTED_PNPM_VERSION: ${{ matrix.pnpm_version }}
           TAG: ${{ needs.resolve.outputs.tag }}
+          SEERRNG_RELEASE_ARCH: ${{ matrix.arch }}
+          GYP_MSVS_VERSION: ${{ matrix.msvs_version || 'auto' }}
+        run: |
+          set -euo pipefail
+          case "$EXPECTED_PNPM_VERSION" in
+            10.*) export npm_config_manage_package_manager_versions=false ;;
+            *) echo "Unsupported pnpm version for release build: $EXPECTED_PNPM_VERSION" >&2; exit 1 ;;
+          esac
+          actual_version="$(pnpm --version)"
+          printf 'Building with pnpm %s from %s\n' "$actual_version" "$(command -v pnpm)"
+          [[ "$actual_version" == "$EXPECTED_PNPM_VERSION" ]] || {
+            echo "Expected pnpm $EXPECTED_PNPM_VERSION, got $actual_version." >&2
+            exit 1
+          }
+          bash .release-tooling/scripts/build-release-assets.sh "${TAG}" dist-release
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: seerrng-${{ matrix.os }}-${{ matrix.arch }}
           path: dist-release/seerrng-*
 
+  build-jellyfin-plugin:
+    name: Build optional Jellyfin plugin
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download validated Jellyfin plugin artifact from previous run
+        if: inputs.reuse_from_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: seerrng-jellyfin-plugin
+          path: dist-release
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reuse_from_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.reuse_from_run_id == ''
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: inputs.reuse_from_run_id == ''
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Build plugin archive and repository manifest
+        if: inputs.reuse_from_run_id == ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          plugin_dir='integrations/jellyfin-plugin'
+          release_dir='dist-release'
+          plugin_version="$(jq -er '.version' "$plugin_dir/meta.json")"
+          target_abi="$(jq -er '.targetAbi' "$plugin_dir/meta.json")"
+          plugin_guid="$(jq -er '.guid' "$plugin_dir/meta.json")"
+          [[ "$plugin_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$target_abi" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$plugin_guid" == '812a21b1-2e18-4ff7-a9b8-3dd84e2a0e16' ]]
+          mkdir -p "$release_dir/plugin"
+          dotnet publish "$plugin_dir/SeerrNG.JellyfinBridge.csproj" \
+            --configuration Release \
+            --output "$release_dir/plugin"
+          test -s "$release_dir/plugin/Jellyfin.Plugin.SeerrNGBridge.dll"
+          cp "$plugin_dir/meta.json" "$release_dir/plugin/meta.json"
+          archive="seerrng-jellyfin-bridge-${RELEASE_TAG}.zip"
+          (
+            cd "$release_dir/plugin"
+            zip -q "../$archive" Jellyfin.Plugin.SeerrNGBridge.dll meta.json
+          )
+          (
+            cd "$release_dir"
+            sha256sum "$archive" > "${archive%.zip}.sha256"
+          )
+          checksum="$(md5sum "$release_dir/$archive" | cut -d ' ' -f1)"
+          [[ "$checksum" =~ ^[a-f0-9]{32}$ ]]
+          source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${archive}"
+          jq -n \
+            --arg guid "$plugin_guid" \
+            --arg version "$plugin_version" \
+            --arg targetAbi "$target_abi" \
+            --arg sourceUrl "$source_url" \
+            --arg checksum "$checksum" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '[{
+              guid: $guid,
+              name: "SeerrNG Bridge",
+              description: "Optional Jellyfin menu link to a separately deployed SeerrNG server.",
+              overview: "Open SeerrNG using the current Jellyfin session.",
+              owner: "snapetech",
+              category: "General",
+              versions: [{
+                version: $version,
+                changelog: "Initial SeerrNG Jellyfin Bridge release.",
+                targetAbi: $targetAbi,
+                sourceUrl: $sourceUrl,
+                checksum: $checksum,
+                timestamp: $timestamp
+              }]
+            }]' > "$release_dir/seerrng-jellyfin-plugin-manifest.json"
+          jq -e --arg guid "$plugin_guid" --arg checksum "$checksum" \
+            'length == 1 and .[0].guid == $guid and .[0].versions[0].checksum == $checksum' \
+            "$release_dir/seerrng-jellyfin-plugin-manifest.json" >/dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: seerrng-jellyfin-plugin
+          path: dist-release/seerrng-jellyfin-*
+
   publish:
     name: Upload release assets
-    needs: [resolve, build]
+    needs: [resolve, build, build-jellyfin-plugin]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -137,8 +347,45 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: seerrng-*
-          path: dist-release
-          merge-multiple: true
+          path: dist-release/downloaded
+
+      - name: Flatten downloaded release assets
+        shell: bash
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_dir='dist-release'
+          downloads="$release_dir/downloaded"
+          while IFS= read -r -d '' file; do
+            filename="${file##*/}"
+            artifact="${file#"$downloads"/}"
+            artifact="${artifact%%/*}"
+            case "$artifact" in
+              seerrng-linux-x64) expected_archive="seerrng-${TAG}-linux-x64.tar.gz" ;;
+              seerrng-linux-arm64) expected_archive="seerrng-${TAG}-linux-arm64.tar.gz" ;;
+              seerrng-macos-x64) expected_archive="seerrng-${TAG}-macos-x64.tar.gz" ;;
+              seerrng-macos-arm64) expected_archive="seerrng-${TAG}-macos-arm64.tar.gz" ;;
+              seerrng-windows-x64) expected_archive="seerrng-${TAG}-windows-x64.zip" ;;
+              seerrng-windows-arm64) expected_archive="seerrng-${TAG}-windows-arm64.zip" ;;
+              seerrng-jellyfin-plugin) expected_archive="seerrng-jellyfin-bridge-${TAG}.zip" ;;
+              *) echo "Unexpected release artifact directory: $artifact" >&2; exit 1 ;;
+            esac
+            expected_checksum="${expected_archive%.tar.gz}"
+            expected_checksum="${expected_checksum%.zip}.sha256"
+            expected_manifest=""
+            [[ "$artifact" != 'seerrng-jellyfin-plugin' ]] || expected_manifest='seerrng-jellyfin-plugin-manifest.json'
+            if [[ "$filename" != "$expected_archive" && "$filename" != "$expected_checksum" && "$filename" != "$expected_manifest" ]]; then
+              echo "Unexpected file in release artifact $artifact: $filename (expected $expected_archive)" >&2
+              exit 1
+            fi
+            target="$release_dir/$filename"
+            if [[ -e "$target" ]]; then
+              echo "Duplicate release asset filename $filename: $file collides with $target" >&2
+              exit 1
+            fi
+            cp -- "$file" "$target"
+          done < <(find "$downloads" -type f -name 'seerrng-*' -print0)
 
       - name: Verify archive inventory and checksums
         shell: bash
@@ -150,7 +397,10 @@ jobs:
             "seerrng-${TAG}-linux-x64.tar.gz"
             "seerrng-${TAG}-linux-arm64.tar.gz"
             "seerrng-${TAG}-macos-arm64.tar.gz"
+            "seerrng-${TAG}-macos-x64.tar.gz"
             "seerrng-${TAG}-windows-x64.zip"
+            "seerrng-${TAG}-windows-arm64.zip"
+            "seerrng-jellyfin-bridge-${TAG}.zip"
           )
           for archive in "${expected[@]}"; do
             test -f "dist-release/$archive"

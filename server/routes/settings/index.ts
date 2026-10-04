@@ -11,6 +11,11 @@ import {
   MAX_TMDB_KEYWORD_ID,
 } from '@server/constants/blocklist';
 import { ApiErrorCode } from '@server/constants/error';
+import {
+  MEDIA_CATEGORY_KEYS,
+  type EnabledMediaCategories,
+  type MediaCategoryKey,
+} from '@server/constants/mediaCategories';
 import { MediaServerType } from '@server/constants/server';
 import {
   SETTINGS_LIBRARY_ROUTE_PATHS,
@@ -42,6 +47,7 @@ import {
   runWithConfigurationAdmission,
   runWithConfigurationAdmissions,
 } from '@server/lib/configurationAdmission';
+import { parseDownloadPathMappings } from '@server/lib/downloadPathMappings';
 import ImageProxy from '@server/lib/imageproxy';
 import { assertNoSymlinkDirectoryComponents } from '@server/lib/pathSecurity';
 import {
@@ -105,14 +111,17 @@ import { rescheduleJob } from 'node-schedule';
 import path from 'path';
 import semver from 'semver';
 import { URL } from 'url';
+import backissueRoutes from './backissue';
 import kapowarrRoutes from './kapowarr';
 import lazyLibrarianRoutes from './lazylibrarian';
 import lidarrRoutes from './lidarr';
 import metadataRoutes from './metadata';
 import mylarRoutes from './mylar';
 import notificationRoutes from './notifications';
+import prowlarrRoutes from './prowlarr';
 import radarrRoutes from './radarr';
 import readarrRoutes from './readarr';
+import softwareAcquisitionRoutes from './softwareAcquisition';
 import sonarrRoutes from './sonarr';
 
 const settingsRoutes = Router();
@@ -585,7 +594,6 @@ export const parseJellyfinSettingsBody = (
     }
   );
   if ('error' in apiKey) return apiKey;
-
   return {
     value: {
       name: current.name,
@@ -598,8 +606,18 @@ export const parseJellyfinSettingsBody = (
       externalHostname: externalHostname.value ?? '',
       jellyfinForgotPasswordUrl: jellyfinForgotPasswordUrl.value ?? '',
       apiKey: apiKey.value,
+      // Bridge login is controlled through its independent endpoint so an
+      // administrator can revoke it without contacting Jellyfin.
+      bridgeLoginEnabled: current.bridgeLoginEnabled ?? false,
+      bridgeLoginGeneration: current.bridgeLoginGeneration ?? 0,
     },
   };
+};
+
+const redactJellyfinSettings = (settings: JellyfinSettings) => {
+  const publicSettings = { ...settings };
+  delete publicSettings.bridgeLoginGeneration;
+  return redactSecrets(publicSettings);
 };
 
 export const parseTautulliSettingsBody = (
@@ -1038,6 +1056,31 @@ const parseMainSettingsBody = (
     value.blocklistedTags = [...new Set(tags)].join(',');
   }
 
+  if (body.enabledMediaCategories !== undefined) {
+    const categories = body.enabledMediaCategories;
+    if (
+      !categories ||
+      typeof categories !== 'object' ||
+      Array.isArray(categories)
+    ) {
+      return { error: 'enabledMediaCategories must be an object.' };
+    }
+
+    const parsedCategories: Partial<EnabledMediaCategories> = {};
+    for (const [key, enabled] of Object.entries(
+      categories as Record<string, unknown>
+    )) {
+      if (!(MEDIA_CATEGORY_KEYS as readonly string[]).includes(key)) {
+        return { error: `Unknown media category: ${key}.` };
+      }
+      if (typeof enabled !== 'boolean') {
+        return { error: `enabledMediaCategories.${key} must be a boolean.` };
+      }
+      parsedCategories[key as MediaCategoryKey] = enabled;
+    }
+    value.enabledMediaCategories = parsedCategories;
+  }
+
   for (const [key, fieldName] of [
     ['hideAvailable', 'hideAvailable'],
     ['hideBlocklisted', 'hideBlocklisted'],
@@ -1106,6 +1149,7 @@ const parseMainSettingsBody = (
       'book',
       'comic',
       'magazine',
+      'software',
     ] as const) {
       if (incomingDefaultQuotas[mediaType] === undefined) {
         continue;
@@ -1171,6 +1215,7 @@ const parseMainSettingsBody = (
     ['spotifyClientSecret', 'spotifyClientSecret'],
     ['youtubeApiKey', 'youtubeApiKey'],
     ['comicVineApiKey', 'comicVineApiKey'],
+    ['googleBooksApiKey', 'googleBooksApiKey'],
   ] as const) {
     const parsed = parsePatchBoundedString(body, key, {
       fieldName,
@@ -1182,6 +1227,21 @@ const parseMainSettingsBody = (
     }
     if (parsed.value !== undefined) {
       value[key] = parsed.value;
+    }
+  }
+
+  if (body.downloadPathMappings !== undefined) {
+    try {
+      value.downloadPathMappings = parseDownloadPathMappings(
+        body.downloadPathMappings
+      );
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'downloadPathMappings must contain valid path mappings.',
+      };
     }
   }
 
@@ -1361,16 +1421,19 @@ settingsRoutes.use('/lidarr', lidarrRoutes);
 settingsRoutes.use('/readarr', readarrRoutes);
 settingsRoutes.use('/mylar', mylarRoutes);
 settingsRoutes.use('/kapowarr', kapowarrRoutes);
+settingsRoutes.use('/backissue', backissueRoutes);
 settingsRoutes.use('/lazylibrarian', lazyLibrarianRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
+settingsRoutes.use('/software-acquisition', softwareAcquisitionRoutes);
+settingsRoutes.use('/prowlarr', prowlarrRoutes);
 
 export const filteredMainSettings = (
   user: User,
   main: MainSettings
 ): Partial<MainSettings> => {
   if (!user?.hasPermission(Permission.ADMIN)) {
-    return omit(main, 'apiKey');
+    return omit(main, 'apiKey', 'downloadPathMappings');
   }
 
   return {
@@ -1734,8 +1797,76 @@ settingsRoutes.post(
 settingsRoutes.get('/jellyfin', (_req, res) => {
   const settings = getSettings();
 
-  res.status(200).json(redactSecrets(settings.jellyfin));
+  res.status(200).json(redactJellyfinSettings(settings.jellyfin));
 });
+
+settingsRoutes.post(
+  '/jellyfin/bridge-login',
+  authorizedMutation(Permission.ADMIN, async (req, res) => {
+    const parsedBody = parseSettingsBodyObject(req.body);
+    if ('error' in parsedBody) {
+      return res.status(400).json({ message: parsedBody.error });
+    }
+
+    const enabled = parseOptionalBodyBoolean(
+      parsedBody.value.enabled,
+      'enabled'
+    );
+    if ('error' in enabled) {
+      return res.status(400).json({ message: enabled.error });
+    }
+    if (enabled.value === undefined) {
+      return res.status(400).json({ message: 'enabled must be a boolean.' });
+    }
+
+    const result = await runWithConfigurationAdmission('jellyfin', async () => {
+      const settings = getSettings();
+      if (enabled.value) {
+        if (!settings.jellyfin.serverId) {
+          return {
+            error: 'Connect a Jellyfin server before enabling bridge sign-in.',
+          };
+        }
+        if (
+          settings.main.mediaServerType !== MediaServerType.JELLYFIN ||
+          settings.main.mediaServerLogin === false
+        ) {
+          return {
+            error:
+              'Set Jellyfin as the active media server and enable media-server sign-in before enabling bridge sign-in.',
+          };
+        }
+      }
+
+      const jellyfin = await settings.persistSection('jellyfin', (current) => {
+        const generation = current.bridgeLoginGeneration;
+        const previousGeneration =
+          Number.isSafeInteger(generation) && (generation ?? -1) >= 0
+            ? generation!
+            : 0;
+        const wasEnabled = current.bridgeLoginEnabled ?? false;
+
+        return {
+          ...current,
+          bridgeLoginEnabled: enabled.value!,
+          bridgeLoginGeneration:
+            wasEnabled === enabled.value
+              ? previousGeneration
+              : previousGeneration + 1,
+        };
+      });
+      return { jellyfin };
+    });
+
+    if ('error' in result) {
+      return res.status(400).json({ message: result.error });
+    }
+
+    return res.status(200).json({
+      bridgeLoginEnabled: result.jellyfin.bridgeLoginEnabled ?? false,
+    });
+  })
+);
 
 settingsRoutes.post(
   '/jellyfin',
@@ -1820,7 +1951,7 @@ settingsRoutes.post(
         }
       }
 
-      return res.status(200).json(redactSecrets(settings.jellyfin));
+      return res.status(200).json(redactJellyfinSettings(settings.jellyfin));
     });
   })
 );
