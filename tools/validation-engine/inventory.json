@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "version": "1.1.0",
   "purpose": "preserved engine and frozen reference, not preview acceptance",
   "items": [
     {
@@ -169,13 +170,18 @@
     },
     {
       "path": "engine/AI-INSTRUCTIONS.txt",
-      "bytes": 10529,
-      "sha256": "515909a73f419f56c7a26798bd1baabb3ed8ffe98ec92f63cba38f39cff0a170"
+      "bytes": 11048,
+      "sha256": "94e415a610259e8530ff89779d47d9f131647ac2f150367e0b0246578874c8d9"
     },
     {
       "path": "engine/cpu-capacity.mjs",
-      "bytes": 2268,
-      "sha256": "2a20b1752838ae2f111d989bbb5c05bea8e7971fd8e0c0954d463b0f1056d749"
+      "bytes": 4905,
+      "sha256": "902449a13bc104b751927c168e0e4710183856160c5bcd41724f4e96134b7f75"
+    },
+    {
+      "path": "engine/cpu-capacity.test.mjs",
+      "bytes": 2934,
+      "sha256": "bb6b750b6d3c49048710986162b31c8bd1da4133b32aa384c28ac17029c9ccfc"
     },
     {
       "path": "engine/ACTUAL-RUN-STATUS.json",
@@ -294,8 +300,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 2161,
-      "sha256": "f13f44d91fefe2f3cfabf8093a9086077f71593eebb4daad33a48d631a3f23a2"
+      "bytes": 2800,
+      "sha256": "ef44b2a3f38742c3a896dce53b3ffb50d3d6e500457c1924ceddfd19ef31ffaa"
     },
     {
       "path": "LATEST-RESULT.txt",
