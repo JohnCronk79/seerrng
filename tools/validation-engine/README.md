@@ -4,7 +4,7 @@ This is an add-only preservation copy for later use. It does not replace the
 preview's tests, application code, package commands or hooks, and saving it did
 not run tests, compile, start a preview or deploy anything.
 
-`validation-engine-20261004.tar.gz` contains the hash-verified RC1 reusable
+`validation-engine-v1.1.0.tar.gz` contains the hash-verified reusable
 controller, reviewed repair/retest components and AI setup instructions, plus
 the exact frozen recipes and inventory from the latest successful V7 run.
 The original RC1 status remains historical; `LATEST-RESULT.txt` records the
@@ -16,6 +16,15 @@ source. It passed 3,983 cases across 553 test files, with zero failures and four
 existing PostgreSQL conditional skips, in 5m36.205s including host lifecycle.
 No application repair was needed in that run. Browser/Cypress, CodeQL,
 compilation and release/deployment checks are not acceptance implied by it.
+
+Worker capacity is selected inside the engine from effective logical CPUs after
+visible-CPU and cgroup limits. The universal default is `max(1, N - 1)` workers.
+When the public GitHub login `JohnCronk79` is detected through GitHub Actions or
+ordinary Git identity, the same engine automatically uses `2N`. This follows the
+operator across development machines without using a machine name, OS account,
+Docker volume, credential lookup or separate runner. An explicit bounded worker
+override remains available to maintainers. The historical V7 result still records
+its original 24-slot configuration; it is not evidence for this updated policy.
 
 ## Reuse
 
