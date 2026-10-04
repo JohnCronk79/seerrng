@@ -97,12 +97,15 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'readarr-request-retry': 'Bookshelf Request Retry',
     'mylar-scan': 'Mylar Comics Scan',
     'kapowarr-scan': 'Kapowarr Comics Scan',
+    'backissue-scan': 'BackIssue Comics Scan',
     'magazine-scan': 'LazyLibrarian Magazine Scan',
     'download-sync': 'Download Sync',
+    'software-request-reconciliation': 'Software Request Reconciliation',
     'download-recovery': 'Download Recovery',
     'download-sync-reset': 'Download Sync Reset',
     'image-cache-cleanup': 'Image Cache Cleanup',
     'process-blocklisted-tags': 'Process Blocklisted Tags',
+    'release-calendar-history': 'Release Calendar History',
     editJobSchedule: 'Modify Job',
     jobScheduleEditSaved: 'Job edited successfully!',
     jobScheduleEditFailed: 'Something went wrong while saving the job.',
@@ -368,12 +371,7 @@ const SettingsJobs = () => {
       />
       <Transition
         as={Fragment}
-        enter="transition-opacity duration-300"
-        enterFrom="opacity-0"
-        enterTo="opacity-100"
-        leave="transition-opacity duration-300"
-        leaveFrom="opacity-100"
-        leaveTo="opacity-0"
+
         show={jobModalState.isOpen}
       >
         <Modal

@@ -1,5 +1,7 @@
 import ExternalAPI from '@server/api/externalapi';
 import cacheManager from '@server/lib/cache';
+import DOMPurify from 'dompurify';
+import { JSDOM } from 'jsdom';
 
 const MAX_COMICVINE_TEXT_LENGTH = 512;
 const MAX_COMICVINE_DESCRIPTION_LENGTH = 20_000;
@@ -7,10 +9,8 @@ const MAX_COMICVINE_ARRAY_ITEMS = 100;
 export const MAX_COMICVINE_PAGE_SIZE = 100;
 
 // ComicVine serves its own cover art from a small, fixed set of CDN hosts.
-// Unlike a Servarr instance URL (admin-supplied, could point anywhere), this
-// is a value we're relaying from a trusted third party's response body, so a
-// plain host allowlist is enough - no need for the async
-// resolves-to-private-address check that admin-facing URLs go through.
+// Require standard HTTPS URLs on those hosts, without userinfo or custom
+// ports, before relaying URLs from the upstream response.
 const COMICVINE_IMAGE_HOSTS = new Set([
   'comicvine.gamespot.com',
   'comicvine1.cbsistatic.com',
@@ -20,6 +20,18 @@ const COMICVINE_IMAGE_HOSTS = new Set([
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
+const isValidIssueResponse = (response: unknown): boolean => {
+  if (!isRecord(response)) return false;
+  return (
+    (response.status_code === undefined || response.status_code === 1) &&
+    (response.error === undefined || response.error === 'OK') &&
+    Array.isArray(response.results) &&
+    (response.number_of_page_results === undefined ||
+      (Number.isSafeInteger(response.number_of_page_results) &&
+        response.number_of_page_results === response.results.length))
+  );
+};
+
 const boundedString = (
   value: unknown,
   maxLength = MAX_COMICVINE_TEXT_LENGTH
@@ -27,6 +39,36 @@ const boundedString = (
   typeof value === 'string' && value.length > 0
     ? value.slice(0, maxLength)
     : undefined;
+
+const comicVineDescriptionPurify = DOMPurify(new JSDOM('').window);
+const sanitizeComicVineDescription = (value: unknown): string | undefined => {
+  const description = boundedString(value, MAX_COMICVINE_DESCRIPTION_LENGTH);
+  if (!description) return undefined;
+  return comicVineDescriptionPurify.sanitize(description, {
+    ALLOWED_TAGS: [
+      'a',
+      'b',
+      'blockquote',
+      'br',
+      'div',
+      'em',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'i',
+      'li',
+      'ol',
+      'p',
+      'span',
+      'strong',
+      'u',
+      'ul',
+    ],
+    ALLOWED_ATTR: ['href', 'title'],
+    ALLOW_DATA_ATTR: false,
+  });
+};
 
 const boundedInteger = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
@@ -57,7 +99,11 @@ const sanitizeUrlAgainstHosts = (
   }
   try {
     const url = new URL(candidate);
-    return url.protocol === 'https:' && allowedHosts.has(url.hostname)
+    return url.protocol === 'https:' &&
+      url.port === '' &&
+      !url.username &&
+      !url.password &&
+      allowedHosts.has(url.hostname)
       ? url.toString()
       : undefined;
   } catch {
@@ -121,6 +167,8 @@ export interface ComicVineIssueSummary {
   id: number;
   name?: string;
   issue_number?: string;
+  cover_date?: string;
+  image?: ComicVineImage;
 }
 
 const sanitizeIssueSummary = (
@@ -135,6 +183,8 @@ const sanitizeIssueSummary = (
         id,
         name: boundedString(value.name),
         issue_number: boundedString(value.issue_number, 32),
+        cover_date: boundedString(value.cover_date, 10),
+        image: sanitizeImage(value.image),
       }
     : undefined;
 };
@@ -190,11 +240,8 @@ const sanitizeVolumeResult = (
     count_of_issues: boundedInteger(value.count_of_issues),
     publisher: sanitizePublisher(value.publisher),
     image: sanitizeImage(value.image),
-    deck: boundedString(value.deck, MAX_COMICVINE_DESCRIPTION_LENGTH),
-    description: boundedString(
-      value.description,
-      MAX_COMICVINE_DESCRIPTION_LENGTH
-    ),
+    deck: sanitizeComicVineDescription(value.deck),
+    description: sanitizeComicVineDescription(value.description),
     site_detail_url: sanitizeSiteDetailUrl(value.site_detail_url),
     resource_type: 'volume',
   };
@@ -208,6 +255,12 @@ export interface ComicVineSearchResponse {
   number_of_total_results: number;
   status_code: number;
   results: ComicVineVolumeResult[];
+}
+
+export interface ComicVineIssuesResponse {
+  offset: number;
+  number_of_total_results: number;
+  results: ComicVineIssueSummary[];
 }
 
 class ComicVineAPI extends ExternalAPI {
@@ -224,6 +277,103 @@ class ComicVineAPI extends ExternalAPI {
         },
       }
     );
+  }
+
+  public async getVolumesPage(page: number): Promise<ComicVineSearchResponse> {
+    if (!Number.isSafeInteger(page) || page < 1) {
+      throw new Error('ComicVine catalog page is invalid.');
+    }
+    const offset = (page - 1) * MAX_COMICVINE_PAGE_SIZE;
+    const response = await this.get<ComicVineSearchResponse>(
+      '/volumes/',
+      {
+        params: {
+          limit: MAX_COMICVINE_PAGE_SIZE,
+          offset,
+          sort: 'id:asc',
+          field_list: [
+            'id',
+            'name',
+            'aliases',
+            'start_year',
+            'count_of_issues',
+            'publisher',
+            'image',
+            'deck',
+            'site_detail_url',
+          ].join(','),
+        },
+      },
+      43200
+    );
+    if (
+      !isRecord(response) ||
+      response.status_code !== 1 ||
+      !Array.isArray(response.results) ||
+      !Number.isSafeInteger(response.number_of_page_results) ||
+      !Number.isSafeInteger(response.number_of_total_results) ||
+      response.results.length !== response.number_of_page_results
+    ) {
+      throw new Error('ComicVine returned an invalid volume index page.');
+    }
+    return {
+      error: 'OK',
+      limit: MAX_COMICVINE_PAGE_SIZE,
+      offset,
+      number_of_page_results: response.number_of_page_results,
+      number_of_total_results: response.number_of_total_results,
+      status_code: 1,
+      results: response.results
+        .map(sanitizeVolumeResult)
+        .filter((result): result is ComicVineVolumeResult => !!result),
+    };
+  }
+
+  public async getVolumeIssues({
+    volumeId,
+    page = 1,
+    limit = 20,
+  }: {
+    volumeId: number;
+    page?: number;
+    limit?: number;
+  }): Promise<ComicVineIssuesResponse> {
+    if (!Number.isSafeInteger(volumeId) || volumeId <= 0) {
+      throw new Error('ComicVine volume ID is invalid.');
+    }
+    if (!Number.isSafeInteger(page) || page < 1) {
+      throw new Error('ComicVine issue page is invalid.');
+    }
+    const boundedLimit = Math.min(Math.max(1, limit), MAX_COMICVINE_PAGE_SIZE);
+    const offset = Math.max(0, (page - 1) * boundedLimit);
+    const response = await this.get<unknown>(
+      '/issues/',
+      {
+        params: {
+          filter: `volume:${volumeId}`,
+          limit: boundedLimit,
+          offset,
+          field_list: 'id,name,issue_number,cover_date,image',
+        },
+      },
+      43200,
+      isValidIssueResponse
+    );
+    if (
+      !isRecord(response) ||
+      !Array.isArray(response.results) ||
+      !isValidIssueResponse(response)
+    ) {
+      throw new Error('ComicVine returned an invalid issue response.');
+    }
+    return {
+      offset: boundedInteger(response.offset) ?? offset,
+      number_of_total_results:
+        boundedInteger(response.number_of_total_results) ?? 0,
+      results: response.results
+        .map(sanitizeIssueSummary)
+        .filter((issue): issue is ComicVineIssueSummary => !!issue),
+    };
   }
 
   public async searchVolumes({

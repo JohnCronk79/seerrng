@@ -1,3 +1,4 @@
+import BackIssueAPI from '@server/api/comics/backissue';
 import KapowarrAPI from '@server/api/comics/kapowarr';
 import MylarAPI from '@server/api/comics/mylar';
 import LazyLibrarianAPI from '@server/api/lazylibrarian';
@@ -182,6 +183,13 @@ const getRequestDispatchServiceSelection = (
       request.serverId !== null && request.serverId >= 0 && !requestedMylar
         ? settings.kapowarr.find(({ id }) => id === request.serverId)
         : undefined;
+    const requestedBackIssue =
+      request.serverId !== null &&
+      request.serverId >= 0 &&
+      !requestedMylar &&
+      !requestedKapowarr
+        ? settings.backissue.find(({ id }) => id === request.serverId)
+        : undefined;
     if (requestedMylar) {
       return {
         serviceType: 'mylar',
@@ -194,6 +202,12 @@ const getRequestDispatchServiceSelection = (
         serviceIds: uniqueIds([requestedKapowarr.id]),
       };
     }
+    if (requestedBackIssue) {
+      return {
+        serviceType: 'backissue',
+        serviceIds: uniqueIds([requestedBackIssue.id]),
+      };
+    }
     const defaultMylar = settings.mylar.find(({ isDefault }) => isDefault);
     if (defaultMylar) {
       return { serviceType: 'mylar', serviceIds: uniqueIds([defaultMylar.id]) };
@@ -201,6 +215,15 @@ const getRequestDispatchServiceSelection = (
     const defaultKapowarr = settings.kapowarr.find(
       ({ isDefault }) => isDefault
     );
+    if (!defaultKapowarr) {
+      const defaultBackIssue = settings.backissue.find(
+        ({ isDefault }) => isDefault
+      );
+      return {
+        serviceType: 'backissue',
+        serviceIds: uniqueIds([defaultBackIssue?.id]),
+      };
+    }
     return {
       serviceType: 'kapowarr',
       serviceIds: uniqueIds([defaultKapowarr?.id]),
@@ -528,6 +551,12 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     entity: MediaRequest,
     event: InsertEvent<MediaRequest>
   ): Promise<void> {
+    // Watch-ahead enrollments can create one small request batch per watched
+    // episode. The owner already opted into that automation, so avoid sending
+    // a fresh approval/request notification for each generated child.
+    if (entity.watchAheadParent || entity.watchAheadParentRequestId) {
+      return;
+    }
     if (entity.status === MediaRequestStatus.PENDING) {
       await this.enqueueRequestNotification(
         Notification.MEDIA_PENDING,
@@ -2074,10 +2103,9 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           editions: bookEditions,
           useRequestedEdition: !!(preferredEditionId || preferredIsbn),
           addOptions: {
-            // Seerr starts and tracks BookSearch explicitly after the add.
-            // The Bookshelf convenience flag depends on a later metadata
-            // refresh and does not expose the resulting command to Seerr.
-            searchForNewBook: false,
+            // Let Bookshelf own acquisition. Seerr only checks for the file
+            // through library availability tracking.
+            searchForNewBook: true,
           },
         });
 
@@ -2098,9 +2126,6 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           );
         }
 
-        const searchCommand = hasLocalBookId
-          ? await readarr.startBookSearch(localBookId as number)
-          : undefined;
         await getRepository(BookRequestSearch).save(
           new BookRequestSearch({
             requestId: entity.id,
@@ -2111,10 +2136,11 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
             providerEditionId: providerEditionId ?? null,
             pendingId: result.pendingId ?? null,
             authorId: result.authorId ?? result.author?.id ?? null,
-            commandId: searchCommand?.id ?? null,
+            commandId: null,
             createdBook: result.createdBook,
             createdAuthor: result.createdAuthor,
-            state: result.pending ? 'pending' : 'searching',
+            providerManagedSearch: !result.pending,
+            state: result.pending ? 'pending' : 'monitoring',
           })
         );
 
@@ -2368,8 +2394,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       const selection = getRequestDispatchServiceSelection(entity);
       const backendId = selection.serviceIds[0];
       if (backendId === undefined) {
+        const backendName =
+          selection.serviceType === 'kapowarr'
+            ? 'Kapowarr'
+            : selection.serviceType === 'backissue'
+              ? 'BackIssue'
+              : 'Mylar';
         throw new Error(
-          `No default ${selection.serviceType === 'kapowarr' ? 'Kapowarr' : 'Mylar'} server is configured for comic requests`
+          `No default ${backendName} server is configured for comic requests`
         );
       }
 
@@ -2383,7 +2415,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         if (!kapowarrSettings) {
           throw new Error('Selected Kapowarr server no longer exists');
         }
-        if (!kapowarrSettings.rootFolder) {
+        const rootFolderPath = entity.rootFolder ?? kapowarrSettings.rootFolder;
+        if (!rootFolderPath) {
           throw new Error(
             'Selected Kapowarr server has no root folder configured'
           );
@@ -2393,16 +2426,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           url: KapowarrAPI.buildUrl(kapowarrSettings),
           apiKey: kapowarrSettings.apiKey,
         });
-        const rootFolderId = await kapowarr.resolveRootFolderId(
-          kapowarrSettings.rootFolder
-        );
+        const rootFolderId = await kapowarr.resolveRootFolderId(rootFolderPath);
         const volume = await kapowarr.addVolume({
           comicVineId: Number(comicVineId),
           rootFolderId,
         });
         externalServiceId = volume.id;
         externalServiceSlug = String(volume.id);
-      } else {
+      } else if (selection.serviceType === 'mylar') {
         const mylarSettings = settings.mylar.find(({ id }) => id === backendId);
         if (!mylarSettings) {
           throw new Error('Selected Mylar server no longer exists');
@@ -2415,12 +2446,27 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         await mylar.addComic(comicVineId);
         externalServiceId = Number(comicVineId);
         externalServiceSlug = comicVineId;
+      } else {
+        const backissueSettings = settings.backissue.find(
+          ({ id }) => id === backendId
+        );
+        if (!backissueSettings) {
+          throw new Error('Selected BackIssue server no longer exists');
+        }
+        const backissue = new BackIssueAPI({
+          url: BackIssueAPI.buildUrl(backissueSettings),
+          apiKey: backissueSettings.apiKey,
+        });
+        const result = await backissue.addVolume(Number(comicVineId));
+        externalServiceId = result.seriesId;
+        externalServiceSlug = String(result.seriesId);
       }
 
       media.serviceId = backendId;
       media.externalServiceId = externalServiceId;
       media.externalServiceSlug = externalServiceSlug;
-      media.comicServiceType = selection.serviceType as 'mylar' | 'kapowarr';
+      media.comicServiceType = selection.serviceType as
+        'mylar' | 'kapowarr' | 'backissue';
       await mediaRepository.save(media);
       await saveRequestServiceTarget(entity, {
         serviceType: selection.serviceType,
@@ -2477,7 +2523,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       }
 
       logger.warn(
-        'Something went wrong sending comic request to Mylar/Kapowarr; retaining the failed request in the durable dispatch queue.',
+        'Something went wrong sending comic request to its service; retaining the failed request in the durable dispatch queue.',
         {
           label: 'Media Request',
           requestId: entity.id,

@@ -522,7 +522,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to search albums: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -567,7 +568,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to search recordings: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -661,7 +663,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to search release groups by tag: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -714,7 +717,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to search artists: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -755,7 +759,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to fetch release group details: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -788,7 +793,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to fetch release labels: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }
@@ -865,7 +871,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to fetch Wikipedia extract: ${
           error instanceof Error ? error.message : 'Unknown error'
-        }`
+        }`,
+        { cause: error }
       );
     }
   }
@@ -905,7 +912,8 @@ class MusicBrainz extends ExternalAPI {
       throw new Error(
         `[MusicBrainz] Failed to fetch release group: ${
           e instanceof Error ? e.message : 'Unknown error'
-        }`
+        }`,
+        { cause: e }
       );
     }
   }

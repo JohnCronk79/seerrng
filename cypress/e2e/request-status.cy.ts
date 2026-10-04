@@ -1,3 +1,14 @@
+const openRequestFilterSection = (label: string) => {
+  cy.get(`section[aria-label="${label}"]`)
+    .find('button.detail-disclosure-button')
+    .then(($button) => {
+      if ($button.attr('aria-expanded') === 'false') cy.wrap($button).click();
+    });
+  cy.get(
+    `section[aria-label="${label}"] button.detail-disclosure-button`
+  ).should('have.attr', 'aria-expanded', 'true');
+};
+
 describe('Request Status', () => {
   beforeEach(() => {
     cy.loginAsAdmin();
@@ -5,6 +16,7 @@ describe('Request Status', () => {
 
   it('opens on all requests and lets users choose a history window', () => {
     cy.visit('/requests');
+    openRequestFilterSection('Filters');
 
     cy.get('button[aria-label="Time Period"]')
       .should('be.visible')
@@ -18,11 +30,14 @@ describe('Request Status', () => {
     cy.contains('[role=option]', 'All time').click();
     cy.location('search').should('not.contain', 'timeFrame=');
 
-    cy.contains('button', 'Media Filters').click();
+    openRequestFilterSection('Media Filters');
     cy.contains('button', 'Books').should('be.visible');
     cy.contains('button', 'Audiobooks').click();
     cy.location('search').should('contain', 'mediaType=audiobook');
-    cy.contains('Showing requests for').should('be.visible');
-    cy.contains('Audiobook').should('be.visible');
+    cy.contains('Showing requests for')
+      .should('be.visible')
+      .parent()
+      .find('[title="Audiobook"]')
+      .should('be.visible');
   });
 });

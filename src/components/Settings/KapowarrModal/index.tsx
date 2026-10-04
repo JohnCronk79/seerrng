@@ -43,7 +43,7 @@ const messages = defineMessages('components.Settings.KapowarrModal', {
   externalUrl: 'External URL',
   enableSearch: 'Enable Automatic Search',
   compatibilityNote:
-    'Kapowarr finds comics via GetComics.org and downloads directly from mirror hosts (MediaFire, etc.) rather than usenet or torrent indexers, so it will find fewer comics than Mylar3. GetComics also has a known, currently-unfixed reliability issue with direct-from-site downloads specifically (mirror hosts are unaffected). Consider Mylar3 as your primary backend and Kapowarr as a fallback.',
+    'Kapowarr finds comics through GetComics.org and downloads from its mirror hosts. This differs from Mylar3 indexers and BackIssue sources. GetComics has a known reliability issue with direct-from-site downloads; mirror-host downloads are generally reliable.',
   flaresolverrNote:
     'Kapowarr needs a companion FlareSolverr container to get past Cloudflare on GetComics and its mirror hosts. Configure its URL in Kapowarr itself (Settings > General), not here.',
   rootFolderHelp:
@@ -56,7 +56,7 @@ const messages = defineMessages('components.Settings.KapowarrModal', {
   syncEnabledHelp:
     'Scan Kapowarr for existing comics so users cannot request content already available.',
   enableSearchHelp:
-    'Automatically trigger a search in Kapowarr when a request is approved.',
+    'Automatically check Kapowarr’s GetComics and mirror sources after a request is approved. Kapowarr does not use Prowlarr indexers; SeerrNG has a separate manual Prowlarr search for users with Manage Requests.',
 });
 
 interface TestResponse {
@@ -166,17 +166,7 @@ const KapowarrModal = ({ onClose, kapowarr, onSave }: KapowarrModalProps) => {
   );
 
   return (
-    <Transition
-      as="div"
-      appear
-      show
-      enter="transition-opacity ease-in-out duration-300"
-      enterFrom="opacity-0"
-      enterTo="opacity-100"
-      leave="transition-opacity ease-in-out duration-300"
-      leaveFrom="opacity-100"
-      leaveTo="opacity-0"
-    >
+    <Transition as="div" appear show>
       <Formik
         initialValues={{
           name: kapowarr?.name ?? '',

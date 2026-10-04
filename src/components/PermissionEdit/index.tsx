@@ -14,6 +14,9 @@ export const messages = defineMessages('components.PermissionEdit', {
   users: 'Manage Users',
   usersDescription:
     'Grant permission to manage users. Users with this permission cannot modify users with or grant the Admin privilege.',
+  managedownloads: 'Manage Downloads',
+  managedownloadsDescription:
+    'View download warnings and history, manually import files, and reject or blocklist downloads in configured acquisition services.',
   managerequests: 'Manage Requests',
   managerequestsDescription:
     'Grant permission to manage media requests. All requests made by a user with this permission will be automatically approved.',
@@ -29,6 +32,8 @@ export const messages = defineMessages('components.PermissionEdit', {
   requestMusicDescription: 'Grant permission to submit music requests.',
   requestBooks: 'Request Books',
   requestBooksDescription: 'Grant permission to submit book requests.',
+  requestComics: 'Request Comics',
+  requestComicsDescription: 'Grant permission to submit comic requests.',
   requestMagazines: 'Request Magazines',
   requestMagazinesDescription:
     'Grant permission to submit magazine requests through LazyLibrarian.',
@@ -45,6 +50,8 @@ export const messages = defineMessages('components.PermissionEdit', {
   autoapproveMusicDescription: 'Grant automatic approval for music requests.',
   autoapproveBooks: 'Auto-Approve Books',
   autoapproveBooksDescription: 'Grant automatic approval for book requests.',
+  autoapproveComics: 'Auto-Approve Comics',
+  autoapproveComicsDescription: 'Grant automatic approval for comic requests.',
   autoapproveMagazines: 'Auto-Approve Magazines',
   autoapproveMagazinesDescription:
     'Grant automatic approval for magazine requests.',
@@ -82,6 +89,12 @@ export const messages = defineMessages('components.PermissionEdit', {
   autorequestBooks: 'Auto-Request Books',
   autorequestBooksDescription:
     'Grant permission to automatically submit book requests via watchlists.',
+  autorequestComics: 'Auto-Request Comics',
+  autorequestComicsDescription:
+    'Grant permission to automatically submit comic requests via watchlists.',
+  autorequestMagazines: 'Auto-Request Magazines',
+  autorequestMagazinesDescription:
+    'Grant permission to automatically submit magazine requests via watchlists.',
   viewrequests: 'View Requests',
   viewrequestsDescription:
     'Grant permission to view media requests submitted by other users.',
@@ -135,6 +148,12 @@ export const PermissionEdit = ({
       name: intl.formatMessage(messages.users),
       description: intl.formatMessage(messages.usersDescription),
       permission: Permission.MANAGE_USERS,
+    },
+    {
+      id: 'managedownloads',
+      name: intl.formatMessage(messages.managedownloads),
+      description: intl.formatMessage(messages.managedownloadsDescription),
+      permission: Permission.MANAGE_DOWNLOADS,
     },
     {
       id: 'managerequest',
@@ -215,6 +234,12 @@ export const PermissionEdit = ({
           permission: Permission.REQUEST_BOOK,
         },
         {
+          id: 'request-comics',
+          name: intl.formatMessage(messages.requestComics),
+          description: intl.formatMessage(messages.requestComicsDescription),
+          permission: Permission.REQUEST_COMIC,
+        },
+        {
           id: 'request-magazines',
           name: intl.formatMessage(messages.requestMagazines),
           description: intl.formatMessage(messages.requestMagazinesDescription),
@@ -277,6 +302,20 @@ export const PermissionEdit = ({
           requires: [
             {
               permissions: [Permission.REQUEST, Permission.REQUEST_BOOK],
+              type: 'or',
+            },
+          ],
+        },
+        {
+          id: 'autoapprovecomics',
+          name: intl.formatMessage(messages.autoapproveComics),
+          description: intl.formatMessage(
+            messages.autoapproveComicsDescription
+          ),
+          permission: Permission.AUTO_APPROVE_COMIC,
+          requires: [
+            {
+              permissions: [Permission.REQUEST, Permission.REQUEST_COMIC],
               type: 'or',
             },
           ],
@@ -352,6 +391,34 @@ export const PermissionEdit = ({
           requires: [
             {
               permissions: [Permission.REQUEST, Permission.REQUEST_BOOK],
+              type: 'or',
+            },
+          ],
+        },
+        {
+          id: 'autorequestcomics',
+          name: intl.formatMessage(messages.autorequestComics),
+          description: intl.formatMessage(
+            messages.autorequestComicsDescription
+          ),
+          permission: Permission.AUTO_REQUEST_COMIC,
+          requires: [
+            {
+              permissions: [Permission.REQUEST, Permission.REQUEST_COMIC],
+              type: 'or',
+            },
+          ],
+        },
+        {
+          id: 'autorequestmagazines',
+          name: intl.formatMessage(messages.autorequestMagazines),
+          description: intl.formatMessage(
+            messages.autorequestMagazinesDescription
+          ),
+          permission: Permission.AUTO_REQUEST_MAGAZINE,
+          requires: [
+            {
+              permissions: [Permission.REQUEST, Permission.REQUEST_MAGAZINE],
               type: 'or',
             },
           ],

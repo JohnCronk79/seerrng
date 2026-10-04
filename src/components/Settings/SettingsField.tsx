@@ -8,13 +8,39 @@ interface SettingsFieldProps {
   type?: string;
   id?: string;
   disabled?: boolean;
+  checked?: boolean;
+  label?: string;
+  onCheckedChange?: (checked: boolean) => void;
+  'data-testid'?: string;
   [key: string]: unknown;
 }
 
-const SettingsCheckboxField = ({
+const ControlledSettingsCheckboxField = ({
+  checked,
   id,
   name,
   disabled,
+  label,
+  onCheckedChange,
+  'data-testid': dataTestId,
+}: SettingsFieldProps) => (
+  <SelectionCircle
+    id={id}
+    name={name}
+    data-testid={dataTestId}
+    label={label}
+    selected={checked ?? false}
+    disabled={disabled ?? false}
+    onClick={() => onCheckedChange?.(!checked)}
+  />
+);
+
+const FormikSettingsCheckboxField = ({
+  id,
+  name,
+  disabled,
+  label,
+  'data-testid': dataTestId,
   onChange,
 }: SettingsFieldProps) => {
   const [field, , helpers] = useField<boolean>({ name, type: 'checkbox' });
@@ -23,11 +49,13 @@ const SettingsCheckboxField = ({
     <SelectionCircle
       id={id}
       name={name}
-      selected={Boolean(field.value)}
-      disabled={Boolean(disabled)}
+      data-testid={dataTestId}
+      label={label}
+      selected={field.value}
+      disabled={disabled ?? false}
       onBlur={() => void helpers.setTouched(true)}
       onClick={() => {
-        const checked = !Boolean(field.value);
+        const checked = !field.value;
         void helpers.setValue(checked);
         notifySettingsUserChange();
 
@@ -47,7 +75,11 @@ const SettingsCheckboxField = ({
 
 const SettingsField = (props: SettingsFieldProps) =>
   props.type === 'checkbox' ? (
-    <SettingsCheckboxField {...props} />
+    typeof props.checked === 'boolean' && props.onCheckedChange ? (
+      <ControlledSettingsCheckboxField {...props} />
+    ) : (
+      <FormikSettingsCheckboxField {...props} />
+    )
   ) : (
     <FormikField {...(props as FieldAttributes<unknown>)} />
   );

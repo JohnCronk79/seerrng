@@ -1,6 +1,6 @@
 ---
 title: Unraid (Advanced)
-description: Install Seerr using Unraid
+description: Install SeerrNG using Unraid
 sidebar_position: 2
 ---
 
@@ -10,17 +10,98 @@ import TabItem from '@theme/TabItem';
 # Unraid
 
 :::warning
-Third-party installation methods are maintained by the community. The Seerr team is not responsible for these packages.
+SeerrNG is a community-maintained Seerr fork. Its Unraid template uses the SeerrNG image from `ghcr.io/snapetech/seerrng`, not the upstream Seerr image.
 :::
 
 :::warning
-This method is not recommended for most users. It is intended for advanced users who are using Unraid.
+This guide covers manual template configuration. Most users can install SeerrNG from Community Apps with the default values.
 :::
 
 ## Template installation
 
-Several templates from Unraid Community are available right now
-- [Unraid Community Apps](https://unraid.net/community/apps#community-apps-iframe)
+Search for **SeerrNG** in
+[Unraid Community Apps](https://ca.unraid.net/apps/seerrng-0wrq5ph1rtda55) and
+choose the entry published by snapetech. The similarly named upstream **Seerr**
+listing is a different application. See the
+[SeerrNG repository](https://github.com/snapetech/seerrng) for this fork's
+code and documentation.
+
+The SeerrNG Community Apps listing installs SeerrNG only. Each optional service
+runs as its own standalone container. Install only what you need, configure it
+through its own web interface, then enter its API key in SeerrNG Settings →
+Services.
+
+| Optional service | Purpose | Installation and setup | Manual template |
+| --- | --- | --- | --- |
+| BookshelfNG | Ebooks and audiobooks; one instance can handle both | [Install BookshelfNG](https://ca.unraid.net/apps/bookshelfng-1fdcqrv18pja7r) · [Setup guide](https://github.com/snapetech/bookshelfng-unraid#installation-and-setup) | [BookshelfNG XML](https://raw.githubusercontent.com/snapetech/bookshelfng-unraid/main/templates/bookshelfng.xml) |
+| ChaptarrNG | Readarr-compatible ebook and audiobook acquisition with SeerrNG pending-request support | [ChaptarrNG setup](https://github.com/snapetech/chaptarrng#unraid-community-applications) · `ghcr.io/snapetech/chaptarrng:0.9.937` · Not yet listed in Community Apps | [ChaptarrNG XML](https://raw.githubusercontent.com/snapetech/chaptarrng-unraid/main/templates/chaptarrng.xml) |
+| ROMarrNG | ROMs and console game acquisition | [ROMarrNG guide](https://github.com/snapetech/ROMarrNG#readme) | [ROMarrNG XML](https://raw.githubusercontent.com/snapetech/ROMarrNG/main/packaging/unraid/romarrng.xml) |
+| QuestarrNG | Games and IGDB catalog | [QuestarrNG guide](https://github.com/snapetech/QuestarrNG#unraid) | [QuestarrNG XML](https://raw.githubusercontent.com/snapetech/QuestarrNG/main/unraid/questarr.xml) |
+
+Search for the NG app name in Unraid **Apps** and select **Install**. If your
+catalog does not show an optional fork, use its manual template and setup guide
+above. Complete the service's own setup before connecting it to SeerrNG.
+
+BookshelfNG, ChaptarrNG, ROMarrNG, and QuestarrNG are Snapetech NG forks that
+work independently and add SeerrNG integration APIs. ChaptarrNG is the
+maintained Chaptarr fork; we keep it so SeerrNG can depend on format-scoped
+book requests and durable tracking for author imports that complete
+asynchronously. Its Unraid profile and template live in the dedicated
+[ChaptarrNG Unraid package repository](https://github.com/snapetech/chaptarrng-unraid).
+The public `v0.9.937` GHCR image is available. Pin
+`ghcr.io/snapetech/chaptarrng:0.9.937` for a reproducible install. The template
+is not listed in Community Apps yet; submit
+`https://github.com/snapetech/chaptarrng-unraid` there to make it searchable.
+Use the
+[SeerrNG issue tracker](https://github.com/snapetech/seerrng/issues) for
+integration support. The upstream [Bookshelf](https://ca.unraid.net/apps/bookshelf-1d1gz3s0hj3af8)
+and [Questarr](https://ca.unraid.net/apps/questarr-0335hnh1oyuaqh) listings
+are different apps and do not replace the NG forks for SeerrNG's extended
+contracts.
+
+LazyLibrarian, Mylar3, and Kapowarr are **third-party apps, not Snapetech NG
+forks**. They already have Unraid Community Apps packages, so install them
+directly from these existing listings rather than a SeerrNG package:
+
+| Optional service | Purpose | Existing Community Apps listing |
+| --- | --- | --- |
+| LazyLibrarian | Magazines | [Install LazyLibrarian](https://ca.unraid.net/apps/lazylibrarian-1o5cqti19ivs1e) |
+| Mylar3 | Comics, including full volumes | [Install Mylar3](https://ca.unraid.net/apps/mylar3-1avghds0trt4q4) |
+| Kapowarr | Comics, including full volumes | [Install Kapowarr](https://ca.unraid.net/apps/kapowarr-1p27chu0mk08ni) |
+
+Mylar3 and Kapowarr are alternatives for comic acquisition; neither is
+mandatory. On separate bridge networks, use the Unraid host address and each
+service's mapped web port when adding it in SeerrNG. For SeerrNG integration
+questions, use the [SeerrNG issue tracker](https://github.com/snapetech/seerrng/issues).
+
+BackIssue is also supported for comic requests. It publishes a Docker image
+and an [Unraid template](https://backissue.app/getting-started); install it
+from its own project and connect it under **Settings > Services**.
+
+For one managed project containing SeerrNG and its companion services, use the
+[SeerrNG Unraid Compose stack](https://github.com/snapetech/seerrng/tree/main/packaging/unraid).
+That stack includes BookshelfNG for ebooks and audiobooks, optional upstream
+LazyLibrarian for magazines, optional upstream Mylar3 and Kapowarr for comics,
+and the ROMarrNG and QuestarrNG forks for software. These Compose profiles do
+not create extra Community Apps listings. Choose only the service profiles you
+need. Unraid does not include Docker Compose natively, so install a Compose
+manager first.
+
+Copy `stack.compose.yaml` and `stack.env.example` to one directory on your
+Unraid host. Rename `stack.env.example` to `.env`, set your appdata, media, and
+download paths, and choose `COMPOSE_PROFILES`. Then run `docker compose -f
+stack.compose.yaml up -d` from that directory through your Compose manager or
+terminal. The SeerrNG appdata directory must be writable by UID/GID
+`1000:1000`; the companion services use the `PUID` and `PGID` values in `.env`.
+Set `HARDCOVER_AUTH` for BookshelfNG, then complete each service's own setup
+and enter its API key in SeerrNG Settings → Services. Within the stack, use
+`bookshelf-ebooks`, `bookshelf-audiobooks`, `lazylibrarian`, `mylar3`,
+`kapowarr`, `romarrng`, and `questarrng` as service hostnames. An existing
+Bookshelf softcover database needs migration before changing to the Hardcover
+image; see the [Bookshelf migration guide](/using-seerr/bookshelf-hardcover-migration/).
+
+The template's raw XML is available at
+[`packaging/unraid/seerrng.xml`](https://raw.githubusercontent.com/snapetech/seerrng/main/packaging/unraid/seerrng.xml).
 
 In case you still want to do it manually, please follow the instructions below.
 
@@ -28,25 +109,29 @@ In case you still want to do it manually, please follow the instructions below.
 
 Before proceeding, choose which installation method best suits your server:
 
-**Seerr Default** (`UID 1000:1000`) — Runs with the container's native `node` user. Matches the official image, but may break SMB share access, trigger "Fix Common Problems" warnings, and cause issues with backup plugins (such as CA Appdata Backup) and network integrations (such as Tailscale).
+Use the same host config path already mapped by an existing SeerrNG install to
+keep its database and settings. The examples below use
+`/mnt/user/appdata/seerrng`, which is the template default.
 
-**Unraid Default** (`UID 99:100`) — Runs with Unraid's native `nobody:users` ownership. Follows Unraid best practices, but overrides Seerr's built-in rootless user and may cause compatibility issues with future Seerr updates.
+**SeerrNG Default** (`UID 1000:1000`) — Runs with the container's native `node` user. Matches the SeerrNG image, but may break SMB share access, trigger "Fix Common Problems" warnings, and cause issues with backup plugins (such as CA Appdata Backup) and network integrations (such as Tailscale).
+
+**Unraid Default** (`UID 99:100`) — Runs with Unraid's native `nobody:users` ownership. Follows Unraid best practices, but overrides SeerrNG's built-in rootless user and may cause compatibility issues with future SeerrNG updates.
 
 <Tabs groupId="unraid-permissions" queryString>
-  <TabItem value="seerr-default" label="Seerr Default">
+  <TabItem value="seerr-default" label="SeerrNG Default">
 
   ### 1. Create the config directory
 
   Open the Unraid terminal and run:
 
   ```bash
-  mkdir -p /mnt/user/appdata/seerr
+  mkdir -p /mnt/user/appdata/seerrng
   ```
 
   ### 2. Set folder permissions
 
   ```bash
-  chown -R 1000:1000 /mnt/user/appdata/seerr
+  chown -R 1000:1000 /mnt/user/appdata/seerrng
   ```
 
   ### 3. Add the Docker container
@@ -61,7 +146,7 @@ Before proceeding, choose which installation method best suits your server:
 
   | Field | Value |
   |---|---|
-  | **Name** | `seerr` |
+  | **Name** | `SeerrNG` |
   | **Repository** | `ghcr.io/snapetech/seerrng:latest` |
   | **Icon URL** | `https://raw.githubusercontent.com/snapetech/seerrng/main/public/android-chrome-512x512.png` |
   | **WebUI** | `http://[IP]:[PORT:5055]` |
@@ -82,7 +167,7 @@ Before proceeding, choose which installation method best suits your server:
   | Field | Value |
   |---|---|
   | Container Path | `/app/config` |
-  | Host Path | `/mnt/user/appdata/seerr` |
+  | Host Path | `/mnt/user/appdata/seerrng` |
 
   **Variable:**
   | Field | Value |
@@ -98,9 +183,10 @@ Before proceeding, choose which installation method best suits your server:
 
   Click **Apply** to create and start the container.
 
-  ### 4. Access Seerr
+  ### 4. Access SeerrNG
 
-  Open the WebUI at `http://<your-unraid-ip>:5055` and follow the setup wizard.
+  Open the SeerrNG WebUI at `http://<your-unraid-ip>:5055` and follow the setup
+  wizard.
   Direct HTTP sign-in works by default with a warning. For encrypted sign-in,
   choose built-in HTTPS in the first-run transport section or use an HTTPS
   reverse proxy. Set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.
@@ -113,13 +199,13 @@ Before proceeding, choose which installation method best suits your server:
   Open the Unraid terminal and run:
 
   ```bash
-  mkdir -p /mnt/user/appdata/seerr
+  mkdir -p /mnt/user/appdata/seerrng
   ```
 
   ### 2. Set folder permissions
 
   ```bash
-  chown -R 99:100 /mnt/user/appdata/seerr
+  chown -R 99:100 /mnt/user/appdata/seerrng
   ```
 
   ### 3. Add the Docker container
@@ -134,7 +220,7 @@ Before proceeding, choose which installation method best suits your server:
 
   | Field | Value |
   |---|---|
-  | **Name** | `seerr` |
+  | **Name** | `SeerrNG` |
   | **Repository** | `ghcr.io/snapetech/seerrng:latest` |
   | **Icon URL** | `https://raw.githubusercontent.com/snapetech/seerrng/main/public/android-chrome-512x512.png` |
   | **WebUI** | `http://[IP]:[PORT:5055]` |
@@ -155,7 +241,7 @@ Before proceeding, choose which installation method best suits your server:
   | Field | Value |
   |---|---|
   | Container Path | `/app/config` |
-  | Host Path | `/mnt/user/appdata/seerr` |
+  | Host Path | `/mnt/user/appdata/seerrng` |
 
   **Variable:**
   | Field | Value |
@@ -171,9 +257,10 @@ Before proceeding, choose which installation method best suits your server:
 
   Click **Apply** to create and start the container.
 
-  ### 4. Access Seerr
+  ### 4. Access SeerrNG
 
-  Open the WebUI at `http://<your-unraid-ip>:5055` and follow the setup wizard.
+  Open the SeerrNG WebUI at `http://<your-unraid-ip>:5055` and follow the setup
+  wizard.
   Direct HTTP sign-in works by default with a warning. For encrypted sign-in,
   choose built-in HTTPS in the first-run transport section or use an HTTPS
   reverse proxy. Set `SEERR_ALLOW_HTTP_AUTH=false` to require HTTPS.

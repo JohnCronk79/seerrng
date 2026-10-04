@@ -76,12 +76,11 @@ test('the production image has an explicit unprivileged final user', () => {
 });
 
 test('the Docker build context excludes secrets and development-only contracts', () => {
-  const ignoredPaths = new Set(
-    fs
-      .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
-      .split(/\r?\n/u)
-      .filter((line) => line && !line.startsWith('#'))
-  );
+  const ignoreRules = fs
+    .readFileSync(path.join(rootDirectory, '.dockerignore'), 'utf8')
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#'));
+  const ignoredPaths = new Set(ignoreRules);
 
   for (const expectedPattern of [
     '.env*',
@@ -101,6 +100,40 @@ test('the Docker build context excludes secrets and development-only contracts',
       `${expectedPattern} is exposed to the Docker build context`
     );
   }
+
+  const rootNpmrcIgnored = ignoreRules.reduce((ignored, rule) => {
+    if (rule === '.npmrc' || rule === '/.npmrc') return true;
+    if (rule === '!.npmrc' || rule === '!/.npmrc') return false;
+    return ignored;
+  }, false);
+  assert.equal(
+    rootNpmrcIgnored,
+    true,
+    'the root .npmrc must remain excluded from the Docker build context'
+  );
+  const dockerfile = fs.readFileSync(
+    path.join(rootDirectory, 'Dockerfile'),
+    'utf8'
+  );
+  assert.doesNotMatch(
+    dockerfile,
+    /COPY[^\n]*\.npmrc/u,
+    'the Dockerfile must not copy host package-manager configuration'
+  );
+  assert.match(
+    dockerfile,
+    /pnpm --config\.engine-strict=true install[^\n]*--frozen-lockfile/gu,
+    'dependency installation must retain strict engine validation without copying .npmrc'
+  );
+  assert.equal(
+    [
+      ...dockerfile.matchAll(
+        /pnpm --config\.engine-strict=true install[^\n]*--frozen-lockfile/gu
+      ),
+    ].length,
+    2,
+    'both production and build dependency installs must retain strict engine validation'
+  );
 });
 
 test('the production build does not require development-only contracts', () => {
@@ -206,51 +239,51 @@ const createFakeDockerFixture = () => {
     `#!/bin/sh
 set -eu
 state=\${FAKE_DOCKER_STATE:?}
-command=\$1
+command=$1
 shift
 last=''
-for argument in "\$@"; do last=\$argument; done
-case "\$command" in
+for argument in "$@"; do last=$argument; done
+case "$command" in
   inspect)
-    test -f "\$state/\$last"
+    test -f "$state/$last"
     ;;
   rm)
-    rm -f "\$state/\$last"
+    rm -f "$state/$last"
     ;;
   stop)
-    test -f "\$state/\$last"
-    printf 'stop %s\\n' "\$last" >> "\$state/operations"
+    test -f "$state/$last"
+    printf 'stop %s\\n' "$last" >> "$state/operations"
     ;;
   rename)
     if [ "\${FAKE_FAIL_RENAME:-}" = true ]; then exit 41; fi
-    mv "\$state/\$1" "\$state/\$2"
-    printf 'rename %s %s\\n' "\$1" "\$2" >> "\$state/operations"
+    mv "$state/$1" "$state/$2"
+    printf 'rename %s %s\\n' "$1" "$2" >> "$state/operations"
     ;;
   run)
     name=''
-    while [ "\$#" -gt 0 ]; do
-      if [ "\$1" = --name ]; then
-        name=\$2
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --name ]; then
+        name=$2
         shift 2
       else
         shift
       fi
     done
-    if [ -z "\$name" ]; then
+    if [ -z "$name" ]; then
       printf '{"main":{},"plex":{},"jellyfin":{},"tautulli":{},"radarr":[],"sonarr":[],"notifications":{}}\\n'
       exit 0
     fi
-    test -n "\$name"
-    printf 'new' > "\$state/\$name"
-    printf 'run %s\\n' "\$name" >> "\$state/operations"
+    test -n "$name"
+    printf 'new' > "$state/$name"
+    printf 'run %s\\n' "$name" >> "$state/operations"
     printf 'fake-container-id\\n'
     ;;
   start)
-    test -f "\$state/\$last"
-    printf 'start %s\\n' "\$last" >> "\$state/operations"
+    test -f "$state/$last"
+    printf 'start %s\\n' "$last" >> "$state/operations"
     ;;
   *)
-    printf 'unsupported docker command: %s\\n' "\$command" >&2
+    printf 'unsupported docker command: %s\\n' "$command" >&2
     exit 64
     ;;
 esac

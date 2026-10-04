@@ -13,6 +13,7 @@ export type AvailableCacheIds =
   | 'plextv'
   | 'plexwatchlist'
   | 'tvdb'
+  | 'tvmaze'
   | 'lidarr'
   | 'readarr'
   | 'musicbrainz'
@@ -20,9 +21,17 @@ export type AvailableCacheIds =
   | 'coverartarchive'
   | 'openlibrary'
   | 'comicvine'
+  | 'questarr'
+  | 'romarr'
+  | 'googlebooks'
   | 'wikidata'
   | 'tadb'
-  | 'associations';
+  | 'associations'
+  | 'trakt'
+  | 'anilist'
+  | 'simkl'
+  | 'personallibrary'
+  | 'mdblist';
 
 const DEFAULT_TTL = 300;
 const DEFAULT_CHECK_PERIOD = 120;
@@ -39,6 +48,7 @@ const GITHUB_MAX_KEYS = 16;
 const PLEX_TV_MAX_KEYS = 5000;
 const PLEX_WATCHLIST_MAX_KEYS = 500;
 const TVDB_MAX_KEYS = 500;
+const GOOGLE_BOOKS_MAX_KEYS = 1000;
 
 export interface CacheStats {
   hits: number;
@@ -143,6 +153,28 @@ export class Cache {
 
 class CacheManager {
   private availableCaches: Record<AvailableCacheIds, Cache> = {
+    trakt: new Cache('trakt', 'Trakt API', {
+      maxKeys: 500,
+      maxBytes: 8 * 1024 * 1024,
+    }),
+    anilist: new Cache('anilist', 'AniList API', {
+      maxKeys: 500,
+      maxBytes: 8 * 1024 * 1024,
+    }),
+    simkl: new Cache('simkl', 'Simkl API', {
+      maxKeys: 500,
+      maxBytes: 8 * 1024 * 1024,
+    }),
+    personallibrary: new Cache('personallibrary', 'Personal media libraries', {
+      stdTtl: 30,
+      maxKeys: 1000,
+      maxBytes: 16 * 1024 * 1024,
+    }),
+    mdblist: new Cache('mdblist', 'MDBList API', {
+      stdTtl: 172800,
+      maxKeys: 500,
+      maxBytes: 8 * 1024 * 1024,
+    }),
     tmdb: new Cache('tmdb', 'The Movie Database API', {
       stdTtl: 21600,
       maxKeys: TMDB_MAX_KEYS,
@@ -176,6 +208,11 @@ class CacheManager {
       stdTtl: 21600,
       maxKeys: TVDB_MAX_KEYS,
     }),
+    tvmaze: new Cache('tvmaze', 'TVmaze API', {
+      stdTtl: 3600,
+      maxKeys: 1000,
+      maxBytes: 16 * 1024 * 1024,
+    }),
     plexguid: new Cache('plexguid', 'Plex GUID', {
       stdTtl: 86400 * 7,
       checkPeriod: 60 * 30,
@@ -201,6 +238,21 @@ class CacheManager {
     comicvine: new Cache('comicvine', 'ComicVine API', {
       stdTtl: 43200,
       checkPeriod: 60 * 30,
+    }),
+    questarr: new Cache('questarr', 'QuestarrNG catalog', {
+      stdTtl: 600,
+      maxKeys: 500,
+      maxBytes: 16 * 1024 * 1024,
+    }),
+    romarr: new Cache('romarr', 'ROMarrNG systems', {
+      stdTtl: 300,
+      maxKeys: 32,
+      maxBytes: 4 * 1024 * 1024,
+    }),
+    googlebooks: new Cache('googlebooks', 'Google Books API', {
+      stdTtl: 900,
+      maxKeys: GOOGLE_BOOKS_MAX_KEYS,
+      checkPeriod: 60 * 5,
     }),
     wikidata: new Cache('wikidata', 'Wikidata API', {
       stdTtl: 43200,

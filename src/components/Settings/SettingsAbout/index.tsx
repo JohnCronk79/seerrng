@@ -1,3 +1,4 @@
+import TmdbLogo from '@app/assets/tmdb_logo.svg';
 import Alert from '@app/components/Common/Alert';
 import Badge from '@app/components/Common/Badge';
 import List from '@app/components/Common/List';
@@ -152,6 +153,34 @@ const SettingsAbout = () => {
               {intl.formatMessage(messages.legalUse)}
             </span>
           </List.Item>
+          <List.Item title="Metadata attribution">
+            <div className="media-tmdb-attribution">
+              <a
+                href="https://www.themoviedb.org/"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="The Movie Database (TMDB)"
+              >
+                <TmdbLogo
+                  className="media-tmdb-attribution-logo"
+                  aria-hidden="true"
+                />
+              </a>
+              <p className="media-tmdb-attribution-copy">
+                This product uses TMDB and the TMDB APIs but is not endorsed,
+                certified, or otherwise approved by TMDB.{' '}
+                <a
+                  className="media-metadata-attribution-link"
+                  href="https://www.themoviedb.org/api-terms-of-use"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  TMDB API terms
+                </a>
+                .
+              </p>
+            </div>
+          </List.Item>
           <List.Item title={intl.formatMessage(messages.appDataPath)}>
             <span className="settings-plain-value">{data.appDataPath}</span>
           </List.Item>
@@ -166,12 +195,12 @@ const SettingsAbout = () => {
         <List title={intl.formatMessage(messages.gettingsupport)}>
           <List.Item title={intl.formatMessage(messages.documentation)}>
             <a
-              href="https://snapetech.github.io/seerrng"
+              href="https://github.com/snapetech/seerrng/tree/main/docs"
               target="_blank"
               rel="noreferrer"
               className="text-indigo-500 transition duration-300 hover:underline"
             >
-              https://snapetech.github.io/seerrng
+              https://github.com/snapetech/seerrng/tree/main/docs
             </a>
           </List.Item>
           <List.Item title={intl.formatMessage(messages.githubdiscussions)}>

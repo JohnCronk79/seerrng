@@ -3,7 +3,7 @@ import CoverArtArchive from '@server/api/coverartarchive';
 import LazyLibrarianAPI, {
   type LazyLibrarianMagazine,
 } from '@server/api/lazylibrarian';
-import MusicBrainz from '@server/api/musicbrainz';
+import MusicBrainz, { escapeMusicBrainzQuery } from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import TheAudioDb from '@server/api/theaudiodb';
 import TheMovieDb from '@server/api/themoviedb';
@@ -24,6 +24,7 @@ import {
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
 import { findMagazineMediaByTitles } from '@server/lib/magazineMediaMatcher';
+import { isMediaCategoryEnabled } from '@server/lib/mediaCategories';
 import {
   getAvailableMusicQualities,
   getMusicQualityStatuses,
@@ -147,7 +148,7 @@ const normalizeSearchText = (value?: string) =>
 
 type MagazineCatalogSearchResults = {
   totalResults: number;
-  results: LazyLibrarianMagazine[];
+  results: (LazyLibrarianMagazine & { serviceId: number })[];
 };
 
 const searchLazyLibrarianCatalogs = async (
@@ -155,34 +156,83 @@ const searchLazyLibrarianCatalogs = async (
   query: string,
   page: number
 ): Promise<MagazineCatalogSearchResults> => {
-  const settled = await Promise.allSettled(
-    services.map((service) =>
-      runWithServarrServiceSnapshot('lazylibrarian', service, (current) =>
-        new LazyLibrarianAPI({
-          url: LazyLibrarianAPI.buildUrl(current),
-          apiKey: current.apiKey,
-        }).getMagazines()
-      )
-    )
+  type CatalogOutcome =
+    | {
+        status: 'fulfilled';
+        index: number;
+        value: (LazyLibrarianMagazine & { serviceId: number })[];
+      }
+    | { status: 'rejected'; index: number; reason: unknown };
+  const completed: CatalogOutcome[] = [];
+  let nextService = 0;
+  let deadlineReached = false;
+  const lookupSignal = AbortSignal.timeout(SEARCH_PROVIDER_TIMEOUT_MS - 1_500);
+  const workers = Array.from(
+    { length: Math.min(2, services.length) },
+    async () => {
+      while (
+        !deadlineReached &&
+        !lookupSignal.aborted &&
+        nextService < services.length
+      ) {
+        const index = nextService++;
+        const service = services[index];
+        try {
+          const magazines = await runWithServarrServiceSnapshot(
+            'lazylibrarian',
+            service,
+            async (current) =>
+              (
+                await new LazyLibrarianAPI({
+                  url: LazyLibrarianAPI.buildUrl(current),
+                  apiKey: current.apiKey,
+                }).getMagazines(lookupSignal)
+              ).map((magazine) => ({ ...magazine, serviceId: current.id }))
+          );
+          completed.push({ status: 'fulfilled', index, value: magazines });
+        } catch (reason) {
+          completed.push({ status: 'rejected', index, reason });
+        }
+      }
+    }
+  );
+  const { timedOut } = await settlePromisesWithin(
+    [Promise.all(workers)],
+    SEARCH_PROVIDER_TIMEOUT_MS - 1_000
+  );
+  deadlineReached = true;
+  const settled = [...completed].sort(
+    (left, right) => left.index - right.index
   );
   const successful = settled.flatMap((result) =>
     result.status === 'fulfilled' ? [result.value] : []
   );
   const failures = settled.filter(
-    (result): result is PromiseRejectedResult => result.status === 'rejected'
+    (result): result is Extract<CatalogOutcome, { status: 'rejected' }> =>
+      result.status === 'rejected'
   );
 
-  if (successful.length === 0 && failures.length > 0) {
-    throw failures[0].reason;
+  if (successful.length === 0 && (failures.length > 0 || timedOut)) {
+    throw failures[0]?.reason ?? new Error('Magazine search timed out.');
   }
-  if (failures.length > 0) {
-    logger.warn('Some LazyLibrarian instances failed during magazine search', {
-      label: 'Search',
-      failedServices: failures.map(({ reason }) => getHttpErrorDetails(reason)),
-    });
+  if (failures.length > 0 || timedOut) {
+    logger.warn(
+      'Some LazyLibrarian instances failed or timed out during magazine search',
+      {
+        label: 'Search',
+        failedServices: failures.map(({ index, reason }) => ({
+          serviceId: services[index].id,
+          ...getHttpErrorDetails(reason),
+        })),
+        timedOut,
+      }
+    );
   }
 
-  const magazinesByTitle = new Map<string, LazyLibrarianMagazine>();
+  const magazinesByTitle = new Map<
+    string,
+    LazyLibrarianMagazine & { serviceId: number }
+  >();
   for (const magazine of successful.flat()) {
     const key = normalizeMagazineTitle(magazine.title);
     if (key && !magazinesByTitle.has(key)) {
@@ -348,21 +398,43 @@ searchRoutes.get('/', async (req, res, next) => {
     });
   }
   const settings = getExternalRuntimeConfig();
-  const musicEnabled = settings.lidarr.length > 0;
+  const ebookServiceEnabled = settings.readarr.some(
+    (server) => (server.serviceType ?? 'ebook') === 'ebook'
+  );
+  const audiobookServiceEnabled = settings.readarr.some(
+    (server) => server.serviceType === 'audiobook'
+  );
+  const ebookEnabled = isMediaCategoryEnabled('ebook') && ebookServiceEnabled;
+  const audiobookEnabled =
+    isMediaCategoryEnabled('audiobook') && audiobookServiceEnabled;
+  const bookFormatEnabled = (format: BookFormat) =>
+    format === 'ebook' ? ebookEnabled : audiobookEnabled;
   const booksEnabled = bookFormat
-    ? settings.readarr.some(
-        (server) => (server.serviceType ?? 'ebook') === bookFormat
-      )
-    : settings.readarr.length > 0;
+    ? bookFormatEnabled(bookFormat)
+    : ebookEnabled || audiobookEnabled;
+  const bookFormatForProviderSearch =
+    bookFormat ??
+    (ebookEnabled && !audiobookEnabled
+      ? 'ebook'
+      : audiobookEnabled && !ebookEnabled
+        ? 'audiobook'
+        : undefined);
+  const musicEnabled =
+    settings.lidarr.length > 0 && isMediaCategoryEnabled('music');
   const comicVineApiKey = getSettings().main.comicVineApiKey;
-  const comicsEnabled = !!comicVineApiKey;
-  const magazinesEnabled = settings.lazylibrarian.length > 0;
+  const comicsEnabled = !!comicVineApiKey && isMediaCategoryEnabled('comic');
+  const magazinesEnabled =
+    settings.lazylibrarian.length > 0 && isMediaCategoryEnabled('magazine');
+  const moviesEnabled = isMediaCategoryEnabled('movie');
+  const seriesEnabled = isMediaCategoryEnabled('tv');
 
   if (
-    (typeFilter === 'album' ||
+    (typeFilter === 'movie' && !moviesEnabled) ||
+    (typeFilter === 'tv' && !seriesEnabled) ||
+    ((typeFilter === 'album' ||
       typeFilter === 'artist' ||
       typeFilter === 'music') &&
-    !musicEnabled
+      !musicEnabled)
   ) {
     return res.status(200).json({
       page,
@@ -472,7 +544,7 @@ searchRoutes.get('/', async (req, res, next) => {
                   )
                 : typeFilter === 'music' && resultFilter
                   ? toMusicAlbumRefinementQuery(queryString, resultFilter)
-                  : queryString,
+                  : escapeMusicBrainzQuery(queryString),
               limit: 20,
               offset: musicOffset,
             })
@@ -482,12 +554,12 @@ searchRoutes.get('/', async (req, res, next) => {
               query:
                 typeFilter === 'artist'
                   ? buildArtistAutocompleteQuery(queryString)
-                  : queryString,
+                  : escapeMusicBrainzQuery(queryString),
               limit: 20,
               offset: musicOffset,
             })
           : Promise.resolve({ results: [], totalResults: 0 }),
-        shouldSearchBooks && booksEnabled
+        shouldSearchBooks && ebookEnabled && bookFormat !== 'audiobook'
           ? openLibrary.searchBooks({
               query: toFieldedBooleanAndQuery(queryString, ['title', 'author']),
               page,
@@ -498,9 +570,8 @@ searchRoutes.get('/', async (req, res, next) => {
           ? searchBookshelfCatalogs(
               getSettings().readarr,
               queryString,
-              bookFormat === 'ebook' || bookFormat === 'audiobook'
-                ? bookFormat
-                : undefined
+              bookFormatForProviderSearch,
+              { failOnAllUnavailable: bookFormat === 'audiobook' }
             )
           : Promise.resolve([]),
         // Choosing a validated search type selects a provider; it does not
@@ -656,18 +727,27 @@ searchRoutes.get('/', async (req, res, next) => {
             'MusicBrainz, the service used for music searches, timed out or is unavailable. Please try again.',
         });
       }
+      const openLibraryBookSearchFailed =
+        !bookProviderResponse || bookProviderResponse.status === 'rejected';
+      const bookshelfBookSearchFailed =
+        !bookshelfProviderResponse ||
+        bookshelfProviderResponse.status === 'rejected';
+      const bookSearchFailed =
+        bookFormat === 'audiobook'
+          ? bookshelfBookSearchFailed
+          : openLibraryBookSearchFailed && bookshelfBookSearchFailed;
       if (
         typeFilter === 'book' &&
         shouldSearchBooks &&
         booksEnabled &&
-        (!bookProviderResponse || bookProviderResponse.status === 'rejected') &&
-        (!bookshelfProviderResponse ||
-          bookshelfProviderResponse.status === 'rejected')
+        bookSearchFailed
       ) {
-        return next({
+        return res.status(503).json({
           status: 503,
           message:
-            'Open Library, the service used for book searches, timed out or is unavailable. Please try again.',
+            bookFormat === 'audiobook'
+              ? 'The configured audiobook catalog is unavailable. Please try again.'
+              : 'The book catalogs are unavailable. Please try again.',
         });
       }
       if (
@@ -1058,7 +1138,8 @@ searchRoutes.get('/', async (req, res, next) => {
         mapLazyLibrarianMagazine(
           magazine,
           [],
-          magazineMediaMap.get(normalizeMagazineTitle(magazine.title))
+          magazineMediaMap.get(normalizeMagazineTitle(magazine.title)),
+          magazine.serviceId
         )
       );
 
@@ -1189,6 +1270,8 @@ searchRoutes.get('/', async (req, res, next) => {
         !('mediaType' in result) ||
         (((result.mediaType !== 'album' && result.mediaType !== 'artist') ||
           musicEnabled) &&
+          (result.mediaType !== 'movie' || moviesEnabled) &&
+          (result.mediaType !== 'tv' || seriesEnabled) &&
           (result.mediaType !== 'book' || booksEnabled) &&
           (result.mediaType !== 'comic' || comicsEnabled) &&
           (result.mediaType !== 'magazine' || magazinesEnabled))

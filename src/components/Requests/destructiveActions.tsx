@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
 import Tooltip from '@app/components/Common/Tooltip';
 import defineMessages from '@app/utils/defineMessages';
@@ -11,7 +12,7 @@ export const requestActionMessageText = {
   delete: 'Delete',
   deleting: 'Deleting…',
   deleteTooltip: 'Delete this request and its status history.',
-  deleteTitle: 'Delete request entry?',
+  deleteTitle: 'Delete Request Entry?',
   deleteDescription:
     'Seerr will cancel any active work it can identify, clean up temporary request records, and permanently remove this entry and its history.',
   deleteFailed: 'Unable to delete this request entry.',
@@ -20,7 +21,7 @@ export const requestActionMessageText = {
   removing: 'Deleting…',
   removeTooltip: 'The media and the library entry will both be deleted.',
   removeUnavailableTooltip: 'No linked library item is available to delete.',
-  removeTitle: 'Permanently delete {title} from {service}?',
+  removeTitle: 'Permanently Delete {title} from {service}?',
   removeDescription:
     'This will permanently delete its media files and remove its library entry from {service}. This action cannot be undone from Seerr. Other quality versions remain. When the last movie or series copy is confirmed gone, library reconciliation also removes its requests and issues, but preserves blocklists and watchlists.',
   removeFailed: 'Unable to delete this item from its library service.',
@@ -83,10 +84,11 @@ export const RequestActionButton = ({
             )
       }
     >
-      <span className="inline-flex">
-        <button
+      <span>
+        <Button
           type="button"
-          className={`compact-control request-destructive-action ${action === 'delete' ? 'request-destructive-action-delete' : 'request-destructive-action-remove'}`}
+          buttonType="danger"
+          buttonSize="standard"
           disabled={disabled || busy}
           onClick={onClick}
         >
@@ -97,7 +99,7 @@ export const RequestActionButton = ({
                 ? requestActionMessages.deleting
                 : requestActionMessages[action]
             )}
-        </button>
+        </Button>
       </span>
     </Tooltip>
   );
@@ -109,6 +111,7 @@ export const RequestActionConfirmation = ({
   service,
   busy,
   disabled = false,
+  confirmLabel,
   onConfirm,
   onCancel,
   children,
@@ -120,6 +123,7 @@ export const RequestActionConfirmation = ({
   service?: string;
   busy: boolean;
   disabled?: boolean;
+  confirmLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
@@ -138,7 +142,7 @@ export const RequestActionConfirmation = ({
           { title, service }
         )
       }
-      okText={intl.formatMessage(requestActionMessages[action])}
+      okText={confirmLabel ?? intl.formatMessage(requestActionMessages[action])}
       okButtonType="danger"
       okButtonProps={{ buttonIcon: 'delete' }}
       cancelButtonType="success"

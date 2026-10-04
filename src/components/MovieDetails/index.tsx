@@ -1,6 +1,7 @@
 import Spinner from '@app/assets/spinner.svg';
 import AssociationBadge from '@app/components/Association/AssociationBadge';
 import Button from '@app/components/Common/Button';
+import IndexerSearchLink from '@app/components/Common/IndexerSearchLink';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import MediaServerPlayButton from '@app/components/Common/MediaServerPlayButton';
 import PageTitle from '@app/components/Common/PageTitle';
@@ -338,7 +339,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       }
     : undefined;
 
-  const primaryActions = (
+  const indexerCompanionActions = (
     <>
       {canUseBlocklist && (
         <Tooltip
@@ -386,6 +387,11 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const reportIssueAction = (
+    <>
       {canUseReportIssue && (
         <Tooltip
           content={intl.formatMessage(
@@ -409,6 +415,11 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
           </Button>
         </Tooltip>
       )}
+    </>
+  );
+
+  const primaryActions = (
+    <>
       {safeTrailerUrl && (
         <Button
           as="a"
@@ -423,16 +434,23 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         </Button>
       )}
       <AssociationBadge mediaType="movie" id={data.id} variant="button" />
-      <RequestButton
-        buttonSize="sm"
-        buttonType="detailRequest"
-        className="ml-0"
-        mediaType="movie"
-        media={data.mediaInfo}
-        tmdbId={data.id}
-        onUpdate={() => revalidate()}
-      />
     </>
+  );
+
+  const requestAction = (
+    <RequestButton
+      buttonSize="sm"
+      buttonType="detailRequest"
+      className="ml-0"
+      mediaType="movie"
+      media={data.mediaInfo}
+      tmdbId={data.id}
+      onUpdate={() => revalidate()}
+    />
+  );
+
+  const indexerSearchAction = (
+    <IndexerSearchLink category="movie" title={data.title} />
   );
 
   const secondaryActions = (
@@ -527,6 +545,10 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         }
         primaryActions={primaryActions}
         secondaryActions={secondaryActions}
+        indexerSearchAction={indexerSearchAction}
+        indexerCompanionActions={indexerCompanionActions}
+        reportIssueAction={reportIssueAction}
+        requestAction={requestAction}
         playbackActions={playbackActions}
       />
     </>

@@ -7,6 +7,7 @@ import {
 import { redactSecrets } from '@server/utils/security';
 import ServarrBase, {
   isServarrServiceUrl,
+  MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
   MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
   sanitizeServarrImages,
@@ -267,7 +268,10 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
         'GET',
         '/movie',
         undefined,
-        tmdbId ? { params: { tmdbId } } : undefined
+        {
+          ...(tmdbId ? { params: { tmdbId } } : {}),
+          maxContentLength: MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+        }
       );
 
       const movies = sanitizeServarrRecordArray<Record<string, unknown>>(
@@ -652,6 +656,18 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   }
 
   public async searchMovie(movieId: number): Promise<void> {
+    return this.executeMovieSearch(movieId, false);
+  }
+
+  /** Run a movie search and let callers handle a provider command failure. */
+  public async searchMovieOrThrow(movieId: number): Promise<void> {
+    return this.executeMovieSearch(movieId, true);
+  }
+
+  private async executeMovieSearch(
+    movieId: number,
+    throwOnError: boolean
+  ): Promise<void> {
     logger.info('Executing movie search command', {
       label: 'Radarr API',
       movieId,
@@ -668,6 +684,11 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
           movieId,
         }
       );
+      if (throwOnError) {
+        throw new Error('Failed to execute Radarr movie search.', {
+          cause: e,
+        });
+      }
     }
   }
   public removeMovie = async (tmdbId: number): Promise<void> => {

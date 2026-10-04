@@ -41,7 +41,7 @@ const messages = defineMessages('components.Settings.MylarModal', {
   externalUrl: 'External URL',
   enableSearch: 'Enable Automatic Search',
   compatibilityNote:
-    'Mylar3 is the recommended comics backend: it searches usenet and torrent indexers, so it can find comics that a direct-download-only backend (like Kapowarr) cannot.',
+    'Mylar3 can search Usenet and torrent indexers. Configure its providers in Mylar3; Kapowarr and BackIssue use their own acquisition sources.',
   apiKeyHelp:
     'In Mylar, enable the API under Settings > Web Interface, then find the key there.',
   baseUrlHelp:
@@ -51,7 +51,7 @@ const messages = defineMessages('components.Settings.MylarModal', {
   syncEnabledHelp:
     'Scan Mylar for existing comics so users cannot request content already available.',
   enableSearchHelp:
-    'Automatically trigger a search in Mylar when a request is approved.',
+    'Automatically trigger a search in Mylar when a request is approved. Prowlarr can sync indexers to Mylar; check Mylar’s provider settings after syncing to confirm they are enabled. SeerrNG also offers a separate manual Prowlarr search for users with Manage Requests.',
 });
 
 interface TestResponse {
@@ -157,17 +157,7 @@ const MylarModal = ({ onClose, mylar, onSave }: MylarModalProps) => {
   );
 
   return (
-    <Transition
-      as="div"
-      appear
-      show
-      enter="transition-opacity ease-in-out duration-300"
-      enterFrom="opacity-0"
-      enterTo="opacity-100"
-      leave="transition-opacity ease-in-out duration-300"
-      leaveFrom="opacity-100"
-      leaveTo="opacity-0"
-    >
+    <Transition as="div" appear show>
       <Formik
         initialValues={{
           name: mylar?.name ?? '',

@@ -35,6 +35,10 @@ export const mediaFilterValues = [
   'comic',
   'magazine',
   'author',
+  'software',
+  'retro',
+  'modern',
+  'game',
 ] as const;
 export type MediaFilterValue = (typeof mediaFilterValues)[number];
 export type UserMediaFilterPins = Partial<
@@ -48,14 +52,19 @@ export interface UserSettingsCardTextResponse {
   book?: CardTextVisibility;
 }
 
+export type UserRequestRootFolders = Record<string, string>;
+
 export type DetailDisclosurePin =
+  | 'overview'
   | 'cast'
   | 'crew'
   | 'artists'
   | 'subjectTags'
   | 'collection'
+  | 'mediaServer'
   | 'details'
   | 'advancedOptions'
+  | 'taskFilters'
   | 'filters'
   | 'mediaFilters'
   | 'sortBy';
@@ -63,12 +72,15 @@ export type DetailDisclosurePin =
 export type DetailDisclosureMediaType = 'movie' | 'tv' | 'music' | 'book';
 
 export interface UserSettingsDetailDisclosureResponse {
+  overview?: boolean;
   details?: boolean;
   advancedOptions?: boolean;
+  taskFilters?: boolean;
   filters?: boolean;
   mediaFilters?: boolean;
   sortBy?: boolean;
   collection?: boolean;
+  mediaServer?: boolean;
   cast?: boolean;
   crew?: boolean;
   artists?: boolean;
@@ -98,6 +110,10 @@ export interface UserSettingsGeneralResponse {
   bookQuotaDays?: number;
   comicQuotaLimit?: number;
   comicQuotaDays?: number;
+  magazineQuotaLimit?: number;
+  magazineQuotaDays?: number;
+  softwareQuotaLimit?: number;
+  softwareQuotaDays?: number;
   globalMovieQuotaDays?: number;
   globalMovieQuotaLimit?: number;
   globalTvQuotaLimit?: number;
@@ -108,11 +124,18 @@ export interface UserSettingsGeneralResponse {
   globalBookQuotaLimit?: number;
   globalComicQuotaDays?: number;
   globalComicQuotaLimit?: number;
+  globalMagazineQuotaDays?: number;
+  globalMagazineQuotaLimit?: number;
+  globalSoftwareQuotaDays?: number;
+  globalSoftwareQuotaLimit?: number;
   watchlistSyncMovies?: boolean;
   watchlistSyncTv?: boolean;
   watchlistSyncMusic?: boolean;
   watchlistSyncBooks?: boolean;
+  watchlistSyncComics?: boolean;
+  watchlistSyncMagazines?: boolean;
   cardTextVisibility?: UserSettingsCardTextResponse;
+  requestRootFolders?: UserRequestRootFolders;
 }
 
 export type NotificationAgentTypes = Record<NotificationAgentKey, number>;

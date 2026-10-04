@@ -1,13 +1,17 @@
+import Spinner from '@app/assets/spinner.svg';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
+import IndexerSearchLink from '@app/components/Common/IndexerSearchLink';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
+import ExternalBlocklistModal from '@app/components/ExternalBlocklistModal';
 import IssueBlock from '@app/components/IssueBlock';
 import AvailabilityValue, {
   getMediaAvailabilityTone,
 } from '@app/components/MediaDetails/AvailabilityValue';
 import MediaDetailArtwork from '@app/components/MediaDetails/MediaDetailArtwork';
+import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
@@ -18,7 +22,10 @@ import {
   ArrowTopRightOnSquareIcon,
   CogIcon,
   ExclamationTriangleIcon,
+  EyeSlashIcon,
   InformationCircleIcon,
+  MinusCircleIcon,
+  StarIcon,
 } from '@heroicons/react/24/solid';
 import { IssueStatus } from '@server/constants/issue';
 import {
@@ -26,14 +33,29 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
+import { UserType } from '@server/constants/user';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
-import type { ComicDetails as ComicDetailsType } from '@server/models/Comic';
+import type {
+  ComicDetails as ComicDetailsType,
+  ComicIssueReference,
+} from '@server/models/Comic';
+import axios from 'axios';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import useSWRInfinite from 'swr/infinite';
+
+interface ComicIssuePage {
+  page: number;
+  totalPages: number;
+  totalResults: number;
+  results: ComicIssueReference[];
+}
+
+const MAX_COMIC_ISSUE_PAGES = 500;
 
 const RequestModal = dynamic(() => import('@app/components/RequestModal'), {
   ssr: false,
@@ -57,17 +79,32 @@ const messages = defineMessages('components.ComicDetails', {
   manage: 'Manage Comic',
   reportissue: 'Report an Issue',
   openissues: 'Open Issues',
+  volumeIssues: 'Issues in this volume',
+  loadMoreIssues: 'Load more issues',
+  issueListUnavailable: 'The issue list could not be loaded right now.',
+  retryIssueList: 'Retry loading issues',
+  watchlistSuccess: '<strong>{title}</strong> added to watchlist successfully!',
+  watchlistDeleted:
+    '<strong>{title}</strong> Removed from watchlist successfully!',
+  watchlistError: 'Something went wrong. Please try again.',
+  removefromwatchlist: 'Remove From Watchlist',
+  addtowatchlist: 'Add To Watchlist',
 });
 
 const ComicDetails = () => {
   const router = useRouter();
   const intl = useIntl();
+  const { addToast } = useToasts();
   const { user, hasPermission } = useUser();
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [editRequest, setEditRequest] =
     useState<NonFunctionProperties<MediaRequest>>();
   const [showIssueModal, setShowIssueModal] = useState(false);
+  const [showBlocklistModal, setShowBlocklistModal] = useState(false);
+  const [isBlocklisting, setIsBlocklisting] = useState(false);
   const [showManager, setShowManager] = useState(router.query.manage === '1');
+  const [isWatchlistUpdating, setIsWatchlistUpdating] = useState(false);
+  const [toggleWatchlist, setToggleWatchlist] = useState(true);
   const comicId =
     typeof router.query.comicId === 'string' ? router.query.comicId : '';
 
@@ -78,10 +115,39 @@ const ComicDetails = () => {
   } = useSWR<ComicDetailsType>(
     comicId ? `/api/v1/comic/${encodeApiPathSegment(comicId)}` : null
   );
+  const {
+    data: issuePages,
+    error: issueListError,
+    isLoading: issueListLoading,
+    size: issuePageCount,
+    setSize: setIssuePageCount,
+    isValidating: issuePagesValidating,
+    mutate: mutateIssuePages,
+  } = useSWRInfinite<ComicIssuePage>(
+    (pageIndex, previousPage) => {
+      if (!comicId || !data?.issueCount) return null;
+      if (pageIndex >= MAX_COMIC_ISSUE_PAGES) return null;
+      if (previousPage && pageIndex + 1 > previousPage.totalPages) return null;
+      return `/api/v1/comic/${encodeApiPathSegment(comicId)}/issues?page=${pageIndex + 1}`;
+    },
+    { revalidateFirstPage: false, revalidateOnFocus: false }
+  );
+  const volumeIssues = issuePages?.flatMap((page) => page.results) ?? [];
+  const lastIssuePage = issuePages?.[issuePages.length - 1];
+  const hasMoreVolumeIssues =
+    lastIssuePage !== undefined &&
+    lastIssuePage.page < MAX_COMIC_ISSUE_PAGES &&
+    lastIssuePage.page < lastIssuePage.totalPages;
+  const loadingMoreIssues =
+    issuePageCount > (issuePages?.length ?? 0) && issuePagesValidating;
 
   useEffect(() => {
     setShowManager(router.query.manage === '1');
   }, [router.query.manage]);
+
+  useEffect(() => {
+    setToggleWatchlist(!data?.onUserWatchlist);
+  }, [data?.onUserWatchlist]);
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -120,6 +186,12 @@ const ComicDetails = () => {
   const isManageAvailable = Boolean(
     data.mediaInfo && data.mediaInfo.status !== MediaStatus.UNKNOWN
   );
+  const canWatchlist =
+    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
+    user?.userType !== UserType.PLEX;
+  const canUseBlocklist = hasPermission(Permission.MANAGE_BLOCKLIST);
+  const isBlocklistAvailable =
+    data.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
   const canUseReportIssue = hasPermission(
     [Permission.MANAGE_ISSUES, Permission.CREATE_ISSUES],
     { type: 'or' }
@@ -132,6 +204,106 @@ const ComicDetails = () => {
     data.mediaInfo?.issues?.filter(
       (issue) => issue.status === IssueStatus.OPEN
     ) ?? [];
+
+  const addToWatchlist = async (): Promise<void> => {
+    setIsWatchlistUpdating(true);
+
+    try {
+      const response = await axios.post('/api/v1/watchlist', {
+        externalId: data.id,
+        mediaType: MediaType.COMIC,
+        title: data.title,
+      });
+
+      if (response.data) {
+        addToast(
+          <span>
+            {intl.formatMessage(messages.watchlistSuccess, {
+              title: data.title,
+              strong: (msg: React.ReactNode) => (
+                <strong key="strong">{msg}</strong>
+              ),
+            })}
+          </span>,
+          { appearance: 'success', autoDismiss: true }
+        );
+      }
+
+      setToggleWatchlist(false);
+    } catch {
+      addToast(intl.formatMessage(messages.watchlistError), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+    } finally {
+      setIsWatchlistUpdating(false);
+      revalidate();
+    }
+  };
+
+  const removeFromWatchlist = async (): Promise<void> => {
+    setIsWatchlistUpdating(true);
+
+    try {
+      await axios.delete(
+        `/api/v1/watchlist/${encodeApiPathSegment(data.id)}?mediaType=comic`
+      );
+
+      addToast(
+        <span>
+          {intl.formatMessage(messages.watchlistDeleted, {
+            title: data.title,
+            strong: (msg: React.ReactNode) => (
+              <strong key="strong">{msg}</strong>
+            ),
+          })}
+        </span>,
+        { appearance: 'info', autoDismiss: true }
+      );
+      setToggleWatchlist(true);
+    } catch {
+      addToast(intl.formatMessage(messages.watchlistError), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+    } finally {
+      setIsWatchlistUpdating(false);
+      revalidate();
+    }
+  };
+
+  const blocklistComic = async (): Promise<void> => {
+    setIsBlocklisting(true);
+
+    try {
+      await axios.post('/api/v1/blocklist', {
+        externalId: data.id,
+        externalProvider: 'comicvine',
+        mediaType: MediaType.COMIC,
+        title: data.title,
+      });
+      addToast(
+        <span>
+          {intl.formatMessage(globalMessages.blocklistSuccess, {
+            title: data.title,
+            strong: (message: React.ReactNode) => (
+              <strong key="strong">{message}</strong>
+            ),
+          })}
+        </span>,
+        { appearance: 'success', autoDismiss: true }
+      );
+      void revalidate();
+    } catch {
+      addToast(intl.formatMessage(globalMessages.blocklistError), {
+        appearance: 'error',
+        autoDismiss: true,
+      });
+    } finally {
+      setIsBlocklisting(false);
+      setShowBlocklistModal(false);
+    }
+  };
 
   return (
     <>
@@ -159,6 +331,17 @@ const ComicDetails = () => {
           title={data.title}
           backdrop={data.posterPath}
           onCancel={() => setShowIssueModal(false)}
+        />
+      )}
+      {showBlocklistModal && (
+        <ExternalBlocklistModal
+          show
+          type="comic"
+          title={data.title}
+          backdrop={data.posterPath}
+          onCancel={() => setShowBlocklistModal(false)}
+          onComplete={() => void blocklistComic()}
+          isUpdating={isBlocklisting}
         />
       )}
       {showRequestModal && (
@@ -241,6 +424,60 @@ const ComicDetails = () => {
             </div>
 
             <div className="media-primary-action-row">
+              {canUseBlocklist && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    isBlocklistAvailable
+                      ? globalMessages.addToBlocklist
+                      : globalMessages.alreadyBlocklisted
+                  )}
+                >
+                  <Button
+                    buttonType="blocklist"
+                    buttonSize="sm"
+                    onClick={() => setShowBlocklistModal(true)}
+                    disabled={!isBlocklistAvailable}
+                    disabledReason={intl.formatMessage(
+                      globalMessages.alreadyBlocklisted
+                    )}
+                    aria-label={intl.formatMessage(
+                      globalMessages.addToBlocklist
+                    )}
+                  >
+                    <EyeSlashIcon />
+                  </Button>
+                </Tooltip>
+              )}
+              {canWatchlist && (
+                <Tooltip
+                  content={intl.formatMessage(
+                    toggleWatchlist
+                      ? messages.addtowatchlist
+                      : messages.removefromwatchlist
+                  )}
+                >
+                  <Button
+                    buttonType={toggleWatchlist ? 'ghost' : 'default'}
+                    buttonSize="sm"
+                    onClick={
+                      toggleWatchlist ? addToWatchlist : removeFromWatchlist
+                    }
+                    aria-label={intl.formatMessage(
+                      toggleWatchlist
+                        ? messages.addtowatchlist
+                        : messages.removefromwatchlist
+                    )}
+                  >
+                    {isWatchlistUpdating ? (
+                      <Spinner />
+                    ) : toggleWatchlist ? (
+                      <StarIcon className="text-amber-300" />
+                    ) : (
+                      <MinusCircleIcon />
+                    )}
+                  </Button>
+                </Tooltip>
+              )}
               {canUseManage && (
                 <Tooltip
                   content={intl.formatMessage(
@@ -299,7 +536,7 @@ const ComicDetails = () => {
                   rel="noreferrer"
                   className="app-button-default inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium"
                 >
-                  <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                  <ArrowTopRightOnSquareIcon />
                   {intl.formatMessage(messages.viewOnComicVine)}
                 </a>
               )}
@@ -329,18 +566,106 @@ const ComicDetails = () => {
                   <span>{intl.formatMessage(globalMessages.request)}</span>
                 </Button>
               )}
+              <IndexerSearchLink category="comic" title={data.title} />
             </div>
 
             <section className="app-card-inset refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
               <h2 className="media-inset-heading">
                 {intl.formatMessage(messages.overview)}
               </h2>
-              <p className="refreshed-detail-text-muted mt-4 max-w-none text-sm leading-5">
-                {data.description ||
-                  data.deck ||
-                  intl.formatMessage(messages.overviewUnavailable)}
-              </p>
+              {data.description || data.deck ? (
+                <div
+                  data-testid="comic-description"
+                  className="prose prose-sm prose-invert refreshed-detail-text-muted mt-4 max-w-none leading-5 break-words"
+                  // ComicVine descriptions are sanitized by the server API
+                  // adapter before they enter the detail response.
+                  dangerouslySetInnerHTML={{
+                    __html: data.description || data.deck || '',
+                  }}
+                />
+              ) : (
+                <p className="refreshed-detail-text-muted mt-4 max-w-none text-sm leading-5">
+                  {intl.formatMessage(messages.overviewUnavailable)}
+                </p>
+              )}
             </section>
+            {(data.issueCount ?? 0) > 0 && (
+              <section className="app-card-inset refreshed-inset-surface mt-[5px] rounded-lg border border-gray-700 p-3">
+                <h2 className="media-inset-heading">
+                  {intl.formatMessage(messages.volumeIssues)}
+                </h2>
+                {issueListError && (
+                  <div
+                    role="alert"
+                    className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-amber-300"
+                  >
+                    <p>{intl.formatMessage(messages.issueListUnavailable)}</p>
+                    <Button
+                      buttonType="ghost"
+                      buttonSize="sm"
+                      disabled={issuePagesValidating}
+                      onClick={() => void mutateIssuePages()}
+                    >
+                      {intl.formatMessage(messages.retryIssueList)}
+                    </Button>
+                  </div>
+                )}
+                {!issuePages && issueListLoading ? (
+                  <LoadingSpinner />
+                ) : (
+                  <>
+                    {volumeIssues.length > 0 && (
+                      <ol className="mt-3 divide-y divide-gray-700">
+                        {volumeIssues.map((issue) => (
+                          <li
+                            key={issue.id}
+                            className="flex items-center gap-3 py-2"
+                          >
+                            <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded bg-gray-900">
+                              <CachedImage
+                                type="tmdb"
+                                src={
+                                  issue.coverUrl ||
+                                  '/images/seerr_poster_not_found.png'
+                                }
+                                alt=""
+                                fill
+                                className="object-cover"
+                              />
+                            </div>
+                            <div className="min-w-0 text-sm">
+                              <p className="font-medium text-gray-100">
+                                #{issue.issueNumber || '?'}
+                                {issue.name ? ` · ${issue.name}` : ''}
+                              </p>
+                              {issue.coverDate && (
+                                <p className="refreshed-detail-text-muted text-xs">
+                                  {issue.coverDate}
+                                </p>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    {hasMoreVolumeIssues && !issueListError && (
+                      <div className="mt-3 flex justify-center">
+                        <Button
+                          buttonType="ghost"
+                          buttonSize="sm"
+                          disabled={loadingMoreIssues}
+                          onClick={() =>
+                            void setIssuePageCount((count) => count + 1)
+                          }
+                        >
+                          {intl.formatMessage(messages.loadMoreIssues)}
+                        </Button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </section>
+            )}
             {hasPermission([Permission.MANAGE_ISSUES, Permission.VIEW_ISSUES], {
               type: 'or',
             }) &&

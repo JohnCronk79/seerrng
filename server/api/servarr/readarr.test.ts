@@ -14,12 +14,18 @@ import type {
 import ReadarrAPI from '@server/api/servarr/readarr';
 import axios from 'axios';
 
-import { MAX_SERVARR_COVER_IMAGES } from './base';
+import {
+  MAX_SERVARR_COVER_IMAGES,
+  MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+} from './base';
 
 type MockableReadarr = {
   get: (
     endpoint: string,
-    options?: { params?: Record<string, unknown> },
+    options?: {
+      params?: Record<string, unknown>;
+      maxContentLength?: number;
+    },
     ttl?: number
   ) => Promise<unknown>;
   post: (
@@ -28,6 +34,87 @@ type MockableReadarr = {
     options?: { params?: Record<string, unknown> }
   ) => Promise<ReadarrBook>;
 };
+
+describe('ReadarrAPI.getReleaseCalendar', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('keeps the configured book format and requests author details', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'audiobook',
+    });
+    const getMock = mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'get',
+      async () => []
+    );
+
+    await api.getReleaseCalendar(
+      '2026-09-01T00:00:00.000Z',
+      '2026-10-01T00:00:00.000Z',
+      false,
+      false,
+      true
+    );
+
+    assert.strictEqual(getMock.mock.calls[0].arguments[0], '/calendar');
+    assert.deepStrictEqual(getMock.mock.calls[0].arguments[1], {
+      params: {
+        mediaType: 'audiobook',
+        start: '2026-09-01T00:00:00.000Z',
+        end: '2026-10-01T00:00:00.000Z',
+        unmonitored: false,
+        includeAuthor: true,
+      },
+    });
+    assert.strictEqual(getMock.mock.calls[0].arguments[2], 300);
+  });
+});
+
+describe('Readarr API key authentication', () => {
+  it('authenticates Bookshelf with X-Api-Key instead of a query parameter', async () => {
+    let receivedApiKey: string | undefined;
+    let receivedQueryApiKey: string | null = null;
+    const server = createServer((request, response) => {
+      const requestUrl = new URL(request.url ?? '/', 'http://localhost');
+      const apiKeyHeader = request.headers['x-api-key'];
+      receivedApiKey = Array.isArray(apiKeyHeader)
+        ? apiKeyHeader[0]
+        : apiKeyHeader;
+      receivedQueryApiKey = requestUrl.searchParams.get('apikey');
+
+      if (receivedApiKey !== 'test-bookshelf-key' || receivedQueryApiKey) {
+        writeJson(response, 401, { message: 'Unauthorized' });
+        return;
+      }
+
+      writeJson(response, 200, [{ id: 1, name: 'Standard' }]);
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'test-bookshelf-key',
+      });
+
+      assert.deepEqual(await api.getProfiles(), [{ id: 1, name: 'Standard' }]);
+      assert.equal(receivedApiKey, 'test-bookshelf-key');
+      assert.equal(receivedQueryApiKey, null);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+      await once(server, 'close');
+    }
+  });
+});
 
 const bookOptions: ReadarrBookOptions = {
   title: 'Test Book',
@@ -48,6 +135,11 @@ const bookOptions: ReadarrBookOptions = {
   addOptions: {
     searchForNewBook: true,
   },
+};
+
+const bookOptionsWithoutSearch: ReadarrBookOptions = {
+  ...bookOptions,
+  addOptions: { searchForNewBook: false },
 };
 
 const existingBook = (overrides: Partial<ReadarrBook> = {}): ReadarrBook => ({
@@ -126,6 +218,29 @@ describe('ReadarrAPI.getEditions', () => {
     assert.deepStrictEqual(getMock.mock.calls[0].arguments[1], {
       params: { bookId: 42 },
     });
+  });
+});
+
+describe('Readarr full-library response limit', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('applies the finite cap to the unpaged full-library response', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+    });
+    const get = mock.method(
+      api as unknown as MockableReadarr,
+      'get',
+      async () => []
+    );
+
+    assert.deepEqual(await api.getBooks(), []);
+    assert.equal(get.mock.calls[0].arguments[0], '/book');
+    assert.equal(
+      get.mock.calls[0].arguments[1]?.maxContentLength,
+      MAX_SERVARR_LIBRARY_RESPONSE_BYTES
+    );
   });
 });
 
@@ -447,10 +562,106 @@ describe('ReadarrAPI media type requests', () => {
     });
     assert.deepStrictEqual(getMock.mock.calls[1].arguments[1], {
       params: { mediaType: 'audiobook' },
+      maxContentLength: MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
     });
     assert.deepStrictEqual(postMock.mock.calls[0].arguments[2], {
       params: { mediaType: 'audiobook' },
     });
+  });
+
+  it('reads only the requested Bookshelf page and preserves its total', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'audiobook',
+    });
+    mock.method(
+      api as unknown as { ensureProvider: () => Promise<void> },
+      'ensureProvider',
+      async () => undefined
+    );
+    const getMock = mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'get',
+      async () => ({
+        records: [
+          {
+            id: 51,
+            title: 'Paged audiobook',
+            foreignBookId: 'hardcover:paged-audio',
+          },
+        ],
+        offset: 50,
+        pageSize: 50,
+        totalCount: 300,
+      })
+    );
+
+    const result = await api.getBooksPage(50, 50);
+
+    assert.deepStrictEqual(
+      result.books.map((book) => book.id),
+      [51]
+    );
+    assert.strictEqual(result.totalCount, 300);
+    assert.strictEqual(getMock.mock.calls[0].arguments[0], '/book/paged');
+    assert.deepStrictEqual(getMock.mock.calls[0].arguments[1], {
+      params: {
+        mediaType: 'audiobook',
+        offset: 50,
+        pageSize: 50,
+        includeUnmonitored: true,
+      },
+    });
+    assert.strictEqual(getMock.mock.calls[0].arguments[2], 0);
+  });
+
+  it('falls back to the regular library only when paging is unsupported', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'audiobook',
+    });
+    mock.method(
+      api as unknown as { ensureProvider: () => Promise<void> },
+      'ensureProvider',
+      async () => undefined
+    );
+    const getMock = mock.method(
+      ReadarrAPI.prototype as unknown as MockableReadarr,
+      'get',
+      async (endpoint: string) => {
+        if (endpoint === '/book/paged') {
+          const error = new axios.AxiosError('Not found');
+          error.response = {
+            status: 404,
+            statusText: 'Not Found',
+            headers: {},
+            config: {} as never,
+            data: {},
+          };
+          throw error;
+        }
+
+        return [
+          { id: 1, title: 'First book', foreignBookId: 'first' },
+          { id: 2, title: 'Second book', foreignBookId: 'second' },
+          { id: 3, title: 'Third book', foreignBookId: 'third' },
+        ];
+      }
+    );
+
+    const result = await api.getBooksPage(1, 1);
+
+    assert.deepStrictEqual(
+      result.books.map((book) => book.id),
+      [2]
+    );
+    assert.strictEqual(result.totalCount, 3);
+    assert.deepStrictEqual(
+      getMock.mock.calls.map((call) => call.arguments[0]),
+      ['/book/paged', '/book']
+    );
   });
 });
 
@@ -492,7 +703,7 @@ describe('ReadarrAPI.addBook', () => {
     mock.restoreAll();
   });
 
-  it('returns an existing monitored book without posting', async () => {
+  it('searches an existing monitored book when the request asks for acquisition', async () => {
     const api = new ReadarrAPI({
       url: 'http://localhost:8787/api/v1',
       apiKey: 'key',
@@ -507,12 +718,33 @@ describe('ReadarrAPI.addBook', () => {
       'post',
       async () => existingBook({ id: 10 })
     );
+    const commandPostMock = mock.fn<
+      (
+        endpoint: string,
+        data?: Record<string, unknown>
+      ) => Promise<{ data: { id: number; name: string; status: string } }>
+    >(async () => ({
+      data: { id: 101, name: 'BookSearch', status: 'started' },
+    }));
+    (
+      api as unknown as {
+        axios: { post: typeof commandPostMock };
+      }
+    ).axios.post = commandPostMock;
 
     const result = await api.addBook(bookOptions);
 
     assert.strictEqual(result.id, 9);
     assert.strictEqual(getMock.mock.calls.length, 1);
     assert.strictEqual(postMock.mock.calls.length, 0);
+    assert.strictEqual(commandPostMock.mock.calls.length, 1);
+    assert.deepStrictEqual(
+      (commandPostMock.mock.calls[0].arguments as unknown[])[1],
+      {
+        name: 'BookSearch',
+        bookIds: [9],
+      }
+    );
   });
 
   it('matches existing books with normalized ISBNs', async () => {
@@ -542,7 +774,7 @@ describe('ReadarrAPI.addBook', () => {
       async () => existingBook({ id: 10 })
     );
 
-    const result = await api.addBook(bookOptions);
+    const result = await api.addBook(bookOptionsWithoutSearch);
 
     assert.strictEqual(result.id, 9);
     assert.strictEqual(postMock.mock.calls.length, 0);
@@ -575,7 +807,7 @@ describe('ReadarrAPI.addBook', () => {
       async () => existingBook({ id: 10 })
     );
 
-    const result = await api.addBook(bookOptions);
+    const result = await api.addBook(bookOptionsWithoutSearch);
 
     assert.strictEqual(result.id, 9);
     assert.strictEqual(postMock.mock.calls.length, 0);
@@ -609,7 +841,7 @@ describe('ReadarrAPI.addBook', () => {
     );
 
     const result = await api.addBook({
-      ...bookOptions,
+      ...bookOptionsWithoutSearch,
       foreignBookId: 'OL123W',
       editions: [
         {
@@ -696,7 +928,7 @@ describe('ReadarrAPI.addBook', () => {
       url: 'http://localhost:8787/api/v1',
       apiKey: 'key',
     });
-    mock.method(
+    const get = mock.method(
       ReadarrAPI.prototype as unknown as MockableReadarr,
       'get',
       async () => []
@@ -712,12 +944,198 @@ describe('ReadarrAPI.addBook', () => {
     assert.strictEqual(result.id, 11);
     assert.strictEqual(postMock.mock.calls.length, 1);
     assert.strictEqual(postMock.mock.calls[0].arguments[0], '/book');
+    assert.equal(
+      get.mock.calls[0].arguments[1]?.maxContentLength,
+      MAX_SERVARR_LIBRARY_RESPONSE_BYTES
+    );
   });
 });
 
 describe('ReadarrAPI Chaptarr compatibility', () => {
   afterEach(() => {
     mock.restoreAll();
+  });
+
+  it('uses the explicit Chaptarr integration capabilities before provider settings', async () => {
+    const requestedPaths: string[] = [];
+    const server = createServer((request, response) => {
+      void (async () => {
+        const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+        requestedPaths.push(parsedUrl.pathname);
+
+        if (parsedUrl.pathname === '/api/v1/system/status') {
+          writeJson(response, 200, {
+            appName: 'Chaptarr',
+            version: '0.9.940.0',
+            urlBase: '',
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/system/capabilities') {
+          writeJson(response, 200, {
+            contract: 'chaptarrng-seerr-bookshelf',
+            contractVersion: 1,
+            providerIdDialect: 'gr',
+            mediaTypes: ['ebook', 'audiobook'],
+            features: { formatScopedFacade: true },
+          });
+          return;
+        }
+
+        writeJson(response, 404, { message: 'not found' });
+      })().catch(() => writeJson(response, 500, { message: 'handler failed' }));
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'key',
+        mediaType: 'ebook',
+      });
+
+      await api.getSystemStatus();
+
+      const internalApi = api as unknown as {
+        requestBaseUrl?: string;
+      };
+      assert.equal(
+        internalApi.requestBaseUrl,
+        `http://127.0.0.1:${address.port}/readarr/gr/ebook/api/v1`
+      );
+      assert.ok(requestedPaths.includes('/api/v1/system/capabilities'));
+      assert.ok(!requestedPaths.includes('/api/v1/config/hardcover'));
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
+  it('falls back to the provider setting unless the format facade is advertised', async () => {
+    const requestedPaths: string[] = [];
+    const server = createServer((request, response) => {
+      void (async () => {
+        const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+        requestedPaths.push(parsedUrl.pathname);
+
+        if (parsedUrl.pathname === '/api/v1/system/status') {
+          writeJson(response, 200, {
+            appName: 'Chaptarr',
+            version: '0.9.940.0',
+            urlBase: '',
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/system/capabilities') {
+          writeJson(response, 200, {
+            contract: 'chaptarrng-seerr-bookshelf',
+            contractVersion: 1,
+            providerIdDialect: 'gr',
+            features: { formatScopedFacade: false },
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/config/hardcover') {
+          writeJson(response, 200, { enabled: true });
+          return;
+        }
+
+        writeJson(response, 404, { message: 'not found' });
+      })().catch(() => writeJson(response, 500, { message: 'handler failed' }));
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'key',
+        mediaType: 'ebook',
+      });
+
+      await api.getSystemStatus();
+
+      const internalApi = api as unknown as {
+        requestBaseUrl?: string;
+      };
+      assert.equal(
+        internalApi.requestBaseUrl,
+        `http://127.0.0.1:${address.port}/readarr/hc/ebook/api/v1`
+      );
+      assert.ok(requestedPaths.includes('/api/v1/config/hardcover'));
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
+  it('uses BookshelfNG format routes only for its supported capability contract', async () => {
+    const requestedPaths: string[] = [];
+    const server = createServer((request, response) => {
+      void (async () => {
+        const parsedUrl = new URL(request.url ?? '/', 'http://localhost');
+        requestedPaths.push(parsedUrl.pathname);
+
+        if (parsedUrl.pathname === '/api/v1/system/status') {
+          writeJson(response, 200, {
+            appName: 'Readarr',
+            version: '0.9.940.0',
+            urlBase: '',
+          });
+          return;
+        }
+
+        if (parsedUrl.pathname === '/api/v1/system/capabilities') {
+          writeJson(response, 200, {
+            contract: 'seerrng-bookshelf',
+            contractVersion: 1,
+            providerIdDialect: 'gr',
+            mediaTypes: ['ebook', 'audiobook'],
+            features: { formatScopedFacade: true },
+          });
+          return;
+        }
+
+        writeJson(response, 404, { message: 'not found' });
+      })().catch(() => writeJson(response, 500, { message: 'handler failed' }));
+    });
+
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    try {
+      const api = new ReadarrAPI({
+        url: `http://127.0.0.1:${address.port}/api/v1`,
+        apiKey: 'key',
+        mediaType: 'audiobook',
+      });
+
+      await api.getSystemStatus();
+
+      const internalApi = api as unknown as {
+        requestBaseUrl?: string;
+      };
+      assert.equal(
+        internalApi.requestBaseUrl,
+        `http://127.0.0.1:${address.port}/readarr/gr/audiobook/api/v1`
+      );
+      assert.ok(requestedPaths.includes('/api/v1/system/capabilities'));
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
   });
 
   it('returns pending Chaptarr book adds as durable pending results', async () => {
@@ -1478,5 +1896,195 @@ describe('ReadarrAPI Chaptarr compatibility', () => {
       server.close();
       await once(server, 'close');
     }
+  });
+});
+
+describe('ReadarrAPI Bookshelf media moves', () => {
+  afterEach(() => {
+    mock.restoreAll();
+  });
+
+  it('uses the bulk preview token flow and sanitizes provider responses', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'ebook',
+    });
+    const internalApi = api as unknown as {
+      ensureProvider: () => Promise<void>;
+      request: (
+        method: string,
+        path: string,
+        data?: unknown,
+        config?: unknown
+      ) => Promise<{ data: unknown }>;
+    };
+    mock.method(internalApi, 'ensureProvider', async () => undefined);
+    const requests: { method: string; path: string; data?: unknown }[] = [];
+    mock.method(
+      internalApi,
+      'request',
+      async (method: string, path: string, data?: unknown) => {
+        requests.push({ method, path, data });
+        if (path === '/author')
+          return {
+            data: [
+              {
+                id: 4,
+                authorName: 'Octavia Butler',
+                path: '/media/books',
+                ebookPath: '/media/ebooks',
+                audiobookPath: '/media/audiobooks',
+                statistics: { bookFileCount: 3 },
+              },
+              { id: 'bad', authorName: 'Ignored' },
+            ],
+          };
+        if (path === '/author/media-move/bulk/preview')
+          return {
+            data: {
+              format: 'ebook',
+              destinationRootPath: '/media/new-books',
+              previewToken: 'fresh-preview-token',
+              authorCount: 1,
+              mediaFileCount: 1,
+              sidecarFileCount: 1,
+              missingFileCount: 0,
+              totalSize: 100,
+              requiredCopyBytes: 100,
+              availableSpace: 10_000,
+              canMove: true,
+              warnings: [],
+              conflicts: [],
+              authors: [
+                {
+                  authorId: 4,
+                  authorName: 'Octavia Butler',
+                  format: 'ebook',
+                  sourcePath: '/media/ebooks/Octavia Butler',
+                  destinationPath: '/media/new-books/Octavia Butler',
+                  mediaFileCount: 1,
+                  sidecarFileCount: 1,
+                  missingFileCount: 0,
+                  alreadyAtDestinationCount: 0,
+                  totalSize: 100,
+                  requiredCopyBytes: 100,
+                  canMove: true,
+                  warnings: [],
+                  conflicts: [],
+                  files: [
+                    {
+                      fileType: 'media',
+                      sourcePath: '/media/ebooks/book.epub',
+                      destinationPath: '/media/new-books/book.epub',
+                      status: 'ready',
+                      sourceExists: true,
+                      destinationExists: false,
+                      size: 100,
+                    },
+                    { fileType: 'unexpected', sourcePath: 'ignored' },
+                  ],
+                },
+              ],
+            },
+          };
+        if (path === '/author/media-move/bulk/start')
+          return {
+            data: { id: 91, name: 'MoveAuthorMediaBatch', status: 'queued' },
+          };
+        if (path === '/command/91')
+          return {
+            data: {
+              id: 91,
+              name: 'MoveAuthorMediaBatch',
+              status: 'completed',
+              progress: 100,
+            },
+          };
+        throw new Error(`Unexpected Bookshelf request: ${method} ${path}`);
+      }
+    );
+
+    const authors = await api.getMediaMoveAuthors();
+    assert.deepEqual(authors, [
+      {
+        id: 4,
+        name: 'Octavia Butler',
+        path: '/media/books',
+        ebookPath: '/media/ebooks',
+        audiobookPath: '/media/audiobooks',
+        bookFileCount: 3,
+      },
+    ]);
+
+    const preview = await api.previewMediaMoveBatch({
+      authorIds: [4],
+      format: 'ebook',
+      destinationRootPath: '/media/new-books',
+    });
+    assert.equal(preview.previewToken, 'fresh-preview-token');
+    assert.equal(preview.authors[0].files.length, 1);
+    assert.equal(preview.authors[0].files[0].status, 'ready');
+    assert.deepEqual(requests[1].data, {
+      authorIds: [4],
+      format: 'ebook',
+      destinationRootPath: '/media/new-books',
+    });
+
+    const command = await api.startMediaMoveBatch({
+      authorIds: [4],
+      format: 'ebook',
+      destinationRootPath: '/media/new-books',
+      previewToken: preview.previewToken,
+    });
+    assert.equal(command.id, 91);
+    assert.equal(command.status, 'queued');
+    assert.deepEqual(requests[2].data, {
+      authorIds: [4],
+      format: 'ebook',
+      destinationRootPath: '/media/new-books',
+      previewToken: 'fresh-preview-token',
+    });
+
+    assert.equal((await api.getMediaMoveCommand(91)).status, 'completed');
+    assert.deepEqual(
+      requests.map(({ method, path }) => [method, path]),
+      [
+        ['GET', '/author'],
+        ['POST', '/author/media-move/bulk/preview'],
+        ['POST', '/author/media-move/bulk/start'],
+        ['GET', '/command/91'],
+      ]
+    );
+  });
+
+  it('rejects incomplete preview responses instead of applying an ambiguous batch', async () => {
+    const api = new ReadarrAPI({
+      url: 'http://localhost:8787/api/v1',
+      apiKey: 'key',
+      mediaType: 'ebook',
+    });
+    const internalApi = api as unknown as {
+      ensureProvider: () => Promise<void>;
+      request: () => Promise<{ data: unknown }>;
+    };
+    mock.method(internalApi, 'ensureProvider', async () => undefined);
+    mock.method(internalApi, 'request', async () => ({
+      data: {
+        format: 'ebook',
+        destinationRootPath: '/media/new-books',
+        previewToken: 'fresh-preview-token',
+        authors: [],
+      },
+    }));
+
+    await assert.rejects(
+      api.previewMediaMoveBatch({
+        authorIds: [4],
+        format: 'ebook',
+        destinationRootPath: '/media/new-books',
+      }),
+      /incomplete media-move preview/
+    );
   });
 });

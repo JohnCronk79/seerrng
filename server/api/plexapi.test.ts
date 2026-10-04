@@ -2,10 +2,58 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import { getSettings } from '@server/lib/settings';
-import PlexAPI, { sanitizePlexClients, sanitizePlexMetadata } from './plexapi';
+import PlexAPI, {
+  sanitizePlexClients,
+  sanitizePlexMetadata,
+  sanitizePlexPlaybackSession,
+} from './plexapi';
 
 afterEach(() => {
   mock.restoreAll();
+});
+
+describe('Plex playback sessions', () => {
+  it('normalizes bounded episode progress and linked-user identity', () => {
+    assert.deepEqual(
+      sanitizePlexPlaybackSession({
+        ratingKey: '42',
+        grandparentRatingKey: '7',
+        type: 'episode',
+        index: 4,
+        parentIndex: 2,
+        viewOffset: 2_160_000,
+        duration: 2_400_000,
+        User: { id: '12', title: 'viewer' },
+        Player: { state: 'playing' },
+      }),
+      {
+        ratingKey: '42',
+        grandparentRatingKey: '7',
+        type: 'episode',
+        index: 4,
+        parentIndex: 2,
+        viewOffset: 2_160_000,
+        duration: 2_400_000,
+        userId: '12',
+        username: 'viewer',
+        state: 'playing',
+      }
+    );
+  });
+
+  it('rejects sessions without valid episode timing', () => {
+    assert.equal(
+      sanitizePlexPlaybackSession({
+        ratingKey: '42',
+        type: 'episode',
+        index: 4,
+        parentIndex: 2,
+        viewOffset: 100,
+        duration: 0,
+      }),
+      undefined
+    );
+  });
 });
 
 describe('Plex library synchronization', () => {
@@ -261,6 +309,75 @@ describe('Plex response normalization', () => {
       params: { includeChildren: 1 },
     });
     assert.ok(!('providerOnly' in metadata));
+  });
+
+  it('keeps per-user watch counts and bounded pagination metadata', async () => {
+    const plex = new PlexAPI({ plexToken: 'linked-user-token' });
+    let requestOptions: {
+      params?: Record<string, number>;
+      headers?: Record<string, string>;
+    } = {};
+    Object.defineProperty(plex, 'get', {
+      configurable: true,
+      value: async (_path: string, options: typeof requestOptions) => {
+        requestOptions = options;
+        return {
+          MediaContainer: {
+            totalSize: 30,
+            Metadata: [
+              {
+                ratingKey: 'show-1',
+                type: 'show',
+                title: 'Partially watched show',
+                year: 2024,
+                leafCount: 10,
+                viewedLeafCount: 4,
+                viewCount: 0,
+                Guid: [{ id: 'tmdb://42' }],
+              },
+            ],
+          },
+        };
+      },
+    });
+
+    const page = await plex.getLibraryContents('7', {
+      offset: 20,
+      size: 10,
+      libraryType: 'show',
+    });
+
+    assert.strictEqual(
+      requestOptions.headers?.['X-Plex-Container-Start'],
+      '20'
+    );
+    assert.strictEqual(requestOptions.headers?.['X-Plex-Container-Size'], '10');
+    assert.strictEqual(requestOptions.params?.includeGuids, 1);
+    assert.strictEqual(page.totalSize, 30);
+    assert.strictEqual(page.items[0].year, 2024);
+    assert.strictEqual(page.items[0].viewedLeafCount, 4);
+    assert.strictEqual(page.items[0].leafCount, 10);
+    assert.deepStrictEqual(page.items[0].Guid, [{ id: 'tmdb://42' }]);
+  });
+
+  it('filters watched and unwatched library pages on the Plex server', async () => {
+    const plex = new PlexAPI({ plexToken: 'linked-user-token' });
+    let requestOptions: {
+      params?: Record<string, number>;
+    } = {};
+    Object.defineProperty(plex, 'get', {
+      configurable: true,
+      value: async (_path: string, options: typeof requestOptions) => {
+        requestOptions = options;
+        return { MediaContainer: { totalSize: 0, Metadata: [] } };
+      },
+    });
+
+    await plex.getLibraryContents('7', { isWatched: true });
+    assert.strictEqual(requestOptions.params?.unwatched, 0);
+
+    await plex.getLibraryContents('7', { isWatched: false });
+    assert.strictEqual(requestOptions.params?.unwatched, 1);
   });
 
   it('requests GUID details for recently added music albums', async () => {

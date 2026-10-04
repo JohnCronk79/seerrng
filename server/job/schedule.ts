@@ -5,9 +5,12 @@ import bookRequestSearchManager from '@server/lib/bookRequestSearch';
 import { syncManagedCollections } from '@server/lib/collectionSync';
 import downloadRecovery from '@server/lib/downloadRecovery';
 import downloadTracker from '@server/lib/downloadtracker';
+import episodeWatchAhead from '@server/lib/episodeWatchAhead';
 import ImageProxy from '@server/lib/imageproxy';
 import refreshToken from '@server/lib/refreshToken';
+import { captureReleaseCalendarHistory } from '@server/lib/releaseCalendar/history';
 import { reconcileActiveRequests } from '@server/lib/requestStatus';
+import { backissueScanner } from '@server/lib/scanners/comics/backissue';
 import { kapowarrScanner } from '@server/lib/scanners/comics/kapowarr';
 import { mylarScanner } from '@server/lib/scanners/comics/mylar';
 import {
@@ -22,6 +25,8 @@ import { readarrScanner } from '@server/lib/scanners/readarr';
 import { sonarrScanner } from '@server/lib/scanners/sonarr';
 import type { JobId } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { refreshTrackedSoftwareRequests } from '@server/lib/softwareRequests';
+import { isWatchAheadMediaServer } from '@server/lib/watchAheadEligibility';
 import watchlistSync from '@server/lib/watchlistsync';
 import logger from '@server/logger';
 import { MediaRequestSubscriber } from '@server/subscriber/MediaRequestSubscriber';
@@ -298,6 +303,21 @@ export const startJobs = (): void => {
     });
   }
 
+  // The persisted job key retains its original name for configuration
+  // compatibility, but the queue now follows Plex, Jellyfin, or Emby playback.
+  if (isWatchAheadMediaServer(mediaServerType)) {
+    scheduledJobs.push({
+      id: 'jellyfin-watch-ahead',
+      name: 'Requested Episode Queue',
+      type: 'process',
+      interval: 'seconds',
+      cronSchedule: jobs['jellyfin-watch-ahead'].schedule,
+      job: schedule.scheduleJob(jobs['jellyfin-watch-ahead'].schedule, () =>
+        runTrackedJob('Requested Episode Queue', () => episodeWatchAhead.run())
+      ),
+    });
+  }
+
   // Run full radarr scan every 24 hours
   scheduledJobs.push({
     id: 'radarr-scan',
@@ -407,6 +427,24 @@ export const startJobs = (): void => {
   });
 
   scheduledJobs.push({
+    id: 'backissue-scan',
+    name: 'BackIssue Comics Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['backissue-scan'].schedule,
+    job: schedule.scheduleJob(jobs['backissue-scan'].schedule, () => {
+      logger.info('Starting scheduled job: BackIssue Comics Scan', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('BackIssue Comics Scan', () =>
+        backissueScanner.run()
+      );
+    }),
+    running: () => backissueScanner.status().running,
+    cancelFn: () => backissueScanner.cancel(),
+  });
+
+  scheduledJobs.push({
     id: 'magazine-scan',
     name: 'LazyLibrarian Magazine Scan',
     type: 'process',
@@ -465,6 +503,30 @@ export const startJobs = (): void => {
         { scope: 'instance' }
       );
     }),
+  });
+
+  scheduledJobs.push({
+    id: 'software-request-reconciliation',
+    name: 'Software Request Reconciliation',
+    type: 'process',
+    interval: 'minutes',
+    cronSchedule: jobs['software-request-reconciliation'].schedule,
+    job: schedule.scheduleJob(
+      jobs['software-request-reconciliation'].schedule,
+      () => {
+        logger.debug(
+          'Starting scheduled job: Software Request Reconciliation',
+          {
+            label: 'Jobs',
+          }
+        );
+        return runTrackedJob(
+          'Software Request Reconciliation',
+          refreshTrackedSoftwareRequests,
+          { logCompletion: true }
+        );
+      }
+    ),
   });
 
   scheduledJobs.push({
@@ -543,6 +605,24 @@ export const startJobs = (): void => {
   });
 
   scheduledJobs.push({
+    id: 'release-calendar-history',
+    name: 'Release Calendar History',
+    type: 'process',
+    interval: 'fixed',
+    cronSchedule: jobs['release-calendar-history'].schedule,
+    job: schedule.scheduleJob(jobs['release-calendar-history'].schedule, () => {
+      logger.info('Starting scheduled job: Release Calendar History', {
+        label: 'Jobs',
+      });
+      return runTrackedJob(
+        'Release Calendar History',
+        () => captureReleaseCalendarHistory(),
+        { logCompletion: true }
+      );
+    }),
+  });
+
+  scheduledJobs.push({
     id: 'process-blocklisted-tags',
     name: 'Process Blocklisted Tags',
     type: 'process',
@@ -572,6 +652,14 @@ export const startJobs = (): void => {
   void runTrackedJob('Request Status Reconciliation', () =>
     reconcileActiveRequests()
   );
+
+  if (jobs['software-request-reconciliation'].enabled !== false) {
+    void runTrackedJob(
+      'Software Request Reconciliation',
+      refreshTrackedSoftwareRequests,
+      { logCompletion: true }
+    );
+  }
 
   // Discover the existing music catalogue immediately after startup instead
   // of leaving ownership badges stale until the overnight Lidarr scan.

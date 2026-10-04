@@ -7,10 +7,14 @@ import {
 import IssueMediaSummary from '@app/components/IssueDetails/IssueMediaSummary';
 import { getAvailableIssueQualities } from '@app/components/IssueDetails/issueMediaFormat';
 import SeriesEpisodeSelector from '@app/components/IssueModal/CreateIssueModal/SeriesEpisodeSelector';
-import { getIssueOptionsForMediaType } from '@app/components/IssueModal/constants';
+import {
+  getIssueOptionsForMediaType,
+  getIssueSubtypeOptionsForMediaType,
+} from '@app/components/IssueModal/constants';
 import MediaQualitySelect from '@app/components/MediaDetails/MediaQualitySelect';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
+import { encodeApiPathSegment } from '@app/utils/apiPath';
 import defineMessages from '@app/utils/defineMessages';
 import { getIssueListHref } from '@app/utils/issueNavigation';
 import { PaperAirplaneIcon, XMarkIcon } from '@heroicons/react/24/outline';
@@ -21,6 +25,7 @@ import type Issue from '@server/entity/Issue';
 import type { SeasonEpisodeSelection } from '@server/interfaces/api/seasonInterfaces';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
 import type { MovieDetails } from '@server/models/Movie';
 import type { MusicDetails } from '@server/models/Music';
 import type { TvDetails } from '@server/models/Tv';
@@ -40,6 +45,7 @@ const messages = defineMessages('components.IssueModal.CreateIssueModal', {
     'Please provide a detailed explanation of the issue you encountered.',
   quality: 'Quality',
   issueType: 'Issue Type',
+  issueReason: 'Reason',
   hd: 'HD',
   ultraHd: '4K',
   noAvailableQuality: 'No available quality',
@@ -53,7 +59,12 @@ const messages = defineMessages('components.IssueModal.CreateIssueModal', {
 });
 
 type IssueMediaDetails =
-  MovieDetails | TvDetails | MusicDetails | BookDetails | ComicDetails;
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
 
 const isMusic = (media: IssueMediaDetails): media is MusicDetails => {
   return (media as MusicDetails).mediaType === 'album';
@@ -67,8 +78,12 @@ const isComic = (media: IssueMediaDetails): media is ComicDetails => {
   return (media as ComicDetails).mediaType === 'comic';
 };
 
+const isMagazine = (media: IssueMediaDetails): media is MagazineDetails => {
+  return (media as MagazineDetails).mediaType === 'magazine';
+};
+
 const isMovie = (movie: IssueMediaDetails): movie is MovieDetails => {
-  if (isMusic(movie) || isBook(movie) || isComic(movie)) {
+  if (isMusic(movie) || isBook(movie) || isComic(movie) || isMagazine(movie)) {
     return false;
   }
 
@@ -76,7 +91,7 @@ const isMovie = (movie: IssueMediaDetails): movie is MovieDetails => {
 };
 
 interface CreateIssueModalProps {
-  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic';
+  mediaType: 'movie' | 'tv' | 'music' | 'book' | 'comic' | 'magazine';
   tmdbId?: number;
   mediaId?: number;
   title?: string;
@@ -99,7 +114,9 @@ const CreateIssueModal = ({
       ? tmdbId
         ? `/api/v1/${mediaType}/${tmdbId}`
         : null
-      : null;
+      : mediaType === 'magazine' && title
+        ? `/api/v1/magazine/${encodeApiPathSegment(title)}`
+        : null;
   const { data, error } = useSWR<IssueMediaDetails>(detailUrl);
 
   if (!tmdbId && !mediaId) {
@@ -112,7 +129,7 @@ const CreateIssueModal = ({
     (data
       ? isMusic(data)
         ? (data.artistBackdrop ?? data.artistThumb ?? data.posterPath)
-        : isBook(data) || isComic(data)
+        : isBook(data) || isComic(data) || isMagazine(data)
           ? data.posterPath
           : data.backdropPath
             ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
@@ -123,11 +140,16 @@ const CreateIssueModal = ({
   const resolvedTitle =
     title ??
     (data
-      ? isMovie(data) || isMusic(data) || isBook(data) || isComic(data)
+      ? isMovie(data) ||
+        isMusic(data) ||
+        isBook(data) ||
+        isComic(data) ||
+        isMagazine(data)
         ? data.title
         : data.name
       : undefined);
   const issueOptions = getIssueOptionsForMediaType(mediaType);
+  const issueSubtypeOptions = getIssueSubtypeOptionsForMediaType(mediaType);
   const orderedIssueOptions = [
     IssueType.OTHER,
     IssueType.AUDIO,
@@ -143,6 +165,11 @@ const CreateIssueModal = ({
       label: intl.formatMessage(option.name),
     })
   );
+  const issueSubtypeSelectOptions: CompactSelectOption[] =
+    issueSubtypeOptions.map((option) => ({
+      value: option.value,
+      label: intl.formatMessage(option.name),
+    }));
   const availableQualities = getAvailableIssueQualities(data?.mediaInfo);
   const hasAvailableVideoQuality = availableQualities.length > 0;
   const initialIs4k = availableQualities[0] === '4k';
@@ -168,6 +195,11 @@ const CreateIssueModal = ({
     issueType: Yup.number()
       .oneOf(orderedIssueOptions.map((option) => option.issueType))
       .required(),
+    issueSubtype: issueSubtypeOptions.length
+      ? Yup.string()
+          .oneOf(issueSubtypeOptions.map((option) => option.value))
+          .required()
+      : Yup.string().notRequired(),
     message: Yup.string()
       .max(
         MAX_ISSUE_MESSAGE_LENGTH,
@@ -194,6 +226,7 @@ const CreateIssueModal = ({
       enableReinitialize
       initialValues={{
         issueType: defaultIssueType,
+        issueSubtype: issueSubtypeOptions.length ? 'other' : '',
         message: '',
         is4k: initialIs4k,
         activeSeason: initialAvailableSeasons[0] ?? -1,
@@ -204,6 +237,9 @@ const CreateIssueModal = ({
         try {
           const newIssue = await axios.post<Issue>('/api/v1/issue', {
             issueType: values.issueType,
+            ...(issueSubtypeOptions.length
+              ? { issueSubtype: values.issueSubtype }
+              : {}),
             message: values.message,
             mediaId: resolvedMediaId,
             is4k: values.is4k,
@@ -272,6 +308,17 @@ const CreateIssueModal = ({
             defaultValue={defaultIssueType.toString()}
           />
         );
+        const issueSubtypeSelect = issueSubtypeOptions.length ? (
+          <CompactSelect
+            label={intl.formatMessage(messages.issueReason)}
+            value={values.issueSubtype}
+            options={issueSubtypeSelectOptions}
+            onChange={(issueSubtype) =>
+              void setFieldValue('issueSubtype', issueSubtype)
+            }
+            defaultValue="other"
+          />
+        ) : null;
 
         return (
           <Modal
@@ -293,14 +340,18 @@ const CreateIssueModal = ({
                 embedded
                 rightDetails={[
                   { label: 'Status', value: 'Ready to Report' },
-                  {
-                    label: 'Quality',
-                    value: hasAvailableVideoQuality
-                      ? values.is4k
-                        ? intl.formatMessage(messages.ultraHd)
-                        : intl.formatMessage(messages.hd)
-                      : intl.formatMessage(messages.noAvailableQuality),
-                  },
+                  ...(mediaType === 'movie' || mediaType === 'tv'
+                    ? [
+                        {
+                          label: 'Quality',
+                          value: hasAvailableVideoQuality
+                            ? values.is4k
+                              ? intl.formatMessage(messages.ultraHd)
+                              : intl.formatMessage(messages.hd)
+                            : intl.formatMessage(messages.noAvailableQuality),
+                        },
+                      ]
+                    : []),
                 ]}
                 footer={
                   <>
@@ -321,19 +372,22 @@ const CreateIssueModal = ({
                       />
                     )}
                     {issueTypeSelect}
+                    {issueSubtypeSelect}
                   </>
                 }
               />
             )}
 
             {!data && issueTypeSelect}
+            {!data && issueSubtypeSelect}
 
             {mediaType === 'tv' &&
               data &&
               !isMovie(data) &&
               !isMusic(data) &&
               !isBook(data) &&
-              !isComic(data) && (
+              !isComic(data) &&
+              !isMagazine(data) && (
                 <>
                   <SeriesEpisodeSelector
                     tvId={data.id}
@@ -394,7 +448,7 @@ const CreateIssueModal = ({
                 buttonSize="standard"
               >
                 <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
-                  <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                  <XMarkIcon aria-hidden="true" />
                   <span>{intl.formatMessage(globalMessages.cancel)}</span>
                 </span>
               </Button>
@@ -411,7 +465,7 @@ const CreateIssueModal = ({
                 }
               >
                 <span className="inline-flex items-center gap-1.5 [&_svg]:!m-0">
-                  <PaperAirplaneIcon className="h-4 w-4" aria-hidden="true" />
+                  <PaperAirplaneIcon aria-hidden="true" />
                   <span>{intl.formatMessage(messages.submitissue)}</span>
                 </span>
               </Button>

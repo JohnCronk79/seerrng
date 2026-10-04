@@ -184,6 +184,15 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: bash scripts/ensure-release-tag-on-main.sh "$TAG"
+      - name: Checkout AppImage launcher files from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: appimage-packaging
+          sparse-checkout: |
+            packaging/appimage
+            public
+          persist-credentials: false
       - name: Download Linux asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -204,17 +213,130 @@ jobs:
           appimagetool_url='https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage'
           curl -fsSL --retry 5 "$appimagetool_url" -o appimagetool
           echo 'a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0  appimagetool' | sha256sum -c -
-          chmod +x appimagetool packaging/appimage/AppRun
-          mkdir -p SeerrNG.AppDir/usr/bin SeerrNG.AppDir/usr/lib/seerrng SeerrNG.AppDir/usr/share/applications SeerrNG.AppDir/usr/share/icons/hicolor/256x256/apps
+          node_version='24.21.0'
+          node_archive="node-v${node_version}-linux-x64.tar.xz"
+          node_base_url="https://nodejs.org/dist/v${node_version}"
+          curl -fsSL --retry 5 "${node_base_url}/${node_archive}" -o "$node_archive"
+          curl -fsSL --retry 5 "${node_base_url}/SHASUMS256.txt" \
+            | awk -v archive="$node_archive" '$2 == archive { print; found = 1 } END { if (!found) exit 1 }' \
+            > node.sha256
+          sha256sum --check node.sha256
+          mkdir -p node-runtime
+          tar -xJf "$node_archive" -C node-runtime --strip-components=1
+          chmod +x appimagetool appimage-packaging/packaging/appimage/AppRun
+          mkdir -p SeerrNG.AppDir/usr/bin SeerrNG.AppDir/usr/lib/seerrng SeerrNG.AppDir/usr/share/applications SeerrNG.AppDir/usr/share/icons/hicolor/256x256/apps SeerrNG.AppDir/usr/share/licenses/nodejs
           tar -xzf "seerrng-${{ steps.version.outputs.tag }}-linux-x64.tar.gz" --strip-components=1 -C SeerrNG.AppDir/usr/lib/seerrng
-          cp "$(command -v node)" SeerrNG.AppDir/usr/bin/node
-          cp packaging/appimage/AppRun SeerrNG.AppDir/
-          cp packaging/appimage/seerrng.desktop SeerrNG.AppDir/
-          cp packaging/appimage/seerrng.desktop SeerrNG.AppDir/usr/share/applications/
-          cp public/android-chrome-512x512.png SeerrNG.AppDir/seerrng.png
-          cp public/android-chrome-512x512.png SeerrNG.AppDir/usr/share/icons/hicolor/256x256/apps/seerrng.png
+          cp node-runtime/bin/node SeerrNG.AppDir/usr/bin/node
+          cp node-runtime/LICENSE SeerrNG.AppDir/usr/share/licenses/nodejs/LICENSE
+          cp appimage-packaging/packaging/appimage/AppRun SeerrNG.AppDir/
+          cp appimage-packaging/packaging/appimage/seerrng.desktop SeerrNG.AppDir/
+          cp appimage-packaging/packaging/appimage/seerrng.desktop SeerrNG.AppDir/usr/share/applications/
+          cp appimage-packaging/public/android-chrome-512x512.png SeerrNG.AppDir/seerrng.png
+          cp appimage-packaging/public/android-chrome-512x512.png SeerrNG.AppDir/usr/share/icons/hicolor/256x256/apps/seerrng.png
+          app_dir='SeerrNG.AppDir/usr/lib/seerrng'
+          manylinux_image='quay.io/pypa/manylinux_2_28_x86_64@sha256:c2261579b9c2e5d45aa93312f73e2a302182e3e977b558581a1838d6fed3d8e6'
+          docker run --rm \
+            --volume "$PWD/$app_dir:/app" \
+            --volume "$PWD/node-runtime:/node-runtime:ro" \
+            --workdir '/app/node_modules/.pnpm/better-sqlite3@13.0.3/node_modules/better-sqlite3' \
+            "$manylinux_image" \
+            /bin/bash -euc '
+              export PATH="/node-runtime/bin:$PATH"
+              npm install --global --prefix /tmp/node-tooling --ignore-scripts node-gyp@13.0.1
+              export PATH="/tmp/node-tooling/bin:$PATH"
+              node-gyp rebuild --release --force_build=1 --nodedir=/node-runtime
+              install -m 0644 build/Release/better_sqlite3.node prebuilds/linux-x64.node
+              rm -rf build
+            '
+          swc_wasm_version="$(node -e "console.log(require(require('node:path').resolve(process.argv[1])).version)" "$app_dir/node_modules/next/package.json")"
+          case "$swc_wasm_version" in
+            16.3.6)
+              swc_wasm_integrity='sha512-Qbh5QIWcyzZfp+neSFDxSaS0PjyCv7NUVipXcOaEp0+bCAynyGAoGnZirESQyPwpn/VXBncpZCVa0cnD+EWDmQ=='
+              ;;
+            *)
+              echo "No pinned Next.js WASM compiler checksum for version ${swc_wasm_version}." >&2
+              exit 1
+              ;;
+          esac
+          swc_wasm_archive="$RUNNER_TEMP/swc-wasm-nodejs-${swc_wasm_version}.tgz"
+          curl -fsSL --retry 5 \
+            "https://registry.npmjs.org/@next/swc-wasm-nodejs/-/swc-wasm-nodejs-${swc_wasm_version}.tgz" \
+            -o "$swc_wasm_archive"
+          actual_swc_wasm_integrity="sha512-$(openssl dgst -sha512 -binary "$swc_wasm_archive" | base64 -w0)"
+          if [ "$actual_swc_wasm_integrity" != "$swc_wasm_integrity" ]; then
+            echo 'Next.js WASM compiler checksum did not match its pinned integrity.' >&2
+            exit 1
+          fi
+          next_directory="$app_dir/node_modules/next"
+          if [ ! -f "$next_directory/package.json" ]; then
+            echo 'The AppImage release archive does not contain Next.js.' >&2
+            exit 1
+          fi
+          swc_wasm_directory="$next_directory/wasm/@next/swc-wasm-nodejs"
+          mkdir -p "$swc_wasm_directory"
+          tar -xzf "$swc_wasm_archive" --strip-components=1 -C "$swc_wasm_directory"
+          find "$app_dir/node_modules/.pnpm" \
+            -path '*/node_modules/@next/swc-linux-x64-gnu/*.node' \
+            -type f -delete
+          if find "$app_dir/node_modules/.pnpm" \
+              -path '*/node_modules/@next/swc-linux-x64-gnu/*.node' \
+              -type f -print -quit | grep -q .; then
+            echo 'The AppImage still contains the build-only GNU SWC binary.' >&2
+            exit 1
+          fi
+          while IFS= read -r -d '' binary; do
+            if ! readelf -h "$binary" >/dev/null 2>&1; then
+              continue
+            fi
+            machine="$(readelf -h "$binary" \
+              | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')"
+            if [ "$machine" != 'Advanced Micro Devices X86-64' ]; then
+              continue
+            fi
+            required_glibc="$(readelf --version-info "$binary" \
+              | grep -Eo 'GLIBC_[0-9]+(\.[0-9]+)+' \
+              | sort -V | tail -n 1 || true)"
+            if [ -n "$required_glibc" ] && \
+                dpkg --compare-versions "${required_glibc#GLIBC_}" gt 2.29; then
+              echo "AppImage binary requires ${required_glibc}: ${binary}" >&2
+              exit 1
+            fi
+          done < <(find SeerrNG.AppDir -type f \
+            \( -perm /111 -o -name '*.node' -o -name '*.so' -o -name '*.so.*' \) \
+            -print0)
           ARCH=x86_64 ./appimagetool SeerrNG.AppDir "SeerrNG-${{ steps.version.outputs.version }}-x86_64.AppImage"
           sha256sum "SeerrNG-${{ steps.version.outputs.version }}-x86_64.AppImage" > "SeerrNG-${{ steps.version.outputs.version }}-x86_64.AppImage.sha256"
+      - name: Smoke-test AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_directory="${RUNNER_TEMP}/seerrng-appimage-config"
+          mkdir -p "$config_directory"
+          appimage_path="$PWD/SeerrNG-${{ steps.version.outputs.version }}-x86_64.AppImage"
+          CONFIG_DIRECTORY="$config_directory" PORT=55155 \
+            "$appimage_path" --appimage-extract-and-run > "$RUNNER_TEMP/appimage.log" 2>&1 &
+          appimage_pid=$!
+          cleanup() {
+            kill "$appimage_pid" 2>/dev/null || true
+            wait "$appimage_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT HUP INT TERM
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:55155/api/v1/settings/public >/dev/null; then
+              curl --fail --silent --show-error --location http://127.0.0.1:55155/ > "$RUNNER_TEMP/appimage-home.html"
+              grep -qi '<html' "$RUNNER_TEMP/appimage-home.html"
+              echo 'AppImage served its first-run web interface successfully.'
+              exit 0
+            fi
+            if ! kill -0 "$appimage_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/appimage.log" >&2
+              exit 1
+            fi
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/appimage.log" >&2
+          echo 'AppImage did not serve its web interface within 30 seconds.' >&2
+          exit 1
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}

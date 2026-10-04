@@ -21,6 +21,7 @@ import {
   BaseAgent,
   NOTIFICATION_DELIVERY_CONCURRENCY,
   getMediaTypeLabel,
+  getNotificationActionLabel,
   getNotificationActionUrl,
 } from './agent';
 
@@ -204,6 +205,40 @@ class EmailAgent
           timestamp: new Date().toTimeString(),
           requestedBy: payload.request.requestedBy.displayName,
           actionUrl: getNotificationActionUrl(payload, applicationUrl),
+          actionLabel: intl.formatMessage(getNotificationActionLabel(payload), {
+            applicationTitle,
+          }),
+          applicationUrl,
+          applicationTitle,
+          logoUrl,
+          recipientName,
+          recipientEmail,
+        },
+      };
+    } else if (
+      type === Notification.SOFTWARE_AVAILABLE ||
+      type === Notification.SOFTWARE_STATUS
+    ) {
+      return {
+        template: path.join(
+          __dirname,
+          '../../../templates/email/media-request'
+        ),
+        message: {
+          to: recipientEmail,
+        },
+        locals: {
+          event: payload.event,
+          body: payload.message ?? '',
+          mediaName: payload.subject,
+          mediaExtra: payload.extra ?? [],
+          imageUrl: embedPoster ? payload.image : undefined,
+          timestamp: new Date().toTimeString(),
+          requestedBy: payload.notifyUser?.displayName ?? '',
+          actionUrl: getNotificationActionUrl(payload, applicationUrl),
+          actionLabel: intl.formatMessage(getNotificationActionLabel(payload), {
+            applicationTitle,
+          }),
           applicationUrl,
           applicationTitle,
           logoUrl,

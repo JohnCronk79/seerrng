@@ -173,6 +173,62 @@ export function changedReleaseNoteFiles(base, head, cwd = process.cwd()) {
     .filter(({ file }) => file && isReleaseNotePath(file));
 }
 
+export function isReleaseNoteShipped(file, head, cwd = process.cwd()) {
+  let latestTag;
+  try {
+    latestTag = execFileSync(
+      'git',
+      ['describe', '--tags', '--abbrev=0', '--match', 'v3.*', head],
+      { cwd, encoding: 'utf8' }
+    ).trim();
+  } catch {
+    return false;
+  }
+
+  try {
+    execFileSync('git', ['cat-file', '-e', `${latestTag}:${file}`], {
+      cwd,
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isShippedReleaseNoteChanged(file, head, cwd = process.cwd()) {
+  let latestTag;
+  try {
+    latestTag = execFileSync(
+      'git',
+      ['describe', '--tags', '--abbrev=0', '--match', 'v3.*', head],
+      { cwd, encoding: 'utf8' }
+    ).trim();
+  } catch {
+    return false;
+  }
+
+  let shippedContent;
+  try {
+    shippedContent = execFileSync('git', ['show', `${latestTag}:${file}`], {
+      cwd,
+      encoding: 'utf8',
+    });
+  } catch {
+    return false;
+  }
+
+  try {
+    const currentContent = execFileSync('git', ['show', `${head}:${file}`], {
+      cwd,
+      encoding: 'utf8',
+    });
+    return currentContent !== shippedContent;
+  } catch {
+    return true;
+  }
+}
+
 export function readReleaseNotes(entries, cwd = process.cwd()) {
   const notes = [];
   const errors = [];
@@ -267,6 +323,7 @@ export function injectCuratedNotes(changelog, curatedNotes) {
 export function hasExplicitNoReleaseNote(body) {
   return (
     /release-note\s*:\s*none/iu.test(body) ||
+    /release-note-none-codeql-action/iu.test(body) ||
     /-\s*\[x\][^\n]*(?:internal-only|no user-facing release note)/iu.test(body)
   );
 }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import dns from 'node:dns/promises';
 import path from 'node:path';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
@@ -6,6 +7,7 @@ import JellyfinAPI from '@server/api/jellyfin';
 import PlexAPI from '@server/api/plexapi';
 import PlexTvAPI, { MAX_PLEX_SHARED_USERS } from '@server/api/plextv';
 import TautulliAPI from '@server/api/tautulli';
+import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import { ScheduledJobLease } from '@server/entity/ScheduledJobLease';
 import { User } from '@server/entity/User';
@@ -28,6 +30,7 @@ import {
 } from '@server/lib/settings';
 import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
 import { setupTestDb } from '@server/test/db';
+import { isSafeHttpUrl } from '@server/utils/security';
 import type { Express } from 'express';
 import express from 'express';
 import * as OpenApiValidator from 'express-openapi-validator';
@@ -118,6 +121,14 @@ before(() => {
 });
 
 beforeEach(() => {
+  // Notification transports are mocked; their explicit public URLs need DNS too.
+  mock.method(dns, 'lookup', async (hostname: string, options: unknown) => {
+    assert.deepStrictEqual(options, { all: true });
+    if (hostname !== 'example.com') {
+      throw new Error(`Unconfigured fixture DNS hostname: ${hostname}`);
+    }
+    return [{ address: '93.184.216.34', family: 4 }];
+  });
   const settings = getSettings();
   settings.plex.libraries = [
     { id: '1', name: 'Movies', enabled: false, type: 'movie' },
@@ -134,6 +145,15 @@ afterEach(() => {
 });
 
 describe('Settings route input validation', () => {
+  it('isolates public fixture DNS without admitting unknown or private hosts', async () => {
+    assert.strictEqual(await isSafeHttpUrl('https://example.com/'), true);
+    assert.strictEqual(
+      await isSafeHttpUrl('https://unconfigured.example.com/'),
+      false
+    );
+    assert.strictEqual(await isSafeHttpUrl('https://127.0.0.1/'), false);
+  });
+
   it('revalidates administrator authority before applying settings', async () => {
     const settings = getSettings();
     const originalTitle = settings.main.applicationTitle;
@@ -448,6 +468,43 @@ describe('Settings route input validation', () => {
     }
   });
 
+  it('saves category availability flags independently and validates their shape', async () => {
+    const settings = getSettings();
+    const original = { ...settings.main.enabledMediaCategories };
+
+    try {
+      const response = await request(app)
+        .post('/settings/main')
+        .send({ enabledMediaCategories: { movie: false, retro: false } });
+      const invalidBoolean = await request(app)
+        .post('/settings/main')
+        .send({ enabledMediaCategories: { tv: 'false' } });
+      const unknownCategory = await request(app)
+        .post('/settings/main')
+        .send({ enabledMediaCategories: { apps: false } });
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.enabledMediaCategories.movie, false);
+      assert.strictEqual(response.body.enabledMediaCategories.retro, false);
+      assert.strictEqual(response.body.enabledMediaCategories.tv, true);
+      assert.strictEqual(settings.main.enabledMediaCategories.movie, false);
+      assert.strictEqual(settings.main.enabledMediaCategories.retro, false);
+      assert.strictEqual(settings.main.enabledMediaCategories.tv, true);
+      assert.strictEqual(invalidBoolean.status, 400);
+      assert.match(
+        invalidBoolean.body.message,
+        /enabledMediaCategories\.tv must be a boolean/
+      );
+      assert.strictEqual(unknownCategory.status, 400);
+      assert.match(
+        unknownCategory.body.message,
+        /Unknown media category: apps/
+      );
+    } finally {
+      settings.main.enabledMediaCategories = original;
+    }
+  });
+
   it('rejects malformed main settings values before saving', async () => {
     const settings = getSettings();
     const saveMock = mock.method(settings, 'save', async () => undefined);
@@ -615,6 +672,7 @@ describe('Settings route input validation', () => {
       spotifyClientId: settings.main.spotifyClientId,
       spotifyClientSecret: settings.main.spotifyClientSecret,
       youtubeApiKey: settings.main.youtubeApiKey,
+      googleBooksApiKey: settings.main.googleBooksApiKey,
     };
 
     try {
@@ -622,6 +680,7 @@ describe('Settings route input validation', () => {
         spotifyClientId: 'spotify-client-id',
         spotifyClientSecret: 'spotify-client-secret',
         youtubeApiKey: 'youtube-api-key',
+        googleBooksApiKey: 'google-books-api-key',
       });
 
       assert.strictEqual(res.status, 200);
@@ -631,13 +690,19 @@ describe('Settings route input validation', () => {
         'spotify-client-secret'
       );
       assert.strictEqual(settings.main.youtubeApiKey, 'youtube-api-key');
+      assert.strictEqual(
+        settings.main.googleBooksApiKey,
+        'google-books-api-key'
+      );
       assert.strictEqual(res.body.spotifyClientId, 'spotify-client-id');
       assert.strictEqual(res.body.spotifyClientSecret, '[REDACTED]');
       assert.strictEqual(res.body.youtubeApiKey, '[REDACTED]');
+      assert.strictEqual(res.body.googleBooksApiKey, '[REDACTED]');
     } finally {
       settings.main.spotifyClientId = original.spotifyClientId;
       settings.main.spotifyClientSecret = original.spotifyClientSecret;
       settings.main.youtubeApiKey = original.youtubeApiKey;
+      settings.main.googleBooksApiKey = original.googleBooksApiKey;
     }
   });
 
@@ -724,6 +789,7 @@ describe('Settings route input validation', () => {
       libraries: [{ id: '2', name: 'Shows', enabled: true, type: 'show' }],
       serverId: 'stored-server',
       apiKey: 'stored-key',
+      bridgeLoginEnabled: true,
     };
     const parsedJellyfin = parseJellyfinSettingsBody(
       {
@@ -733,6 +799,7 @@ describe('Settings route input validation', () => {
         apiKey: 'new-key',
         name: 'Injected name',
         serverId: 'injected-server',
+        bridgeLoginEnabled: false,
         libraries: [],
         unexpected: 'persisted',
       },
@@ -741,12 +808,37 @@ describe('Settings route input validation', () => {
     assert.ok('value' in parsedJellyfin);
     assert.strictEqual(parsedJellyfin.value.name, 'Stored Jellyfin');
     assert.strictEqual(parsedJellyfin.value.serverId, 'stored-server');
+    assert.strictEqual(parsedJellyfin.value.bridgeLoginEnabled, true);
     assert.deepStrictEqual(parsedJellyfin.value.libraries, jellyfin.libraries);
     assert.strictEqual(
       (parsedJellyfin.value as JellyfinSettings & { unexpected?: unknown })
         .unexpected,
       undefined
     );
+  });
+
+  it('can revoke Jellyfin bridge sessions while Jellyfin is unavailable', async () => {
+    const settings = getSettings();
+    settings.jellyfin.bridgeLoginEnabled = true;
+    const getSystemInfo = mock.method(JellyfinAPI.prototype, 'getSystemInfo');
+
+    try {
+      const response = await request(app)
+        .post('/settings/jellyfin/bridge-login')
+        .send({ enabled: false });
+      const malformed = await request(app)
+        .post('/settings/jellyfin/bridge-login')
+        .send({ enabled: 'false' });
+
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(response.body, { bridgeLoginEnabled: false });
+      assert.strictEqual(settings.jellyfin.bridgeLoginEnabled, false);
+      assert.strictEqual(getSystemInfo.mock.callCount(), 0);
+      assert.strictEqual(malformed.status, 400);
+      assert.match(malformed.body.message, /enabled must be a boolean/i);
+    } finally {
+      getSystemInfo.mock.restore();
+    }
   });
 
   it('rejects malformed media-server connection fields', () => {
@@ -1416,6 +1508,63 @@ describe('Settings route input validation', () => {
 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body[0].type, 'book');
+  });
+
+  it('keeps the independent Jellyfin bridge switch reachable through OpenAPI', async () => {
+    const settings = getSettings();
+    settings.jellyfin.serverId = 'test-jellyfin-server';
+    settings.jellyfin.bridgeLoginEnabled = false;
+    settings.jellyfin.bridgeLoginGeneration = 4;
+    settings.main.mediaServerType = MediaServerType.PLEX;
+    settings.main.mediaServerLogin = true;
+
+    const wrongMediaServer = await request(createOpenApiValidatedApp())
+      .post('/api/v1/settings/jellyfin/bridge-login')
+      .send({ enabled: true });
+    assert.strictEqual(wrongMediaServer.status, 400);
+    assert.strictEqual(settings.jellyfin.bridgeLoginEnabled, false);
+    assert.strictEqual(settings.jellyfin.bridgeLoginGeneration, 4);
+
+    settings.main.mediaServerType = MediaServerType.JELLYFIN;
+    settings.main.mediaServerLogin = false;
+
+    const mediaServerLoginDisabled = await request(createOpenApiValidatedApp())
+      .post('/api/v1/settings/jellyfin/bridge-login')
+      .send({ enabled: true });
+    assert.strictEqual(mediaServerLoginDisabled.status, 400);
+    assert.match(
+      mediaServerLoginDisabled.body.message,
+      /enable media-server sign-in/i
+    );
+    assert.strictEqual(settings.jellyfin.bridgeLoginEnabled, false);
+    assert.strictEqual(settings.jellyfin.bridgeLoginGeneration, 4);
+
+    settings.main.mediaServerLogin = true;
+
+    const res = await request(createOpenApiValidatedApp())
+      .post('/api/v1/settings/jellyfin/bridge-login')
+      .send({ enabled: true });
+
+    assert.strictEqual(res.status, 200);
+    assert.deepStrictEqual(res.body, { bridgeLoginEnabled: true });
+    assert.strictEqual(settings.jellyfin.bridgeLoginEnabled, true);
+    assert.strictEqual(settings.jellyfin.bridgeLoginGeneration, 5);
+
+    const unchanged = await request(createOpenApiValidatedApp())
+      .post('/api/v1/settings/jellyfin/bridge-login')
+      .send({ enabled: true });
+    assert.strictEqual(unchanged.status, 200);
+    assert.strictEqual(settings.jellyfin.bridgeLoginGeneration, 5);
+
+    const disabled = await request(createOpenApiValidatedApp())
+      .post('/api/v1/settings/jellyfin/bridge-login')
+      .send({ enabled: false });
+    assert.strictEqual(disabled.status, 200);
+    assert.strictEqual(settings.jellyfin.bridgeLoginGeneration, 6);
+
+    const jellyfinSettings = await request(app).get('/settings/jellyfin');
+    assert.strictEqual(jellyfinSettings.status, 200);
+    assert.strictEqual(jellyfinSettings.body.bridgeLoginGeneration, undefined);
   });
 
   it('supports switching an audiobook library back to Music', async () => {
@@ -2400,6 +2549,39 @@ describe('Settings route input validation', () => {
     );
 
     assert.strictEqual(res.status, 404);
+  });
+
+  it('lists and manually starts the BackIssue collection scan through the API', async () => {
+    let invoked = false;
+    scheduledJobs.push({
+      id: 'backissue-scan',
+      name: 'BackIssue Comics Scan',
+      type: 'process',
+      interval: 'hours',
+      cronSchedule: '0 30 5 * * *',
+      job: {
+        invoke: () => {
+          invoked = true;
+        },
+        nextInvocation: () => null,
+      } as never,
+    });
+
+    const validatedApp = createOpenApiValidatedApp();
+    const jobs = await request(validatedApp).get('/api/v1/settings/jobs');
+    const run = await request(validatedApp).post(
+      '/api/v1/settings/jobs/backissue-scan/run'
+    );
+
+    assert.strictEqual(jobs.status, 200);
+    assert.ok(
+      jobs.body.some(
+        (job: { id: string; name: string }) =>
+          job.id === 'backissue-scan' && job.name === 'BackIssue Comics Scan'
+      )
+    );
+    assert.strictEqual(run.status, 200);
+    assert.strictEqual(invoked, true);
   });
 
   it('does not invoke a job that already reports running', async () => {

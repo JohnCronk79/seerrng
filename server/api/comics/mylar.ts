@@ -1,6 +1,7 @@
 import ExternalAPI from '@server/api/externalapi';
 import type { MylarSettings } from '@server/lib/settings';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
+import type { Readable } from 'node:stream';
 
 // Mylar3's `?apikey=&cmd=` API is not uniformly enveloped - confirmed by
 // reading the running app's own mylar/api.py, not by guessing. Most commands
@@ -37,6 +38,12 @@ export interface MylarIssue {
 export interface MylarComicDetail {
   comic?: MylarComic;
   issues: MylarIssue[];
+}
+
+export interface MylarIssueDownload {
+  stream: Readable;
+  filename?: string;
+  size?: number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -98,6 +105,68 @@ const sanitizeIssue = (value: unknown): MylarIssue | undefined => {
   };
 };
 
+const MAX_CONTENT_DISPOSITION_LENGTH = 8_192;
+
+export const getMylarIssueFilename = (
+  disposition: string
+): string | undefined => {
+  if (disposition.length > MAX_CONTENT_DISPOSITION_LENGTH) return undefined;
+
+  const extendedFilename = /(?:^|;)\s*filename\*\s*=\s*UTF-8''([^;]+)/i.exec(
+    disposition
+  )?.[1];
+  let filename = extendedFilename;
+  if (filename) {
+    try {
+      filename = decodeURIComponent(filename.trim());
+    } catch {
+      return undefined;
+    }
+  } else {
+    const parameter = /(?:^|;)\s*filename\s*=\s*/i.exec(disposition);
+    if (!parameter) return undefined;
+    let index = parameter.index + parameter[0].length;
+    while (index < disposition.length && /\s/.test(disposition[index])) index++;
+    if (disposition[index] === '"') {
+      index++;
+      let parsed = '';
+      let closed = false;
+      while (index < disposition.length) {
+        const character = disposition[index];
+        if (character === '\\' && index + 1 < disposition.length) {
+          const next = disposition[index + 1];
+          parsed += next === '"' || next === '\\' ? next : '\\' + next;
+          index += 2;
+        } else if (character === '"') {
+          closed = true;
+          break;
+        } else {
+          parsed += character;
+          index++;
+        }
+      }
+      if (!closed) return undefined;
+      filename = parsed;
+    } else {
+      const end = disposition.indexOf(';', index);
+      filename = disposition.slice(index, end < 0 ? undefined : end).trim();
+    }
+  }
+
+  if (!filename) return undefined;
+  filename = filename
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()!
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, 255);
+  return filename === '.' || filename === '..' || !filename
+    ? undefined
+    : filename;
+};
+
 class MylarAPI extends ExternalAPI {
   static buildUrl(
     settings: Pick<MylarSettings, 'useSsl' | 'hostname' | 'port' | 'baseUrl'>,
@@ -146,27 +215,70 @@ class MylarAPI extends ExternalAPI {
     return this.runCommand('getVersion');
   }
 
-  public async getIndex(): Promise<MylarComic[]> {
-    const data = await this.runCommand<unknown>('getIndex');
+  public async getIndex(ttl = 0): Promise<MylarComic[]> {
+    const data = await this.runCommand<unknown>('getIndex', {}, ttl);
     return Array.isArray(data)
       ? data.map(sanitizeComic).filter((comic): comic is MylarComic => !!comic)
       : [];
   }
 
-  public async getComic(comicId: string): Promise<MylarComicDetail> {
+  public async getComic(comicId: string, ttl = 0): Promise<MylarComicDetail> {
     const data = await this.runCommand<{
       comic?: unknown[];
       issues?: unknown[];
-    }>('getComic', { id: comicId });
+    }>('getComic', { id: comicId }, ttl);
     return {
       comic: Array.isArray(data.comic)
         ? sanitizeComic(data.comic[0])
         : undefined,
       issues: Array.isArray(data.issues)
         ? data.issues
+            .slice(0, 10_000)
             .map(sanitizeIssue)
             .filter((issue): issue is MylarIssue => !!issue)
         : [],
+    };
+  }
+
+  public async downloadIssue(issueId: string): Promise<MylarIssueDownload> {
+    if (!/^\d{1,20}$/.test(issueId)) {
+      throw new Error('Mylar3 issue IDs must be numeric.');
+    }
+
+    const response = await this.request<Readable>('GET', '/api', undefined, {
+      params: {
+        apikey: this.apiKey,
+        cmd: 'downloadIssue',
+        id: issueId,
+      },
+      responseType: 'stream',
+      headers: { Accept: 'application/octet-stream' },
+    });
+    const contentType = String(response.headers['content-type'] ?? '')
+      .split(';', 1)[0]
+      .trim()
+      .toLowerCase();
+    if (contentType === 'application/json' || contentType === 'text/html') {
+      response.data.destroy();
+      throw new Error('Mylar3 did not return an issue file.');
+    }
+
+    const rawSize = response.headers['content-length'];
+    const parsedSize =
+      typeof rawSize === 'string' && /^\d+$/.test(rawSize)
+        ? Number(rawSize)
+        : undefined;
+    const filename = getMylarIssueFilename(
+      String(response.headers['content-disposition'] ?? '')
+    );
+
+    return {
+      stream: response.data,
+      filename,
+      size:
+        parsedSize !== undefined && Number.isSafeInteger(parsedSize)
+          ? parsedSize
+          : undefined,
     };
   }
 

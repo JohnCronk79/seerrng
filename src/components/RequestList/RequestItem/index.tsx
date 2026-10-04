@@ -9,8 +9,11 @@ import ConfirmButton from '@app/components/Common/ConfirmButton';
 import MediaTypeBadge, {
   getMediaTypeBadgeType,
 } from '@app/components/Common/MediaTypeBadge';
+import Tooltip from '@app/components/Common/Tooltip';
+import { canRetryRequest } from '@app/components/RequestCard/retryPermissions';
 import StatusBadge from '@app/components/StatusBadge';
 import useDeepLinks from '@app/hooks/useDeepLinks';
+import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -22,6 +25,7 @@ import {
 import defineMessages from '@app/utils/defineMessages';
 import { getTmdbPosterImageUrl } from '@app/utils/imageCache';
 import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { hasLinkedWatchAheadAccount } from '@app/utils/watchAhead';
 import {
   ArrowPathIcon,
   CheckIcon,
@@ -33,6 +37,7 @@ import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { RequestResultsResponse } from '@server/interfaces/api/requestInterfaces';
+import type { ServiceCommonServer } from '@server/interfaces/api/serviceInterfaces';
 import type { BookDetails } from '@server/models/Book';
 import type { ComicDetails } from '@server/models/Comic';
 import type { MagazineDetails } from '@server/models/Magazine';
@@ -42,7 +47,7 @@ import type { TvDetails } from '@server/models/Tv';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { FormattedRelativeTime, useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
@@ -76,6 +81,19 @@ const messages = defineMessages('components.RequestList.RequestItem', {
   audiobook: 'Audiobook',
   both: 'Both',
   partialBookService: 'Partial Bookshelf link',
+  watchAheadTitle: 'Episode Queue',
+  watchAheadDescription:
+    'This optional queue is Off by default for every TV request. If you turn it on, SeerrNG follows your linked media server playback and keeps up to {count} upcoming episodes requested in Sonarr after the request is approved. Episodes use the parent approval and do not count against your request quota. Turning it off stops future additions but does not cancel episodes already requested.',
+  watchAheadOff: 'Off',
+  watchAheadEpisodes: '{count, plural, one {# episode} other {# episodes}}',
+  saveWatchAhead: 'Save',
+  stopWatchAhead: 'Stop',
+  watchAheadSaved: 'Requested episode queue updated.',
+  watchAheadSaveError:
+    'Could not update the requested episode queue. Check that your media server and Sonarr are connected.',
+  watchAheadEpisodeBadge: 'Auto-Queued',
+  watchAheadEpisodeBadgeTooltip:
+    'Automatically requested by the Episode Queue as playback progressed.',
 });
 
 type RequestItemTitle =
@@ -545,7 +563,12 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   const { addToast } = useToasts();
   const intl = useIntl();
   const { user, hasPermission } = useUser();
+  const { currentSettings } = useSettings();
   const [showEditModal, setShowEditModal] = useState(false);
+  const [watchAheadEpisodeCount, setWatchAheadEpisodeCount] = useState(
+    request.watchAheadEpisodeCount ?? 0
+  );
+  const [savingWatchAhead, setSavingWatchAhead] = useState(false);
   const bookId =
     request.type === 'book' ? getNormalizedBookId(request) : undefined;
   const musicId =
@@ -568,6 +591,9 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                 ? `/api/v1/magazine/${encodeApiPathSegment(magazineId)}`
                 : null;
   const { data: title, error } = useSWR<RequestItemTitle>(inView ? url : null);
+  const { data: sonarrServers } = useSWR<ServiceCommonServer[]>(
+    '/api/v1/service/sonarr'
+  );
   const { data: requestData, mutate: revalidate } = useSWR<
     NonFunctionProperties<MediaRequest>
   >(`/api/v1/request/${request.id}`, {
@@ -581,6 +607,24 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
       15000
     ),
   });
+  const canFailDownload = Boolean(
+    requestData &&
+    requestData.status === MediaRequestStatus.APPROVED &&
+    (requestData.type === 'movie' || requestData.type === 'tv') &&
+    getRequestDownloadStatus(requestData)?.some((item) => item.downloadId) &&
+    user &&
+    canRetryRequest({
+      requestType: requestData.type,
+      is4k: requestData.is4k,
+      requestedById: requestData.requestedBy.id,
+      userId: user.id,
+      permissions: user.permissions,
+    })
+  );
+
+  useEffect(() => {
+    setWatchAheadEpisodeCount(requestData?.watchAheadEpisodeCount ?? 0);
+  }, [requestData?.watchAheadEpisodeCount]);
 
   const [isRetrying, setRetrying] = useState(false);
   const [updatingType, setUpdatingType] = useState<
@@ -591,6 +635,28 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
       ? hasBookFormat(requestData, 'ebook') !==
         hasBookFormat(requestData, 'audiobook')
       : false;
+  const matchingSonarr =
+    requestData?.serverId != null
+      ? sonarrServers?.find(
+          (server) =>
+            server.id === requestData.serverId &&
+            server.is4k === requestData.is4k
+        )
+      : sonarrServers?.find(
+          (server) => server.isDefault && server.is4k === requestData?.is4k
+        );
+  const canEnableWatchAhead =
+    hasLinkedWatchAheadAccount(user, currentSettings.mediaServerType) &&
+    Number.isSafeInteger(Number(requestData?.media.tvdbId)) &&
+    Number(requestData?.media.tvdbId) > 0 &&
+    Boolean(matchingSonarr) &&
+    hasPermission(
+      requestData?.is4k
+        ? [Permission.REQUEST_4K, Permission.REQUEST_4K_TV]
+        : [Permission.REQUEST, Permission.REQUEST_TV],
+      { type: 'or' }
+    );
+  const savedWatchAheadEpisodeCount = requestData?.watchAheadEpisodeCount ?? 0;
   const removableBookFormat =
     requestData?.type === 'book' && requestData.bookFormat === 'both'
       ? hasPartialBookService
@@ -667,6 +733,28 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
       });
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const saveWatchAhead = async () => {
+    setSavingWatchAhead(true);
+    try {
+      await axios.put(`/api/v1/request/${request.id}/watch-ahead`, {
+        episodeCount: watchAheadEpisodeCount,
+      });
+      revalidate();
+      revalidateList();
+      addToast(intl.formatMessage(messages.watchAheadSaved), {
+        autoDismiss: true,
+        appearance: 'success',
+      });
+    } catch {
+      addToast(intl.formatMessage(messages.watchAheadSaveError), {
+        autoDismiss: true,
+        appearance: 'error',
+      });
+    } finally {
+      setSavingWatchAhead(false);
     }
   };
 
@@ -951,6 +1039,8 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                   }
                   plexUrl={requestData.is4k ? plexUrl4k : plexUrl}
                   serviceUrl={getRequestServiceUrl(requestData)}
+                  requestId={requestData.id}
+                  canFailDownload={canFailDownload}
                 />
               )}
             </div>
@@ -1092,7 +1182,8 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                   {intl.formatMessage(messages.partialBookService)}
                 </span>
                 <span className="flex truncate text-sm text-gray-300">
-                  {requestData.media.serviceId
+                  {requestData.media.serviceId !== null &&
+                  requestData.media.serviceId !== undefined
                     ? intl.formatMessage(messages.ebook)
                     : intl.formatMessage(messages.audiobook)}
                 </span>
@@ -1101,6 +1192,86 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
           </div>
         </div>
         <div className="z-10 mt-4 flex w-full flex-col justify-center space-y-2 pr-4 pl-4 xl:mt-0 xl:w-96 xl:items-end xl:pl-0">
+          {requestData.watchAheadParentRequestId && (
+            <Tooltip
+              content={intl.formatMessage(
+                messages.watchAheadEpisodeBadgeTooltip
+              )}
+            >
+              <span className="request-status-control request-status-control-success">
+                {intl.formatMessage(messages.watchAheadEpisodeBadge)}
+              </span>
+            </Tooltip>
+          )}
+          {requestData.type === 'tv' &&
+            !requestData.watchAheadParentRequestId &&
+            requestData.requestedBy.id === user?.id &&
+            ((requestData.status !== MediaRequestStatus.DECLINED &&
+              requestData.status !== MediaRequestStatus.FAILED) ||
+              savedWatchAheadEpisodeCount > 0) &&
+            (canEnableWatchAhead || savedWatchAheadEpisodeCount > 0) && (
+              <div className="w-full rounded-md border border-indigo-500/40 bg-indigo-950/30 p-2 text-left">
+                <label
+                  htmlFor={`request-watch-ahead-${requestData.id}`}
+                  className="block text-xs font-semibold text-gray-100"
+                >
+                  {intl.formatMessage(messages.watchAheadTitle)}
+                </label>
+                <select
+                  id={`request-watch-ahead-${requestData.id}`}
+                  className="request-form-control mt-1 w-full rounded-md border px-2 py-1 text-xs"
+                  value={watchAheadEpisodeCount}
+                  onChange={(event) =>
+                    setWatchAheadEpisodeCount(Number(event.target.value))
+                  }
+                  disabled={savingWatchAhead}
+                >
+                  <option value={0}>
+                    {intl.formatMessage(messages.watchAheadOff)}
+                  </option>
+                  {!canEnableWatchAhead && savedWatchAheadEpisodeCount > 0 && (
+                    <option value={savedWatchAheadEpisodeCount} disabled>
+                      {intl.formatMessage(messages.watchAheadEpisodes, {
+                        count: savedWatchAheadEpisodeCount,
+                      })}
+                    </option>
+                  )}
+                  {canEnableWatchAhead &&
+                    [1, 2, 3, 4, 5].map((count) => (
+                      <option key={count} value={count}>
+                        {intl.formatMessage(messages.watchAheadEpisodes, {
+                          count,
+                        })}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-1 text-[11px] leading-snug text-gray-300">
+                  {intl.formatMessage(messages.watchAheadDescription, {
+                    count: watchAheadEpisodeCount,
+                  })}
+                </p>
+                <Button
+                  className="mt-2 w-full"
+                  buttonSize="sm"
+                  buttonType={
+                    watchAheadEpisodeCount === 0 ? 'danger' : 'primary'
+                  }
+                  disabled={
+                    savingWatchAhead ||
+                    watchAheadEpisodeCount === savedWatchAheadEpisodeCount
+                  }
+                  onClick={saveWatchAhead}
+                >
+                  {savingWatchAhead
+                    ? intl.formatMessage(globalMessages.saving)
+                    : intl.formatMessage(
+                        watchAheadEpisodeCount === 0
+                          ? messages.stopWatchAhead
+                          : messages.saveWatchAhead
+                      )}
+                </Button>
+              </div>
+            )}
           {requestData.status === MediaRequestStatus.FAILED &&
             hasPermission(Permission.MANAGE_REQUESTS) && (
               <Button

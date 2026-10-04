@@ -52,7 +52,7 @@ const messages = defineMessages('components.ManageMediaActions', {
   checkingLibraries:
     'Checking all configured library services for copies of this title.',
   libraryLookupFailed:
-    'Unable to verify all library services. Retry before deleting.',
+    'Unable to verify all library services or identify this comic’s backend. Refresh its metadata or check service availability before deleting.',
   retryLibraries: 'Retry Library Check',
   blocklist: 'Blocklist',
   block: 'Blocklist Title',
@@ -188,6 +188,7 @@ const ManageMediaActions = ({
         })
       : title;
   const { hasPermission } = useUser();
+  const isAdmin = hasPermission(Permission.ADMIN);
   const { addToast } = useToasts();
   const [action, setAction] = useState<
     | 'delete'
@@ -232,9 +233,7 @@ const ManageMediaActions = ({
     error: libraryError,
     mutate: refreshLibrary,
   } = useSWR<LibraryRemovalPlan>(
-    hasPermission(Permission.MANAGE_REQUESTS)
-      ? `/api/v1/media/${media.id}/library`
-      : null,
+    isAdmin ? `/api/v1/media/${media.id}/library` : null,
     { revalidateOnFocus: false, shouldRetryOnError: false }
   );
   const targets = libraryPlan?.targets ?? [];
@@ -269,7 +268,8 @@ const ManageMediaActions = ({
       inFlight.current ||
       !action ||
       (action === 'delete' && !request) ||
-      (action === 'remove' && !confirmedLibrary?.targets.length) ||
+      (action === 'remove' &&
+        (!isAdmin || !confirmedLibrary?.targets.length)) ||
       (action === 'block' && !canBlock) ||
       (action === 'unblock' && !canUnblock) ||
       ((action === 'closeIssues' || action === 'deleteIssues') &&
@@ -330,75 +330,77 @@ const ManageMediaActions = ({
 
   return (
     <div data-testid="manage-advanced-sections" className="card-stack">
-      <section className="manage-advanced-section">
-        <h4 className="manage-media-section-title">
-          {intl.formatMessage(messages.services)}
-        </h4>
-        <div className="manage-request-action-buttons">
-          {targets.map((item) => {
-            const url = getSafeHref(item.url);
-            return url ? (
-              <Tooltip
-                key={item.key}
-                content={intl.formatMessage(messages.openServiceTooltip, {
-                  service: item.service,
-                })}
-              >
-                <Button
-                  as="a"
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  buttonType="success"
-                  buttonSize="standard"
+      {isAdmin && (
+        <section className="manage-advanced-section">
+          <h4 className="manage-media-section-title">
+            {intl.formatMessage(messages.services)}
+          </h4>
+          <div className="manage-request-action-buttons">
+            {targets.map((item) => {
+              const url = getSafeHref(item.url);
+              return url ? (
+                <Tooltip
+                  key={item.key}
+                  content={intl.formatMessage(messages.openServiceTooltip, {
+                    service: item.service,
+                  })}
                 >
-                  <ServerIcon />
-                  <span>
-                    {intl.formatMessage(messages.openService, {
-                      service: item.service,
-                    })}
-                  </span>
-                </Button>
-              </Tooltip>
-            ) : null;
-          })}
-          <RequestActionButton
-            action="remove"
-            tooltip={
-              targets.length
-                ? intl.formatMessage(messages.removeAllDescription)
-                : intl.formatMessage(
-                    libraryError
-                      ? messages.libraryLookupFailed
-                      : !libraryPlan
-                        ? messages.checkingLibraries
-                        : requestActionMessages.removeUnavailableTooltip
-                  )
-            }
-            disabled={busy || !!libraryError || !targets.length}
-            unavailable={!targets.length}
-            onClick={() => {
-              if (!libraryPlan || libraryError) return;
-              setConfirmedLibrary({
-                token: libraryPlan.token,
-                targets: libraryPlan.targets.map((copy) => ({ ...copy })),
-              });
-              setAction('remove');
-            }}
-          />
-          {libraryError && (
-            <Button
-              title={intl.formatMessage(messages.libraryLookupFailed)}
-              onClick={() => void refreshLibrary()}
-            >
-              {intl.formatMessage(messages.retryLibraries)}
-            </Button>
-          )}
-        </div>
-        <p className="manage-action-note">
-          {intl.formatMessage(messages.servicesDescription)}
-        </p>
-      </section>
+                  <Button
+                    as="a"
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    buttonType="success"
+                    buttonSize="standard"
+                  >
+                    <ServerIcon />
+                    <span>
+                      {intl.formatMessage(messages.openService, {
+                        service: item.service,
+                      })}
+                    </span>
+                  </Button>
+                </Tooltip>
+              ) : null;
+            })}
+            <RequestActionButton
+              action="remove"
+              tooltip={
+                targets.length
+                  ? intl.formatMessage(messages.removeAllDescription)
+                  : intl.formatMessage(
+                      libraryError
+                        ? messages.libraryLookupFailed
+                        : !libraryPlan
+                          ? messages.checkingLibraries
+                          : requestActionMessages.removeUnavailableTooltip
+                    )
+              }
+              disabled={busy || !!libraryError || !targets.length}
+              unavailable={!targets.length}
+              onClick={() => {
+                if (!libraryPlan || libraryError) return;
+                setConfirmedLibrary({
+                  token: libraryPlan.token,
+                  targets: libraryPlan.targets.map((copy) => ({ ...copy })),
+                });
+                setAction('remove');
+              }}
+            />
+            {libraryError && (
+              <Button
+                title={intl.formatMessage(messages.libraryLookupFailed)}
+                onClick={() => void refreshLibrary()}
+              >
+                {intl.formatMessage(messages.retryLibraries)}
+              </Button>
+            )}
+          </div>
+          <p className="manage-action-note">
+            {intl.formatMessage(messages.servicesDescription)}
+          </p>
+        </section>
+      )}
       {mediaType !== MediaType.MAGAZINE && (
         <section className="manage-advanced-section">
           <h4 className="manage-media-section-title">

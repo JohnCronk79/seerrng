@@ -6,6 +6,23 @@ declare module 'express-session' {
   interface SessionData {
     userId: number;
     credentialVersion?: number;
+    jellyfinBridge?: {
+      jellyfinUserId: string;
+      authorityKey: string;
+    };
+    discoveryAuth?: Partial<
+      Record<
+        'trakt' | 'simkl',
+        {
+          code: string;
+          userCode: string;
+          clientId: string;
+          expiresAt: number;
+          interval: number;
+          nextPollAt: number;
+        }
+      >
+    >;
     spotifyOAuthState?: string;
     spotifyOAuthStateCreatedAt?: number;
   }

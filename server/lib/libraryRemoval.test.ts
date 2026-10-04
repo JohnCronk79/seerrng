@@ -2,7 +2,11 @@ import { MediaType } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { resolveLibraryRemoval } from './libraryRemoval';
+import {
+  libraryPlanToken,
+  libraryServiceType,
+  resolveLibraryRemoval,
+} from './libraryRemoval';
 
 const fixture = vi.hoisted(() => ({
   albums: [] as { id?: number; foreignAlbumId: string }[],
@@ -10,11 +14,13 @@ const fixture = vi.hoisted(() => ({
   comics: [] as { id: string }[],
   volumes: [] as { id: number; comicvine_id: number; title: string }[],
   magazines: [] as { title: string }[],
+  appApiKey: 'test-app-key',
   remove: vi.fn(),
   movies: vi.fn(),
 }));
 vi.mock('@server/lib/externalRuntimeConfig', () => ({
   getExternalRuntimeConfig: () => ({
+    main: { apiKey: fixture.appApiKey },
     radarr: [
       {
         id: 0,
@@ -155,7 +161,15 @@ vi.mock('@server/api/lazylibrarian', () => ({
 }));
 
 const media = { id: 42, mediaType: MediaType.MUSIC, mbId: 'album-id' } as Media;
+it('does not assume a comic backend when its service type is unknown', () => {
+  expect(() => libraryServiceType(MediaType.COMIC)).toThrow(
+    'Cannot safely identify the comic backend.'
+  );
+  expect(libraryServiceType(MediaType.COMIC, 'mylar')).toBe('mylar');
+});
+
 beforeEach(() => {
+  fixture.appApiKey = 'test-app-key';
   fixture.albums = [];
   fixture.series = [];
   fixture.comics = [];
@@ -163,6 +177,13 @@ beforeEach(() => {
   fixture.magazines = [];
   fixture.remove.mockReset();
   fixture.movies.mockReset();
+});
+
+it('signs destructive library plans with the application API key', () => {
+  const authority = { serviceApiKey: 'service-key' };
+  const token = libraryPlanToken(42, [], authority);
+  fixture.appApiKey = 'rotated-app-key';
+  expect(libraryPlanToken(42, [], authority)).not.toBe(token);
 });
 
 it('queries only the exact movie with strict verification across every Radarr service', async () => {

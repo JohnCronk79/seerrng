@@ -12,26 +12,51 @@ on:
         description: Release tag to publish or retry
         required: true
         type: string
+      announce_security_correction:
+        description: Post the security notes omitted from a published release announcement
+        required: false
+        default: false
+        type: boolean
+      reuse_from_run_id:
+        description: Reuse successful platform artifacts from a failed release run for this exact tag
+        required: false
+        type: string
+        default: ''
+      reuse_package_workflow_runs:
+        description: JSON map of required package workflow filenames to successful run IDs for this exact tag
+        required: false
+        type: string
+        default: '{}'
+      reuse_published_image:
+        description: Reuse the image only after its revision label matches this tag
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   DOCKER_HUB: snapetech/seerrng
+  GHCR_IMAGE: ghcr.io/snapetech/seerrng
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   validate-main-tag:
     name: Validate main release tag
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    if: github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && inputs.announce_security_correction != true)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: read
       contents: read
+    outputs:
+      reuse_windows_x64_artifact: ${{ steps.recovery.outputs.reuse_windows_x64_artifact || 'false' }}
+      reuse_windows_arm64_artifact: ${{ steps.recovery.outputs.reuse_windows_arm64_artifact || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,6 +83,142 @@ jobs:
             echo "::error::Release tags must point at commits contained in origin/main."
             exit 1
           fi
+
+      - name: Validate previous run artifacts for recovery
+        id: recovery
+        if: inputs.reuse_from_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REUSE_FROM_RUN_ID: ${{ inputs.reuse_from_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$REUSE_FROM_RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo 'The previous run ID must be numeric.' >&2
+            exit 1
+          }
+
+          release_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          run="$(gh api "repos/$REPO/actions/runs/$REUSE_FROM_RUN_ID")"
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$release_sha" \
+            '.status == "completed" and
+             .conclusion == "failure" and
+             ((.event == "push" and .head_branch == $tag and .head_sha == $sha) or
+              (.event == "workflow_dispatch" and .head_branch == "main"))' <<<"$run" >/dev/null || {
+              echo 'The previous run must be a failed release run for this tag on main.' >&2
+              exit 1
+            }
+          source_event="$(jq -r '.event' <<<"$run")"
+          source_sha="$(jq -r '.head_sha' <<<"$run")"
+          if [[ "$source_event" == 'workflow_dispatch' ]]; then
+            git merge-base --is-ancestor "$release_sha" "$source_sha" || {
+              echo 'The previous manual release run started before this tag commit.' >&2
+              exit 1
+            }
+            git merge-base --is-ancestor "$source_sha" origin/main || {
+              echo 'The previous manual release run is not based on current main history.' >&2
+              exit 1
+            }
+          fi
+
+          jobs="$(gh api "repos/$REPO/actions/runs/$REUSE_FROM_RUN_ID/jobs?per_page=100")"
+          reuse_windows_arm64_artifact=false
+          if jq -e '
+            ([.jobs[] | select(.conclusion == "failure") | .name] ==
+              ["Build release assets / Build windows x64"]) and
+            (([
+              "Validate main release tag",
+              "Build release assets / Validate release tag",
+              "Build release assets / Build linux x64",
+              "Build release assets / Build linux arm64",
+              "Build release assets / Build macos arm64",
+              "Build release assets / Build macos x64",
+              "Build release assets / Build windows arm64",
+              "Build release assets / Build optional Jellyfin plugin"
+            ] - [.jobs[] | select(.conclusion == "success") | .name]) | length == 0)
+          ' <<<"$jobs" >/dev/null; then
+            reuse_windows_x64_artifact=false
+            reuse_windows_arm64_artifact=true
+          elif jq -e '
+            ([.jobs[] | select(.conclusion == "failure") | .name] ==
+              ["Build release assets / Upload release assets"]) and
+            (([
+              "Validate main release tag",
+              "Build release assets / Validate release tag",
+              "Build release assets / Build linux x64",
+              "Build release assets / Build linux arm64",
+              "Build release assets / Build macos arm64",
+              "Build release assets / Build macos x64",
+              "Build release assets / Build windows x64",
+              "Build release assets / Build windows arm64",
+              "Build release assets / Build optional Jellyfin plugin",
+              "Create draft release"
+            ] - [.jobs[] | select(.conclusion == "success") | .name]) | length == 0)
+          ' <<<"$jobs" >/dev/null; then
+            reuse_windows_x64_artifact=true
+            reuse_windows_arm64_artifact=true
+          elif jq -e '
+            ([.jobs[] | select(.conclusion == "failure") | .name] ==
+              ["Dispatch package channels"]) and
+            (([
+              "Validate main release tag",
+              "Generate changelog",
+              "Create draft release",
+              "Publish multi-arch manifests",
+              "Scan release image (linux/amd64)",
+              "Scan release image (linux/arm64)",
+              "Sign images and create SBOM attestations",
+              "Verify signatures and attestations",
+              "Build release assets / Validate release tag",
+              "Build release assets / Build linux x64",
+              "Build release assets / Build linux arm64",
+              "Build release assets / Build macos arm64",
+              "Build release assets / Build macos x64",
+              "Build release assets / Build windows x64",
+              "Build release assets / Build windows arm64",
+              "Build release assets / Build optional Jellyfin plugin",
+              "Build release assets / Upload release assets"
+            ] - [.jobs[] | select(.conclusion == "success") | .name]) | length == 0)
+          ' <<<"$jobs" >/dev/null; then
+            reuse_windows_x64_artifact=true
+            reuse_windows_arm64_artifact=true
+          else
+            echo 'The previous run did not fail at a supported recoverable release stage.' >&2
+            exit 1
+          fi
+          echo "reuse_windows_x64_artifact=$reuse_windows_x64_artifact" >> "$GITHUB_OUTPUT"
+          echo "reuse_windows_arm64_artifact=$reuse_windows_arm64_artifact" >> "$GITHUB_OUTPUT"
+
+          artifacts="$(gh api "repos/$REPO/actions/runs/$REUSE_FROM_RUN_ID/artifacts?per_page=100")"
+          if [[ "$reuse_windows_x64_artifact" == true ]]; then
+            expected_artifacts='[
+              "seerrng-linux-x64",
+              "seerrng-linux-arm64",
+              "seerrng-macos-arm64",
+              "seerrng-macos-x64",
+              "seerrng-windows-x64",
+              "seerrng-windows-arm64",
+              "seerrng-jellyfin-plugin"
+            ]'
+          else
+            expected_artifacts='[
+              "seerrng-linux-x64",
+              "seerrng-linux-arm64",
+              "seerrng-macos-arm64",
+              "seerrng-macos-x64",
+              "seerrng-windows-arm64",
+              "seerrng-jellyfin-plugin"
+            ]'
+          fi
+          jq -e --argjson expected "$expected_artifacts" '
+            ($expected - [.artifacts[] | select(.expired == false) | .name] | length == 0)
+          ' <<<"$artifacts" >/dev/null || {
+            echo 'One or more successful builder artifacts are missing or expired.' >&2
+            exit 1
+          }
 
   changelog:
     name: Generate changelog
@@ -210,7 +371,7 @@ jobs:
         with:
           images: |
             ${{ env.DOCKER_HUB }}
-            ghcr.io/${{ github.repository }}
+            ${{ env.GHCR_IMAGE }}
           tags: |
             type=semver,pattern={{raw}},value=${{ env.VERSION }}
             type=semver,pattern=v{{major}}.{{minor}},value=${{ env.VERSION }}
@@ -223,6 +384,7 @@ jobs:
             org.opencontainers.image.revision=${{ steps.release.outputs.SHA }}
 
       - name: Build & Push (multi-arch)
+        if: inputs.reuse_published_image != true
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -231,9 +393,23 @@ jobs:
         run: |
           set -euo pipefail
           release_sha="${{ steps.release.outputs.SHA }}"
+          release_dockerfile="Dockerfile.release"
+
+          mapfile -t pinned_node_refs < <(
+            grep -Eo '(public\.ecr\.aws/docker/library/node|mirror\.gcr\.io/library/node):[^[:space:]]+' Dockerfile | sort -u
+          )
+          ((${#pinned_node_refs[@]} > 0)) || {
+            echo 'The release Dockerfile has no digest-pinned Node base image.' >&2
+            exit 1
+          }
+          for pinned_ref in "${pinned_node_refs[@]}"; do
+            mirror_ref="$(sed 's#^public.ecr.aws/docker/library/node#mirror.gcr.io/library/node#' <<< "$pinned_ref")"
+            echo "Using digest-pinned Node base image: ${mirror_ref}"
+          done
+          sed 's#public.ecr.aws/docker/library/node#mirror.gcr.io/library/node#g' Dockerfile > "$release_dockerfile"
 
           build_args=(
-            --file ./Dockerfile
+            --file "./${release_dockerfile}"
             --platform linux/amd64,linux/arm64
             --push
             --build-arg "COMMIT_TAG=${release_sha}"
@@ -269,42 +445,41 @@ jobs:
             sleep $((attempt * 30))
           done
 
+      - name: Log out of GHCR before public manifest checks
+        shell: bash
+        run: docker logout ghcr.io
+
+      - name: Verify and reuse published image for this exact release commit
+        if: inputs.reuse_published_image == true
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.release.outputs.SHA }}
+        run: |
+          set -euo pipefail
+          image="${GHCR_IMAGE}:${VERSION}"
+          docker pull --platform linux/amd64 "$image"
+          image_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
+          if [[ "$image_revision" != "$EXPECTED_SHA" ]]; then
+            echo "The published image revision does not match the release tag: $image_revision" >&2
+            exit 1
+          fi
+          docker image rm "$image"
+
       - name: Resolve manifest digest
         id: digests
         shell: bash
         run: |
           set -euo pipefail
+          image="${GHCR_IMAGE}:${VERSION}"
           for attempt in 1 2 3 4 5; do
             echo "Resolving release manifest digest (attempt ${attempt}/5)"
-            if DIGEST=$(docker buildx imagetools inspect "${{ env.DOCKER_HUB }}:${{ env.VERSION }}" --format '{{json .Manifest.Digest}}' | tr -d '"') &&
+            if DIGEST=$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' | tr -d '"') &&
               [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "IMAGE_DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             if [ "$attempt" -eq 5 ]; then
               echo 'Unable to resolve the release manifest digest after 5 attempts.' >&2
-              exit 1
-            fi
-            sleep $((attempt * 15))
-          done
-
-      - name: Also tag :latest (non-pre-release only)
-        shell: bash
-        if: ${{ !contains(env.VERSION, '-') }}
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            echo "Tagging release images as latest (attempt ${attempt}/5)"
-            if docker buildx imagetools create \
-                -t "${{ env.DOCKER_HUB }}:latest" \
-                "${{ env.DOCKER_HUB }}:${{ env.VERSION }}" &&
-              docker buildx imagetools create \
-                -t "ghcr.io/${{ github.repository }}:latest" \
-                "ghcr.io/${{ github.repository }}:${{ env.VERSION }}"; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 5 ]; then
-              echo 'Unable to tag release images as latest after 5 attempts.' >&2
               exit 1
             fi
             sleep $((attempt * 15))
@@ -317,10 +492,10 @@ jobs:
         run: |
           set -euo pipefail
           scripts/verify-container-manifest.sh --require-provenance "${DOCKER_HUB}:${VERSION}" linux/amd64 linux/arm64
-          scripts/verify-container-manifest.sh --require-provenance "ghcr.io/${GITHUB_REPOSITORY}:${VERSION}" linux/amd64 linux/arm64
+          scripts/verify-container-manifest.sh --require-provenance "${GHCR_IMAGE}:${VERSION}" linux/amd64 linux/arm64
           if [[ "$VERSION" != *-* ]]; then
             scripts/verify-container-manifest.sh --require-provenance "${DOCKER_HUB}:latest" linux/amd64 linux/arm64
-            scripts/verify-container-manifest.sh --require-provenance "ghcr.io/${GITHUB_REPOSITORY}:latest" linux/amd64 linux/arm64
+            scripts/verify-container-manifest.sh --require-provenance "${GHCR_IMAGE}:latest" linux/amd64 linux/arm64
           fi
 
   scan-release-image:
@@ -380,11 +555,11 @@ jobs:
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
-            "ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}"
+            "${GHCR_IMAGE}@${{ needs.publish.outputs.image_digest }}"
 
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-release-${{ matrix.suffix }}.sarif
           category: trivy-release-${{ matrix.suffix }}
@@ -431,7 +606,7 @@ jobs:
 
       - name: Sign images
         run: |
-          cosign sign --recursive "ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}"
+          cosign sign --recursive "${GHCR_IMAGE}@${{ needs.publish.outputs.image_digest }}"
           cosign sign --recursive "${{ env.DOCKER_HUB }}@${{ needs.publish.outputs.image_digest }}"
 
       - name: Resolve published platform digests
@@ -448,7 +623,7 @@ jobs:
               ' | sort
           }
           mapfile -t ghcr_platforms < <(
-            resolve_platforms "ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}"
+            resolve_platforms "${GHCR_IMAGE}@${{ needs.publish.outputs.image_digest }}"
           )
           mapfile -t dockerhub_platforms < <(
             resolve_platforms "${{ env.DOCKER_HUB }}@${{ needs.publish.outputs.image_digest }}"
@@ -468,14 +643,14 @@ jobs:
             dockerhub_sbom="seerr-dockerhub-${arch}-${{ env.VERSION }}.sbom"
             trivy image --platform "linux/$arch" --timeout 15m --format cyclonedx \
               --output "$ghcr_sbom" \
-              "ghcr.io/${{ github.repository }}@$digest"
+              "${GHCR_IMAGE}@$digest"
             trivy image --platform "linux/$arch" --timeout 15m --format cyclonedx \
               --output "$dockerhub_sbom" \
               "${{ env.DOCKER_HUB }}@$digest"
             cosign attest \
               --type cyclonedx \
               --predicate "$ghcr_sbom" \
-              "ghcr.io/${{ github.repository }}@$digest"
+              "${GHCR_IMAGE}@$digest"
             cosign attest \
               --type cyclonedx \
               --predicate "$dockerhub_sbom" \
@@ -522,7 +697,7 @@ jobs:
 
       - name: Verify signatures
         run: |
-          cosign verify "ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}" \
+          cosign verify "${GHCR_IMAGE}@${{ needs.publish.outputs.image_digest }}" \
             --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
@@ -544,7 +719,7 @@ jobs:
               ' | sort
           }
           for registry_image in \
-            "ghcr.io/${{ github.repository }}" \
+            "${GHCR_IMAGE}" \
             "${{ env.DOCKER_HUB }}"; do
             mapfile -t platforms < <(
               resolve_platforms "$registry_image@${{ needs.publish.outputs.image_digest }}"
@@ -577,26 +752,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-release-assets:
-    name: Build release assets
-    needs: verify
-    uses: ./.github/workflows/release-assets.yml
+  sync-yunohost-package:
+    name: Sync YunoHost package
+    needs: [publish-release]
+    uses: ./.github/workflows/sync-yunohost.yml
     with:
-      tag: ${{ inputs.tag || github.ref_name }}
+      release_tag: ${{ inputs.tag || github.ref_name }}
+    secrets:
+      YUNOHOST_PACKAGE_TOKEN: ${{ secrets.YUNOHOST_PACKAGE_TOKEN }}
     permissions:
-      actions: read
       contents: write
 
-  dispatch-package-channels:
-    name: Dispatch package channels
-    needs: [verify, build-release-assets]
-    timeout-minutes: 120
+  dispatch-chocolatey:
+    name: Dispatch Chocolatey after publication
+    needs: [publish-release]
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       actions: write
-      contents: write
+      contents: read
     steps:
-      - name: Dispatch package workflows
+      - name: Dispatch Chocolatey package workflow
         env:
           GH_TOKEN: ${{ secrets.GH_WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -604,35 +780,132 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$TAG" == *-* ]]; then
+            echo "Skipping Chocolatey for pre-release tag $TAG."
+            exit 0
+          fi
+          gh workflow run release-chocolatey.yml --repo "$REPO" --ref main -f "tag=$TAG"
+
+  build-release-assets:
+    name: Build release assets
+    needs: [validate-main-tag, create-draft-release]
+    uses: ./.github/workflows/release-assets.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+      reuse_from_run_id: ${{ inputs.reuse_from_run_id || '' }}
+      reuse_windows_x64_artifact: ${{ needs.validate-main-tag.outputs.reuse_windows_x64_artifact == 'true' }}
+      reuse_windows_arm64_artifact: ${{ needs.validate-main-tag.outputs.reuse_windows_arm64_artifact == 'true' }}
+    permissions:
+      actions: read
+      contents: write
+
+  dispatch-package-channels:
+    name: Dispatch package channels
+    needs: [verify, build-release-assets]
+    timeout-minutes: 360
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Dispatch package workflows
+        env:
+          GH_TOKEN: ${{ secrets.GH_WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          REUSE_FROM_RUN_ID: ${{ inputs.reuse_from_run_id || '' }}
+          REUSE_PACKAGE_WORKFLOW_RUNS: ${{ inputs.reuse_package_workflow_runs || '{}' }}
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" == *-* ]]; then
             echo "Skipping stable package channels for pre-release tag $TAG."
             exit 0
           fi
-          for workflow in \
+          required_workflows=(
             release-linux-packages.yml \
             release-flatpak.yml \
             release-aur.yml \
-            release-snap.yml \
             release-ppa.yml \
             release-copr.yml
-          do
-            optional=false
-            [[ "$workflow" == "release-snap.yml" ]] && optional=true
-            dispatch_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          )
+          # release-chocolatey.yml is dispatched after the public-release gate.
+          optional_workflows=(
+            release-snap.yml
+          )
+          declare -A dispatch_started=()
+          required_names=()
+          required_run_ids=()
+          pending_names=()
+          allowed_reuse_workflows="$(printf '%s\n' "${required_workflows[@]}" | jq -R . | jq -s .)"
+          jq -e --argjson allowed "$allowed_reuse_workflows" '
+            type == "object" and
+            (keys - $allowed | length == 0) and
+            all(.[]; (tostring | test("^[0-9]+$")))
+          ' <<<"$REUSE_PACKAGE_WORKFLOW_RUNS" >/dev/null || {
+            echo 'Reusable package workflows must be a JSON object of required workflow names to numeric run IDs.' >&2
+            exit 1
+          }
+
+          for workflow in "${required_workflows[@]}"; do
+            reused_run_id="$(jq -r --arg workflow "$workflow" '.[$workflow] // empty' <<<"$REUSE_PACKAGE_WORKFLOW_RUNS")"
+            if [[ -n "$reused_run_id" ]]; then
+              run_json="$(gh api "repos/$REPO/actions/runs/$reused_run_id")"
+              workflow_path=".github/workflows/$workflow"
+              jq -e --arg workflow_path "$workflow_path" '
+                .path == $workflow_path and
+                .event == "workflow_dispatch" and
+                .head_branch == "main" and
+                .status == "completed" and
+                .conclusion == "success"
+              ' <<<"$run_json" >/dev/null || {
+                echo "Refusing to reuse unsuccessful or mismatched package workflow run $reused_run_id for $workflow." >&2
+                exit 1
+              }
+              run_logs="$(gh run view "$reused_run_id" --repo "$REPO" --log)"
+              grep -Fq "RELEASE_TAG: $TAG" <<<"$run_logs" || {
+                echo "Refusing to reuse $workflow run $reused_run_id because its logs do not confirm tag $TAG." >&2
+                exit 1
+              }
+              echo "Reusing verified $workflow run $reused_run_id for $TAG."
+              required_names+=("$workflow")
+              required_run_ids+=("$reused_run_id")
+              continue
+            fi
+
+            dispatch_started["$workflow"]="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             if ! gh workflow run "$workflow" --repo "$REPO" --ref main -f "tag=$TAG"; then
-              if [[ "$optional" == true ]]; then
+              exit 1
+            fi
+            echo "Dispatched $workflow for $TAG."
+            pending_names+=("$workflow")
+          done
+
+          if [[ -z "$REUSE_FROM_RUN_ID" ]]; then
+            for workflow in "${optional_workflows[@]}"; do
+              dispatch_started["$workflow"]="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              if ! gh workflow run "$workflow" --repo "$REPO" --ref main -f "tag=$TAG"; then
                 echo "::warning::Optional package workflow $workflow could not be dispatched; continuing."
                 continue
               fi
-              exit 1
-            fi
+              echo "Dispatched optional $workflow for $TAG."
+            done
+          else
+            echo 'Skipping optional Chocolatey and Snap workflows during release recovery; Chocolatey dispatch follows publication.'
+          fi
+
+          for workflow in "${pending_names[@]}"; do
             run_id=""
             for attempt in {1..60}; do
               runs_json="$(gh api "repos/$REPO/actions/workflows/$workflow/runs?event=workflow_dispatch&branch=main&per_page=20")"
-              run_id="$(jq -r --arg started "$dispatch_started" '
+              run_id="$(jq -r --arg started "${dispatch_started[$workflow]}" '
                 [.workflow_runs[]
                   | select(.created_at >= $started and .head_branch == "main")
-                  | .id]
-                | first // empty
+                ]
+                | sort_by(.created_at)
+                | last
+                | .id // empty
               ' <<<"$runs_json")"
               if [[ -n "$run_id" ]]; then
                 break
@@ -640,22 +913,32 @@ jobs:
               sleep 5
             done
             if [[ -z "$run_id" ]]; then
-              if [[ "$optional" == true ]]; then
-                echo "::warning::Optional package workflow $workflow did not appear; continuing."
-                continue
-              fi
               echo "Unable to find the dispatched $workflow run." >&2
               exit 1
             fi
-            echo "Waiting for $workflow run $run_id"
-            if ! gh run watch "$run_id" --repo "$REPO" --interval 15 --exit-status; then
-              if [[ "$optional" == true ]]; then
-                echo "::warning::Optional package workflow $workflow failed; continuing without Snap Store publication."
-                continue
-              fi
-              exit 1
+            required_names+=("$workflow")
+            required_run_ids+=("$run_id")
+          done
+
+          watcher_pids=()
+          for index in "${!required_run_ids[@]}"; do
+            workflow="${required_names[$index]}"
+            run_id="${required_run_ids[$index]}"
+            (
+              echo "Waiting for required $workflow run $run_id"
+              node scripts/watch-github-run.mjs "$REPO" "$run_id"
+            ) &
+            watcher_pids+=("$!")
+          done
+
+          dispatch_status=0
+          for index in "${!watcher_pids[@]}"; do
+            if ! wait "${watcher_pids[$index]}"; then
+              echo "::error::Required package workflow ${required_names[$index]} failed."
+              dispatch_status=1
             fi
           done
+          (( dispatch_status == 0 )) || exit 1
 
       - name: Verify release package assets
         env:
@@ -678,8 +961,12 @@ jobs:
               "seerrng-${TAG}-linux-arm64.sha256"
               "seerrng-${TAG}-macos-arm64.tar.gz"
               "seerrng-${TAG}-macos-arm64.sha256"
+              "seerrng-${TAG}-macos-x64.tar.gz"
+              "seerrng-${TAG}-macos-x64.sha256"
               "seerrng-${TAG}-windows-x64.zip"
               "seerrng-${TAG}-windows-x64.sha256"
+              "seerrng-${TAG}-windows-arm64.zip"
+              "seerrng-${TAG}-windows-arm64.sha256"
               "seerrng_${version}_amd64.deb"
               "seerrng_${version}_amd64.deb.sha256"
               "SeerrNG-${version}-x86_64.AppImage"
@@ -707,7 +994,8 @@ jobs:
 
   announce-discord:
     name: Announce release to Discord
-    needs: [changelog, publish, publish-release, dispatch-package-channels]
+    needs:
+      [changelog, publish, publish-release, sync-yunohost-package, dispatch-package-channels]
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, seerrng]
     permissions:
@@ -718,6 +1006,12 @@ jobs:
       IMAGE_DIGEST: ${{ needs.publish.outputs.image_digest }}
       RELEASE_BODY: ${{ needs.changelog.outputs.release_body }}
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Send Discord announcement
         shell: bash
         run: |
@@ -726,37 +1020,147 @@ jobs:
             exit 1
           }
           release_url="${{ github.server_url }}/${{ github.repository }}/releases/tag/${VERSION}"
-          image_ref="ghcr.io/${{ github.repository }}:${VERSION}"
-          body="${RELEASE_BODY}"$'\n\n'"Images are published by the release pipeline."
-          if (( ${#body} > 3800 )); then
-            body="${body:0:3797}"$'…'
+          image_ref="${GHCR_IMAGE}:${VERSION}"
+          printf '%s' "$RELEASE_BODY" | node scripts/discord-release-notes.mjs --split > chunks.json
+          chunk_count="$(jq 'length' chunks.json)"
+          (( chunk_count > 0 )) || {
+            echo 'The generated release notes are empty.' >&2
+            exit 1
+          }
+
+          webhook_url="$DISCORD_WEBHOOK"
+          if [[ "$webhook_url" == *'?'* ]]; then
+            webhook_url+='&wait=true'
+          else
+            webhook_url+='?wait=true'
           fi
 
-          jq -n \
-            --arg username "SeerrNG Releases" \
-            --arg title "SeerrNG ${VERSION} is live" \
-            --arg url "$release_url" \
-            --arg description "$body" \
-            --arg image "$image_ref" \
-            --arg digest "$IMAGE_DIGEST" \
-            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            '{
-              username: $username,
-              embeds: [{
-                title: $title,
-                url: $url,
-                description: (if $description == "" then "Release notes are available on GitHub." else $description end),
-                color: 5814783,
-                fields: [
-                  { name: "Image", value: ("`" + $image + "`"), inline: false },
-                  { name: "Digest", value: ("`" + $digest + "`"), inline: false },
-                  { name: "Workflow", value: $run_url, inline: false }
-                ]
-              }]
-            }' > payload.json
+          for ((index = 0; index < chunk_count; index += 1)); do
+            description="$(jq -r --argjson index "$index" '.[$index]' chunks.json)"
+            number=$((index + 1))
+            title="SeerrNG ${VERSION} release notes ($number/$chunk_count)"
+            jq -n \
+              --arg username "SeerrNG Releases" \
+              --arg title "$title" \
+              --arg url "$release_url" \
+              --arg description "$description" \
+              --arg image "$image_ref" \
+              --arg digest "$IMAGE_DIGEST" \
+              --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --argjson first "$index" \
+              '{
+                username: $username,
+                embeds: [{
+                  title: $title,
+                  url: $url,
+                  description: $description,
+                  color: 5814783,
+                  fields: (if $first == 0 then [
+                    { name: "Image", value: $image, inline: false },
+                    { name: "Digest", value: $digest, inline: false },
+                    { name: "Workflow", value: $run_url, inline: false }
+                  ] else [] end)
+                }]
+              }' > payload.json
 
-          curl --fail --silent --show-error \
-            -H "Content-Type: application/json" \
-            -X POST \
-            --data @payload.json \
-            "$DISCORD_WEBHOOK"
+            response="$(curl --fail --silent --show-error \
+              -H "Content-Type: application/json" \
+              -X POST \
+              --data @payload.json \
+              "$webhook_url")"
+            jq -e --arg description "$description" \
+              '.id != null and .embeds[0].description == $description' \
+              <<< "$response" > /dev/null
+            if (( number < chunk_count )); then
+              sleep 1
+            fi
+          done
+
+
+  announce-security-correction:
+    name: Correct published Discord security notes
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.announce_security_correction == true
+    timeout-minutes: 10
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Post omitted security notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] || {
+            echo 'Security-note corrections must run from main.' >&2
+            exit 1
+          }
+          [[ "$TAG" =~ ^v[0-9][0-9A-Za-z._+-]{0,126}$ ]] || {
+            echo 'Invalid release tag.' >&2
+            exit 1
+          }
+          test -n "$DISCORD_WEBHOOK" || {
+            echo 'DISCORD_RELEASE_WEBHOOK is required to correct a release announcement.' >&2
+            exit 1
+          }
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.body' > release-body.md
+          security_notes="$(awk '
+            /^#### Security$/ { active = 1; next }
+            active && /^#### / { exit }
+            active { print }
+          ' release-body.md)"
+          test -n "${security_notes//[[:space:]]/}" || {
+            echo "No security release notes were found for ${TAG}." >&2
+            exit 1
+          }
+
+          release_url="${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG}"
+          body="Correction: the original ${TAG} Discord announcement was truncated."$'\n\n'"#### Security"$'\n'"${security_notes}"$'\n\n'"Full release notes: ${release_url}"
+          printf '%s' "$body" | node scripts/discord-release-notes.mjs --split > chunks.json
+          chunk_count="$(jq 'length' chunks.json)"
+          webhook_url="$DISCORD_WEBHOOK"
+          if [[ "$webhook_url" == *'?'* ]]; then
+            webhook_url+='&wait=true'
+          else
+            webhook_url+='?wait=true'
+          fi
+
+          for ((index = 0; index < chunk_count; index += 1)); do
+            description="$(jq -r --argjson index "$index" '.[$index]' chunks.json)"
+            number=$((index + 1))
+            title="Correction: SeerrNG ${TAG} security notes ($number/$chunk_count)"
+            jq -n \
+              --arg username "SeerrNG Releases" \
+              --arg title "$title" \
+              --arg url "$release_url" \
+              --arg description "$description" \
+              '{
+                username: $username,
+                embeds: [{
+                  title: $title,
+                  url: $url,
+                  description: $description,
+                  color: 16742144
+                }]
+              }' > payload.json
+            response="$(curl --fail --silent --show-error \
+              -H "Content-Type: application/json" \
+              -X POST \
+              --data @payload.json \
+              "$webhook_url")"
+            jq -e --arg description "$description" \
+              '.id != null and .embeds[0].description == $description' \
+              <<< "$response" > /dev/null
+            if (( number < chunk_count )); then
+              sleep 1
+            fi
+          done

@@ -1,3 +1,6 @@
+import { MediaServerType } from '@server/constants/server';
+import episodeWatchAhead from '@server/lib/episodeWatchAhead';
+import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { setupTestDb } from '@server/test/db';
 import schedule from 'node-schedule';
@@ -35,6 +38,45 @@ describe('scheduled job lifecycle', () => {
     }
   });
 
+  it('schedules the requested episode queue for every supported media server', async () => {
+    const settings = getSettings();
+    mock.method(episodeWatchAhead, 'run', async () => undefined);
+    const previousMediaServerType = settings.main.mediaServerType;
+    const previousWatchAheadSchedule =
+      settings.jobs['jellyfin-watch-ahead'].schedule;
+
+    try {
+      settings.jobs['jellyfin-watch-ahead'].schedule = '*/30 * * * * *';
+      settings.main.mediaServerType = MediaServerType.NOT_CONFIGURED;
+      startJobs();
+      assert.equal(
+        scheduledJobs.some((job) => job.id === 'jellyfin-watch-ahead'),
+        false
+      );
+
+      for (const mediaServerType of [
+        MediaServerType.PLEX,
+        MediaServerType.JELLYFIN,
+        MediaServerType.EMBY,
+      ]) {
+        await stopJobs();
+        settings.main.mediaServerType = mediaServerType;
+        startJobs();
+        const watchAheadJob = scheduledJobs.find(
+          (job) => job.id === 'jellyfin-watch-ahead'
+        );
+        assert.ok(watchAheadJob);
+        assert.equal(watchAheadJob.name, 'Requested Episode Queue');
+        assert.equal(watchAheadJob.interval, 'seconds');
+        assert.equal(watchAheadJob.cronSchedule, '*/30 * * * * *');
+      }
+    } finally {
+      settings.main.mediaServerType = previousMediaServerType;
+      settings.jobs['jellyfin-watch-ahead'].schedule =
+        previousWatchAheadSchedule;
+    }
+  });
+
   it('does not register duplicate jobs when startup runs twice', () => {
     const job = schedule.scheduleJob(
       new Date(Date.now() + 60_000),
@@ -54,6 +96,21 @@ describe('scheduled job lifecycle', () => {
 
     assert.strictEqual(scheduledJobs.length, 1);
     assert.strictEqual(scheduledJobs[0].job, job);
+  });
+
+  it('registers the BackIssue collection sync as a scheduled process task', () => {
+    startJobs();
+
+    const backissueJob = scheduledJobs.find(
+      (job) => job.id === 'backissue-scan'
+    );
+
+    assert.ok(backissueJob);
+    assert.equal(backissueJob.name, 'BackIssue Comics Scan');
+    assert.equal(backissueJob.type, 'process');
+    assert.equal(backissueJob.interval, 'hours');
+    assert.equal(backissueJob.cronSchedule, '0 30 5 * * *');
+    assert.equal(typeof backissueJob.cancelFn, 'function');
   });
 
   it('cancels future invocations and waits for active work', async () => {

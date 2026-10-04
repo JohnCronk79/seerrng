@@ -57,10 +57,14 @@ export class BookRequestSearch {
   @Column({ type: 'boolean', default: false })
   public createdAuthor: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  public providerManagedSearch: boolean;
+
   @Column({ type: 'varchar', length: 32, default: 'searching' })
   public state:
     | 'searching'
     | 'pending'
+    | 'monitoring'
     | 'settling'
     | 'grabbed'
     | 'importing'

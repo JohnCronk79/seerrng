@@ -1,3 +1,4 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
 import ReadarrAPI from '@server/api/servarr/readarr';
 import {
   MediaRequestStatus,
@@ -85,6 +86,35 @@ const createActiveBookRequest = async () => {
   return request;
 };
 
+const createActiveComicRequest = async (
+  comicServiceType: 'mylar' | 'kapowarr'
+) => {
+  const requestedBy = await getRepository(User).findOneByOrFail({
+    email: 'friend@seerr.dev',
+  });
+  const media = await getRepository(Media).save(
+    new Media({
+      mediaType: MediaType.COMIC,
+      tmdbId: 0,
+      status: MediaStatus.PROCESSING,
+      status4k: MediaStatus.UNKNOWN,
+      serviceId: 40,
+      externalServiceId: 1,
+      comicServiceType,
+    })
+  );
+  return getRepository(MediaRequest).save(
+    new MediaRequest({
+      type: MediaType.COMIC,
+      status: MediaRequestStatus.APPROVED,
+      media,
+      requestedBy,
+      is4k: false,
+      serverId: 40,
+    })
+  );
+};
+
 describe('RequestWorkCleanupManager', () => {
   before(async () => {
     await seedTestDb();
@@ -99,6 +129,8 @@ describe('RequestWorkCleanupManager', () => {
   afterEach(() => {
     mock.restoreAll();
     getSettings().readarr = [];
+    getSettings().mylar = [];
+    getSettings().kapowarr = [];
   });
 
   it('cancels a pending Chaptarr import without requiring a book or command ID', async () => {
@@ -323,6 +355,45 @@ describe('RequestWorkCleanupManager', () => {
     assert.equal(media.externalServiceId, null);
   });
 
+  it('cancels a monitored book without waiting for a search command', async () => {
+    const request = await createActiveBookRequest();
+    const operation = await getRepository(BookRequestSearch).findOneByOrFail({
+      requestId: request.id,
+    });
+    await getRepository(BookRequestSearch).update(operation.id, {
+      state: 'monitoring',
+      commandId: null,
+    });
+    const getCommand = mock.method(
+      ReadarrAPI.prototype,
+      'getCommand',
+      async () => {
+        throw new Error('Monitoring should not have a search command.');
+      }
+    );
+    mock.method(ReadarrAPI.prototype, 'getQueue', async () => []);
+    mock.method(ReadarrAPI.prototype, 'getBookIfExists', async () => ({
+      id: 55,
+      title: 'Cleanup Book',
+      statistics: { bookFileCount: 0 },
+    }));
+    const removedBooks: number[] = [];
+    mock.method(ReadarrAPI.prototype, 'removeBook', async (bookId: number) => {
+      removedBooks.push(bookId);
+    });
+    mock.method(ReadarrAPI.prototype, 'getBooksByAuthor', async () => []);
+    mock.method(ReadarrAPI.prototype, 'removeAuthor', async () => undefined);
+
+    await requestWorkCleanupManager.cleanup(request, true);
+
+    assert.equal(getCommand.mock.callCount(), 0);
+    assert.deepEqual(removedBooks, [55]);
+    assert.equal(
+      await getRepository(BookRequestSearch).countBy({ requestId: request.id }),
+      0
+    );
+  });
+
   it('keeps the request intact when Bookshelf cannot confirm cancellation', async () => {
     const request = await createActiveBookRequest();
     mock.method(ReadarrAPI.prototype, 'getCommand', async () => ({
@@ -338,6 +409,80 @@ describe('RequestWorkCleanupManager', () => {
     assert.equal(
       await getRepository(BookRequestSearch).countBy({ requestId: request.id }),
       1
+    );
+  });
+
+  it('reports Mylar cancellation as unsupported without touching the request', async () => {
+    const request = await createActiveComicRequest('mylar');
+
+    await assert.rejects(
+      () => requestWorkCleanupManager.cleanup(request, true),
+      RequestWorkCleanupError
+    );
+  });
+
+  it('cancels a Kapowarr comic download by matching the queued volume', async () => {
+    getSettings().kapowarr = [
+      {
+        id: 40,
+        name: 'Kapowarr',
+        hostname: 'kapowarr.local',
+        port: 5656,
+        apiKey: 'kapowarr-key',
+        useSsl: false,
+        tags: [],
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+      },
+    ];
+    const request = await createActiveComicRequest('kapowarr');
+    let queueRead = 0;
+    mock.method(KapowarrAPI.prototype, 'getQueue', async () =>
+      queueRead++ === 0 ? [{ id: 9, volumeId: 1 }] : []
+    );
+    const removed: [number, boolean][] = [];
+    mock.method(
+      KapowarrAPI.prototype,
+      'removeQueueItem',
+      async (downloadId: number, blocklist: boolean) => {
+        removed.push([downloadId, blocklist]);
+      }
+    );
+
+    await requestWorkCleanupManager.cleanup(request, true);
+
+    assert.deepEqual(removed, [[9, false]]);
+  });
+
+  it('confirms cancellation actually removed the Kapowarr queue entry', async () => {
+    getSettings().kapowarr = [
+      {
+        id: 40,
+        name: 'Kapowarr',
+        hostname: 'kapowarr.local',
+        port: 5656,
+        apiKey: 'kapowarr-key',
+        useSsl: false,
+        tags: [],
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+      },
+    ];
+    const request = await createActiveComicRequest('kapowarr');
+    mock.method(KapowarrAPI.prototype, 'getQueue', async () => [
+      { id: 9, volumeId: 1 },
+    ]);
+    mock.method(
+      KapowarrAPI.prototype,
+      'removeQueueItem',
+      async () => undefined
+    );
+
+    await assert.rejects(
+      () => requestWorkCleanupManager.cleanup(request, true),
+      RequestWorkCleanupError
     );
   });
 });

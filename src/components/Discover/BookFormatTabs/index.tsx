@@ -19,6 +19,7 @@ interface BookFormatTabsProps {
   query: ParsedUrlQuery;
   currentPath?: string;
   className?: string;
+  availableFormats?: readonly BookDiscoveryFormat[];
 }
 
 const getBookFormatHref = (
@@ -70,6 +71,7 @@ const BookFormatTabs = ({
   query,
   currentPath,
   className = '',
+  availableFormats = ['all', 'ebook', 'audiobook'],
 }: BookFormatTabsProps) => {
   const intl = useIntl();
   const router = useRouter();
@@ -129,37 +131,39 @@ const BookFormatTabs = ({
   return (
     <nav
       aria-label={intl.formatMessage(messages.format)}
-      className={`flex flex-wrap gap-2 ${className}`}
+      className={`app-filter-row ${className}`}
       data-testid="book-format-tabs"
     >
-      {tabs.map((tab) => {
-        const isSelected = tab.format === format;
-        const Icon = tab.icon;
+      {tabs
+        .filter((tab) => availableFormats.includes(tab.format))
+        .map((tab) => {
+          const isSelected = tab.format === format;
+          const Icon = tab.icon;
 
-        return (
-          <MediaFilterOption
-            key={tab.format}
-            pin={pin}
-            value={tab.format}
-            label={intl.formatMessage(tab.label)}
-            selected={isSelected}
-          >
-            <Link
-              href={getBookFormatHref(
-                tab.pathname,
-                preservedQuery,
-                tab.queryFormat
-              )}
-              aria-current={isSelected ? 'page' : undefined}
-              data-testid={`book-format-tab-${tab.format}`}
-              className="app-filter-segment-focus flex h-full items-center gap-1.5 px-2"
+          return (
+            <MediaFilterOption
+              key={tab.format}
+              pin={pin}
+              value={tab.format}
+              label={intl.formatMessage(tab.label)}
+              selected={isSelected}
             >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              <span>{intl.formatMessage(tab.label)}</span>
-            </Link>
-          </MediaFilterOption>
-        );
-      })}
+              <Link
+                href={getBookFormatHref(
+                  tab.pathname,
+                  preservedQuery,
+                  tab.queryFormat
+                )}
+                aria-current={isSelected ? 'page' : undefined}
+                data-testid={`book-format-tab-${tab.format}`}
+                className="app-control-shadow-exempt app-filter-segment-focus"
+              >
+                <Icon className="app-action-icon" aria-hidden="true" />
+                <span>{intl.formatMessage(tab.label)}</span>
+              </Link>
+            </MediaFilterOption>
+          );
+        })}
     </nav>
   );
 };

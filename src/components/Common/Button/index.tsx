@@ -1,4 +1,5 @@
 import {
+  ArrowPathIcon,
   MagnifyingGlassIcon,
   TrashIcon,
   XMarkIcon,
@@ -18,6 +19,7 @@ export type ButtonType =
   | 'manage'
   | 'reportIssue'
   | 'association'
+  | 'prowlarr'
   | 'bulkRequest'
   | 'detailRequest'
   | 'trailer'
@@ -41,7 +43,7 @@ type BaseProps<P> = {
   buttonSize?: 'standard' | 'default' | 'lg' | 'md' | 'sm';
   /** Explains a state-based disabled action in the shared styled tooltip. */
   disabledReason?: string;
-  buttonIcon?: 'cancel' | 'browse' | 'delete';
+  buttonIcon?: 'cancel' | 'browse' | 'delete' | 'retry';
   /** Uses shared square geometry for an action with only an icon. */
   iconOnly?: boolean;
   // Had to do declare this manually as typescript would assume e was of type any otherwise
@@ -65,6 +67,7 @@ const buttonTypeStyles: Record<ButtonType, string> = {
   manage: 'app-button-manage',
   reportIssue: 'app-button-report-issue',
   association: 'app-button-association',
+  prowlarr: 'app-button-prowlarr',
   bulkRequest: 'app-button-bulk-request',
   detailRequest: 'app-button-detail-request',
   trailer: 'app-button-trailer',
@@ -110,13 +113,15 @@ function Button<P extends ElementTypes = 'button'>(
       <a
         className={buttonStyle}
         {...(props as React.ComponentProps<'a'>)}
+        data-button-icon={buttonIcon}
         data-button-help={props.title}
         title={undefined}
         ref={ref as ForwardedRef<HTMLAnchorElement>}
       >
-        <span className="flex items-center">
+        <span>
           {buttonIcon === 'cancel' && <XMarkIcon aria-hidden="true" />}
           {buttonIcon === 'delete' && <TrashIcon aria-hidden="true" />}
+          {buttonIcon === 'retry' && <ArrowPathIcon aria-hidden="true" />}
           {buttonIcon === 'browse' && (
             <MagnifyingGlassIcon aria-hidden="true" />
           )}
@@ -134,14 +139,16 @@ function Button<P extends ElementTypes = 'button'>(
       <button
         className={buttonStyle}
         {...buttonProps}
+        data-button-icon={buttonIcon}
         data-button-help={buttonProps.title}
         data-disabled-reason={disabledTitle}
         title={undefined}
         ref={ref as ForwardedRef<HTMLButtonElement>}
       >
-        <span className="flex max-w-full items-center">
+        <span>
           {buttonIcon === 'cancel' && <XMarkIcon aria-hidden="true" />}
           {buttonIcon === 'delete' && <TrashIcon aria-hidden="true" />}
+          {buttonIcon === 'retry' && <ArrowPathIcon aria-hidden="true" />}
           {buttonIcon === 'browse' && (
             <MagnifyingGlassIcon aria-hidden="true" />
           )}

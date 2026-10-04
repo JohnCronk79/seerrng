@@ -4,6 +4,9 @@ import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
 import ComicVineAPI from '@server/api/comicvine';
 import ExternalAPI from '@server/api/externalapi';
+import LazyLibrarianAPI, {
+  type LazyLibrarianMagazine,
+} from '@server/api/lazylibrarian';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import ReadarrAPI from '@server/api/servarr/readarr';
@@ -19,6 +22,7 @@ import MetadataAlbum from '@server/entity/MetadataAlbum';
 import MetadataArtist from '@server/entity/MetadataArtist';
 import {
   getSettings,
+  type LazyLibrarianSettings,
   type LidarrSettings,
   type ReadarrSettings,
 } from '@server/lib/settings';
@@ -147,6 +151,7 @@ afterEach(async () => {
   mock.restoreAll();
   getSettings().lidarr = [];
   getSettings().readarr = [];
+  getSettings().lazylibrarian = [];
 });
 
 setupTestDb();
@@ -178,6 +183,19 @@ async function loginAs(email: string, password: string) {
 }
 
 describe('GET /search', () => {
+  const magazineService = (id: number): LazyLibrarianSettings => ({
+    id,
+    name: `LazyLibrarian ${id}`,
+    hostname: `lazylibrarian-${id}.test`,
+    port: 5299,
+    apiKey: 'test-key',
+    useSsl: false,
+    isDefault: id === 1,
+    tags: [],
+    syncEnabled: false,
+    preventSearch: false,
+  });
+
   it('omits optional catalog providers without configured services', async () => {
     const settings = getSettings();
     const priorLidarr = settings.lidarr;
@@ -218,6 +236,87 @@ describe('GET /search', () => {
       settings.lidarr = priorLidarr;
       settings.readarr = priorReadarr;
     }
+  });
+
+  it('keeps healthy magazine matches when another catalog stalls', async () => {
+    getSettings().lazylibrarian = [magazineService(1), magazineService(2)];
+    let releaseStalledCatalog!: (value: LazyLibrarianMagazine[]) => void;
+    const stalledCatalog = new Promise<LazyLibrarianMagazine[]>((resolve) => {
+      releaseStalledCatalog = resolve;
+    });
+    let calls = 0;
+    mock.method(LazyLibrarianAPI.prototype, 'getMagazines', () =>
+      ++calls === 1
+        ? Promise.resolve([{ title: 'Science Monthly' }])
+        : stalledCatalog
+    );
+
+    try {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent
+        .get('/search')
+        .query({ query: 'Science', type: 'magazine' });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.results[0]?.title, 'Science Monthly');
+    } finally {
+      releaseStalledCatalog([]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  });
+
+  it('limits concurrent magazine catalog lookups in global search', async () => {
+    getSettings().lazylibrarian = [1, 2, 3, 4, 5].map(magazineService);
+    let active = 0;
+    let peak = 0;
+    const getMagazines = mock.method(
+      LazyLibrarianAPI.prototype,
+      'getMagazines',
+      async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        return [{ title: 'Science Monthly' }];
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent
+      .get('/search')
+      .query({ query: 'Science', type: 'magazine' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(getMagazines.mock.callCount(), 5);
+    assert.ok(peak <= 2, `expected at most two lookups, saw ${peak}`);
+  });
+
+  it('keeps configured service order when magazine titles overlap', async () => {
+    getSettings().lazylibrarian = [magazineService(1), magazineService(2)];
+    let calls = 0;
+    mock.method(LazyLibrarianAPI.prototype, 'getMagazines', async () => {
+      const call = ++calls;
+      if (call === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      return [
+        {
+          title: 'Science Monthly',
+          latestCover: `cache/magazine/${(call === 1 ? 'a' : 'b').repeat(40)}.jpg`,
+        },
+      ];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent
+      .get('/search')
+      .query({ query: 'Science', type: 'magazine' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      res.body.results[0]?.posterPath,
+      `/api/v1/magazine/cover/1/${'a'.repeat(40)}`
+    );
   });
 
   it('returns comics from ComicVine, merges local media, and respects the comic type filter', async () => {
@@ -382,6 +481,114 @@ describe('GET /search', () => {
     assert.strictEqual(bookSearch.mock.callCount(), 0);
   });
 
+  it('queries only audiobook Bookshelf services for audiobook searches', async () => {
+    getSettings().readarr = [
+      {
+        id: 1,
+        hostname: 'ebookshelf.test',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'ebook',
+      } as ReadarrSettings,
+      {
+        id: 2,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const openLibrarySearch = mock.method(
+      OpenLibraryAPI.prototype,
+      'searchBooks'
+    );
+    const audiobookSearch = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBook',
+      async () => []
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'The Da Vinci Code',
+      type: 'book',
+      format: 'audiobook',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(openLibrarySearch.mock.callCount(), 0);
+    assert.strictEqual(audiobookSearch.mock.callCount(), 1);
+  });
+
+  it('explains when the configured audiobook catalog is unavailable', async () => {
+    getSettings().readarr = [
+      {
+        id: 1,
+        hostname: 'audiobookshelf.test',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        baseUrl: '',
+        serviceType: 'audiobook',
+      } as ReadarrSettings,
+    ];
+    const audiobookSearch = mock.method(
+      ReadarrAPI.prototype,
+      'lookupBook',
+      async () => {
+        throw new Error('Catalog connection refused');
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'Pacific',
+      type: 'book',
+      format: 'audiobook',
+    });
+
+    assert.strictEqual(res.status, 503);
+    assert.deepStrictEqual(res.body, {
+      status: 503,
+      message:
+        'The configured audiobook catalog is unavailable. Please try again.',
+    });
+    assert.strictEqual(audiobookSearch.mock.callCount(), 1);
+  });
+
+  it('does not search an administrator-disabled book format', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    settings.readarr = [{ serviceType: 'ebook' } as ReadarrSettings];
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      ebook: false,
+      audiobook: true,
+    };
+    const bookSearch = mock.method(OpenLibraryAPI.prototype, 'searchBooks');
+
+    try {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const res = await agent.get('/search').query({
+        query: 'microsoft',
+        type: 'book',
+        format: 'ebook',
+      });
+
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.results, []);
+      assert.strictEqual(res.body.totalResults, 0);
+      assert.strictEqual(bookSearch.mock.callCount(), 0);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+      settings.readarr = [];
+    }
+  });
+
   it('limits global book keywords to visible title and author fields', async () => {
     const bookSearch = mock.method(
       OpenLibraryAPI.prototype,
@@ -460,6 +667,37 @@ describe('GET /search', () => {
     assert.strictEqual(artistSearch.mock.callCount(), 0);
   });
 
+  it('escapes Lucene special characters in the default music search query', async () => {
+    let albumQuery: string | undefined;
+    let artistQuery: string | undefined;
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        albumQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal',
+      async ({ query }: { query: string }) => {
+        artistQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'Say Anything (Live)!',
+      type: 'music',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(albumQuery, 'Say Anything \\(Live\\)\\!');
+    assert.strictEqual(artistQuery, 'Say Anything \\(Live\\)\\!');
+  });
+
   it('autocomplete searches artist prefixes without fetching albums or dropping mapped artists', async () => {
     const artistId = '79239441-bfd5-4981-a70c-55c3f15c1287';
     await getRepository(MetadataArtist).save(
@@ -512,6 +750,37 @@ describe('GET /search', () => {
 
     assert.strictEqual(res.status, 400);
     assert.match(res.body.message, /only be used with book searches/);
+  });
+
+  it('escapes MusicBrainz query operators in album and artist searches', async () => {
+    let albumQuery: string | undefined;
+    let artistQuery: string | undefined;
+    mock.method(
+      MusicBrainz.prototype,
+      'searchAlbumWithTotal',
+      async ({ query }: { query: string }) => {
+        albumQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+    mock.method(
+      MusicBrainz.prototype,
+      'searchArtistWithTotal',
+      async ({ query }: { query: string }) => {
+        artistQuery = query;
+        return { results: [], totalResults: 0 };
+      }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/search').query({
+      query: 'AC/DC (Live) + 1992',
+      type: 'album',
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(albumQuery, 'AC\\/DC \\(Live\\) \\+ 1992');
+    assert.strictEqual(artistQuery, 'AC\\/DC \\(Live\\) \\+ 1992');
   });
 
   it('rejects blank keyword searches', async () => {

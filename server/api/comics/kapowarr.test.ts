@@ -95,6 +95,40 @@ describe('KapowarrAPI', () => {
     assert.strictEqual(volumes[0].issue_count, 0);
   });
 
+  it('preserves exact issue dates from volume details', async () => {
+    const getMock = mockGet(async () => ({
+      error: null,
+      result: {
+        id: 2,
+        comicvine_id: 2002,
+        title: 'Daredevil',
+        monitored: true,
+        issue_count: 1,
+        issues_downloaded: 0,
+        issues: [
+          {
+            id: 92,
+            volume_id: 2,
+            issue_number: '7',
+            title: 'The Red Fist',
+            date: '2026-09-22',
+            files: [],
+          },
+        ],
+      },
+    }));
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    const volume = await api.getVolume(2, 60);
+
+    assert.equal(getMock.mock.calls[0].arguments[0], '/api/volumes/2');
+    assert.equal(getMock.mock.calls[0].arguments[2], 60);
+    assert.equal(volume?.issues?.[0].releaseDate, '2026-09-22');
+  });
+
   it('resolveRootFolderId reuses an existing folder before creating one', async () => {
     mockGet(async () => ({
       error: null,
@@ -274,5 +308,67 @@ describe('KapowarrAPI', () => {
       (error: Error) =>
         error instanceof KapowarrTaskRunningError && error.volumeId === 2
     );
+  });
+
+  it('parses the activity queue', async () => {
+    mockGet(async () => ({
+      error: null,
+      result: [
+        {
+          id: 2,
+          volume_id: 1,
+          issue_id: null,
+          title: 'Saga Volume 01 Issue 016 - 030',
+          size: 488748917,
+          status: 'downloading',
+          progress: 30.04,
+          speed: 34347085.54,
+        },
+        { id: 3, volume_id: 1, issue_id: null, status: 'queued' },
+      ],
+    }));
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    const queue = await api.getQueue();
+
+    assert.deepStrictEqual(queue, [
+      {
+        id: 2,
+        volumeId: 1,
+        title: 'Saga Volume 01 Issue 016 - 030',
+        size: 488748917,
+        status: 'downloading',
+        progress: 30.04,
+        speed: 34347085.54,
+      },
+      {
+        id: 3,
+        volumeId: 1,
+        title: '',
+        size: 0,
+        status: 'queued',
+        progress: 0,
+        speed: 0,
+      },
+    ]);
+  });
+
+  it('removeQueueItem sends blocklist as a JSON body', async () => {
+    const requestMock = mockRequest(async () => ({ error: null, result: {} }));
+
+    const api = new KapowarrAPI({
+      url: 'http://localhost:5656',
+      apiKey: 'key',
+    });
+    await api.removeQueueItem(2, true);
+
+    assert.deepStrictEqual(requestMock.mock.calls[0].arguments, [
+      'DELETE',
+      '/api/activity/queue/2',
+      { blocklist: true },
+    ]);
   });
 });

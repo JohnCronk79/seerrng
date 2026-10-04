@@ -10,18 +10,55 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy_main:
+        description: Deploy the published image to seerr.home after its scan passes.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 env:
   DOCKER_HUB: snapetech/seerrng
+  GHCR_IMAGE: ghcr.io/snapetech/seerrng
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  jellyfin-plugin:
+    name: Build Jellyfin bridge plugin
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Build plugin
+        run: >-
+          dotnet publish
+          integrations/jellyfin-plugin/SeerrNG.JellyfinBridge.csproj
+          --configuration Release
+          --output artifacts/seerrng-jellyfin-bridge
+
+      - name: Smoke test plugin in Jellyfin 10.11.11
+        run: >-
+          python3 integrations/jellyfin-plugin/smoke-test.py
+          --plugin-output artifacts/seerrng-jellyfin-bridge
+
   release-notes:
     name: Release-note contract
     timeout-minutes: 10
@@ -90,9 +127,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node24-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-node24-pnpm-store-
 
       - name: Install dependencies
         env:
@@ -110,7 +147,7 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     container:
-      image: node:22.22.2-alpine3.23@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f
+      image: node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
     steps:
       - name: Install Git for complete checkout
         run: apk add --no-cache git
@@ -119,6 +156,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install native build tools
+        run: apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat
 
       - name: Pnpm Setup
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -132,9 +172,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-node24-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-node24-pnpm-store-
 
       - name: Install dependencies
         env:
@@ -159,12 +199,15 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     container:
-      image: node:22.22.2-alpine3.23@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f
+      image: node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install native build tools
+        run: apk add --no-cache python3 py3-setuptools make g++ gcc libc6-compat
 
       - name: Pnpm Setup
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -179,9 +222,9 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ env.LOCK_HASH }}
+          key: ${{ runner.os }}-node24-pnpm-store-${{ env.LOCK_HASH }}
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+            ${{ runner.os }}-node24-pnpm-store-
 
       - name: Install dependencies
         env:
@@ -285,7 +328,7 @@ jobs:
         run: echo "CHANNEL=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
 
@@ -305,7 +348,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.GHCR_IMAGE }}
           tags: |
             type=raw,value=${{ steps.channel.outputs.CHANNEL }}
             type=sha
@@ -407,7 +450,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          image_name="${GHCR_IMAGE}"
           scripts/verify-container-manifest.sh --require-provenance "${image_name}:main" linux/amd64 linux/arm64
           scripts/verify-container-manifest.sh --require-provenance "${image_name}:sha-${GITHUB_SHA::7}" linux/amd64 linux/arm64
 
@@ -416,7 +459,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          image_name="${GHCR_IMAGE}"
           for attempt in 1 2 3 4 5; do
             echo "Resolving published image digest (attempt ${attempt}/5)"
             if digest=$(docker buildx imagetools inspect "${image_name}:main" --format '{{json .Manifest.Digest}}' | tr -d '"') &&
@@ -479,6 +522,7 @@ jobs:
       - name: Run Trivy image scan
         env:
           PLATFORM: ${{ matrix.platform }}
+          IMAGE_DIGEST: ${{ needs.publish.outputs.image_digest }}
         run: |
           trivy image \
             --platform "$PLATFORM" \
@@ -487,11 +531,11 @@ jobs:
             --exit-code 1 \
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
-            "ghcr.io/${{ github.repository }}@${{ needs.publish.outputs.image_digest }}"
+            "${GHCR_IMAGE}@${IMAGE_DIGEST}"
 
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-main-${{ matrix.suffix }}.sarif
           category: trivy-main-${{ matrix.suffix }}
@@ -499,7 +543,10 @@ jobs:
   deploy-main:
     name: Deploy main to seerr.home
     timeout-minutes: 30
-    if: github.ref == 'refs/heads/main' && needs.preflight-deploy.outputs.ready == 'true'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.preflight-deploy.outputs.ready == 'true' &&
+      (github.event_name != 'workflow_dispatch' || inputs.deploy_main)
     needs: [publish, preflight-deploy]
     concurrency:
       group: seerrng-live-deploy
@@ -535,7 +582,7 @@ jobs:
       - name: Pull latest main image
         run: |
           set -euo pipefail
-          image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          image_name="${GHCR_IMAGE}"
           digest="${SEERRNG_IMAGE_DIGEST:?The publish job did not provide an image digest}"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo 'The publish job returned an invalid image digest.' >&2

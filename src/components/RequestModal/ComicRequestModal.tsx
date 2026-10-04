@@ -15,10 +15,11 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { ComicServiceOption } from '@server/interfaces/api/serviceInterfaces';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
+import type { UserRequestRootFolders } from '@server/interfaces/api/userSettingsInterfaces';
 import { Permission, hasAutoApprovePermission } from '@server/lib/permissions';
 import type { ComicDetails } from '@server/models/Comic';
 import axios from 'axios';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
@@ -36,12 +37,15 @@ const messages = defineMessages('components.RequestModal.Comic', {
     'The request was submitted, but the comics service rejected it while processing.',
   editerror: 'Something went wrong while canceling the request.',
   noComicsServer:
-    'No Mylar or Kapowarr service is configured. Comic requests are unavailable.',
+    'No Mylar, Kapowarr, or BackIssue service is configured. Comic requests are unavailable.',
   publisher: 'Publisher',
   issueCount: 'Issues',
   status: 'Status',
   service: 'Service',
   defaultService: 'Default ({name})',
+  rootFolder: 'Kapowarr root folder',
+  configuredRootFolder: 'Configured default ({path})',
+  rootFolderLoading: 'Loading folders…',
   approval: 'Approval',
   requested: 'Requested',
   readyToRequest: 'Ready to Request',
@@ -55,6 +59,11 @@ interface ComicRequestModalProps {
   onComplete?: (newStatus: MediaStatus) => void;
   onUpdating?: (isUpdating: boolean) => void;
   editRequest?: NonFunctionProperties<MediaRequest>;
+}
+
+interface KapowarrRootFoldersResponse {
+  defaultRootFolder: string | null;
+  rootFolders: { id: number; path: string }[];
 }
 
 const ComicRequestModal = ({
@@ -72,12 +81,17 @@ const ComicRequestModal = ({
   const [selectedServerId, setSelectedServerId] = useState<number | undefined>(
     initialServerId
   );
+  const [selectedRootFolder, setSelectedRootFolder] = useState('');
+  const rootFolderManuallySelected = useRef(false);
   const { data, error } = useSWR<ComicDetails>(
     `/api/v1/comic/${encodeApiPathSegment(comicId)}`,
     { revalidateOnMount: true }
   );
   const { data: quota } = useSWR<QuotaResponse>(
     user ? `/api/v1/user/${user.id}/quota` : null
+  );
+  const { data: requestUserRootFolders } = useSWR<UserRequestRootFolders>(
+    user ? `/api/v1/user/${user.id}/settings/request-root-folders` : null
   );
   const { data: comicServices } = useSWR<ComicServiceOption[]>(
     '/api/v1/service/comic'
@@ -105,6 +119,41 @@ const ComicRequestModal = ({
     (service) => service.id === selectedServerId
   );
   const fallbackService = comicServices?.find((service) => service.isDefault);
+  const requestService = selectedService ?? fallbackService;
+  const rootFoldersEndpoint =
+    canUseAdvancedOptions && requestService?.backendType === 'kapowarr'
+      ? `/api/v1/service/comic/${requestService.id}/rootfolders`
+      : null;
+  const { data: kapowarrFolders } =
+    useSWR<KapowarrRootFoldersResponse>(rootFoldersEndpoint);
+
+  useEffect(() => {
+    rootFolderManuallySelected.current = false;
+    setSelectedRootFolder('');
+  }, [selectedServerId, user?.id]);
+
+  useEffect(() => {
+    if (
+      !kapowarrFolders ||
+      rootFolderManuallySelected.current ||
+      !requestService ||
+      requestService.backendType !== 'kapowarr'
+    ) {
+      return;
+    }
+
+    const preferredFolder =
+      requestUserRootFolders?.[`comic-kapowarr:${requestService.id}`];
+    if (
+      preferredFolder &&
+      preferredFolder !== kapowarrFolders.defaultRootFolder &&
+      kapowarrFolders.rootFolders.some(
+        (folder) => folder.path === preferredFolder
+      )
+    ) {
+      setSelectedRootFolder(preferredFolder);
+    }
+  }, [kapowarrFolders, requestService, requestUserRootFolders]);
 
   const sendRequest = useCallback(async () => {
     if (requestCovered) {
@@ -119,6 +168,9 @@ const ComicRequestModal = ({
         mediaType: 'comic',
         ...(selectedServerId !== undefined
           ? { serverId: selectedServerId }
+          : {}),
+        ...(selectedRootFolder && requestService?.backendType === 'kapowarr'
+          ? { rootFolder: selectedRootFolder }
           : {}),
       });
 
@@ -172,6 +224,8 @@ const ComicRequestModal = ({
     intl,
     onComplete,
     requestCovered,
+    requestService?.backendType,
+    selectedRootFolder,
     selectedServerId,
   ]);
 
@@ -362,9 +416,51 @@ const ComicRequestModal = ({
                 </option>
                 {comicServices.map((service) => (
                   <option key={service.id} value={service.id}>
-                    {service.name}
+                    {service.name} ·{' '}
+                    {service.backendType === 'mylar'
+                      ? 'Mylar3'
+                      : service.backendType === 'kapowarr'
+                        ? 'Kapowarr'
+                        : 'BackIssue'}
                   </option>
                 ))}
+              </select>
+            )}
+          {canUseAdvancedOptions &&
+            requestService?.backendType === 'kapowarr' && (
+              <select
+                className="request-form-control compact-control rounded-md border px-2 text-[11px] font-medium"
+                value={selectedRootFolder}
+                onChange={(event) => {
+                  rootFolderManuallySelected.current = true;
+                  setSelectedRootFolder(event.target.value);
+                }}
+                disabled={!kapowarrFolders}
+                aria-label={intl.formatMessage(messages.rootFolder)}
+              >
+                {!kapowarrFolders ? (
+                  <option value="">
+                    {intl.formatMessage(messages.rootFolderLoading)}
+                  </option>
+                ) : (
+                  <>
+                    <option value="">
+                      {intl.formatMessage(messages.configuredRootFolder, {
+                        path: kapowarrFolders.defaultRootFolder || notAvailable,
+                      })}
+                    </option>
+                    {kapowarrFolders.rootFolders
+                      .filter(
+                        (folder) =>
+                          folder.path !== kapowarrFolders.defaultRootFolder
+                      )
+                      .map((folder) => (
+                        <option key={folder.id} value={folder.path}>
+                          {folder.path}
+                        </option>
+                      ))}
+                  </>
+                )}
               </select>
             )}
           <button

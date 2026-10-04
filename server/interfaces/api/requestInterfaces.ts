@@ -32,6 +32,7 @@ export type MediaRequestBody = {
   tvdbId?: number;
   seasons?: number[] | 'all';
   seasonRequests?: SeasonEpisodeSelection[];
+  watchAheadEpisodeCount?: number;
   is4k?: boolean;
   serverId?: number;
   profileId?: number;
@@ -110,6 +111,7 @@ export interface RequestStatusUsersResponse extends PaginatedResponse {
 }
 
 export type RequestStatusQuery = {
+  requestId?: number;
   requestedBy?: number;
   mediaType?: MediaType | 'all';
   bookFormat?: 'ebook' | 'audiobook';

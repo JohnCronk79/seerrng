@@ -1,6 +1,12 @@
 import ExternalAPI from '@server/api/externalapi';
 import type { LazyLibrarianSettings } from '@server/lib/settings';
+import {
+  MAX_SAFE_REMOTE_IMAGE_BYTES,
+  normalizeSafeRasterImage,
+  type SafeRemoteImage,
+} from '@server/utils/safeRemoteImage';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
+import type { AxiosRequestConfig } from 'axios';
 
 export interface LazyLibrarianMagazine {
   title: string;
@@ -123,21 +129,25 @@ class LazyLibrarianAPI extends ExternalAPI {
     });
   }
 
+  private readonly serviceUrl: string;
   private readonly apiKey: string;
 
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super(url, {}, { allowPrivateAddresses: true });
+    this.serviceUrl = url;
     this.apiKey = apiKey;
   }
 
   private async runCommand<T>(
     command: string,
     params: Record<string, string | number | boolean> = {},
-    ttl = 0
+    ttl = 0,
+    requestConfig: Pick<AxiosRequestConfig, 'signal'> = {}
   ): Promise<T> {
     const response = await this.get<unknown>(
       '/api',
       {
+        ...requestConfig,
         params: {
           apikey: this.apiKey,
           cmd: command,
@@ -163,8 +173,12 @@ class LazyLibrarianAPI extends ExternalAPI {
     return 'Connected';
   }
 
-  public async getMagazines(): Promise<LazyLibrarianMagazine[]> {
-    const response = await this.runCommand<unknown>('getMagazines', {}, 60);
+  public async getMagazines(
+    signal?: AbortSignal
+  ): Promise<LazyLibrarianMagazine[]> {
+    const response = await this.runCommand<unknown>('getMagazines', {}, 60, {
+      signal,
+    });
     return Array.isArray(response)
       ? response
           .map(sanitizeMagazine)
@@ -172,10 +186,19 @@ class LazyLibrarianAPI extends ExternalAPI {
       : [];
   }
 
-  public async getIssues(title: string): Promise<LazyLibrarianMagazineDetail> {
-    const response = await this.runCommand<unknown>('getIssues', {
-      name: title,
-    });
+  public async getIssues(
+    title: string,
+    signal?: AbortSignal,
+    ttl = 0
+  ): Promise<LazyLibrarianMagazineDetail> {
+    const response = await this.runCommand<unknown>(
+      'getIssues',
+      {
+        name: title,
+      },
+      ttl,
+      { signal }
+    );
     if (!isRecord(response)) {
       return { issues: [] };
     }
@@ -186,6 +209,7 @@ class LazyLibrarianAPI extends ExternalAPI {
       magazine: sanitizeMagazine(magazineValue),
       issues: Array.isArray(response.issues)
         ? response.issues
+            .slice(0, 10_000)
             .map(sanitizeIssue)
             .filter((issue): issue is LazyLibrarianIssue => !!issue)
         : [],
@@ -208,6 +232,29 @@ class LazyLibrarianAPI extends ExternalAPI {
 
   public async scanMagazine(title?: string): Promise<void> {
     await this.runCommand<unknown>('forceMagazineScan', title ? { title } : {});
+  }
+
+  public async getMagazineCover(coverId: string): Promise<SafeRemoteImage> {
+    if (!/^(?:[a-f\d]{32}|[a-f\d]{40})$/i.test(coverId)) {
+      throw new Error('Magazine cover ID is invalid.');
+    }
+
+    const coverUrl = new URL(this.serviceUrl);
+    coverUrl.pathname = `${coverUrl.pathname.replace(/\/+$/, '')}/cache/magazine/${coverId.toLowerCase()}.jpg`;
+    coverUrl.search = '';
+    coverUrl.hash = '';
+
+    const response = await this.axios.get<ArrayBuffer>(coverUrl.href, {
+      responseType: 'arraybuffer',
+      maxContentLength: MAX_SAFE_REMOTE_IMAGE_BYTES,
+      maxBodyLength: MAX_SAFE_REMOTE_IMAGE_BYTES,
+      headers: { Accept: 'image/*' },
+    });
+
+    return normalizeSafeRasterImage(
+      response.data,
+      response.headers['content-type']
+    );
   }
 }
 

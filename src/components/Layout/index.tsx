@@ -6,29 +6,25 @@ import ThemePicker from '@app/components/Layout/ThemePicker';
 import UserDropdown from '@app/components/Layout/UserDropdown';
 import UserWarnings from '@app/components/Layout/UserWarnings';
 import useLocale from '@app/hooks/useLocale';
-import useSearchActivity from '@app/hooks/useSearchActivity';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
-import defineMessages from '@app/utils/defineMessages';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import {
+  DISCOVER_MEDIA_TYPES,
+  isConfiguredMediaCategoryEnabled,
+  isDiscoverMediaTypeEnabled,
+  isOptionalCatalogPathEnabled,
+} from '@app/utils/serviceAvailability';
 import { ArrowLeftIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/solid';
 import type { AvailableLocale } from '@server/types/languages';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
-import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 type LayoutProps = {
   children: React.ReactNode;
 };
 
-const messages = defineMessages('components.Layout', {
-  searching: 'Searching',
-});
-
 const Layout = ({ children }: LayoutProps) => {
-  const intl = useIntl();
-  const isSearching = useSearchActivity();
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const isScrolledRef = useRef(false);
@@ -63,6 +59,92 @@ const Layout = ({ children }: LayoutProps) => {
       );
     }
   }, [setLocale, currentSettings.locale, user]);
+
+  useEffect(() => {
+    if (!currentSettings.initialized) return;
+
+    if (router.pathname === '/discover/trending') {
+      const requestedType =
+        typeof router.query.mediaType === 'string'
+          ? router.query.mediaType
+          : 'movie';
+      if (
+        (DISCOVER_MEDIA_TYPES as readonly string[]).includes(requestedType) &&
+        !isDiscoverMediaTypeEnabled(
+          requestedType as (typeof DISCOVER_MEDIA_TYPES)[number],
+          currentSettings
+        )
+      ) {
+        const fallbackType = DISCOVER_MEDIA_TYPES.find((type) =>
+          isDiscoverMediaTypeEnabled(type, currentSettings)
+        );
+        if (fallbackType) {
+          void router.replace(
+            {
+              pathname: '/discover/trending',
+              query: { ...router.query, mediaType: fallbackType },
+            },
+            undefined,
+            { scroll: false }
+          );
+        } else {
+          void router.replace('/');
+        }
+        return;
+      }
+    }
+
+    if (router.pathname.startsWith('/book/')) {
+      const format = router.query.format;
+      const disabledFormat =
+        (format === 'ebook' &&
+          !isConfiguredMediaCategoryEnabled('ebook', currentSettings)) ||
+        (format === 'audiobook' &&
+          !isConfiguredMediaCategoryEnabled('audiobook', currentSettings));
+      if (disabledFormat) {
+        const availableFormat = isConfiguredMediaCategoryEnabled(
+          format === 'ebook' ? 'audiobook' : 'ebook',
+          currentSettings
+        )
+          ? format === 'ebook'
+            ? 'audiobook'
+            : 'ebook'
+          : undefined;
+        if (availableFormat) {
+          const target = new URL(router.asPath, window.location.origin);
+          target.searchParams.set('format', availableFormat);
+          void router.replace(
+            `${target.pathname}${target.search}${target.hash}`
+          );
+          return;
+        }
+      }
+    }
+
+    if (
+      router.pathname === '/discover/audiobooks' &&
+      !isConfiguredMediaCategoryEnabled('audiobook', currentSettings) &&
+      isConfiguredMediaCategoryEnabled('ebook', currentSettings)
+    ) {
+      const target = new URL(router.asPath, window.location.origin);
+      target.pathname = '/discover/books';
+      target.searchParams.set('format', 'ebook');
+      void router.replace(`${target.pathname}${target.search}${target.hash}`);
+      return;
+    }
+
+    const audiobookOnlyBookAlias =
+      router.pathname === '/discover/books' &&
+      !isDiscoverMediaTypeEnabled('book', currentSettings) &&
+      isDiscoverMediaTypeEnabled('audiobook', currentSettings);
+
+    if (
+      !isOptionalCatalogPathEnabled(router.pathname, currentSettings) &&
+      !audiobookOnlyBookAlias
+    ) {
+      void router.replace('/');
+    }
+  }, [currentSettings, router]);
 
   useEffect(() => {
     if ('requestIdleCallback' in window) {
@@ -197,25 +279,11 @@ const Layout = ({ children }: LayoutProps) => {
           </div>
         </div>
 
-        <main className="relative top-16 z-0 focus:outline-none" tabIndex={0}>
+        <main className="page-layout" tabIndex={0}>
           <div className="mb-6">
-            <div className="max-w-8xl mx-auto px-4">
+            <div className="max-w-8xl mx-auto" data-page-layout-part="content">
               <UserWarnings />
-              <div className="global-search-progress-region">
-                <div
-                  className="global-search-progress-indicator"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {isSearching && (
-                    <>
-                      <ArrowPathIcon className="h-5 w-5 animate-spin" />
-                      <span>{intl.formatMessage(messages.searching)}</span>
-                    </>
-                  )}
-                </div>
-                {children}
-              </div>
+              {children}
             </div>
           </div>
         </main>

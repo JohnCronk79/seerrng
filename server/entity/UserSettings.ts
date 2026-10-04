@@ -3,11 +3,14 @@ import type {
   NotificationAgentTypes,
   UserMediaFilterPins,
   UserPreferredLanguages,
+  UserRequestRootFolders,
   UserSettingsDetailDisclosuresByMedia,
 } from '@server/interfaces/api/userSettingsInterfaces';
 import { Notification, hasNotificationType } from '@server/lib/notifications';
 import { NotificationAgentKey } from '@server/lib/settings';
 import { DbAwareColumn } from '@server/utils/DbColumnHelper';
+import type { AdvancedThemeOverrides } from '@server/utils/advancedThemeOverrides';
+import type { DetailDisclosureOrder } from '@server/utils/detailDisclosureOrder';
 import {
   Column,
   Entity,
@@ -190,6 +193,12 @@ export class UserSettings {
   @Column({ nullable: true })
   public watchlistSyncBooks?: boolean;
 
+  @Column({ nullable: true })
+  public watchlistSyncComics?: boolean;
+
+  @Column({ nullable: true })
+  public watchlistSyncMagazines?: boolean;
+
   @Column({ type: 'varchar', nullable: true })
   public cardTextVisibilityMovie?: CardTextVisibility;
 
@@ -218,7 +227,19 @@ export class UserSettings {
   public detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
 
   @Column({ type: 'simple-json', nullable: true })
+  public detailDisclosureOrder?: DetailDisclosureOrder;
+
+  @Column({ type: 'simple-json', nullable: true })
   public mediaFilterPins?: UserMediaFilterPins;
+
+  @Column({ type: 'simple-json', nullable: true })
+  public advancedThemeOverrides?: AdvancedThemeOverrides | null;
+
+  @Column({ default: 'seerr' })
+  public themePalette: string = 'seerr';
+
+  @Column({ type: 'simple-json', nullable: true })
+  public requestRootFolders?: UserRequestRootFolders;
 
   @Column({
     type: 'text',
@@ -258,6 +279,8 @@ export class UserSettings {
       watchlistSyncTv: this.watchlistSyncTv,
       watchlistSyncMusic: this.watchlistSyncMusic,
       watchlistSyncBooks: this.watchlistSyncBooks,
+      watchlistSyncComics: this.watchlistSyncComics,
+      watchlistSyncMagazines: this.watchlistSyncMagazines,
       cardTextVisibilityMovie: this.cardTextVisibilityMovie,
       cardTextVisibilityTv: this.cardTextVisibilityTv,
       cardTextVisibilityAlbum: this.cardTextVisibilityAlbum,
@@ -267,7 +290,10 @@ export class UserSettings {
       detailDisclosureArtistsPinned: this.detailDisclosureArtistsPinned,
       detailDisclosureSubjectTagsPinned: this.detailDisclosureSubjectTagsPinned,
       detailDisclosurePins: this.detailDisclosurePins,
+      detailDisclosureOrder: this.detailDisclosureOrder,
       mediaFilterPins: this.mediaFilterPins,
+      advancedThemeOverrides: this.advancedThemeOverrides,
+      themePalette: this.themePalette,
     };
   }
 

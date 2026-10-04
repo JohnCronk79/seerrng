@@ -1,3 +1,4 @@
+import KapowarrAPI from '@server/api/comics/kapowarr';
 import ListenBrainzAPI from '@server/api/listenbrainz';
 import MusicBrainz from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
@@ -56,6 +57,7 @@ import {
   type ServarrServiceType,
 } from '@server/lib/serviceAdmission';
 import {
+  type BackIssueSettings,
   type KapowarrSettings,
   type MylarSettings,
   type RadarrSettings,
@@ -66,6 +68,7 @@ import {
   isUserCredentialVersionCurrent,
   runUserSecurityMutation,
 } from '@server/lib/userSecurityMutation';
+import { hasWatchAheadMediaServerLink } from '@server/lib/watchAheadEligibility';
 import logger from '@server/logger';
 import AsyncLock from '@server/utils/asyncLock';
 import { parseBookshelfBookId } from '@server/utils/bookshelfCatalog';
@@ -79,9 +82,11 @@ import {
   Column,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  RelationId,
   UpdateDateColumn,
   VirtualColumn,
   type EntityManager,
@@ -371,7 +376,7 @@ export class MediaRequest {
   public static request(
     requestBody: MediaRequestBody,
     user: User,
-    options: MediaRequestOptions = {}
+    options: InternalMediaRequestOptions = {}
   ): Promise<MediaRequest> {
     requestBody = { ...requestBody, is4k: requestBody.is4k ?? false };
 
@@ -469,6 +474,31 @@ export class MediaRequest {
 
     if (!requestUser) {
       throw new Error('User missing from request context.');
+    }
+
+    const watchAheadEpisodeCount = requestBody.watchAheadEpisodeCount ?? 0;
+    if (
+      !Number.isSafeInteger(watchAheadEpisodeCount) ||
+      watchAheadEpisodeCount < 0 ||
+      watchAheadEpisodeCount > 5
+    ) {
+      throw new RequestPermissionError(
+        'The requested episode queue must be between 0 and 5 episodes.'
+      );
+    }
+    if (watchAheadEpisodeCount > 0) {
+      if (
+        requestBody.mediaType !== MediaType.TV ||
+        requestUser.id !== user.id ||
+        !hasWatchAheadMediaServerLink(
+          requestUser,
+          settings.main.mediaServerType
+        )
+      ) {
+        throw new RequestPermissionError(
+          'The requested episode queue can only be enabled by the linked owner of a TV request.'
+        );
+      }
     }
 
     const isManagedRequestForAnotherUser =
@@ -835,18 +865,27 @@ export class MediaRequest {
           requestedServerId != null && !requestedMylar
             ? settings.kapowarr.find(({ id }) => id === requestedServerId)
             : undefined;
+        const requestedBackIssue =
+          requestedServerId != null && !requestedMylar && !requestedKapowarr
+            ? settings.backissue.find(({ id }) => id === requestedServerId)
+            : undefined;
 
         if (requestedMylar) {
           addService('mylar', requestedMylar.id);
         } else if (requestedKapowarr) {
           addService('kapowarr', requestedKapowarr.id);
+        } else if (requestedBackIssue) {
+          addService('backissue', requestedBackIssue.id);
         } else if (requestedServerId == null) {
           const defaultMylar = settings.mylar.find((m) => m.isDefault);
           const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+          const defaultBackIssue = settings.backissue.find((b) => b.isDefault);
           if (defaultMylar) {
             addService('mylar', defaultMylar.id);
           } else if (defaultKapowarr) {
             addService('kapowarr', defaultKapowarr.id);
+          } else if (defaultBackIssue) {
+            addService('backissue', defaultBackIssue.id);
           }
         }
         // A requested serverId matching neither array locks nothing here;
@@ -1500,8 +1539,9 @@ export class MediaRequest {
         ? requestBody.serverId
         : undefined;
 
-      let comicBackendType: 'mylar' | 'kapowarr' | undefined;
-      let selectedServer: MylarSettings | KapowarrSettings | undefined;
+      let comicBackendType: 'mylar' | 'kapowarr' | 'backissue' | undefined;
+      let selectedServer:
+        MylarSettings | KapowarrSettings | BackIssueSettings | undefined;
 
       if (requestedServerId != null) {
         const requestedMylar = settings.mylar.find(
@@ -1510,26 +1550,64 @@ export class MediaRequest {
         const requestedKapowarr = requestedMylar
           ? undefined
           : settings.kapowarr.find(({ id }) => id === requestedServerId);
-        if (!requestedMylar && !requestedKapowarr) {
+        const requestedBackIssue =
+          !requestedMylar && !requestedKapowarr
+            ? settings.backissue.find(({ id }) => id === requestedServerId)
+            : undefined;
+        if (!requestedMylar && !requestedKapowarr && !requestedBackIssue) {
           throw new ServiceConfigurationError(
             'Selected comics server does not exist.'
           );
         }
-        comicBackendType = requestedMylar ? 'mylar' : 'kapowarr';
-        selectedServer = requestedMylar ?? requestedKapowarr;
+        comicBackendType = requestedMylar
+          ? 'mylar'
+          : requestedKapowarr
+            ? 'kapowarr'
+            : 'backissue';
+        selectedServer =
+          requestedMylar ?? requestedKapowarr ?? requestedBackIssue;
       } else {
         const defaultMylar = settings.mylar.find((m) => m.isDefault);
         const defaultKapowarr = settings.kapowarr.find((k) => k.isDefault);
+        const defaultBackIssue = settings.backissue.find((b) => b.isDefault);
         if (defaultMylar) {
           comicBackendType = 'mylar';
           selectedServer = defaultMylar;
         } else if (defaultKapowarr) {
           comicBackendType = 'kapowarr';
           selectedServer = defaultKapowarr;
+        } else if (defaultBackIssue) {
+          comicBackendType = 'backissue';
+          selectedServer = defaultBackIssue;
         }
       }
 
       const serverId = selectedServer?.id;
+      let selectedRootFolder =
+        selectedServer && 'rootFolder' in selectedServer
+          ? selectedServer.rootFolder
+          : undefined;
+      if (useAdvancedOptions && requestBody.rootFolder) {
+        if (comicBackendType !== 'kapowarr' || !selectedServer) {
+          throw new ServiceConfigurationError(
+            'Per-request comic folders are only supported by Kapowarr.'
+          );
+        }
+        const kapowarrSettings = selectedServer as KapowarrSettings;
+        const kapowarr = new KapowarrAPI({
+          url: KapowarrAPI.buildUrl(kapowarrSettings),
+          apiKey: kapowarrSettings.apiKey,
+        });
+        const rootFolders = await kapowarr.getRootFolders();
+        if (
+          !rootFolders.some(({ folder }) => folder === requestBody.rootFolder)
+        ) {
+          throw new ServiceConfigurationError(
+            'Selected Kapowarr root folder is no longer available.'
+          );
+        }
+        selectedRootFolder = requestBody.rootFolder;
+      }
       const selectedDestination: RequestDestination | undefined =
         serverId === undefined || comicBackendType === undefined
           ? undefined
@@ -1537,7 +1615,7 @@ export class MediaRequest {
               serviceType: comicBackendType,
               format: 'comic',
               serverId,
-              rootFolder: selectedServer?.rootFolder ?? null,
+              rootFolder: selectedRootFolder ?? null,
             };
 
       const destinationRequests = media.id
@@ -1616,7 +1694,7 @@ export class MediaRequest {
         modifiedBy: autoApproved ? user : undefined,
         is4k: false,
         serverId,
-        rootFolder: selectedServer?.rootFolder,
+        rootFolder: selectedRootFolder,
         serviceTargets:
           serverId === undefined || comicBackendType === undefined
             ? []
@@ -1625,7 +1703,7 @@ export class MediaRequest {
                   serviceType: comicBackendType,
                   format: 'comic',
                   serverId,
-                  rootFolder: selectedServer?.rootFolder ?? null,
+                  rootFolder: selectedRootFolder ?? null,
                   status: MediaStatus.PENDING,
                 },
               ],
@@ -1884,6 +1962,17 @@ export class MediaRequest {
       ) {
         media.status4k = MediaStatus.PENDING;
       }
+    }
+
+    const resolvedTvdbId = media.tvdbId ?? tvdbId;
+    if (
+      (requestBody.watchAheadEpisodeCount ?? 0) > 0 &&
+      (!Number.isSafeInteger(Number(resolvedTvdbId)) ||
+        Number(resolvedTvdbId) <= 0)
+    ) {
+      throw new ServiceConfigurationError(
+        'The requested episode queue requires a valid TVDB identity for this series.'
+      );
     }
 
     const useAdvancedOptions = canUseAdvancedRequestOptions(user);
@@ -2430,6 +2519,7 @@ export class MediaRequest {
             : MediaRequestStatus.PENDING,
           modifiedBy: autoApproved ? user : undefined,
           is4k: requestBody.is4k,
+          watchAheadEpisodeCount,
           serverId,
           profileId: profileId,
           rootFolder: rootFolder,
@@ -2579,6 +2669,34 @@ export class MediaRequest {
 
   @Column({ default: false })
   public is4k: boolean;
+
+  /** Number of upcoming unwatched episodes to keep requested automatically. */
+  @Column({ type: 'integer', default: 0 })
+  public watchAheadEpisodeCount = 0;
+
+  /** Highest episode whose watched state has been handled by watch-ahead. */
+  @Column({ type: 'integer', nullable: true })
+  public watchAheadLastSeason?: number | null;
+
+  @Column({ type: 'integer', nullable: true })
+  public watchAheadLastEpisode?: number | null;
+
+  /** Last time the worker reconciled this enrollment against Sonarr. */
+  @Column({ type: 'integer', nullable: true })
+  public watchAheadLastReconciledAt?: number | null;
+
+  @ManyToOne(() => MediaRequest, (request) => request.watchAheadRequests, {
+    nullable: true,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'watchAheadParentRequestId' })
+  public watchAheadParent?: MediaRequest | null;
+
+  @RelationId((request: MediaRequest) => request.watchAheadParent)
+  public watchAheadParentRequestId?: number | null;
+
+  @OneToMany(() => MediaRequest, (request) => request.watchAheadParent)
+  public watchAheadRequests?: MediaRequest[];
 
   @Column({ nullable: true })
   public serverId: number;

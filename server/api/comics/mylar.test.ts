@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
-import MylarAPI from '@server/api/comics/mylar';
+import MylarAPI, { getMylarIssueFilename } from '@server/api/comics/mylar';
 
 type MockableMylar = {
   get: (
@@ -79,7 +79,12 @@ describe('MylarAPI', () => {
       data: {
         comic: [{ id: '1234', name: 'Batman' }],
         issues: [
-          { id: '1', number: '1' },
+          {
+            id: '1',
+            number: '1',
+            releaseDate: '2026-09-10',
+            issueDate: '2026-09',
+          },
           { id: '2', number: '2' },
         ],
       },
@@ -90,6 +95,23 @@ describe('MylarAPI', () => {
 
     assert.strictEqual(detail.comic?.name, 'Batman');
     assert.strictEqual(detail.issues.length, 2);
+    assert.strictEqual(detail.issues[0].releaseDate, '2026-09-10');
+    assert.strictEqual(detail.issues[0].issueDate, '2026-09');
+  });
+
+  it('parses safe content-disposition filenames without backtracking on malformed headers', () => {
+    assert.strictEqual(
+      getMylarIssueFilename('attachment; filename="Batman \\"Special\\".cbz"'),
+      'Batman "Special".cbz'
+    );
+    assert.strictEqual(
+      getMylarIssueFilename("attachment; filename*=UTF-8''Batman%20%231.cbz"),
+      'Batman #1.cbz'
+    );
+    assert.strictEqual(
+      getMylarIssueFilename('attachment; filename="' + '\\\\!'.repeat(128)),
+      undefined
+    );
   });
 
   it('addComic sends the ComicVine id as the id param', async () => {

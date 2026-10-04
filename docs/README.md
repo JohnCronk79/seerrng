@@ -5,9 +5,10 @@ sidebar_position: 1
 
 # SeerrNG Documentation
 
-SeerrNG brings movie, television, music, ebook, and audiobook requests into one
-self-hosted app. These guides cover installation, request workflows, user
-settings, and the media services SeerrNG connects to.
+SeerrNG brings movie, television, music, book, comic, magazine, emulation, and
+PC game requests into one self-hosted app. These guides cover installation,
+request workflows, download copies, user settings, and the services SeerrNG
+connects to.
 
 ## Start here
 
@@ -23,7 +24,12 @@ settings, and the media services SeerrNG connects to.
 
 - [Find books, authors, and series](/using-seerr/books-and-series/)
 - [Follow requests and status history](/using-seerr/request-status/)
+- [Opt in to the TV episode queue with Plex, Jellyfin, or Emby playback](/using-seerr/jellyfin-watch-ahead/)
+- [Browse and request ROMs and PC games](/using-seerr/software-acquisition/)
+- [See where indexer searches run by media category](/using-seerr/indexer-searches/)
+- [Download verified files from Request Status](/using-seerr/request-status/)
 - [Media details and playback controls](/using-seerr/media-details-and-playback/)
+- [Optional native desktop playback](/using-seerr/native-desktop-playback/)
 - [Import a playlist as music requests](/using-seerr/playlist-requests/)
 - [Manage users and request preferences](/using-seerr/users/editing-users/)
 - [Configure notifications](/using-seerr/notifications/)
@@ -33,7 +39,9 @@ settings, and the media services SeerrNG connects to.
 ## Configure and operate
 
 - [Configure media and automation services](/using-seerr/settings/services/)
+- [Choose available media categories](/using-seerr/settings/media-categories/)
 - [Configure media-server libraries](/using-seerr/settings/mediaserver)
+- [Choose companion services and SeerrNG NG forks](/using-seerr/companion-services)
 - [Enable built-in HTTPS](/using-seerr/advanced/built-in-tls)
 - [Create override rules](/using-seerr/override-rules/)
 - [Bookshelf backend setup](/using-seerr/bookshelf-backend/)

@@ -117,6 +117,14 @@ describe('getImageCacheUrl', () => {
     assert.equal(
       getImageCacheUrl({
         cacheImages: true,
+        src: 'https://static.tvmaze.com/uploads/poster.jpg',
+        type: 'tmdb',
+      }),
+      '/imageproxy/tvmaze/uploads/poster.jpg'
+    );
+    assert.equal(
+      getImageCacheUrl({
+        cacheImages: true,
         src: 'https://covers.openlibrary.org/b/id/123-L.jpg',
         type: 'book',
       }),
@@ -125,6 +133,33 @@ describe('getImageCacheUrl', () => {
   });
 
   it('rewrites supported image providers by URL even when the type is generic', () => {
+    for (const [src, expected] of [
+      [
+        'https://comicvine.gamespot.com/a/uploads/scale_large/1/cover.jpg',
+        '/imageproxy/comicvine/a/uploads/scale_large/1/cover.jpg',
+      ],
+      [
+        'https://comicvine.cbsistatic.com/a/uploads/scale_large/1/cover.jpg',
+        '/imageproxy/comicvinestatic/a/uploads/scale_large/1/cover.jpg',
+      ],
+      [
+        'https://comicvine1.cbsistatic.com/a/uploads/scale_large/1/cover.jpg',
+        '/imageproxy/comicvinestatic1/a/uploads/scale_large/1/cover.jpg',
+      ],
+      [
+        'https://images.igdb.com/igdb/image/upload/t_cover_big/abc.jpg',
+        '/imageproxy/igdb/igdb/image/upload/t_cover_big/abc.jpg',
+      ],
+    ]) {
+      assert.equal(
+        getImageCacheUrl({ cacheImages: true, src, type: 'tmdb' }),
+        expected
+      );
+      assert.equal(
+        getImageCacheUrl({ cacheImages: false, src, type: 'tmdb' }),
+        src
+      );
+    }
     assert.equal(
       getImageCacheUrl({
         cacheImages: true,

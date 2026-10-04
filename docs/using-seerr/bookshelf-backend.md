@@ -19,83 +19,171 @@ recovery, plus Google Books, Library of Congress, Apify, caching, IDs, and
 future provider candidates, see [Bookshelf Metadata Sources and Migration
 Recovery](./bookshelf-metadata-sources.md).
 
-[Chaptarr](https://github.com/Chaptarr/chaptarr) is a supported Readarr-
-compatible alternative. SeerrNG sends the selected book format explicitly, so
-Chaptarr can serve ebooks and audiobooks from one instance without a
-provider-specific URL Base or API adapter.
+## One BookshelfNG instance for both formats
 
-### Chaptarr
+One BookshelfNG instance and database can manage ebooks and audiobooks on the
+same book record. SeerrNG keeps format routing separate, so add two **Bookshelf**
+service entries when you want both formats: set one to **Book** and the other
+to **Audiobook**, and point both entries to the same BookshelfNG URL and API
+key. The entries let SeerrNG route each format; they are not separate
+BookshelfNG instances.
 
-Configure Chaptarr in **Settings > Services** as a Bookshelf server:
+For a new deployment, run `deploy/install-bookshelf-backend.sh` without an
+instance flag. It selects one combined BookshelfNG process by default. In
+SeerrNG's first-run **Configure Services** step, add a **Book** connection,
+then choose **Use this instance for Audiobooks** to create the second service
+entry with the same connection details. Select its root folder and profiles
+before saving. Use `--split-instances` only if you want isolated processes.
+
+On upgrade, the installer keeps an existing split audiobook database and
+SeerrNG keeps the configured service entries. To combine later, migrate the
+separate audiobook library into the instance you will keep, verify its files
+and requests, and back up the old database. After the separate database is no
+longer at its configured path, run the installer with `--single-instance` and
+point both SeerrNG entries to that instance. The installer refuses to ignore
+an existing separate audiobook database; changing the two URLs alone does not
+merge it.
+
+Each BookshelfNG author can optionally set different ebook and audiobook
+folders in the author editor. These overrides apply to future imports,
+upgrades, and renames; existing files are not moved automatically. Quality and
+metadata profiles remain shared by both formats. Separate BookshelfNG instances are
+optional when you need isolated databases or different settings for the same
+author.
+
+### BookshelfNG interoperability
+
+Current BookshelfNG builds publish `/api/v1/system/capabilities` with the
+versioned `seerrng-bookshelf` contract. SeerrNG checks that response and, when
+available, routes ebook and audiobook service requests through the matching
+`/readarr/{gr|hc}/{format}/api/v1` path, where `gr` and `hc` identify the
+provider-ID dialect. Older BookshelfNG versions keep using the standard
+Readarr API path. Both routes reach the same BookshelfNG database and library;
+the facade carries the configured format context and does not create separate
+profile storage.
+
+On BookshelfNG builds that support a dedicated SeerrNG key, operators can set
+`BOOKSHELF_SEERRNG_API_KEY` from a container or Kubernetes secret and use it in
+both SeerrNG service entries. This credential
+is limited to BookshelfNG status/capability, library/search, tag,
+quality/metadata-profile and root-folder, queue, book-file, book-history, and
+command-status reads; author/book add or update operations; and a `BookSearch`
+command for one book at a time. It cannot manage API keys or system settings,
+run other commands, or delete authors or files. The global BookshelfNG API key
+remains supported for existing clients. Older BookshelfNG builds should
+continue to use the global API key.
+
+[ChaptarrNG](https://github.com/snapetech/chaptarrng) is Snapetech's maintained
+fork of [Chaptarr](https://github.com/Chaptarr/chaptarr), supported as a
+Readarr-compatible alternative. We maintain the fork because SeerrNG needs
+format-scoped requests and durable tracking when author metadata preparation
+delays a book add. ChaptarrNG remains a standalone app. SeerrNG sends the
+selected format explicitly, so one ChaptarrNG instance can serve ebooks and
+audiobooks without a provider-specific URL Base or API adapter.
+
+### ChaptarrNG
+
+Configure ChaptarrNG in **Settings > Services** as a Bookshelf server. Its
+system-status response identifies the app as `Chaptarr` so SeerrNG's
+Readarr-compatible detection continues to work:
 
 1. Add one service entry for each format you want to request. Set **Book
-   Format** to **Book** or **Audiobook** to match the Chaptarr root folder and
+   Format** to **Book** or **Audiobook** to match the ChaptarrNG root folder and
    profiles selected below it.
-2. Use Chaptarr's normal host, port, and API key. Leave **URL Base** blank
-   unless you deliberately configured a URL Base in Chaptarr.
+2. Use ChaptarrNG's normal host, port, and API key. Leave **URL Base** blank
+   unless you deliberately configured a URL Base in ChaptarrNG.
 3. Select the format-specific root folder, quality profile, and metadata
    profile returned by the connection test.
 4. Enable **Scan** after saving. Enable **Automatic Search** if approvals
-   should start a Chaptarr search.
+   should start a ChaptarrNG search.
 
-For a single Chaptarr instance that manages both formats, create two SeerrNG
+When SeerrNG and ChaptarrNG run in separate containers, connect them through a
+shared Docker network and use the ChaptarrNG service name and container port,
+for example `http://chaptarrng:8789`. Do not use `localhost` from SeerrNG's
+container. ChaptarrNG's Compose example publishes its host port on loopback by
+default; container-to-container requests can use the shared network without a
+host port publication. For separate Compose projects, create the network once
+with `docker network create media-services`, then add the following network
+declaration and service attachment to both Compose files (adjust service names
+as needed):
+
+```yaml
+services:
+  chaptarrng:
+    networks: [media-services]
+
+networks:
+  media-services:
+    external: true
+```
+
+For a single ChaptarrNG instance that manages both formats, create two SeerrNG
 service entries with the same connection details and different **Book Format**
 values. Mark one entry of each format as the default. A **Both** request then
 dispatches once to each entry.
 
-SeerrNG sends Chaptarr the requested book identity and selected-book monitoring
-intent. Chaptarr may still create unmonitored catalogue rows for other books by
-the same author; only the requested format/book is marked for monitoring. This
-is normal Chaptarr behaviour, not evidence that SeerrNG approved those other
-books.
+SeerrNG sends ChaptarrNG the requested book identity and selected-book
+monitoring intent. ChaptarrNG may still create unmonitored catalogue rows for
+other books by the same author; only the requested format/book is marked for
+monitoring. This is normal ChaptarrNG behavior, not evidence that SeerrNG
+approved those other books.
 
-### Chaptarr interoperability
+### ChaptarrNG interoperability
 
-SeerrNG detects Chaptarr from its system status and sends each Bookshelf service
-through the matching ebook or audiobook API facade. It reads Chaptarr's
-Hardcover setting to choose the provider-ID dialect; older Chaptarr versions
-without that setting use the Hardcover facade. Keep both SeerrNG service entries
-on the same Chaptarr instance when it manages both formats, and select the
+SeerrNG sends each ChaptarrNG Bookshelf service through the matching ebook or
+audiobook API facade. It reads ChaptarrNG's `/system/capabilities` contract to
+choose the provider-ID dialect. Older versions without a supported contract
+fall back to the existing Hardcover-setting check, then use the Hardcover
+facade when that setting is unavailable. Keep both SeerrNG service entries on
+the same ChaptarrNG instance when it manages both formats, and select the
 matching format in each entry.
 
 | Operation | SeerrNG behavior |
 | --- | --- |
 | Search and edition selection | Uses format-scoped lookups, retains the provider's work and edition IDs, and falls back to native lookup results when a format facade has no addressable result. |
-| Library scan | Reads paged, format-scoped results including unmonitored catalogue rows. It follows Chaptarr's reported total even when a page is short, and refuses to return a scan known to be incomplete. |
-| Add and search | Sends the selected format and monitoring intent. When Chaptarr queues author metadata preparation, SeerrNG stores the pending import and resumes the requested book add and search when it is ready. |
-| Request cancellation | Cancels the pending author import only when no other active request on the same Chaptarr instance references it. The check includes both SeerrNG ebook and audiobook service entries. For completed adds, normal book and queue cleanup applies. |
-| Settings diagnostic | A normal diagnostic checks the connection, profiles, folders, and lookup. The optional `testAdd` API flag performs a real add and removes the local book afterward. If Chaptarr returns a pending import, the diagnostic displays its ID and leaves it queued because Chaptarr may share that import with an active request. Check the import in Chaptarr and cancel it only if no request needs it. |
+| Library scan | Reads paged, format-scoped results including unmonitored catalogue rows. It follows ChaptarrNG's reported total even when a page is short, and refuses to return a scan known to be incomplete. |
+| Add and search | Sends the selected format and monitoring intent. When ChaptarrNG queues author metadata preparation, SeerrNG stores the pending import and resumes the requested book add and search when it is ready. |
+| Request cancellation | Cancels the pending author import only when no other active request on the same ChaptarrNG instance references it. The check includes both SeerrNG ebook and audiobook service entries. For completed adds, normal book and queue cleanup applies. |
+| Settings diagnostic | A normal diagnostic checks the connection, profiles, folders, and lookup. The optional `testAdd` API flag performs a real add and removes the local book afterward. If ChaptarrNG returns a pending import, the diagnostic displays its ID and leaves it queued because that import may also serve an active request. Check the import in ChaptarrNG and cancel it only if no request needs it. |
 
 The `testAdd` diagnostic is an API option; the Settings modal's **Run
 Diagnostic** button does not enable it. Use it only when you intend to exercise
 the add endpoint and can review any provider-side work it queues.
 
-When Chaptarr accepts an add with `202 Accepted` while it prepares author
+When ChaptarrNG accepts an add with `202 Accepted` while it prepares author
 metadata, SeerrNG keeps the request waiting and resumes the selected format's
-add and search after Chaptarr reports that import complete. SeerrNG retains the
-provider work and edition IDs for that request, so it can restore tracking if
-Chaptarr assigns the local book a different row ID. Cancelling a waiting
+add and search after ChaptarrNG reports that import complete. SeerrNG retains
+the provider work and edition IDs for that request, so it can restore tracking
+if ChaptarrNG assigns the local book a different row ID. Cancelling a waiting
 request checks for active references across both format entries when they point
-to the same Chaptarr instance, and cancels the pending author import only when
-no other request depends on it.
+to the same ChaptarrNG instance, and cancels the pending author import only
+when no other request depends on it.
 
-The last end-to-end Docker validation used Chaptarr `0.9.911.0`. As of
-2026-09-24, the client contract has also been source-reviewed against
-[Chaptarr v0.9.958](https://github.com/Chaptarr/chaptarr/releases/tag/v0.9.958),
-the latest listed pre-release, including the pending-add response and
-pending-author-import API available since v0.9.936. The v0.9.958 Docker image
-has not been runtime-tested with SeerrNG. Pin an exact Chaptarr image version
-instead of relying on `latest`, because Chaptarr is actively developed and its
-Readarr-compatible surface can change between releases.
-The source-reviewed contracts are in Chaptarr's
-[BookController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/Books/BookController.cs)
+The last end-to-end Docker validation used Chaptarr `0.9.911.0`. The fork's
+first stable release was `v0.9.936`; its current
+[ChaptarrNG v0.9.939 release](https://github.com/snapetech/chaptarrng/releases/tag/v0.9.939)
+includes the format-scoped request and pending-import contracts reviewed in
+the
+[BookController](https://github.com/snapetech/chaptarrng/blob/v0.9.939/src/Chaptarr.Api.V1/Books/BookController.cs)
 and
-[PendingAuthorImportController](https://github.com/Chaptarr/chaptarr/blob/v0.9.958/src/Chaptarr.Api.V1/PendingImport/PendingAuthorImportController.cs).
+[PendingAuthorImportController](https://github.com/snapetech/chaptarrng/blob/v0.9.939/src/Chaptarr.Api.V1/PendingImport/PendingAuthorImportController.cs).
+The explicit `/system/capabilities` contract is scheduled for the next
+ChaptarrNG release; current images continue to use the settings fallback. The
+contract and fallback are covered by ChaptarrNG resource tests and SeerrNG
+adapter tests, but those checks do not replace end-to-end Docker validation.
+The public GHCR images
+`ghcr.io/snapetech/chaptarrng:0.9.939` and
+`ghcr.io/snapetech/chaptarrng:latest` are available for `linux/amd64`,
+`linux/arm64`, and `linux/arm/v7`. Its Unraid template is available from the
+[dedicated ChaptarrNG Unraid package repository](https://github.com/snapetech/chaptarrng-unraid).
+Source review and image publication are not end-to-end runtime validation of
+SeerrNG with ChaptarrNG. Pin `0.9.939` for reproducible deployments because
+the Readarr-compatible surface can change between releases.
 
-If a Chaptarr lookup is empty, first verify that the selected **Book Format**
+If a ChaptarrNG lookup is empty, first verify that the selected **Book Format**
 has a writable root folder and matching quality/metadata profiles. If the
 connection test succeeds but diagnosis reports incomplete metadata, check the
-Chaptarr metadata provider and retry the lookup from its UI.
+ChaptarrNG metadata provider and retry the lookup from its UI.
 
 ## Deployment Policy
 
@@ -108,8 +196,9 @@ and SeerrNG service configuration.
 
 Core policy:
 
-- New install with no existing Readarr or Bookshelf config: create Hardcover
-  ebook and audiobook instances.
+- New install with no existing Readarr or Bookshelf config: one BookshelfNG
+  instance can serve both formats. Add two SeerrNG service entries with the
+  same endpoint when both request formats are enabled.
 - Existing Readarr or softcover config: retain the configured backend unless
   the operator explicitly chooses to migrate.
 - Matching: strict automatic migration only; fuzzy matches go to an optional
@@ -130,7 +219,8 @@ Core policy:
 
   The default mode should be `auto`.
 - In `auto` mode:
-  - if no existing config or database exists, create fresh Hardcover instances;
+  - if no existing config or database exists, create one combined Hardcover
+    BookshelfNG instance for ebooks and audiobooks;
   - if an existing Readarr or softcover config/database exists, run the
     migration flow.
 - For fresh Hardcover installs:
@@ -155,9 +245,11 @@ Core policy:
   `http://127.0.0.1:*` or already use the `rreading-glasses` Compose profile
   are detected as `compatibility` on rerun. Set the mode explicitly to change
   that behavior.
-- Keep two instances:
-  - ebook on `8787`;
-  - audiobook on `8788`.
+- Use one BookshelfNG process and database for fresh ebook and audiobook
+  deployments. SeerrNG still uses two format-specific service entries that
+  point to that same instance. The optional `--split-instances` mode is for
+  operators who need separate settings or databases; it is not required for
+  either format.
 
 ### Migration Flow
 
@@ -226,14 +318,15 @@ Applying the generated rebuild payload is opt-in. Set
 `rebuild-blocked.json`.
 
 BookshelfNG also searches Library of Congress and Gutendex alongside Hardcover
-by default. The managed two-instance SeerrNG installer enables LOC on the
-audiobook service by default so both processes do not exceed LOC's shared
-outbound request pacing; it enables Gutendex on both services. Google Books
-and Europeana are added when `GOOGLE_BOOKS_API_KEY` and `EUROPEANA_API_KEY` are
-configured. Internet Archive and NDL Search are opt-in. Europeana is limited
-to openly reusable text records from its cultural heritage collection. These
-runtime catalogs return source-qualified IDs that SeerrNG retains through
-search, details, and requests.
+by default. The standard deployment runs one BookshelfNG instance, which uses
+the same catalog selection for ebooks and audiobooks. The optional split
+deployment enables Library of Congress for the audiobook process by default to
+coordinate outbound request pacing across processes, and enables Gutendex in
+both processes. Google Books and Europeana are added when
+`GOOGLE_BOOKS_API_KEY` and `EUROPEANA_API_KEY` are configured. Internet Archive
+and NDL Search are opt-in. Europeana is limited to openly reusable text records
+from its cultural heritage collection. These runtime catalogs return
+source-qualified IDs that SeerrNG retains through search, details, and requests.
 Set `BOOKSHELF_EBOOKS_METADATA_SOURCES` and
 `BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES` to override each service; the legacy
 `BOOKSHELF_METADATA_SOURCES` value applies to both when supplied to the
@@ -409,18 +502,27 @@ by Bookshelf when Open Library has no author photo.
 
 ## Architecture
 
-Run separate Bookshelf instances for ebooks and audiobooks:
+BookshelfNG is the maintained Readarr-style application. One instance manages
+both ebook and audiobook files, downloads, imports, file organization, and the
+Readarr-compatible API that SeerrNG calls. When both request formats are
+enabled, SeerrNG has two service entries pointing to that same instance.
 
-- `bookshelf-ebooks` on port `8787`
-- `bookshelf-audiobooks` on port `8788`
+The bundled installer defaults fresh deployments to one combined BookshelfNG
+process, configuration, and database. SeerrNG still uses separate **Book** and
+**Audiobook** service entries for request routing; both entries point to the
+same BookshelfNG URL and API key. Existing audiobook databases retain the
+split deployment on installer reruns, and the installer will not merge those
+databases. Use `--split-instances` for an intentional two-process deployment
+or `--single-instance` to request the combined layout explicitly.
 
-BookshelfNG is the maintained Readarr-style application. It owns library
-management, download clients, importing, file organization, and the
-Readarr-compatible API that SeerrNG calls. rreading-glasses is a metadata
-compatibility/proxy layer: it exposes the metadata API BookshelfNG expects,
-translates requests to Hardcover, caches results in PostgreSQL, and
-coalesces/rate-limits upstream work. Metadata has three deliberate deployment
-modes:
+A single instance uses one metadata catalog selection and one author-level
+profile set. Each author uses one default path and can optionally set separate
+ebook and audiobook folder overrides.
+
+rreading-glasses is a metadata compatibility/proxy layer: it exposes the
+metadata API BookshelfNG expects, translates requests to Hardcover, caches
+results in PostgreSQL, and coalesces/rate-limits upstream work. Metadata has
+three deliberate deployment modes:
 
 | Mode | Bookshelf metadata path | rreading-glasses | Use it when |
 | --- | --- | --- | --- |
@@ -431,8 +533,8 @@ modes:
 Compatibility is the installer default because it keeps BookshelfNG decoupled
 from Hardcover's GraphQL API and centralizes Hardcover authentication, caching,
 request coalescing, and upstream throttling. One proxy and PostgreSQL cache can
-serve both the ebook and audiobook instances. Existing local proxy installs are
-detected and preserved on rerun.
+serve a single combined BookshelfNG instance or several isolated instances.
+Existing local proxy installs are detected and preserved on rerun.
 
 Native remains an explicit alternative when the shortest direct path is more
 valuable than the shared proxy boundary. Select it with
@@ -476,11 +578,11 @@ In compatibility mode, rreading-glasses provides the older shared path:
 4. A cache miss, expired entry, or free-text search still needs the configured
    upstream. The proxy is not an unlimited offline mirror.
 
-The shared cache can help both Bookshelf instances and survives a proxy restart
-when its PostgreSQL volume is healthy. It also adds two local failure points:
-the proxy and its database. If either is unavailable, both instances lose this
-metadata path. There is no automatic runtime failover from Hardcover to
-Goodreads or OpenLibrary in either mode.
+The shared cache can serve one or more Bookshelf instances and survives a proxy
+restart when its PostgreSQL volume is healthy. It also adds two local failure
+points: the proxy and its database. If either is unavailable, connected
+instances lose this metadata path. There is no automatic runtime failover from
+Hardcover to Goodreads or OpenLibrary in either mode.
 
 During a compatibility-mode outage, keep rreading-glasses and
 `RREADING_GLASSES_POSTGRES_DIR` intact. The installer backs up that directory
@@ -490,10 +592,10 @@ upstream recovery.
 
 For compatibility mode, provide `HARDCOVER_AUTH` with the `Bearer ` prefix;
 the token is used by rreading-glasses. Native mode passes it to BookshelfNG.
-Get a token from
-https://hardcover.app/settings → Hardcover API. Hosted mode does not require a
-local token for metadata, although Bookshelf's own Hardcover list-import
-settings still need an API key when that feature is used.
+Create a token in [Hardcover account API settings](https://hardcover.app/account/api).
+Hosted mode does not require a local token for metadata, although Bookshelf's
+own Hardcover list-import settings still need an API key when that feature is
+used.
 
 For Goodreads/softcover mode, provide a Goodreads cookie via `COOKIE` if your
 upstream requires one.
@@ -504,9 +606,9 @@ connection test. Hardcover mode requires `HARDCOVER_AUTH` with the `Bearer `
 prefix; softcover mode requires the Goodreads `COOKIE` when the upstream asks
 for it.
 
-Bookshelf supports only one type of a given book in a single instance. SeerrNG
-therefore expects one default Bookshelf service for ebooks and a separate default
-Bookshelf service for audiobooks when audiobook or both-format requests are used.
+BookshelfNG supports ebook and audiobook files for the same book in one
+instance. SeerrNG needs a default service entry for each format enabled, and
+both entries can point to the same BookshelfNG instance.
 
 ## Repository and Image
 
@@ -605,7 +707,8 @@ For the validated deployment, the important in-container paths were:
 
 ## Installer Script
 
-The repository includes an installer helper:
+The repository includes an installer helper. A fresh deployment starts one
+BookshelfNG process for both formats:
 
 ```bash
 deploy/install-bookshelf-backend.sh
@@ -624,14 +727,20 @@ It does the following:
 - copies `deploy/compose.bookshelf.yml` into an install directory,
 - writes an `.env` file with a generated Postgres password,
 - backs up existing Bookshelf/Readarr config directories,
-- creates missing config/data directories,
-- creates or patches each Bookshelf `config.xml` so the ebook instance binds
-  port `8787` and the audiobook instance binds port `8788`,
+- creates the combined Bookshelf config on port `8787` by default; pass
+  `--split-instances` to create separate ebook (`8787`) and audiobook (`8788`)
+  configs,
 - optionally stops an old Readarr container,
-- starts the two Bookshelf instances with Docker Compose; starts
+- starts the selected Bookshelf deployment with Docker Compose; starts
   rreading-glasses and Postgres only when
   `BOOKSHELF_METADATA_MODE=compatibility`,
 - prints the Seerr settings and validation commands.
+
+When an audiobook database is found, the helper preserves the split layout on
+reruns. Use `--single-instance` only after separately migrating any data from
+that database; the installer refuses to silently leave it behind. The
+combined layout uses the same host, port, and API key in both SeerrNG format
+entries.
 
 Preview the install without changing files or containers:
 
@@ -648,9 +757,12 @@ sudo deploy/install-bookshelf-backend.sh --validate-only
 Validate the Bookshelf APIs after startup:
 
 ```bash
-sudo EBOOK_API_KEY=replace-me AUDIOBOOK_API_KEY=replace-me \
+sudo EBOOK_API_KEY=replace-me \
   deploy/install-bookshelf-backend.sh --validate-api --skip-pull --no-stop-readarr
 ```
+
+In split-instance mode, also set `AUDIOBOOK_API_KEY`; the helper validates
+both processes separately.
 
 Run it on the Docker host:
 
@@ -814,17 +926,23 @@ tar -C /mnt/datapool_lvm_media -czf "$backup_dir/bookshelf-audiobooks-config.tgz
 Do not delete the old backup after first boot. Keep it until ebook, audiobook,
 and both-format requests have been tested through SeerrNG.
 
-## SeerrNG Configuration
+## SeerrNG Configuration for One BookshelfNG Instance
 
-In **Settings > Services**, add two Bookshelf services.
+In **Settings > Services**, add two Bookshelf service entries that point to
+the same BookshelfNG host, port, and API key. This keeps SeerrNG's format
+routing separate while BookshelfNG stores both formats in one library.
+To reorganize files inside that combined database, use the admin-only
+[Bookshelf media path mover](./bookshelf-media-path-migration.md). It previews
+the file moves and requires confirmation before BookshelfNG queues them.
 
 Book service:
 
 ```text
 Hostname: kspls0, 127.0.0.1, or the Docker host name reachable by SeerrNG
 Port: 8787
+API Key: the BookshelfNG instance's API key
 Book Format: Book
-Quality Profile: eBook
+Quality Profile: a profile present in this BookshelfNG instance
 Root Folder: /data/plex/books
 Default Server: enabled
 Enable Scan: enabled
@@ -835,22 +953,25 @@ Audiobook service:
 
 ```text
 Hostname: kspls0, 127.0.0.1, or the Docker host name reachable by SeerrNG
-Port: 8788
+Port: 8787
+API Key: the same BookshelfNG instance's API key
 Book Format: Audiobook
-Quality Profile: Spoken
-Root Folder: /data/plex/books, unless you maintain a separate audiobook root
+Quality Profile: a profile present in this BookshelfNG instance
+Root Folder: /data/plex/books
 Default Server: enabled
 Enable Scan: enabled
 Enable Automatic Search: your policy
 ```
 
-Use each instance's own API key from **Bookshelf > Settings > General >
-Security**. Do not reuse a stale key unless the config directory was intentionally
-migrated and the key is still valid.
+Use the same API key from **Bookshelf > Settings > General > Security** for
+both service entries. Authors can optionally set separate ebook and audiobook
+folders, while quality and metadata profiles remain shared. Select compatible
+defaults in each entry. The entries can use different endpoints if you
+deliberately operate isolated instances.
 
 ## Metadata Source
 
-Each Bookshelf instance should use:
+The combined BookshelfNG instance can use:
 
 ```text
 http://127.0.0.1:8790
@@ -859,11 +980,8 @@ http://127.0.0.1:8790
 Verify with:
 
 ```bash
-curl -H "X-Api-Key: EBOOK_API_KEY" \
+curl -H "X-Api-Key: BOOKSHELF_API_KEY" \
   http://127.0.0.1:8787/api/v1/config/development
-
-curl -H "X-Api-Key: AUDIOBOOK_API_KEY" \
-  http://127.0.0.1:8788/api/v1/config/development
 ```
 
 Both responses should include:
@@ -1104,16 +1222,17 @@ service/profile override value, not as a missing or invalid ID.
 - Book requests rely on Bookshelf-compatible lookup metadata. The diagnostic
   can identify incomplete lookup results, but it does not yet run automatically
   before every request.
-- Both-format book requests dispatch to two backend services. Check each
-  Bookshelf instance when troubleshooting partial success.
+- Both-format book requests dispatch through two format-specific service
+  entries. Check each entry when troubleshooting partial success; both can
+  point to the same BookshelfNG instance.
 
 ## Optional chaptered M4B imports
 
 BookshelfNG can merge an identified multi-file audiobook download into one
 chaptered M4B. In the SeerrNG-managed deployment, set
 `BOOKSHELF_M4B_MERGE=true` before running the installer. It stores that choice
-in the generated `.env` and passes it to both BookshelfNG instances. The
-default is `false`.
+in the generated `.env` and passes it to the combined process, or to both
+processes when using the optional split layout. The default is `false`.
 
 The standard BookshelfNG Docker image includes FFmpeg. The merge encodes AAC
 at 128 kbps by default; set `BOOKSHELF_M4B_AAC_BITRATE_KBPS` to a value from
