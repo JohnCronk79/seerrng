@@ -1,0 +1,350 @@
+import type { ReadarrBook } from '@server/api/servarr/readarr';
+import ReadarrAPI from '@server/api/servarr/readarr';
+import { MediaStatus, MediaType } from '@server/constants/media';
+import { getRepository } from '@server/datasource';
+import Media from '@server/entity/Media';
+import { MediaIdentifierProvider } from '@server/entity/MediaIdentifier';
+import { resolveOpenLibraryIdentifiersForReadarrBook } from '@server/lib/bookIdentifierResolver';
+import { normalizeExternalBookId } from '@server/lib/externalIds';
+import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import { normalizeIsbn, normalizeValidIsbn } from '@server/lib/isbn';
+import { runMediaEntityMutation } from '@server/lib/mediaMutation';
+import type {
+  ProcessOptions,
+  RunnableScanner,
+  StatusBase,
+} from '@server/lib/scanners/baseScanner';
+import BaseScanner from '@server/lib/scanners/baseScanner';
+import { forEachMediaCleanupBatch } from '@server/lib/scanners/mediaCleanupBatches';
+import {
+  ServarrServiceAuthorityChangedError,
+  runWithServarrServiceSnapshot,
+  runWithServarrServiceSnapshots,
+} from '@server/lib/serviceAdmission';
+import type { ReadarrSettings } from '@server/lib/settings';
+import { getHttpErrorDetails } from '@server/utils/httpError';
+import { uniqWith } from 'lodash';
+
+type SyncStatus = StatusBase & {
+  currentServer: ReadarrSettings;
+  servers: ReadarrSettings[];
+};
+
+const normalizeReadarrIsbn = (isbn?: string): string | undefined =>
+  normalizeValidIsbn(isbn) ?? normalizeIsbn(isbn);
+
+const getBookIdentifierKey = (
+  provider: MediaIdentifierProvider,
+  value: string
+): string => `${provider}:${normalizeExternalBookId(value, provider)}`;
+
+const SQLITE_BUSY_RETRY_ATTEMPTS = 3;
+const SQLITE_BUSY_RETRY_DELAY_MS = 750;
+
+const isSqliteBusyError = (error: unknown): boolean =>
+  error instanceof Error &&
+  (error.message.includes('SQLITE_BUSY') ||
+    error.message.includes('database is locked'));
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+class ReadarrScanner
+  extends BaseScanner<ReadarrBook>
+  implements RunnableScanner<SyncStatus>
+{
+  private servers: ReadarrSettings[];
+  private currentServer: ReadarrSettings;
+  private readarrApi: ReadarrAPI;
+  private scannedIdentifierKeys: Set<string> = new Set();
+  private didScan = false;
+
+  constructor() {
+    super('Bookshelf Scan', { bundleSize: 10 });
+  }
+
+  public status(): SyncStatus {
+    return {
+      running: this.running,
+      progress: this.progress,
+      total: this.items.length,
+      currentServer: this.currentServer,
+      servers: this.servers,
+    };
+  }
+
+  public async run(): Promise<void> {
+    const settings = getExternalRuntimeConfig();
+    const sessionId = this.startRun();
+    if (!sessionId) {
+      return;
+    }
+    this.scannedIdentifierKeys.clear();
+    this.didScan = false;
+
+    try {
+      this.servers = uniqWith(
+        structuredClone(settings.readarr),
+        (readarrA, readarrB) =>
+          readarrA.hostname === readarrB.hostname &&
+          readarrA.port === readarrB.port &&
+          readarrA.baseUrl === readarrB.baseUrl &&
+          (readarrA.serviceType ?? 'ebook') ===
+            (readarrB.serviceType ?? 'ebook')
+      );
+
+      for (const server of this.servers) {
+        this.currentServer = server;
+        if (server.syncEnabled) {
+          this.log(
+            `Beginning to process Bookshelf server: ${server.name}`,
+            'info'
+          );
+
+          this.items = await runWithServarrServiceSnapshot(
+            'readarr',
+            server,
+            async (current) => {
+              this.readarrApi = new ReadarrAPI({
+                apiKey: current.apiKey,
+                url: ReadarrAPI.buildUrl(current, '/api/v1'),
+                mediaType: current.serviceType ?? 'ebook',
+              });
+              return this.readarrApi.getBooks();
+            }
+          );
+          this.didScan = true;
+          await this.loop(this.processReadarrBook.bind(this), { sessionId });
+        } else {
+          this.log(
+            `Sync not enabled. Skipping Bookshelf server: ${server.name}`
+          );
+        }
+      }
+
+      if (!this.servers.every((server) => server.syncEnabled)) {
+        this.didScan = false;
+      }
+
+      await this.cleanupOrphanedBooks();
+      this.log('Bookshelf scan complete', 'info');
+    } catch (e) {
+      this.log('Scan interrupted', 'error', {
+        ...getHttpErrorDetails(e),
+        errorStack: e instanceof Error ? e.stack : undefined,
+      });
+    } finally {
+      this.endRun(sessionId);
+    }
+  }
+
+  private async processReadarrBook(readarrBook: ReadarrBook): Promise<void> {
+    try {
+      if (!readarrBook.editions?.length) {
+        readarrBook.editions = await runWithServarrServiceSnapshot(
+          'readarr',
+          this.currentServer,
+          async () => this.readarrApi.getEditions(readarrBook.id)
+        );
+      }
+
+      const identifier =
+        readarrBook.editions
+          ?.map((edition) => normalizeReadarrIsbn(edition.isbn13))
+          .find((isbn): isbn is string => !!isbn) ?? readarrBook.foreignBookId;
+
+      if (!identifier) {
+        this.log(
+          'No supported identifier found for this book. Skipping item.',
+          'debug',
+          {
+            title: readarrBook.title,
+          }
+        );
+        return;
+      }
+
+      const provider = readarrBook.editions?.some(
+        (edition) => normalizeReadarrIsbn(edition.isbn13) === identifier
+      )
+        ? MediaIdentifierProvider.ISBN
+        : MediaIdentifierProvider.READARR;
+      const resolvedOpenLibraryIdentifiers =
+        await resolveOpenLibraryIdentifiersForReadarrBook(readarrBook);
+
+      const secondaryIdentifiers = [
+        readarrBook.foreignBookId
+          ? {
+              provider: MediaIdentifierProvider.READARR,
+              value: readarrBook.foreignBookId,
+            }
+          : undefined,
+        ...((readarrBook.editions ?? [])
+          .map((edition) => {
+            const isbn = normalizeReadarrIsbn(edition.isbn13);
+
+            return isbn
+              ? {
+                  provider: MediaIdentifierProvider.ISBN,
+                  value: isbn,
+                }
+              : undefined;
+          })
+          .filter(Boolean) as {
+          provider: MediaIdentifierProvider;
+          value: string;
+        }[]),
+        ...resolvedOpenLibraryIdentifiers,
+      ].filter(
+        (
+          item
+        ): item is {
+          provider: MediaIdentifierProvider;
+          value: string;
+        } =>
+          !!item && !(item.provider === provider && item.value === identifier)
+      );
+
+      [{ provider, value: identifier }, ...secondaryIdentifiers].forEach(
+        (item) =>
+          this.scannedIdentifierKeys.add(
+            getBookIdentifierKey(item.provider, item.value)
+          )
+      );
+
+      const hasFile = (readarrBook.statistics?.bookFileCount ?? 0) > 0;
+      const totalBooks = readarrBook.statistics?.totalBookCount ?? 1;
+
+      if (!readarrBook.monitored) {
+        await this.processBookWithRetry(provider, identifier, {
+          serviceId: this.currentServer.id,
+          externalServiceId: readarrBook.id,
+          externalServiceSlug:
+            readarrBook.titleSlug ?? readarrBook.foreignBookId,
+          title: readarrBook.title,
+          mediaAddedAt: readarrBook.added
+            ? new Date(readarrBook.added)
+            : undefined,
+          hasFile: false,
+          secondaryIdentifiers,
+          processing: false,
+          bookServiceType: this.currentServer.serviceType ?? 'ebook',
+          mutationGuard: (callback) =>
+            runWithServarrServiceSnapshot(
+              'readarr',
+              this.currentServer,
+              callback
+            ),
+        });
+        return;
+      }
+
+      await this.processBookWithRetry(provider, identifier, {
+        serviceId: this.currentServer.id,
+        externalServiceId: readarrBook.id,
+        externalServiceSlug: readarrBook.titleSlug ?? readarrBook.foreignBookId,
+        title: readarrBook.title,
+        mediaAddedAt: readarrBook.added
+          ? new Date(readarrBook.added)
+          : undefined,
+        hasFile,
+        secondaryIdentifiers,
+        bookServiceType: this.currentServer.serviceType ?? 'ebook',
+        processing:
+          readarrBook.monitored &&
+          (readarrBook.statistics
+            ? (readarrBook.statistics.bookFileCount ?? 0) < totalBooks
+            : !hasFile),
+        mutationGuard: (callback) =>
+          runWithServarrServiceSnapshot(
+            'readarr',
+            this.currentServer,
+            callback
+          ),
+      });
+    } catch (e) {
+      if (e instanceof ServarrServiceAuthorityChangedError) throw e;
+      this.log('Failed to process Bookshelf media', 'error', {
+        errorMessage: e.message,
+        title: readarrBook.title,
+      });
+    }
+  }
+
+  private async processBookWithRetry(
+    provider: MediaIdentifierProvider,
+    identifier: string,
+    options: ProcessOptions
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= SQLITE_BUSY_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        await this.processBook(provider, identifier, options);
+        return;
+      } catch (e) {
+        if (!isSqliteBusyError(e) || attempt === SQLITE_BUSY_RETRY_ATTEMPTS) {
+          throw e;
+        }
+
+        await sleep(SQLITE_BUSY_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  private async cleanupOrphanedBooks(): Promise<void> {
+    const mediaRepository = getRepository(Media);
+
+    if (!this.didScan) {
+      this.log(
+        'Skipping orphaned book cleanup: not all Bookshelf servers were scanned.',
+        'info'
+      );
+      return;
+    }
+
+    await forEachMediaCleanupBatch(
+      { mediaType: MediaType.BOOK, status: MediaStatus.PROCESSING },
+      async (media) => {
+        const identifierKeys = (media.identifiers ?? []).map((identifier) =>
+          getBookIdentifierKey(identifier.provider, identifier.value)
+        );
+
+        if (
+          identifierKeys.length > 0 &&
+          !identifierKeys.some((key) => this.scannedIdentifierKeys.has(key))
+        ) {
+          const changed = await runMediaEntityMutation(media, () =>
+            runWithServarrServiceSnapshots(
+              'readarr',
+              this.servers.filter((server) => server.syncEnabled),
+              async () => {
+                const current = await mediaRepository.findOne({
+                  where: { id: media.id },
+                  relations: { identifiers: true },
+                });
+                if (!current || current.status !== MediaStatus.PROCESSING) {
+                  return false;
+                }
+                current.status = MediaStatus.UNKNOWN;
+                await mediaRepository.save(current);
+                return true;
+              },
+              {
+                requireExactAuthoritySet: true,
+                includeCurrent: (server) => server.syncEnabled,
+              }
+            )
+          );
+          if (changed) {
+            this.log(
+              `Book ${identifierKeys[0]} not found in any Bookshelf server. Status reset to UNKNOWN.`,
+              'info'
+            );
+          }
+        }
+      },
+      { relations: { identifiers: true } }
+    );
+  }
+}
+
+export const readarrScanner = new ReadarrScanner();

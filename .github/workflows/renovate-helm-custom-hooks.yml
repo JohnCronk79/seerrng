@@ -1,0 +1,377 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Renovate Helm Hooks
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render Renovate Chart Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: >-
+      github.actor == 'renovate[bot]' &&
+      github.event.pull_request.user.login == 'renovate[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'renovate/')
+    outputs:
+      has_changes: ${{ steps.package.outputs.has_changes }}
+    steps:
+      - name: Checkout Renovate head without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+
+      - name: Bump changed chart versions
+        id: bump
+        env:
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          if [[ ! "$TARGET_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] ||
+             [[ "$TARGET_BRANCH" == *..* ]]; then
+            echo 'Invalid default branch name.' >&2
+            exit 1
+          fi
+
+          charts_file="$RUNNER_TEMP/renovate-helm-charts"
+          : > "$charts_file"
+          mapfile -t charts < <(ct list-changed --target-branch "$TARGET_BRANCH")
+          if (( ${#charts[@]} == 0 )); then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base_commit="$(git merge-base "origin/$TARGET_BRANCH" HEAD)"
+          for chart in "${charts[@]}"; do
+            if [[ ! "$chart" =~ ^charts/[A-Za-z0-9._-]+$ ]] ||
+               [[ "$chart" == 'charts/.' || "$chart" == 'charts/..' ]] ||
+               [[ ! -d "$chart" || -L "$chart" ]]; then
+              echo "Unsafe changed chart path: $chart" >&2
+              exit 1
+            fi
+            printf '%s\n' "$chart" >> "$charts_file"
+
+            chart_file="$chart/Chart.yaml"
+            if [[ ! -f "$chart_file" || -L "$chart_file" ]] ||
+               [[ "$(stat -c '%h' "$chart_file")" != 1 ]]; then
+              echo "Chart metadata is not a private regular file: $chart_file" >&2
+              exit 1
+            fi
+            if [[ "$(grep -c '^appVersion:' "$chart_file")" != 1 ]] ||
+               [[ "$(grep -c '^version:' "$chart_file")" != 1 ]]; then
+              echo "Chart metadata must contain one appVersion and version: $chart_file" >&2
+              exit 1
+            fi
+
+            app_version="$(grep -m1 '^appVersion:' "$chart_file" | cut -d: -f2- | tr -d '[:space:]' | tr -d "'\"")"
+            chart_version="$(grep -m1 '^version:' "$chart_file" | cut -d: -f2- | tr -d '[:space:]' | tr -d "'\"")"
+            previous_app_version="$(git show "$base_commit:$chart_file" | grep -m1 '^appVersion:' | cut -d: -f2- | tr -d '[:space:]' | tr -d "'\"")"
+
+            semver_pattern='^v?[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'
+            if [[ ! "$app_version" =~ $semver_pattern ]] ||
+               [[ ! "$previous_app_version" =~ $semver_pattern ]] ||
+               [[ ! "$chart_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid semantic version in $chart_file" >&2
+              exit 1
+            fi
+
+            app_core="${app_version#v}"
+            app_core="${app_core%%+*}"
+            app_core="${app_core%%-*}"
+            previous_core="${previous_app_version#v}"
+            previous_core="${previous_core%%+*}"
+            previous_core="${previous_core%%-*}"
+            IFS=. read -r app_major app_minor app_patch <<< "$app_core"
+            IFS=. read -r previous_major previous_minor previous_patch <<< "$previous_core"
+            IFS=. read -r chart_major chart_minor chart_patch <<< "$chart_version"
+
+            if [[ "$app_major" != "$previous_major" ]]; then
+              chart_major=$((10#$chart_major + 1))
+              chart_minor=0
+              chart_patch=0
+            elif [[ "$app_minor" != "$previous_minor" ]]; then
+              chart_minor=$((10#$chart_minor + 1))
+              chart_patch=0
+            elif [[ "$app_patch" != "$previous_patch" ]]; then
+              chart_patch=$((10#$chart_patch + 1))
+            fi
+
+            chart_new_version="${chart_major}.${chart_minor}.${chart_patch}"
+            sed -i "s/^version:.*/version: ${chart_new_version}/" "$chart_file"
+          done
+
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Regenerate chart documentation
+        if: steps.bump.outputs.changed == 'true'
+        uses: docker://jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c
+
+      - name: Package bounded generated changes
+        id: package
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          EXPECTED_HEAD_OID: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          charts_file="$RUNNER_TEMP/renovate-helm-charts"
+          if [[ ! -s "$charts_file" || -L "$charts_file" ]]; then
+            echo 'Changed chart manifest is missing or unsafe.' >&2
+            exit 1
+          fi
+          if git diff --quiet HEAD --; then
+            echo 'has_changes=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "$(git diff --diff-filter=D --name-only HEAD --)" ]]; then
+            echo 'Generated chart updates must not delete files.' >&2
+            exit 1
+          fi
+
+          output_directory="$(mktemp -d "$RUNNER_TEMP/renovate-helm-output.XXXXXX")"
+          changes_file="$output_directory/changes.json"
+          jq -n \
+            --arg expectedHeadOid "$EXPECTED_HEAD_OID" \
+            --arg repository "$HEAD_REPOSITORY" \
+            --arg branch "$HEAD_BRANCH" \
+            '{
+              expectedHeadOid: $expectedHeadOid,
+              repository: $repository,
+              branch: $branch,
+              fileChanges: { deletions: [], additions: [] }
+            }' > "$changes_file"
+
+          file_count=0
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              charts/*/Chart.yaml | charts/*/README.md) ;;
+              *)
+                echo "Unexpected generated path: $file" >&2
+                exit 1
+                ;;
+            esac
+            chart="${file%/*}"
+            if ! grep -Fxq -- "$chart" "$charts_file"; then
+              echo "Generated file is outside a changed chart: $file" >&2
+              exit 1
+            fi
+            if [[ ! -f "$file" || -L "$file" ]] ||
+               [[ "$(stat -c '%h' "$file")" != 1 ]]; then
+              echo "Generated path is not a private regular file: $file" >&2
+              exit 1
+            fi
+            size="$(stat -c '%s' "$file")"
+            if (( size < 1 || size > 1048576 )); then
+              echo "Generated file exceeds its size boundary: $file" >&2
+              exit 1
+            fi
+
+            encoded_file="$(mktemp "$RUNNER_TEMP/renovate-helm-base64.XXXXXX")"
+            base64 -w 0 -- "$file" > "$encoded_file"
+            jq --arg path "$file" --rawfile contents "$encoded_file" \
+              '.fileChanges.additions += [{path: $path, contents: $contents}]' \
+              "$changes_file" > "$changes_file.next"
+            mv "$changes_file.next" "$changes_file"
+            rm -f "$encoded_file"
+            file_count=$((file_count + 1))
+          done < <(git diff --diff-filter=ACM --name-only -z HEAD --)
+
+          if (( file_count < 1 || file_count > 20 )); then
+            echo 'Generated change count is outside the allowed boundary.' >&2
+            exit 1
+          fi
+          chmod 0600 "$changes_file"
+          echo 'has_changes=true' >> "$GITHUB_OUTPUT"
+          echo "artifact_path=$changes_file" >> "$GITHUB_OUTPUT"
+
+      - name: Upload generated change manifest
+        if: steps.package.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: renovate-helm-changes-${{ github.event.pull_request.number }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          retention-days: 1
+
+  publish:
+    name: Publish Renovate Chart Changes
+    needs: render
+    if: needs.render.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download generated change manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: renovate-helm-changes-${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/renovate-helm-changes
+
+      - name: Validate generated change manifest
+        env:
+          EXPECTED_HEAD_OID: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          manifest_directory="$RUNNER_TEMP/renovate-helm-changes"
+          manifest="$manifest_directory/changes.json"
+          if [[ ! -d "$manifest_directory" || -L "$manifest_directory" ]]; then
+            echo 'Change artifact directory is missing or unsafe.' >&2
+            exit 1
+          fi
+          artifact_entries="$(find "$manifest_directory" -mindepth 1 -maxdepth 1 -printf '.' | wc -c)"
+          if [[ "$artifact_entries" != 1 ]] ||
+             [[ ! -f "$manifest" || -L "$manifest" ]] ||
+             [[ "$(stat -c '%h' "$manifest")" != 1 ]]; then
+            echo 'Change artifact must contain exactly one regular manifest.' >&2
+            exit 1
+          fi
+          manifest_size="$(stat -c '%s' "$manifest")"
+          if (( manifest_size < 1 || manifest_size > 3145728 )); then
+            echo 'Change manifest exceeds its size boundary.' >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_BRANCH" =~ ^renovate/[A-Za-z0-9._/-]+$ ]] ||
+             [[ "$HEAD_BRANCH" == *..* ]]; then
+            echo 'Unsafe Renovate branch name.' >&2
+            exit 1
+          fi
+
+          jq -e \
+            --arg expectedHeadOid "$EXPECTED_HEAD_OID" \
+            --arg repository "$HEAD_REPOSITORY" \
+            --arg branch "$HEAD_BRANCH" '
+              type == "object" and
+              (keys == ["branch", "expectedHeadOid", "fileChanges", "repository"]) and
+              (.expectedHeadOid == $expectedHeadOid) and
+              (.expectedHeadOid | test("^[0-9a-f]{40}$")) and
+              (.repository == $repository) and
+              (.branch == $branch) and
+              (.fileChanges | type == "object") and
+              (.fileChanges | keys == ["additions", "deletions"]) and
+              (.fileChanges.deletions == []) and
+              (.fileChanges.additions | type == "array") and
+              (.fileChanges.additions | length >= 1 and length <= 20) and
+              all(.fileChanges.additions[];
+                type == "object" and
+                (keys == ["contents", "path"]) and
+                (.path | type == "string") and
+                (.contents | type == "string") and
+                (.path | test("^charts/[A-Za-z0-9._-]+/(Chart\\.yaml|README\\.md)$"))
+              )
+            ' "$manifest" >/dev/null
+
+          duplicate_paths="$(jq -r '.fileChanges.additions[].path' "$manifest" | sort | uniq -d)"
+          if [[ -n "$duplicate_paths" ]]; then
+            echo 'Change manifest contains duplicate paths.' >&2
+            exit 1
+          fi
+
+          total_bytes=0
+          while IFS= read -r path; do
+            chart_name="${path#charts/}"
+            chart_name="${chart_name%%/*}"
+            if [[ "$chart_name" == '.' || "$chart_name" == '..' ]]; then
+              echo "Unsafe chart path: $path" >&2
+              exit 1
+            fi
+            encoded_file="$(mktemp "$RUNNER_TEMP/renovate-helm-encoded.XXXXXX")"
+            decoded_file="$(mktemp "$RUNNER_TEMP/renovate-helm-decoded.XXXXXX")"
+            jq -r --arg path "$path" \
+              '.fileChanges.additions[] | select(.path == $path) | .contents' \
+              "$manifest" > "$encoded_file"
+            base64 --decode "$encoded_file" > "$decoded_file"
+            decoded_size="$(stat -c '%s' "$decoded_file")"
+            rm -f "$encoded_file" "$decoded_file"
+            if (( decoded_size < 1 || decoded_size > 1048576 )); then
+              echo "Decoded generated file exceeds its size boundary: $path" >&2
+              exit 1
+            fi
+            total_bytes=$((total_bytes + decoded_size))
+          done < <(jq -r '.fileChanges.additions[].path' "$manifest")
+          if (( total_bytes > 2097152 )); then
+            echo 'Decoded generated changes exceed the aggregate size boundary.' >&2
+            exit 1
+          fi
+
+      - name: Create single-repository contents token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: 2138788
+          private-key: ${{ secrets.APP_SEERR_HELM_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Commit validated generated changes
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          EXPECTED_HEAD_OID: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          manifest="$RUNNER_TEMP/renovate-helm-changes/changes.json"
+          payload="$(mktemp "$RUNNER_TEMP/renovate-helm-payload.XXXXXX")"
+          headers="$(mktemp "$RUNNER_TEMP/renovate-helm-headers.XXXXXX")"
+          response="$(mktemp "$RUNNER_TEMP/renovate-helm-response.XXXXXX")"
+          trap 'rm -f "$payload" "$headers" "$response"' EXIT
+
+          jq -n \
+            --arg repo "$HEAD_REPOSITORY" \
+            --arg branch "$HEAD_BRANCH" \
+            --arg expectedOid "$EXPECTED_HEAD_OID" \
+            --slurpfile changes "$manifest" '
+              {
+                query: "mutation ($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { url } } }",
+                variables: {
+                  input: {
+                    branch: {
+                      repositoryNameWithOwner: $repo,
+                      branchName: $branch
+                    },
+                    message: {
+                      headline: "fix: post upgrade changes from renovate"
+                    },
+                    fileChanges: $changes[0].fileChanges,
+                    expectedHeadOid: $expectedOid
+                  }
+                }
+              }
+            ' > "$payload"
+          printf 'Authorization: Bearer %s\n' "$APP_TOKEN" > "$headers"
+          curl --fail --silent --show-error \
+            --header "@$headers" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@$payload" \
+            https://api.github.com/graphql > "$response"
+          jq -e '
+            ((.errors // []) | length == 0) and
+            (.data.createCommitOnBranch.commit.url | type == "string")
+          ' "$response" >/dev/null

@@ -1,0 +1,66 @@
+import Header from '@app/components/Common/Header';
+import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import PageTitle from '@app/components/Common/PageTitle';
+import PersonCard from '@app/components/PersonCard';
+import ErrorPage from '@app/pages/_error';
+import defineMessages from '@app/utils/defineMessages';
+import type { TvDetails } from '@server/models/Tv';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useIntl } from 'react-intl';
+import useSWR from 'swr';
+
+const messages = defineMessages('components.TvDetails.TvCrew', {
+  fullseriescrew: 'Full Series Crew',
+});
+
+const TvCrew = () => {
+  const router = useRouter();
+  const intl = useIntl();
+  const tvId = typeof router.query.tvId === 'string' ? router.query.tvId : '';
+  const { data, error } = useSWR<TvDetails>(tvId ? `/api/v1/tv/${tvId}` : null);
+
+  if (!data && !error) {
+    return <LoadingSpinner />;
+  }
+
+  if (!data) {
+    return <ErrorPage statusCode={404} />;
+  }
+
+  return (
+    <>
+      <PageTitle
+        title={[intl.formatMessage(messages.fullseriescrew), data.name]}
+      />
+      <div className="mt-1 mb-5">
+        <Header
+          subtext={
+            <Link href={`/tv/${data.id}`} className="hover:underline">
+              {data.name}
+            </Link>
+          }
+        >
+          {intl.formatMessage(messages.fullseriescrew)}
+        </Header>
+      </div>
+      <ul className="cards-vertical">
+        {data?.credits.crew.map((person, index) => {
+          return (
+            <li key={`crew-${person.id}-${index}`}>
+              <PersonCard
+                name={person.name}
+                personId={person.id}
+                subName={person.job}
+                profilePath={person.profilePath}
+                canExpand
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+};
+
+export default TvCrew;

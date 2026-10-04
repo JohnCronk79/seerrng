@@ -1,0 +1,6 @@
+usr/lib/seerrng usr/lib/
+usr/bin/seerrng usr/bin/
+lib/systemd/system/seerrng.service lib/systemd/system/
+etc/seerrng/seerrng.env etc/seerrng/
+usr/lib/sysusers.d/seerrng.conf usr/lib/sysusers.d/
+usr/lib/tmpfiles.d/seerrng.conf usr/lib/tmpfiles.d/

@@ -1,0 +1,3 @@
+export const MAX_BLOCKLISTED_TAG_IDS = 100;
+export const MAX_BLOCKLISTED_TAG_PAGES = 250;
+export const MAX_TMDB_KEYWORD_ID = 1_000_000_000;

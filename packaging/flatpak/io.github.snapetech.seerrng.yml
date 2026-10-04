@@ -1,0 +1,36 @@
+app-id: io.github.snapetech.seerrng
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: seerrng-wrapper
+finish-args:
+  - --share=network
+  - --filesystem=xdg-config/seerrng:create
+modules:
+  - name: node
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/node /app/bin
+      - cp -R . /app/node/
+      - ln -sf /app/node/bin/node /app/bin/node
+    sources:
+      - type: dir
+        path: ../../flatpak-src/node
+  - name: seerrng
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/seerrng /app/bin
+      - cp -R . /app/lib/seerrng/
+      - |
+        cat > /app/bin/seerrng-wrapper <<'EOF'
+        #!/usr/bin/env sh
+        set -eu
+        export NODE_ENV=production
+        export CONFIG_DIRECTORY="${XDG_CONFIG_HOME:-$HOME/.config}/seerrng"
+        mkdir -p "$CONFIG_DIRECTORY"
+        exec /app/bin/node /app/lib/seerrng/dist/index.js "$@"
+        EOF
+        chmod 0755 /app/bin/seerrng-wrapper
+    sources:
+      - type: dir
+        path: ../../flatpak-src/seerrng

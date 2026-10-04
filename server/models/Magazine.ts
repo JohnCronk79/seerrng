@@ -1,0 +1,112 @@
+import type { GoogleBooksMagazineResult } from '@server/api/googlebooks';
+import type {
+  LazyLibrarianIssue,
+  LazyLibrarianMagazine,
+} from '@server/api/lazylibrarian';
+import type Media from '@server/entity/Media';
+import { normalizeMagazineTitle } from '@server/lib/magazineIdentity';
+
+export interface MagazineResult {
+  id: string;
+  provider: 'lazylibrarian' | 'googlebooks';
+  mediaType: 'magazine';
+  title: string;
+  posterPath?: string;
+  backdropPath?: string;
+  publisher?: string;
+  firstPublishYear?: number;
+  status?: string;
+  latestIssue?: string;
+  issueCount?: number;
+  requestable?: boolean;
+  mediaInfo?: Media;
+}
+
+export interface MagazineIssueReference {
+  id: string;
+  date?: string;
+  available: boolean;
+}
+
+export interface MagazineDetails extends MagazineResult {
+  issues: MagazineIssueReference[];
+  onUserWatchlist?: boolean;
+}
+
+const getMagazinePosterPath = (
+  magazine: LazyLibrarianMagazine,
+  serviceId?: number
+): string | undefined => {
+  const coverId = magazine.latestCover?.match(
+    /^cache\/magazine\/([a-f\d]{32}|[a-f\d]{40})\.jpg$/i
+  )?.[1];
+
+  // The first configured Servarr-compatible service is assigned ID 0.
+  // Treat only an absent ID as unconfigured; zero is a valid authority key.
+  if (serviceId === undefined || !Number.isSafeInteger(serviceId) || !coverId) {
+    return undefined;
+  }
+
+  return `/api/v1/magazine/cover/${serviceId}/${coverId.toLowerCase()}`;
+};
+
+export const mapLazyLibrarianMagazine = (
+  magazine: LazyLibrarianMagazine,
+  issues: LazyLibrarianIssue[] = [],
+  media?: Media,
+  serviceId?: number
+): MagazineResult => ({
+  id: magazine.title,
+  provider: 'lazylibrarian',
+  mediaType: 'magazine',
+  title: magazine.title,
+  posterPath: getMagazinePosterPath(magazine, serviceId),
+  status: magazine.status,
+  latestIssue: magazine.issueDate,
+  issueCount: issues.length,
+  requestable: true,
+  mediaInfo: media,
+});
+
+export const mapGoogleBooksMagazine = (
+  magazine: GoogleBooksMagazineResult,
+  media?: Media,
+  requestable = false
+): MagazineResult => {
+  const publishedYear = magazine.publishedDate?.match(/^\d{4}/)?.[0];
+
+  return {
+    id: magazine.title,
+    provider: 'googlebooks',
+    mediaType: 'magazine',
+    title: magazine.title,
+    posterPath: magazine.imageUrl,
+    publisher: magazine.publisher,
+    firstPublishYear: publishedYear ? Number(publishedYear) : undefined,
+    latestIssue: magazine.publishedDate,
+    requestable,
+    mediaInfo: media,
+  };
+};
+
+export const mapLazyLibrarianMagazineDetails = (
+  magazine: LazyLibrarianMagazine,
+  issues: LazyLibrarianIssue[],
+  media?: Media,
+  onUserWatchlist?: boolean,
+  serviceId?: number
+): MagazineDetails => ({
+  ...mapLazyLibrarianMagazine(magazine, issues, media, serviceId),
+  onUserWatchlist,
+  issues: issues.map((issue) => ({
+    id:
+      issue.issueId ??
+      [issue.issueNumber, issue.issueDate, issue.title]
+        .filter(Boolean)
+        .join('-')
+        .slice(0, 128) ??
+      normalizeMagazineTitle(issue.title),
+    date: issue.issueDate,
+    available: Boolean(issue.issueFile),
+  })),
+});

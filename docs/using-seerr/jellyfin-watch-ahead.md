@@ -1,0 +1,69 @@
+---
+title: TV episode watch-ahead
+description: Opt in to a small buffer of upcoming TV episodes requested in Sonarr as you watch in Plex, Jellyfin, or Emby.
+---
+
+# TV episode watch-ahead
+
+The Episode Queue lets a TV request owner ask SeerrNG to keep up to five
+upcoming episodes requested in Sonarr as they watch the series in Plex,
+Jellyfin, or Emby. It is optional and **Off by default for every request**.
+Choosing a buffer applies only to that request.
+
+## Requirements
+
+- SeerrNG is configured to use Plex, Jellyfin, or Emby as its media server.
+- Your SeerrNG account is linked to the matching account or user on that
+  media server.
+- You have permission to request the TV quality selected for the request.
+- The series has a TVDB identity so playback can be matched to the request.
+- A matching Sonarr destination is configured for the request's standard or 4K
+  quality.
+
+## Turn it on or off
+
+When creating or editing your own TV request, choose a buffer under **Keep
+upcoming episodes requested**. The initial selection is **Off**. You can change
+it later from that request's card in **Requests** or **Request Status**. Only
+the request owner can change the setting; administrators cannot enable it for
+someone else.
+
+Choose **Off** to stop future watch-ahead requests. Episodes already created
+remain in Sonarr and in SeerrNG's request history. Turn the queue off before
+removing an episode request you do not want; while it remains on, SeerrNG may
+add a missing episode again if it is needed to maintain the selected buffer.
+
+## What SeerrNG does
+
+While at least one request has a buffer enabled, the worker checks active
+playback every 30 seconds. A matching episode must reach at least 90% of its
+runtime before the queue advances. SeerrNG matches the playing series and
+linked account to the TV request owner; another user's playback does not
+advance your request. New episodes are reconciled at most once every 15
+minutes.
+
+While the TV request is pending approval, SeerrNG remembers your watched
+progress but waits to add episodes. Once the request is approved, SeerrNG checks
+the selected Sonarr library and requests enough upcoming, missing episodes to
+maintain the buffer. Episodes already in the library, monitored by Sonarr, or
+covered by another active request count toward that buffer. Specials follow
+the administrator's **Enable Special Episodes** setting.
+
+Generated episode requests inherit the approved parent request and do not use
+additional request quota. They appear in Requests with a **Requested ahead of
+playback** label and do not create a separate approval notification for every
+episode. Sonarr remains responsible for searching, downloading, importing, and
+tracking the files.
+
+## API
+
+The request owner can update a request through
+`PUT /api/v1/request/{requestId}/watch-ahead` with a JSON body such as:
+
+```json
+{ "episodeCount": 3 }
+```
+
+Use `episodeCount: 0` to disable future additions. Values from 0 through 5 are
+accepted. Enabling the queue requires a linked account for the configured
+Plex, Jellyfin, or Emby server and a matching Sonarr destination.

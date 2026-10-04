@@ -1,0 +1,668 @@
+import PlexAPI from '@server/api/plexapi';
+import TheMovieDb from '@server/api/themoviedb';
+import { getTmdbAuthSource } from '@server/api/themoviedb/auth';
+import dataSource, {
+  enforceSqliteDatabasePermissions,
+  getRepository,
+} from '@server/datasource';
+import DiscoverSlider from '@server/entity/DiscoverSlider';
+import { Session } from '@server/entity/Session';
+import { User } from '@server/entity/User';
+import { initI18n } from '@server/i18n';
+import { startJobs, stopJobs } from '@server/job/schedule';
+import { resumeComicCatalogIndex } from '@server/lib/comicCatalogIndex';
+import { runWithConfigurationAdmission } from '@server/lib/configurationAdmission';
+import { loadExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
+import {
+  METRICS_RATE_LIMIT,
+  metricsAuthMiddleware,
+  metricsHandler,
+  metricsMiddleware,
+} from '@server/lib/metrics';
+import notificationManager from '@server/lib/notifications';
+import DiscordAgent from '@server/lib/notifications/agents/discord';
+import EmailAgent from '@server/lib/notifications/agents/email';
+import GotifyAgent from '@server/lib/notifications/agents/gotify';
+import NtfyAgent from '@server/lib/notifications/agents/ntfy';
+import PushbulletAgent from '@server/lib/notifications/agents/pushbullet';
+import PushoverAgent from '@server/lib/notifications/agents/pushover';
+import SlackAgent from '@server/lib/notifications/agents/slack';
+import TelegramAgent from '@server/lib/notifications/agents/telegram';
+import WebhookAgent from '@server/lib/notifications/agents/webhook';
+import WebPushAgent from '@server/lib/notifications/agents/webpush';
+import checkOverseerrMerge from '@server/lib/overseerrMerge';
+import requestDispatchManager from '@server/lib/requestDispatch';
+import { getSettings } from '@server/lib/settings';
+import { runStartupMigrations } from '@server/lib/startupMigrations';
+import { setStaticAssetCacheControl } from '@server/lib/staticAssetCache';
+import { TypeormSessionStore } from '@server/lib/typeormSessionStore';
+import logger from '@server/logger';
+import {
+  formatApiErrorResponse,
+  getRequestLogPath,
+  normalizeApiErrorStatus,
+} from '@server/middleware/apiError';
+import clearCookies from '@server/middleware/clearcookies';
+import csrfProtection, {
+  requestUsesSecureTransport,
+} from '@server/middleware/csrfProtection';
+import csrfTokenCookie from '@server/middleware/csrfTokenCookie';
+import securityHeaders from '@server/middleware/securityHeaders';
+import routes from '@server/routes';
+import {
+  resumePendingPasswordResetDeliveries,
+  waitForPendingPasswordResetDeliveries,
+} from '@server/routes/auth';
+import avatarproxy from '@server/routes/avatarproxy';
+import imageproxy from '@server/routes/imageproxy';
+import { appDataPermissions } from '@server/utils/appDataVolume';
+import { getAppVersion } from '@server/utils/appVersion';
+import {
+  trackBackgroundTask,
+  waitForBackgroundTasks,
+} from '@server/utils/backgroundTasks';
+import createCustomProxyAgent, {
+  setForceIpv4First,
+} from '@server/utils/customProxyAgent';
+import { initializeDnsCache } from '@server/utils/dnsCache';
+import {
+  createProcessShutdownController,
+  drainForShutdown,
+} from '@server/utils/gracefulShutdown';
+import { getHttpErrorDetails } from '@server/utils/httpError';
+import { configureHttpServer, parseListenPort } from '@server/utils/httpServer';
+import restartFlag from '@server/utils/restartFlag';
+import { getRateLimitKey } from '@server/utils/security';
+import { getSessionTransportOptions } from '@server/utils/sessionCookie';
+import {
+  createHttpsRedirectHandler,
+  createHttpsUpgradeHandler,
+  initializeTls,
+} from '@server/utils/tls';
+import compression from 'compression';
+import cookieParser from 'cookie-parser';
+import type { NextFunction, Request, Response } from 'express';
+import express from 'express';
+import * as OpenApiValidator from 'express-openapi-validator';
+import rateLimit from 'express-rate-limit';
+import type { Store } from 'express-session';
+import session from 'express-session';
+import fs from 'fs/promises';
+import http from 'http';
+import https from 'https';
+import yaml from 'js-yaml';
+import next from 'next';
+import path from 'path';
+import swaggerUi from 'swagger-ui-express';
+
+const API_SPEC_PATH = path.join(__dirname, '../seerr-api.yml');
+const API_BODY_LIMIT = '100kb';
+const API_URLENCODED_PARAMETER_LIMIT = 100;
+const API_RATE_LIMIT = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getRateLimitKey,
+  skip: () =>
+    process.env.NODE_ENV === 'test' || process.env.E2E_TESTS === 'true',
+});
+const SHUTDOWN_CONNECTION_TIMEOUT_MS = 10_000;
+const SHUTDOWN_TASK_TIMEOUT_MS = 15_000;
+
+const isTruthyEnv = (value?: string): boolean =>
+  value?.toLowerCase() === 'true' || value === '1';
+
+const getErrorLogFields = (error: unknown) => ({
+  errorMessage: error instanceof Error ? error.message : 'Unknown error',
+  errorStack: error instanceof Error ? error.stack : undefined,
+});
+
+let requestGracefulShutdown:
+  ((reason: string, requestedExitCode?: number) => void) | undefined;
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', {
+    label: 'Process',
+    ...getErrorLogFields(reason),
+  });
+  if (requestGracefulShutdown) {
+    requestGracefulShutdown('unhandled promise rejection', 1);
+  } else {
+    process.exit(1);
+  }
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception', {
+    label: 'Process',
+    ...getErrorLogFields(error),
+  });
+  process.exit(1);
+});
+
+logger.info(`Starting Seerr version ${getAppVersion()}`);
+const dev = process.env.NODE_ENV !== 'production';
+
+if (
+  !dev &&
+  isTruthyEnv(process.env.SEERR_EXTERNAL_READ_ONLY) &&
+  !isTruthyEnv(process.env.SEERR_ALLOW_PRODUCTION_EXTERNAL_READ_ONLY)
+) {
+  logger.error(
+    'Refusing to start production with SEERR_EXTERNAL_READ_ONLY enabled. Set SEERR_ALLOW_PRODUCTION_EXTERNAL_READ_ONLY=true only for an intentional read-only production clone.',
+    { label: 'Server' }
+  );
+  process.exit(1);
+}
+
+// Initialize the database and load settings through the plain
+// tsconfig-paths resolver before `next({ dev })` below installs Next's
+// own require-hook. TypeORM's directory-based loaders (entities,
+// subscribers, migrations) and the settings migrator both resolve
+// `@server/*`-aliased files dynamically at runtime; once Next's hook is
+// layered on top of tsconfig-paths, that resolution can throw "Cannot
+// find module" for one of them. Everything here is idempotent, so the
+// equivalent calls further down (kept for production-path parity) are
+// safe no-ops once this has already run. Only reproduces in `pnpm dev`'s
+// ts-node invocation -- compiled production builds have no runtime path
+// aliases to resolve, and the test suite never imports `next` at all.
+Promise.resolve()
+  .then(async () => {
+    if (!dataSource.isInitialized) {
+      await dataSource.initialize();
+    }
+    enforceSqliteDatabasePermissions();
+    await getSettings().load();
+  })
+  .then(() => {
+    // Select Webpack independently of filesystem polling for Linux-local previews.
+    const app = next({
+      dev,
+      ...(dev &&
+      (process.env.WATCHPACK_POLLING === 'true' ||
+        process.env.SEERR_DEV_WEBPACK === 'true')
+        ? { webpack: true }
+        : {}),
+    });
+    const handle = app.getRequestHandler();
+
+    if (!appDataPermissions()) {
+      logger.error(
+        'Something went wrong while checking config folder! Please ensure the config folder is set up properly.\nhttps://github.com/snapetech/seerrng/tree/main/docs/getting-started'
+      );
+    }
+
+    return app.prepare().then(async () => {
+      // Run Overseerr to Seerr migration
+      await checkOverseerrMerge();
+
+      const dbConnection = dataSource.isInitialized
+        ? dataSource
+        : await dataSource.initialize();
+      enforceSqliteDatabasePermissions();
+
+      // Run migrations in production unless a prepared test database is being used.
+      if (
+        process.env.NODE_ENV === 'production' &&
+        process.env.SEERR_SKIP_DB_MIGRATIONS !== 'true'
+      ) {
+        await runStartupMigrations(dbConnection);
+      }
+
+      // Load Settings
+      const settings = await getSettings().load();
+      const port = parseListenPort(process.env.PORT);
+      const tlsConfiguration = await initializeTls({
+        httpPort: port,
+        settings: settings.network.tls,
+      });
+      loadExternalRuntimeConfig();
+      restartFlag.initializeSettings(settings);
+
+      initI18n();
+
+      setForceIpv4First(settings.network.forceIpv4First);
+
+      // Add DNS caching
+      if (settings.network.dnsCache?.enabled) {
+        initializeDnsCache({
+          forceMinTtl: settings.network.dnsCache.forceMinTtl,
+          forceMaxTtl: settings.network.dnsCache.forceMaxTtl,
+        });
+      }
+
+      // Register HTTP proxy
+      if (settings.network.proxy.enabled) {
+        await createCustomProxyAgent(
+          settings.network.proxy,
+          settings.network.forceIpv4First
+        );
+      }
+
+      const isE2eTest = isTruthyEnv(process.env.E2E_TESTS);
+
+      // Migrate library types
+      if (
+        settings.plex.libraries.length > 1 &&
+        !settings.plex.libraries[0].type
+      ) {
+        await runWithConfigurationAdmission('plex', async () => {
+          const currentPlex = getSettings().plex;
+          if (
+            currentPlex.libraries.length <= 1 ||
+            currentPlex.libraries[0].type
+          ) {
+            return;
+          }
+          const userRepository = getRepository(User);
+          const admin = await userRepository.findOne({
+            select: { id: true, plexToken: true },
+            where: { id: 1 },
+          });
+
+          if (admin) {
+            logger.info('Migrating Plex libraries to include media type', {
+              label: 'Settings',
+            });
+
+            const plexapi = new PlexAPI({
+              plexToken: admin.plexToken,
+              plexSettings: structuredClone(currentPlex),
+            });
+            await plexapi.syncLibraries();
+          }
+        });
+      }
+
+      // Register Notification Agents
+      notificationManager.registerAgents([
+        new DiscordAgent(),
+        new EmailAgent(),
+        new GotifyAgent(),
+        new NtfyAgent(),
+        new PushbulletAgent(),
+        new PushoverAgent(),
+        new SlackAgent(),
+        new TelegramAgent(),
+        new WebhookAgent(),
+        new WebPushAgent(),
+      ]);
+      if (isE2eTest) {
+        logger.info('Skipping background delivery loops in E2E test mode', {
+          label: 'Server',
+        });
+      } else {
+        await notificationManager.resumePendingNotifications();
+        notificationManager.startOutboxRetryLoop();
+        await requestDispatchManager.resume();
+        requestDispatchManager.start();
+        await resumePendingPasswordResetDeliveries();
+      }
+
+      const userRepository = getRepository(User);
+      const totalUsers = await userRepository.count();
+      if (!isE2eTest) {
+        try {
+          await resumeComicCatalogIndex();
+        } catch {
+          logger.warn(
+            'ComicVine catalog indexing could not resume at startup.'
+          );
+        }
+      }
+      if (totalUsers > 0 && !isE2eTest) {
+        startJobs();
+      } else if (isE2eTest) {
+        logger.info('Skipping scheduled jobs in E2E test mode', {
+          label: 'Server',
+        });
+      } else {
+        logger.info(
+          `Skipping starting the scheduled jobs as we have no Plex/Jellyfin/Emby servers setup yet`,
+          {
+            label: 'Server',
+          }
+        );
+      }
+
+      // Bootstrap Discovery Sliders
+      await DiscoverSlider.bootstrapSliders();
+
+      const server = express();
+      server.disable('x-powered-by');
+      if (settings.network.trustProxy) {
+        server.set('trust proxy', 1);
+      }
+      server.use(securityHeaders);
+      server.use(compression());
+      server.use(cookieParser(settings.sessionSecret));
+      server.use(express.json({ limit: API_BODY_LIMIT }));
+      server.use(
+        express.urlencoded({
+          extended: true,
+          limit: API_BODY_LIMIT,
+          parameterLimit: API_URLENCODED_PARAMETER_LIMIT,
+        })
+      );
+      server.use(metricsMiddleware);
+      if (isTruthyEnv(process.env.METRICS_ENABLED)) {
+        server.get(
+          '/metrics',
+          rateLimit({
+            ...METRICS_RATE_LIMIT,
+            standardHeaders: true,
+            legacyHeaders: false,
+            keyGenerator: getRateLimitKey,
+          }),
+          metricsAuthMiddleware,
+          metricsHandler
+        );
+      }
+      if (settings.network.csrfProtection) {
+        server.use(csrfProtection());
+        server.use(csrfTokenCookie(requestUsesSecureTransport));
+      }
+
+      // Set up sessions
+      const sessionRespository = getRepository(Session);
+      const sessionTransportOptions = getSessionTransportOptions(
+        dev,
+        settings.network.csrfProtection,
+        tlsConfiguration.httpAuthAllowed
+      );
+      // Cypress drives many concurrent API requests through one SQLite session
+      // row. Keep E2E session state process-local so those requests cannot queue
+      // behind TypeORM session touches. Production retains durable sessions.
+      const sessionStore = isE2eTest
+        ? undefined
+        : (new TypeormSessionStore(sessionRespository, {
+            cleanupLimit: 2,
+            ttl: 60 * 60 * 24 * 30,
+          }) as Store);
+      server.use(
+        '/api',
+        // HTTP session cookies are an explicit compatibility mode controlled
+        // by allowHttpAuth; HTTPS-only deployments always force Secure.
+        // codeql[js/clear-text-cookie]
+        session({
+          secret: settings.sessionSecret,
+          resave: false,
+          saveUninitialized: false,
+          cookie: {
+            ...sessionTransportOptions.cookie,
+          },
+          proxy: sessionTransportOptions.proxy,
+          ...(sessionStore ? { store: sessionStore } : {}),
+        })
+      );
+      const apiSpecContent = await fs.readFile(API_SPEC_PATH, 'utf-8');
+      const apiDocs = yaml.load(apiSpecContent) as Record<string, unknown>;
+      server.use('/api-docs', swaggerUi.serve, swaggerUi.setup(apiDocs));
+      server.use(
+        OpenApiValidator.middleware({
+          apiSpec: API_SPEC_PATH,
+          validateRequests: true,
+        })
+      );
+      server.use('/api/v1', API_RATE_LIMIT, routes);
+
+      // Do not set cookies so CDNs can cache them
+      server.use('/imageproxy', clearCookies, imageproxy);
+      server.use('/avatarproxy', clearCookies, avatarproxy);
+
+      server.get('*path', (req, res) => {
+        if (!dev) {
+          setStaticAssetCacheControl(req, res);
+        }
+
+        return handle(req, res);
+      });
+      server.use(
+        (
+          err: {
+            status?: number;
+            message?: string;
+            errors?: string[];
+            stack?: string;
+            error?: string;
+            cause?: unknown;
+          },
+          req: Request,
+          res: Response,
+          // We must provide a next function for the function signature here even though its not used
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          _next: NextFunction
+        ) => {
+          const status = normalizeApiErrorStatus(err.status);
+
+          if (status >= 500) {
+            const causeDetails =
+              err.cause === undefined
+                ? undefined
+                : getHttpErrorDetails(err.cause);
+            logger.error('Unhandled API request error', {
+              label: 'API',
+              method: req.method,
+              path: getRequestLogPath(req.originalUrl),
+              status,
+              errorMessage: err.message,
+              errorStack: err.stack,
+              errors: err.errors,
+              ...(causeDetails
+                ? {
+                    causeName:
+                      err.cause instanceof Error ? err.cause.name : undefined,
+                    causeMessage: causeDetails.errorMessage,
+                    ...(causeDetails.errorCode
+                      ? { causeErrorCode: causeDetails.errorCode }
+                      : {}),
+                    ...(causeDetails.upstreamMethod
+                      ? { upstreamMethod: causeDetails.upstreamMethod }
+                      : {}),
+                    ...(causeDetails.upstreamHost
+                      ? { upstreamHost: causeDetails.upstreamHost }
+                      : {}),
+                    ...(causeDetails.upstreamPath
+                      ? { upstreamPath: causeDetails.upstreamPath }
+                      : {}),
+                    ...(causeDetails.status !== undefined
+                      ? { causeStatus: causeDetails.status }
+                      : {}),
+                    ...(causeDetails.upstreamStatusCode !== undefined
+                      ? {
+                          upstreamStatusCode: causeDetails.upstreamStatusCode,
+                        }
+                      : {}),
+                    ...(causeDetails.upstreamMessage
+                      ? { upstreamMessage: causeDetails.upstreamMessage }
+                      : {}),
+                    causeStack:
+                      err.cause instanceof Error ? err.cause.stack : undefined,
+                  }
+                : {}),
+            });
+          } else if (
+            getRequestLogPath(req.originalUrl).startsWith('/api/v1/playback/')
+          ) {
+            logger.warn('Playback API request rejected before completion.', {
+              label: 'Playback',
+              method: req.method,
+              path: getRequestLogPath(req.originalUrl),
+              status,
+              errorMessage: err.message,
+              errors: err.errors,
+            });
+          }
+
+          res.status(status).json(formatApiErrorResponse(err, status));
+        }
+      );
+
+      const host = process.env.HOST;
+      const listener = configureHttpServer(
+        tlsConfiguration.mode === 'disabled'
+          ? http.createServer(server)
+          : http.createServer(
+              (tlsConfiguration.redirectsHttpToHttps
+                ? createHttpsRedirectHandler
+                : createHttpsUpgradeHandler)(
+                tlsConfiguration.httpsPort!,
+                tlsConfiguration.hosts
+              )
+            )
+      );
+      const secureListener = tlsConfiguration.httpsOptions
+        ? configureHttpServer(
+            https.createServer(tlsConfiguration.httpsOptions, server)
+          )
+        : undefined;
+      const listeners = secureListener
+        ? [listener, secureListener]
+        : [listener];
+
+      const listen = (
+        target: typeof listener,
+        targetPort: number,
+        message: string
+      ) => {
+        if (host) {
+          target.listen(targetPort, host, () => {
+            logger.info(message, { label: 'Server' });
+          });
+        } else {
+          target.listen(targetPort, () => {
+            logger.info(message, { label: 'Server' });
+          });
+        }
+      };
+
+      if (tlsConfiguration.mode === 'disabled') {
+        listen(
+          listener,
+          port,
+          `Server ready on ${host ? `${host} ` : ''}port ${port}`
+        );
+        if (tlsConfiguration.httpAuthAllowed) {
+          logger.warn(
+            'Direct HTTP browser authentication is enabled. Browser sessions may be intercepted by anyone who can observe this HTTP connection; use built-in HTTPS or an HTTPS reverse proxy when possible.',
+            { label: 'Security' }
+          );
+        }
+      } else {
+        listen(
+          listener,
+          port,
+          `${tlsConfiguration.redirectsHttpToHttps ? 'HTTP redirect' : 'HTTP upgrade'} listener ready on ${host ? `${host} ` : ''}port ${port}`
+        );
+        listen(
+          secureListener!,
+          tlsConfiguration.httpsPort!,
+          `HTTPS server ready on ${host ? `${host} ` : ''}port ${tlsConfiguration.httpsPort}`
+        );
+        logger.warn(
+          `Built-in HTTPS is enabled. Trust the local CA before signing in. Certificate fingerprint: ${tlsConfiguration.runtime.fingerprint}`,
+          {
+            label: 'Security',
+            tlsMode: tlsConfiguration.mode,
+            tlsHosts: tlsConfiguration.hosts,
+            caCertificatePath: tlsConfiguration.caCertificatePath,
+            httpsPort: tlsConfiguration.httpsPort,
+          }
+        );
+      }
+
+      if (process.env.NODE_ENV !== 'test' && !isE2eTest) {
+        trackBackgroundTask('TMDB authentication check', async () => {
+          try {
+            await new TheMovieDb().checkAuthentication();
+            logger.info('TMDB API authentication check succeeded', {
+              label: 'TMDB API',
+              credentialSource: getTmdbAuthSource(),
+            });
+          } catch {
+            // The TMDB client logs the sanitized upstream status/code and
+            // credential source for failures. Avoid a second generic log.
+          }
+        });
+      }
+
+      for (const target of listeners) {
+        target.on('error', (err: Error) => {
+          logger.error('Failed to start server', {
+            label: 'Server',
+            message: err.message,
+          });
+          process.exit(1);
+        });
+      }
+
+      let stoppingJobs: Promise<void> | undefined;
+      const shutdownController = createProcessShutdownController({
+        onStart: (reason) => {
+          logger.info(`Received ${reason}; draining server before shutdown.`, {
+            label: 'Server',
+          });
+          notificationManager.stopOutboxRetryLoop();
+          requestDispatchManager.stop();
+          // Cancel future schedules immediately, while the listener drains.
+          stoppingJobs = stopJobs();
+        },
+        drain: () =>
+          drainForShutdown({
+            server: listeners,
+            tasks: [
+              {
+                name: 'scheduled jobs and background tasks',
+                run: async () => {
+                  await stoppingJobs;
+                  // Active HTTP handlers may have reached a job invocation or
+                  // delayed retry immediately before the listener finished
+                  // draining. A second pass closes that admission race.
+                  await stopJobs();
+                  // Reset deliveries can enqueue tracked recovery work. Drain
+                  // them first so the background-task pass observes that work.
+                  await waitForPendingPasswordResetDeliveries();
+                  await waitForBackgroundTasks();
+                },
+              },
+            ],
+            connectionTimeoutMs: SHUTDOWN_CONNECTION_TIMEOUT_MS,
+            taskTimeoutMs: SHUTDOWN_TASK_TIMEOUT_MS,
+          }),
+        onComplete: (result, failed) => {
+          const log = failed
+            ? logger.error.bind(logger)
+            : logger.info.bind(logger);
+          log(
+            failed
+              ? 'Server shutdown drain finished with incomplete work.'
+              : 'Server shutdown drain completed.',
+            {
+              label: 'Server',
+              forcedConnections: result.forcedConnections,
+              serverError: result.serverError?.message,
+              taskErrors: result.taskErrors.map(({ name, error }) => ({
+                name,
+                errorMessage:
+                  error instanceof Error ? error.message : 'Unknown error',
+              })),
+              timedOutTasks: result.timedOutTasks,
+            }
+          );
+        },
+        onError: (error) => {
+          logger.error('Server shutdown drain failed.', {
+            label: 'Server',
+            ...getErrorLogFields(error),
+          });
+        },
+      });
+
+      requestGracefulShutdown = shutdownController.request;
+    });
+  })
+  .catch((err) => {
+    logger.error(err.stack);
+    process.exit(1);
+  });

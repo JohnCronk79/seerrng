@@ -1,0 +1,155 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Create tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  determine-tag-version:
+    name: Determine tag version
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    permissions:
+      contents: read
+    outputs:
+      tag_version: ${{ steps.git-cliff.outputs.tag_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ssh-key: ${{ secrets.COMMIT_KEY }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: git-cliff
+
+      - name: Get tag version
+        id: git-cliff
+        env:
+          # In order to avoid hitting the GitHub API rate limit
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag_version=$(git-cliff -c .github/cliff.toml --bumped-version --unreleased)
+          [[ "$tag_version" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || {
+            echo "Invalid generated tag version: $tag_version" >&2
+            exit 2
+          }
+          echo "Next tag version is ${tag_version}"
+          echo "tag_version=${tag_version}" >> "$GITHUB_OUTPUT"
+
+  create-tag:
+    name: Create tag
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    permissions:
+      contents: read
+    needs: determine-tag-version
+    env:
+      TAG_VERSION: ${{ needs.determine-tag-version.outputs.tag_version }}
+    steps:
+      - name: Install git-cliff
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: git-cliff
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ssh-key: ${{ secrets.COMMIT_KEY }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: 'package.json'
+          # For workflows with elevated privileges we recommend disabling automatic caching.
+          # https://github.com/actions/setup-node
+          package-manager-cache: false
+
+      - name: Configure git
+        env:
+          GIT_ACTOR: ${{ github.actor }}
+        run: |
+          git config user.name "$GIT_ACTOR"
+          git config user.email "$GIT_ACTOR@users.noreply.github.com"
+
+      - name: Bump package.json
+        run: npm version "$TAG_VERSION" --ignore-scripts --no-commit-hooks --no-git-tag-version
+
+      - name: Sync Helm chart release metadata
+        run: |
+          set -euo pipefail
+          chart_file='charts/seerr-chart/Chart.yaml'
+          chart_readme='charts/seerr-chart/README.md'
+          chart_version="$(awk '$1 == "version:" { print $2 }' "$chart_file")"
+          [[ "$chart_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid chart version: $chart_version" >&2
+            exit 2
+          }
+          IFS=. read -r chart_major chart_minor chart_patch <<< "$chart_version"
+          chart_patch=$((10#$chart_patch + 1))
+          next_chart_version="${chart_major}.${chart_minor}.${chart_patch}"
+          sed -i "s/^version:.*/version: ${next_chart_version}/" "$chart_file"
+          sed -i "s/^appVersion:.*/appVersion: '${TAG_VERSION}'/" "$chart_file"
+          sed -i -E \
+            -e "s/AppVersion-v[0-9A-Za-z._+-]+/AppVersion-${TAG_VERSION}/g" \
+            -e "s/AppVersion: v[0-9A-Za-z._+-]+/AppVersion: ${TAG_VERSION}/g" \
+            -e "s/Version-[0-9]+\.[0-9]+\.[0-9]+/Version-${next_chart_version}/g" \
+            -e "s/Version: [0-9]+\.[0-9]+\.[0-9]+/Version: ${next_chart_version}/g" \
+            "$chart_readme"
+          grep -Fxq "appVersion: '${TAG_VERSION}'" "$chart_file"
+          grep -Fq "AppVersion: ${TAG_VERSION}" "$chart_readme"
+          grep -Fq "Version: ${next_chart_version}" "$chart_readme"
+
+      - name: Generate checked-in changelog
+        shell: bash
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          previous_tag="$(scripts/latest-published-release-tag.sh)"
+          current_changelog="${RUNNER_TEMP}/seerrng-current-changelog.md"
+          git-cliff \
+            -c .github/cliff.toml \
+            --unreleased \
+            --tag "$TAG_VERSION" \
+            --output "$current_changelog"
+          node scripts/assemble-release-notes.mjs \
+            --previous-tag "$previous_tag" \
+            --head HEAD \
+            --changelog "$current_changelog" \
+            --output "$current_changelog"
+          node scripts/prepend-changelog-section.mjs \
+            --current "$current_changelog" \
+            --existing CHANGELOG.md \
+            --output CHANGELOG.md
+          node scripts/check-changelog-tags.mjs
+          grep -Eq '^## ' CHANGELOG.md
+
+      - name: Commit updated files
+        run: |
+          git add CHANGELOG.md package.json charts/seerr-chart/Chart.yaml charts/seerr-chart/README.md
+          git commit \
+            -m "chore(release): prepare ${TAG_VERSION}" \
+            -m "release-note: none"
+          git push
+
+      - name: Create git tag
+        run: |
+          git tag -- "$TAG_VERSION"
+          git push origin "refs/tags/$TAG_VERSION:refs/tags/$TAG_VERSION"

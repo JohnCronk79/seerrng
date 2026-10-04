@@ -1,0 +1,17 @@
+export enum ApiErrorCode {
+  InvalidUrl = 'INVALID_URL',
+  InvalidCredentials = 'INVALID_CREDENTIALS',
+  InvalidAuthToken = 'INVALID_AUTH_TOKEN',
+  InvalidEmail = 'INVALID_EMAIL',
+  ConnectionError = 'CONNECTION_ERROR',
+  NotAdmin = 'NOT_ADMIN',
+  NoAdminUser = 'NO_ADMIN_USER',
+  OidcProviderDiscoveryFailed = 'OIDC_PROVIDER_DISCOVERY_FAILED',
+  OidcAuthorizationFailed = 'OIDC_AUTHORIZATION_FAILED',
+  OidcMissingEmail = 'OIDC_MISSING_EMAIL',
+  OidcAccountAlreadyLinked = 'OIDC_ACCOUNT_ALREADY_LINKED',
+  SyncErrorGroupedFolders = 'SYNC_ERROR_GROUPED_FOLDERS',
+  SyncErrorNoLibraries = 'SYNC_ERROR_NO_LIBRARIES',
+  Unauthorized = 'UNAUTHORIZED',
+  Unknown = 'UNKNOWN',
+}

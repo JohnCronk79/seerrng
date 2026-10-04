@@ -1,0 +1,35 @@
+# Generated files which we would not like to format
+.next/
+dist/
+config/
+cache/config.json
+.bookshelf-migration-lab
+.bookshelf-migration-lab/**
+pnpm-lock.yaml
+cypress/config/settings.cypress.json
+.github
+.vscode
+next-env.d.ts
+gen-docs/vendor/image-size/dist/
+coverage/
+out/
+build/
+artifacts/
+cypress/runtime-config/
+cypress/videos/
+cypress/screenshots/
+gen-docs/.docusaurus/
+gen-docs/build/
+bin/duplicate-detector/node_modules/
+
+# assets
+src/assets/
+docs/
+public/*
+!public/sw.js
+
+# helm charts
+**/charts
+
+# Prettier breaks GitHub alert syntax in markdown
+*.md

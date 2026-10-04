@@ -1,0 +1,2884 @@
+import JellyfinAPI from '@server/api/jellyfin';
+import PlexTvAPI from '@server/api/plextv';
+import { ApiErrorCode } from '@server/constants/error';
+import { MediaServerType } from '@server/constants/server';
+import { UserType } from '@server/constants/user';
+import { USER_SETTINGS_LIMITS } from '@server/constants/userSettings';
+import { getRepository } from '@server/datasource';
+import { LinkedAccount } from '@server/entity/LinkedAccount';
+import { User } from '@server/entity/User';
+import { ALL_NOTIFICATIONS, UserSettings } from '@server/entity/UserSettings';
+import type {
+  CardTextVisibility,
+  DetailDisclosureMediaType,
+  UserPreferredLanguages,
+  UserRequestRootFolders,
+  UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsGeneralResponse,
+  UserSettingsLinkedAccount,
+  UserSettingsLinkedAccountResponse,
+  UserSettingsNotificationsResponse,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import {
+  mediaFilterScopes,
+  mediaFilterValues,
+  type MediaFilterScope,
+  type MediaFilterValue,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import {
+  getAuthAccountAdmissionResource,
+  runAuthAccountAdmission,
+} from '@server/lib/authAccountAdmission';
+import { getJellyfinAuthAuthorityKey } from '@server/lib/mediaServerAuthority';
+import {
+  MAX_PERMISSION_VALUE,
+  Permission,
+  isValidPermissionValue,
+} from '@server/lib/permissions';
+import requestAdmissionCoordinator from '@server/lib/requestAdmission';
+import { getSettings } from '@server/lib/settings';
+import {
+  UserMutationActorUnauthorizedError,
+  isUserSessionCredentialVersionCurrent,
+  runAuthorizedUserSecurityMutation,
+  runUserSecurityMutationWithActor,
+  runUserSecurityReadWithActor,
+} from '@server/lib/userSecurityMutation';
+import logger from '@server/logger';
+import { isAuthenticated } from '@server/middleware/auth';
+import { quickConnectSecret } from '@server/routes/auth';
+import { ApiError } from '@server/types/error';
+import { isAvailableLocale } from '@server/types/languages';
+import { validateAdvancedThemeOverrides } from '@server/utils/advancedThemeOverrides';
+import AsyncLock from '@server/utils/asyncLock';
+import {
+  normalizeSeriesDisclosureOrder,
+  parseSeriesDisclosureOrder,
+  type SeriesDisclosureRole,
+} from '@server/utils/detailDisclosureOrder';
+import { normalizeDiscordSnowflake } from '@server/utils/discord';
+import { getHostname } from '@server/utils/getHostname';
+import { normalizeJellyfinGuid } from '@server/utils/jellyfin';
+import { parsePlexAccountIdentity } from '@server/utils/plexAccount';
+import {
+  isOwnProfile,
+  isOwnProfileOrAdmin,
+} from '@server/utils/profileMiddleware';
+import { parsePositiveRouteId } from '@server/utils/routeId';
+import {
+  getRateLimitKey,
+  hasAsciiControlCharacters,
+  preserveRedactedSecrets,
+  redactSecrets,
+} from '@server/utils/security';
+import { parseThemePalette } from '@server/utils/themePreference';
+import {
+  parseBoundedString,
+  parseOptionalBodyBoolean,
+  parseOptionalBoundedString,
+  parseOptionalNonNegativeInteger,
+} from '@server/utils/validation';
+import { Router, type Request } from 'express';
+import rateLimit from 'express-rate-limit';
+import net from 'net';
+import { IsNull, Not, Raw, type FindOptionsWhere } from 'typeorm';
+import { canMakePermissionsChange, isUniqueConstraintError } from '.';
+
+const userSettingsRoutes = Router({ mergeParams: true });
+
+userSettingsRoutes.get<
+  { id: string; mediaType: string },
+  SeriesDisclosureRole[]
+>(
+  '/detail-disclosure-order/:mediaType',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (req.params.mediaType !== 'tv')
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    const userId = parsePositiveRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await getRepository(User).findOne({
+            where: { id: userId },
+          });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          return res
+            .status(200)
+            .json(
+              normalizeSeriesDisclosureOrder(
+                user.settings?.detailDisclosureOrder?.tv
+              )
+            );
+        }
+      );
+    } catch (e) {
+      return next({
+        status: e instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message:
+          e instanceof UserMutationActorUnauthorizedError
+            ? 'Access denied.'
+            : e.message,
+      });
+    }
+  }
+);
+userSettingsRoutes.post<
+  { id: string; mediaType: string },
+  SeriesDisclosureRole[],
+  { order?: unknown }
+>(
+  '/detail-disclosure-order/:mediaType',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (req.params.mediaType !== 'tv')
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    const order =
+      req.body && Object.keys(req.body).length === 1
+        ? parseSeriesDisclosureOrder(req.body.order)
+        : null;
+    if (!order)
+      return next({ status: 400, message: 'Invalid disclosure order.' });
+    const userId = parsePositiveRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          // Preferences are exclusively self-owned, including for administrators.
+          if (actor.id !== userId)
+            return next({ status: 403, message: 'Access denied.' });
+          const repo = getRepository(User);
+          const user = await repo.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          user.settings.detailDisclosureOrder = {
+            ...user.settings.detailDisclosureOrder,
+            tv: order,
+          };
+          const saved = await repo.save(user);
+          return res
+            .status(200)
+            .json(
+              normalizeSeriesDisclosureOrder(
+                saved.settings?.detailDisclosureOrder?.tv
+              )
+            );
+        }
+      );
+    } catch (e) {
+      return next({
+        status: e instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message:
+          e instanceof UserMutationActorUnauthorizedError
+            ? 'Access denied.'
+            : e.message,
+      });
+    }
+  }
+);
+
+const updateMediaFilterPin = (
+  current: Partial<Record<MediaFilterScope, MediaFilterValue>> | undefined,
+  scope: MediaFilterScope,
+  value: MediaFilterValue | null
+): Partial<Record<MediaFilterScope, MediaFilterValue>> => {
+  const pins = { ...current };
+
+  // Keep request-derived property names out of object writes. The explicit
+  // cases also make additions to MediaFilterScope fail closed until handled.
+  switch (scope) {
+    case 'books': {
+      if (value !== null) return { ...pins, books: value };
+      const remaining = { ...pins };
+      delete remaining.books;
+      return remaining;
+    }
+    case 'trending': {
+      if (value !== null) return { ...pins, trending: value };
+      const remaining = { ...pins };
+      delete remaining.trending;
+      return remaining;
+    }
+    case 'search': {
+      if (value !== null) return { ...pins, search: value };
+      const remaining = { ...pins };
+      delete remaining.search;
+      return remaining;
+    }
+    case 'blocklist': {
+      if (value !== null) return { ...pins, blocklist: value };
+      const remaining = { ...pins };
+      delete remaining.blocklist;
+      return remaining;
+    }
+    case 'issues': {
+      if (value !== null) return { ...pins, issues: value };
+      const remaining = { ...pins };
+      delete remaining.issues;
+      return remaining;
+    }
+    case 'requests': {
+      if (value !== null) return { ...pins, requests: value };
+      const remaining = { ...pins };
+      delete remaining.requests;
+      return remaining;
+    }
+  }
+};
+
+userSettingsRoutes.post<{ id: string; scope: string }>(
+  '/media-filter-pins/:scope',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const scope = req.params.scope as MediaFilterScope;
+    const value = req.body?.value;
+    if (
+      !mediaFilterScopes.includes(scope) ||
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'value') ||
+      (value !== null && !mediaFilterValues.includes(value))
+    ) {
+      return next({ status: 400, message: 'Invalid media filter pin.' });
+    }
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!canModifyUser(user, actor))
+            return next({ status: 403, message: 'Access denied.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          const pins = updateMediaFilterPin(
+            user.settings.mediaFilterPins,
+            scope,
+            value as MediaFilterValue | null
+          );
+          user.settings.mediaFilterPins = pins;
+          await repository.save(user);
+          return res.status(200).json(pins);
+        }
+      );
+    } catch (error) {
+      next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save media filter pin.',
+      });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ id: string }>(
+  '/theme',
+  isOwnProfile(),
+  async (req, res, next) => {
+    const palette =
+      req.body && !Array.isArray(req.body) && Object.keys(req.body).length === 1
+        ? parseThemePalette(req.body.palette)
+        : null;
+    if (!palette)
+      return next({ status: 400, message: 'Invalid theme palette.' });
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+    try {
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const repository = getRepository(User);
+          const user = await repository.findOne({ where: { id: userId } });
+          if (!user) return next({ status: 404, message: 'User not found.' });
+          if (!user.settings) user.settings = new UserSettings({ user });
+          user.settings.themePalette = palette;
+          await repository.save(user);
+          return res.status(200).json({ themePalette: palette });
+        },
+        {
+          expectedCredentialVersion:
+            req.session?.userId === req.user!.id
+              ? (req.session.credentialVersion ?? 0)
+              : undefined,
+        }
+      );
+    } catch (error) {
+      return next({
+        status: error instanceof UserMutationActorUnauthorizedError ? 403 : 500,
+        message: 'Could not save theme preference.',
+      });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ id: string }>(
+  '/advanced-theme',
+  isOwnProfile(),
+  async (req, res, next) => {
+    if (
+      !req.body ||
+      Array.isArray(req.body) ||
+      Object.keys(req.body).some((key) => key !== 'overrides') ||
+      !hasOwn(req.body, 'overrides')
+    ) {
+      return next({ status: 400, message: 'Invalid advanced theme settings.' });
+    }
+
+    const validation = validateAdvancedThemeOverrides(req.body.overrides);
+    if ('error' in validation) {
+      return next({ status: 400, message: validation.error });
+    }
+
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) return next({ status: 404, message: 'User not found.' });
+
+    try {
+      const repository = getRepository(User);
+      const user = await repository.findOne({
+        where: { id: userId },
+        relations: { settings: true },
+      });
+      if (!user) return next({ status: 404, message: 'User not found.' });
+
+      if (!user.settings) user.settings = new UserSettings({ user });
+      user.settings.advancedThemeOverrides = validation.value;
+      await repository.save(user);
+
+      return res.status(200).json({
+        advancedThemeOverrides: validation.value,
+      });
+    } catch {
+      return next({
+        status: 500,
+        message: 'Could not save advanced theme settings.',
+      });
+    }
+  }
+);
+
+const MAX_USER_SETTINGS_ID_VALUE = 1_000_000_000;
+const MAX_LINKED_ACCOUNT_TOKEN_LENGTH = 4096;
+const MAX_LINKED_ACCOUNT_USERNAME_LENGTH = 512;
+const MAX_LINKED_ACCOUNT_PASSWORD_LENGTH = 512;
+const authenticationMutationLock = new AsyncLock();
+const runAuthenticationMutation = <T>(
+  req: Pick<Request, 'session' | 'user'>,
+  userId: number,
+  callback: (actor: User) => Promise<T>
+): Promise<T> => {
+  const actorId = req.user!.id;
+  return runUserSecurityMutationWithActor(
+    actorId,
+    userId,
+    Permission.MANAGE_USERS,
+    (actor) =>
+      requestAdmissionCoordinator.run([`auth:user:${userId}`], () =>
+        authenticationMutationLock.dispatch(userId, () => callback(actor))
+      ),
+    {
+      expectedCredentialVersion:
+        req.session?.userId === actorId
+          ? (req.session.credentialVersion ?? 0)
+          : undefined,
+    }
+  );
+};
+export const PASSWORD_MUTATION_RATE_LIMIT = {
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+} as const;
+export const getPasswordMutationRateLimitKey = (req: Request): string =>
+  req.user?.id ? `user:${req.user.id}` : getRateLimitKey(req);
+const passwordMutationRateLimit = rateLimit({
+  ...PASSWORD_MUTATION_RATE_LIMIT,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  keyGenerator: getPasswordMutationRateLimitKey,
+});
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+const isCardTextVisibility = (value: unknown): value is CardTextVisibility =>
+  value === 'always' || value === 'hover';
+
+const parseUserSettingsRouteId = (id: unknown): number | undefined =>
+  parsePositiveRouteId(id, MAX_USER_SETTINGS_ID_VALUE);
+
+const canModifyUser = (target: User, actor?: User): boolean =>
+  !target.hasPermission(Permission.ADMIN) ||
+  actor?.id === target.id ||
+  actor?.id === 1;
+
+const canModifyUserAuthentication = (target: User, actor?: User): boolean =>
+  canModifyUser(target, actor) &&
+  !!actor &&
+  (actor.id === target.id ||
+    actor.hasPermission(Permission.ADMIN) ||
+    canMakePermissionsChange(target.permissions, actor));
+
+const isSessionCredentialCurrent = (req: Request, actor: User): boolean =>
+  req.session?.userId !== actor.id ||
+  isUserSessionCredentialVersionCurrent(actor, req.session.credentialVersion);
+
+const parseUserSettingsBodyObject = (
+  body: unknown
+): { value: Record<string, unknown> } | { error: string } => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'User settings body must be an object.' };
+  }
+
+  return { value: body as Record<string, unknown> };
+};
+
+const serializeCardTextVisibility = (
+  settings?: UserSettings
+): UserSettingsCardTextResponse => ({
+  movie:
+    settings?.cardTextVisibilityMovie === 'always' ||
+    settings?.cardTextVisibilityMovie === 'hover'
+      ? settings.cardTextVisibilityMovie
+      : undefined,
+  tv:
+    settings?.cardTextVisibilityTv === 'always' ||
+    settings?.cardTextVisibilityTv === 'hover'
+      ? settings.cardTextVisibilityTv
+      : undefined,
+  album:
+    settings?.cardTextVisibilityAlbum === 'always' ||
+    settings?.cardTextVisibilityAlbum === 'hover'
+      ? settings.cardTextVisibilityAlbum
+      : undefined,
+  book:
+    settings?.cardTextVisibilityBook === 'always' ||
+    settings?.cardTextVisibilityBook === 'hover'
+      ? settings.cardTextVisibilityBook
+      : undefined,
+});
+
+const parseCardTextVisibilityBody = (
+  body: unknown
+): { value: UserSettingsCardTextResponse } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const bodyObject = parsedBody.value;
+  const value: UserSettingsCardTextResponse = {};
+
+  for (const key of ['movie', 'tv', 'album', 'book'] as const) {
+    const fieldValue = bodyObject[key];
+
+    if (fieldValue == null) {
+      continue;
+    }
+
+    if (!isCardTextVisibility(fieldValue)) {
+      return { error: `${key} must be "always" or "hover".` };
+    }
+
+    value[key] = fieldValue;
+  }
+
+  return { value };
+};
+
+const serializeDetailDisclosurePins = (
+  settings?: UserSettings
+): UserSettingsDetailDisclosureResponse => ({
+  cast: settings?.detailDisclosureCastPinned === true,
+  crew: settings?.detailDisclosureCrewPinned === true,
+  artists: settings?.detailDisclosureArtistsPinned === true,
+  subjectTags: settings?.detailDisclosureSubjectTagsPinned === true,
+});
+
+const detailDisclosureMediaTypes: DetailDisclosureMediaType[] = [
+  'movie',
+  'tv',
+  'music',
+  'book',
+];
+
+const isDetailDisclosureMediaType = (
+  value: string
+): value is DetailDisclosureMediaType =>
+  detailDisclosureMediaTypes.includes(value as DetailDisclosureMediaType);
+
+const serializeScopedDetailDisclosurePins = (
+  settings: UserSettings | undefined,
+  mediaType: DetailDisclosureMediaType
+): UserSettingsDetailDisclosureResponse => {
+  const legacyPins: UserSettingsDetailDisclosureResponse = {
+    details: false,
+    ...(mediaType === 'movie' ? { collection: false } : {}),
+    ...(mediaType === 'tv' ? { mediaServer: false, overview: false } : {}),
+    cast:
+      mediaType === 'movie' && settings?.detailDisclosureCastPinned === true,
+    crew:
+      mediaType === 'movie' && settings?.detailDisclosureCrewPinned === true,
+    artists:
+      mediaType === 'music' && settings?.detailDisclosureArtistsPinned === true,
+    subjectTags:
+      mediaType === 'movie' &&
+      settings?.detailDisclosureSubjectTagsPinned === true,
+  };
+
+  return {
+    ...legacyPins,
+    ...settings?.detailDisclosurePins?.[mediaType],
+  };
+};
+
+const parseDetailDisclosurePinsBody = (
+  body: unknown,
+  includeCollection = false,
+  includeDetails = false,
+  includeMediaServer = false,
+  includeOverview = false
+): { value: UserSettingsDetailDisclosureResponse } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const value: UserSettingsDetailDisclosureResponse = {};
+  const keys = ['cast', 'crew', 'artists', 'subjectTags'] as const;
+  const allowedKeys: (keyof UserSettingsDetailDisclosureResponse)[] = [
+    ...keys,
+    ...(includeDetails ? (['details'] as const) : []),
+    'advancedOptions',
+    'taskFilters',
+    'filters',
+    'mediaFilters',
+    'sortBy',
+    ...(includeCollection ? (['collection'] as const) : []),
+    ...(includeMediaServer ? (['mediaServer'] as const) : []),
+    ...(includeOverview ? (['overview'] as const) : []),
+  ];
+  for (const key of allowedKeys) {
+    if (!hasOwn(parsedBody.value, key)) {
+      continue;
+    }
+    if (typeof parsedBody.value[key] !== 'boolean') {
+      return { error: `${key} must be a boolean.` };
+    }
+    value[key] = parsedBody.value[key];
+  }
+
+  return { value };
+};
+
+type GeneralStringField =
+  | 'username'
+  | 'email'
+  | 'locale'
+  | 'discoverRegion'
+  | 'streamingRegion'
+  | 'originalLanguage';
+
+type NotificationStringField =
+  | 'pgpKey'
+  | 'pushbulletAccessToken'
+  | 'pushoverApplicationToken'
+  | 'pushoverUserKey'
+  | 'pushoverSound'
+  | 'telegramChatId'
+  | 'telegramMessageThreadId';
+
+const parseOptionalDiscordIds = (
+  value: unknown
+): { value: string[] | undefined } | { error: string } => {
+  if (value === undefined) {
+    return { value: undefined };
+  }
+
+  if (!Array.isArray(value)) {
+    return { error: 'discordIds must be an array of Discord user IDs.' };
+  }
+
+  if (value.length > USER_SETTINGS_LIMITS.discordIdsMax) {
+    return {
+      error: `discordIds may not contain more than ${USER_SETTINGS_LIMITS.discordIdsMax} entries.`,
+    };
+  }
+
+  const ids: string[] = [];
+  for (const item of value) {
+    const parsed = parseOptionalBoundedString(item, {
+      fieldName: 'discordId',
+      maxLength: USER_SETTINGS_LIMITS.discordId,
+    });
+    if ('error' in parsed) {
+      return parsed;
+    }
+    if (!parsed.value) {
+      continue;
+    }
+
+    const normalized = normalizeDiscordSnowflake(parsed.value);
+    if (!normalized) {
+      return { error: 'discordId must be a valid Discord user ID.' };
+    }
+    ids.push(normalized);
+  }
+
+  return { value: ids };
+};
+
+const preferredLanguageMediaTypes = ['movie', 'tv', 'music', 'book'] as const;
+
+const parsePreferredLanguages = (
+  value: unknown
+): { value: UserPreferredLanguages | undefined } | { error: string } => {
+  if (value === undefined || value === null) {
+    return { value: undefined };
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'preferredLanguages must be an object.' };
+  }
+
+  const input = value as Record<string, unknown>;
+  const allowedKeys = new Set(['all', ...preferredLanguageMediaTypes]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+    return { error: 'preferredLanguages contains an unsupported media type.' };
+  }
+
+  const parsed: UserPreferredLanguages = {};
+  for (const fieldName of ['all', ...preferredLanguageMediaTypes] as const) {
+    if (!hasOwn(input, fieldName)) {
+      continue;
+    }
+
+    const fieldValue = input[fieldName];
+    if (fieldValue === null || fieldValue === '') {
+      if (fieldName !== 'all') {
+        parsed[fieldName] = null;
+      }
+      continue;
+    }
+
+    const language = parseBoundedString(fieldValue, {
+      fieldName: `preferredLanguages.${fieldName}`,
+      maxLength: USER_SETTINGS_LIMITS.language,
+    });
+    if ('error' in language) {
+      return language;
+    }
+    if (!/^[a-z]{2}$/i.test(language.value)) {
+      return {
+        error: `preferredLanguages.${fieldName} must be a two-letter language code.`,
+      };
+    }
+
+    parsed[fieldName] = language.value.toLowerCase();
+  }
+
+  return { value: parsed };
+};
+
+const MAX_REQUEST_ROOT_FOLDER_SERVICE_ID = 1_000_000_000;
+const requestRootFolderKeyPattern =
+  /^(?:radarr|sonarr|lidarr|readarr|comic-kapowarr):(0|[1-9]\d{0,9})$/;
+const parseRequestRootFolders = (
+  input: unknown
+): { value: UserRequestRootFolders } | { error: string } => {
+  if (input === null || input === undefined) return { value: {} };
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return { error: 'requestRootFolders must be an object.' };
+  }
+
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > 100) {
+    return {
+      error: 'requestRootFolders cannot contain more than 100 entries.',
+    };
+  }
+
+  const value: UserRequestRootFolders = {};
+  for (const [key, rawPath] of entries) {
+    const keyMatch = requestRootFolderKeyPattern.exec(key);
+    if (!keyMatch || Number(keyMatch[1]) > MAX_REQUEST_ROOT_FOLDER_SERVICE_ID) {
+      return { error: 'requestRootFolders contains an invalid service key.' };
+    }
+    if (
+      typeof rawPath !== 'string' ||
+      rawPath.length > 4096 ||
+      rawPath.trim().length === 0 ||
+      hasAsciiControlCharacters(rawPath)
+    ) {
+      return { error: 'requestRootFolders paths must be valid folder paths.' };
+    }
+    value[key] = rawPath;
+  }
+
+  return { value };
+};
+
+const parseGeneralSettingsBody = (
+  body: unknown
+):
+  | {
+      value: UserSettingsGeneralResponse;
+    }
+  | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const bodyObject = parsedBody.value;
+  const boundedFields: [GeneralStringField, number][] = [
+    ['username', USER_SETTINGS_LIMITS.username],
+    ['email', USER_SETTINGS_LIMITS.email],
+    ['locale', USER_SETTINGS_LIMITS.locale],
+    ['discoverRegion', USER_SETTINGS_LIMITS.region],
+    ['streamingRegion', USER_SETTINGS_LIMITS.region],
+    ['originalLanguage', USER_SETTINGS_LIMITS.language],
+  ];
+  const value: UserSettingsGeneralResponse = {};
+
+  if (hasOwn(bodyObject, 'username')) {
+    const username = parseBoundedString(bodyObject.username, {
+      fieldName: 'username',
+      maxLength: USER_SETTINGS_LIMITS.username,
+    });
+
+    if ('error' in username) {
+      return username;
+    }
+
+    value.username = username.value;
+  }
+
+  for (const [fieldName, maxLength] of boundedFields) {
+    if (fieldName === 'username') {
+      continue;
+    }
+
+    if (!hasOwn(bodyObject, fieldName)) {
+      continue;
+    }
+
+    const parsed = parseOptionalBoundedString(bodyObject[fieldName], {
+      fieldName,
+      maxLength,
+    });
+
+    if ('error' in parsed) {
+      return parsed;
+    }
+
+    if (
+      fieldName === 'locale' &&
+      parsed.value !== undefined &&
+      !isAvailableLocale(parsed.value)
+    ) {
+      return { error: 'locale must be a supported locale.' };
+    }
+
+    value[fieldName] = parsed.value;
+  }
+
+  if (hasOwn(bodyObject, 'preferredLanguages')) {
+    const preferredLanguages = parsePreferredLanguages(
+      bodyObject.preferredLanguages
+    );
+    if ('error' in preferredLanguages) {
+      return preferredLanguages;
+    }
+    value.preferredLanguages = preferredLanguages.value;
+  }
+
+  if (hasOwn(bodyObject, 'discordIds')) {
+    const discordIds = parseOptionalDiscordIds(bodyObject.discordIds);
+    if ('error' in discordIds) {
+      return discordIds;
+    }
+    value.discordIds = discordIds.value;
+  }
+
+  for (const fieldName of [
+    'movieQuotaLimit',
+    'movieQuotaDays',
+    'tvQuotaLimit',
+    'tvQuotaDays',
+    'musicQuotaLimit',
+    'musicQuotaDays',
+    'bookQuotaLimit',
+    'bookQuotaDays',
+    'comicQuotaLimit',
+    'comicQuotaDays',
+    'magazineQuotaLimit',
+    'magazineQuotaDays',
+    'softwareQuotaLimit',
+    'softwareQuotaDays',
+  ] as const) {
+    const rawValue = bodyObject[fieldName];
+    if (!hasOwn(bodyObject, fieldName)) {
+      continue;
+    }
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+      value[fieldName] = undefined;
+      continue;
+    }
+
+    const parsed = parseOptionalNonNegativeInteger(
+      rawValue,
+      USER_SETTINGS_LIMITS.quota
+    );
+    if (parsed === undefined) {
+      return { error: `${fieldName} must be a valid non-negative integer.` };
+    }
+    value[fieldName] = parsed;
+  }
+
+  for (const fieldName of [
+    'watchlistSyncMovies',
+    'watchlistSyncTv',
+    'watchlistSyncMusic',
+    'watchlistSyncBooks',
+    'watchlistSyncComics',
+    'watchlistSyncMagazines',
+  ] as const) {
+    if (!hasOwn(bodyObject, fieldName)) {
+      continue;
+    }
+    const parsed = parseOptionalBodyBoolean(bodyObject[fieldName], fieldName);
+    if ('error' in parsed) {
+      return parsed;
+    }
+    value[fieldName] = parsed.value;
+  }
+
+  if (bodyObject.cardTextVisibility) {
+    const parsedCardTextVisibility = parseCardTextVisibilityBody(
+      bodyObject.cardTextVisibility
+    );
+
+    if ('error' in parsedCardTextVisibility) {
+      return parsedCardTextVisibility;
+    }
+
+    value.cardTextVisibility = parsedCardTextVisibility.value;
+  }
+
+  if (hasOwn(bodyObject, 'requestRootFolders')) {
+    const parsedRequestRootFolders = parseRequestRootFolders(
+      bodyObject.requestRootFolders
+    );
+    if ('error' in parsedRequestRootFolders) {
+      return parsedRequestRootFolders;
+    }
+    value.requestRootFolders = parsedRequestRootFolders.value;
+  }
+
+  return { value };
+};
+
+const parseNotificationTypes = (
+  value: unknown
+):
+  | {
+      value: Partial<UserSettingsNotificationsResponse['notificationTypes']>;
+    }
+  | { error: string } => {
+  if (value === undefined || value === null) {
+    return { value: {} };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return { error: 'notificationTypes must be an object.' };
+  }
+
+  const allowedKeys = [
+    'email',
+    'discord',
+    'gotify',
+    'ntfy',
+    'pushbullet',
+    'pushover',
+    'slack',
+    'telegram',
+    'webhook',
+    'webpush',
+  ] as const;
+
+  const parsed: Partial<
+    UserSettingsNotificationsResponse['notificationTypes']
+  > = {};
+  for (const key of allowedKeys) {
+    const rawValue = value[key as keyof typeof value];
+
+    if (rawValue === undefined || rawValue === null) {
+      continue;
+    }
+    if (
+      typeof rawValue !== 'number' ||
+      !Number.isInteger(rawValue) ||
+      rawValue < 0 ||
+      (rawValue & ~ALL_NOTIFICATIONS) !== 0
+    ) {
+      return { error: `notificationTypes.${key} must be valid.` };
+    }
+    parsed[key] = rawValue;
+  }
+
+  return { value: parsed };
+};
+
+const parseNotificationsBody = (
+  body: unknown
+):
+  | {
+      value: UserSettingsNotificationsResponse;
+    }
+  | { error: string } => {
+  const parsedBodyObject = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBodyObject) {
+    return parsedBodyObject;
+  }
+
+  const bodyObject = parsedBodyObject.value;
+  const notificationTypes = parseNotificationTypes(
+    bodyObject.notificationTypes
+  );
+  if ('error' in notificationTypes) {
+    return notificationTypes;
+  }
+  const boundedFields: [NotificationStringField, number][] = [
+    ['pgpKey', USER_SETTINGS_LIMITS.pgpKey],
+    ['pushbulletAccessToken', USER_SETTINGS_LIMITS.pushbulletAccessToken],
+    ['pushoverApplicationToken', USER_SETTINGS_LIMITS.pushoverApplicationToken],
+    ['pushoverUserKey', USER_SETTINGS_LIMITS.pushoverUserKey],
+    ['pushoverSound', USER_SETTINGS_LIMITS.pushoverSound],
+    ['telegramChatId', USER_SETTINGS_LIMITS.telegramChatId],
+    ['telegramMessageThreadId', USER_SETTINGS_LIMITS.telegramMessageThreadId],
+  ];
+  const parsedBody: UserSettingsNotificationsResponse = {
+    notificationTypes: notificationTypes.value,
+  };
+
+  for (const [fieldName, maxLength] of boundedFields) {
+    if (!hasOwn(bodyObject, fieldName)) {
+      continue;
+    }
+
+    const parsed = parseOptionalBoundedString(bodyObject[fieldName], {
+      fieldName,
+      maxLength,
+    });
+
+    if ('error' in parsed) {
+      return parsed;
+    }
+
+    parsedBody[fieldName] = parsed.value;
+  }
+
+  if (hasOwn(bodyObject, 'discordIds')) {
+    const discordIds = parseOptionalDiscordIds(bodyObject.discordIds);
+    if ('error' in discordIds) {
+      return discordIds;
+    }
+    parsedBody.discordIds = discordIds.value;
+  }
+
+  if (hasOwn(bodyObject, 'telegramSendSilently')) {
+    const telegramSendSilently = parseOptionalBodyBoolean(
+      bodyObject.telegramSendSilently,
+      'telegramSendSilently'
+    );
+    if ('error' in telegramSendSilently) {
+      return telegramSendSilently;
+    }
+    parsedBody.telegramSendSilently = telegramSendSilently.value;
+  }
+
+  return { value: parsedBody };
+};
+
+const parsePasswordBody = (
+  body: unknown
+):
+  | { value: { currentPassword?: string; newPassword: string } }
+  | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const newPassword = parseBoundedString(parsedBody.value.newPassword, {
+    fieldName: 'newPassword',
+    maxLength: USER_SETTINGS_LIMITS.password,
+  });
+
+  if ('error' in newPassword) {
+    return newPassword;
+  }
+
+  if (newPassword.value.length < 8) {
+    return { error: 'Password must be at least 8 characters.' };
+  }
+
+  const currentPassword = parseOptionalBoundedString(
+    parsedBody.value.currentPassword,
+    {
+      fieldName: 'currentPassword',
+      maxLength: USER_SETTINGS_LIMITS.password,
+    }
+  );
+
+  if ('error' in currentPassword) {
+    return currentPassword;
+  }
+
+  return {
+    value: {
+      currentPassword: currentPassword.value,
+      newPassword: newPassword.value,
+    },
+  };
+};
+
+const parsePlexLinkBody = (
+  body: unknown
+): { value: { authToken: string } } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const authToken = parseBoundedString(parsedBody.value.authToken, {
+    fieldName: 'authToken',
+    maxLength: MAX_LINKED_ACCOUNT_TOKEN_LENGTH,
+  });
+
+  if ('error' in authToken) {
+    return authToken;
+  }
+
+  return { value: { authToken: authToken.value } };
+};
+
+const parseJellyfinLinkBody = (
+  body: unknown
+): { value: { username: string; password: string } } | { error: string } => {
+  const parsedBody = parseUserSettingsBodyObject(body);
+
+  if ('error' in parsedBody) {
+    return parsedBody;
+  }
+
+  const username = parseBoundedString(parsedBody.value.username, {
+    fieldName: 'username',
+    maxLength: MAX_LINKED_ACCOUNT_USERNAME_LENGTH,
+  });
+
+  if ('error' in username) {
+    return username;
+  }
+
+  const password = parseBoundedString(parsedBody.value.password, {
+    fieldName: 'password',
+    maxLength: MAX_LINKED_ACCOUNT_PASSWORD_LENGTH,
+  });
+
+  if ('error' in password) {
+    return password;
+  }
+
+  return { value: { username: username.value, password: password.value } };
+};
+
+userSettingsRoutes.get<
+  { id: string },
+  UserPreferredLanguages | { status: number; message: string }
+>('/preferred-languages', isAuthenticated(), async (req, res, next) => {
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    const actor = req.user!;
+    if (
+      actor.id !== userId &&
+      !actor.hasPermission(
+        [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+        { type: 'or' }
+      )
+    ) {
+      return res.status(403).json({ status: 403, message: 'Access denied.' });
+    }
+
+    const targetUser = await getRepository(User).findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    return res.status(200).json(targetUser.settings?.preferredLanguages ?? {});
+  } catch (error) {
+    next({
+      status: 500,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Unable to read language preferences.',
+    });
+  }
+});
+
+userSettingsRoutes.get<
+  { id: string },
+  UserRequestRootFolders | { status: number; message: string }
+>('/request-root-folders', isAuthenticated(), async (req, res, next) => {
+  const userId = parseUserSettingsRouteId(req.params.id);
+  if (!userId) {
+    return res.status(404).json({ status: 404, message: 'User not found.' });
+  }
+
+  const actor = req.user!;
+  if (
+    actor.id !== userId &&
+    !actor.hasPermission(
+      [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+      { type: 'or' }
+    )
+  ) {
+    return res.status(403).json({ status: 403, message: 'Access denied.' });
+  }
+
+  try {
+    const targetUser = await getRepository(User).findOne({
+      where: { id: userId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ status: 404, message: 'User not found.' });
+    }
+
+    return res.status(200).json(targetUser.settings?.requestRootFolders ?? {});
+  } catch {
+    return next({ status: 500, message: 'Unable to read request folders.' });
+  }
+});
+
+userSettingsRoutes.get<{ id: string }, UserSettingsGeneralResponse>(
+  '/main',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const {
+      main: { defaultQuotas },
+    } = getSettings();
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res.status(200).json({
+            username: user.username,
+            email: user.email,
+            discordIds: user.settings?.discordIds,
+            locale: user.settings?.locale,
+            discoverRegion: user.settings?.discoverRegion,
+            streamingRegion: user.settings?.streamingRegion,
+            originalLanguage: user.settings?.originalLanguage,
+            preferredLanguages: user.settings?.preferredLanguages,
+            movieQuotaLimit: user.movieQuotaLimit,
+            movieQuotaDays: user.movieQuotaDays,
+            tvQuotaLimit: user.tvQuotaLimit,
+            tvQuotaDays: user.tvQuotaDays,
+            musicQuotaLimit: user.musicQuotaLimit,
+            musicQuotaDays: user.musicQuotaDays,
+            bookQuotaLimit: user.bookQuotaLimit,
+            bookQuotaDays: user.bookQuotaDays,
+            comicQuotaLimit: user.comicQuotaLimit,
+            comicQuotaDays: user.comicQuotaDays,
+            magazineQuotaLimit: user.magazineQuotaLimit,
+            magazineQuotaDays: user.magazineQuotaDays,
+            softwareQuotaLimit: user.softwareQuotaLimit,
+            softwareQuotaDays: user.softwareQuotaDays,
+            globalMovieQuotaDays: defaultQuotas.movie.quotaDays,
+            globalMovieQuotaLimit: defaultQuotas.movie.quotaLimit,
+            globalTvQuotaDays: defaultQuotas.tv.quotaDays,
+            globalTvQuotaLimit: defaultQuotas.tv.quotaLimit,
+            globalMusicQuotaDays: defaultQuotas.music.quotaDays,
+            globalMusicQuotaLimit: defaultQuotas.music.quotaLimit,
+            globalBookQuotaDays: defaultQuotas.book.quotaDays,
+            globalBookQuotaLimit: defaultQuotas.book.quotaLimit,
+            globalComicQuotaDays: defaultQuotas.comic.quotaDays,
+            globalComicQuotaLimit: defaultQuotas.comic.quotaLimit,
+            globalMagazineQuotaDays: defaultQuotas.magazine.quotaDays,
+            globalMagazineQuotaLimit: defaultQuotas.magazine.quotaLimit,
+            globalSoftwareQuotaDays: defaultQuotas.software.quotaDays,
+            globalSoftwareQuotaLimit: defaultQuotas.software.quotaLimit,
+            watchlistSyncMovies: user.settings?.watchlistSyncMovies,
+            watchlistSyncTv: user.settings?.watchlistSyncTv,
+            watchlistSyncMusic: user.settings?.watchlistSyncMusic,
+            watchlistSyncBooks: user.settings?.watchlistSyncBooks,
+            watchlistSyncComics: user.settings?.watchlistSyncComics,
+            watchlistSyncMagazines: user.settings?.watchlistSyncMagazines,
+            cardTextVisibility: serializeCardTextVisibility(user.settings),
+            requestRootFolders: user.settings?.requestRootFolders ?? {},
+          });
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsGeneralResponse,
+  UserSettingsGeneralResponse
+>('/main', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseGeneralSettingsBody(req.body);
+
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
+  }
+
+  const body = parsedBody.value;
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    const updateSettings = () =>
+      runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          if (!canModifyUser(user, actor)) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's settings.",
+            });
+          }
+
+          const oldEmail = user.email;
+          const nextEmail =
+            user.userType !== UserType.PLEX && body.email
+              ? body.email
+              : user.email;
+
+          if (
+            nextEmail !== oldEmail &&
+            !canModifyUserAuthentication(user, actor)
+          ) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's email.",
+            });
+          }
+
+          if (body.username !== undefined) {
+            user.username = body.username;
+          }
+          user.email = nextEmail;
+
+          const existingUser = await userRepository.findOne({
+            where: { email: user.email, id: Not(user.id) },
+          });
+
+          if (oldEmail !== user.email && existingUser) {
+            throw new ApiError(400, ApiErrorCode.InvalidEmail);
+          }
+
+          // Update quota values only if the user has the correct permissions
+          if (
+            actor.hasPermission(Permission.MANAGE_USERS) &&
+            actor.id !== user.id
+          ) {
+            for (const fieldName of [
+              'movieQuotaDays',
+              'movieQuotaLimit',
+              'tvQuotaDays',
+              'tvQuotaLimit',
+              'musicQuotaDays',
+              'musicQuotaLimit',
+              'bookQuotaDays',
+              'bookQuotaLimit',
+              'comicQuotaDays',
+              'comicQuotaLimit',
+              'magazineQuotaDays',
+              'magazineQuotaLimit',
+              'softwareQuotaDays',
+              'softwareQuotaLimit',
+            ] as const) {
+              if (hasOwn(body, fieldName)) {
+                Object.assign(user, { [fieldName]: body[fieldName] ?? null });
+              }
+            }
+          }
+
+          if (!user.settings) {
+            user.settings = new UserSettings({ user });
+          }
+
+          for (const fieldName of [
+            'discordIds',
+            'locale',
+            'discoverRegion',
+            'streamingRegion',
+            'originalLanguage',
+            'preferredLanguages',
+            'watchlistSyncMovies',
+            'watchlistSyncTv',
+            'watchlistSyncMusic',
+            'watchlistSyncBooks',
+            'watchlistSyncComics',
+            'watchlistSyncMagazines',
+          ] as const) {
+            if (hasOwn(body, fieldName)) {
+              Object.assign(user.settings, {
+                [fieldName]:
+                  fieldName === 'locale'
+                    ? (body[fieldName] ?? '')
+                    : (body[fieldName] ?? null),
+              });
+            }
+          }
+
+          if (body.cardTextVisibility) {
+            user.settings.cardTextVisibilityMovie =
+              body.cardTextVisibility.movie ??
+              user.settings.cardTextVisibilityMovie;
+            user.settings.cardTextVisibilityTv =
+              body.cardTextVisibility.tv ?? user.settings.cardTextVisibilityTv;
+            user.settings.cardTextVisibilityAlbum =
+              body.cardTextVisibility.album ??
+              user.settings.cardTextVisibilityAlbum;
+            user.settings.cardTextVisibilityBook =
+              body.cardTextVisibility.book ??
+              user.settings.cardTextVisibilityBook;
+          }
+
+          if (hasOwn(body, 'requestRootFolders')) {
+            user.settings.requestRootFolders = body.requestRootFolders ?? {};
+          }
+
+          const savedUser = await userRepository.save(user);
+
+          return res.status(200).json({
+            username: savedUser.username,
+            discordIds: savedUser.settings?.discordIds ?? [],
+            locale: savedUser.settings?.locale,
+            discoverRegion: savedUser.settings?.discoverRegion,
+            streamingRegion: savedUser.settings?.streamingRegion,
+            originalLanguage: savedUser.settings?.originalLanguage,
+            preferredLanguages: savedUser.settings?.preferredLanguages,
+            watchlistSyncMovies: savedUser.settings?.watchlistSyncMovies,
+            watchlistSyncTv: savedUser.settings?.watchlistSyncTv,
+            watchlistSyncMusic: savedUser.settings?.watchlistSyncMusic,
+            watchlistSyncBooks: savedUser.settings?.watchlistSyncBooks,
+            watchlistSyncComics: savedUser.settings?.watchlistSyncComics,
+            watchlistSyncMagazines: savedUser.settings?.watchlistSyncMagazines,
+            cardTextVisibility: serializeCardTextVisibility(savedUser.settings),
+            requestRootFolders: savedUser.settings?.requestRootFolders ?? {},
+            email: savedUser.email,
+          });
+        }
+      );
+
+    return body.email
+      ? await runAuthAccountAdmission(
+          [getAuthAccountAdmissionResource('email', body.email.toLowerCase())],
+          updateSettings
+        )
+      : await updateSettings();
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    if (e.errorCode) {
+      return next({
+        status: e.statusCode,
+        message: e.errorCode,
+      });
+    }
+    return next({ status: 500, message: e.message });
+  }
+});
+
+userSettingsRoutes.get<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(user.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string; mediaType: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>(
+  '/detail-disclosures/:mediaType',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const { mediaType } = req.params;
+    const parsedBody = parseDetailDisclosurePinsBody(
+      req.body,
+      mediaType === 'movie',
+      true,
+      mediaType === 'tv',
+      mediaType === 'tv'
+    );
+
+    if (!isDetailDisclosureMediaType(mediaType)) {
+      return next({ status: 400, message: 'Invalid detail media type.' });
+    }
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({ where: { id: userId } });
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+          if (!canModifyUser(user, actor)) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's settings.",
+            });
+          }
+          if (!user.settings) {
+            user.settings = new UserSettings({ user });
+          }
+
+          const currentPins = serializeScopedDetailDisclosurePins(
+            user.settings,
+            mediaType
+          );
+          const nextPins = {
+            ...user.settings.detailDisclosurePins,
+          };
+          const updatedPins = { ...currentPins, ...parsedBody.value };
+          switch (mediaType) {
+            case 'movie':
+              nextPins.movie = updatedPins;
+              break;
+            case 'tv':
+              nextPins.tv = updatedPins;
+              break;
+            case 'music':
+              nextPins.music = updatedPins;
+              break;
+            case 'book':
+              nextPins.book = updatedPins;
+              break;
+          }
+          user.settings.detailDisclosurePins = nextPins;
+
+          const savedUser = await userRepository.save(user);
+          return res
+            .status(200)
+            .json(
+              serializeScopedDetailDisclosurePins(savedUser.settings, mediaType)
+            );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: "You do not have permission to modify this user's settings.",
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.get<{ id: string }, UserSettingsCardTextResponse>(
+  '/card-text',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(serializeCardTextVisibility(user.settings));
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsCardTextResponse,
+  UserSettingsCardTextResponse
+>('/card-text', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseCardTextVisibilityBody(req.body);
+
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
+  }
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    return await runUserSecurityMutationWithActor(
+      req.user!.id,
+      userId,
+      Permission.MANAGE_USERS,
+      async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUser(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's settings.",
+          });
+        }
+
+        if (!user.settings) {
+          user.settings = new UserSettings({ user });
+        }
+
+        const body = parsedBody.value;
+        user.settings.cardTextVisibilityMovie =
+          body.movie ?? user.settings.cardTextVisibilityMovie;
+        user.settings.cardTextVisibilityTv =
+          body.tv ?? user.settings.cardTextVisibilityTv;
+        user.settings.cardTextVisibilityAlbum =
+          body.album ?? user.settings.cardTextVisibilityAlbum;
+        user.settings.cardTextVisibilityBook =
+          body.book ?? user.settings.cardTextVisibilityBook;
+
+        const savedUser = await userRepository.save(user);
+
+        return res
+          .status(200)
+          .json(serializeCardTextVisibility(savedUser.settings));
+      }
+    );
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    next({ status: 500, message: e.message });
+  }
+});
+
+userSettingsRoutes.get<{ id: string }, UserSettingsDetailDisclosureResponse>(
+  '/detail-disclosures',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res
+            .status(200)
+            .json(serializeDetailDisclosurePins(user.settings));
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  UserSettingsDetailDisclosureResponse,
+  UserSettingsDetailDisclosureResponse
+>('/detail-disclosures', isOwnProfileOrAdmin(), async (req, res, next) => {
+  const userRepository = getRepository(User);
+  const parsedBody = parseDetailDisclosurePinsBody(req.body);
+
+  if ('error' in parsedBody) {
+    return next({ status: 400, message: parsedBody.error });
+  }
+
+  try {
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return next({ status: 404, message: 'User not found.' });
+    }
+
+    return await runUserSecurityMutationWithActor(
+      req.user!.id,
+      userId,
+      Permission.MANAGE_USERS,
+      async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        if (!user) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUser(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's settings.",
+          });
+        }
+
+        if (!user.settings) {
+          user.settings = new UserSettings({ user });
+        }
+
+        const body = parsedBody.value;
+        if (body.cast !== undefined) {
+          user.settings.detailDisclosureCastPinned = body.cast;
+        }
+        if (body.crew !== undefined) {
+          user.settings.detailDisclosureCrewPinned = body.crew;
+        }
+        if (body.artists !== undefined) {
+          user.settings.detailDisclosureArtistsPinned = body.artists;
+        }
+        if (body.subjectTags !== undefined) {
+          user.settings.detailDisclosureSubjectTagsPinned = body.subjectTags;
+        }
+
+        const savedUser = await userRepository.save(user);
+        return res
+          .status(200)
+          .json(serializeDetailDisclosurePins(savedUser.settings));
+      }
+    );
+  } catch (e) {
+    if (e instanceof UserMutationActorUnauthorizedError) {
+      return next({
+        status: 403,
+        message: "You do not have permission to modify this user's settings.",
+      });
+    }
+    next({ status: 500, message: e.message });
+  }
+});
+
+userSettingsRoutes.get<{ id: string }, { hasPassword: boolean }>(
+  '/password',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+            select: { id: true, password: true },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res.status(200).json({ hasPassword: !!user.password });
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: "You do not have permission to modify this user's password.",
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  null,
+  { currentPassword?: string; newPassword: string }
+>(
+  '/password',
+  passwordMutationRateLimit,
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const parsedBody = parsePasswordBody(req.body);
+
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+
+    const body = parsedBody.value;
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runAuthenticationMutation(req, userId, async (actor) => {
+        const user = await userRepository.findOne({
+          where: { id: userId },
+        });
+
+        const userWithPassword = await userRepository.findOne({
+          select: { id: true, password: true },
+          where: { id: userId },
+        });
+
+        if (!user || !userWithPassword) {
+          return next({ status: 404, message: 'User not found.' });
+        }
+
+        if (!canModifyUserAuthentication(user, actor)) {
+          return next({
+            status: 403,
+            message:
+              "You do not have permission to modify this user's password.",
+          });
+        }
+
+        // If the user has the permission to manage users and they are not
+        // editing themselves, we will just set the new password
+        if (
+          actor.hasPermission(Permission.MANAGE_USERS) &&
+          actor.id !== user.id
+        ) {
+          await user.setPassword(body.newPassword);
+          const passwordUpdate = await userRepository.update(
+            {
+              id: user.id,
+              permissions: Raw((alias) => `(${alias} & :adminPermission) = 0`, {
+                adminPermission: Permission.ADMIN,
+              }),
+            },
+            {
+              password: user.password,
+              passwordChangedAt: user.passwordChangedAt,
+              failedLoginAttempts: 0,
+              lastFailedLoginAt: null,
+              loginBlockedUntil: null,
+              resetPasswordGuid: null,
+              recoveryLinkExpirationDate: null,
+            }
+          );
+          if (passwordUpdate.affected !== 1) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's password.",
+            });
+          }
+          logger.debug('Password overriden by user.', {
+            label: 'User Settings',
+            userEmail: user.email,
+            changingUser: actor.email,
+          });
+          return res.status(204).send();
+        }
+
+        // If the user has a password, we need to check the currentPassword is correct
+        if (
+          userWithPassword.password &&
+          (!body.currentPassword ||
+            !(await userWithPassword.passwordMatch(body.currentPassword)))
+        ) {
+          logger.debug(
+            'Attempt to change password for user failed. Invalid current password provided.',
+            { label: 'User Settings', userEmail: user.email }
+          );
+          return next({
+            status: 403,
+            message: 'Current password is invalid.',
+          });
+        }
+
+        await user.setPassword(body.newPassword);
+        const passwordUpdate = await userRepository.update(
+          {
+            id: user.id,
+            password: userWithPassword.password ?? IsNull(),
+          },
+          {
+            password: user.password,
+            passwordChangedAt: user.passwordChangedAt,
+            failedLoginAttempts: 0,
+            lastFailedLoginAt: null,
+            loginBlockedUntil: null,
+            resetPasswordGuid: null,
+            recoveryLinkExpirationDate: null,
+          }
+        );
+
+        if (passwordUpdate.affected !== 1) {
+          return next({
+            status: 409,
+            message: 'Password changed during request. Try again.',
+          });
+        }
+
+        return res.status(204).send();
+      });
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ authToken: string }>(
+  '/linked-accounts/plex',
+  isOwnProfile(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+    const parsedBody = parsePlexLinkBody(req.body);
+
+    if ('error' in parsedBody) {
+      return res.status(400).json({ message: parsedBody.error });
+    }
+
+    if (!req.user) {
+      return res.status(404).json({ code: ApiErrorCode.Unauthorized });
+    }
+    // Make sure Plex login is enabled
+    if (settings.main.mediaServerType !== MediaServerType.PLEX) {
+      return res.status(403).json({ message: 'Plex login is disabled' });
+    }
+
+    // First we need to use this auth token to get the user's email from plex.tv
+    const plextv = new PlexTvAPI(parsedBody.value.authToken);
+    const rawAccount = await plextv.getUser();
+    const parsedAccount = parsePlexAccountIdentity(
+      rawAccount,
+      parsedBody.value.authToken
+    );
+    if ('error' in parsedAccount) {
+      return res.status(502).json({ message: parsedAccount.error });
+    }
+    const account = parsedAccount.value;
+    try {
+      return await runAuthAccountAdmission(
+        [getAuthAccountAdmissionResource('plex', String(account.id))],
+        () =>
+          runAuthenticationMutation(req, req.user!.id, async (actor) => {
+            if (!isSessionCredentialCurrent(req, actor)) {
+              return res.status(403).json({ code: ApiErrorCode.Unauthorized });
+            }
+            if (getSettings().main.mediaServerType !== MediaServerType.PLEX) {
+              return res
+                .status(409)
+                .json({ message: 'Media server configuration changed.' });
+            }
+            if (
+              await userRepository.exists({ where: { plexId: account.id } })
+            ) {
+              return res.status(422).json({
+                message: 'This Plex account is already linked to a Seerr user',
+              });
+            }
+
+            const user = await userRepository.findOneBy({ id: req.user!.id });
+            if (!user) {
+              return res.status(404).json({ code: ApiErrorCode.Unauthorized });
+            }
+            if (user.email !== account.email) {
+              return res.status(422).json({
+                message:
+                  'This Plex account is registered under a different email address.',
+              });
+            }
+
+            user.userType = UserType.PLEX;
+            user.plexId = account.id;
+            user.plexUsername = account.username;
+            user.plexToken = account.authToken;
+            await userRepository.save(user);
+
+            return res.status(204).send();
+          })
+      );
+    } catch (error) {
+      if (error instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).json({ code: ApiErrorCode.Unauthorized });
+      }
+      if (isUniqueConstraintError(error)) {
+        return res.status(422).json({
+          message: 'This Plex account is already linked to a Seerr user',
+        });
+      }
+      throw error;
+    }
+  }
+);
+
+userSettingsRoutes.delete<{ id: string }>(
+  '/linked-accounts/plex',
+  isOwnProfileOrAdmin(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+
+    // Make sure Plex login is enabled
+    if (settings.main.mediaServerType !== MediaServerType.PLEX) {
+      return res.status(403).json({ message: 'Plex login is disabled' });
+    }
+
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    try {
+      return await runAuthenticationMutation(req, userId, async (actor) => {
+        const user = await userRepository
+          .createQueryBuilder('user')
+          .addSelect('user.password')
+          .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+          .where({ id: userId })
+          .getOne();
+
+        if (!user) {
+          return res.status(404).json({ message: 'User not found.' });
+        }
+
+        if (!canModifyUserAuthentication(user, actor)) {
+          return res.status(403).json({
+            message:
+              "You do not have permission to modify this user's account.",
+          });
+        }
+
+        if (user.id === 1) {
+          return res.status(400).json({
+            message:
+              'Cannot unlink media server accounts for the primary administrator.',
+          });
+        }
+
+        if (!user.password && user.getActiveLinkedAccounts().length === 0) {
+          return res.status(400).json({
+            message:
+              'User does not have a local password or other linked account.',
+          });
+        }
+
+        user.userType = UserType.LOCAL;
+        user.plexId = null;
+        user.plexUsername = null;
+        user.plexToken = null;
+        await userRepository.save(user);
+
+        return res.status(204).send();
+      });
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).json({
+          message: "You do not have permission to modify this user's account.",
+        });
+      }
+      logger.error('Failed to unlink Plex account.', {
+        label: 'User Settings',
+        userId: req.params.id,
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
+      return res
+        .status(500)
+        .json({ message: 'Failed to unlink Plex account.' });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ username: string; password: string }>(
+  '/linked-accounts/jellyfin',
+  isOwnProfile(),
+  async (req, res) => {
+    const settings = getSettings();
+    const initialJellyfinAuthorityKey = getJellyfinAuthAuthorityKey(settings);
+    const userRepository = getRepository(User);
+    const parsedBody = parseJellyfinLinkBody(req.body);
+
+    if ('error' in parsedBody) {
+      return res.status(400).json({ message: parsedBody.error });
+    }
+
+    const body = parsedBody.value;
+
+    if (!req.user) {
+      return res.status(401).json({ code: ApiErrorCode.Unauthorized });
+    }
+    // Make sure jellyfin login is enabled
+    if (
+      settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
+      settings.main.mediaServerType !== MediaServerType.EMBY
+    ) {
+      return res
+        .status(403)
+        .json({ message: 'Jellyfin/Emby login is disabled' });
+    }
+
+    const hostname = getHostname();
+    const deviceId = Buffer.from(
+      req.user?.id === 1 ? 'BOT_seerr' : `BOT_seerr_${req.user.username ?? ''}`
+    ).toString('base64');
+
+    const jellyfinserver = new JellyfinAPI(hostname, undefined, deviceId);
+
+    const ip = req.ip;
+    let clientIp: string | undefined;
+    if (ip) {
+      if (net.isIPv4(ip)) {
+        clientIp = ip;
+      } else if (net.isIPv6(ip)) {
+        clientIp = ip.startsWith('::ffff:') ? ip.substring(7) : ip;
+      }
+    }
+
+    try {
+      const account = await jellyfinserver.login(
+        body.username,
+        body.password,
+        clientIp
+      );
+      const jellyfinUserId = normalizeJellyfinGuid(account.User.Id);
+      if (!jellyfinUserId) {
+        return res.status(502).json({
+          message: 'Media server returned an invalid user identity.',
+        });
+      }
+
+      return await runAuthAccountAdmission(
+        [getAuthAccountAdmissionResource('jellyfin', jellyfinUserId)],
+        () =>
+          runAuthenticationMutation(req, req.user!.id, async (actor) => {
+            if (!isSessionCredentialCurrent(req, actor)) {
+              return res.status(403).json({ code: ApiErrorCode.Unauthorized });
+            }
+            const activeSettings = getSettings();
+            const activeMediaServerType = activeSettings.main.mediaServerType;
+            if (
+              getJellyfinAuthAuthorityKey(activeSettings) !==
+                initialJellyfinAuthorityKey ||
+              (activeMediaServerType !== MediaServerType.JELLYFIN &&
+                activeMediaServerType !== MediaServerType.EMBY)
+            ) {
+              return res
+                .status(409)
+                .json({ message: 'Media server configuration changed.' });
+            }
+            if (
+              await userRepository.exists({
+                where: { jellyfinUserId },
+              })
+            ) {
+              return res.status(422).json({
+                message:
+                  'The specified account is already linked to a Seerr user',
+              });
+            }
+
+            const user = await userRepository.findOneBy({ id: req.user!.id });
+            if (!user) {
+              return res.status(404).json({ code: ApiErrorCode.Unauthorized });
+            }
+            if (getJellyfinAuthAuthorityKey() !== initialJellyfinAuthorityKey) {
+              return res
+                .status(409)
+                .json({ message: 'Media server configuration changed.' });
+            }
+            user.userType =
+              activeMediaServerType === MediaServerType.EMBY
+                ? UserType.EMBY
+                : UserType.JELLYFIN;
+            user.jellyfinUserId = jellyfinUserId;
+            user.jellyfinUsername = account.User.Name;
+            user.jellyfinAuthToken = account.AccessToken;
+            user.jellyfinDeviceId = deviceId;
+            await userRepository.save(user);
+
+            return res.status(204).send();
+          })
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).json({ code: ApiErrorCode.Unauthorized });
+      }
+      logger.error('Failed to link account to user.', {
+        label: 'API',
+        ip: req.ip,
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
+      if (
+        e instanceof ApiError &&
+        e.errorCode === ApiErrorCode.InvalidCredentials
+      ) {
+        return res.status(401).json({ code: e.errorCode });
+      }
+      if (isUniqueConstraintError(e)) {
+        return res.status(422).json({
+          message: 'The specified account is already linked to a Seerr user',
+        });
+      }
+
+      return res.status(500).send();
+    }
+  }
+);
+
+userSettingsRoutes.delete<{ id: string }>(
+  '/linked-accounts/jellyfin',
+  isOwnProfileOrAdmin(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+
+    // Make sure jellyfin login is enabled
+    if (
+      settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
+      settings.main.mediaServerType !== MediaServerType.EMBY
+    ) {
+      return res
+        .status(403)
+        .json({ message: 'Jellyfin/Emby login is disabled' });
+    }
+
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    try {
+      return await runAuthenticationMutation(req, userId, async (actor) => {
+        const user = await userRepository
+          .createQueryBuilder('user')
+          .addSelect('user.password')
+          .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+          .where({ id: userId })
+          .getOne();
+
+        if (!user) {
+          return res.status(404).json({ message: 'User not found.' });
+        }
+
+        if (!canModifyUserAuthentication(user, actor)) {
+          return res.status(403).json({
+            message:
+              "You do not have permission to modify this user's account.",
+          });
+        }
+
+        if (user.id === 1) {
+          return res.status(400).json({
+            message:
+              'Cannot unlink media server accounts for the primary administrator.',
+          });
+        }
+
+        if (!user.password && user.getActiveLinkedAccounts().length === 0) {
+          return res.status(400).json({
+            message:
+              'User does not have a local password or other linked account.',
+          });
+        }
+
+        user.userType = UserType.LOCAL;
+        user.jellyfinUserId = null;
+        user.jellyfinUsername = null;
+        user.jellyfinAuthToken = null;
+        user.jellyfinDeviceId = null;
+        await userRepository.save(user);
+
+        return res.status(204).send();
+      });
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).json({
+          message: "You do not have permission to modify this user's account.",
+        });
+      }
+      logger.error('Failed to unlink Jellyfin/Emby account.', {
+        label: 'User Settings',
+        userId: req.params.id,
+        error: e instanceof Error ? e.message : 'Unknown error',
+      });
+      return res
+        .status(500)
+        .json({ message: 'Failed to unlink Jellyfin/Emby account.' });
+    }
+  }
+);
+
+userSettingsRoutes.get<{ id: string }, UserSettingsLinkedAccountResponse>(
+  '/linked-accounts',
+  isOwnProfileOrAdmin(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+    const userId = parseUserSettingsRouteId(req.params.id);
+    if (!userId) {
+      return res.status(404).send();
+    }
+
+    try {
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository
+            .createQueryBuilder('user')
+            .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+            .where({ id: userId })
+            .getOne();
+
+          if (!user) {
+            return res.status(404).send();
+          }
+
+          const linkedAccountInfo = user
+            .getActiveLinkedAccounts()
+            .slice(0, 100)
+            .flatMap((acc) => {
+              const provider = settings.oidc.providers.find(
+                (configuredProvider) => configuredProvider.slug === acc.provider
+              );
+              if (!provider) return [];
+
+              return [
+                {
+                  id: acc.id,
+                  username: acc.username,
+                  provider: {
+                    slug: provider.slug,
+                    name: provider.name,
+                    logo: provider.logo,
+                  },
+                } satisfies UserSettingsLinkedAccount,
+              ];
+            });
+
+          return res.status(200).json(linkedAccountInfo);
+        }
+      );
+    } catch (error) {
+      if (error instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).send();
+      }
+      throw error;
+    }
+  }
+);
+
+userSettingsRoutes.delete<{ id: string; acctId: string }>(
+  '/linked-accounts/:acctId',
+  isOwnProfileOrAdmin(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+    const linkedAccountsRepository = getRepository(LinkedAccount);
+    const userId = parseUserSettingsRouteId(req.params.id);
+    const acctId = parseUserSettingsRouteId(req.params.acctId);
+    if (!userId || !acctId) {
+      return res.status(404).send();
+    }
+
+    return runAuthenticationMutation(req, userId, async (actor) => {
+      const user = await userRepository
+        .createQueryBuilder('user')
+        .addSelect('user.password')
+        .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+        .where({ id: userId })
+        .getOne();
+
+      if (!user) {
+        return res.status(404).send();
+      }
+
+      if (!canModifyUserAuthentication(user, actor)) {
+        return res.status(403).send();
+      }
+
+      const remainingOidcCount = user
+        .getActiveLinkedAccounts()
+        .filter((account) => account.id !== acctId).length;
+      const hasMediaServer =
+        (settings.main.mediaServerType === MediaServerType.PLEX &&
+          !!user.plexId) ||
+        ([MediaServerType.JELLYFIN, MediaServerType.EMBY].includes(
+          settings.main.mediaServerType
+        ) &&
+          !!user.jellyfinUserId);
+      if (!user.password && remainingOidcCount === 0 && !hasMediaServer) {
+        return res.status(400).json({
+          message:
+            'User does not have a local password or other linked account.',
+        });
+      }
+
+      const condition: FindOptionsWhere<LinkedAccount> = {
+        id: acctId,
+        user: { id: userId },
+      };
+
+      if (await linkedAccountsRepository.exists({ where: condition })) {
+        await linkedAccountsRepository.delete(condition);
+        return res.status(204).send();
+      }
+
+      return res.status(404).send();
+    }).catch((error) => {
+      if (error instanceof UserMutationActorUnauthorizedError) {
+        return res.status(403).send();
+      }
+      throw error;
+    });
+  }
+);
+
+userSettingsRoutes.post<{ secret: string }>(
+  '/linked-accounts/jellyfin/quickconnect',
+  isOwnProfile(),
+  async (req, res) => {
+    const settings = getSettings();
+    const userRepository = getRepository(User);
+
+    if (!req.user) {
+      return res.status(401).json({ code: ApiErrorCode.Unauthorized });
+    }
+
+    const result = quickConnectSecret.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ message: 'Invalid secret format' });
+    }
+
+    const { secret } = result.data;
+
+    if (
+      settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
+      settings.main.mediaServerType !== MediaServerType.EMBY
+    ) {
+      return res
+        .status(500)
+        .json({ message: 'Jellyfin/Emby login is disabled' });
+    }
+
+    if (settings.main.mediaServerType !== MediaServerType.JELLYFIN) {
+      return res
+        .status(403)
+        .json({ message: 'Quick Connect is only supported by Jellyfin.' });
+    }
+
+    const hostname = getHostname();
+    const jellyfinServer = new JellyfinAPI(hostname);
+
+    try {
+      const account = await jellyfinServer.authenticateQuickConnect(secret);
+
+      if (
+        await userRepository.exists({
+          where: { jellyfinUserId: account.User.Id },
+        })
+      ) {
+        return res.status(422).json({
+          message: 'The specified account is already linked to a Seerr user',
+        });
+      }
+
+      const user = req.user;
+      const deviceId = Buffer.from(
+        user.id === 1 ? 'BOT_seerr' : `BOT_seerr_${user.username ?? ''}`
+      ).toString('base64');
+
+      user.userType = UserType.JELLYFIN;
+      user.jellyfinUserId = account.User.Id;
+      user.jellyfinUsername = account.User.Name;
+      user.jellyfinAuthToken = account.AccessToken;
+      user.jellyfinDeviceId = deviceId;
+      await userRepository.save(user);
+
+      return res.status(204).send();
+    } catch (e) {
+      logger.error('Failed to link account with Quick Connect.', {
+        label: 'API',
+        ip: req.ip,
+        error: e,
+      });
+
+      const status = e instanceof ApiError ? e.statusCode : 500;
+      return res.status(status).send();
+    }
+  }
+);
+
+userSettingsRoutes.get<{ id: string }, UserSettingsNotificationsResponse>(
+  '/notifications',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const settings = getSettings()?.notifications.agents;
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res.status(200).json(
+            redactSecrets({
+              emailEnabled: settings.email.enabled,
+              pgpKey: user.settings?.pgpKey,
+              discordEnabled:
+                settings?.discord.enabled &&
+                settings.discord.options.enableMentions,
+              discordEnabledTypes:
+                settings?.discord.enabled &&
+                settings.discord.options.enableMentions
+                  ? settings.discord.types
+                  : 0,
+              discordIds: user.settings?.discordIds ?? [],
+              pushbulletAccessToken: user.settings?.pushbulletAccessToken,
+              pushoverApplicationToken: user.settings?.pushoverApplicationToken,
+              pushoverUserKey: user.settings?.pushoverUserKey,
+              pushoverSound: user.settings?.pushoverSound,
+              telegramEnabled: settings.telegram.enabled,
+              telegramBotUsername: settings.telegram.options.botUsername,
+              telegramChatId: user.settings?.telegramChatId,
+              telegramMessageThreadId: user.settings?.telegramMessageThreadId,
+              telegramSendSilently: user.settings?.telegramSendSilently,
+              webPushEnabled: settings.webpush.enabled,
+              notificationTypes: user.settings?.notificationTypes ?? {},
+            })
+          );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<{ id: string }, UserSettingsNotificationsResponse>(
+  '/notifications',
+  isOwnProfileOrAdmin(),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const parsedBody = parseNotificationsBody(req.body);
+
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+
+    const body = parsedBody.value;
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityMutationWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          if (!canModifyUser(user, actor)) {
+            return next({
+              status: 403,
+              message:
+                "You do not have permission to modify this user's settings.",
+            });
+          }
+
+          const preservedBody = preserveRedactedSecrets(body, user.settings);
+
+          if (!user.settings) {
+            user.settings = new UserSettings({ user, notificationTypes: {} });
+          }
+
+          for (const fieldName of [
+            'pgpKey',
+            'discordIds',
+            'pushbulletAccessToken',
+            'pushoverApplicationToken',
+            'pushoverUserKey',
+            'pushoverSound',
+            'telegramChatId',
+            'telegramMessageThreadId',
+            'telegramSendSilently',
+          ] as const) {
+            if (hasOwn(preservedBody, fieldName)) {
+              Object.assign(user.settings, {
+                [fieldName]: preservedBody[fieldName] ?? null,
+              });
+            }
+          }
+          user.settings.notificationTypes = Object.assign(
+            {},
+            user.settings.notificationTypes,
+            preservedBody.notificationTypes
+          );
+
+          await userRepository.save(user);
+
+          return res.status(200).json(
+            redactSecrets({
+              pgpKey: user.settings.pgpKey,
+              discordIds: user.settings.discordIds ?? [],
+              pushbulletAccessToken: user.settings.pushbulletAccessToken,
+              pushoverApplicationToken: user.settings.pushoverApplicationToken,
+              pushoverUserKey: user.settings.pushoverUserKey,
+              pushoverSound: user.settings.pushoverSound,
+              telegramChatId: user.settings.telegramChatId,
+              telegramMessageThreadId: user.settings.telegramMessageThreadId,
+              telegramSendSilently: user.settings.telegramSendSilently,
+              notificationTypes: user.settings.notificationTypes,
+            })
+          );
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: "You do not have permission to modify this user's settings.",
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.get<{ id: string }, { permissions?: number }>(
+  '/permissions',
+  isAuthenticated(Permission.MANAGE_USERS),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      return await runUserSecurityReadWithActor(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async () => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) {
+            return next({ status: 404, message: 'User not found.' });
+          }
+
+          return res.status(200).json({ permissions: user.permissions });
+        }
+      );
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({ status: 403, message: 'Access denied.' });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+userSettingsRoutes.post<
+  { id: string },
+  { permissions?: number },
+  { permissions: number }
+>(
+  '/permissions',
+  isAuthenticated(Permission.MANAGE_USERS),
+  async (req, res, next) => {
+    const userRepository = getRepository(User);
+    const parsedBody = parseUserSettingsBodyObject(req.body);
+    if ('error' in parsedBody) {
+      return next({ status: 400, message: parsedBody.error });
+    }
+    const body = parsedBody.value;
+    const parsedPermissions = parseOptionalNonNegativeInteger(
+      body.permissions,
+      MAX_PERMISSION_VALUE
+    );
+
+    if (
+      parsedPermissions === undefined ||
+      !isValidPermissionValue(parsedPermissions)
+    ) {
+      return next({ status: 400, message: 'permissions is invalid.' });
+    }
+
+    try {
+      const userId = parseUserSettingsRouteId(req.params.id);
+      if (!userId) {
+        return next({ status: 404, message: 'User not found.' });
+      }
+
+      const outcome = await runAuthorizedUserSecurityMutation(
+        req.user!.id,
+        userId,
+        Permission.MANAGE_USERS,
+        async (actor) => {
+          const user = await userRepository.findOne({
+            where: { id: userId },
+          });
+
+          if (!user) return 'missing' as const;
+
+          // Administrators are protected from delegated managers, and users
+          // cannot change their own permission set through this endpoint.
+          if (!canModifyUser(user, actor) || actor.id === user.id) {
+            return 'forbidden' as const;
+          }
+
+          if (!canMakePermissionsChange(parsedPermissions, actor)) {
+            return 'grant-forbidden' as const;
+          }
+          const criteria: FindOptionsWhere<User> = {
+            id: user.id,
+            ...(actor.id !== 1 && {
+              permissions: Raw((alias) => `(${alias} & :adminPermission) = 0`, {
+                adminPermission: Permission.ADMIN,
+              }),
+            }),
+          };
+          const result = await userRepository.update(criteria, {
+            permissions: parsedPermissions,
+          });
+          return result.affected === 1
+            ? ('updated' as const)
+            : ('forbidden' as const);
+        }
+      );
+
+      if (outcome === 'missing') {
+        return next({ status: 404, message: 'User not found.' });
+      }
+      if (outcome === 'forbidden') {
+        return next({
+          status: 403,
+          message: 'You do not have permission to modify this user',
+        });
+      }
+      if (outcome === 'grant-forbidden') {
+        return next({
+          status: 403,
+          message: 'You do not have permission to grant this level of access',
+        });
+      }
+
+      return res.status(200).json({ permissions: parsedPermissions });
+    } catch (e) {
+      if (e instanceof UserMutationActorUnauthorizedError) {
+        return next({
+          status: 403,
+          message: 'You do not have permission to modify this user',
+        });
+      }
+      next({ status: 500, message: e.message });
+    }
+  }
+);
+
+export default userSettingsRoutes;

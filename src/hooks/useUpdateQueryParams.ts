@@ -1,0 +1,199 @@
+import type { NextRouter } from 'next/router';
+import { useRouter } from 'next/router';
+import type { ParsedUrlQuery } from 'querystring';
+import { useCallback, useRef } from 'react';
+
+type UseQueryParamReturnedFunction = (
+  query: ParsedUrlQuery,
+  routerAction?: 'push' | 'replace',
+  options?: { shallow?: boolean; scroll?: boolean }
+) => void;
+
+interface MergedQueryString {
+  pathname: string;
+  path: string;
+}
+
+export const getQueryParamString = (
+  value: ParsedUrlQuery[string]
+): string | undefined => {
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+
+  return undefined;
+};
+
+export const getPositiveQueryParamNumber = (
+  value: ParsedUrlQuery[string],
+  fallback?: number
+): number | undefined => {
+  const stringValue = getQueryParamString(value);
+  const parsedValue = stringValue ? Number(stringValue) : undefined;
+
+  return parsedValue && Number.isInteger(parsedValue) && parsedValue > 0
+    ? parsedValue
+    : fallback;
+};
+
+/**
+ * Returns a filtered object containing only key/value pairs that don't exist in the current
+ * router path.
+ *
+ * @param router Nextjs router instance
+ * @param filters Object containing key value pairs for filter items that should be cleaned
+ */
+export const filterQueryString = (
+  router: NextRouter,
+  filters: ParsedUrlQuery
+): ParsedUrlQuery => {
+  const cleanedFilters: ParsedUrlQuery = {};
+
+  Object.keys(filters).forEach((key) => {
+    if (
+      !router.pathname.includes(`[${key}]`) &&
+      !router.pathname.includes(`[...${key}]`) &&
+      !router.pathname.includes(`[[...${key}]]`)
+    ) {
+      cleanedFilters[key] = filters[key];
+    }
+  });
+
+  return cleanedFilters;
+};
+
+/**
+ * Takes a query paramter object and returns a new pathname and path
+ * with the new values appended.
+ *
+ * - If the value already exists, it is updated.
+ * - If a key with the value of null is passed, it will be removed from
+ *   the current query paramters
+ *
+ * ## Example usage:
+ *
+ * If the current URL is `/foo?bar=test` and you want to add a new query parameter, you
+ * can do the following:
+ *
+ * ```
+ * const newRoute = mergeQueryString(router, { newParam: 'value' });
+ * ```
+ * NewRoute will become
+ *
+ * ```
+ * {
+ *  pathName: '/foo?bar=test&newParam=value',
+ *   path: '/foo?bar=test&newParam=value'
+ * }
+ * ```
+ *
+ * @param router Nextjs router instance
+ * @param query Key/value pair object containing query paramters
+ */
+export const mergeQueryString = (
+  router: NextRouter,
+  query: ParsedUrlQuery
+): MergedQueryString => {
+  const cleanedQuery = filterQueryString(router, router.query);
+  const mergedQuery = Object.assign({}, cleanedQuery, query);
+  const queryParams = new URLSearchParams();
+
+  Object.entries(mergedQuery).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item) {
+          queryParams.append(key, item);
+        }
+      });
+    } else if (value) {
+      queryParams.set(key, value);
+    }
+  });
+  // URLSearchParams serializes spaces as `+`, but the API request validator
+  // requires percent-encoded query values. Keep router URLs and the discovery
+  // request URLs on the same unambiguous encoding so multi-word live searches
+  // are not rejected before reaching their route handlers.
+  const queryString = queryParams.toString().replace(/\+/g, '%20');
+
+  const pathWithoutQuery = router.asPath.match(/(.*)\?.*/);
+  const asPath = pathWithoutQuery ? pathWithoutQuery[1] : router.asPath;
+
+  const pathname = `${router.pathname}${
+    queryString.length > 0 ? `?${queryString}` : ''
+  }`;
+  const path = `${asPath}${queryString.length > 0 ? `?${queryString}` : ''}`;
+
+  return { pathname, path };
+};
+
+/**
+ * useQueryParams hook is used just to provide a callback with a nextjs
+ * router instance attached to it. The returned method can be called with
+ * an object of key/value pairs to route the user with the new query paramters
+ */
+export const useQueryParams = (): UseQueryParamReturnedFunction => {
+  const router = useRouter();
+
+  return useCallback(
+    (
+      query: ParsedUrlQuery,
+      routerAction: 'push' | 'replace' = 'push',
+      options?: { shallow?: boolean; scroll?: boolean }
+    ) => {
+      const newRoute = mergeQueryString(router, query);
+
+      if (newRoute.path !== router.asPath) {
+        if (routerAction === 'replace') {
+          router.replace(newRoute.pathname, newRoute.path, options);
+        } else {
+          router.push(newRoute.pathname, newRoute.path, options);
+        }
+      }
+    },
+    [router]
+  );
+};
+
+export const useUpdateQueryParams = (
+  filter: ParsedUrlQuery
+): ((key: string, value?: string) => void) => {
+  const updateQueryParams = useQueryParams();
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+
+  return useCallback(
+    (key: string, value?: string) => {
+      const query = {
+        ...filterRef.current,
+        [key]: value,
+      };
+      updateQueryParams(query, 'replace');
+    },
+    [updateQueryParams]
+  );
+};
+
+export const useBatchUpdateQueryParams = (
+  filter: ParsedUrlQuery
+): ((
+  items: Record<string, string | undefined>,
+  options?: { shallow?: boolean; scroll?: boolean }
+) => void) => {
+  const updateQueryParams = useQueryParams();
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+
+  return useCallback(
+    (
+      items: Record<string, string | undefined>,
+      options?: { shallow?: boolean; scroll?: boolean }
+    ) => {
+      const query = {
+        ...filterRef.current,
+        ...items,
+      };
+      updateQueryParams(query, 'replace', options);
+    },
+    [updateQueryParams]
+  );
+};

@@ -1,0 +1,114 @@
+name: Publish AUR
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish-aur:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          [[ "$tag" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || { echo "Invalid release tag: $tag" >&2; exit 2; }
+          [[ "$tag" != *-* ]] || { echo "Stable package channels reject pre-release tag: $tag" >&2; exit 2; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "pkgver=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag is on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git show-ref --verify --quiet "refs/tags/$TAG"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "Release tag $TAG is not reachable from main." >&2
+            exit 1
+          }
+
+      - name: Wait for Linux x64 release asset
+        id: linux_asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="seerrng-${TAG}-linux-x64.tar.gz"
+          for attempt in {1..80}; do
+            if gh release download "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" \
+              --output /tmp/seerrng.tar.gz \
+              --clobber; then
+              tar -tzf /tmp/seerrng.tar.gz > /tmp/seerrng-files.txt
+              grep -q "seerrng-${TAG}-linux-x64/dist/index.js" /tmp/seerrng-files.txt
+              echo "sha256=$(sha256sum /tmp/seerrng.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+
+      - name: Update PKGBUILD
+        run: |
+          set -euo pipefail
+          cd packaging/aur
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" PKGBUILD-bin
+          svc="$(sha256sum seerrng.service | awk '{print $1}')"
+          envsum="$(sha256sum seerrng.env | awk '{print $1}')"
+          sys="$(sha256sum seerrng.sysusers | awk '{print $1}')"
+          tmp="$(sha256sum seerrng.tmpfiles | awk '{print $1}')"
+          sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.linux_asset.outputs.sha256 }}' '$svc' '$envsum' '$sys' '$tmp')/" PKGBUILD-bin
+          bash ../scripts/validate-aur-pkgbuild-hashes.sh PKGBUILD-bin
+
+      - name: Setup AUR SSH
+        id: aur-ssh
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_SSH_KEY:-}" ]; then
+            echo "AUR_SSH_KEY is required for a release-channel publication; refusing to report a skipped upload as success." >&2
+            exit 1
+          fi
+          tmp_key="$(mktemp)"
+          trap 'rm -f "$tmp_key"' EXIT
+          printf '%s\n' "$AUR_SSH_KEY" > "$tmp_key"
+          env -u AUR_SSH_KEY bash packaging/scripts/setup-aur-ssh.sh "$tmp_key"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push seerrng-bin
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bash packaging/scripts/checkout-aur-repo.sh seerrng-bin aur-seerrng-bin
+          cp packaging/aur/PKGBUILD-bin aur-seerrng-bin/PKGBUILD
+          cp packaging/aur/seerrng.{service,env,sysusers,tmpfiles,install} aur-seerrng-bin/
+          bash packaging/scripts/generate-aur-srcinfo.sh aur-seerrng-bin/PKGBUILD > aur-seerrng-bin/.SRCINFO
+          (cd aur-seerrng-bin && git add -A)
+          bash packaging/scripts/push-aur-repo.sh aur-seerrng-bin seerrng-bin "Update to ${TAG}"
+
+      - name: Remove AUR SSH credentials
+        if: always()
+        run: rm -f -- ~/.ssh/aur ~/.ssh/aur_config ~/.ssh/aur_known_hosts

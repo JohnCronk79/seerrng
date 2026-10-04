@@ -1,0 +1,128 @@
+services:
+  rreading-glasses-postgres:
+    profiles: ['rreading-glasses']
+    image: ${RREADING_GLASSES_POSTGRES_IMAGE:-postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
+    container_name: ${RREADING_GLASSES_POSTGRES_CONTAINER_NAME:-rreading-glasses-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${RREADING_GLASSES_POSTGRES_DB:-rreading-glasses}
+      POSTGRES_USER: ${RREADING_GLASSES_POSTGRES_USER:-rreading}
+      # Compose interpolates profile-gated services before filtering the
+      # profile. Native/hosted mode therefore needs an empty dormant value;
+      # the installer supplies a generated password for compatibility mode.
+      POSTGRES_PASSWORD: ${RREADING_GLASSES_POSTGRES_PASSWORD:-}
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${RREADING_GLASSES_POSTGRES_USER:-rreading} -d ${RREADING_GLASSES_POSTGRES_DB:-rreading-glasses}',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - '127.0.0.1:${RREADING_GLASSES_POSTGRES_PORT:-15433}:5432'
+    volumes:
+      - ${RREADING_GLASSES_POSTGRES_DIR:-/mnt/datapool_lvm_media/rreading-glasses-postgres/data}:/var/lib/postgresql/data
+
+  rreading-glasses:
+    profiles: ['rreading-glasses']
+    image: ${RREADING_GLASSES_IMAGE:-blampe/rreading-glasses:hardcover@sha256:3489e722a73c9cbab5b9ba530cf8a60c2280367fb03db1fb649261dfb064b52f}
+    container_name: ${RREADING_GLASSES_CONTAINER_NAME:-rreading-glasses}
+    entrypoint: ['/main', 'serve']
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      rreading-glasses-postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: ${RREADING_GLASSES_POSTGRES_HOST:-127.0.0.1}
+      POSTGRES_PORT: ${RREADING_GLASSES_POSTGRES_PORT:-15433}
+      POSTGRES_DATABASE: ${RREADING_GLASSES_POSTGRES_DB:-rreading-glasses}
+      POSTGRES_USER: ${RREADING_GLASSES_POSTGRES_USER:-rreading}
+      POSTGRES_PASSWORD: ${RREADING_GLASSES_POSTGRES_PASSWORD:-}
+      PORT: ${RREADING_GLASSES_PORT:-8790}
+      HARDCOVER_AUTH: ${HARDCOVER_AUTH:-}
+      COOKIE: ${COOKIE:-}
+      UPSTREAM: ${RREADING_GLASSES_UPSTREAM:-api.hardcover.app}
+    command: ['--verbose']
+
+  bookshelf-ebooks:
+    image: ${BOOKSHELF_IMAGE:-ghcr.io/snapetech/bookshelfng:hardcover}
+    container_name: ${BOOKSHELF_EBOOKS_CONTAINER_NAME:-bookshelf-ebooks}
+    network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -fsS http://127.0.0.1:${BOOKSHELF_EBOOKS_PORT:-8787}/ping >/dev/null',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-953}
+      TZ: ${TZ:-America/Regina}
+      METADATA_URL: ${BOOKSHELF_METADATA_URL:-http://127.0.0.1:${RREADING_GLASSES_PORT:-8790}}
+      HARDCOVER: ${BOOKSHELF_HARDCOVER:-true}
+      HARDCOVER_NATIVE: ${BOOKSHELF_HARDCOVER_NATIVE:-false}
+      HARDCOVER_AUTH: ${BOOKSHELF_HARDCOVER_AUTH:-}
+      HARDCOVER_API_URL: ${BOOKSHELF_HARDCOVER_API_URL:-}
+      BOOKSHELF_M4B_MERGE: ${BOOKSHELF_M4B_MERGE:-false}
+      BOOKSHELF_M4B_AAC_BITRATE_KBPS: ${BOOKSHELF_M4B_AAC_BITRATE_KBPS:-128}
+      BOOKSHELF_METADATA_SOURCES: ${BOOKSHELF_EBOOKS_METADATA_SOURCES-${BOOKSHELF_METADATA_SOURCES-gutendex,googlebooks,europeana}}
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY-}
+      EUROPEANA_API_KEY: ${EUROPEANA_API_KEY-}
+      HARDCOVER_APIFY_GOODREADS_ACTOR: ${HARDCOVER_APIFY_GOODREADS_ACTOR-}
+      HARDCOVER_APIFY_TOKEN: ${HARDCOVER_APIFY_TOKEN-}
+      HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE: ${HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE-}
+    volumes:
+      - ${BOOKSHELF_EBOOKS_CONFIG_DIR:-/mnt/datapool_lvm_media/readarr-config}:/config
+      - ${MEDIA_ROOT:-/mnt/datapool_lvm_media}:/data
+      - ${DOWNLOAD_ROOT:-/mnt/datapool_lvm_media/download}:/download
+      - ${MEDIA_ROOT:-/mnt/datapool_lvm_media}:/downloads
+      - ${PLEX_ROOT:-/mnt/datapool_lvm_media/plex}:/plex
+      - ${PLEX_ROOT:-/mnt/datapool_lvm_media/plex}:/media/plex
+
+  bookshelf-audiobooks:
+    image: ${BOOKSHELF_IMAGE:-ghcr.io/snapetech/bookshelfng:hardcover}
+    container_name: ${BOOKSHELF_AUDIOBOOKS_CONTAINER_NAME:-bookshelf-audiobooks}
+    network_mode: host
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'curl -fsS http://127.0.0.1:${BOOKSHELF_AUDIOBOOKS_PORT:-8788}/ping >/dev/null',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-953}
+      TZ: ${TZ:-America/Regina}
+      METADATA_URL: ${BOOKSHELF_METADATA_URL:-http://127.0.0.1:${RREADING_GLASSES_PORT:-8790}}
+      HARDCOVER: ${BOOKSHELF_HARDCOVER:-true}
+      HARDCOVER_NATIVE: ${BOOKSHELF_HARDCOVER_NATIVE:-false}
+      HARDCOVER_AUTH: ${BOOKSHELF_HARDCOVER_AUTH:-}
+      HARDCOVER_API_URL: ${BOOKSHELF_HARDCOVER_API_URL:-}
+      BOOKSHELF_M4B_MERGE: ${BOOKSHELF_M4B_MERGE:-false}
+      BOOKSHELF_M4B_AAC_BITRATE_KBPS: ${BOOKSHELF_M4B_AAC_BITRATE_KBPS:-128}
+      BOOKSHELF_METADATA_SOURCES: ${BOOKSHELF_AUDIOBOOKS_METADATA_SOURCES-${BOOKSHELF_METADATA_SOURCES-loc,gutendex,googlebooks,europeana}}
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY-}
+      EUROPEANA_API_KEY: ${EUROPEANA_API_KEY-}
+      HARDCOVER_APIFY_GOODREADS_ACTOR: ${HARDCOVER_APIFY_GOODREADS_ACTOR-}
+      HARDCOVER_APIFY_TOKEN: ${HARDCOVER_APIFY_TOKEN-}
+      HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE: ${HARDCOVER_APIFY_GOODREADS_INPUT_TEMPLATE-}
+    volumes:
+      - ${BOOKSHELF_AUDIOBOOKS_CONFIG_DIR:-/mnt/datapool_lvm_media/bookshelf-audiobooks-config}:/config
+      - ${MEDIA_ROOT:-/mnt/datapool_lvm_media}:/data
+      - ${DOWNLOAD_ROOT:-/mnt/datapool_lvm_media/download}:/download
+      - ${MEDIA_ROOT:-/mnt/datapool_lvm_media}:/downloads
+      - ${PLEX_ROOT:-/mnt/datapool_lvm_media/plex}:/plex
+      - ${PLEX_ROOT:-/mnt/datapool_lvm_media/plex}:/media/plex

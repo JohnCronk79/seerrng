@@ -1,0 +1,2 @@
+[ -n "$HUSKY_BYPASS" ] || pnpm attribution:check || exit $?
+pnpm exec lint-staged || exit $?

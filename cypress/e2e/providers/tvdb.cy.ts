@@ -1,0 +1,237 @@
+describe('TVDB Integration', () => {
+  // Constants for routes and selectors
+  const ROUTES = {
+    home: '/',
+    metadataSettings: '/settings/metadata',
+    tomorrowIsOursTvShow: '/tv/72879',
+    monsterTvShow: '/tv/225634',
+    dragonnBallZKaiAnime: '/tv/61709',
+  };
+
+  const SELECTORS = {
+    sidebarToggle: '[data-testid=sidebar-toggle]',
+    sidebarSettingsMobile: '[data-testid=sidebar-menu-settings-mobile]',
+    settingsNav: 'nav[aria-label="Tabs"]',
+    metadataTestButton: '[data-testid="metadata-test-button"]',
+    metadataSaveButton: '[data-testid="settings-save-button"]',
+    tmdbStatus: '[data-testid="tmdb-status"]',
+    tvdbStatus: '[data-testid="tvdb-status"]',
+    tvMetadataProviderSelector: '[data-testid="tv-metadata-provider-selector"]',
+    animeMetadataProviderSelector:
+      '[data-testid="anime-metadata-provider-selector"]',
+    seasonSelector: '[data-testid="season-selector"]',
+    season1: 'button[aria-label="Expand Season 01"]',
+    season2: 'button[aria-label="Expand Season 02"]',
+    season3: 'button[aria-label="Expand Season 03"]',
+    episodeList: '[data-tree-part="episodes"]',
+    episode9: '9 - Hang Men',
+  };
+
+  // Reusable commands
+  const navigateToMetadataSettings = () => {
+    cy.visit(ROUTES.home);
+    cy.get(SELECTORS.sidebarToggle).click();
+    cy.get(SELECTORS.sidebarSettingsMobile).click();
+    cy.get(
+      `${SELECTORS.settingsNav} a[href="${ROUTES.metadataSettings}"]`
+    ).click();
+  };
+
+  const testAndVerifyMetadataConnection = () => {
+    cy.intercept('POST', '/api/v1/settings/metadatas/test').as(
+      'testConnection'
+    );
+    cy.get(SELECTORS.metadataTestButton)
+      .scrollIntoView()
+      .should('be.visible')
+      .click();
+    return cy.wait('@testConnection');
+  };
+
+  const saveMetadataSettings = (
+    customBody: Record<string, string> | null = null
+  ) => {
+    if (customBody) {
+      cy.intercept('PUT', '/api/v1/settings/metadatas', (req) => {
+        req.body = customBody;
+      }).as('saveMetadata');
+    } else {
+      // Else just intercept without modifying body
+      cy.intercept('PUT', '/api/v1/settings/metadatas').as('saveMetadata');
+    }
+
+    cy.get(SELECTORS.metadataSaveButton).click();
+    return cy.wait('@saveMetadata');
+  };
+
+  const openMediaServer = () => {
+    cy.get('button[aria-controls="series-media-server-panel"]')
+      .should('be.visible')
+      .then(($button) => {
+        if ($button.attr('aria-expanded') !== 'true') cy.wrap($button).click();
+      });
+    cy.get('#series-media-server-panel').should('be.visible');
+    cy.get('#series-media-server-panel [data-selection-tree]').should('exist');
+  };
+
+  const recordClientSeasonSummary = (tvId: number, seasonNumber: number) => {
+    cy.intercept('GET', `/api/v1/tv/${tvId}`, (request) => {
+      request.continue((response) => {
+        Cypress.log({
+          name: 'client season summary',
+          message: JSON.stringify({
+            id: response.body.id,
+            season: response.body.seasons?.find(
+              (season: { seasonNumber: number }) =>
+                season.seasonNumber === seasonNumber
+            ),
+          }),
+        });
+      });
+    }).as('seriesDetails');
+  };
+
+  const verifySsrSeasonSummary = (tvId: number, seasonNumber: number) => {
+    // Initial full-page metadata is server-side; don't require a browser GET.
+    cy.get('script#__NEXT_DATA__')
+      .invoke('text')
+      .then((text) => {
+        const details = JSON.parse(text).props.pageProps.tv;
+        const season = details.seasons.find(
+          (item: { seasonNumber: number }) => item.seasonNumber === seasonNumber
+        );
+        Cypress.log({
+          name: 'SSR season summary',
+          message: JSON.stringify({ id: details.id, season }),
+        });
+        expect(details.id, 'SSR canonical series TMDB ID').to.eq(tvId);
+        expect(season, `SSR advertises season ${seasonNumber}`).not.to.equal(
+          undefined
+        );
+        expect(
+          season.episodeCount,
+          'SSR season meets the current tree episodeCount > 0 eligibility filter'
+        ).to.be.greaterThan(0);
+      });
+  };
+
+  beforeEach(() => {
+    // Perform login
+    cy.loginAsAdmin();
+
+    // Navigate to Metadata settings
+    navigateToMetadataSettings();
+
+    // Verify we're on the correct settings page
+    cy.contains('h3', 'Metadata Providers').should('be.visible');
+
+    // Configure TVDB as TV provider and test connection
+    cy.get(SELECTORS.tvMetadataProviderSelector).click();
+
+    // get id react-select-4-option-1
+    cy.get('[class*="react-select__option"]').contains('TheTVDB').click();
+
+    // Test the connection
+    testAndVerifyMetadataConnection().then(({ response }) => {
+      if (!response) {
+        throw new Error('TVDB test connection did not return a response');
+      }
+      expect(response.statusCode).to.equal(200);
+      // Check TVDB connection status
+      cy.get(SELECTORS.tvdbStatus).should('contain', 'Operational');
+    });
+
+    // Save settings
+    saveMetadataSettings({
+      anime: 'tvdb',
+      tv: 'tvdb',
+    }).then(({ response }) => {
+      if (!response) {
+        throw new Error('Metadata settings save did not return a response');
+      }
+      expect(response.statusCode).to.equal(200);
+      expect(response.body.tv).to.equal('tvdb');
+    });
+  });
+
+  it('should display "Tomorrow is Ours" show information with multiple seasons from TVDB', () => {
+    recordClientSeasonSummary(72879, 2);
+    cy.intercept('GET', '/api/v1/tv/72879/season/2').as('tomorrowSeason2');
+    // Navigate to the TV show
+    cy.visit(ROUTES.tomorrowIsOursTvShow);
+    verifySsrSeasonSummary(72879, 2);
+    openMediaServer();
+    cy.get(SELECTORS.season2).should('be.visible');
+
+    // Verify that multiple seasons are displayed (TMDB has only 1 season, TVDB has multiple)
+    // cy.get(SELECTORS.seasonSelector).should('exist');
+    // Select Season 2 and verify it loads
+    cy.wait('@tomorrowSeason2').its('response.statusCode').should('eq', 200);
+    cy.get(SELECTORS.season2)
+      .should('be.visible')
+      .and('have.attr', 'aria-expanded', 'false')
+      .scrollIntoView()
+      .click();
+
+    // Verify that episodes are displayed for Season 2
+    cy.get(`${SELECTORS.episodeList}[aria-label="Season 02 Episodes"]`)
+      .should('be.visible')
+      .within(() => {
+        cy.contains('[data-tree-part="number"]', /^01$/).should('be.visible');
+        cy.contains('[data-tree-part="number"]', /^247$/)
+          .scrollIntoView()
+          .should('be.visible');
+      });
+  });
+
+  it('Should display "Monster" show information correctly when not existing on TVDB', () => {
+    recordClientSeasonSummary(225634, 1);
+    cy.intercept('GET', '/api/v1/tv/225634/season/1').as('monsterSeason1');
+    // Navigate to the TV show
+    cy.visit(ROUTES.monsterTvShow);
+    verifySsrSeasonSummary(225634, 1);
+    openMediaServer();
+    cy.get(SELECTORS.season1).should('be.visible');
+
+    // Select Season 1
+    cy.wait('@monsterSeason1').its('response.statusCode').should('eq', 200);
+    cy.get(SELECTORS.season1)
+      .should('be.visible')
+      .and('have.attr', 'aria-expanded', 'false')
+      .scrollIntoView()
+      .click();
+
+    // Verify specific episode exists
+    cy.get(`${SELECTORS.episodeList}[aria-label="Season 01 Episodes"]`)
+      .should('be.visible')
+      .contains('[data-tree-part="episode"]', 'Hang Men')
+      .within(() => {
+        cy.contains('[data-tree-part="number"]', /^09$/).should('exist');
+        cy.contains('[data-tree-part="name"]', 'Hang Men').should('exist');
+      });
+  });
+
+  it('should display "Dragon Ball Z Kai" show information with multiple only 2 seasons from TVDB', () => {
+    recordClientSeasonSummary(61709, 2);
+    cy.intercept('GET', '/api/v1/tv/61709/season/2').as('dragonSeason2');
+    // Navigate to the TV show
+    cy.visit(ROUTES.dragonnBallZKaiAnime);
+    verifySsrSeasonSummary(61709, 2);
+    openMediaServer();
+    cy.get(SELECTORS.season2).should('be.visible');
+
+    // Select Season 2 and verify it visible
+    cy.wait('@dragonSeason2').its('response.statusCode').should('eq', 200);
+    cy.get(SELECTORS.season2)
+      .should('be.visible')
+      .and('have.attr', 'aria-expanded', 'false')
+      .scrollIntoView()
+      .click();
+
+    // select season 3 and verify it not visible
+    cy.get(SELECTORS.season3).should('not.exist');
+    cy.get(`${SELECTORS.episodeList}[aria-label="Season 02 Episodes"]`).should(
+      'be.visible'
+    );
+  });
+});

@@ -1,0 +1,35 @@
+name: seerrng
+base: core24
+version: '0.1.0'
+summary: Standalone media request and discovery service
+title: SeerrNG
+license: MIT
+contact: seerrng@proton.me
+website: https://github.com/snapetech/seerrng
+source-code: https://github.com/snapetech/seerrng
+issues: https://github.com/snapetech/seerrng/issues
+description: |
+  SeerrNG can be configured to integrate with external Plex, Jellyfin, Emby,
+  Sonarr, Radarr, Lidarr, and Readarr-compatible services. Those services are
+  optional and are managed separately from this snap.
+grade: stable
+confinement: strict
+platforms:
+  amd64:
+    build-on: amd64
+    build-for: amd64
+
+apps:
+  seerrng:
+    command: start.sh
+    plugs: [network, network-bind, home, removable-media]
+    environment:
+      NODE_ENV: production
+      CONFIG_DIRECTORY: $SNAP_DATA/config
+      PORT: 5055
+      HOST: 0.0.0.0
+
+parts:
+  seerrng:
+    plugin: dump
+    source: src

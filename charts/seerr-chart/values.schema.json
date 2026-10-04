@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "enableServiceLinks": {
+      "type": "boolean"
+    },
+    "extraEnv": {
+      "type": "array"
+    },
+    "extraEnvFrom": {
+      "type": "array"
+    },
+    "image": {
+      "type": "object",
+      "required": ["pullPolicy", "registry", "repository", "sha", "tag"],
+      "properties": {
+        "pullPolicy": {
+          "enum": ["Always", "IfNotPresent", "Never"]
+        },
+        "registry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^(|[a-f0-9]{64})$"
+        },
+        "tag": {
+          "type": "string"
+        }
+      }
+    },
+    "runtimeStorage": {
+      "type": "object",
+      "required": ["nextCacheSizeLimit", "tmpSizeLimit"],
+      "properties": {
+        "nextCacheSizeLimit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tmpSizeLimit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "required": [
+        "allowPrivilegeEscalation",
+        "capabilities",
+        "privileged",
+        "readOnlyRootFilesystem",
+        "runAsGroup",
+        "runAsNonRoot",
+        "runAsUser",
+        "seccompProfile"
+      ],
+      "properties": {
+        "allowPrivilegeEscalation": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "privileged": {
+          "type": "boolean"
+        },
+        "readOnlyRootFilesystem": {
+          "type": "boolean"
+        },
+        "runAsGroup": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runAsNonRoot": {
+          "const": true
+        },
+        "runAsUser": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seccompProfile": {
+          "type": "object"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["automount", "create", "name"],
+      "properties": {
+        "automount": {
+          "type": "boolean"
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

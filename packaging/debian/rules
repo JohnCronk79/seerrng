@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+# The release archive bundles prebuilt Node modules for multiple Linux
+# architectures. Debian's binary rewriting/scanning helpers run for the host
+# architecture only and mis-handle those vendored runtime artifacts.
+override_dh_strip_nondeterminism:
+
+override_dh_dwz:
+
+override_dh_strip:
+
+override_dh_shlibdeps:

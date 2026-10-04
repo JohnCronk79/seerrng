@@ -1,0 +1,244 @@
+name: Publish Launchpad PPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+      reuse_published_source_versions:
+        description: Verify existing published package versions by Ubuntu series instead of uploading again
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-ppa-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-ppa:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu_series: [jammy, noble]
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          [[ "$tag" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || { echo "Invalid release tag: $tag" >&2; exit 2; }
+          [[ "$tag" != *-* ]] || { echo "Stable package channels reject pre-release tag: $tag" >&2; exit 2; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag is on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/ensure-release-tag-on-main.sh "$TAG"
+
+      - name: Install packaging tools
+        env:
+          REUSE_PUBLISHED_SOURCE_VERSIONS: ${{ inputs.reuse_published_source_versions || '' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          if [[ -n "$REUSE_PUBLISHED_SOURCE_VERSIONS" ]]; then
+            sudo apt-get install -y python3-launchpadlib
+          else
+            sudo apt-get install -y build-essential debhelper devscripts dpkg-dev gnupg curl python3-launchpadlib
+          fi
+
+      - name: Download Linux asset
+        if: inputs.reuse_published_source_versions == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..80}; do
+            if gh release download "${{ steps.version.outputs.tag }}" -R "$GITHUB_REPOSITORY" --pattern "seerrng-${{ steps.version.outputs.tag }}-linux-x64.tar.gz" --clobber; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+
+      - name: Import GPG key
+        if: inputs.reuse_published_source_versions == ''
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$GPG_PRIVATE_KEY"
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fingerprint="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+          test -n "$fingerprint"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare source package
+        if: inputs.reuse_published_source_versions == ''
+        id: source
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          series="${{ matrix.ubuntu_series }}"
+          src="seerrng-${version}"
+          rm -rf "$src"
+          mkdir -p "$src/usr/lib/seerrng" "$src/usr/bin" "$src/lib/systemd/system" "$src/etc/seerrng" \
+            "$src/usr/lib/sysusers.d" "$src/usr/lib/tmpfiles.d"
+          tar -xzf "seerrng-v${version}-linux-x64.tar.gz" --strip-components=1 -C "$src/usr/lib/seerrng"
+          ln -s /usr/lib/seerrng/start.sh "$src/usr/bin/seerrng"
+          cp packaging/aur/seerrng.service "$src/lib/systemd/system/"
+          cp packaging/aur/seerrng.env "$src/etc/seerrng/"
+          cp packaging/aur/seerrng.sysusers "$src/usr/lib/sysusers.d/seerrng.conf"
+          cp packaging/aur/seerrng.tmpfiles "$src/usr/lib/tmpfiles.d/seerrng.conf"
+          cp -r packaging/debian "$src/debian"
+          find "$src/usr/lib/seerrng" -type f \
+            | sed "s#^$src/##" \
+            > "$src/debian/source/include-binaries"
+          echo "source_dir=${src}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Launchpad target
+        id: launchpad
+        env:
+          LAUNCHPAD_PPA: ${{ secrets.LAUNCHPAD_PPA || vars.LAUNCHPAD_PPA }}
+        run: |
+          set -euo pipefail
+
+          raw_target="${LAUNCHPAD_PPA:-}"
+          if [[ -z "$raw_target" ]]; then
+            echo "Set LAUNCHPAD_PPA to ppa:<owner>/<archive>, ~<owner>/ubuntu/<archive>, or ftp://ppa.launchpad.net/~<owner>/ubuntu/<archive>/." >&2
+            exit 1
+          fi
+
+          raw_target="${raw_target%/}"
+          case "$raw_target" in
+            ppa:*)
+              shorthand="${raw_target#ppa:}"
+              owner="${shorthand%%/*}"
+              archive="${shorthand#*/}"
+              if [[ -z "$owner" || -z "$archive" || "$owner" == "$archive" ]]; then
+                echo "Invalid LAUNCHPAD_PPA shorthand: $raw_target" >&2
+                exit 1
+              fi
+              path="~${owner#\~}/ubuntu/${archive}"
+              ;;
+            ftp://ppa.launchpad.net/*)
+              path="${raw_target#ftp://ppa.launchpad.net/}"
+              ;;
+            \~*/ubuntu/*)
+              path="$raw_target"
+              ;;
+            *)
+              echo "Invalid LAUNCHPAD_PPA target: $raw_target" >&2
+              echo "Expected ppa:<owner>/<archive>, ~<owner>/ubuntu/<archive>, or ftp://ppa.launchpad.net/~<owner>/ubuntu/<archive>/." >&2
+              exit 1
+              ;;
+          esac
+
+          path="${path%/}"
+          if [[ ! "$path" =~ ^~[^/]+/ubuntu/[^/]+$ ]]; then
+            echo "Invalid Launchpad upload path after normalization: $path" >&2
+            exit 1
+          fi
+
+          owner="${path%%/ubuntu/*}"
+          archive="${path##*/ubuntu/}"
+          owner_name="${owner#\~}"
+          archive_api="https://api.launchpad.net/1.0/~${owner_name}/+archive/ubuntu/${archive}"
+          archive_web="https://launchpad.net/~${owner_name}/+archive/ubuntu/${archive}"
+
+          if ! curl --fail --silent --show-error "$archive_api" >/dev/null; then
+            echo "Launchpad PPA does not exist or is not public: $archive_web" >&2
+            echo "Create that PPA, or set LAUNCHPAD_PPA to an existing archive owned by ${owner}." >&2
+            echo "Public PPAs currently visible for ${owner}:" >&2
+            curl --fail --silent "https://api.launchpad.net/1.0/${owner}/ppas" \
+              | python3 -c 'import json, sys; data=json.load(sys.stdin); [print("  {} ({})".format(entry["reference"], entry["web_link"])) for entry in data.get("entries", [])]' >&2 \
+              || true
+            exit 1
+          fi
+
+          {
+            printf '[seerrng-ppa]\n'
+            printf 'fqdn = ppa.launchpad.net\n'
+            printf 'method = ftp\n'
+            printf 'incoming = %s\n' "$path"
+            printf 'login = anonymous\n'
+            printf 'allow_unsigned_uploads = 0\n'
+          } > ~/.dput.cf
+          echo "archive_api=${archive_api}" >> "$GITHUB_OUTPUT"
+          echo "archive_web=${archive_web}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .ppa-release-tools
+          persist-credentials: false
+
+      - name: Publish and verify Launchpad source and binary packages
+        env:
+          ARCHIVE_API: ${{ steps.launchpad.outputs.archive_api }}
+          ARCHIVE_WEB: ${{ steps.launchpad.outputs.archive_web }}
+          SOURCE_DIR: ${{ steps.source.outputs.source_dir }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          UPSTREAM_VERSION: ${{ steps.version.outputs.version }}
+          UBUNTU_SERIES: ${{ matrix.ubuntu_series }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          REUSE_PUBLISHED_SOURCE_VERSIONS: ${{ inputs.reuse_published_source_versions || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$REUSE_PUBLISHED_SOURCE_VERSIONS" ]]; then
+            jq -e '
+              type == "object" and
+              (keys - ["jammy", "noble"] | length == 0) and
+              all(.[]; type == "string")
+            ' <<<"$REUSE_PUBLISHED_SOURCE_VERSIONS" >/dev/null || {
+              echo 'Reusable PPA versions must be a JSON map from jammy/noble to source package versions.' >&2
+              exit 1
+            }
+            source_version="$(jq -er --arg series "$UBUNTU_SERIES" '.[$series] | select(type == "string")' <<<"$REUSE_PUBLISHED_SOURCE_VERSIONS")"
+            version_prefix="${UPSTREAM_VERSION}+ppa"
+            version_suffix="${source_version#"$version_prefix"}"
+            [[ "$version_suffix" =~ ^[0-9]+\.[0-9]+\.[0-9]+~${UBUNTU_SERIES}$ ]] || {
+              echo "Reusable PPA version does not match $UPSTREAM_VERSION for $UBUNTU_SERIES: $source_version" >&2
+              exit 1
+            }
+            echo "Verifying already-published PPA package $source_version."
+            python3 .ppa-release-tools/scripts/wait-for-launchpad-ppa.py \
+              --archive-url "$ARCHIVE_API" \
+              --archive-web "$ARCHIVE_WEB" \
+              --series "$UBUNTU_SERIES" \
+              --source-version "$source_version" \
+              --timeout-minutes 5
+          else
+            python3 .ppa-release-tools/scripts/publish-launchpad-ppa.py \
+              --package-dir "$SOURCE_DIR" \
+              --tag "$RELEASE_TAG" \
+              --upstream-version "$UPSTREAM_VERSION" \
+              --series "$UBUNTU_SERIES" \
+              --archive-url "$ARCHIVE_API" \
+              --archive-web "$ARCHIVE_WEB" \
+              --gpg-key-id "$GPG_FINGERPRINT" \
+              --run-id "$GH_RUN_ID" \
+              --run-attempt "$GH_RUN_ATTEMPT" \
+              --timeout-minutes 300 \
+              --max-attempts 2
+          fi

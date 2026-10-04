@@ -1,0 +1,66 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Lint and Test Charts
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/lint-helm-charts.yml'
+      - 'charts/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lint-helm-charts.yml'
+      - 'charts/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+
+      - name: Ensure documentation is updated
+        uses: docker://jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c
+
+      - name: Run chart-testing (list-changed)
+        id: list-changed
+        if: github.event_name == 'pull_request'
+        env:
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          changed=$(ct list-changed --target-branch "$TARGET_BRANCH")
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "$changed"
+          fi
+
+      - name: Run chart-testing (pull request)
+        if: github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'
+        env:
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: ct lint --target-branch "$TARGET_BRANCH" --validate-maintainers=false
+
+      - name: Run chart-testing (push)
+        if: github.event_name == 'push'
+        run: ct lint --all --validate-maintainers=false

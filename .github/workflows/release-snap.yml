@@ -1,0 +1,87 @@
+name: Publish Snap
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish-snap:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          [[ "$tag" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || { echo "Invalid release tag: $tag" >&2; exit 2; }
+          [[ "$tag" != *-* ]] || { echo "Stable package channels reject pre-release tag: $tag" >&2; exit 2; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag is on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git show-ref --verify --quiet "refs/tags/$TAG"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "Release tag $TAG is not reachable from main." >&2
+            exit 1
+          }
+
+      - name: Download Linux asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..80}; do
+            if gh release download "$TAG" --pattern "seerrng-${TAG}-linux-x64.tar.gz" --dir packaging/snap --clobber; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+
+      - name: Prepare snapcraft
+        run: |
+          set -euo pipefail
+          cd packaging/snap
+          asset="seerrng-${{ steps.version.outputs.tag }}-linux-x64.tar.gz"
+          rm -rf src
+          mkdir src
+          tar -xzf "$asset" --strip-components=1 -C src
+          sed -i "s/^version: .*/version: '${{ steps.version.outputs.version }}'/" snapcraft.yaml
+
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+        id: build
+        with:
+          path: packaging/snap
+
+      - name: Validate Snap Store credentials
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: test -n "$SNAPCRAFT_STORE_CREDENTIALS"
+
+      - uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable

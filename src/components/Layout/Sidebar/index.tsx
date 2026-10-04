@@ -1,0 +1,427 @@
+import Badge from '@app/components/Common/Badge';
+import VersionStatus from '@app/components/Layout/VersionStatus';
+import useClickOutside from '@app/hooks/useClickOutside';
+import useSettings from '@app/hooks/useSettings';
+import { Permission, useUser } from '@app/hooks/useUser';
+import defineMessages from '@app/utils/defineMessages';
+import { isOptionalCatalogPathEnabled } from '@app/utils/serviceAvailability';
+import versionedAsset from '@app/utils/versionedAsset';
+import { Transition, TransitionChild } from '@headlessui/react';
+import {
+  BookOpenIcon,
+  ClockIcon,
+  CogIcon,
+  CommandLineIcon,
+  ExclamationTriangleIcon,
+  EyeSlashIcon,
+  FilmIcon,
+  MagnifyingGlassIcon,
+  MusicalNoteIcon,
+  NewspaperIcon,
+  SparklesIcon,
+  SpeakerWaveIcon,
+  Square3Stack3DIcon,
+  TvIcon,
+  UsersIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import Image from 'next/image';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { Fragment, useEffect, useRef } from 'react';
+import { useIntl } from 'react-intl';
+
+export const menuMessages = defineMessages('components.Layout.Sidebar', {
+  discover: 'Discover',
+  calendar: 'Calendar',
+  downloads: 'Download Inbox',
+  library: 'My Library',
+  indexerSearch: 'Indexer Search',
+  browsemovies: 'Movies',
+  browsemusic: 'Music',
+  browsebooks: 'Books',
+  browseaudiobooks: 'Audiobooks',
+  browsesoftware: 'Software',
+  browsecomics: 'Comics',
+  browsemagazines: 'Magazines',
+  browsetv: 'Series',
+  requests: 'Requests',
+  blocklist: 'Blocklist',
+  issues: 'Issues',
+  users: 'User List',
+  settings: 'Settings',
+});
+
+interface SidebarProps {
+  open?: boolean;
+  setClosed: () => void;
+  pendingRequestsCount: number;
+  openIssuesCount: number;
+  revalidateIssueCount: () => void;
+  revalidateRequestsCount: () => void;
+}
+
+interface SidebarLinkProps {
+  href: string;
+  svgIcon: React.ReactNode;
+  messagesKey: keyof typeof menuMessages;
+  activeRegExp: RegExp;
+  as?: string;
+  requiredPermission?: Permission | Permission[];
+  permissionType?: 'and' | 'or';
+  dataTestId?: string;
+}
+
+const SidebarLinks: SidebarLinkProps[] = [
+  {
+    href: '/',
+    messagesKey: 'discover',
+    svgIcon: <SparklesIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(discover\/?)?$/,
+  },
+  {
+    href: '/library',
+    messagesKey: 'library',
+    svgIcon: <BookOpenIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/library$/,
+  },
+  {
+    href: '/downloads',
+    messagesKey: 'downloads',
+    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/downloads$/,
+    requiredPermission: Permission.MANAGE_DOWNLOADS,
+  },
+  {
+    href: '/indexer-search',
+    messagesKey: 'indexerSearch',
+    svgIcon: <MagnifyingGlassIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/indexer-search$/,
+    requiredPermission: Permission.MANAGE_REQUESTS,
+  },
+  {
+    href: '/calendar',
+    messagesKey: 'calendar',
+    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/calendar$/,
+  },
+  {
+    href: '/discover/movies',
+    messagesKey: 'browsemovies',
+    svgIcon: <FilmIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/movies(?:\/.*)?|movie\/)/,
+  },
+  {
+    href: '/discover/tv',
+    messagesKey: 'browsetv',
+    svgIcon: <TvIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/tv(?:\/.*)?|tv\/)/,
+  },
+  {
+    href: '/discover/music',
+    messagesKey: 'browsemusic',
+    svgIcon: <MusicalNoteIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/music(?:\/.*)?|music\/)/,
+  },
+  {
+    href: '/discover/books',
+    messagesKey: 'browsebooks',
+    svgIcon: <BookOpenIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
+  },
+  {
+    href: '/discover/audiobooks',
+    messagesKey: 'browseaudiobooks',
+    svgIcon: <SpeakerWaveIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/discover\/audiobooks$/,
+  },
+  {
+    href: '/discover/comics',
+    messagesKey: 'browsecomics',
+    svgIcon: <Square3Stack3DIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/comics(?:\/.*)?|comic\/)/,
+  },
+  {
+    href: '/discover/magazines',
+    messagesKey: 'browsemagazines',
+    svgIcon: <NewspaperIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/(?:discover\/magazines(?:\/.*)?|magazine\/)/,
+  },
+  {
+    href: '/software',
+    messagesKey: 'browsesoftware',
+    svgIcon: <CommandLineIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/software(?:\/|$)/,
+  },
+  {
+    href: '/requests',
+    messagesKey: 'requests',
+    svgIcon: <ClockIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/requests\/?$/,
+  },
+  {
+    href: '/blocklist',
+    messagesKey: 'blocklist',
+    svgIcon: <EyeSlashIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/blocklist/,
+    requiredPermission: [
+      Permission.MANAGE_BLOCKLIST,
+      Permission.VIEW_BLOCKLIST,
+    ],
+    permissionType: 'or',
+  },
+  {
+    href: '/issues',
+    messagesKey: 'issues',
+    svgIcon: <ExclamationTriangleIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/issues/,
+    requiredPermission: [
+      Permission.MANAGE_ISSUES,
+      Permission.CREATE_ISSUES,
+      Permission.VIEW_ISSUES,
+    ],
+    permissionType: 'or',
+  },
+  {
+    href: '/users',
+    messagesKey: 'users',
+    svgIcon: <UsersIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/users/,
+    requiredPermission: Permission.MANAGE_USERS,
+    dataTestId: 'sidebar-menu-users',
+  },
+  {
+    href: '/settings',
+    messagesKey: 'settings',
+    svgIcon: <CogIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/settings/,
+    requiredPermission: Permission.ADMIN,
+    dataTestId: 'sidebar-menu-settings',
+  },
+];
+
+const Sidebar = ({
+  open,
+  setClosed,
+  pendingRequestsCount,
+  openIssuesCount,
+  revalidateIssueCount,
+  revalidateRequestsCount,
+}: SidebarProps) => {
+  const navRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const intl = useIntl();
+  const { hasPermission } = useUser();
+  const { currentSettings } = useSettings();
+  useClickOutside(navRef, () => setClosed());
+
+  const visibleSidebarLinks = SidebarLinks.filter(
+    (link) =>
+      isOptionalCatalogPathEnabled(link.href, currentSettings) &&
+      (link.requiredPermission
+        ? hasPermission(link.requiredPermission, {
+            type: link.permissionType ?? 'and',
+          })
+        : true)
+  );
+
+  useEffect(() => {
+    if (openIssuesCount) {
+      revalidateIssueCount();
+    }
+
+    if (pendingRequestsCount) {
+      revalidateRequestsCount();
+    }
+  }, [
+    revalidateIssueCount,
+    revalidateRequestsCount,
+    pendingRequestsCount,
+    openIssuesCount,
+  ]);
+
+  return (
+    <>
+      <div className="lg:hidden">
+        <Transition as={Fragment} show={open}>
+          <div className="fixed inset-0 z-40 flex">
+            <TransitionChild
+              as="div"
+              enter="transition-opacity ease-linear duration-300"
+              enterFrom="opacity-0"
+              enterTo="opacity-100"
+              leave="transition-opacity ease-linear duration-300"
+              leaveFrom="opacity-100"
+              leaveTo="opacity-0"
+            >
+              <div className="fixed inset-0">
+                <div className="absolute inset-0 bg-gray-900 opacity-90" />
+              </div>
+            </TransitionChild>
+            <TransitionChild
+              as="div"
+              enter="transition-transform ease-in-out duration-300"
+              enterFrom="-translate-x-full"
+              enterTo="translate-x-0"
+              leave="transition-transform ease-in-out duration-300"
+              leaveFrom="translate-x-0"
+              leaveTo="-translate-x-full"
+            >
+              <>
+                <div className="sidebar relative flex h-full w-full max-w-xs flex-1 flex-col">
+                  <div className="sidebar-close-button absolute right-0 -mr-14 p-1">
+                    <button
+                      className="flex h-12 w-12 items-center justify-center rounded-full focus:bg-gray-600 focus:outline-none"
+                      aria-label="Close sidebar"
+                      onClick={() => setClosed()}
+                    >
+                      <XMarkIcon className="h-6 w-6 text-white" />
+                    </button>
+                  </div>
+                  <div
+                    ref={navRef}
+                    className="flex flex-1 flex-col overflow-y-auto pt-4 pb-8 sm:pb-4"
+                  >
+                    <div className="flex flex-shrink-0 items-center px-2">
+                      <span className="w-full px-4 text-xl text-gray-50">
+                        <Link href="/" className="relative block h-24 w-64">
+                          <Image
+                            src={versionedAsset('/logo_full.svg')}
+                            alt="Logo"
+                            fill
+                            className="object-contain object-left"
+                          />
+                        </Link>
+                      </span>
+                    </div>
+                    <nav className="mt-10 flex-1 space-y-4 px-4">
+                      {visibleSidebarLinks.map((sidebarLink) => {
+                        return (
+                          <Link
+                            key={`mobile-${sidebarLink.messagesKey}`}
+                            href={sidebarLink.href}
+                            as={sidebarLink.as}
+                            prefetch={false}
+                            onClick={setClosed}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                setClosed();
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            className={`flex items-center rounded-md px-2 py-2 text-base leading-6 font-medium text-white transition duration-150 ease-in-out focus:outline-none ${
+                              router.pathname.match(sidebarLink.activeRegExp)
+                                ? 'main-menu-link sidebar-link-selected'
+                                : 'main-menu-link sidebar-link-idle'
+                            } `}
+                            data-testid={`${sidebarLink.dataTestId}-mobile`}
+                          >
+                            {sidebarLink.svgIcon}
+                            {intl.formatMessage(
+                              menuMessages[sidebarLink.messagesKey]
+                            )}
+                          </Link>
+                        );
+                      })}
+                    </nav>
+                    {hasPermission(Permission.ADMIN) && (
+                      <div className="px-2">
+                        <VersionStatus onClick={() => setClosed()} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="w-14 flex-shrink-0">
+                  {/* <!-- Force sidebar to shrink to fit close icon --> */}
+                </div>
+              </>
+            </TransitionChild>
+          </div>
+        </Transition>
+      </div>
+
+      <div className="fixed top-0 bottom-0 left-0 z-30 hidden lg:flex lg:flex-shrink-0">
+        <div className="sidebar flex w-64 flex-col">
+          <div className="flex h-0 flex-1 flex-col">
+            <div className="flex flex-1 flex-col overflow-y-auto pb-4">
+              <div className="flex flex-shrink-0 items-center">
+                <span className="w-full px-4 py-2 text-2xl text-gray-50">
+                  <Link href="/" className="relative block h-24">
+                    <Image
+                      src={versionedAsset('/logo_full.svg')}
+                      alt="Logo"
+                      fill
+                      className="object-contain object-left"
+                      loading="eager"
+                    />
+                  </Link>
+                </span>
+              </div>
+              <nav className="mt-8 flex-1 space-y-4 px-4">
+                {visibleSidebarLinks.map((sidebarLink) => {
+                  return (
+                    <Link
+                      key={`desktop-${sidebarLink.messagesKey}`}
+                      href={sidebarLink.href}
+                      as={sidebarLink.as}
+                      prefetch={false}
+                      className={`group flex items-center rounded-md px-2 py-2 text-lg leading-6 font-medium text-white transition duration-150 ease-in-out focus:outline-none ${
+                        router.pathname.match(sidebarLink.activeRegExp)
+                          ? 'main-menu-link sidebar-link-selected'
+                          : 'main-menu-link sidebar-link-idle'
+                      } `}
+                      data-testid={sidebarLink.dataTestId}
+                    >
+                      {sidebarLink.svgIcon}
+                      {intl.formatMessage(
+                        menuMessages[sidebarLink.messagesKey]
+                      )}
+                      {sidebarLink.messagesKey === 'requests' &&
+                        pendingRequestsCount > 0 &&
+                        hasPermission(Permission.MANAGE_REQUESTS) && (
+                          <div className="ml-auto flex">
+                            <Badge
+                              className={`rounded-md bg-gradient-to-br ${
+                                router.pathname.match(sidebarLink.activeRegExp)
+                                  ? 'border-indigo-600 from-indigo-700 to-purple-700'
+                                  : 'border-indigo-500 from-indigo-600 to-purple-600'
+                              }`}
+                            >
+                              {pendingRequestsCount}
+                            </Badge>
+                          </div>
+                        )}
+                      {sidebarLink.messagesKey === 'issues' &&
+                        openIssuesCount > 0 &&
+                        hasPermission(Permission.MANAGE_ISSUES) && (
+                          <div className="ml-auto flex">
+                            <Badge
+                              className={`rounded-md bg-gradient-to-br ${
+                                router.pathname.match(sidebarLink.activeRegExp)
+                                  ? 'border-indigo-600 from-indigo-700 to-purple-700'
+                                  : 'border-indigo-500 from-indigo-600 to-purple-600'
+                              }`}
+                            >
+                              {openIssuesCount}
+                            </Badge>
+                          </div>
+                        )}
+                    </Link>
+                  );
+                })}
+              </nav>
+              {hasPermission(Permission.ADMIN) && (
+                <div className="px-2">
+                  <VersionStatus />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default Sidebar;

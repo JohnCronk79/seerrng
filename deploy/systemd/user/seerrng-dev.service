@@ -1,0 +1,15 @@
+[Unit]
+Description=SeerrNG local development server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/keith/Documents/code/seerrng
+Environment=CONFIG_DIRECTORY=/home/keith/Documents/code/seerrng/config
+ExecStart=/home/keith/.local/lib/npm/bin/pnpm dev
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

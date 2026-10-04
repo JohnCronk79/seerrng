@@ -1,0 +1,248 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Release Charts
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - '.github/workflows/helm.yml'
+
+permissions:
+  contents: read
+
+env:
+  GHCR_IMAGE: ghcr.io/snapetech/seerrng
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-helm-chart:
+    name: Package helm chart
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      has_artifacts: ${{ steps.check-artifacts.outputs.has_artifacts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Install Oras
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package helm charts
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p ./.cr-release-packages
+          for chart_path in ./charts/*; do
+            if [[ ! -d "$chart_path" || -L "$chart_path" || ! -f "$chart_path/Chart.yaml" ]]; then
+              echo "Skipping $chart_path: not a regular Helm chart directory."
+              continue
+            fi
+            chart_name="$(awk '$1 == "name:" { print $2 }' "$chart_path/Chart.yaml")"
+            current_version="$(awk '$1 == "version:" { print $2 }' "$chart_path/Chart.yaml")"
+            if [[ "$(grep -c '^name:' "$chart_path/Chart.yaml")" != 1 ]] ||
+               [[ "$(grep -c '^version:' "$chart_path/Chart.yaml")" != 1 ]] ||
+               [[ ! "$chart_name" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+               [[ ! "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid chart identity in $chart_path/Chart.yaml" >&2
+              exit 1
+            fi
+            if oras manifest fetch "${GHCR_IMAGE}/${chart_name}:${current_version}" >/dev/null 2>&1; then
+              echo "No version change for $chart_name. Skipping."
+            else
+              helm dependency build "$chart_path"
+              helm package "$chart_path" --destination ./.cr-release-packages
+            fi
+          done
+
+      - name: Check if artifacts exist
+        id: check-artifacts
+        run: |
+          set -euo pipefail
+          if ls .cr-release-packages/*.tgz >/dev/null 2>&1; then
+            echo 'has_artifacts=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'has_artifacts=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.check-artifacts.outputs.has_artifacts == 'true'
+        with:
+          name: artifacts
+          include-hidden-files: true
+          path: .cr-release-packages/
+
+  publish:
+    name: Publish to ghcr.io
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    timeout-minutes: 30
+    permissions:
+      packages: write
+      id-token: write
+    needs: [package-helm-chart]
+    if: needs.package-helm-chart.outputs.has_artifacts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Install Oras
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Downloads artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: artifacts
+          path: .cr-release-packages/
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push charts to GHCR
+        env:
+          COSIGN_YES: true
+        run: |
+          set -euo pipefail
+          umask 077
+          mapfile -d '' -t chart_archives < <(
+            find .cr-release-packages -mindepth 1 -maxdepth 1 -type f -name '*.tgz' -print0
+          )
+          if (( ${#chart_archives[@]} < 1 || ${#chart_archives[@]} > 20 )); then
+            echo 'Chart artifact count is outside the allowed boundary.' >&2
+            exit 1
+          fi
+          for chart_path in "${chart_archives[@]}"; do
+            metadata="$(helm show chart "$chart_path")"
+            chart_name="$(awk '$1 == "name:" { print $2 }' <<< "$metadata")"
+            chart_version="$(awk '$1 == "version:" { print $2 }' <<< "$metadata")"
+            if [[ "$(grep -c '^name:' <<< "$metadata")" != 1 ]] ||
+               [[ "$(grep -c '^version:' <<< "$metadata")" != 1 ]] ||
+               [[ ! "$chart_name" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+               [[ ! "$chart_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid packaged chart identity: $chart_path" >&2
+              exit 1
+            fi
+            helm_push_output="$(mktemp "$RUNNER_TEMP/helm-push.XXXXXX")"
+            oras_push_output="$(mktemp "$RUNNER_TEMP/oras-push.XXXXXX")"
+            trap 'rm -f "$helm_push_output" "$oras_push_output"' EXIT
+            helm push "$chart_path" "oci://${GHCR_IMAGE}" |& tee "$helm_push_output"
+            chart_digest="$(awk -F '[, ]+' '/Digest/{print $NF}' "$helm_push_output" | tail -n 1)"
+            if [[ ! "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Helm returned an invalid chart digest for $chart_name:$chart_version" >&2
+              exit 1
+            fi
+            cosign sign "${GHCR_IMAGE}/${chart_name}@${chart_digest}"
+
+            metadata_file="charts/$chart_name/artifacthub-repo.yml"
+            if [[ ! -f "$metadata_file" || -L "$metadata_file" ]] ||
+               [[ "$(stat -c '%h' "$metadata_file")" != 1 ]]; then
+              echo "Artifact Hub metadata is missing or unsafe: $metadata_file" >&2
+              exit 1
+            fi
+            oras push \
+              "${GHCR_IMAGE}/${chart_name}:artifacthub.io" \
+              --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+              "$metadata_file:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml" \
+              |& tee "$oras_push_output"
+            artifacthub_digest="$(awk '/Digest:/{print $2}' "$oras_push_output" | tail -n 1)"
+            if [[ ! "$artifacthub_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "ORAS returned an invalid metadata digest for $chart_name" >&2
+              exit 1
+            fi
+            cosign sign "${GHCR_IMAGE}/${chart_name}:artifacthub.io@${artifacthub_digest}"
+            rm -f "$helm_push_output" "$oras_push_output"
+            trap - EXIT
+          done
+
+  verify:
+    name: Verify signatures for each chart tag
+    needs: [publish]
+    runs-on: [self-hosted, Linux, X64, seerrng]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+
+      - name: Downloads artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: artifacts
+          path: .cr-release-packages/
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify signatures for each chart tag
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t chart_archives < <(
+            find .cr-release-packages -mindepth 1 -maxdepth 1 -type f -name '*.tgz' -print0
+          )
+          if (( ${#chart_archives[@]} < 1 || ${#chart_archives[@]} > 20 )); then
+            echo 'Chart artifact count is outside the allowed boundary.' >&2
+            exit 1
+          fi
+          for chart_path in "${chart_archives[@]}"; do
+            metadata="$(helm show chart "$chart_path")"
+            chart_name="$(awk '$1 == "name:" { print $2 }' <<< "$metadata")"
+            version="$(awk '$1 == "version:" { print $2 }' <<< "$metadata")"
+            if [[ ! "$chart_name" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] ||
+               [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid packaged chart identity: $chart_path" >&2
+              exit 1
+            fi
+            cosign verify "${GHCR_IMAGE}/${chart_name}:${version}" \
+              --certificate-identity "https://github.com/${{ github.workflow_ref }}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+          done

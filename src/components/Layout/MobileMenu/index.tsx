@@ -1,0 +1,383 @@
+import Badge from '@app/components/Common/Badge';
+import { menuMessages } from '@app/components/Layout/Sidebar';
+import useClickOutside from '@app/hooks/useClickOutside';
+import useSettings from '@app/hooks/useSettings';
+import { Permission, useUser } from '@app/hooks/useUser';
+import { isOptionalCatalogPathEnabled } from '@app/utils/serviceAvailability';
+import { Transition } from '@headlessui/react';
+import {
+  BookOpenIcon,
+  ClockIcon,
+  CogIcon,
+  CommandLineIcon,
+  EllipsisHorizontalIcon,
+  ExclamationTriangleIcon,
+  EyeSlashIcon,
+  FilmIcon,
+  MusicalNoteIcon,
+  NewspaperIcon,
+  SparklesIcon,
+  SpeakerWaveIcon,
+  Square3Stack3DIcon,
+  TvIcon,
+  UsersIcon,
+} from '@heroicons/react/24/outline';
+import {
+  BookOpenIcon as FilledBookOpenIcon,
+  ClockIcon as FilledClockIcon,
+  CogIcon as FilledCogIcon,
+  CommandLineIcon as FilledCommandLineIcon,
+  ExclamationTriangleIcon as FilledExclamationTriangleIcon,
+  EyeSlashIcon as FilledEyeSlashIcon,
+  FilmIcon as FilledFilmIcon,
+  MusicalNoteIcon as FilledMusicalNoteIcon,
+  NewspaperIcon as FilledNewspaperIcon,
+  SparklesIcon as FilledSparklesIcon,
+  SpeakerWaveIcon as FilledSpeakerWaveIcon,
+  Square3Stack3DIcon as FilledSquare3Stack3DIcon,
+  TvIcon as FilledTvIcon,
+  UsersIcon as FilledUsersIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/solid';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import {
+  cloneElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+} from 'react';
+import { useIntl } from 'react-intl';
+
+interface MobileMenuProps {
+  pendingRequestsCount: number;
+  openIssuesCount: number;
+  revalidateIssueCount: () => void;
+  revalidateRequestsCount: () => void;
+}
+
+interface MenuLink {
+  href: string;
+  svgIcon: JSX.Element;
+  svgIconSelected: JSX.Element;
+  content: React.ReactNode;
+  activeRegExp: RegExp;
+  as?: string;
+  requiredPermission?: Permission | Permission[];
+  permissionType?: 'and' | 'or';
+  dataTestId?: string;
+}
+
+const MobileMenu = ({
+  pendingRequestsCount,
+  openIssuesCount,
+  revalidateIssueCount,
+  revalidateRequestsCount,
+}: MobileMenuProps) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
+  const intl = useIntl();
+  const [isOpen, setIsOpen] = useState(false);
+  const { hasPermission } = useUser();
+  const { currentSettings } = useSettings();
+  const router = useRouter();
+  useClickOutside(ref, () => {
+    if (closeTimer.current !== undefined) {
+      clearTimeout(closeTimer.current);
+    }
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = undefined;
+      setIsOpen(false);
+    }, 150);
+  });
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== undefined) {
+        clearTimeout(closeTimer.current);
+      }
+    },
+    []
+  );
+
+  const toggle = () => setIsOpen((open) => !open);
+
+  const menuLinks: MenuLink[] = useMemo(
+    () => [
+      {
+        href: '/',
+        content: intl.formatMessage(menuMessages.discover),
+        svgIcon: <SparklesIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSparklesIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(discover\/?)?$/,
+      },
+      {
+        href: '/discover/movies',
+        content: intl.formatMessage(menuMessages.browsemovies),
+        svgIcon: <FilmIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledFilmIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/movies(?:\/.*)?|movie\/)/,
+      },
+      {
+        href: '/discover/tv',
+        content: intl.formatMessage(menuMessages.browsetv),
+        svgIcon: <TvIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledTvIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/tv(?:\/.*)?|tv\/)/,
+      },
+      {
+        href: '/discover/music',
+        content: intl.formatMessage(menuMessages.browsemusic),
+        svgIcon: <MusicalNoteIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledMusicalNoteIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/music(?:\/.*)?|music\/)/,
+      },
+      {
+        href: '/discover/books',
+        content: intl.formatMessage(menuMessages.browsebooks),
+        svgIcon: <BookOpenIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledBookOpenIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/books(?:\/.*)?|book\/)/,
+      },
+      {
+        href: '/discover/audiobooks',
+        content: intl.formatMessage(menuMessages.browseaudiobooks),
+        svgIcon: <SpeakerWaveIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSpeakerWaveIcon className="h-6 w-6" />,
+        activeRegExp: /^\/discover\/audiobooks$/,
+      },
+      {
+        href: '/discover/comics',
+        content: intl.formatMessage(menuMessages.browsecomics),
+        svgIcon: <Square3Stack3DIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledSquare3Stack3DIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/comics(?:\/.*)?|comic\/)/,
+      },
+      {
+        href: '/discover/magazines',
+        content: intl.formatMessage(menuMessages.browsemagazines),
+        svgIcon: <NewspaperIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledNewspaperIcon className="h-6 w-6" />,
+        activeRegExp: /^\/(?:discover\/magazines(?:\/.*)?|magazine\/)/,
+      },
+      {
+        href: '/software',
+        content: intl.formatMessage(menuMessages.browsesoftware),
+        svgIcon: <CommandLineIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledCommandLineIcon className="h-6 w-6" />,
+        activeRegExp: /^\/software(?:\/|$)/,
+      },
+      {
+        href: '/requests',
+        content: intl.formatMessage(menuMessages.requests),
+        svgIcon: <ClockIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledClockIcon className="h-6 w-6" />,
+        activeRegExp: /^\/requests\/?$/,
+      },
+      {
+        href: '/blocklist',
+        content: intl.formatMessage(menuMessages.blocklist),
+        svgIcon: <EyeSlashIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledEyeSlashIcon className="h-6 w-6" />,
+        activeRegExp: /^\/blocklist/,
+        requiredPermission: [
+          Permission.MANAGE_BLOCKLIST,
+          Permission.VIEW_BLOCKLIST,
+        ],
+        permissionType: 'or',
+      },
+      {
+        href: '/issues',
+        content: intl.formatMessage(menuMessages.issues),
+        svgIcon: <ExclamationTriangleIcon className="h-6 w-6" />,
+        svgIconSelected: <FilledExclamationTriangleIcon className="h-6 w-6" />,
+        activeRegExp: /^\/issues/,
+        requiredPermission: [
+          Permission.MANAGE_ISSUES,
+          Permission.CREATE_ISSUES,
+          Permission.VIEW_ISSUES,
+        ],
+        permissionType: 'or',
+      },
+      {
+        href: '/users',
+        content: intl.formatMessage(menuMessages.users),
+        svgIcon: <UsersIcon className="mr-3 h-6 w-6" />,
+        svgIconSelected: <FilledUsersIcon className="mr-3 h-6 w-6" />,
+        activeRegExp: /^\/users/,
+        requiredPermission: Permission.MANAGE_USERS,
+        dataTestId: 'sidebar-menu-users',
+      },
+      {
+        href: '/settings',
+        content: intl.formatMessage(menuMessages.settings),
+        svgIcon: <CogIcon className="mr-3 h-6 w-6" />,
+        svgIconSelected: <FilledCogIcon className="mr-3 h-6 w-6" />,
+        activeRegExp: /^\/settings/,
+        requiredPermission: Permission.ADMIN,
+        dataTestId: 'sidebar-menu-settings',
+      },
+    ],
+    [intl]
+  );
+
+  const filteredLinks = useMemo(
+    () =>
+      menuLinks.filter(
+        (link) =>
+          isOptionalCatalogPathEnabled(link.href, currentSettings) &&
+          (!link.requiredPermission ||
+            hasPermission(link.requiredPermission, {
+              type: link.permissionType ?? 'and',
+            }))
+      ),
+    [currentSettings, hasPermission, menuLinks]
+  );
+
+  useEffect(() => {
+    if (openIssuesCount) {
+      revalidateIssueCount();
+    }
+
+    if (pendingRequestsCount) {
+      revalidateRequestsCount();
+    }
+  }, [
+    revalidateIssueCount,
+    revalidateRequestsCount,
+    pendingRequestsCount,
+    openIssuesCount,
+  ]);
+
+  return (
+    <div className="fixed right-0 bottom-0 left-0 z-50">
+      <Transition
+        show={isOpen}
+        as="div"
+        ref={ref}
+        enter="transition duration-500"
+        enterFrom="opacity-0 translate-y-0"
+        enterTo="opacity-100 -translate-y-full"
+        leave="transition duration-500"
+        leaveFrom="opacity-100 -translate-y-full"
+        leaveTo="opacity-0 translate-y-0"
+        className="app-menu-gradient absolute top-0 right-0 left-0 flex w-full -translate-y-full flex-col space-y-6 border-t border-gray-600 px-6 py-6 font-semibold text-gray-100 backdrop-blur"
+      >
+        {filteredLinks.map((link) => {
+          const isActive = router.pathname.match(link.activeRegExp);
+          return (
+            <Link
+              key={`mobile-menu-link-${link.href}`}
+              href={link.href}
+              prefetch={false}
+              className={`main-menu-link flex items-center px-2 py-2 ${
+                isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
+              }`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setIsOpen(false);
+                }
+              }}
+              onClick={() => setIsOpen(false)}
+              role="button"
+              tabIndex={0}
+            >
+              {cloneElement(isActive ? link.svgIconSelected : link.svgIcon, {
+                className: 'h-5 w-5',
+              })}
+              <span className="ml-2">{link.content}</span>
+              {link.href === '/requests' &&
+                pendingRequestsCount > 0 &&
+                hasPermission(Permission.MANAGE_REQUESTS) && (
+                  <div className="ml-auto flex">
+                    <Badge className="rounded-md border-indigo-500 bg-gradient-to-br from-indigo-600 to-purple-600">
+                      {pendingRequestsCount}
+                    </Badge>
+                  </div>
+                )}
+              {link.href === '/issues' &&
+                openIssuesCount > 0 &&
+                hasPermission(Permission.MANAGE_ISSUES) && (
+                  <div className="ml-auto flex">
+                    <Badge className="rounded-md border-indigo-500 bg-gradient-to-br from-indigo-600 to-purple-600">
+                      {openIssuesCount}
+                    </Badge>
+                  </div>
+                )}
+            </Link>
+          );
+        })}
+      </Transition>
+      <div className="app-mobile-menu-surface padding-bottom-safe border-t border-gray-600 backdrop-blur">
+        <div className="flex h-full items-center justify-between px-6 py-4 text-gray-100">
+          {filteredLinks
+            .slice(0, filteredLinks.length === 5 ? 5 : 4)
+            .map((link) => {
+              const isActive =
+                router.pathname.match(link.activeRegExp) && !isOpen;
+              return (
+                <Link
+                  key={`mobile-menu-link-${link.href}`}
+                  href={link.href}
+                  prefetch={false}
+                  aria-label={
+                    typeof link.content === 'string' ? link.content : undefined
+                  }
+                  className={`main-menu-link relative flex flex-col items-center space-y-1 p-2 ${
+                    isActive ? 'sidebar-link-selected' : 'sidebar-link-idle'
+                  }`}
+                >
+                  {cloneElement(
+                    isActive ? link.svgIconSelected : link.svgIcon,
+                    {
+                      className: 'h-6 w-6',
+                    }
+                  )}
+                  {link.href === '/requests' &&
+                    pendingRequestsCount > 0 &&
+                    hasPermission(Permission.MANAGE_REQUESTS) && (
+                      <div className="absolute bottom-3 left-3">
+                        <Badge
+                          className={`bg-gradient-to-br ${
+                            router.pathname.match(link.activeRegExp)
+                              ? 'border-indigo-600 from-indigo-700 to-purple-700'
+                              : 'border-indigo-500 from-indigo-600 to-purple-600'
+                          } flex ${
+                            pendingRequestsCount > 99 ? 'w-6' : 'w-4'
+                          } h-4 items-center justify-center !px-[5px] !py-[7px] text-[8px]`}
+                        >
+                          {pendingRequestsCount > 99
+                            ? '99+'
+                            : pendingRequestsCount}
+                        </Badge>
+                      </div>
+                    )}
+                </Link>
+              );
+            })}
+          {filteredLinks.length > 4 && filteredLinks.length !== 5 && (
+            <button
+              className={`main-menu-link flex flex-col items-center space-y-1 p-2 ${
+                isOpen ? 'sidebar-link-selected' : 'sidebar-link-idle'
+              }`}
+              onClick={() => toggle()}
+              aria-label={isOpen ? 'Close menu' : 'More navigation'}
+            >
+              {isOpen ? (
+                <XMarkIcon className="h-6 w-6" />
+              ) : (
+                <EllipsisHorizontalIcon className="h-6 w-6" />
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default MobileMenu;

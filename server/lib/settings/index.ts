@@ -1,0 +1,1810 @@
+import {
+  DEFAULT_ENABLED_MEDIA_CATEGORIES,
+  type EnabledMediaCategories,
+} from '@server/constants/mediaCategories';
+import {
+  defaultProwlarrCategoryMappings,
+  type ProwlarrCategoryMappings,
+} from '@server/constants/prowlarr';
+import { MediaServerType } from '@server/constants/server';
+import { assertNoSymlinkDirectoryComponents } from '@server/lib/pathSecurity';
+import { Permission } from '@server/lib/permissions';
+import { runMigrations } from '@server/lib/settings/migrator';
+import type { AvailableLocale } from '@server/types/languages';
+import AsyncLock from '@server/utils/asyncLock';
+import type { TlsSettings } from '@server/utils/tls';
+import { randomBytes, randomUUID } from 'crypto';
+import { mergeWith } from 'lodash';
+import fs from 'node:fs';
+import path from 'path';
+import webpush from 'web-push';
+import {
+  MAX_SETTINGS_FILE_BYTES,
+  assertSettingsFileSize,
+  readPrivateSettingsFile,
+  withSettingsFileLock,
+  writePrivateSettingsFile,
+} from './fileSecurity';
+
+export { MAX_SETTINGS_FILE_BYTES, assertSettingsFileSize };
+
+type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
+// Prevents stale array entries when incoming data has fewer elements
+const mergeSettings = <T>(current: T, incoming: DeepPartial<T>): T =>
+  mergeWith({}, current, incoming, (_objValue, srcValue) =>
+    Array.isArray(srcValue) ? srcValue : undefined
+  ) as T;
+
+export interface Library {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: 'show' | 'movie' | 'music' | 'book';
+  lastScan?: number;
+}
+
+export interface Region {
+  iso_3166_1: string;
+  english_name: string;
+  name?: string;
+}
+
+export interface Language {
+  iso_639_1: string;
+  english_name: string;
+  name: string;
+}
+
+export interface PlexSettings {
+  name: string;
+  machineId?: string;
+  ip: string;
+  port: number;
+  useSsl?: boolean;
+  libraries: Library[];
+  webAppUrl?: string;
+}
+
+export interface JellyfinSettings {
+  name: string;
+  ip: string;
+  port: number;
+  useSsl?: boolean;
+  urlBase?: string;
+  externalHostname?: string;
+  jellyfinForgotPasswordUrl?: string;
+  libraries: Library[];
+  serverId: string;
+  apiKey: string;
+  bridgeLoginEnabled?: boolean;
+  bridgeLoginGeneration?: number;
+}
+
+export type OidcProvider = {
+  slug: string;
+  name: string;
+  issuerUrl: string;
+  clientId: string;
+  clientSecret: string;
+  logo?: string;
+  requiredClaims?: string;
+  scopes?: string;
+  newUserLogin?: boolean;
+};
+
+export type PublicOidcProvider = Pick<OidcProvider, 'slug' | 'name' | 'logo'>;
+
+export interface OidcSettings {
+  providers: OidcProvider[];
+}
+
+export interface TautulliSettings {
+  hostname?: string;
+  port?: number;
+  useSsl?: boolean;
+  urlBase?: string;
+  apiKey?: string;
+  externalUrl?: string;
+}
+
+export interface SoftwareProviderSettings {
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export type EmulationSystemGroup = 'retro' | 'modern';
+
+export interface SoftwareAcquisitionSettings {
+  romarr: SoftwareProviderSettings;
+  questarr: SoftwareProviderSettings;
+  emulationCatalogProvider: 'questarr' | 'romarr';
+  emulationSystemGroups: Record<string, EmulationSystemGroup>;
+}
+
+export interface ProwlarrSettings extends SoftwareProviderSettings {
+  categoryMappings: ProwlarrCategoryMappings;
+}
+
+export interface DVRSettings {
+  id: number;
+  name: string;
+  hostname: string;
+  port: number;
+  apiKey: string;
+  useSsl: boolean;
+  baseUrl?: string;
+  activeProfileId: number;
+  activeProfileName: string;
+  activeDirectory: string;
+  tags: number[];
+  is4k: boolean;
+  isDefault: boolean;
+  externalUrl?: string;
+  syncEnabled: boolean;
+  preventSearch: boolean;
+  tagRequests: boolean;
+  overrideRule: number[];
+}
+
+export interface RadarrSettings extends DVRSettings {
+  minimumAvailability: string;
+}
+
+export interface SonarrSettings extends DVRSettings {
+  seriesType: 'standard' | 'daily' | 'anime';
+  animeSeriesType: 'standard' | 'daily' | 'anime';
+  activeAnimeProfileId?: number;
+  activeAnimeProfileName?: string;
+  activeAnimeDirectory?: string;
+  activeAnimeLanguageProfileId?: number;
+  activeLanguageProfileId?: number;
+  animeTags?: number[];
+  enableSeasonFolders: boolean;
+  monitorNewItems: 'all' | 'none';
+}
+
+export interface LidarrSettings extends DVRSettings {
+  activeMetadataProfileId?: number;
+  activeMetadataProfileName?: string;
+}
+
+export interface ReadarrSettings extends DVRSettings {
+  activeMetadataProfileId?: number;
+  activeMetadataProfileName?: string;
+  serviceType?: 'ebook' | 'audiobook';
+}
+
+export interface CollectorServiceSettings {
+  id: number;
+  name: string;
+  hostname: string;
+  port: number;
+  apiKey: string;
+  useSsl: boolean;
+  baseUrl?: string;
+  isDefault: boolean;
+  externalUrl?: string;
+  tags: number[];
+  syncEnabled: boolean;
+  preventSearch: boolean;
+}
+
+export interface MylarSettings extends CollectorServiceSettings {
+  rootFolder?: string;
+}
+
+export interface KapowarrSettings extends CollectorServiceSettings {
+  rootFolder?: string;
+}
+
+export type BackIssueSettings = CollectorServiceSettings;
+
+export type LazyLibrarianSettings = CollectorServiceSettings;
+
+interface Quota {
+  quotaLimit?: number;
+  quotaDays?: number;
+}
+
+export enum MetadataProviderType {
+  TMDB = 'tmdb',
+  TVDB = 'tvdb',
+}
+
+export interface MetadataSettings {
+  tv: MetadataProviderType;
+  anime: MetadataProviderType;
+}
+
+export type DownloadPathService =
+  'radarr' | 'sonarr' | 'readarr' | 'lazylibrarian' | 'kapowarr' | 'backissue';
+
+export interface DownloadPathMapping {
+  serviceType: DownloadPathService;
+  serviceId?: number;
+  remoteRoot: string;
+  localRoot: string;
+}
+
+export interface ProxySettings {
+  enabled: boolean;
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  user: string;
+  password: string;
+  bypassFilter: string;
+  bypassLocalAddresses: boolean;
+}
+
+export interface MainSettings {
+  apiKey: string;
+  downloadPathMappings: DownloadPathMapping[];
+  applicationTitle: string;
+  applicationUrl: string;
+  cacheImages: boolean;
+  includeAdult: boolean;
+  defaultPermissions: number;
+  defaultQuotas: {
+    movie: Quota;
+    tv: Quota;
+    music: Quota;
+    book: Quota;
+    comic: Quota;
+    magazine: Quota;
+    software: Quota;
+  };
+  enabledMediaCategories: EnabledMediaCategories;
+  hideAvailable: boolean;
+  hideBlocklisted: boolean;
+  hideRequested: boolean;
+  localLogin: boolean;
+  mediaServerLogin: boolean;
+  oidcLogin: boolean;
+  newPlexLogin: boolean;
+  discoverRegion: string;
+  streamingRegion: string;
+  originalLanguage: string;
+  blocklistRegion: string;
+  blocklistLanguage: string;
+  blocklistedTags: string;
+  blocklistedTagsLimit: number;
+  mediaServerType: number;
+  partialRequestsEnabled: boolean;
+  enableSpecialEpisodes: boolean;
+  locale: string;
+  youtubeUrl: string;
+  versionCheck: boolean;
+  spotifyClientId?: string;
+  spotifyClientSecret?: string;
+  youtubeApiKey?: string;
+  comicVineApiKey?: string;
+  googleBooksApiKey?: string;
+}
+
+export interface ProxySettings {
+  enabled: boolean;
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  user: string;
+  password: string;
+  bypassFilter: string;
+  bypassLocalAddresses: boolean;
+}
+
+export interface DnsCacheSettings {
+  enabled: boolean;
+  forceMinTtl?: number;
+  forceMaxTtl?: number;
+}
+
+export interface NetworkSettings {
+  csrfProtection: boolean;
+  forceIpv4First: boolean;
+  trustProxy: boolean;
+  tls: TlsSettings;
+  proxy: ProxySettings;
+  dnsCache: DnsCacheSettings;
+  apiRequestTimeout: number;
+}
+
+interface PublicSettings {
+  initialized: boolean;
+}
+
+interface FullPublicSettings extends PublicSettings {
+  applicationTitle: string;
+  applicationUrl: string;
+  hideAvailable: boolean;
+  hideBlocklisted: boolean;
+  hideRequested: boolean;
+  localLogin: boolean;
+  mediaServerLogin: boolean;
+  movie4kEnabled: boolean;
+  series4kEnabled: boolean;
+  musicEnabled: boolean;
+  booksEnabled: boolean;
+  ebookServiceEnabled: boolean;
+  audiobookServiceEnabled: boolean;
+  comicsEnabled: boolean;
+  magazinesEnabled: boolean;
+  softwareEnabled: boolean;
+  romarrEnabled: boolean;
+  enabledMediaCategories: EnabledMediaCategories;
+  discoverRegion: string;
+  streamingRegion: string;
+  originalLanguage: string;
+  mediaServerType: number;
+  jellyfinExternalHost?: string;
+  jellyfinForgotPasswordUrl?: string;
+  jellyfinServerName?: string;
+  partialRequestsEnabled: boolean;
+  enableSpecialEpisodes: boolean;
+  cacheImages: boolean;
+  vapidPublic: string;
+  enablePushRegistration: boolean;
+  locale: string;
+  emailEnabled: boolean;
+  userEmailRequired: boolean;
+  newPlexLogin: boolean;
+  youtubeUrl: string;
+  versionCheck: boolean;
+  plexClientIdentifier: string;
+  openIdProviders: PublicOidcProvider[];
+}
+
+export interface NotificationAgentConfig {
+  enabled: boolean;
+  embedPoster: boolean;
+  types?: number;
+  options: Record<string, unknown>;
+}
+export interface NotificationAgentDiscord extends NotificationAgentConfig {
+  options: {
+    botUsername?: string;
+    botAvatarUrl?: string;
+    webhookUrl: string;
+    webhookRoleId?: string;
+    webhookThreadId?: string;
+    enableMentions: boolean;
+    locale: AvailableLocale;
+    useUserLocale: boolean;
+  };
+}
+
+export interface NotificationAgentSlack extends NotificationAgentConfig {
+  options: {
+    webhookUrl: string;
+    locale: AvailableLocale;
+  };
+}
+
+export interface NotificationAgentEmail extends NotificationAgentConfig {
+  options: {
+    userEmailRequired: boolean;
+    emailFrom: string;
+    smtpHost: string;
+    smtpPort: number;
+    secure: boolean;
+    ignoreTls: boolean;
+    requireTls: boolean;
+    authUser?: string;
+    authPass?: string;
+    allowSelfSigned: boolean;
+    senderName: string;
+    usePublicLogo: boolean;
+    pgpPrivateKey?: string;
+    pgpPassword?: string;
+  };
+}
+
+export interface NotificationAgentTelegram extends NotificationAgentConfig {
+  options: {
+    botUsername?: string;
+    botAPI: string;
+    chatId: string;
+    messageThreadId: string;
+    sendSilently: boolean;
+  };
+}
+
+export interface NotificationAgentPushbullet extends NotificationAgentConfig {
+  options: {
+    accessToken: string;
+    channelTag?: string;
+  };
+}
+
+export interface NotificationAgentPushover extends NotificationAgentConfig {
+  options: {
+    accessToken: string;
+    userToken: string;
+    sound: string;
+  };
+}
+
+export interface NotificationAgentWebhook extends NotificationAgentConfig {
+  options: {
+    webhookUrl: string;
+    jsonPayload: string;
+    authHeader?: string;
+    customHeaders?: { key: string; value: string }[];
+    supportVariables?: boolean;
+  };
+}
+
+export interface NotificationAgentGotify extends NotificationAgentConfig {
+  options: {
+    url: string;
+    token: string;
+    priority: number;
+    locale: AvailableLocale;
+  };
+}
+
+export interface NotificationAgentNtfy extends NotificationAgentConfig {
+  options: {
+    url: string;
+    topic: string;
+    tags?: string;
+    authMethodUsernamePassword?: boolean;
+    username?: string;
+    password?: string;
+    authMethodToken?: boolean;
+    token?: string;
+    priority?: number;
+    locale: AvailableLocale;
+  };
+}
+
+export enum NotificationAgentKey {
+  DISCORD = 'discord',
+  EMAIL = 'email',
+  GOTIFY = 'gotify',
+  NTFY = 'ntfy',
+  PUSHBULLET = 'pushbullet',
+  PUSHOVER = 'pushover',
+  SLACK = 'slack',
+  TELEGRAM = 'telegram',
+  WEBHOOK = 'webhook',
+  WEBPUSH = 'webpush',
+}
+
+interface NotificationAgents {
+  discord: NotificationAgentDiscord;
+  email: NotificationAgentEmail;
+  gotify: NotificationAgentGotify;
+  ntfy: NotificationAgentNtfy;
+  pushbullet: NotificationAgentPushbullet;
+  pushover: NotificationAgentPushover;
+  slack: NotificationAgentSlack;
+  telegram: NotificationAgentTelegram;
+  webhook: NotificationAgentWebhook;
+  webpush: NotificationAgentConfig;
+}
+
+interface NotificationSettings {
+  agents: NotificationAgents;
+}
+
+interface JobSettings {
+  schedule: string;
+  enabled?: boolean;
+}
+
+export type JobId =
+  | 'plex-recently-added-scan'
+  | 'plex-full-scan'
+  | 'plex-watchlist-sync'
+  | 'plex-refresh-token'
+  | 'radarr-scan'
+  | 'sonarr-scan'
+  | 'lidarr-scan'
+  | 'readarr-scan'
+  | 'readarr-request-retry'
+  | 'mylar-scan'
+  | 'kapowarr-scan'
+  | 'backissue-scan'
+  | 'magazine-scan'
+  | 'download-sync'
+  | 'software-request-reconciliation'
+  | 'download-recovery'
+  | 'download-sync-reset'
+  | 'jellyfin-recently-added-scan'
+  | 'jellyfin-full-scan'
+  | 'jellyfin-watch-ahead'
+  | 'image-cache-cleanup'
+  | 'release-calendar-history'
+  | 'availability-sync'
+  | 'process-blocklisted-tags';
+
+export interface DiscoveryIntegrationsSettings {
+  trakt: { clientId: string; clientSecret: string };
+  anilist: { clientId: string; clientSecret: string };
+  simkl: { clientId: string };
+  mdblist: { apiKey: string };
+}
+
+export const defaultDiscoveryIntegrations =
+  (): DiscoveryIntegrationsSettings => ({
+    trakt: { clientId: '', clientSecret: '' },
+    anilist: { clientId: '', clientSecret: '' },
+    simkl: { clientId: '' },
+    mdblist: { apiKey: '' },
+  });
+
+export interface AllSettings {
+  clientId: string;
+  sessionSecret?: string;
+  vapidPublic: string;
+  vapidPrivate: string;
+  main: MainSettings;
+  plex: PlexSettings;
+  jellyfin: JellyfinSettings;
+  oidc: OidcSettings;
+  tautulli: TautulliSettings;
+  radarr: RadarrSettings[];
+  sonarr: SonarrSettings[];
+  lidarr: LidarrSettings[];
+  readarr: ReadarrSettings[];
+  mylar: MylarSettings[];
+  kapowarr: KapowarrSettings[];
+  backissue: BackIssueSettings[];
+  lazylibrarian: LazyLibrarianSettings[];
+  softwareAcquisition: SoftwareAcquisitionSettings;
+  prowlarr: ProwlarrSettings;
+  discoveryIntegrations: DiscoveryIntegrationsSettings;
+  public: PublicSettings;
+  notifications: NotificationSettings;
+  jobs: Record<JobId, JobSettings>;
+  network: NetworkSettings;
+  metadataSettings: MetadataSettings;
+  migrations: string[];
+}
+
+const SETTINGS_PATH = process.env.CONFIG_DIRECTORY
+  ? `${process.env.CONFIG_DIRECTORY}/settings.json`
+  : path.join(__dirname, '../../../config/settings.json');
+
+class Settings {
+  private data: AllSettings;
+  private readonly defaultData: AllSettings;
+  private saveLock: Promise<void> = Promise.resolve();
+  private settingsSaveLock = new AsyncLock();
+  private persistenceOperations = 0;
+  private loadedFromDisk = false;
+  private persistedFileStamp?: string;
+
+  constructor(
+    initialSettings?: AllSettings,
+    private readonly settingsPath = SETTINGS_PATH,
+    private readonly coordinateFileWrites = process.env.NODE_ENV !== 'test'
+  ) {
+    this.data = {
+      clientId: randomUUID(),
+      sessionSecret: '',
+      vapidPrivate: '',
+      vapidPublic: '',
+      main: {
+        apiKey: '',
+        downloadPathMappings: [],
+        applicationTitle: 'Seerr',
+        applicationUrl: '',
+        cacheImages: true,
+        includeAdult: false,
+        defaultPermissions: Permission.REQUEST,
+        defaultQuotas: {
+          movie: {},
+          tv: {},
+          music: {},
+          book: {},
+          comic: {},
+          magazine: {},
+          software: {},
+        },
+        enabledMediaCategories: { ...DEFAULT_ENABLED_MEDIA_CATEGORIES },
+        hideAvailable: false,
+        hideBlocklisted: false,
+        hideRequested: false,
+        localLogin: true,
+        mediaServerLogin: true,
+        oidcLogin: false,
+        newPlexLogin: true,
+        discoverRegion: '',
+        streamingRegion: '',
+        originalLanguage: '',
+        blocklistRegion: '',
+        blocklistLanguage: '',
+        blocklistedTags: '',
+        blocklistedTagsLimit: 50,
+        mediaServerType: MediaServerType.NOT_CONFIGURED,
+        partialRequestsEnabled: true,
+        enableSpecialEpisodes: false,
+        locale: 'en',
+        youtubeUrl: '',
+        versionCheck: true,
+        spotifyClientId: '',
+        spotifyClientSecret: '',
+        youtubeApiKey: '',
+        comicVineApiKey: '',
+        googleBooksApiKey: '',
+      },
+      plex: {
+        name: '',
+        ip: '',
+        port: 32400,
+        useSsl: false,
+        libraries: [],
+      },
+      jellyfin: {
+        name: '',
+        ip: '',
+        port: 8096,
+        useSsl: false,
+        urlBase: '',
+        externalHostname: '',
+        jellyfinForgotPasswordUrl: '',
+        libraries: [],
+        serverId: '',
+        apiKey: '',
+        bridgeLoginEnabled: false,
+        bridgeLoginGeneration: 0,
+      },
+      oidc: {
+        providers: [],
+      },
+      tautulli: {},
+      metadataSettings: {
+        tv: MetadataProviderType.TMDB,
+        anime: MetadataProviderType.TMDB,
+      },
+      radarr: [],
+      sonarr: [],
+      lidarr: [],
+      readarr: [],
+      mylar: [],
+      kapowarr: [],
+      backissue: [],
+      lazylibrarian: [],
+      discoveryIntegrations: defaultDiscoveryIntegrations(),
+      softwareAcquisition: {
+        romarr: {
+          hostname: '',
+          port: 6868,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        questarr: {
+          hostname: '',
+          port: 3000,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        emulationCatalogProvider: 'questarr',
+        emulationSystemGroups: {},
+      },
+      prowlarr: {
+        hostname: '',
+        port: 9696,
+        useSsl: false,
+        baseUrl: '',
+        apiKey: '',
+        categoryMappings: defaultProwlarrCategoryMappings(),
+      },
+      public: {
+        initialized: false,
+      },
+      notifications: {
+        agents: {
+          email: {
+            enabled: false,
+            embedPoster: true,
+            options: {
+              userEmailRequired: false,
+              emailFrom: '',
+              smtpHost: '',
+              smtpPort: 587,
+              secure: false,
+              ignoreTls: false,
+              requireTls: false,
+              allowSelfSigned: false,
+              senderName: 'Seerr',
+              usePublicLogo: false,
+            },
+          },
+          discord: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              webhookRoleId: '',
+              enableMentions: true,
+              locale: 'en',
+              useUserLocale: true,
+            },
+          },
+          slack: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              locale: 'en',
+            },
+          },
+          telegram: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              botAPI: '',
+              chatId: '',
+              messageThreadId: '',
+              sendSilently: false,
+            },
+          },
+          pushbullet: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              accessToken: '',
+            },
+          },
+          pushover: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              accessToken: '',
+              userToken: '',
+              sound: '',
+            },
+          },
+          webhook: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              jsonPayload:
+                'IntcbiAgXCJub3RpZmljYXRpb25fdHlwZVwiOiBcInt7bm90aWZpY2F0aW9uX3R5cGV9fVwiLFxuICBcImV2ZW50XCI6IFwie3tldmVudH19XCIsXG4gIFwic3ViamVjdFwiOiBcInt7c3ViamVjdH19XCIsXG4gIFwibWVzc2FnZVwiOiBcInt7bWVzc2FnZX19XCIsXG4gIFwiaW1hZ2VcIjogXCJ7e2ltYWdlfX1cIixcbiAgXCJ7e21lZGlhfX1cIjoge1xuICAgIFwibWVkaWFfdHlwZVwiOiBcInt7bWVkaWFfdHlwZX19XCIsXG4gICAgXCJ0bWRiSWRcIjogXCJ7e21lZGlhX3RtZGJpZH19XCIsXG4gICAgXCJ0dmRiSWRcIjogXCJ7e21lZGlhX3R2ZGJpZH19XCIsXG4gICAgXCJzdGF0dXNcIjogXCJ7e21lZGlhX3N0YXR1c319XCIsXG4gICAgXCJzdGF0dXM0a1wiOiBcInt7bWVkaWFfc3RhdHVzNGt9fVwiXG4gIH0sXG4gIFwie3tyZXF1ZXN0fX1cIjoge1xuICAgIFwicmVxdWVzdF9pZFwiOiBcInt7cmVxdWVzdF9pZH19XCIsXG4gICAgXCJyZXF1ZXN0ZWRCeV9lbWFpbFwiOiBcInt7cmVxdWVzdGVkQnlfZW1haWx9fVwiLFxuICAgIFwicmVxdWVzdGVkQnlfdXNlcm5hbWVcIjogXCJ7e3JlcXVlc3RlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X2F2YXRhclwiOiBcInt7cmVxdWVzdGVkQnlfYXZhdGFyfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVxdWVzdGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tyZXF1ZXN0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2lzc3VlfX1cIjoge1xuICAgIFwiaXNzdWVfaWRcIjogXCJ7e2lzc3VlX2lkfX1cIixcbiAgICBcImlzc3VlX3R5cGVcIjogXCJ7e2lzc3VlX3R5cGV9fVwiLFxuICAgIFwiaXNzdWVfc3RhdHVzXCI6IFwie3tpc3N1ZV9zdGF0dXN9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9lbWFpbFwiOiBcInt7cmVwb3J0ZWRCeV9lbWFpbH19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3VzZXJuYW1lXCI6IFwie3tyZXBvcnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcG9ydGVkQnlfYXZhdGFyXCI6IFwie3tyZXBvcnRlZEJ5X2F2YXRhcn19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc19kaXNjb3JkSWR9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2NvbW1lbnR9fVwiOiB7XG4gICAgXCJjb21tZW50X21lc3NhZ2VcIjogXCJ7e2NvbW1lbnRfbWVzc2FnZX19XCIsXG4gICAgXCJjb21tZW50ZWRCeV9lbWFpbFwiOiBcInt7Y29tbWVudGVkQnlfZW1haWx9fVwiLFxuICAgIFwiY29tbWVudGVkQnlfdXNlcm5hbWVcIjogXCJ7e2NvbW1lbnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X2F2YXRhclwiOiBcInt7Y29tbWVudGVkQnlfYXZhdGFyfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7Y29tbWVudGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tjb21tZW50ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2V4dHJhfX1cIjogW11cbn0i',
+            },
+          },
+          webpush: {
+            enabled: false,
+            embedPoster: true,
+            options: {},
+          },
+          gotify: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              token: '',
+              priority: 0,
+              locale: 'en',
+            },
+          },
+          ntfy: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              url: '',
+              topic: '',
+              tags: '',
+              priority: 3,
+              locale: 'en',
+            },
+          },
+        },
+      },
+      jobs: {
+        'plex-recently-added-scan': {
+          schedule: '0 */5 * * * *',
+        },
+        'plex-full-scan': {
+          schedule: '0 0 3 * * *',
+        },
+        'plex-watchlist-sync': {
+          schedule: '0 */3 * * * *',
+        },
+        'plex-refresh-token': {
+          schedule: '0 0 5 * * *',
+        },
+        'radarr-scan': {
+          schedule: '0 0 4 * * *',
+        },
+        'sonarr-scan': {
+          schedule: '0 30 4 * * *',
+        },
+        'lidarr-scan': {
+          schedule: '0 30 4 * * *',
+        },
+        'readarr-scan': {
+          schedule: '0 45 4 * * *',
+        },
+        'readarr-request-retry': {
+          schedule: '0 */5 * * * *',
+        },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
+        },
+        'backissue-scan': {
+          schedule: '0 30 5 * * *',
+        },
+        'magazine-scan': {
+          schedule: '0 30 5 * * *',
+        },
+        'availability-sync': {
+          schedule: '0 0 5 * * *',
+        },
+        'download-sync': {
+          schedule: '0 * * * * *',
+        },
+        'software-request-reconciliation': {
+          schedule: '0 * * * * *',
+        },
+        'download-recovery': {
+          schedule: '0 */5 * * * *',
+          enabled: true,
+        },
+        'download-sync-reset': {
+          schedule: '0 0 1 * * *',
+        },
+        'jellyfin-recently-added-scan': {
+          schedule: '0 */5 * * * *',
+        },
+        'jellyfin-full-scan': {
+          schedule: '0 0 3 * * *',
+        },
+        'jellyfin-watch-ahead': {
+          schedule: '*/30 * * * * *',
+        },
+        'image-cache-cleanup': {
+          schedule: '0 0 5 * * *',
+        },
+        'release-calendar-history': {
+          schedule: '0 0 4 * * *',
+        },
+        'process-blocklisted-tags': {
+          schedule: '0 30 1 */7 * *',
+        },
+      },
+      network: {
+        csrfProtection: false,
+        forceIpv4First: false,
+        trustProxy: false,
+        tls: {
+          mode: 'disabled',
+          httpsPort: 5056,
+          hosts: 'localhost,127.0.0.1,::1',
+          certificateFile: '',
+          keyFile: '',
+          caFile: '',
+          redirectHttpToHttps: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
+        },
+        proxy: {
+          enabled: false,
+          hostname: '',
+          port: 8080,
+          useSsl: false,
+          user: '',
+          password: '',
+          bypassFilter: '',
+          bypassLocalAddresses: true,
+        },
+        dnsCache: {
+          enabled: false,
+          forceMinTtl: 0,
+          forceMaxTtl: -1,
+        },
+        apiRequestTimeout: 10000,
+      },
+      migrations: [],
+    };
+    // Persisted refreshes must be rebased on defaults rather than this
+    // process's prior in-memory state. Otherwise keys explicitly removed by
+    // another process are silently restored by lodash's deep merge.
+    this.defaultData = structuredClone(this.data);
+    if (initialSettings) {
+      this.data = mergeSettings(this.data, initialSettings);
+    }
+  }
+
+  private mergePersistedSettings(
+    persisted: DeepPartial<AllSettings>
+  ): AllSettings {
+    const merged = mergeSettings(structuredClone(this.defaultData), persisted);
+    if (process.env.API_KEY) merged.main.apiKey = process.env.API_KEY;
+    return merged;
+  }
+
+  private async withPersistenceLock<Result>(
+    callback: () => Promise<Result>
+  ): Promise<Result> {
+    if (!this.coordinateFileWrites) return callback();
+    this.persistenceOperations += 1;
+    try {
+      return await withSettingsFileLock(this.settingsPath, callback);
+    } finally {
+      this.persistenceOperations -= 1;
+    }
+  }
+
+  public refreshIfChangedSync(): void {
+    if (
+      !this.coordinateFileWrites ||
+      !this.loadedFromDisk ||
+      this.persistenceOperations > 0
+    ) {
+      return;
+    }
+
+    assertNoSymlinkDirectoryComponents(path.dirname(this.settingsPath), {
+      label: 'Settings directory',
+    });
+    let descriptor: number;
+    try {
+      descriptor = fs.openSync(
+        this.settingsPath,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    try {
+      const stat = fs.fstatSync(descriptor);
+      if (!stat.isFile() || stat.nlink !== 1) {
+        throw new Error('Settings path must be a regular file.');
+      }
+      assertSettingsFileSize(stat.size);
+      const pathStamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+      if (pathStamp === this.persistedFileStamp) return;
+      const persisted = JSON.parse(
+        fs.readFileSync(descriptor, { encoding: 'utf8' })
+      ) as DeepPartial<AllSettings>;
+      this.data = this.mergePersistedSettings(persisted);
+      this.persistedFileStamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  }
+
+  private async refreshFromPersistedSettings(): Promise<void> {
+    if (!this.coordinateFileWrites) return;
+    try {
+      const persisted = JSON.parse(
+        await readPrivateSettingsFile(this.settingsPath)
+      ) as DeepPartial<AllSettings>;
+      this.data = this.mergePersistedSettings(persisted);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+
+  private async persistCurrentSnapshot(): Promise<void> {
+    await this.writeSnapshot(JSON.stringify(this.data, undefined, ' '));
+  }
+
+  private async persistMutationSnapshot(): Promise<void> {
+    if (this.coordinateFileWrites) {
+      await this.persistCurrentSnapshot();
+    } else {
+      await this.save();
+    }
+  }
+
+  get main(): MainSettings {
+    return this.data.main;
+  }
+
+  set main(data: MainSettings) {
+    this.data.main = mergeSettings(this.data.main, data);
+  }
+
+  get plex(): PlexSettings {
+    return this.data.plex;
+  }
+
+  set plex(data: PlexSettings) {
+    this.data.plex = mergeSettings(this.data.plex, data);
+  }
+
+  get jellyfin(): JellyfinSettings {
+    return this.data.jellyfin;
+  }
+
+  set jellyfin(data: JellyfinSettings) {
+    this.data.jellyfin = mergeSettings(this.data.jellyfin, data);
+  }
+
+  get oidc(): OidcSettings {
+    return this.data.oidc;
+  }
+
+  set oidc(data: OidcSettings) {
+    this.data.oidc = data;
+  }
+
+  get tautulli(): TautulliSettings {
+    return this.data.tautulli;
+  }
+
+  set tautulli(data: TautulliSettings) {
+    this.data.tautulli = mergeSettings(this.data.tautulli, data);
+  }
+
+  get metadataSettings(): MetadataSettings {
+    return this.data.metadataSettings;
+  }
+
+  set metadataSettings(data: MetadataSettings) {
+    this.data.metadataSettings = mergeSettings(
+      this.data.metadataSettings,
+      data
+    );
+  }
+
+  public replaceSection<K extends keyof AllSettings>(
+    section: K,
+    value: AllSettings[K]
+  ): void {
+    this.data[section] = value;
+  }
+
+  public async persistSection<K extends keyof AllSettings>(
+    section: K,
+    update: AllSettings[K] | ((current: AllSettings[K]) => AllSettings[K])
+  ): Promise<AllSettings[K]> {
+    return this.settingsSaveLock.dispatch('settings', async () => {
+      return this.withPersistenceLock(async () => {
+        await this.refreshFromPersistedSettings();
+        const previous = this.data[section];
+        const candidate =
+          typeof update === 'function'
+            ? (update as (current: AllSettings[K]) => AllSettings[K])(previous)
+            : update;
+        this.data[section] = candidate;
+
+        try {
+          await this.persistMutationSnapshot();
+          return candidate;
+        } catch (error) {
+          if (this.data[section] === candidate) {
+            this.data[section] = previous;
+          }
+          throw error;
+        }
+      });
+    });
+  }
+
+  public async persistChanges(
+    update: (current: AllSettings) => Partial<AllSettings>
+  ): Promise<AllSettings> {
+    return this.settingsSaveLock.dispatch('settings', async () => {
+      return this.withPersistenceLock(async () => {
+        await this.refreshFromPersistedSettings();
+        const previous = this.data;
+        const candidate = { ...previous, ...update(previous) };
+        this.data = candidate;
+
+        try {
+          await this.persistMutationSnapshot();
+          return candidate;
+        } catch (error) {
+          if (this.data === candidate) {
+            this.data = previous;
+          }
+          throw error;
+        }
+      });
+    });
+  }
+
+  get radarr(): RadarrSettings[] {
+    return this.data.radarr;
+  }
+
+  set radarr(data: RadarrSettings[]) {
+    this.data.radarr = data;
+  }
+
+  get lidarr(): LidarrSettings[] {
+    return this.data.lidarr;
+  }
+
+  set lidarr(data: LidarrSettings[]) {
+    this.data.lidarr = data;
+  }
+
+  get readarr(): ReadarrSettings[] {
+    return this.data.readarr;
+  }
+
+  set readarr(data: ReadarrSettings[]) {
+    this.data.readarr = data;
+  }
+
+  get sonarr(): SonarrSettings[] {
+    return this.data.sonarr;
+  }
+
+  set sonarr(data: SonarrSettings[]) {
+    this.data.sonarr = data;
+  }
+
+  get mylar(): MylarSettings[] {
+    return this.data.mylar;
+  }
+
+  set mylar(data: MylarSettings[]) {
+    this.data.mylar = data;
+  }
+
+  get kapowarr(): KapowarrSettings[] {
+    return this.data.kapowarr;
+  }
+
+  set kapowarr(data: KapowarrSettings[]) {
+    this.data.kapowarr = data;
+  }
+
+  get backissue(): BackIssueSettings[] {
+    return this.data.backissue;
+  }
+
+  set backissue(data: BackIssueSettings[]) {
+    this.data.backissue = data;
+  }
+
+  get lazylibrarian(): LazyLibrarianSettings[] {
+    return this.data.lazylibrarian;
+  }
+
+  set lazylibrarian(data: LazyLibrarianSettings[]) {
+    this.data.lazylibrarian = data;
+  }
+
+  get discoveryIntegrations(): DiscoveryIntegrationsSettings {
+    return this.data.discoveryIntegrations ?? defaultDiscoveryIntegrations();
+  }
+
+  get softwareAcquisition(): SoftwareAcquisitionSettings {
+    return this.data.softwareAcquisition;
+  }
+
+  set softwareAcquisition(data: SoftwareAcquisitionSettings) {
+    this.data.softwareAcquisition = mergeSettings(
+      this.data.softwareAcquisition,
+      data
+    );
+  }
+
+  get prowlarr(): ProwlarrSettings {
+    return this.data.prowlarr;
+  }
+
+  set prowlarr(data: ProwlarrSettings) {
+    this.data.prowlarr = mergeSettings(this.data.prowlarr, data);
+  }
+
+  get public(): PublicSettings {
+    return this.data.public;
+  }
+
+  set public(data: PublicSettings) {
+    this.data.public = mergeSettings(this.data.public, data);
+  }
+
+  get fullPublicSettings(): FullPublicSettings {
+    return {
+      ...this.data.public,
+      applicationTitle: this.data.main.applicationTitle,
+      applicationUrl: this.data.main.applicationUrl,
+      hideAvailable: this.data.main.hideAvailable,
+      hideBlocklisted: this.data.main.hideBlocklisted,
+      hideRequested: this.data.main.hideRequested,
+      localLogin: this.data.main.localLogin,
+      mediaServerLogin: this.data.main.mediaServerLogin,
+      jellyfinExternalHost: this.data.jellyfin.externalHostname,
+      jellyfinForgotPasswordUrl: this.data.jellyfin.jellyfinForgotPasswordUrl,
+      movie4kEnabled: this.data.radarr.some(
+        (radarr) => radarr.is4k && radarr.isDefault
+      ),
+      series4kEnabled: this.data.sonarr.some(
+        (sonarr) => sonarr.is4k && sonarr.isDefault
+      ),
+      musicEnabled: this.data.lidarr.length > 0,
+      booksEnabled: this.data.readarr.length > 0,
+      ebookServiceEnabled: this.data.readarr.some(
+        (service) => (service.serviceType ?? 'ebook') === 'ebook'
+      ),
+      audiobookServiceEnabled: this.data.readarr.some(
+        (service) => service.serviceType === 'audiobook'
+      ),
+      comicsEnabled:
+        this.data.mylar.length > 0 ||
+        this.data.kapowarr.length > 0 ||
+        this.data.backissue.length > 0,
+      magazinesEnabled: this.data.lazylibrarian.length > 0,
+      softwareEnabled: Boolean(
+        this.data.softwareAcquisition.questarr.hostname &&
+        this.data.softwareAcquisition.questarr.apiKey
+      ),
+      romarrEnabled: Boolean(
+        this.data.softwareAcquisition.romarr.hostname &&
+        this.data.softwareAcquisition.romarr.apiKey
+      ),
+      enabledMediaCategories: {
+        ...DEFAULT_ENABLED_MEDIA_CATEGORIES,
+        ...this.data.main.enabledMediaCategories,
+      },
+      discoverRegion: this.data.main.discoverRegion,
+      streamingRegion: this.data.main.streamingRegion,
+      originalLanguage: this.data.main.originalLanguage,
+      mediaServerType: this.main.mediaServerType,
+      partialRequestsEnabled: this.data.main.partialRequestsEnabled,
+      enableSpecialEpisodes: this.data.main.enableSpecialEpisodes,
+      cacheImages: this.data.main.cacheImages,
+      vapidPublic: this.vapidPublic,
+      enablePushRegistration: this.data.notifications.agents.webpush.enabled,
+      locale: this.data.main.locale,
+      emailEnabled: this.data.notifications.agents.email.enabled,
+      userEmailRequired:
+        this.data.notifications.agents.email.options.userEmailRequired,
+      newPlexLogin: this.data.main.newPlexLogin,
+      youtubeUrl: this.data.main.youtubeUrl,
+      versionCheck: this.data.main.versionCheck,
+      plexClientIdentifier: this.data.clientId,
+      openIdProviders: this.data.main.oidcLogin
+        ? this.data.oidc.providers.map((p) => ({
+            slug: p.slug,
+            name: p.name,
+            logo: p.logo,
+          }))
+        : [],
+    };
+  }
+
+  get notifications(): NotificationSettings {
+    return this.data.notifications;
+  }
+
+  set notifications(data: NotificationSettings) {
+    this.data.notifications = mergeSettings(this.data.notifications, data);
+  }
+
+  get jobs(): Record<JobId, JobSettings> {
+    return this.data.jobs;
+  }
+
+  set jobs(data: Record<JobId, JobSettings>) {
+    this.data.jobs = mergeSettings(this.data.jobs, data);
+  }
+
+  get network(): NetworkSettings {
+    return this.data.network;
+  }
+
+  set network(data: NetworkSettings) {
+    this.data.network = mergeSettings(this.data.network, data);
+  }
+
+  get migrations(): string[] {
+    return this.data.migrations;
+  }
+
+  set migrations(data: string[]) {
+    this.data.migrations = data;
+  }
+
+  get clientId(): string {
+    return this.data.clientId;
+  }
+
+  get sessionSecret(): string {
+    return this.data.sessionSecret!;
+  }
+
+  get vapidPublic(): string {
+    return this.data.vapidPublic;
+  }
+
+  get vapidPrivate(): string {
+    return this.data.vapidPrivate;
+  }
+
+  public async regenerateApiKey(): Promise<MainSettings> {
+    return this.persistSection('main', (current) => ({
+      ...current,
+      apiKey: this.generateApiKey(),
+    }));
+  }
+
+  private generateApiKey(): string {
+    if (process.env.API_KEY) {
+      return process.env.API_KEY;
+    } else {
+      return Buffer.from(`${Date.now()}${randomUUID()}`).toString('base64');
+    }
+  }
+
+  /**
+   * Settings Load
+   *
+   * This will load settings from file unless an optional argument of the object structure
+   * is passed in.
+   * @param overrideSettings If passed in, will override all existing settings with these
+   * @param raw If true, will load the settings without running migrations or generating missing
+   * values
+   */
+  public async load(
+    overrideSettings?: DeepPartial<AllSettings>,
+    raw?: false
+  ): Promise<Settings>;
+  public async load(
+    overrideSettings: AllSettings | undefined,
+    raw: true
+  ): Promise<Settings>;
+  public async load(
+    overrideSettings?: DeepPartial<AllSettings>,
+    raw = false
+  ): Promise<Settings> {
+    if (overrideSettings) {
+      if (raw) {
+        this.data = overrideSettings as AllSettings;
+      } else {
+        this.data = mergeSettings(this.data, overrideSettings);
+      }
+      return this;
+    }
+
+    return this.settingsSaveLock.dispatch('settings', () =>
+      this.withPersistenceLock(async () => {
+        let data;
+        try {
+          data = await readPrivateSettingsFile(this.settingsPath);
+        } catch (e) {
+          if (e.code === 'ENOENT') {
+            await this.persistCurrentSnapshot();
+          } else {
+            throw e;
+          }
+        }
+
+        let change = false;
+        if (data && !raw) {
+          const parsedJson = JSON.parse(data);
+          const migratedData = await runMigrations(
+            parsedJson,
+            this.settingsPath
+          );
+          const merged = mergeSettings(this.data, migratedData);
+
+          if (JSON.stringify(merged) !== JSON.stringify(migratedData)) {
+            change = true;
+          }
+
+          this.data = merged;
+        } else if (data) {
+          this.data = JSON.parse(data);
+        }
+
+        // generate keys and ids if it's missing
+        if (!this.data.main.apiKey) {
+          this.data.main.apiKey = this.generateApiKey();
+          change = true;
+        } else if (process.env.API_KEY) {
+          if (this.main.apiKey != process.env.API_KEY) {
+            this.main.apiKey = process.env.API_KEY;
+          }
+        }
+        if (!this.data.clientId) {
+          this.data.clientId = randomUUID();
+          change = true;
+        }
+        if (!this.data.sessionSecret) {
+          this.data.sessionSecret = randomBytes(32).toString('hex');
+          change = true;
+        }
+        if (!this.data.vapidPublic || !this.data.vapidPrivate) {
+          const vapidKeys = webpush.generateVAPIDKeys();
+          this.data.vapidPrivate = vapidKeys.privateKey;
+          this.data.vapidPublic = vapidKeys.publicKey;
+          change = true;
+        }
+        if (change) {
+          await this.persistCurrentSnapshot();
+        }
+
+        this.loadedFromDisk = true;
+        this.persistedFileStamp = undefined;
+        return this;
+      })
+    );
+  }
+
+  public async save(): Promise<void> {
+    // Capture the caller's completed mutation now. Serializing inside the
+    // queued callback lets a later request's in-memory changes leak into this
+    // save before its disk turn begins.
+    const snapshot = JSON.stringify(this.data, undefined, ' ');
+    const savePromise = this.saveLock.then(async () => {
+      await this.withPersistenceLock(() => this.writeSnapshot(snapshot));
+    });
+
+    this.saveLock = savePromise.catch(() => {
+      // Keep the chain alive so future saves aren't blocked by past failures
+    });
+
+    return savePromise;
+  }
+
+  protected async writeSnapshot(snapshot: string): Promise<void> {
+    await writePrivateSettingsFile(this.settingsPath, snapshot);
+  }
+
+  public reset() {
+    this.data = {
+      clientId: randomUUID(),
+      sessionSecret: '',
+      vapidPrivate: '',
+      vapidPublic: '',
+      main: {
+        apiKey: '',
+        downloadPathMappings: [],
+        applicationTitle: 'Seerr',
+        applicationUrl: '',
+        cacheImages: false,
+        includeAdult: false,
+        defaultPermissions: Permission.REQUEST,
+        defaultQuotas: {
+          movie: {},
+          tv: {},
+          music: {},
+          book: {},
+          comic: {},
+          magazine: {},
+          software: {},
+        },
+        enabledMediaCategories: { ...DEFAULT_ENABLED_MEDIA_CATEGORIES },
+        hideAvailable: false,
+        hideBlocklisted: false,
+        hideRequested: false,
+        localLogin: true,
+        mediaServerLogin: true,
+        oidcLogin: false,
+        newPlexLogin: true,
+        discoverRegion: '',
+        streamingRegion: '',
+        originalLanguage: '',
+        blocklistRegion: '',
+        blocklistLanguage: '',
+        blocklistedTags: '',
+        blocklistedTagsLimit: 50,
+        mediaServerType: MediaServerType.NOT_CONFIGURED,
+        partialRequestsEnabled: true,
+        enableSpecialEpisodes: false,
+        locale: 'en',
+        youtubeUrl: '',
+        versionCheck: true,
+      },
+      plex: {
+        name: '',
+        ip: '',
+        port: 32400,
+        useSsl: false,
+        libraries: [],
+      },
+      jellyfin: {
+        name: '',
+        ip: '',
+        port: 8096,
+        useSsl: false,
+        urlBase: '',
+        externalHostname: '',
+        jellyfinForgotPasswordUrl: '',
+        libraries: [],
+        serverId: '',
+        apiKey: '',
+        bridgeLoginEnabled: false,
+        bridgeLoginGeneration: 0,
+      },
+      oidc: {
+        providers: [],
+      },
+      tautulli: {},
+      metadataSettings: {
+        tv: MetadataProviderType.TMDB,
+        anime: MetadataProviderType.TMDB,
+      },
+      radarr: [],
+      sonarr: [],
+      lidarr: [],
+      readarr: [],
+      mylar: [],
+      kapowarr: [],
+      backissue: [],
+      lazylibrarian: [],
+      discoveryIntegrations: defaultDiscoveryIntegrations(),
+      softwareAcquisition: {
+        romarr: {
+          hostname: '',
+          port: 6868,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        questarr: {
+          hostname: '',
+          port: 3000,
+          useSsl: false,
+          baseUrl: '',
+          apiKey: '',
+        },
+        emulationCatalogProvider: 'questarr',
+        emulationSystemGroups: {},
+      },
+      prowlarr: {
+        hostname: '',
+        port: 9696,
+        useSsl: false,
+        baseUrl: '',
+        apiKey: '',
+        categoryMappings: defaultProwlarrCategoryMappings(),
+      },
+      public: {
+        initialized: false,
+      },
+      notifications: {
+        agents: {
+          email: {
+            enabled: false,
+            embedPoster: true,
+            options: {
+              userEmailRequired: false,
+              emailFrom: '',
+              smtpHost: '',
+              smtpPort: 587,
+              secure: false,
+              ignoreTls: false,
+              requireTls: false,
+              allowSelfSigned: false,
+              senderName: 'Seerr',
+              usePublicLogo: false,
+            },
+          },
+          discord: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              webhookRoleId: '',
+              enableMentions: true,
+              locale: 'en',
+              useUserLocale: true,
+            },
+          },
+          slack: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              locale: 'en',
+            },
+          },
+          telegram: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              botAPI: '',
+              chatId: '',
+              messageThreadId: '',
+              sendSilently: false,
+            },
+          },
+          pushbullet: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              accessToken: '',
+            },
+          },
+          pushover: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              accessToken: '',
+              userToken: '',
+              sound: '',
+            },
+          },
+          webhook: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              webhookUrl: '',
+              jsonPayload:
+                'IntcbiAgXCJub3RpZmljYXRpb25fdHlwZVwiOiBcInt7bm90aWZpY2F0aW9uX3R5cGV9fVwiLFxuICBcImV2ZW50XCI6IFwie3tldmVudH19XCIsXG4gIFwic3ViamVjdFwiOiBcInt7c3ViamVjdH19XCIsXG4gIFwibWVzc2FnZVwiOiBcInt7bWVzc2FnZX19XCIsXG4gIFwiaW1hZ2VcIjogXCJ7e2ltYWdlfX1cIixcbiAgXCJ7e21lZGlhfX1cIjoge1xuICAgIFwibWVkaWFfdHlwZVwiOiBcInt7bWVkaWFfdHlwZX19XCIsXG4gICAgXCJ0bWRiSWRcIjogXCJ7e21lZGlhX3RtZGJpZH19XCIsXG4gICAgXCJ0dmRiSWRcIjogXCJ7e21lZGlhX3R2ZGJpZH19XCIsXG4gICAgXCJzdGF0dXNcIjogXCJ7e21lZGlhX3N0YXR1c319XCIsXG4gICAgXCJzdGF0dXM0a1wiOiBcInt7bWVkaWFfc3RhdHVzNGt9fVwiXG4gIH0sXG4gIFwie3tyZXF1ZXN0fX1cIjoge1xuICAgIFwicmVxdWVzdF9pZFwiOiBcInt7cmVxdWVzdF9pZH19XCIsXG4gICAgXCJyZXF1ZXN0ZWRCeV9lbWFpbFwiOiBcInt7cmVxdWVzdGVkQnlfZW1haWx9fVwiLFxuICAgIFwicmVxdWVzdGVkQnlfdXNlcm5hbWVcIjogXCJ7e3JlcXVlc3RlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X2F2YXRhclwiOiBcInt7cmVxdWVzdGVkQnlfYXZhdGFyfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVxdWVzdGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tyZXF1ZXN0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2lzc3VlfX1cIjoge1xuICAgIFwiaXNzdWVfaWRcIjogXCJ7e2lzc3VlX2lkfX1cIixcbiAgICBcImlzc3VlX3R5cGVcIjogXCJ7e2lzc3VlX3R5cGV9fVwiLFxuICAgIFwiaXNzdWVfc3RhdHVzXCI6IFwie3tpc3N1ZV9zdGF0dXN9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9lbWFpbFwiOiBcInt7cmVwb3J0ZWRCeV9lbWFpbH19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3VzZXJuYW1lXCI6IFwie3tyZXBvcnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcG9ydGVkQnlfYXZhdGFyXCI6IFwie3tyZXBvcnRlZEJ5X2F2YXRhcn19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc19kaXNjb3JkSWR9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2NvbW1lbnR9fVwiOiB7XG4gICAgXCJjb21tZW50X21lc3NhZ2VcIjogXCJ7e2NvbW1lbnRfbWVzc2FnZX19XCIsXG4gICAgXCJjb21tZW50ZWRCeV9lbWFpbFwiOiBcInt7Y29tbWVudGVkQnlfZW1haWx9fVwiLFxuICAgIFwiY29tbWVudGVkQnlfdXNlcm5hbWVcIjogXCJ7e2NvbW1lbnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X2F2YXRhclwiOiBcInt7Y29tbWVudGVkQnlfYXZhdGFyfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7Y29tbWVudGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tjb21tZW50ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2V4dHJhfX1cIjogW11cbn0i',
+            },
+          },
+          webpush: {
+            enabled: false,
+            embedPoster: true,
+            options: {},
+          },
+          gotify: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              token: '',
+              priority: 0,
+              locale: 'en',
+            },
+          },
+          ntfy: {
+            enabled: false,
+            embedPoster: true,
+            types: 0,
+            options: {
+              url: '',
+              topic: '',
+              priority: 3,
+              locale: 'en',
+            },
+          },
+        },
+      },
+      jobs: {
+        'plex-recently-added-scan': {
+          schedule: '0 */5 * * * *',
+        },
+        'plex-full-scan': {
+          schedule: '0 0 3 * * *',
+        },
+        'plex-watchlist-sync': {
+          schedule: '0 */3 * * * *',
+        },
+        'plex-refresh-token': {
+          schedule: '0 0 5 * * *',
+        },
+        'radarr-scan': {
+          schedule: '0 0 4 * * *',
+        },
+        'sonarr-scan': {
+          schedule: '0 30 4 * * *',
+        },
+        'lidarr-scan': {
+          schedule: '0 30 4 * * *',
+        },
+        'readarr-scan': {
+          schedule: '0 45 4 * * *',
+        },
+        'readarr-request-retry': {
+          schedule: '0 */5 * * * *',
+        },
+        'mylar-scan': {
+          schedule: '0 0 5 * * *',
+        },
+        'kapowarr-scan': {
+          schedule: '0 15 5 * * *',
+        },
+        'backissue-scan': {
+          schedule: '0 30 5 * * *',
+        },
+        'magazine-scan': {
+          schedule: '0 30 5 * * *',
+        },
+        'availability-sync': {
+          schedule: '0 0 5 * * *',
+        },
+        'download-sync': {
+          schedule: '0 * * * * *',
+        },
+        'software-request-reconciliation': {
+          schedule: '0 * * * * *',
+        },
+        'download-recovery': {
+          schedule: '0 */5 * * * *',
+          enabled: true,
+        },
+        'download-sync-reset': {
+          schedule: '0 0 1 * * *',
+        },
+        'jellyfin-recently-added-scan': {
+          schedule: '0 */5 * * * *',
+        },
+        'jellyfin-full-scan': {
+          schedule: '0 0 3 * * *',
+        },
+        'jellyfin-watch-ahead': {
+          schedule: '*/30 * * * * *',
+        },
+        'image-cache-cleanup': {
+          schedule: '0 0 5 * * *',
+        },
+        'release-calendar-history': {
+          schedule: '0 0 4 * * *',
+        },
+        'process-blocklisted-tags': {
+          schedule: '0 30 1 */7 * *',
+        },
+      },
+      network: {
+        csrfProtection: false,
+        forceIpv4First: false,
+        trustProxy: false,
+        tls: {
+          mode: 'disabled',
+          httpsPort: 5056,
+          hosts: 'localhost,127.0.0.1,::1',
+          certificateFile: '',
+          keyFile: '',
+          caFile: '',
+          redirectHttpToHttps: false,
+          allowHttpAuth: true,
+          httpAuthAcknowledged: true,
+        },
+        proxy: {
+          enabled: false,
+          hostname: '',
+          port: 8080,
+          useSsl: false,
+          user: '',
+          password: '',
+          bypassFilter: '',
+          bypassLocalAddresses: true,
+        },
+        dnsCache: {
+          enabled: false,
+          forceMinTtl: 0,
+          forceMaxTtl: -1,
+        },
+        apiRequestTimeout: 10000,
+      },
+      migrations: [],
+    };
+  }
+}
+
+let settings: Settings | undefined;
+
+export const getSettings = (initialSettings?: AllSettings): Settings => {
+  if (!settings) {
+    settings = new Settings(initialSettings);
+  }
+
+  settings.refreshIfChangedSync();
+
+  return settings;
+};
+
+export default Settings;

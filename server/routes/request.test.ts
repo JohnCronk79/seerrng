@@ -1,0 +1,8134 @@
+import assert from 'node:assert/strict';
+import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
+
+import ListenBrainzAPI from '@server/api/listenbrainz';
+import MusicBrainz from '@server/api/musicbrainz';
+import OpenLibraryAPI from '@server/api/openlibrary';
+import RadarrAPI from '@server/api/servarr/radarr';
+import ReadarrAPI from '@server/api/servarr/readarr';
+import SonarrAPI from '@server/api/servarr/sonarr';
+import TheMovieDb from '@server/api/themoviedb';
+import type {
+  TmdbMovieDetails,
+  TmdbTvDetails,
+} from '@server/api/themoviedb/interfaces';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
+import { MediaServerType } from '@server/constants/server';
+import { UserType } from '@server/constants/user';
+import dataSource, { getRepository } from '@server/datasource';
+import { Blocklist } from '@server/entity/Blocklist';
+import Media from '@server/entity/Media';
+import MediaIdentifier, {
+  MediaIdentifierProvider,
+} from '@server/entity/MediaIdentifier';
+import {
+  MAX_BOOK_REQUEST_IDENTIFIER_CANDIDATES,
+  MediaRequest,
+} from '@server/entity/MediaRequest';
+import MediaRequestStatusEvent from '@server/entity/MediaRequestStatusEvent';
+import OverrideRule from '@server/entity/OverrideRule';
+import Season from '@server/entity/Season';
+import SeasonRequest from '@server/entity/SeasonRequest';
+import { User } from '@server/entity/User';
+import { aliasDownloadId } from '@server/lib/mediaResponse';
+import { Permission } from '@server/lib/permissions';
+import requestAdmissionCoordinator from '@server/lib/requestAdmission';
+import requestDispatchManager from '@server/lib/requestDispatch';
+import {
+  RequestStatusStage,
+  recordRequestStatusOverride,
+} from '@server/lib/requestStatus';
+import requestWorkCleanupManager, {
+  RequestWorkCleanupError,
+} from '@server/lib/requestWorkCleanup';
+import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
+import { getSettings } from '@server/lib/settings';
+import { runUserSecurityMutation } from '@server/lib/userSecurityMutation';
+import { checkUser } from '@server/middleware/auth';
+import { setupTestDb } from '@server/test/db';
+import type { Express } from 'express';
+import express from 'express';
+import rateLimit from 'express-rate-limit';
+import session from 'express-session';
+import request from 'supertest';
+import type { EntitySubscriberInterface, InsertEvent } from 'typeorm';
+import { In } from 'typeorm';
+import authRoutes from './auth';
+import requestRoutes, { REQUEST_SERVICE_PROFILE_CONCURRENCY } from './request';
+
+const getMovieImpl: (args: {
+  movieId: number;
+  language?: string;
+}) => Promise<TmdbMovieDetails> = async ({ movieId }) => fakeTmdbMovie(movieId);
+
+const getTvShowImpl: (args: {
+  tvId: number;
+  language?: string;
+}) => Promise<TmdbTvDetails> = async ({ tvId }) => fakeTmdbShow(tvId);
+
+function installDefaultTmdbTestDoubles(): void {
+  Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+    get() {
+      return async (args: { movieId: number; language?: string }) =>
+        getMovieImpl(args);
+    },
+    set() {},
+    configurable: true,
+  });
+
+  Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+    get() {
+      return async (args: { tvId: number; language?: string }) =>
+        getTvShowImpl(args);
+    },
+    set() {},
+    configurable: true,
+  });
+}
+
+installDefaultTmdbTestDoubles();
+
+function fakeTmdbMovie(tmdbId: number): TmdbMovieDetails {
+  return {
+    id: tmdbId,
+    genres: [],
+    original_language: 'en',
+    keywords: { keywords: [] },
+    external_ids: {},
+  } as unknown as TmdbMovieDetails;
+}
+
+function fakeTmdbShow(tmdbId: number): TmdbTvDetails {
+  return {
+    id: tmdbId,
+    genres: [],
+    original_language: 'en',
+    keywords: { results: [] },
+    external_ids: {},
+  } as unknown as TmdbTvDetails;
+}
+
+function configureRadarr(overrides: Partial<RadarrSettings>[]): void {
+  const settings = getSettings();
+  settings.radarr = overrides.map((o, i) => ({
+    id: i,
+    name: `Radarr ${i}`,
+    hostname: 'localhost',
+    port: 7878,
+    apiKey: 'test-key',
+    baseUrl: '',
+    useSsl: false,
+    activeProfileId: 1,
+    activeDirectory: '/movies',
+    is4k: false,
+    minimumAvailability: 'released',
+    tags: [],
+    isDefault: i === 0,
+    syncEnabled: true,
+    preventSearch: false,
+    externalUrl: '',
+    ...o,
+  })) as RadarrSettings[];
+}
+
+function configureSonarr(overrides: Partial<SonarrSettings>[]): void {
+  const settings = getSettings();
+  settings.sonarr = overrides.map((o, i) => ({
+    id: i,
+    name: `Sonarr ${i}`,
+    hostname: 'localhost',
+    port: 8989,
+    apiKey: 'test-key',
+    baseUrl: '',
+    useSsl: false,
+    activeProfileId: 1,
+    activeDirectory: '/tv',
+    activeLanguageProfileId: 1,
+    animeTags: [],
+    is4k: false,
+    enableSeasonFolders: true,
+    tags: [],
+    isDefault: i === 0,
+    syncEnabled: true,
+    preventSearch: false,
+    externalUrl: '',
+    ...o,
+  })) as SonarrSettings[];
+}
+
+let app: Express;
+let cleanupShouldFail = false;
+
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use(
+    session({
+      secret: 'test-secret',
+      cookie: { secure: 'auto' },
+      resave: false,
+      saveUninitialized: false,
+    })
+  );
+  app.use(rateLimit({ windowMs: 60_000, limit: 10_000 }), checkUser);
+  app.use('/auth', authRoutes);
+  app.use('/request', requestRoutes);
+  app.use(
+    (
+      err: { status?: number; message?: string },
+      _req: express.Request,
+      res: express.Response,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      _next: express.NextFunction
+    ) => {
+      res
+        .status(err.status ?? 500)
+        .json({ status: err.status ?? 500, message: err.message });
+    }
+  );
+  return app;
+}
+
+before(async () => {
+  app = createApp();
+});
+
+beforeEach(() => {
+  // Several request cases replace these descriptors and delete them in t.after.
+  // Reinstall the suite defaults so later cases never reach the real TMDB client.
+  installDefaultTmdbTestDoubles();
+  cleanupShouldFail = false;
+  const settings = getSettings();
+  settings.radarr = [];
+  settings.sonarr = [];
+  settings.lidarr = [];
+  settings.readarr = [];
+  mock.method(MediaRequest, 'sendNotification', async () => undefined);
+  mock.method(requestDispatchManager, 'enqueue', async () => undefined);
+  mock.method(requestWorkCleanupManager, 'cleanup', async () => {
+    if (cleanupShouldFail) {
+      throw new RequestWorkCleanupError('Cleanup was not confirmed.');
+    }
+  });
+});
+
+afterEach(() => {
+  mock.restoreAll();
+});
+
+setupTestDb();
+
+async function loginAs(email: string, password: string) {
+  const settings = getSettings();
+  const priorLocalLogin = settings.main.localLogin;
+  settings.main.localLogin = true;
+
+  try {
+    const agent = request.agent(app);
+    const res = await agent.post('/auth/local').send({ email, password });
+    assert.strictEqual(res.status, 200);
+    return agent;
+  } finally {
+    settings.main.localLogin = priorLocalLogin;
+  }
+}
+
+async function loginCookieAs(email: string, password: string) {
+  const settings = getSettings();
+  const priorLocalLogin = settings.main.localLogin;
+  settings.main.localLogin = true;
+
+  try {
+    const res = await request(app)
+      .post('/auth/local')
+      .send({ email, password });
+    assert.strictEqual(res.status, 200);
+    const cookies = res.headers['set-cookie'];
+    const cookie = Array.isArray(cookies) ? cookies.join('; ') : cookies;
+    assert.ok(cookie);
+    return cookie;
+  } finally {
+    settings.main.localLogin = priorLocalLogin;
+  }
+}
+
+async function seedRequest(
+  status = MediaRequestStatus.PENDING,
+  createdAt?: Date,
+  tmdbId = 12345,
+  requesterEmail = 'friend@seerr.dev'
+) {
+  const userRepo = getRepository(User);
+  const mediaRepo = getRepository(Media);
+  const requestRepo = getRepository(MediaRequest);
+
+  const requestedBy = await userRepo.findOneOrFail({
+    where: { email: requesterEmail },
+  });
+
+  const media = await mediaRepo.save(
+    new Media({
+      mediaType: MediaType.MOVIE,
+      tmdbId,
+      status: MediaStatus.UNKNOWN,
+      status4k: MediaStatus.UNKNOWN,
+    })
+  );
+
+  const request = new MediaRequest({
+    type: MediaType.MOVIE,
+    status,
+    media,
+    requestedBy,
+    is4k: false,
+    updatedAt: new Date('2025-03-01T00:00:00.000Z'),
+  });
+  if (createdAt) {
+    request.createdAt = createdAt;
+  }
+
+  const created = await requestRepo.save(request);
+
+  return requestRepo.findOneOrFail({
+    where: { id: created.id },
+    relations: { requestedBy: true, modifiedBy: true },
+  });
+}
+
+function createReadarrSettings(
+  id: number,
+  serviceType: 'ebook' | 'audiobook',
+  isDefault = true
+) {
+  return {
+    id,
+    name: `${serviceType} Bookshelf`,
+    hostname: `${serviceType}.local`,
+    port: 8787,
+    apiKey: `${serviceType}-key`,
+    useSsl: false,
+    activeProfileId: 22,
+    activeProfileName: serviceType,
+    activeMetadataProfileId: 33,
+    activeMetadataProfileName: serviceType,
+    activeDirectory: '/books',
+    tags: [],
+    is4k: false,
+    isDefault,
+    syncEnabled: true,
+    preventSearch: false,
+    tagRequests: false,
+    overrideRule: [],
+    serviceType,
+  };
+}
+
+function createLidarrSettings(id: number, isDefault = true) {
+  return {
+    id,
+    name: 'Lidarr',
+    hostname: 'lidarr.local',
+    port: 8686,
+    apiKey: 'lidarr-key',
+    useSsl: false,
+    activeProfileId: 20,
+    activeProfileName: 'Music',
+    activeMetadataProfileId: 30,
+    activeMetadataProfileName: 'Standard',
+    activeDirectory: '/music',
+    tags: [],
+    is4k: false,
+    isDefault,
+    syncEnabled: true,
+    preventSearch: false,
+    tagRequests: false,
+    overrideRule: [],
+  };
+}
+
+function createRadarrSettings(id: number, isDefault = true) {
+  return {
+    id,
+    name: 'Radarr',
+    hostname: 'radarr.local',
+    port: 7878,
+    apiKey: 'radarr-key',
+    useSsl: false,
+    activeProfileId: 0,
+    activeProfileName: 'Zero',
+    activeDirectory: '/selected-movies',
+    minimumAvailability: 'released' as const,
+    tags: [7],
+    is4k: false,
+    isDefault,
+    syncEnabled: true,
+    preventSearch: false,
+    tagRequests: false,
+    overrideRule: [],
+  };
+}
+
+function createSonarrSettings(id: number, isDefault = true) {
+  return {
+    id,
+    name: 'Sonarr',
+    hostname: 'sonarr.local',
+    port: 8989,
+    apiKey: 'sonarr-key',
+    useSsl: false,
+    activeProfileId: 20,
+    activeProfileName: 'TV',
+    activeDirectory: '/tv',
+    tags: [],
+    is4k: false,
+    isDefault,
+    syncEnabled: true,
+    preventSearch: false,
+    tagRequests: false,
+    overrideRule: [],
+    seriesType: 'standard' as const,
+    animeSeriesType: 'anime' as const,
+    activeAnimeProfileId: 20,
+    activeAnimeProfileName: 'TV',
+    activeAnimeDirectory: '/tv',
+    activeAnimeLanguageProfileId: 1,
+    activeLanguageProfileId: 1,
+    animeTags: [],
+    enableSeasonFolders: true,
+    monitorNewItems: 'all' as const,
+  };
+}
+
+function replacePrototypeMethod(
+  target: object,
+  methodName: string,
+  implementation: (...args: unknown[]) => unknown,
+  t: { after: (callback: () => void | Promise<void>) => void }
+): void {
+  const previous = Object.getOwnPropertyDescriptor(target, methodName);
+  Object.defineProperty(target, methodName, {
+    configurable: true,
+    writable: true,
+    value: implementation,
+  });
+  t.after(() => {
+    if (previous) {
+      Object.defineProperty(target, methodName, previous);
+    } else {
+      Reflect.deleteProperty(target, methodName);
+    }
+  });
+}
+
+describe('PUT /request/:requestId/watch-ahead', () => {
+  for (const [serverName, mediaServerType] of [
+    ['Plex', MediaServerType.PLEX],
+    ['Jellyfin', MediaServerType.JELLYFIN],
+    ['Emby', MediaServerType.EMBY],
+  ] as const) {
+    it(`allows the linked request owner to enable and disable their TV buffer with ${serverName}`, async () => {
+      const settings = getSettings();
+      const previousMediaServerType = settings.main.mediaServerType;
+      settings.main.mediaServerType = mediaServerType;
+      configureSonarr([{}]);
+
+      try {
+        const userRepository = getRepository(User);
+        const requestedBy = await userRepository.findOneOrFail({
+          where: { email: 'friend@seerr.dev' },
+        });
+        requestedBy.jellyfinUserId = '01234567-89ab-cdef-0123-456789abcdef';
+        requestedBy.jellyfinUsername = 'friend';
+        requestedBy.plexId = 12345;
+        requestedBy.plexUsername = 'friend';
+        await userRepository.save(requestedBy);
+
+        const media = await getRepository(Media).save(
+          new Media({
+            mediaType: MediaType.TV,
+            tmdbId: 765432,
+            tvdbId: 123456,
+            status: MediaStatus.UNKNOWN,
+            status4k: MediaStatus.UNKNOWN,
+          })
+        );
+        const tvRequest = await getRepository(MediaRequest).save(
+          new MediaRequest({
+            type: MediaType.TV,
+            status: MediaRequestStatus.APPROVED,
+            media,
+            requestedBy,
+            is4k: false,
+            serverId: 0,
+            seasons: [],
+          })
+        );
+
+        const owner = await loginAs('friend@seerr.dev', 'test1234');
+        const enabled = await owner
+          .put(`/request/${tvRequest.id}/watch-ahead`)
+          .send({ episodeCount: 3 });
+        assert.strictEqual(enabled.status, 200);
+        assert.strictEqual(enabled.body.watchAheadEpisodeCount, 3);
+
+        const disabled = await owner
+          .put(`/request/${tvRequest.id}/watch-ahead`)
+          .send({ episodeCount: 0 });
+        assert.strictEqual(disabled.status, 200);
+        assert.strictEqual(disabled.body.watchAheadEpisodeCount, 0);
+
+        const queueHistory = (
+          await getRepository(MediaRequestStatusEvent).find({
+            where: { requestId: tvRequest.id },
+            order: { id: 'ASC' },
+          })
+        ).filter((event) => event.message?.startsWith('Episode queue changed'));
+        assert.deepEqual(
+          queueHistory.map((event) => event.message),
+          [
+            'Episode queue changed from Off to 3 episodes.',
+            'Episode queue changed from 3 episodes to Off.',
+          ]
+        );
+      } finally {
+        settings.main.mediaServerType = previousMediaServerType;
+      }
+    });
+  }
+
+  it('does not let an administrator opt in for another user', async () => {
+    const settings = getSettings();
+    const previousMediaServerType = settings.main.mediaServerType;
+    settings.main.mediaServerType = MediaServerType.JELLYFIN;
+    configureSonarr([{}]);
+
+    try {
+      const userRepository = getRepository(User);
+      const requestedBy = await userRepository.findOneOrFail({
+        where: { email: 'friend@seerr.dev' },
+      });
+      requestedBy.jellyfinUserId = '01234567-89ab-cdef-0123-456789abcdef';
+      requestedBy.jellyfinUsername = 'friend';
+      await userRepository.save(requestedBy);
+
+      const media = await getRepository(Media).save(
+        new Media({
+          mediaType: MediaType.TV,
+          tmdbId: 765433,
+          tvdbId: 123457,
+          status: MediaStatus.UNKNOWN,
+          status4k: MediaStatus.UNKNOWN,
+        })
+      );
+      const tvRequest = await getRepository(MediaRequest).save(
+        new MediaRequest({
+          type: MediaType.TV,
+          status: MediaRequestStatus.APPROVED,
+          media,
+          requestedBy,
+          is4k: false,
+          serverId: 0,
+          seasons: [],
+        })
+      );
+
+      const admin = await loginAs('admin@seerr.dev', 'test1234');
+      const response = await admin
+        .put(`/request/${tvRequest.id}/watch-ahead`)
+        .send({ episodeCount: 2 });
+      assert.strictEqual(response.status, 403);
+
+      tvRequest.watchAheadEpisodeCount = 2;
+      await getRepository(MediaRequest).save(tvRequest);
+      const disableResponse = await admin
+        .put(`/request/${tvRequest.id}/watch-ahead`)
+        .send({ episodeCount: 0 });
+      assert.strictEqual(disableResponse.status, 403);
+      assert.strictEqual(
+        (
+          await getRepository(MediaRequest).findOneByOrFail({
+            id: tvRequest.id,
+          })
+        ).watchAheadEpisodeCount,
+        2
+      );
+    } finally {
+      settings.main.mediaServerType = previousMediaServerType;
+    }
+  });
+
+  it('rejects enabling watch-ahead for an owner without TV request permission', async () => {
+    const settings = getSettings();
+    const previousMediaServerType = settings.main.mediaServerType;
+    settings.main.mediaServerType = MediaServerType.JELLYFIN;
+    configureSonarr([{}]);
+
+    try {
+      const userRepository = getRepository(User);
+      const requestedBy = await userRepository.findOneOrFail({
+        where: { email: 'friend@seerr.dev' },
+      });
+      requestedBy.jellyfinUserId = '01234567-89ab-cdef-0123-456789abcdef';
+      requestedBy.jellyfinUsername = 'friend';
+      requestedBy.permissions = Permission.NONE;
+      await userRepository.save(requestedBy);
+
+      const media = await getRepository(Media).save(
+        new Media({
+          mediaType: MediaType.TV,
+          tmdbId: 765434,
+          tvdbId: 123458,
+          status: MediaStatus.UNKNOWN,
+          status4k: MediaStatus.UNKNOWN,
+        })
+      );
+      const tvRequest = await getRepository(MediaRequest).save(
+        new MediaRequest({
+          type: MediaType.TV,
+          status: MediaRequestStatus.APPROVED,
+          media,
+          requestedBy,
+          is4k: false,
+          serverId: 0,
+          seasons: [],
+        })
+      );
+
+      const owner = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await owner
+        .put(`/request/${tvRequest.id}/watch-ahead`)
+        .send({ episodeCount: 2 });
+      assert.strictEqual(response.status, 409);
+      assert.match(response.body.message, /permission to request TV/i);
+      assert.equal(
+        (
+          await getRepository(MediaRequest).findOneByOrFail({
+            id: tvRequest.id,
+          })
+        ).watchAheadEpisodeCount,
+        0
+      );
+    } finally {
+      settings.main.mediaServerType = previousMediaServerType;
+    }
+  });
+
+  it('rejects enrollment when the saved series has no TVDB identity', async () => {
+    const settings = getSettings();
+    const previousMediaServerType = settings.main.mediaServerType;
+    settings.main.mediaServerType = MediaServerType.JELLYFIN;
+    configureSonarr([{}]);
+
+    try {
+      const userRepository = getRepository(User);
+      const requestedBy = await userRepository.findOneOrFail({
+        where: { email: 'friend@seerr.dev' },
+      });
+      requestedBy.jellyfinUserId = '01234567-89ab-cdef-0123-456789abcdef';
+      requestedBy.jellyfinUsername = 'friend';
+      await userRepository.save(requestedBy);
+
+      const media = await getRepository(Media).save(
+        new Media({
+          mediaType: MediaType.TV,
+          tmdbId: 765436,
+          status: MediaStatus.UNKNOWN,
+          status4k: MediaStatus.UNKNOWN,
+        })
+      );
+      const tvRequest = await getRepository(MediaRequest).save(
+        new MediaRequest({
+          type: MediaType.TV,
+          status: MediaRequestStatus.APPROVED,
+          media,
+          requestedBy,
+          is4k: false,
+          serverId: 0,
+          seasons: [],
+        })
+      );
+
+      const owner = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await owner
+        .put(`/request/${tvRequest.id}/watch-ahead`)
+        .send({ episodeCount: 2 });
+      assert.strictEqual(response.status, 409);
+      assert.match(response.body.message, /TVDB identity/);
+    } finally {
+      settings.main.mediaServerType = previousMediaServerType;
+    }
+  });
+
+  it('rejects watch-ahead buffers above five episodes', async () => {
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 765435,
+        tvdbId: 123459,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const tvRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: await getRepository(User).findOneOrFail({
+          where: { email: 'friend@seerr.dev' },
+        }),
+        is4k: false,
+        seasons: [],
+      })
+    );
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await owner
+      .put(`/request/${tvRequest.id}/watch-ahead`)
+      .send({ episodeCount: 6 });
+
+    assert.strictEqual(response.status, 400);
+  });
+});
+
+describe('POST /request with Jellyfin watch-ahead', () => {
+  it('rejects opt-in when TMDB has no TVDB identity for the series', async () => {
+    const settings = getSettings();
+    const previousMediaServerType = settings.main.mediaServerType;
+    settings.main.mediaServerType = MediaServerType.JELLYFIN;
+    configureSonarr([{}]);
+
+    try {
+      const userRepository = getRepository(User);
+      const requestedBy = await userRepository.findOneOrFail({
+        where: { email: 'friend@seerr.dev' },
+      });
+      requestedBy.jellyfinUserId = '01234567-89ab-cdef-0123-456789abcdef';
+      requestedBy.jellyfinUsername = 'friend';
+      await userRepository.save(requestedBy);
+
+      const owner = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await owner.post('/request').send({
+        mediaType: 'tv',
+        mediaId: 765437,
+        seasons: [1],
+        watchAheadEpisodeCount: 2,
+      });
+      assert.strictEqual(response.status, 400);
+      assert.match(response.body.message, /TVDB identity/);
+      assert.strictEqual(
+        await getRepository(MediaRequest).count({
+          where: { requestedBy: { id: requestedBy.id } },
+        }),
+        0
+      );
+    } finally {
+      settings.main.mediaServerType = previousMediaServerType;
+    }
+  });
+});
+
+describe('GET /request/count', () => {
+  it('limits ordinary users to their own counts while managers see all requests', async () => {
+    await seedRequest();
+
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+    const adminMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 12346,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media: adminMedia,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    const friendAgent = await loginAs('friend@seerr.dev', 'test1234');
+    const friendCounts = await friendAgent.get('/request/count');
+    assert.strictEqual(friendCounts.status, 200);
+    assert.strictEqual(friendCounts.body.total, 1);
+    assert.strictEqual(friendCounts.body.pending, 1);
+
+    const adminAgent = await loginAs('admin@seerr.dev', 'test1234');
+    const adminCounts = await adminAgent.get('/request/count');
+    assert.strictEqual(adminCounts.status, 200);
+    assert.strictEqual(adminCounts.body.total, 2);
+    assert.strictEqual(adminCounts.body.pending, 2);
+  });
+
+  it('breaks out comic and magazine counts alongside the other media types', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+
+    const comicMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.COMIC,
+        tmdbId: 0,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.COMIC,
+        status: MediaRequestStatus.PENDING,
+        media: comicMedia,
+        requestedBy,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const counts = await agent.get('/request/count');
+
+    assert.strictEqual(counts.status, 200);
+    assert.strictEqual(counts.body.comic, 1);
+    assert.strictEqual(counts.body.magazine, 0);
+    assert.strictEqual(counts.body.total, 1);
+  });
+
+  it('counts approved book requests by requested format availability', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+
+    const ebookOnlyMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        externalServiceId: 101,
+        audiobookExternalServiceId: null,
+      })
+    );
+    const bothFormatsMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        externalServiceId: 201,
+        audiobookExternalServiceId: 202,
+      })
+    );
+    const missingFormatsMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    const savedRequests = await requestRepo.save([
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: ebookOnlyMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'ebook',
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: ebookOnlyMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'both',
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: bothFormatsMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'both',
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: missingFormatsMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'audiobook',
+      }),
+    ]);
+    await requestRepo.update(
+      savedRequests.map((request) => request.id),
+      { status: MediaRequestStatus.APPROVED }
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.get('/request/count');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.book, 4);
+    assert.strictEqual(res.body.approved, 4);
+    assert.strictEqual(res.body.available, 2);
+    assert.strictEqual(res.body.processing, 2);
+  });
+
+  it('reports failed requests so the status breakdown reconciles to total', async () => {
+    await seedRequest(MediaRequestStatus.FAILED);
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.get('/request/count');
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.total, 1);
+    assert.strictEqual(res.body.failed, 1);
+    assert.strictEqual(
+      res.body.pending +
+        res.body.approved +
+        res.body.declined +
+        res.body.failed +
+        res.body.completed,
+      res.body.total
+    );
+  });
+});
+
+describe('GET /request/status', () => {
+  for (const filter of ['pending', 'processing', 'deleted']) {
+    it(`returns an empty page for the ${filter} filter when nothing matches`, async () => {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await agent
+        .get('/request/status')
+        .query({ filter, timeFrame: 'all' });
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pageInfo.results, 0);
+      assert.deepStrictEqual(response.body.results, []);
+    });
+  }
+
+  it('defaults to all requests while rolling windows expose older history', async () => {
+    const now = Date.now();
+    await seedRequest(
+      MediaRequestStatus.PENDING,
+      new Date(now - 45 * 24 * 60 * 60 * 1000)
+    );
+    await seedRequest(
+      MediaRequestStatus.PENDING,
+      new Date(now - 2 * 24 * 60 * 60 * 1000),
+      12346
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const allResponse = await agent.get('/request/status');
+    assert.strictEqual(allResponse.status, 200);
+    assert.strictEqual(allResponse.body.pageInfo.results, 2);
+    assert.strictEqual(allResponse.body.olderCount, 0);
+
+    const recentResponse = await agent
+      .get('/request/status')
+      .query({ timeFrame: '7d' });
+    assert.strictEqual(recentResponse.status, 200);
+    assert.strictEqual(recentResponse.body.pageInfo.results, 1);
+    assert.strictEqual(recentResponse.body.olderCount, 1);
+
+    const fourteenDayResponse = await agent
+      .get('/request/status')
+      .query({ timeFrame: '14d' });
+    assert.strictEqual(fourteenDayResponse.status, 200);
+    assert.strictEqual(fourteenDayResponse.body.pageInfo.results, 1);
+    assert.strictEqual(fourteenDayResponse.body.olderCount, 1);
+
+    const explicitAllResponse = await agent
+      .get('/request/status')
+      .query({ timeFrame: 'all' });
+    assert.strictEqual(explicitAllResponse.status, 200);
+    assert.strictEqual(explicitAllResponse.body.pageInfo.results, 2);
+    assert.strictEqual(explicitAllResponse.body.olderCount, 0);
+  });
+
+  it('returns the owner-scoped lifecycle and durable history', async () => {
+    const mediaRequest = await seedRequest();
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const listResponse = await agent
+      .get('/request/status')
+      .query({ filter: 'requested' });
+
+    assert.strictEqual(listResponse.status, 200);
+    assert.strictEqual(listResponse.body.pageInfo.results, 1);
+    assert.strictEqual(listResponse.body.results.length, 1);
+    assert.strictEqual(listResponse.body.results[0].status.stage, 'requested');
+    assert.strictEqual(listResponse.body.counts.total, 1);
+    assert.strictEqual(listResponse.body.counts.active, 1);
+
+    const detailResponse = await agent.get(
+      `/request/status/${mediaRequest.id}`
+    );
+
+    assert.strictEqual(detailResponse.status, 200);
+    assert.strictEqual(
+      detailResponse.body.request.media.id,
+      mediaRequest.media.id
+    );
+    assert.strictEqual(detailResponse.body.current.stage, 'requested');
+    assert.ok(detailResponse.body.history.total >= 1);
+    assert.strictEqual(
+      detailResponse.body.history.results[0].stage,
+      'requested'
+    );
+  });
+
+  it('does not leak another user’s status history to an ordinary viewer', async () => {
+    await seedRequest();
+    const admin = await getRepository(User).findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+    const adminMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 12346,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const adminRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media: adminMedia,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const listResponse = await agent.get('/request/status');
+    const forbiddenResponse = await agent.get(
+      `/request/status/${adminRequest.id}`
+    );
+
+    assert.strictEqual(listResponse.status, 200);
+    assert.strictEqual(listResponse.body.pageInfo.results, 1);
+    assert.strictEqual(listResponse.body.counts.total, 1);
+    assert.strictEqual(listResponse.body.olderCount, 0);
+    assert.strictEqual(forbiddenResponse.status, 403);
+  });
+
+  it('applies live lifecycle filtering instead of trusting a stale event stage', async () => {
+    const mediaRequest = await seedRequest();
+    await getRepository(Media).update(mediaRequest.media.id, {
+      status: MediaStatus.AVAILABLE,
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent
+      .get('/request/status')
+      .query({ filter: 'available' });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.pageInfo.results, 1);
+    assert.strictEqual(response.body.results[0].status.stage, 'available');
+  });
+
+  it('exposes partially fulfilled requests as incomplete', async () => {
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+    await getRepository(Media).update(mediaRequest.media.id, {
+      status: MediaStatus.PARTIALLY_AVAILABLE,
+      serviceId: 10,
+      externalServiceId: 20,
+    });
+    const completeRequest = await seedRequest(
+      MediaRequestStatus.APPROVED,
+      undefined,
+      12346
+    );
+    await getRepository(Media).update(completeRequest.media.id, {
+      status: MediaStatus.AVAILABLE,
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.get('/request/status').query({
+      filter: 'incomplete',
+      sort: 'incomplete',
+      sortDirection: 'desc',
+    });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.pageInfo.results, 1);
+    assert.strictEqual(response.body.results[0].request.id, mediaRequest.id);
+    assert.strictEqual(response.body.results[0].status.stage, 'searching');
+    assert.match(
+      response.body.results[0].status.message,
+      /Waiting for a usable release/
+    );
+    assert.strictEqual(response.body.counts.incomplete, 1);
+
+    const sortedResponse = await agent.get('/request/status').query({
+      sort: 'incomplete',
+      sortDirection: 'desc',
+    });
+    assert.strictEqual(sortedResponse.status, 200);
+    assert.deepStrictEqual(
+      sortedResponse.body.results.map(
+        (result: { request: { id: number } }) => result.request.id
+      ),
+      [mediaRequest.id, completeRequest.id]
+    );
+  });
+
+  it('evaluates selected TV seasons from the status page query', async () => {
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 12347,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 10,
+        externalServiceId: 20,
+        seasons: [
+          new Season({
+            seasonNumber: 1,
+            status: MediaStatus.AVAILABLE,
+            status4k: MediaStatus.UNKNOWN,
+          }),
+          new Season({
+            seasonNumber: 2,
+            status: MediaStatus.PROCESSING,
+            status4k: MediaStatus.UNKNOWN,
+          }),
+        ],
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.APPROVED,
+          }),
+        ],
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent
+      .get('/request/status')
+      .query({ filter: 'available' });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.pageInfo.results, 1);
+    assert.strictEqual(response.body.results[0].request.id, mediaRequest.id);
+    assert.strictEqual(response.body.results[0].status.stage, 'available');
+  });
+
+  it('separates ebook and audiobook status filters while including both-format requests', async () => {
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const mediaRepository = getRepository(Media);
+    const requestRepository = getRepository(MediaRequest);
+    const [ebookMedia, audiobookMedia, bothMedia] = await mediaRepository.save([
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      }),
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      }),
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      }),
+    ]);
+    await requestRepository.save([
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: ebookMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'ebook',
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: audiobookMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'audiobook',
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        status: MediaRequestStatus.PENDING,
+        media: bothMedia,
+        requestedBy,
+        is4k: false,
+        bookFormat: 'both',
+      }),
+    ]);
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const ebookResponse = await agent
+      .get('/request/status')
+      .query({ mediaType: 'book', bookFormat: 'ebook' });
+    const audiobookResponse = await agent
+      .get('/request/status')
+      .query({ mediaType: 'book', bookFormat: 'audiobook' });
+
+    assert.strictEqual(ebookResponse.status, 200);
+    assert.strictEqual(audiobookResponse.status, 200);
+    assert.strictEqual(ebookResponse.body.pageInfo.results, 2);
+    assert.strictEqual(audiobookResponse.body.pageInfo.results, 2);
+    assert.deepStrictEqual(
+      ebookResponse.body.results
+        .map((result: { request: { id: number } }) => result.request.id)
+        .sort((left: number, right: number) => left - right),
+      [
+        (
+          await requestRepository.findOneByOrFail({
+            media: { id: ebookMedia.id },
+          })
+        ).id,
+        (
+          await requestRepository.findOneByOrFail({
+            media: { id: bothMedia.id },
+          })
+        ).id,
+      ].sort((left, right) => left - right)
+    );
+    assert.strictEqual(ebookResponse.body.counts.total, 2);
+    assert.strictEqual(audiobookResponse.body.counts.total, 2);
+  });
+
+  it('returns only safe user identities to status viewers', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent.get('/request/status/users');
+
+    assert.strictEqual(response.status, 200);
+    assert.ok(response.body.results.length >= 2);
+    assert.ok(
+      response.body.results.every(
+        (user: Record<string, unknown>) =>
+          typeof user.id === 'number' &&
+          typeof user.displayName === 'string' &&
+          typeof user.avatar === 'string' &&
+          user.email === undefined &&
+          user.permissions === undefined
+      )
+    );
+
+    const ordinaryUser = await loginAs('friend@seerr.dev', 'test1234');
+    const forbiddenResponse = await ordinaryUser.get('/request/status/users');
+    assert.strictEqual(forbiddenResponse.status, 403);
+  });
+});
+
+describe('DELETE /request/:requestId', () => {
+  it('allows the owner to delete their own pending request', async () => {
+    const mediaRequest = await seedRequest();
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${mediaRequest.id}`);
+
+    assert.strictEqual(res.status, 204);
+    const events = await getRepository(MediaRequestStatusEvent).find({
+      where: { requestId: mediaRequest.id },
+      order: { id: 'ASC' },
+    });
+    assert.strictEqual(events.at(-1)?.stage, 'cancelled');
+  });
+
+  it('allows an admin to delete any pending request', async () => {
+    const mediaRequest = await seedRequest();
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${mediaRequest.id}`);
+
+    assert.strictEqual(res.status, 204);
+  });
+
+  it('resets parent status when only failed request history remains', async () => {
+    const user = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 54320,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const [, pendingRequest] = await getRepository(MediaRequest).save([
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.FAILED,
+        media,
+        requestedBy: user,
+        is4k: false,
+      }),
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: user,
+        is4k: false,
+      }),
+    ]);
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent.delete(`/request/${pendingRequest.id}`);
+
+    assert.strictEqual(response.status, 204);
+    assert.strictEqual(
+      (await getRepository(Media).findOneByOrFail({ id: media.id })).status,
+      MediaStatus.UNKNOWN
+    );
+  });
+
+  it('preserves deleted parent status when the last request is removed', async () => {
+    const user = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 54319,
+        status: MediaStatus.DELETED,
+        status4k: MediaStatus.DELETED,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: user,
+        is4k: false,
+      })
+    );
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await agent.delete(`/request/${mediaRequest.id}`);
+
+    assert.strictEqual(response.status, 204);
+    const persisted = await getRepository(Media).findOneByOrFail({
+      id: media.id,
+    });
+    assert.strictEqual(persisted.status, MediaStatus.DELETED);
+    assert.strictEqual(persisted.status4k, MediaStatus.DELETED);
+  });
+
+  it('prevents a non-owner non-admin from deleting a pending request', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    // Create a request owned by admin, then try to delete as friend
+    const owner = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 54321,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    const mediaRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: owner,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${mediaRequest.id}`);
+
+    assert.strictEqual(res.status, 401);
+  });
+
+  it('prevents the owner from deleting an approved request', async () => {
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${mediaRequest.id}`);
+
+    assert.strictEqual(res.status, 401);
+  });
+
+  it('returns 404 for a non-existent request', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete('/request/99999999');
+
+    assert.strictEqual(res.status, 404);
+  });
+
+  it('returns 404 for malformed request IDs', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete('/request/not-a-number');
+
+    assert.strictEqual(res.status, 404);
+  });
+});
+
+describe('POST /request/:requestId/fail-download', () => {
+  const rawMovieDownloadId = 'movie-download-91b6';
+
+  async function linkMovieToRadarr(
+    requestData: MediaRequest,
+    serviceId: number,
+    externalServiceId: number
+  ) {
+    await getRepository(Media).update(requestData.media.id, {
+      serviceId,
+      externalServiceId,
+    });
+  }
+
+  async function allowUserRequestType(
+    email: string,
+    mediaPermission: Permission,
+    t: { after: (callback: () => void | Promise<void>) => void }
+  ) {
+    const userRepository = getRepository(User);
+    const user = await userRepository.findOneOrFail({ where: { email } });
+    const previousPermissions = user.permissions;
+    await userRepository.update(user.id, {
+      permissions: previousPermissions | Permission.REQUEST | mediaPermission,
+    });
+    t.after(async () => {
+      await userRepository.update(user.id, {
+        permissions: previousPermissions,
+      });
+    });
+  }
+
+  const movieQueueItem = (movieId: number) =>
+    ({
+      size: 100,
+      title: 'Bad release',
+      sizeleft: 50,
+      timeleft: '00:10:00',
+      estimatedCompletionTime: '2026-09-30T20:00:00.000Z',
+      status: 'downloading',
+      trackedDownloadStatus: 'downloading',
+      trackedDownloadState: 'importPending',
+      downloadId: rawMovieDownloadId,
+      protocol: 'torrent',
+      downloadClient: 'qBittorrent',
+      indexer: 'Test indexer',
+      id: 901,
+      movieId,
+    }) as Awaited<ReturnType<RadarrAPI['getQueue']>>[number];
+
+  it('lets the requester fail the matching movie release using its private download alias', async (t) => {
+    const requestData = await seedRequest(MediaRequestStatus.APPROVED);
+    await linkMovieToRadarr(requestData, 31, 812);
+    await allowUserRequestType('friend@seerr.dev', Permission.REQUEST_MOVIE, t);
+    configureRadarr([createRadarrSettings(31)]);
+    const getQueue = mock.method(RadarrAPI.prototype, 'getQueue', async () => [
+      movieQueueItem(812),
+    ]);
+    const deleteQueueItem = mock.method(
+      RadarrAPI.prototype,
+      'deleteQueueItem',
+      async () => undefined
+    );
+    const searchedMovieIds: number[] = [];
+    replacePrototypeMethod(
+      RadarrAPI.prototype,
+      'searchMovieOrThrow',
+      async (movieId) => {
+        searchedMovieIds.push(Number(movieId));
+      },
+      t
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(
+      response.status,
+      200,
+      JSON.stringify({
+        response: response.body,
+        queueCalls: getQueue.mock.callCount(),
+      })
+    );
+    assert.strictEqual(getQueue.mock.callCount(), 1);
+    assert.deepStrictEqual(deleteQueueItem.mock.calls[0].arguments, [
+      901,
+      { removeFromClient: true, blocklist: true, skipRedownload: false },
+    ]);
+    assert.deepStrictEqual(searchedMovieIds, [812]);
+  });
+
+  it('does not remove a queued release that belongs to another movie', async (t) => {
+    const requestData = await seedRequest(MediaRequestStatus.APPROVED);
+    await linkMovieToRadarr(requestData, 31, 812);
+    await allowUserRequestType('friend@seerr.dev', Permission.REQUEST_MOVIE, t);
+    configureRadarr([createRadarrSettings(31)]);
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => [
+      movieQueueItem(999),
+    ]);
+    const deleteQueueItem = mock.method(
+      RadarrAPI.prototype,
+      'deleteQueueItem',
+      async () => undefined
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(response.status, 409);
+    assert.strictEqual(deleteQueueItem.mock.callCount(), 0);
+  });
+
+  it('reports a replacement-search failure after the matching release is removed', async (t) => {
+    const requestData = await seedRequest(MediaRequestStatus.APPROVED);
+    await linkMovieToRadarr(requestData, 31, 812);
+    await allowUserRequestType('friend@seerr.dev', Permission.REQUEST_MOVIE, t);
+    configureRadarr([createRadarrSettings(31)]);
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => [
+      movieQueueItem(812),
+    ]);
+    const deleteQueueItem = mock.method(
+      RadarrAPI.prototype,
+      'deleteQueueItem',
+      async () => undefined
+    );
+    let replacementSearchFailed = false;
+    replacePrototypeMethod(
+      RadarrAPI.prototype,
+      'searchMovieOrThrow',
+      async () => {
+        replacementSearchFailed = true;
+        throw new Error('Provider search failed');
+      },
+      t
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(response.status, 502);
+    assert.match(
+      response.body.message,
+      /removed the release.*could not start/i
+    );
+    assert.strictEqual(deleteQueueItem.mock.callCount(), 1);
+    assert.strictEqual(replacementSearchFailed, true);
+  });
+
+  it('rejects pending requests before contacting Radarr', async () => {
+    const requestData = await seedRequest(MediaRequestStatus.PENDING);
+    const getQueue = mock.method(
+      RadarrAPI.prototype,
+      'getQueue',
+      async () => []
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(response.status, 409);
+    assert.strictEqual(getQueue.mock.callCount(), 0);
+  });
+
+  it('lets the requester fail a matching series release through Sonarr', async (t) => {
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 921,
+        tvdbId: 88221,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 32,
+        externalServiceId: 731,
+      })
+    );
+    const requestData = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy,
+        is4k: false,
+        seasons: [],
+      })
+    );
+    await allowUserRequestType('friend@seerr.dev', Permission.REQUEST_TV, t);
+    configureSonarr([createSonarrSettings(32)]);
+    const getQueue = mock.method(SonarrAPI.prototype, 'getQueue', async () => [
+      {
+        size: 100,
+        title: 'Bad episode release',
+        sizeleft: 50,
+        timeleft: '00:10:00',
+        estimatedCompletionTime: '2026-09-30T20:00:00.000Z',
+        status: 'downloading',
+        trackedDownloadStatus: 'downloading',
+        trackedDownloadState: 'importPending',
+        downloadId: rawMovieDownloadId,
+        protocol: 'torrent',
+        downloadClient: 'qBittorrent',
+        indexer: 'Test indexer',
+        id: 902,
+        seriesId: 731,
+        episode: { seasonNumber: 1, episodeNumber: 1 },
+        episodeId: 551,
+      } as unknown as Awaited<ReturnType<SonarrAPI['getQueue']>>[number],
+    ]);
+    const deleteQueueItem = mock.method(
+      SonarrAPI.prototype,
+      'deleteQueueItem',
+      async () => undefined
+    );
+    const searchedSeriesIds: number[] = [];
+    replacePrototypeMethod(
+      SonarrAPI.prototype,
+      'searchSeriesOrThrow',
+      async (seriesId) => {
+        searchedSeriesIds.push(Number(seriesId));
+      },
+      t
+    );
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(getQueue.mock.callCount(), 1);
+    assert.strictEqual(deleteQueueItem.mock.calls[0].arguments[0], 902);
+    assert.deepStrictEqual(searchedSeriesIds, [731]);
+  });
+
+  it('does not let another ordinary requester operate on the request download', async (t) => {
+    const requestData = await seedRequest(MediaRequestStatus.APPROVED);
+    await allowUserRequestType('demo@seerr.dev', Permission.REQUEST_MOVIE, t);
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+
+    const response = await agent
+      .post(`/request/${requestData.id}/fail-download`)
+      .send({ downloadId: aliasDownloadId(rawMovieDownloadId) });
+
+    assert.strictEqual(response.status, 403);
+  });
+});
+
+describe('PUT /request/:requestId (movie)', () => {
+  it('validates and preserves partial movie routing changes', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(3)];
+    t.after(() => {
+      settings.radarr = [];
+    });
+    const requestRepo = getRepository(MediaRequest);
+    const mediaRequest = await seedRequest();
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      serverId: 3,
+      profileId: 7,
+      rootFolder: '/updated/movies',
+      tags: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.serverId, 3);
+    assert.strictEqual(saved.profileId, 7);
+    assert.strictEqual(saved.rootFolder, '/updated/movies');
+
+    const partialResponse = await agent
+      .put(`/request/${mediaRequest.id}`)
+      .send({ mediaType: MediaType.MOVIE, rootFolder: '/partial/movies' });
+    const invalidResponse = await agent
+      .put(`/request/${mediaRequest.id}`)
+      .send({ mediaType: MediaType.MOVIE, serverId: 99 });
+    const partiallySaved = await requestRepo.findOneByOrFail({
+      id: mediaRequest.id,
+    });
+
+    assert.strictEqual(partialResponse.status, 200);
+    assert.strictEqual(invalidResponse.status, 400);
+    assert.strictEqual(partiallySaved.serverId, 3);
+    assert.strictEqual(partiallySaved.profileId, 7);
+    assert.strictEqual(partiallySaved.rootFolder, '/partial/movies');
+  });
+
+  it('rejects request mutations after the session credential changes', async () => {
+    const mediaRequest = await seedRequest();
+    const userRepository = getRepository(User);
+    const actor = await userRepository.findOneByOrFail({ id: 1 });
+    const oldCredentialVersion = actor.passwordChangedAt?.getTime() ?? 0;
+    await userRepository.update(actor.id, {
+      passwordChangedAt: new Date(oldCredentialVersion + 1_000),
+    });
+    const staleSessionApp = express();
+    staleSessionApp.use(express.json());
+    staleSessionApp.use((req, _res, next) => {
+      req.user = new User({ id: actor.id, permissions: Permission.ADMIN });
+      req.session = {
+        userId: actor.id,
+        credentialVersion: oldCredentialVersion,
+      } as typeof req.session;
+      next();
+    });
+    staleSessionApp.use('/request', requestRoutes);
+    staleSessionApp.use(
+      (
+        err: { status?: number; message?: string },
+        _req: express.Request,
+        res: express.Response,
+        _next: express.NextFunction
+      ) => (void _next, res.status(err.status ?? 500).json(err))
+    );
+
+    const [editResponse, deleteResponse, approveResponse] = await Promise.all([
+      request(staleSessionApp).put(`/request/${mediaRequest.id}`).send({
+        mediaType: MediaType.MOVIE,
+        serverId: 3,
+        profileId: 7,
+        rootFolder: '/must-not-change',
+        tags: [],
+      }),
+      request(staleSessionApp).delete(`/request/${mediaRequest.id}`),
+      request(staleSessionApp).post(`/request/${mediaRequest.id}/approve`),
+    ]);
+
+    assert.strictEqual(editResponse.status, 403);
+    assert.strictEqual(deleteResponse.status, 401);
+    assert.strictEqual(approveResponse.status, 403);
+    let persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: mediaRequest.id,
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+    assert.notStrictEqual(persisted.rootFolder, '/must-not-change');
+
+    await getRepository(MediaRequest).update(mediaRequest.id, {
+      status: MediaRequestStatus.FAILED,
+    });
+    const retryResponse = await request(staleSessionApp).post(
+      `/request/${mediaRequest.id}/retry`
+    );
+    assert.strictEqual(retryResponse.status, 403);
+    persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: mediaRequest.id,
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.FAILED);
+  });
+});
+
+describe('GET /request', () => {
+  it('bounds service profile hydration concurrency', () => {
+    assert.strictEqual(REQUEST_SERVICE_PROFILE_CONCURRENCY, 10);
+  });
+
+  it('hydrates profiles only for services referenced by the result page', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(30), createRadarrSettings(31)];
+    const mediaRequest = await seedRequest();
+    await getRepository(MediaRequest).update(mediaRequest.id, {
+      serverId: 30,
+      profileId: 5,
+    });
+    const profiles = mock.method(
+      RadarrAPI.prototype,
+      'getProfiles',
+      async () => [{ id: 5, name: 'HD' }]
+    );
+    t.after(() => {
+      profiles.mock.restore();
+      settings.radarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.get('/request');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(profiles.mock.callCount(), 1);
+    assert.strictEqual(response.body.results[0].profileName, 'HD');
+    assert.deepStrictEqual(response.body.serviceErrors.radarr, []);
+  });
+
+  it('does not use stored service credentials for ordinary request viewers', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      {
+        id: 30,
+        name: 'Radarr',
+        hostname: 'radarr.local',
+        port: 7878,
+        apiKey: 'stored-secret',
+        useSsl: false,
+        activeProfileId: 5,
+        activeProfileName: 'HD',
+        activeDirectory: '/movies',
+        minimumAvailability: 'released',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    const profiles = mock.method(
+      RadarrAPI.prototype,
+      'getProfiles',
+      async () => [{ id: 5, name: 'HD' }]
+    );
+    t.after(() => {
+      profiles.mock.restore();
+      settings.radarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.get('/request');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(profiles.mock.callCount(), 0);
+    assert.deepStrictEqual(response.body.serviceErrors.radarr, []);
+  });
+
+  it('filters the request list by mediaType=comic and marks it removable', async (t) => {
+    const settings = getSettings();
+    settings.mylar = [
+      {
+        id: 40,
+        name: 'Mylar',
+        hostname: 'mylar.local',
+        port: 8090,
+        apiKey: 'mylar-key',
+        useSsl: false,
+        tags: [],
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+      },
+    ];
+    t.after(() => {
+      settings.mylar = [];
+    });
+
+    const movieMedia = await seedRequest();
+    const requestedBy = movieMedia.requestedBy;
+    const comicMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.COMIC,
+        tmdbId: 0,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 40,
+        comicServiceType: 'mylar',
+      })
+    );
+    await getRepository(MediaIdentifier).save(
+      new MediaIdentifier({
+        media: comicMedia,
+        provider: MediaIdentifierProvider.COMICVINE,
+        value: '4567',
+        canonical: true,
+      })
+    );
+    const comicRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.COMIC,
+        status: MediaRequestStatus.PENDING,
+        media: comicMedia,
+        requestedBy,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.get('/request').query({ mediaType: 'comic' });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.results.length, 1);
+    assert.strictEqual(response.body.results[0].id, comicRequest.id);
+    assert.strictEqual(response.body.results[0].canRemove, true);
+  });
+
+  it('does not expose backend media routing fields to an ordinary request owner', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      {
+        id: 30,
+        name: 'Private Radarr',
+        hostname: 'radarr.internal',
+        port: 7878,
+        apiKey: 'stored-secret',
+        useSsl: false,
+        activeProfileId: 5,
+        activeProfileName: 'HD',
+        activeDirectory: '/private/movies',
+        minimumAvailability: 'released',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    t.after(() => {
+      settings.radarr = [];
+    });
+
+    const seeded = await seedRequest();
+    await getRepository(Media).update(seeded.media.id, {
+      serviceId: 30,
+      externalServiceId: 44,
+      externalServiceSlug: 'private-release',
+      ratingKey: 'private-rating-key',
+      jellyfinMediaId: 'private-jellyfin-id',
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.get(`/request/${seeded.id}`);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.media.serviceUrl, undefined);
+    assert.strictEqual(response.body.media.externalServiceSlug, undefined);
+    assert.strictEqual(response.body.media.ratingKey, undefined);
+    assert.strictEqual(response.body.media.jellyfinMediaId, undefined);
+    assert.strictEqual(response.body.media.serviceId, 30);
+    assert.strictEqual(response.body.media.externalServiceId, 44);
+  });
+
+  it('revalidates request-view authority before list, count, and detail reads', async () => {
+    const friendRequest = await seedRequest();
+    await getRepository(User).update(1, { permissions: Permission.REQUEST });
+    const staleAuthorizationApp = express();
+    staleAuthorizationApp.use((req, _res, next) => {
+      req.user = new User({ id: 1, permissions: Permission.REQUEST_VIEW });
+      next();
+    });
+    staleAuthorizationApp.use('/request', requestRoutes);
+    staleAuthorizationApp.use(
+      (
+        err: { status?: number; message?: string },
+        _req: express.Request,
+        res: express.Response,
+        _next: express.NextFunction
+      ) => (void _next, res.status(err.status ?? 500).json(err))
+    );
+
+    const listResponse = await request(staleAuthorizationApp)
+      .get('/request')
+      .query({ requestedBy: 2 });
+    const countResponse = await request(staleAuthorizationApp).get(
+      '/request/count'
+    );
+    const detailResponse = await request(staleAuthorizationApp).get(
+      `/request/${friendRequest.id}`
+    );
+
+    assert.strictEqual(listResponse.status, 403);
+    assert.strictEqual(countResponse.status, 200);
+    assert.strictEqual(countResponse.body.total, 0);
+    assert.strictEqual(detailResponse.status, 403);
+  });
+
+  it('accepts the default added sort used by the request list', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.get('/request').query({
+      filter: 'pending',
+      mediaType: 'all',
+      take: 10,
+      sort: 'added',
+      sortDirection: 'desc',
+      skip: 0,
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.ok(Array.isArray(res.body.results));
+  });
+
+  it('accepts the recent requests slider query', async () => {
+    const deletedRequest = await seedRequest(
+      MediaRequestStatus.COMPLETED,
+      undefined,
+      987654
+    );
+    deletedRequest.media.status = MediaStatus.DELETED;
+    await getRepository(Media).save(deletedRequest.media);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.get('/request').query({
+      filter: 'recent',
+      take: 10,
+      sort: 'added',
+      sortDirection: 'desc',
+      skip: 0,
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.ok(Array.isArray(res.body.results));
+    assert.ok(
+      !res.body.results.some(
+        (item: { id: number }) => item.id === deletedRequest.id
+      )
+    );
+    assert.ok(
+      res.body.results.every(
+        (item: { is4k: boolean; media: Media }) =>
+          item.media[item.is4k ? 'status4k' : 'status'] !== MediaStatus.DELETED
+      )
+    );
+  });
+
+  it('rejects malformed request list query filters', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent
+      .get('/request')
+      .query({ mediaType: ['movie', 'tv'] });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Media type must be a string/);
+  });
+
+  it('rejects unknown request list sort parameters', async () => {
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.get('/request').query({ sort: 'drop-table' });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Sort must be valid/);
+  });
+
+  it('marks audiobook-only book requests removable when the Bookshelf server exists', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 21,
+        name: 'Audio Bookshelf',
+        hostname: 'audio.local',
+        port: 8787,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 1,
+        activeProfileName: 'Audiobooks',
+        activeMetadataProfileId: 1,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/audiobooks',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'audiobook',
+      },
+    ];
+    const originalGetProfiles = Object.getOwnPropertyDescriptor(
+      ReadarrAPI.prototype,
+      'getProfiles'
+    );
+    Object.defineProperty(ReadarrAPI.prototype, 'getProfiles', {
+      set() {},
+      get() {
+        return async () => [{ id: 1, name: 'Audiobooks' }];
+      },
+      configurable: true,
+    });
+    t.after(() => {
+      if (originalGetProfiles) {
+        Object.defineProperty(
+          ReadarrAPI.prototype,
+          'getProfiles',
+          originalGetProfiles
+        );
+      }
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mediaType: MediaType.BOOK,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        audiobookServiceId: 21,
+        audiobookExternalServiceId: 210,
+        audiobookExternalServiceSlug: 'audio-book',
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.COMPLETED,
+        is4k: false,
+        bookFormat: 'audiobook',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.get('/request').query({ mediaType: 'book' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.results.length, 1);
+    assert.strictEqual(res.body.results[0].canRemove, true);
+  });
+
+  it('does not mark both-format book requests removable when one linked Bookshelf server is missing', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(10, 'ebook')];
+    const originalGetProfiles = Object.getOwnPropertyDescriptor(
+      ReadarrAPI.prototype,
+      'getProfiles'
+    );
+    Object.defineProperty(ReadarrAPI.prototype, 'getProfiles', {
+      set() {},
+      get() {
+        return async () => [{ id: 22, name: 'Ebooks' }];
+      },
+      configurable: true,
+    });
+    t.after(() => {
+      if (originalGetProfiles) {
+        Object.defineProperty(
+          ReadarrAPI.prototype,
+          'getProfiles',
+          originalGetProfiles
+        );
+      }
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mediaType: MediaType.BOOK,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 10,
+        externalServiceId: 100,
+        externalServiceSlug: 'ebook-book',
+        audiobookServiceId: 20,
+        audiobookExternalServiceId: 200,
+        audiobookExternalServiceSlug: 'audio-book',
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.COMPLETED,
+        is4k: false,
+        bookFormat: 'both',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.get('/request').query({ mediaType: 'book' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.results.length, 1);
+    assert.strictEqual(res.body.results[0].canRemove, false);
+  });
+});
+
+describe('POST /request', () => {
+  it('rejects an available selected movie quality while allowing the missing quality', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      createRadarrSettings(20),
+      { ...createRadarrSettings(21), is4k: true, name: 'Radarr 4K' },
+    ];
+    const tmdbId = 987_639;
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get:
+        () =>
+        async ({ movieId }: { movieId: number }) =>
+          ({
+            id: movieId,
+            external_ids: {},
+            keywords: { keywords: [] },
+            genres: [],
+            original_language: 'en',
+          }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const availableResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: tmdbId,
+      serverId: 20,
+      is4k: false,
+    });
+    const missingQualityResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: tmdbId,
+      serverId: 21,
+      is4k: true,
+    });
+
+    assert.strictEqual(availableResponse.status, 409);
+    assert.match(availableResponse.body.message, /already available/i);
+    assert.strictEqual(missingQualityResponse.status, 201);
+    assert.strictEqual(missingQualityResponse.body.is4k, true);
+
+    const updatedMedia = await getRepository(Media).findOneByOrFail({
+      id: existingMedia.id,
+    });
+    assert.strictEqual(updatedMedia.status, MediaStatus.AVAILABLE);
+    assert.notStrictEqual(updatedMedia.status4k, MediaStatus.UNKNOWN);
+  });
+
+  it('uses an explicitly selected zero-valued screen service without a default', async (t) => {
+    const settings = getSettings();
+    const legacyStandardSettings = createRadarrSettings(0, false);
+    Reflect.deleteProperty(legacyStandardSettings, 'is4k');
+    settings.radarr = [
+      legacyStandardSettings,
+      { ...createRadarrSettings(1, false), is4k: true },
+    ];
+    const providerMediaIds: number[] = [];
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get:
+        () =>
+        async ({ movieId }: { movieId: number }) => {
+          providerMediaIds.push(movieId);
+          return {
+            id: movieId,
+            external_ids: {},
+            keywords: { keywords: [] },
+            genres: [],
+            original_language: 'en',
+          } as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>;
+        },
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const selectedResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 987_640,
+      serverId: 0,
+    });
+    const unknownResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 987_641,
+      serverId: 99,
+    });
+    const wrongTierResponse = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 987_642,
+      serverId: 1,
+    });
+
+    assert.strictEqual(selectedResponse.status, 201);
+    assert.strictEqual(selectedResponse.body.serverId, 0);
+    assert.strictEqual(selectedResponse.body.profileId, 0);
+    assert.strictEqual(selectedResponse.body.rootFolder, '/selected-movies');
+    assert.deepStrictEqual(selectedResponse.body.tags, [7]);
+    assert.strictEqual(unknownResponse.status, 400);
+    assert.match(unknownResponse.body.message, /does not exist/i);
+    assert.strictEqual(wrongTierResponse.status, 400);
+    assert.match(wrongTierResponse.body.message, /quality tier/i);
+    assert.ok(providerMediaIds.length > 0);
+    assert.ok(providerMediaIds.every((mediaId) => mediaId === 987_640));
+  });
+
+  it('applies the most specific matching override rule deterministically', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      {
+        id: 30,
+        name: 'Radarr',
+        hostname: 'radarr.local',
+        port: 7878,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 5,
+        activeProfileName: 'HD',
+        activeDirectory: '/default',
+        minimumAvailability: 'released',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    const overrideRepository = getRepository(OverrideRule);
+    await overrideRepository.save([
+      new OverrideRule({
+        radarrServiceId: 30,
+        genre: '18',
+        rootFolder: '/general',
+      }),
+      new OverrideRule({
+        radarrServiceId: 30,
+        users: '2',
+        genre: '18',
+        rootFolder: '/specific',
+        profileId: 0,
+      }),
+    ]);
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 987650,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [{ id: 18, name: 'Drama' }],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(async () => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+      await overrideRepository.clear();
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 987650,
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.body.rootFolder, '/specific');
+    assert.strictEqual(response.body.profileId, 0);
+  });
+
+  it('rejects request creation after the session credential changes', async (t) => {
+    const userRepository = getRepository(User);
+    const actor = await userRepository.findOneByOrFail({ id: 1 });
+    const oldCredentialVersion = actor.passwordChangedAt?.getTime() ?? 0;
+    await userRepository.update(actor.id, {
+      passwordChangedAt: new Date(oldCredentialVersion + 1_000),
+    });
+    let getMovieCalls = 0;
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () => {
+        getMovieCalls += 1;
+        throw new Error('Provider must not be called for stale credentials.');
+      },
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+    });
+    const staleSessionApp = express();
+    staleSessionApp.use(express.json());
+    staleSessionApp.use((req, _res, next) => {
+      req.user = new User({ id: actor.id, permissions: Permission.ADMIN });
+      req.session = {
+        userId: actor.id,
+        credentialVersion: oldCredentialVersion,
+      } as typeof req.session;
+      next();
+    });
+    staleSessionApp.use('/request', requestRoutes);
+    staleSessionApp.use(
+      (
+        err: { status?: number; message?: string },
+        _req: express.Request,
+        res: express.Response,
+        _next: express.NextFunction
+      ) => (void _next, res.status(err.status ?? 500).json(err))
+    );
+    const beforeCount = await getRepository(MediaRequest).count();
+
+    const [response, bulkResponse] = await Promise.all([
+      request(staleSessionApp).post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 987654321,
+      }),
+      request(staleSessionApp)
+        .post('/request/bulk')
+        .send({
+          mediaType: MediaType.MUSIC,
+          items: [{ mediaId: 'stale-session-release-group' }],
+        }),
+    ]);
+
+    assert.strictEqual(response.status, 403);
+    assert.strictEqual(bulkResponse.status, 403);
+    assert.strictEqual(getMovieCalls, 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), beforeCount);
+  });
+
+  it('returns forbidden when a request session rotates during admission', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const userRepository = getRepository(User);
+    const actor = await userRepository.findOneByOrFail({ id: 2 });
+    const originalRun = requestAdmissionCoordinator.run.bind(
+      requestAdmissionCoordinator
+    );
+    let rotated = false;
+    requestAdmissionCoordinator.run = async (resourceKeys, callback) => {
+      if (!rotated && resourceKeys.includes('user-security:user:2')) {
+        rotated = true;
+        await userRepository.update(2, {
+          passwordChangedAt: new Date(
+            (actor.passwordChangedAt?.getTime() ?? 0) + 1_000
+          ),
+        });
+      }
+      return originalRun(resourceKeys, callback);
+    };
+
+    try {
+      const response = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 987654320,
+      });
+
+      assert.strictEqual(response.status, 403);
+      assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+    } finally {
+      requestAdmissionCoordinator.run = originalRun;
+    }
+  });
+
+  it('reloads permissions after an admitted concurrent revocation', async () => {
+    const userRepository = getRepository(User);
+    const friend = await userRepository.findOneByOrFail({ id: 2 });
+    let revocationStarted!: () => void;
+    let releaseRevocation!: () => void;
+    const revocationStartedPromise = new Promise<void>((resolve) => {
+      revocationStarted = resolve;
+    });
+    const releaseRevocationPromise = new Promise<void>((resolve) => {
+      releaseRevocation = resolve;
+    });
+    const revocation = runUserSecurityMutation(friend.id, async () => {
+      await userRepository.update(friend.id, { permissions: 0 });
+      revocationStarted();
+      await releaseRevocationPromise;
+    });
+    await revocationStartedPromise;
+
+    const rejectedRequest = assert.rejects(
+      MediaRequest.request(
+        { mediaType: MediaType.MOVIE, mediaId: 4999 },
+        friend
+      ),
+      /do not have permission/i
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseRevocation();
+    await revocation;
+
+    await rejectedRequest;
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+    assert.strictEqual(await getRepository(Media).count(), 0);
+  });
+
+  it('serializes concurrent request admission so quotas cannot be exceeded', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    friend.musicQuotaLimit = 1;
+    friend.musicQuotaDays = 7;
+    await userRepo.save(friend);
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) =>
+        ({
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: { name: releaseGroupId },
+            artist: { name: 'Concurrent Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+      friend.musicQuotaLimit = undefined;
+      friend.musicQuotaDays = undefined;
+    });
+
+    const results = await Promise.allSettled([
+      MediaRequest.request(
+        { mediaType: MediaType.MUSIC, mediaId: 'concurrent-album-one' },
+        friend
+      ),
+      MediaRequest.request(
+        { mediaType: MediaType.MUSIC, mediaId: 'concurrent-album-two' },
+        friend
+      ),
+    ]);
+
+    assert.equal(
+      results.filter((result) => result.status === 'fulfilled').length,
+      1
+    );
+    const rejection = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    assert.ok(rejection);
+    assert.match(String(rejection.reason), /quota exceeded/i);
+    assert.equal(await getRepository(MediaRequest).count(), 1);
+  });
+
+  it('serializes concurrent requests for the same media across users', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [
+      {
+        id: 30,
+        name: 'Radarr',
+        hostname: 'radarr.local',
+        port: 7878,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 5,
+        activeProfileName: 'HD',
+        activeDirectory: '/movies',
+        minimumAvailability: 'released',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 550,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+
+    const userRepository = getRepository(User);
+    const firstUser = await userRepository.findOneByOrFail({ id: 2 });
+    const secondUser = await userRepository.save(
+      new User({
+        email: 'concurrent-requester@seerr.dev',
+        username: 'concurrent-requester',
+        avatar: 'https://example.com/avatar.png',
+        permissions: Permission.REQUEST,
+        userType: UserType.LOCAL,
+      })
+    );
+
+    const results = await Promise.allSettled([
+      MediaRequest.request(
+        { mediaType: MediaType.MOVIE, mediaId: 550, is4k: false },
+        firstUser
+      ),
+      MediaRequest.request(
+        { mediaType: MediaType.MOVIE, mediaId: 550 },
+        secondUser
+      ),
+    ]);
+
+    assert.equal(
+      results.filter((result) => result.status === 'fulfilled').length,
+      1
+    );
+    const rejection = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    assert.ok(rejection);
+    assert.match(String(rejection.reason), /already exists/i);
+    assert.equal(await getRepository(MediaRequest).count(), 1);
+    assert.equal(await getRepository(Media).count(), 1);
+  });
+
+  it('shares media identity across concurrent standard and 4K requests', async (t) => {
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 551,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+    });
+
+    const userRepository = getRepository(User);
+    const firstUser = await userRepository.findOneByOrFail({ id: 1 });
+    const secondUser = await userRepository.save(
+      new User({
+        email: 'concurrent-4k-requester@seerr.dev',
+        username: 'concurrent-4k-requester',
+        avatar: 'https://example.com/avatar.png',
+        permissions: Permission.ADMIN,
+        userType: UserType.LOCAL,
+      })
+    );
+
+    const results = await Promise.allSettled([
+      MediaRequest.request(
+        { mediaType: MediaType.MOVIE, mediaId: 551, is4k: false },
+        firstUser
+      ),
+      MediaRequest.request(
+        { mediaType: MediaType.MOVIE, mediaId: 551, is4k: true },
+        secondUser
+      ),
+    ]);
+
+    assert.equal(
+      results.filter((result) => result.status === 'fulfilled').length,
+      2
+    );
+    assert.equal(await getRepository(MediaRequest).count(), 2);
+    assert.equal(await getRepository(Media).count(), 1);
+    const media = await getRepository(Media).findOneByOrFail({ tmdbId: 551 });
+    assert.notEqual(media.status, MediaStatus.UNKNOWN);
+    assert.notEqual(media.status4k, MediaStatus.UNKNOWN);
+  });
+
+  it('returns the post-approval media status instead of the pre-subscriber snapshot', async (t) => {
+    // MediaRequestSubscriber.afterInsert bumps the parent Media row to
+    // PROCESSING for an auto-approved request, using its own freshly fetched
+    // copy of that row. The MediaRequest object returned by request() must
+    // reflect that update rather than the status it held before the
+    // subscriber ran, or every caller (the API response, the frontend) sees
+    // a stale PENDING status until something else happens to refetch it.
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 552,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+    });
+
+    const adminUser = await getRepository(User).findOneByOrFail({ id: 1 });
+
+    const mediaRequest = await MediaRequest.request(
+      { mediaType: MediaType.MOVIE, mediaId: 552, is4k: false },
+      adminUser
+    );
+
+    assert.equal(mediaRequest.status, MediaRequestStatus.APPROVED);
+    assert.equal(mediaRequest.media.status, MediaStatus.PROCESSING);
+
+    const persistedMedia = await getRepository(Media).findOneByOrFail({
+      tmdbId: 552,
+    });
+    assert.equal(persistedMedia.status, MediaStatus.PROCESSING);
+  });
+
+  it("lets an administrator request any tier for another user while preserving that user's approval permissions", async (t) => {
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 553,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+    });
+
+    const adminUser = await getRepository(User).findOneByOrFail({ id: 1 });
+    const requestOwner = await getRepository(User).findOneByOrFail({ id: 2 });
+
+    const mediaRequest = await MediaRequest.request(
+      {
+        mediaType: MediaType.MOVIE,
+        mediaId: 553,
+        is4k: true,
+        userId: requestOwner.id,
+      },
+      adminUser
+    );
+
+    assert.equal(mediaRequest.requestedBy.id, requestOwner.id);
+    assert.equal(mediaRequest.status, MediaRequestStatus.PENDING);
+    assert.equal(mediaRequest.modifiedBy == null, true);
+    assert.equal(mediaRequest.media.status, MediaStatus.UNKNOWN);
+    assert.equal(mediaRequest.media.status4k, MediaStatus.PENDING);
+  });
+
+  it('promotes matching pending Movie, Series, Music, and Book requests without replacing their requester or timeline', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(41)];
+    settings.sonarr = [createSonarrSettings(42)];
+    settings.lidarr = [createLidarrSettings(43)];
+    settings.readarr = [createReadarrSettings(44, 'ebook')];
+
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 560,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 561,
+          external_ids: { tvdb_id: 9561 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [{ season_number: 1 }],
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'pending-release-group',
+          release_group_metadata: {
+            release_group: { name: 'Pending Album' },
+            artist: { name: 'Pending Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OLPENDINGW',
+          title: 'Pending Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () => ({ size: 0, entries: [] })
+    );
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      getAlbumMock.mock.restore();
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.radarr = [];
+      settings.sonarr = [];
+      settings.lidarr = [];
+      settings.readarr = [];
+    });
+
+    const userRepository = getRepository(User);
+    const mediaRepository = getRepository(Media);
+    const requestRepository = getRepository(MediaRequest);
+    const originalRequester = await userRepository.findOneByOrFail({ id: 2 });
+    const movie = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 560,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const series = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 561,
+        tvdbId: 9561,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const music = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'pending-release-group',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const book = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OLPENDINGW',
+            canonical: true,
+          }),
+        ],
+      })
+    );
+
+    const pendingRequests = await requestRepository.save([
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        media: movie,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 41,
+        profileId: 0,
+        rootFolder: '/selected-movies',
+        serviceTargets: [
+          {
+            serviceType: 'radarr',
+            format: 'standard',
+            serverId: 41,
+            profileId: 0,
+            rootFolder: '/selected-movies',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media: series,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 42,
+        profileId: 20,
+        languageProfileId: 1,
+        rootFolder: '/tv',
+        serviceTargets: [
+          {
+            serviceType: 'sonarr',
+            format: 'standard',
+            serverId: 42,
+            profileId: 20,
+            languageProfileId: 1,
+            rootFolder: '/tv',
+            status: MediaStatus.PENDING,
+          },
+        ],
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: music,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 43,
+        profileId: 20,
+        metadataProfileId: 30,
+        rootFolder: '/music',
+        serviceTargets: [
+          {
+            serviceType: 'lidarr',
+            format: 'music',
+            serverId: 43,
+            profileId: 20,
+            metadataProfileId: 30,
+            rootFolder: '/music',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: book,
+        requestedBy: originalRequester,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 44,
+        profileId: 22,
+        metadataProfileId: 33,
+        rootFolder: '/books',
+        bookFormat: 'ebook',
+        serviceTargets: [
+          {
+            serviceType: 'readarr',
+            format: 'ebook',
+            serverId: 44,
+            profileId: 22,
+            metadataProfileId: 33,
+            rootFolder: '/books',
+            status: MediaStatus.PENDING,
+          },
+        ],
+      }),
+    ]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const responses = [
+      await admin.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 560,
+        is4k: false,
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 561,
+        seasons: [1],
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.MUSIC,
+        mediaId: 'pending-release-group',
+      }),
+      await admin.post('/request').send({
+        mediaType: MediaType.BOOK,
+        mediaId: 'OLPENDINGW',
+        format: 'ebook',
+      }),
+    ];
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status),
+      [201, 201, 201, 201]
+    );
+    assert.deepStrictEqual(
+      responses.map((response) => response.body.id).sort((a, b) => a - b),
+      pendingRequests.map((pending) => pending.id).sort((a, b) => a - b)
+    );
+    assert.strictEqual(await requestRepository.count(), 4);
+
+    const promoted = await requestRepository.find({
+      order: { id: 'ASC' },
+    });
+    assert.ok(
+      promoted.every(
+        (request) =>
+          request.status === MediaRequestStatus.APPROVED &&
+          request.requestedBy.id === originalRequester.id &&
+          request.modifiedBy?.id === 1
+      )
+    );
+  });
+
+  it('allows an auto-approved actor to fulfill another user pending request', async (t) => {
+    const settings = getSettings();
+    settings.radarr = [createRadarrSettings(45)];
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 562,
+          external_ids: {},
+          keywords: { keywords: [] },
+          genres: [],
+          original_language: 'en',
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getMovie']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      settings.radarr = [];
+    });
+
+    const pending = await seedRequest(
+      MediaRequestStatus.PENDING,
+      undefined,
+      562
+    );
+    const userRepository = getRepository(User);
+    const originalRequester = await userRepository.findOneByOrFail({ id: 1 });
+    pending.requestedBy = originalRequester;
+    await getRepository(MediaRequest).save(pending);
+    const fulfillingUser = await userRepository.findOneByOrFail({ id: 2 });
+    fulfillingUser.permissions |= Permission.AUTO_APPROVE_MOVIE;
+    await userRepository.save(fulfillingUser);
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 562,
+      is4k: false,
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.body.id, pending.id);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+    const promoted = await getRepository(MediaRequest).findOneByOrFail({
+      id: pending.id,
+    });
+    assert.strictEqual(promoted.status, MediaRequestStatus.APPROVED);
+    assert.strictEqual(promoted.requestedBy.id, originalRequester.id);
+    assert.strictEqual(promoted.modifiedBy?.id, fulfillingUser.id);
+  });
+
+  it('serializes different music releases resolving to one release group', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'shared-release-group',
+          release_group_metadata: {
+            release_group: { name: 'Shared Album' },
+            artist: { name: 'Concurrent Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const userRepository = getRepository(User);
+    const firstUser = await userRepository.findOneByOrFail({ id: 2 });
+    const secondUser = await userRepository.save(
+      new User({
+        email: 'music-alias-requester@seerr.dev',
+        username: 'music-alias-requester',
+        avatar: 'https://example.com/avatar.png',
+        permissions: Permission.REQUEST,
+        userType: UserType.LOCAL,
+      })
+    );
+
+    const results = await Promise.allSettled([
+      MediaRequest.request(
+        { mediaType: MediaType.MUSIC, mediaId: 'release-one' },
+        firstUser
+      ),
+      MediaRequest.request(
+        { mediaType: MediaType.MUSIC, mediaId: 'release-two' },
+        secondUser
+      ),
+    ]);
+
+    assert.equal(
+      results.filter((result) => result.status === 'fulfilled').length,
+      1
+    );
+    const rejection = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    assert.ok(rejection);
+    assert.match(String(rejection.reason), /already exists/i);
+    assert.equal(await getRepository(MediaRequest).count(), 1);
+    assert.equal(await getRepository(Media).count(), 1);
+  });
+
+  it('acquires canonical music admission before service admission', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'ordered-release-group',
+          release_group_metadata: {
+            release_group: { name: 'Ordered Album' },
+            artist: { name: 'Ordered Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    const admittedResources: string[][] = [];
+    const originalRun = requestAdmissionCoordinator.run.bind(
+      requestAdmissionCoordinator
+    );
+    const observedRun: typeof requestAdmissionCoordinator.run = (
+      resources,
+      callback
+    ) => {
+      admittedResources.push(resources);
+      return originalRun(resources, callback);
+    };
+    mock.method(requestAdmissionCoordinator, 'run', observedRun);
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const requester = await getRepository(User).findOneByOrFail({ id: 2 });
+    await MediaRequest.request(
+      { mediaType: MediaType.MUSIC, mediaId: 'ordered-release' },
+      requester
+    );
+
+    const canonicalIndex = admittedResources.findIndex((resources) =>
+      resources.includes('request-canonical:music:ordered-release-group')
+    );
+    const serviceIndex = admittedResources.findIndex((resources) =>
+      resources.includes('service-config:lidarr:10')
+    );
+    assert.ok(canonicalIndex >= 0);
+    assert.ok(serviceIndex > canonicalIndex);
+  });
+
+  it('rejects malformed request bodies before request processing', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send([]);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Request body must be an object/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects missing and malformed create identities before provider calls', async (t) => {
+    let movieLookups = 0;
+    let tvLookups = 0;
+    Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+      configurable: true,
+      get: () => {
+        movieLookups += 1;
+        return async () => undefined as never;
+      },
+      set: () => undefined,
+    });
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => {
+        tvLookups += 1;
+        return async () => undefined as never;
+      },
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getMovie;
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+    });
+    const cookie = await loginCookieAs('friend@seerr.dev', 'test1234');
+
+    const responses = await Promise.all([
+      request(app).post('/request').set('Cookie', cookie).send({ mediaId: 1 }),
+      request(app).post('/request').set('Cookie', cookie).send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 'not-an-id',
+      }),
+      request(app).post('/request').set('Cookie', cookie).send({
+        mediaType: MediaType.TV,
+        mediaId: 2,
+      }),
+      request(app).post('/request').set('Cookie', cookie).send({
+        mediaType: MediaType.TV,
+        mediaId: 2,
+        seasons: [],
+      }),
+      request(app).post('/request').set('Cookie', cookie).send({
+        mediaType: 'podcast',
+        mediaId: 3,
+      }),
+    ]);
+
+    assert.ok(responses.every(({ status }) => status === 400));
+    assert.strictEqual(movieLookups, 0);
+    assert.strictEqual(tvLookups, 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects new requests when their media category is disabled', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      movie: false,
+    };
+
+    try {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const response = await agent.post('/request').send({
+        mediaType: MediaType.MOVIE,
+        mediaId: 991,
+      });
+
+      assert.strictEqual(response.status, 403);
+      assert.match(response.body.message, /Movie requests are disabled/);
+      assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+    }
+  });
+
+  it('blocks book and both-format requests when the ebook category is disabled', async () => {
+    const settings = getSettings();
+    const originalCategories = { ...settings.main.enabledMediaCategories };
+    settings.main.enabledMediaCategories = {
+      ...originalCategories,
+      ebook: false,
+      audiobook: true,
+    };
+
+    try {
+      const agent = await loginAs('friend@seerr.dev', 'test1234');
+      const ebook = await agent.post('/request').send({
+        mediaType: MediaType.BOOK,
+        mediaId: 'OLCATEGORY1W',
+        format: 'ebook',
+      });
+      const both = await agent.post('/request').send({
+        mediaType: MediaType.BOOK,
+        mediaId: 'OLCATEGORY2W',
+        format: 'both',
+      });
+
+      assert.strictEqual(ebook.status, 403);
+      assert.match(ebook.body.message, /Book requests are disabled/);
+      assert.strictEqual(both.status, 403);
+      assert.match(both.body.message, /Book requests are disabled/);
+      assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+    } finally {
+      settings.main.enabledMediaCategories = originalCategories;
+    }
+  });
+
+  it('rejects Open Library path-control IDs before request processing', async () => {
+    const getWork = mock.method(OpenLibraryAPI.prototype, 'getWork');
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/../../search',
+      format: 'ebook',
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /valid Open Library resource ID/i);
+    assert.strictEqual(getWork.mock.callCount(), 0);
+  });
+
+  it('rejects MusicBrainz path-control IDs before request processing', async () => {
+    const getAlbum = mock.method(ListenBrainzAPI.prototype, 'getAlbum');
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: '../album?redirect=/account',
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /valid MusicBrainz resource ID/i);
+    assert.strictEqual(getAlbum.mock.callCount(), 0);
+  });
+
+  it('does not expose unexpected request-processing errors', async () => {
+    const privateDiagnostic = 'SQLITE private_schema at 10.0.0.5';
+    mock.method(MediaRequest, 'request', async () => {
+      throw new Error(privateDiagnostic);
+    });
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 991,
+      is4k: false,
+    });
+
+    assert.strictEqual(res.status, 500);
+    assert.strictEqual(res.body.message, 'Unable to submit request.');
+    assert.doesNotMatch(JSON.stringify(res.body), /private_schema|10\.0\.0\.5/);
+  });
+
+  it('rejects malformed advanced option payloads before request processing', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'listenbrainz-release-id',
+      tags: [1, 'not-a-number'],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /tags must contain positive integers/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects non-boolean quality-tier flags before request processing', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 992,
+      is4k: 'false',
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /is4k must be a boolean/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('reuses existing TV media when TMDB changes but TVDB matches', async (t) => {
+    const settings = getSettings();
+    settings.sonarr = [createSonarrSettings(10)];
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 111,
+        tvdbId: 222,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 333,
+          external_ids: { tvdb_id: 222 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [{ season_number: 1 }],
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      settings.sonarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 333,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.media.id, existingMedia.id);
+    assert.strictEqual(res.body.media.tmdbId, 333);
+    assert.strictEqual(res.body.media.tvdbId, 222);
+    assert.strictEqual(await getRepository(Media).count(), 1);
+  });
+
+  it('excludes active TV seasons without blocking seasons from failed history', async (t) => {
+    const settings = getSettings();
+    settings.sonarr = [createSonarrSettings(10)];
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 334,
+        tvdbId: 223,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save([
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 2,
+            status: MediaRequestStatus.FAILED,
+          }),
+        ],
+      }),
+    ]);
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 334,
+          external_ids: { tvdb_id: 223 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [1, 2, 3].map((season_number) => ({ season_number })),
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      settings.sonarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 334,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.deepStrictEqual(
+      response.body.seasons.map(
+        ({ seasonNumber }: { seasonNumber: number }) => seasonNumber
+      ),
+      [2, 3]
+    );
+  });
+
+  it('persists exact episodes and removes duplicate active episode selections', async (t) => {
+    const settings = getSettings();
+    settings.sonarr = [createSonarrSettings(10)];
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 335,
+        tvdbId: 224,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            episodeNumbers: [1],
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      })
+    );
+    Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+      configurable: true,
+      get: () => async () =>
+        ({
+          id: 335,
+          external_ids: { tvdb_id: 224 },
+          keywords: { results: [] },
+          genres: [],
+          original_language: 'en',
+          seasons: [1, 2].map((season_number) => ({ season_number })),
+        }) as unknown as Awaited<ReturnType<TheMovieDb['getTvShow']>>,
+      set: () => undefined,
+    });
+    t.after(() => {
+      delete (TheMovieDb.prototype as Partial<TheMovieDb>).getTvShow;
+      settings.sonarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 335,
+      seasons: [1, 2],
+      seasonRequests: [
+        { seasonNumber: 1, episodeNumbers: [1, 2] },
+        { seasonNumber: 2 },
+      ],
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.deepStrictEqual(
+      response.body.seasons.map(
+        (season: { seasonNumber: number; episodeNumbers?: number[] }) => ({
+          seasonNumber: season.seasonNumber,
+          episodeNumbers: season.episodeNumbers,
+        })
+      ),
+      [
+        { seasonNumber: 1, episodeNumbers: [2] },
+        { seasonNumber: 2, episodeNumbers: null },
+      ]
+    );
+  });
+
+  it('rejects an empty partial-season request', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 336,
+      seasonRequests: [{ seasonNumber: 1, episodeNumbers: [] }],
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /must include an episode/);
+  });
+
+  it('creates a pending music request with the resolved MusicBrainz release group', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        id: 10,
+        name: 'Lidarr',
+        hostname: 'lidarr.local',
+        port: 8686,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 20,
+        activeProfileName: 'Music',
+        activeMetadataProfileId: 30,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/music',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'release-group-id',
+          release_group_metadata: {
+            release_group: {
+              name: 'Kind of Blue',
+            },
+            artist: {
+              name: 'Miles Davis',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'listenbrainz-release-id',
+      serverId: 10,
+      profileId: 20,
+      metadataProfileId: 30,
+      rootFolder: '/music',
+      tags: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.type, MediaType.MUSIC);
+    assert.strictEqual(res.body.status, MediaRequestStatus.PENDING);
+    assert.strictEqual(res.body.media.mbId, 'release-group-id');
+    assert.strictEqual(res.body.serverId, 10);
+    assert.strictEqual(res.body.profileId, 20);
+    assert.strictEqual(res.body.metadataProfileId, 30);
+    assert.strictEqual(res.body.rootFolder, '/music');
+    assert.deepStrictEqual(res.body.tags, []);
+    assert.deepStrictEqual(res.body.serviceTargets, [
+      {
+        serviceType: 'lidarr',
+        format: 'music',
+        serverId: 10,
+        profileId: 20,
+        metadataProfileId: 30,
+        rootFolder: '/music',
+        tags: [],
+        status: MediaStatus.PENDING,
+      },
+    ]);
+
+    const savedMedia = await getRepository(Media).findOneOrFail({
+      where: { mbId: 'release-group-id', mediaType: MediaType.MUSIC },
+      relations: { requests: true },
+    });
+    assert.strictEqual(savedMedia.status, MediaStatus.PENDING);
+    assert.strictEqual(savedMedia.requests.length, 1);
+  });
+
+  it('rejects a music request when the album is already available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const mbId = 'available-music-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Available Album' },
+            artist: { name: 'Available Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+
+    assert.strictEqual(response.status, 409);
+    assert.match(response.body.message, /already available/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('allows the alternate music destination and blocks it after that copy becomes available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(11, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'alternate-quality-music-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 10,
+        externalServiceId: 100,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Alternate Quality Album' },
+            artist: { name: 'Alternate Quality Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const alternateResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 11,
+    });
+
+    assert.strictEqual(alternateResponse.status, 201);
+    assert.strictEqual(alternateResponse.body.serverId, 11);
+
+    const alternateRequest = await getRepository(MediaRequest).findOneByOrFail({
+      id: alternateResponse.body.id,
+    });
+    alternateRequest.status = MediaRequestStatus.COMPLETED;
+    alternateRequest.serviceTargets = alternateRequest.serviceTargets?.map(
+      (target) => ({ ...target, status: MediaStatus.AVAILABLE })
+    );
+    await getRepository(MediaRequest).save(alternateRequest);
+
+    const duplicateResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 11,
+    });
+
+    assert.strictEqual(duplicateResponse.status, 409);
+    assert.match(duplicateResponse.body.message, /already available/i);
+  });
+
+  it('allows simultaneous active music requests for different Lidarr destinations', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(0, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'simultaneous-quality-music-release-group';
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'Two Quality Album' },
+            artist: { name: 'Two Quality Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const mp3Response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+    const flacResponse = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 0,
+    });
+
+    assert.strictEqual(mp3Response.status, 201);
+    assert.strictEqual(flacResponse.status, 201);
+    assert.strictEqual(mp3Response.body.serverId, 10);
+    assert.strictEqual(flacResponse.body.serverId, 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
+  it('allows an MP3 request when the FLAC destination is already available', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        ...createLidarrSettings(10),
+        name: 'Lidarr MP3',
+        activeProfileName: 'MP3',
+      },
+      {
+        ...createLidarrSettings(11, false),
+        name: 'Lidarr FLAC',
+        activeProfileName: 'FLAC',
+      },
+    ];
+    const mbId = 'flac-available-mp3-request-release-group';
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 11,
+        externalServiceId: 101,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: mbId,
+          release_group_metadata: {
+            release_group: { name: 'FLAC Available Album' },
+            artist: { name: 'FLAC Available Artist' },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+      serverId: 10,
+    });
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.body.serverId, 10);
+  });
+
+  it('rolls back an existing music status when the request insert fails', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const mbId = 'existing-music-request-rollback';
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        tmdbId: 0,
+        mbId,
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({ release_group_mbid: mbId }) as Awaited<
+          ReturnType<ListenBrainzAPI['getAlbum']>
+        >
+    );
+    const subscriber: EntitySubscriberInterface<MediaRequest> = {
+      listenTo: () => MediaRequest,
+      beforeInsert: (event: InsertEvent<MediaRequest>) => {
+        if (event.entity.media.id === existingMedia.id) {
+          throw new Error('forced existing-media request failure');
+        }
+      },
+    };
+    dataSource.subscribers.push(subscriber);
+    t.after(() => {
+      dataSource.subscribers.splice(
+        dataSource.subscribers.indexOf(subscriber),
+        1
+      );
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: mbId,
+    });
+
+    assert.strictEqual(response.status, 500);
+    assert.strictEqual(
+      (await getRepository(Media).findOneByOrFail({ id: existingMedia.id }))
+        .status,
+      MediaStatus.UNKNOWN
+    );
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('accepts zero-valued Lidarr service and profile overrides in music requests', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(0, false)];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'zero-single-album',
+          release_group_metadata: {
+            release_group: {
+              name: 'Zero Single Album',
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'zero-single-album',
+      serverId: 0,
+      profileId: 0,
+      metadataProfileId: 0,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.serverId, 0);
+    assert.strictEqual(res.body.profileId, 0);
+    assert.strictEqual(res.body.metadataProfileId, 0);
+  });
+
+  it('creates a music request when ListenBrainz album lookup fails for a valid release group', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        id: 10,
+        name: 'Lidarr',
+        hostname: 'lidarr.local',
+        port: 8686,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 20,
+        activeProfileName: 'Music',
+        activeMetadataProfileId: 30,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/music',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () => {
+        throw new Error('ListenBrainz unavailable');
+      }
+    );
+    const getReleaseGroupDetailsMock = mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () =>
+        ({
+          id: 'release-group-id',
+          title: 'Kind of Blue',
+          score: 100,
+          media_type: 'album',
+          'primary-type': 'Album',
+          'first-release-date': '1959',
+          'artist-credit': [],
+          posterPath: undefined,
+          'type-id': '',
+          'primary-type-id': '',
+          count: 1,
+          releases: [],
+          releasedate: '1959',
+        }) as Awaited<ReturnType<MusicBrainz['getReleaseGroupDetails']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      getReleaseGroupDetailsMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'RELEASE-GROUP-ID',
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.type, MediaType.MUSIC);
+    assert.strictEqual(res.body.media.mbId, 'release-group-id');
+  });
+
+  it('allows a new music request after a previous request failed', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [
+      {
+        id: 10,
+        name: 'Lidarr',
+        hostname: 'lidarr.local',
+        port: 8686,
+        apiKey: 'test-key',
+        useSsl: false,
+        activeProfileId: 20,
+        activeProfileName: 'Music',
+        activeMetadataProfileId: 30,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/music',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+      },
+    ];
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'retry-album',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'retry-album',
+          release_group_metadata: {
+            release_group: {
+              name: 'Retry Album',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'retry-album',
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.media.mbId, 'retry-album');
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
+  it('rejects music requests without a default Lidarr server', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'release-group-no-lidarr',
+          release_group_metadata: {
+            release_group: {
+              name: 'No Lidarr Album',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => getAlbumMock.mock.restore());
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'listenbrainz-release-id',
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /no default lidarr/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects music requests with an unknown Lidarr server override', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'release-group-bad-lidarr',
+          release_group_metadata: {
+            release_group: {
+              name: 'Bad Lidarr Album',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => getAlbumMock.mock.restore());
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'listenbrainz-release-id',
+      serverId: 999,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /selected lidarr/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('creates a pending book request with normalized identifiers and format', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 11,
+        name: 'Audio Bookshelf',
+        hostname: 'audio.local',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        activeProfileId: 22,
+        activeProfileName: 'Audiobooks',
+        activeMetadataProfileId: 33,
+        activeMetadataProfileName: 'Audio Standard',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'audiobook',
+      },
+    ];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL45804W',
+          title: 'The Left Hand of Darkness',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/OL45804W',
+      editionId: '/books/OL1M',
+      isbn13: '978-0-441-47812-5',
+      format: 'audiobook',
+      serverId: 11,
+      profileId: 22,
+      metadataProfileId: 33,
+      rootFolder: '/books',
+      tags: [4, 5],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.type, MediaType.BOOK);
+    assert.strictEqual(res.body.status, MediaRequestStatus.PENDING);
+    assert.strictEqual(res.body.bookFormat, 'audiobook');
+    assert.strictEqual(res.body.serverId, 11);
+    assert.strictEqual(res.body.profileId, 22);
+    assert.strictEqual(res.body.metadataProfileId, 33);
+    assert.strictEqual(res.body.rootFolder, '/books');
+    assert.deepStrictEqual(res.body.tags, []);
+
+    const savedMedia = await getRepository(Media).findOneOrFail({
+      where: { id: res.body.media.id },
+      relations: { identifiers: true, requests: true },
+    });
+    assert.strictEqual(savedMedia.mediaType, MediaType.BOOK);
+    assert.strictEqual(savedMedia.status, MediaStatus.PENDING);
+    assert.strictEqual(savedMedia.requests.length, 1);
+    assert.deepStrictEqual(
+      savedMedia.identifiers
+        .map((identifier) => ({
+          provider: identifier.provider,
+          value: identifier.value,
+          canonical: identifier.canonical,
+        }))
+        .sort((a, b) => a.provider.localeCompare(b.provider)),
+      [
+        {
+          provider: MediaIdentifierProvider.ISBN,
+          value: '9780441478125',
+          canonical: false,
+        },
+        {
+          provider: MediaIdentifierProvider.OPENLIBRARY,
+          value: 'OL45804W',
+          canonical: true,
+        },
+        {
+          provider: MediaIdentifierProvider.OPENLIBRARY_EDITION,
+          value: 'OL1M',
+          canonical: false,
+        },
+      ].sort((a, b) => a.provider.localeCompare(b.provider))
+    );
+  });
+
+  it('rolls back new book media and identifiers when the request insert fails', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(11, 'ebook')];
+    const openLibraryId = 'OLREQUESTROLLBACKW';
+    const mediaCountBefore = await getRepository(Media).countBy({
+      mediaType: MediaType.BOOK,
+    });
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({ key: `/works/${openLibraryId}`, title: 'Rollback Book' }) as Awaited<
+          ReturnType<OpenLibraryAPI['getWork']>
+        >
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({ size: 0, entries: [] }) as Awaited<
+          ReturnType<OpenLibraryAPI['getWorkEditions']>
+        >
+    );
+    const subscriber: EntitySubscriberInterface<MediaRequest> = {
+      listenTo: () => MediaRequest,
+      beforeInsert: async (event: InsertEvent<MediaRequest>) => {
+        if (
+          event.entity.type === MediaType.BOOK &&
+          (await event.manager.getRepository(MediaIdentifier).existsBy({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: openLibraryId,
+          }))
+        ) {
+          throw new Error('forced request insert failure');
+        }
+      },
+    };
+    dataSource.subscribers.push(subscriber);
+    t.after(() => {
+      dataSource.subscribers.splice(
+        dataSource.subscribers.indexOf(subscriber),
+        1
+      );
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: openLibraryId,
+      format: 'ebook',
+    });
+
+    assert.strictEqual(response.status, 500);
+    assert.strictEqual(
+      await getRepository(MediaIdentifier).existsBy({
+        provider: MediaIdentifierProvider.OPENLIBRARY,
+        value: openLibraryId,
+      }),
+      false
+    );
+    assert.strictEqual(
+      await getRepository(Media).countBy({ mediaType: MediaType.BOOK }),
+      mediaCountBefore
+    );
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('caps provider-supplied book identifiers before locking and persistence', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(11, 'ebook')];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({ key: '/works/OL8106W', title: 'Identifier Flood' }) as Awaited<
+          ReturnType<OpenLibraryAPI['getWork']>
+        >
+    );
+    const makeIsbn13 = (index: number) => {
+      const body = `978${String(index).padStart(9, '0')}`;
+      const sum = body
+        .split('')
+        .reduce(
+          (total, digit, digitIndex) =>
+            total + Number(digit) * (digitIndex % 2 === 0 ? 1 : 3),
+          0
+        );
+      return `${body}${(10 - (sum % 10)) % 10}`;
+    };
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL8106M',
+              isbn_13: Array.from({ length: 500 }, (_, index) =>
+                makeIsbn13(index)
+              ),
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/OL8106W',
+      format: 'ebook',
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(
+      await getRepository(MediaIdentifier).count({
+        where: { media: { id: res.body.media.id } },
+      }),
+      MAX_BOOK_REQUEST_IDENTIFIER_CANDIDATES
+    );
+  });
+
+  it('rejects an audiobook request with an ebook-only Bookshelf server override', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 11,
+        name: 'Ebook Bookshelf',
+        hostname: 'ebooks.local',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        activeProfileId: 22,
+        activeProfileName: 'Ebooks',
+        activeMetadataProfileId: 33,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'ebook',
+      },
+    ];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL45804W',
+          title: 'The Left Hand of Darkness',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/OL45804W',
+      format: 'audiobook',
+      serverId: 11,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /not configured for audiobook/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects book requests with an unknown Bookshelf server override', async (t) => {
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL45804W',
+          title: 'The Left Hand of Darkness',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/OL45804W',
+      serverId: 999,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /selected bookshelf/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+    assert.strictEqual(
+      await getRepository(MediaIdentifier).existsBy({
+        provider: MediaIdentifierProvider.OPENLIBRARY,
+        value: 'OL45804W',
+      }),
+      false
+    );
+    assert.strictEqual(
+      await getRepository(Media).countBy({ mediaType: MediaType.BOOK }),
+      0
+    );
+  });
+
+  it('rejects both-format book requests without both default Bookshelf formats', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 11,
+        name: 'Ebook Bookshelf',
+        hostname: 'ebooks.local',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        activeProfileId: 22,
+        activeProfileName: 'Ebooks',
+        activeMetadataProfileId: 33,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'ebook',
+      },
+    ];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL45804W',
+          title: 'The Left Hand of Darkness',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: '/works/OL45804W',
+      format: 'both',
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /default ebook and audiobook/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('uses an explicit ebook service with the default audiobook service for both formats', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      createReadarrSettings(0, 'ebook', false),
+      createReadarrSettings(1, 'audiobook', true),
+    ];
+    const providerWorkIds: string[] = [];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) => {
+        providerWorkIds.push(workId);
+        return {
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: 'Both Format Book',
+        } as Awaited<ReturnType<OpenLibraryAPI['getWork']>>;
+      }
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}M`,
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const selectedResponse = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OLBOTH1W',
+      format: 'both',
+      serverId: 0,
+    });
+    const wrongTypeResponse = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OLBOTH2W',
+      format: 'both',
+      serverId: 1,
+    });
+
+    assert.strictEqual(selectedResponse.status, 201);
+    assert.strictEqual(selectedResponse.body.serverId, 0);
+    assert.strictEqual(selectedResponse.body.bookFormat, 'both');
+    assert.strictEqual(wrongTypeResponse.status, 400);
+    assert.match(wrongTypeResponse.body.message, /configured for ebook/i);
+    assert.ok(providerWorkIds.every((workId) => !workId.includes('OLBOTH2W')));
+  });
+
+  it('blocks duplicate book requests that resolve to an existing ISBN', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.ISBN,
+            value: '9780441478125',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL999W',
+          title: 'Duplicate ISBN Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL999M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL999W',
+      isbn13: '9780441478125',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /request for this book already exists/i);
+    assert.strictEqual(await requestRepo.count(), 1);
+  });
+
+  it('allows a new book request after a previous request failed', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 21,
+        name: 'Ebook Bookshelf',
+        hostname: 'ebooks.local',
+        port: 8787,
+        apiKey: 'ebook-key',
+        useSsl: false,
+        activeProfileId: 31,
+        activeProfileName: 'Ebooks',
+        activeMetadataProfileId: 32,
+        activeMetadataProfileName: 'Standard',
+        activeDirectory: '/books',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'ebook',
+      },
+    ];
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.ISBN,
+            value: '9780441478125',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL45804W',
+          title: 'Retry Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL45804W',
+      isbn13: '9780441478125',
+      format: 'ebook',
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.bookFormat, 'ebook');
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
+  it('allows a complementary audiobook request when an ebook request already exists', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      {
+        id: 21,
+        name: 'Audio Bookshelf',
+        hostname: 'audio.local',
+        port: 8787,
+        apiKey: 'audio-key',
+        useSsl: false,
+        activeProfileId: 31,
+        activeProfileName: 'Audiobooks',
+        activeMetadataProfileId: 32,
+        activeMetadataProfileName: 'Audio Standard',
+        activeDirectory: '/audiobooks',
+        tags: [],
+        is4k: false,
+        isDefault: true,
+        syncEnabled: true,
+        preventSearch: false,
+        tagRequests: false,
+        overrideRule: [],
+        serviceType: 'audiobook',
+      },
+    ];
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.ISBN,
+            value: '9780441478125',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL999W',
+          title: 'Complementary Format Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL999M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL999W',
+      isbn13: '9780441478125',
+      format: 'audiobook',
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.bookFormat, 'audiobook');
+    assert.strictEqual(await requestRepo.count(), 2);
+  });
+
+  it('blocks a both-formats book request when either format already has an active request', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [
+      createReadarrSettings(21, 'ebook'),
+      createReadarrSettings(22, 'audiobook'),
+    ];
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.ISBN,
+            value: '9780441478125',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'audiobook',
+      })
+    );
+
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL999W',
+          title: 'Duplicate Both Format Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL999M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL999W',
+      isbn13: '9780441478125',
+      format: 'both',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /request for this book already exists/i);
+    assert.strictEqual(await requestRepo.count(), 1);
+  });
+
+  it('blocks duplicate book requests when Open Library only returns ISBN-10', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.ISBN,
+            value: '9780441478125',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL999W',
+          title: 'Duplicate ISBN-10 Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL999M',
+              isbn_10: ['0-441-47812-3'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL999W',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /request for this book already exists/i);
+    assert.strictEqual(await requestRepo.count(), 1);
+  });
+
+  it('blocks duplicate book requests that resolve to an existing edition', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(21, 'ebook')];
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const requestedBy = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const existingMedia = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        identifiers: [
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY,
+            value: 'OL45804W',
+            canonical: true,
+          }),
+          new MediaIdentifier({
+            provider: MediaIdentifierProvider.OPENLIBRARY_EDITION,
+            value: 'OL1M',
+            canonical: false,
+          }),
+        ],
+      })
+    );
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: existingMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL999W',
+          title: 'Duplicate Edition Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: '/books/OL1M',
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL999W',
+      editionId: 'OL1M',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /request for this book already exists/i);
+    assert.strictEqual(await requestRepo.count(), 1);
+  });
+
+  it('blocks music requests when the release group external id is blocklisted', async (t) => {
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () =>
+        ({
+          release_group_mbid: 'blocklisted-release-group',
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => getAlbumMock.mock.restore());
+
+    await getRepository(Blocklist).save(
+      new Blocklist({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        externalId: 'blocklisted-release-group',
+        externalProvider: MediaIdentifierProvider.MUSICBRAINZ,
+        title: 'Blocked Album',
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MUSIC,
+      mediaId: 'listenbrainz-release-id',
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.match(res.body.message, /album is blocklisted/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('blocks book requests when any discovered edition ISBN is blocklisted', async (t) => {
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async () =>
+        ({
+          key: '/works/OL123W',
+          title: 'Blocked Book',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async () =>
+        ({
+          size: 2,
+          entries: [
+            {
+              key: '/books/OL1M',
+              isbn_13: ['9780306406157'],
+            },
+            {
+              key: '/books/OL2M',
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+    });
+
+    await getRepository(Blocklist).save(
+      new Blocklist({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        externalId: '9780441478125',
+        externalProvider: MediaIdentifierProvider.ISBN,
+        title: 'Blocked Book',
+      })
+    );
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.BOOK,
+      mediaId: 'OL123W',
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.match(res.body.message, /book is blocklisted/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+});
+
+describe('PUT /request/:requestId', () => {
+  const createTvRequest = async ({
+    requestedBy,
+    seasons,
+    status = MediaRequestStatus.PENDING,
+    tmdbId,
+  }: {
+    requestedBy: User;
+    seasons: number[];
+    status?: MediaRequestStatus;
+    tmdbId: number;
+  }) => {
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    return getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status,
+        is4k: false,
+        seasons: seasons.map(
+          (seasonNumber) =>
+            new SeasonRequest({
+              seasonNumber,
+              status: MediaRequestStatus.PENDING,
+            })
+        ),
+      })
+    );
+  };
+
+  it('does not allow an approved series request to be rewritten', async () => {
+    const friend = await getRepository(User).findOneByOrFail({ id: 2 });
+    const mediaRequest = await createTvRequest({
+      requestedBy: friend,
+      seasons: [1],
+      status: MediaRequestStatus.APPROVED,
+      tmdbId: 8101,
+    });
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 409);
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: mediaRequest.id,
+    });
+    assert.deepStrictEqual(
+      persisted.seasons.map((season) => season.seasonNumber),
+      [1]
+    );
+  });
+
+  it('does not transfer a request to a user without request permission', async () => {
+    const owner = await getRepository(User).findOneByOrFail({ id: 2 });
+    const target = await getRepository(User).save(
+      new User({
+        email: 'no-request-permission@seerr.dev',
+        username: 'no-request-permission',
+        avatar: 'https://example.com/avatar.png',
+        permissions: Permission.NONE,
+        userType: UserType.LOCAL,
+      })
+    );
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 8102,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        media,
+        requestedBy: owner,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 403);
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: mediaRequest.id,
+    });
+    assert.strictEqual(persisted.requestedBy.id, owner.id);
+  });
+
+  it('blocks seasons from active requests but permits failed history on edit', async () => {
+    const friend = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 8103,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const [first] = await getRepository(MediaRequest).save([
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy: friend,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy: friend,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 3,
+            status: MediaRequestStatus.FAILED,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy: friend,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 2,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+    ]);
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await agent.put(`/request/${first.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: first.id,
+    });
+    assert.deepStrictEqual(
+      persisted.seasons.map((season) => season.seasonNumber),
+      [1, 3]
+    );
+  });
+
+  it('serializes concurrent series edits against the user quota', async () => {
+    const userRepository = getRepository(User);
+    const friend = await userRepository.findOneByOrFail({ id: 2 });
+    friend.tvQuotaLimit = 3;
+    friend.tvQuotaDays = 7;
+    await userRepository.save(friend);
+    const first = await createTvRequest({
+      requestedBy: friend,
+      seasons: [1],
+      tmdbId: 8104,
+    });
+    const second = await createTvRequest({
+      requestedBy: friend,
+      seasons: [1],
+      tmdbId: 8105,
+    });
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+
+    const responses = await Promise.all([
+      agent.put(`/request/${first.id}`).send({
+        mediaType: MediaType.TV,
+        seasons: [1, 2],
+      }),
+      agent.put(`/request/${second.id}`).send({
+        mediaType: MediaType.TV,
+        seasons: [1, 2],
+      }),
+    ]);
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status).sort(),
+      [200, 403]
+    );
+    const persisted = await getRepository(MediaRequest).findBy({
+      id: In([first.id, second.id]),
+    });
+    assert.strictEqual(
+      persisted.reduce((total, item) => total + item.seasons.length, 0),
+      3
+    );
+  });
+
+  it('rejects oversized request option strings on edit', async () => {
+    const mediaRequest = await seedRequest();
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      rootFolder: '/movies/'.padEnd(4097, 'x'),
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /rootFolder must be 4096 characters/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.rootFolder, null);
+  });
+
+  it('rejects attempts to change the media type of an existing request', async () => {
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      serverId: 123,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /media type cannot be changed/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.type, MediaType.BOOK);
+    assert.strictEqual(persisted.serverId, null);
+  });
+
+  it('rejects book edits that point an audiobook request at an ebook Bookshelf server', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(11, 'ebook')];
+    t.after(() => {
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.BOOK,
+      format: 'audiobook',
+      serverId: 11,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /not audiobook requests/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.bookFormat, 'ebook');
+    assert.strictEqual(persisted.serverId, null);
+  });
+
+  it('treats legacy Bookshelf servers without a service type as ebook servers on edit', async (t) => {
+    const settings = getSettings();
+    const legacyReadarr = createReadarrSettings(11, 'ebook');
+    delete (legacyReadarr as { serviceType?: 'ebook' | 'audiobook' })
+      .serviceType;
+    settings.readarr = [legacyReadarr];
+    t.after(() => {
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      serverId: 11,
+      profileId: 22,
+      metadataProfileId: 33,
+      rootFolder: '/books',
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.bookFormat, 'ebook');
+    assert.strictEqual(persisted.serverId, 11);
+    assert.strictEqual(persisted.profileId, 22);
+    assert.strictEqual(persisted.metadataProfileId, 33);
+    assert.strictEqual(persisted.rootFolder, '/books');
+  });
+
+  it('rejects malformed request edit bodies before persistence', async () => {
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send([]);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /Request body must be an object/i);
+  });
+
+  it('rejects music edits that point at a missing Lidarr server', async () => {
+    const settings = getSettings();
+    settings.lidarr = [];
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'release-group-edit',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MUSIC,
+      serverId: 999,
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /selected lidarr/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.serverId, null);
+  });
+
+  it('preserves music service routing when a partial edit omits server fields', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    t.after(() => {
+      settings.lidarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'release-group-partial-edit',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        serverId: 10,
+        profileId: 20,
+        metadataProfileId: 30,
+        rootFolder: '/music',
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MUSIC,
+      tags: [7, 8],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(persisted.serverId, 10);
+    assert.strictEqual(persisted.profileId, 20);
+    assert.strictEqual(persisted.metadataProfileId, 30);
+    assert.strictEqual(persisted.rootFolder, '/music');
+    assert.deepStrictEqual(persisted.tags, [7, 8]);
+  });
+
+  it('refuses to modify a request that is no longer pending', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      serverId: 3,
+      rootFolder: '/updated/movies',
+    });
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /pending/i);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.serverId, null);
+    assert.strictEqual(saved.rootFolder, null);
+  });
+});
+
+async function seedUser(
+  email: string,
+  quotas: {
+    movieQuotaLimit?: number;
+    tvQuotaLimit?: number;
+    tvQuotaDays?: number;
+  } = {}
+) {
+  const userRepo = getRepository(User);
+  const user = await userRepo.findOneOrFail({ where: { email } });
+  Object.assign(user, quotas);
+
+  return userRepo.save(user);
+}
+
+async function seedTvMedia(tmdbId: number) {
+  const mediaRepo = getRepository(Media);
+
+  return (
+    (await mediaRepo.findOne({
+      where: { tmdbId, mediaType: MediaType.TV },
+    })) ??
+    (await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    ))
+  );
+}
+
+async function seedMediaSeasons(
+  tmdbId: number,
+  seasons: { seasonNumber: number; status: MediaStatus }[]
+) {
+  const media = await seedTvMedia(tmdbId);
+  media.seasons = seasons.map(
+    ({ seasonNumber, status }) =>
+      new Season({ seasonNumber, status, status4k: MediaStatus.UNKNOWN })
+  );
+
+  return getRepository(Media).save(media);
+}
+
+async function seedTvRequest(
+  requestedBy: User,
+  seasons: number[],
+  { tmdbId = 67890, ignoreQuota = false, createdAt = new Date() } = {}
+) {
+  return getRepository(MediaRequest).save(
+    new MediaRequest({
+      type: MediaType.TV,
+      status: MediaRequestStatus.PENDING,
+      media: await seedTvMedia(tmdbId),
+      requestedBy,
+      is4k: false,
+      ignoreQuota,
+      createdAt,
+      seasons: seasons.map(
+        (seasonNumber) =>
+          new SeasonRequest({
+            seasonNumber,
+            status: MediaRequestStatus.PENDING,
+          })
+      ),
+    })
+  );
+}
+
+describe('PUT /request/:requestId (tv)', () => {
+  it('does not add a season held by another request', async () => {
+    const requestRepo = getRepository(MediaRequest);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const otherUser = await seedUser('demo@seerr.dev');
+
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+    const otherRequest = await seedTvRequest(otherUser, [3]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+
+    const otherSaved = await requestRepo.findOneOrFail({
+      where: { id: otherRequest.id },
+    });
+    assert.deepStrictEqual(
+      otherSaved.seasons.map((s) => s.seasonNumber),
+      [3]
+    );
+  });
+
+  it('gives a season to only one of two concurrent edits', async () => {
+    const requestRepo = getRepository(MediaRequest);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const otherUser = await seedUser('demo@seerr.dev');
+
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    const otherRequest = await seedTvRequest(otherUser, [3]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const friend = await loginAs('demo@seerr.dev', 'test1234');
+
+    const [adminRes, friendRes] = await Promise.all([
+      admin
+        .put(`/request/${mediaRequest.id}`)
+        .send({ mediaType: MediaType.TV, seasons: [1, 2] }),
+      friend
+        .put(`/request/${otherRequest.id}`)
+        .send({ mediaType: MediaType.TV, seasons: [3, 2] }),
+    ]);
+
+    assert.strictEqual(adminRes.status, 200);
+    assert.strictEqual(friendRes.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    const otherSaved = await requestRepo.findOneOrFail({
+      where: { id: otherRequest.id },
+    });
+
+    const holders = [saved, otherSaved].filter((r) =>
+      r.seasons.some((s) => s.seasonNumber === 2)
+    );
+    assert.strictEqual(holders.length, 1);
+
+    assert.deepStrictEqual(
+      [...saved.seasons, ...otherSaved.seasons]
+        .map((s) => s.seasonNumber)
+        .sort((a, b) => a - b),
+      [1, 2, 3]
+    );
+  });
+});
+
+describe('PUT /request/:requestId (season availability)', () => {
+  it('does not add a season the media already has', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 3]
+    );
+  });
+
+  it('returns 202 when every requested season is already covered', async () => {
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [2],
+    });
+
+    assert.strictEqual(res.status, 202);
+  });
+
+  it('keeps the seasons it already holds once they are available', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 1, status: MediaStatus.AVAILABLE },
+      { seasonNumber: 2, status: MediaStatus.PROCESSING },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('does not charge quota for a season the media already has', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    await seedMediaSeasons(67890, [
+      { seasonNumber: 2, status: MediaStatus.AVAILABLE },
+    ]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber),
+      [1]
+    );
+  });
+});
+
+describe('PUT /request/:requestId (quota)', () => {
+  it('rejects adding seasons beyond the season limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('rejects adding seasons to a request older than the quota window', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', {
+      tvQuotaLimit: 2,
+      tvQuotaDays: 7,
+    });
+    const mediaRequest = await seedTvRequest(owner, [1, 2], {
+      createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2]
+    );
+  });
+
+  it('allows swapping seasons at the season limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [3, 4],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [3, 4]
+    );
+  });
+
+  it('rejects reassignment to a user without room for the existing seasons', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('admin@seerr.dev');
+    const target = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+  });
+
+  it('rejects reassignment of a movie request to a user at their limit', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const mediaRepo = getRepository(Media);
+
+    const owner = await seedUser('admin@seerr.dev');
+    const target = await seedUser('demo@seerr.dev', { movieQuotaLimit: 1 });
+
+    // Uses up the target's single movie request
+    await seedRequest(
+      MediaRequestStatus.PENDING,
+      undefined,
+      12345,
+      'demo@seerr.dev'
+    );
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 55555,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const mediaRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: owner,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 403);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, owner.id);
+  });
+
+  it('allows reassignment to a user who bypasses quotas', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 1 });
+    const target = await seedUser('admin@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1, 2]);
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2],
+      userId: target.id,
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.strictEqual(saved.requestedBy.id, target.id);
+  });
+
+  it('allows an edit that exceeds the limit when the request ignores quota', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 2 });
+
+    await seedTvRequest(owner, [1, 2], { tmdbId: 77777 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2], {
+      ignoreQuota: true,
+    });
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 3],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2, 3]
+    );
+  });
+
+  it('charges only the net increase when an edit both adds and removes', async () => {
+    const requestRepo = getRepository(MediaRequest);
+    const owner = await seedUser('demo@seerr.dev', { tvQuotaLimit: 4 });
+    const mediaRequest = await seedTvRequest(owner, [1, 2, 3]);
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.TV,
+      seasons: [1, 2, 4, 5],
+    });
+
+    assert.strictEqual(res.status, 200);
+
+    const saved = await requestRepo.findOneOrFail({
+      where: { id: mediaRequest.id },
+    });
+    assert.deepStrictEqual(
+      saved.seasons.map((s) => s.seasonNumber).sort((a, b) => a - b),
+      [1, 2, 4, 5]
+    );
+  });
+});
+
+describe('POST /request/:requestId/:status', () => {
+  const cases = [
+    { action: 'approve', expected: MediaRequestStatus.APPROVED },
+    { action: 'decline', expected: MediaRequestStatus.DECLINED },
+  ] as const;
+
+  for (const { action, expected } of cases) {
+    it(`transitions to ${action}d and records the acting user`, async () => {
+      const repo = getRepository(MediaRequest);
+      const pending = await seedRequest();
+      const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+      const res = await admin.post(`/request/${pending.id}/${action}`);
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.status, expected);
+      assert.strictEqual(res.body.modifiedBy.id, 1);
+      assert.strictEqual(res.body.modifiedBy.email, undefined);
+
+      const persisted = await repo.findOneOrFail({
+        where: { id: pending.id },
+        relations: { modifiedBy: true },
+      });
+
+      assert.strictEqual(persisted.status, expected);
+      assert.strictEqual(persisted.modifiedBy?.email, 'admin@seerr.dev');
+      assert.ok(persisted.updatedAt > pending.updatedAt);
+    });
+  }
+
+  it('preserves available media status when a pending request is declined', async () => {
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 8120,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const pending = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await admin.post(`/request/${pending.id}/decline`);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(
+      (await getRepository(Media).findOneByOrFail({ id: media.id })).status,
+      MediaStatus.AVAILABLE
+    );
+  });
+
+  it('resets a declined TV season when only failed history remains', async () => {
+    const requestedBy = await getRepository(User).findOneByOrFail({ id: 2 });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId: 8121,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+        seasons: [
+          new Season({
+            seasonNumber: 1,
+            status: MediaStatus.PENDING,
+            status4k: MediaStatus.UNKNOWN,
+          }),
+        ],
+      })
+    );
+    const [pending] = await getRepository(MediaRequest).save([
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.PENDING,
+          }),
+        ],
+      }),
+      new MediaRequest({
+        type: MediaType.TV,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+        seasons: [
+          new SeasonRequest({
+            seasonNumber: 1,
+            status: MediaRequestStatus.FAILED,
+          }),
+        ],
+      }),
+    ]);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const response = await admin.post(`/request/${pending.id}/decline`);
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(
+      (
+        await getRepository(Season).findOneByOrFail({
+          media: { id: media.id },
+          seasonNumber: 1,
+        })
+      ).status,
+      MediaStatus.UNKNOWN
+    );
+  });
+
+  it('rejects unknown request status actions', async () => {
+    const pending = await seedRequest(MediaRequestStatus.PENDING);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.post(`/request/${pending.id}/not-a-status`);
+
+    assert.strictEqual(res.status, 404);
+  });
+
+  for (const existingStatus of [
+    MediaRequestStatus.APPROVED,
+    MediaRequestStatus.DECLINED,
+    MediaRequestStatus.FAILED,
+    MediaRequestStatus.COMPLETED,
+  ]) {
+    it(`does not transition a request from status ${existingStatus}`, async () => {
+      const existing = await seedRequest(existingStatus);
+      const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+      const res = await admin.post(`/request/${existing.id}/approve`);
+
+      assert.strictEqual(res.status, 409);
+      const persisted = await getRepository(MediaRequest).findOneOrFail({
+        where: { id: existing.id },
+        relations: { modifiedBy: true },
+      });
+      assert.strictEqual(persisted.status, existingStatus);
+    });
+  }
+
+  it('allows only one concurrent terminal transition', async () => {
+    const pending = await seedRequest(MediaRequestStatus.PENDING);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const responses = await Promise.all([
+      admin.post(`/request/${pending.id}/approve`),
+      admin.post(`/request/${pending.id}/decline`),
+    ]);
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status).sort(),
+      [200, 409]
+    );
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: pending.id,
+    });
+    assert.ok(
+      persisted.status === MediaRequestStatus.APPROVED ||
+        persisted.status === MediaRequestStatus.DECLINED
+    );
+  });
+
+  it('rejects approving a book request with a stale Bookshelf server format', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(11, 'ebook')];
+    t.after(() => {
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const pending = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'audiobook',
+        serverId: 11,
+      })
+    );
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${pending.id}/approve`);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /not audiobook requests/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: pending.id },
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+  });
+
+  it('rejects approving a music request without a selected or default Lidarr server', async () => {
+    const settings = getSettings();
+    settings.lidarr = [];
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'release-group-no-default-approve',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const pending = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${pending.id}/approve`);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /no default lidarr/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: pending.id },
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+  });
+
+  it('rejects approving a both-format book request without both default Bookshelf formats', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(11, 'ebook')];
+    t.after(() => {
+      settings.readarr = [];
+    });
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const pending = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'both',
+      })
+    );
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${pending.id}/approve`);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /default ebook and audiobook/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: pending.id },
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+  });
+});
+
+describe('DELETE /request/:requestId/status', () => {
+  it('removes the request and its complete status history', async () => {
+    const mediaRequest = await seedRequest(MediaRequestStatus.FAILED);
+    await recordRequestStatusOverride(
+      mediaRequest.id,
+      RequestStatusStage.FAILED,
+      'Download failed.'
+    );
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await owner.delete(`/request/${mediaRequest.id}/status`);
+
+    assert.strictEqual(response.status, 204);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      0
+    );
+    assert.strictEqual(
+      await getRepository(MediaRequestStatusEvent).countBy({
+        requestId: mediaRequest.id,
+      }),
+      0
+    );
+  });
+
+  it('keeps the database entry when active cleanup is not confirmed', async () => {
+    cleanupShouldFail = true;
+    const mediaRequest = await seedRequest(MediaRequestStatus.APPROVED);
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const response = await owner.delete(`/request/${mediaRequest.id}/status`);
+
+    assert.strictEqual(response.status, 409);
+    assert.match(response.body.message, /not confirmed/i);
+    assert.strictEqual(
+      await getRepository(MediaRequest).countBy({ id: mediaRequest.id }),
+      1
+    );
+  });
+});
+
+describe('POST /request/:requestId/retry', () => {
+  it('allows the request owner to retry a failed request', async () => {
+    const failed = await seedRequest(MediaRequestStatus.FAILED);
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await owner.post(`/request/${failed.id}/retry`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, MediaRequestStatus.APPROVED);
+    assert.strictEqual(res.body.modifiedBy.id, 2);
+    const retryEvents = await getRepository(MediaRequestStatusEvent).find({
+      where: { requestId: failed.id },
+      order: { id: 'ASC' },
+    });
+    const retryEvent = retryEvents.find((event) =>
+      event.fingerprint.startsWith('retry:')
+    );
+    assert.ok(retryEvent);
+    assert.strictEqual(retryEvent.stage, RequestStatusStage.APPROVED);
+    assert.strictEqual(
+      retryEvent.message,
+      'The request was retried and is waiting to be dispatched.'
+    );
+  });
+
+  it('requeues an unavailable approved request for another search', async () => {
+    const pending = await seedRequest(MediaRequestStatus.APPROVED);
+    await recordRequestStatusOverride(
+      pending.id,
+      RequestStatusStage.UNAVAILABLE,
+      'No usable release is currently available.'
+    );
+    const owner = await loginAs('friend@seerr.dev', 'test1234');
+
+    const res = await owner.post(`/request/${pending.id}/retry`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, MediaRequestStatus.APPROVED);
+    const statusResponse = await owner.get(`/request/status/${pending.id}`);
+    assert.strictEqual(statusResponse.status, 200);
+    assert.strictEqual(statusResponse.body.current.stage, 'searching');
+  });
+
+  it('re-approves a failed request and records the acting user', async () => {
+    const repo = getRepository(MediaRequest);
+    const failed = await seedRequest(MediaRequestStatus.FAILED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${failed.id}/retry`);
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.status, MediaRequestStatus.APPROVED);
+    assert.strictEqual(res.body.modifiedBy.id, 1);
+    assert.strictEqual(res.body.modifiedBy.email, undefined);
+
+    const persisted = await repo.findOneOrFail({
+      where: { id: failed.id },
+      relations: { modifiedBy: true },
+    });
+
+    assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+    assert.strictEqual(persisted.modifiedBy?.email, 'admin@seerr.dev');
+    assert.ok(persisted.updatedAt > failed.updatedAt);
+
+    const statusResponse = await admin.get(`/request/status/${failed.id}`);
+    assert.strictEqual(statusResponse.status, 200);
+    assert.notStrictEqual(statusResponse.body.current.stage, 'failed');
+  });
+
+  it('allows only one concurrent retry of a failed request', async () => {
+    const failed = await seedRequest(MediaRequestStatus.FAILED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const responses = await Promise.all([
+      admin.post(`/request/${failed.id}/retry`),
+      admin.post(`/request/${failed.id}/retry`),
+    ]);
+
+    assert.deepStrictEqual(
+      responses.map((response) => response.status).sort(),
+      [200, 409]
+    );
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: failed.id,
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+  });
+
+  it('does not bypass approval for a pending request', async () => {
+    const existing = await seedRequest(MediaRequestStatus.PENDING);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${existing.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    const persisted = await getRepository(MediaRequest).findOneByOrFail({
+      id: existing.id,
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+    assert.strictEqual(persisted.modifiedBy, null);
+  });
+
+  it('does not enqueue a request that is already queued for dispatch', async () => {
+    const existing = await seedRequest(MediaRequestStatus.APPROVED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${existing.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(
+      (await getRepository(MediaRequest).findOneByOrFail({ id: existing.id }))
+        .status,
+      MediaRequestStatus.APPROVED
+    );
+  });
+
+  for (const status of [
+    MediaRequestStatus.DECLINED,
+    MediaRequestStatus.COMPLETED,
+  ]) {
+    it(`allows an administrator to restart a request in status ${status}`, async () => {
+      const existing = await seedRequest(status);
+      const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+      const res = await admin.post(`/request/${existing.id}/retry`);
+
+      assert.strictEqual(res.status, 200);
+      const persisted = await getRepository(MediaRequest).findOneOrFail({
+        where: { id: existing.id },
+        relations: { modifiedBy: true },
+      });
+      assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+      assert.strictEqual(persisted.modifiedBy?.id, 1);
+    });
+  }
+
+  it('rejects retrying a failed music request with a stale Lidarr server', async () => {
+    const settings = getSettings();
+    settings.lidarr = [];
+
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const media = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'release-group-retry',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    const failed = await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media,
+        requestedBy,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+        serverId: 999,
+      })
+    );
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${failed.id}/retry`);
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /selected lidarr/i);
+
+    const persisted = await getRepository(MediaRequest).findOneOrFail({
+      where: { id: failed.id },
+    });
+    assert.strictEqual(persisted.status, MediaRequestStatus.FAILED);
+  });
+});
+
+describe('POST /request/bulk', () => {
+  it('rejects malformed bulk request envelopes', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const arrayRes = await agent.post('/request/bulk').send([]);
+
+    assert.strictEqual(arrayRes.status, 400);
+    assert.match(arrayRes.body.message, /Request body must be an object/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects bulk items without media IDs before creating requests', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [{ mediaId: '   ', title: 'Missing Album ID' }],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /mediaId is required/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('rejects Open Library path-control IDs in bulk requests', async () => {
+    const getWork = mock.method(OpenLibraryAPI.prototype, 'getWork');
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      items: [{ mediaId: 'OL1W?redirect=/account' }],
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /valid Open Library resource ID/i);
+    assert.strictEqual(getWork.mock.callCount(), 0);
+  });
+
+  it('rejects MusicBrainz path-control IDs in bulk requests', async () => {
+    const getAlbum = mock.method(ListenBrainzAPI.prototype, 'getAlbum');
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const response = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [{ mediaId: 'album?redirect=/account' }],
+    });
+
+    assert.strictEqual(response.status, 400);
+    assert.match(response.body.message, /valid MusicBrainz resource ID/i);
+    assert.strictEqual(getAlbum.mock.callCount(), 0);
+  });
+
+  it('rejects bulk item text that exceeds request limits', async () => {
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [{ mediaId: 'album-id', title: 'x'.repeat(513) }],
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.message, /title must be 512 characters/i);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('creates music requests and returns skipped/failed item summaries', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const requestedBy = await getRepository(User).findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    const duplicateMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'duplicate-album',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: duplicateMedia,
+        requestedBy,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) => {
+        if (releaseGroupId === 'failed-album') {
+          throw new Error('ListenBrainz unavailable');
+        }
+
+        return {
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: {
+              name: releaseGroupId,
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        } as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>;
+      }
+    );
+    const getReleaseGroupDetailsMock = mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroupDetails',
+      async () => {
+        throw new Error('MusicBrainz unavailable');
+      }
+    );
+    const getReleaseGroupMock = mock.method(
+      MusicBrainz.prototype,
+      'getReleaseGroup',
+      async () => null
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      getReleaseGroupDetailsMock.mock.restore();
+      getReleaseGroupMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [
+        { mediaId: 'new-album', title: 'New Album' },
+        { mediaId: 'duplicate-album', title: 'Duplicate Album' },
+        { mediaId: 'failed-album', title: 'Failed Album' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].media.mbId, 'new-album');
+    assert.deepStrictEqual(res.body.skipped, [
+      {
+        mediaId: 'duplicate-album',
+        title: 'Duplicate Album',
+        reason: 'Request for this album already exists.',
+      },
+    ]);
+    assert.deepStrictEqual(res.body.failed, [
+      {
+        mediaId: 'failed-album',
+        title: 'Failed Album',
+        reason: 'Unable to process item.',
+      },
+    ]);
+    assert.doesNotMatch(JSON.stringify(res.body), /ListenBrainz unavailable/);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
+  it('dedupes repeated music bulk items before requesting metadata', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) =>
+        ({
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: {
+              name: releaseGroupId,
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [
+        { mediaId: 'duplicate-new-album', title: 'Duplicate New Album' },
+        { mediaId: 'duplicate-new-album', title: 'Duplicate New Album' },
+        { mediaId: 'DUPLICATE-NEW-ALBUM', title: 'Duplicate New Album' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].media.mbId, 'duplicate-new-album');
+    assert.deepStrictEqual(res.body.skipped, []);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(getAlbumMock.mock.callCount(), 1);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+  });
+
+  it('creates music requests for processing albums without active requests', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'processing-album',
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.UNKNOWN,
+        serviceId: 10,
+        externalServiceId: 123,
+        externalServiceSlug: 'processing-album',
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) =>
+        ({
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: {
+              name: releaseGroupId,
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [{ mediaId: 'processing-album', title: 'Processing Album' }],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.skipped.length, 0);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].media.mbId, 'processing-album');
+    assert.strictEqual(
+      res.body.created[0].media.externalServiceSlug,
+      undefined
+    );
+    assert.strictEqual(res.body.created[0].requestedBy.permissions, undefined);
+    assert.strictEqual(res.body.created[0].requestedBy.userType, undefined);
+  });
+
+  it('accepts zero-valued Lidarr service and profile overrides in bulk music requests', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(0, false)];
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) =>
+        ({
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: {
+              name: releaseGroupId,
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      serverId: 0,
+      profileId: 0,
+      metadataProfileId: 0,
+      items: [{ mediaId: 'zero-service-album', title: 'Zero Service Album' }],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].serverId, 0);
+    assert.strictEqual(res.body.created[0].profileId, 0);
+    assert.strictEqual(res.body.created[0].metadataProfileId, 0);
+  });
+
+  it('creates book requests and returns skipped item summaries', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(10, 'ebook')];
+    const availableMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+        externalServiceId: 123,
+      })
+    );
+    await getRepository(MediaIdentifier).save(
+      new MediaIdentifier({
+        media: availableMedia,
+        provider: MediaIdentifierProvider.OPENLIBRARY,
+        value: 'available-work',
+        canonical: true,
+      })
+    );
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) =>
+        ({
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: workId,
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}-edition`,
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      items: [
+        {
+          mediaId: 'new-work',
+          title: 'New Work',
+          authorId: 'OL1A',
+          isbn13: '9780441478125',
+          editionId: 'new-work-edition',
+        },
+        { mediaId: 'available-work', title: 'Available Work' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].type, MediaType.BOOK);
+    assert.strictEqual(res.body.created[0].bookFormat, 'ebook');
+    assert.deepStrictEqual(res.body.skipped, [
+      {
+        mediaId: 'available-work',
+        title: 'Available Work',
+        reason: 'This ebook is already available.',
+      },
+    ]);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+  });
+
+  it('dedupes repeated book bulk work IDs before resolving editions', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(10, 'ebook')];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) =>
+        ({
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: workId,
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}-edition`,
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      items: [
+        { mediaId: 'duplicate-book-work', title: 'Duplicate Book Work' },
+        { mediaId: '/works/duplicate-book-work', title: 'Duplicate Book Work' },
+        { mediaId: 'DUPLICATE-BOOK-WORK', title: 'Duplicate Book Work' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].type, MediaType.BOOK);
+    assert.deepStrictEqual(res.body.skipped, []);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(getWorkMock.mock.callCount(), 1);
+    assert.strictEqual(getWorkEditionsMock.mock.callCount(), 1);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+  });
+
+  it('dedupes no-ISBN book bulk items by title and author', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(10, 'ebook')];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) =>
+        ({
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: 'Deník malého poseroutky: psí život',
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}-edition`,
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      items: [
+        {
+          mediaId: 'OL44696722W',
+          title: 'Deník malého poseroutky: psí život',
+          authorId: 'OL2832500A',
+        },
+        {
+          mediaId: 'OL44696721W',
+          title: 'Denik maleho poseroutky: psi zivot',
+          authorId: 'OL2832500A',
+        },
+        {
+          mediaId: 'OL44696720W',
+          title: 'Deník malého poseroutky: psí život',
+          authorId: 'OL2832500A',
+        },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.deepStrictEqual(res.body.skipped, []);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(getWorkMock.mock.callCount(), 1);
+    assert.strictEqual(getWorkEditionsMock.mock.callCount(), 1);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 1);
+  });
+
+  it('accepts zero-valued Bookshelf service and profile overrides in bulk book requests', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(0, 'ebook', false)];
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) =>
+        ({
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: workId,
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}-edition`,
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+    });
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      serverId: 0,
+      profileId: 0,
+      metadataProfileId: 0,
+      items: [
+        {
+          mediaId: 'zero-book-work',
+          title: 'Zero Book Work',
+          authorId: 'OL1A',
+          isbn13: '9780441478125',
+          editionId: 'zero-book-work-edition',
+        },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].serverId, 0);
+    assert.strictEqual(res.body.created[0].profileId, 0);
+    assert.strictEqual(res.body.created[0].metadataProfileId, 0);
+  });
+
+  it('does not count skipped music bulk items against quota', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    friend.musicQuotaLimit = 4;
+    friend.musicQuotaDays = 7;
+    await userRepo.save(friend);
+    const duplicateMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'duplicate-album',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: duplicateMedia,
+        requestedBy: friend,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+      })
+    );
+    const failedMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.MUSIC,
+        tmdbId: 0,
+        mbId: 'failed-album',
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.MUSIC,
+        media: failedMedia,
+        requestedBy: friend,
+        status: MediaRequestStatus.FAILED,
+        is4k: false,
+      })
+    );
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async (releaseGroupId: string) =>
+        ({
+          release_group_mbid: releaseGroupId,
+          release_group_metadata: {
+            release_group: {
+              name: releaseGroupId,
+            },
+            artist: {
+              name: 'Bulk Artist',
+            },
+          },
+        }) as Awaited<ReturnType<ListenBrainzAPI['getAlbum']>>
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+      friend.musicQuotaLimit = undefined;
+      friend.musicQuotaDays = undefined;
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [
+        { mediaId: 'duplicate-album', title: 'Duplicate Album' },
+        { mediaId: 'failed-album', title: 'Failed Album Retry' },
+        { mediaId: 'new-album', title: 'New Album' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.deepStrictEqual(
+      res.body.created.map(
+        (createdRequest: { media: { mbId: string } }) =>
+          createdRequest.media.mbId
+      ),
+      ['failed-album', 'new-album']
+    );
+    assert.deepStrictEqual(res.body.skipped, [
+      {
+        mediaId: 'duplicate-album',
+        title: 'Duplicate Album',
+        reason: 'Request for this album already exists.',
+      },
+    ]);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 4);
+  });
+
+  it('does not count skipped book bulk items against quota', async (t) => {
+    const settings = getSettings();
+    settings.readarr = [createReadarrSettings(10, 'ebook')];
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    friend.bookQuotaLimit = 2;
+    friend.bookQuotaDays = 7;
+    await userRepo.save(friend);
+    const duplicateMedia = await getRepository(Media).save(
+      new Media({
+        mediaType: MediaType.BOOK,
+        tmdbId: 0,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+    await getRepository(MediaIdentifier).save(
+      new MediaIdentifier({
+        media: duplicateMedia,
+        provider: MediaIdentifierProvider.OPENLIBRARY,
+        value: 'duplicate-work',
+        canonical: true,
+      })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        type: MediaType.BOOK,
+        media: duplicateMedia,
+        requestedBy: friend,
+        status: MediaRequestStatus.PENDING,
+        is4k: false,
+        bookFormat: 'ebook',
+      })
+    );
+    const getWorkMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWork',
+      async (workId: string) =>
+        ({
+          key: `/works/${workId.replace(/^\/?works\//, '')}`,
+          title: workId,
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWork']>>
+    );
+    const getWorkEditionsMock = mock.method(
+      OpenLibraryAPI.prototype,
+      'getWorkEditions',
+      async (workId: string) =>
+        ({
+          size: 1,
+          entries: [
+            {
+              key: `/books/${workId.replace(/^\/?works\//, '')}-edition`,
+              isbn_13: ['9780441478125'],
+            },
+          ],
+        }) as Awaited<ReturnType<OpenLibraryAPI['getWorkEditions']>>
+    );
+    t.after(() => {
+      getWorkMock.mock.restore();
+      getWorkEditionsMock.mock.restore();
+      settings.readarr = [];
+      friend.bookQuotaLimit = undefined;
+      friend.bookQuotaDays = undefined;
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.BOOK,
+      format: 'ebook',
+      items: [
+        { mediaId: 'duplicate-work', title: 'Duplicate Work' },
+        {
+          mediaId: 'new-work',
+          title: 'New Work',
+          authorId: 'OL1A',
+          isbn13: '9780441478125',
+          editionId: 'new-work-edition',
+        },
+      ],
+    });
+
+    assert.strictEqual(res.status, 207);
+    assert.strictEqual(res.body.created.length, 1);
+    assert.strictEqual(res.body.created[0].type, MediaType.BOOK);
+    assert.strictEqual(res.body.created[0].bookFormat, 'ebook');
+    assert.deepStrictEqual(res.body.skipped, [
+      {
+        mediaId: 'duplicate-work',
+        title: 'Duplicate Work',
+        reason: 'Request for this book already exists.',
+      },
+    ]);
+    assert.deepStrictEqual(res.body.failed, []);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 2);
+  });
+
+  it('rejects quota overage before creating any bulk requests', async (t) => {
+    const settings = getSettings();
+    settings.lidarr = [createLidarrSettings(10)];
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'friend@seerr.dev' },
+    });
+    friend.musicQuotaLimit = 1;
+    friend.musicQuotaDays = 7;
+    await userRepo.save(friend);
+    const getAlbumMock = mock.method(
+      ListenBrainzAPI.prototype,
+      'getAlbum',
+      async () => {
+        throw new Error('Bulk request should not fetch item metadata');
+      }
+    );
+    t.after(() => {
+      getAlbumMock.mock.restore();
+      settings.lidarr = [];
+    });
+
+    const agent = await loginAs('friend@seerr.dev', 'test1234');
+    const res = await agent.post('/request/bulk').send({
+      mediaType: MediaType.MUSIC,
+      items: [
+        { mediaId: 'quota-one', title: 'Quota One' },
+        { mediaId: 'quota-two', title: 'Quota Two' },
+      ],
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.match(res.body.message, /music quota exceeded/i);
+    assert.strictEqual(getAlbumMock.mock.callCount(), 0);
+    assert.strictEqual(await getRepository(MediaRequest).count(), 0);
+  });
+
+  it('refuses to retry a request that has not failed', async () => {
+    const repo = getRepository(MediaRequest);
+    const pending = await seedRequest();
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const res = await admin.post(`/request/${pending.id}/retry`);
+
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.message, /failed/i);
+
+    const persisted = await repo.findOneOrFail({ where: { id: pending.id } });
+    assert.strictEqual(persisted.status, MediaRequestStatus.PENDING);
+  });
+
+  it('serializes concurrent retry attempts so only one is accepted', async () => {
+    const repo = getRepository(MediaRequest);
+    const failed = await seedRequest(MediaRequestStatus.FAILED);
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+
+    const results = await Promise.all([
+      admin.post(`/request/${failed.id}/retry`),
+      admin.post(`/request/${failed.id}/retry`),
+    ]);
+
+    assert.deepStrictEqual(results.map((r) => r.status).sort(), [200, 409]);
+
+    const persisted = await repo.findOneOrFail({ where: { id: failed.id } });
+    assert.strictEqual(persisted.status, MediaRequestStatus.APPROVED);
+  });
+});
+
+describe('DELETE /request/:requestId, deleted media status restoration', () => {
+  async function seedDeletedMediaScenario() {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99001,
+        status: MediaStatus.DELETED,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    const staleRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.COMPLETED,
+        media,
+        requestedBy: admin,
+        is4k: false,
+        isAutoRequest: true,
+      })
+    );
+
+    media.status = MediaStatus.PENDING;
+    await mediaRepo.save(media);
+
+    const newRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    return { media, staleRequest, newRequest, admin };
+  }
+
+  it('restores media status to DELETED when the re-request is deleted and a stale completed request remains', async () => {
+    const mediaRepo = getRepository(Media);
+    const { media, newRequest } = await seedDeletedMediaScenario();
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${newRequest.id}`);
+
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status, MediaStatus.DELETED);
+  });
+
+  it('restores media status4k to DELETED when the re-request is deleted and a stale completed request remains', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99003,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.DELETED,
+      })
+    );
+
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.COMPLETED,
+        media,
+        requestedBy: admin,
+        is4k: true,
+        isAutoRequest: true,
+      })
+    );
+
+    media.status4k = MediaStatus.PENDING;
+    await mediaRepo.save(media);
+
+    const newRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: admin,
+        is4k: true,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${newRequest.id}`);
+
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status4k, MediaStatus.DELETED);
+  });
+
+  it('resets media status to UNKNOWN when the stale completed request is also deleted', async () => {
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+    const { media, newRequest, staleRequest } =
+      await seedDeletedMediaScenario();
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    await agent.delete(`/request/${newRequest.id}`);
+
+    const res = await agent.delete(`/request/${staleRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status, MediaStatus.UNKNOWN);
+
+    const remaining = await requestRepo.find({
+      where: { media: { id: media.id } },
+    });
+    assert.strictEqual(remaining.length, 0);
+  });
+
+  it('resets media status4k to UNKNOWN when the stale completed 4K request is also deleted', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99004,
+        status: MediaStatus.UNKNOWN,
+        status4k: MediaStatus.DELETED,
+      })
+    );
+
+    const staleRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.COMPLETED,
+        media,
+        requestedBy: admin,
+        is4k: true,
+        isAutoRequest: true,
+      })
+    );
+
+    media.status4k = MediaStatus.PENDING;
+    await mediaRepo.save(media);
+
+    const newRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: admin,
+        is4k: true,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+
+    await agent.delete(`/request/${newRequest.id}`);
+
+    const res = await agent.delete(`/request/${staleRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status4k, MediaStatus.UNKNOWN);
+  });
+
+  it('does not reset media status when other active requests still exist', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99002,
+        status: MediaStatus.PENDING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    const req1 = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.PENDING,
+        media,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${req1.id}`);
+
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status, MediaStatus.PENDING);
+  });
+
+  it('does not reset media status when status is PARTIALLY_AVAILABLE and only completed requests remain', async () => {
+    const userRepo = getRepository(User);
+    const mediaRepo = getRepository(Media);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    const media = await mediaRepo.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 99005,
+        status: MediaStatus.PARTIALLY_AVAILABLE,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    const completedRequest = await requestRepo.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.COMPLETED,
+        media,
+        requestedBy: admin,
+        is4k: false,
+      })
+    );
+
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await agent.delete(`/request/${completedRequest.id}`);
+
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.status, MediaStatus.PARTIALLY_AVAILABLE);
+  });
+});
+
+describe('POST /request (movie), override rules', () => {
+  it('applies an override rule when the default Radarr server id differs from its array index', async () => {
+    configureRadarr([{ id: 5, isDefault: true, is4k: false }]);
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 5,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88001,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/movies');
+  });
+
+  it('applies an override rule when the default Radarr server id matches its array index (sanity check)', async () => {
+    configureRadarr([{ id: 0, isDefault: true, is4k: false }]);
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 0,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88002,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/movies');
+  });
+
+  it('does not apply an unrelated override rule when there is no default Radarr server configured', async () => {
+    getSettings().radarr = [];
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        radarrServiceId: 999,
+        users: String(friend.id),
+        rootFolder: '/overridden/movies',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.MOVIE,
+      mediaId: 88005,
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('POST /request (tv), override rules', () => {
+  it('applies an override rule when the default Sonarr server id differs from its array index', async () => {
+    configureSonarr([{ id: 5, isDefault: true, is4k: false }]);
+    getSettings().radarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 5,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88003,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/tv');
+  });
+
+  it('applies an override rule when the default Sonarr server id matches its array index (sanity check)', async () => {
+    configureSonarr([{ id: 0, isDefault: true, is4k: false }]);
+    getSettings().radarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 0,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88004,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, '/overridden/tv');
+  });
+
+  it('does not apply an unrelated override rule when there is no default Sonarr server configured', async () => {
+    getSettings().radarr = [];
+    getSettings().sonarr = [];
+
+    const userRepo = getRepository(User);
+    const friend = await userRepo.findOneOrFail({
+      where: { email: 'demo@seerr.dev' },
+    });
+
+    const overrideRuleRepo = getRepository(OverrideRule);
+    await overrideRuleRepo.save(
+      new OverrideRule({
+        sonarrServiceId: 999,
+        users: String(friend.id),
+        rootFolder: '/overridden/tv',
+      })
+    );
+
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const res = await agent.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 88006,
+      seasons: [1],
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('DELETE /request/:requestId, orphaned season status reset', () => {
+  async function seedTvShow(
+    tmdbId: number,
+    seasons: Partial<Season>[]
+  ): Promise<Media> {
+    const mediaRepo = getRepository(Media);
+
+    return mediaRepo.save(
+      new Media({
+        mediaType: MediaType.TV,
+        tmdbId,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.UNKNOWN,
+        seasons: seasons.map((season) => new Season(season)),
+      })
+    );
+  }
+
+  async function seedTvRequest(
+    media: Media,
+    seasonNumbers: number[]
+  ): Promise<MediaRequest> {
+    const userRepo = getRepository(User);
+    const requestRepo = getRepository(MediaRequest);
+
+    const admin = await userRepo.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+
+    return requestRepo.save(
+      new MediaRequest({
+        type: MediaType.TV,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: admin,
+        is4k: false,
+        seasons: seasonNumbers.map(
+          (seasonNumber) =>
+            new SeasonRequest({
+              seasonNumber,
+              status: MediaRequestStatus.APPROVED,
+            })
+        ),
+      })
+    );
+  }
+
+  it('resets a request-covered PROCESSING season to UNKNOWN so it can be re-requested', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99101, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({
+      where: { id: media.id },
+    });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.UNKNOWN);
+
+    const friend = await loginAs('demo@seerr.dev', 'test1234');
+    const reRequest = await friend.post('/request').send({
+      mediaType: MediaType.TV,
+      mediaId: 99101,
+      seasons: [1],
+    });
+    assert.strictEqual(reRequest.status, 201);
+  });
+
+  it('does not touch PROCESSING seasons the deleted request did not cover', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99102, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+      { seasonNumber: 2, status: MediaStatus.PROCESSING },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    const seasonOne = updated.seasons.find((s) => s.seasonNumber === 1);
+    const seasonTwo = updated.seasons.find((s) => s.seasonNumber === 2);
+    assert.strictEqual(seasonOne?.status, MediaStatus.UNKNOWN);
+    assert.strictEqual(seasonTwo?.status, MediaStatus.PROCESSING);
+  });
+
+  it('keeps a season PROCESSING while another active request still covers it', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99103, [
+      { seasonNumber: 1, status: MediaStatus.PROCESSING },
+    ]);
+    const firstRequest = await seedTvRequest(media, [1]);
+    await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${firstRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.PROCESSING);
+  });
+
+  it('leaves season status4k untouched when deleting a non-4K request', async () => {
+    const mediaRepo = getRepository(Media);
+    const media = await seedTvShow(99104, [
+      {
+        seasonNumber: 1,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.PROCESSING,
+      },
+    ]);
+    const tvRequest = await seedTvRequest(media, [1]);
+
+    const admin = await loginAs('admin@seerr.dev', 'test1234');
+    const res = await admin.delete(`/request/${tvRequest.id}`);
+    assert.strictEqual(res.status, 204);
+
+    const updated = await mediaRepo.findOneOrFail({ where: { id: media.id } });
+    assert.strictEqual(updated.seasons[0].status, MediaStatus.UNKNOWN);
+    assert.strictEqual(updated.seasons[0].status4k, MediaStatus.PROCESSING);
+  });
+});

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+if ! getent passwd seerrng >/dev/null; then
+  adduser --system --group --home /var/lib/seerrng --no-create-home seerrng
+fi
+mkdir -p /var/lib/seerrng /etc/seerrng
+chown seerrng:seerrng /var/lib/seerrng
+chmod 750 /var/lib/seerrng
+if command -v systemctl >/dev/null; then
+  systemctl daemon-reload || true
+fi
+#DEBHELPER#

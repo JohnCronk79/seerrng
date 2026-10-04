@@ -1,0 +1,16 @@
+[Unit]
+Description=Relink SeerrNG to local Plex proxy
+After=plex-live-tv-proxy.service
+Wants=plex-live-tv-proxy.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/keith/Documents/code/seerrng
+Environment=CONFIG_DIRECTORY=/home/keith/Documents/code/seerrng/config
+Environment="PLEX_PREFERENCES=/var/lib/plex-standby-config/Library/Application Support/Plex Media Server/Preferences.xml"
+Environment=PLEX_PROXY_HOST=127.0.0.1
+Environment=PLEX_PROXY_PORT=33240
+ExecStart=/home/keith/Documents/code/seerrng/scripts/relink-plex-from-local-preferences.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=SeerrNG
+Exec=AppRun
+Icon=seerrng
+Categories=Network;
+Terminal=false

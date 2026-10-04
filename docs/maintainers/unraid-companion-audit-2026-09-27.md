@@ -1,0 +1,17 @@
+# Unraid companion template audit (2026-09-27; ChaptarrNG status updated 2026-09-29)
+
+The SeerrNG Community Apps repository now contains only the SeerrNG XML template. Community Apps Docker templates configure one container at a time. BookshelfNG uses the dedicated [bookshelfng-unraid](https://github.com/snapetech/bookshelfng-unraid) repository because its application source contains 30 unrelated XML files that cause scanner warnings. ROMarrNG and QuestarrNG keep standalone XML templates in their own repositories. The upstream apps use their existing Community Apps listings. The Compose project remains an alternate deployment path and does not create appfeed listings.
+
+| Companion template | Image | Existing Community Apps entry | Standalone check |
+| --- | --- | --- | --- |
+| BookshelfNG | `ghcr.io/snapetech/bookshelfng:hardcover` | [Upstream Bookshelf](https://ca.unraid.net/apps/bookshelf-1d1gz3s0hj3af8) | Fresh config; web UI HTTP 200 |
+| LazyLibrarian | `lscr.io/linuxserver/lazylibrarian:latest` | [LazyLibrarian](https://ca.unraid.net/apps/lazylibrarian-1o5cqti19ivs1e) | Fresh config; authors UI HTTP 200 |
+| Mylar3 | `lscr.io/linuxserver/mylar3:latest` | [Mylar3](https://ca.unraid.net/apps/mylar3-1avghds0trt4q4) | Fresh config; home UI HTTP 200 |
+| Kapowarr | `mrcas/kapowarr:latest` | [Kapowarr](https://ca.unraid.net/apps/kapowarr-1p27chu0mk08ni) | Fresh config; web UI HTTP 200 |
+| ROMarrNG | `ghcr.io/snapetech/romarrng:latest` | No NG fork entry located | Fresh folder library; health HTTP 200 |
+| QuestarrNG | `ghcr.io/snapetech/questarrng:latest` | [Upstream Questarr](https://ca.unraid.net/apps/questarr-0335hnh1oyuaqh) | Fresh config; health HTTP 200 |
+| ChaptarrNG | `ghcr.io/snapetech/chaptarrng:0.9.937` and `:latest` | Not yet listed; dedicated package repo ready for submission | Public amd64, arm64, and armv7 manifests verified; container and SeerrNG integration not runtime-validated |
+
+The companion images available during the original runtime pass were started independently without SeerrNG on a local Docker host. ChaptarrNG was added after that pass: its public image manifests were verified, but neither the container nor its SeerrNG integration has been started. Metadata lookup and acquisition were not exercised because these require personal provider credentials and configured download clients. BookshelfNG's current fork supports ebooks and audiobooks in one instance; both SeerrNG service entries can point to its single API URL and key.
+
+SeerrNG previously duplicated the BookshelfNG, ROMarrNG, and QuestarrNG XML from their own repositories. Those copies were removed to avoid a duplicate submission collision. ChaptarrNG's Community Apps profile and template now live in the clean `snapetech/chaptarrng-unraid` repository. The full ChaptarrNG source tree contains `browserconfig.xml`; submitting that source repository produced the portal's `not_unraid_application` warning. The dedicated repo includes only the profile and one Docker template, so the portal will scan the intended package files. The LazyLibrarian, Mylar3, and Kapowarr copies were also removed because we do not fork those apps and their Community Apps listings already exist. Community Apps ingestion is separate from pushing XML or publishing a GHCR image; submit `https://github.com/snapetech/chaptarrng-unraid` through the portal and verify the public listing after its scan.

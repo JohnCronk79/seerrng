@@ -1,0 +1,322 @@
+name: Publish COPR
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish-copr:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          [[ "$tag" =~ ^v[0-9][0-9A-Za-z._+-]{0,127}$ ]] || { echo "Invalid release tag: $tag" >&2; exit 2; }
+          [[ "$tag" != *-* ]] || { echo "Stable package channels reject pre-release tag: $tag" >&2; exit 2; }
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag is on main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/ensure-release-tag-on-main.sh "$TAG"
+
+      - name: Download Linux asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..80}; do
+            if gh release download "${{ steps.version.outputs.tag }}" -R "$GITHUB_REPOSITORY" --pattern "seerrng-${{ steps.version.outputs.tag }}-linux-x64.tar.gz" --clobber; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+
+      - name: Install RPM/COPR tooling
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates krb5-k5tls krb5-pkinit krb5-user libkrb5-dev oathtool rpm python3-pip python3-venv
+          python3 -m venv "$RUNNER_TEMP/copr"
+          "$RUNNER_TEMP/copr/bin/python" -m pip install --upgrade pip copr-cli requests-gssapi rich
+          echo "$RUNNER_TEMP/copr/bin" >> "$GITHUB_PATH"
+
+      - name: Configure COPR
+        env:
+          COPR_LOGIN: ${{ secrets.COPR_LOGIN }}
+          COPR_TOKEN: ${{ secrets.COPR_TOKEN }}
+          COPR_USERNAME: ${{ secrets.COPR_USERNAME }}
+          COPR_KERBEROS_PRINCIPAL: ${{ secrets.COPR_KERBEROS_PRINCIPAL }}
+          COPR_KERBEROS_KEYTAB_B64: ${{ secrets.COPR_KERBEROS_KEYTAB_B64 }}
+          COPR_FEDORA_USERNAME: ${{ secrets.COPR_FEDORA_USERNAME }}
+          COPR_FEDORA_PASSWORD: ${{ secrets.COPR_FEDORA_PASSWORD }}
+          COPR_FEDORA_OTP_SECRET: ${{ secrets.COPR_FEDORA_OTP_SECRET }}
+        run: |
+          set -euo pipefail
+          username="${COPR_USERNAME:-slskdn}"
+          mkdir -p ~/.config
+
+          configure_token() {
+            cat > ~/.config/copr <<EOF
+          [copr-cli]
+          login = ${COPR_LOGIN}
+          username = ${username}
+          token = ${COPR_TOKEN}
+          copr_url = https://copr.fedorainfracloud.org
+          EOF
+          }
+
+          configure_fedora_kerberos() {
+            sudo install -d -m 0755 /etc/ipa
+            curl -fsSL https://id.fedoraproject.org/ipa/config/ca.crt | sudo tee /etc/ipa/ca.crt >/dev/null || return 1
+            krb5_config="$RUNNER_TEMP/fedora-krb5.conf"
+            cat > "$krb5_config" <<'EOF'
+          [libdefaults]
+           default_realm = FEDORAPROJECT.ORG
+           dns_lookup_realm = false
+           rdns = false
+           dns_canonicalize_hostname = fallback
+
+          [realms]
+           FEDORAPROJECT.ORG = {
+            kdc = https://id.fedoraproject.org/KdcProxy
+            pkinit_anchors = FILE:/etc/ipa/ca.crt
+           }
+
+          [domain_realm]
+           .fedoraproject.org = FEDORAPROJECT.ORG
+           fedoraproject.org = FEDORAPROJECT.ORG
+           .fedorainfracloud.org = FEDORAPROJECT.ORG
+           fedorainfracloud.org = FEDORAPROJECT.ORG
+          EOF
+            export KRB5_CONFIG="$krb5_config"
+            echo "KRB5_CONFIG=$krb5_config" >> "$GITHUB_ENV"
+          }
+
+          configure_gssapi_client() {
+            cat > ~/.config/copr <<EOF
+          [copr-cli]
+          username = ${username}
+          copr_url = https://copr.fedorainfracloud.org
+          gssapi = true
+          EOF
+          }
+
+          cache_copr_gssapi_session() {
+            response="$RUNNER_TEMP/copr-gssapi-login.json"
+            cookie_jar="$RUNNER_TEMP/copr-gssapi-login.cookies"
+            status="$(curl --silent --show-error --negotiate -u : \
+              --cookie-jar "$cookie_jar" \
+              --output "$response" \
+              --write-out '%{http_code}' \
+              https://copr.fedorainfracloud.org/api_3/gssapi_login/)" || return 1
+            if [[ "$status" != "200" ]]; then
+              echo "COPR GSSAPI login failed with HTTP ${status}." >&2
+              sed -n '1,20p' "$response" >&2 || true
+              return 1
+            fi
+            "$RUNNER_TEMP/copr/bin/python" - "$response" "$cookie_jar" <<'PY'
+          import json
+          import sys
+          import time
+          from pathlib import Path
+
+          response_path = Path(sys.argv[1])
+          cookie_path = Path(sys.argv[2])
+          data = json.loads(response_path.read_text())
+          username = data.get("name")
+          session = None
+
+          for line in cookie_path.read_text().splitlines():
+              if not line:
+                  continue
+              if line.startswith("#HttpOnly_"):
+                  line = line.removeprefix("#HttpOnly_")
+              elif line.startswith("#"):
+                  continue
+              fields = line.split("\t")
+              if len(fields) >= 7 and fields[5] == "session":
+                  session = fields[6]
+                  break
+
+          if not username or not session:
+              raise SystemExit("COPR GSSAPI login did not return a usable session.")
+
+          cache_dir = Path.home() / ".cache" / "copr"
+          cache_dir.mkdir(parents=True, exist_ok=True)
+          cache_path = cache_dir / "copr.fedorainfracloud.org-session"
+          cache_path.write_text(json.dumps({
+              "name": username,
+              "session": session,
+              "expiration": time.time() + 10 * 3600,
+          }, indent=4) + "\n")
+          print(f"COPR GSSAPI session cached for {username}.")
+          PY
+          }
+
+          validate_copr_auth() {
+            "$RUNNER_TEMP/copr/bin/python" <<'PY'
+          import sys
+          from copr.v3 import Client
+
+          client = Client.create_from_config_file()
+          client.config["connection_attempts"] = 3
+
+          try:
+              username = client.base_proxy.auth_username()
+              client.base_proxy.auth_check()
+          except Exception as exc:
+              response = getattr(exc, "response", None)
+              if response is not None:
+                  body = response.text[:500].replace("\n", " ")
+                  content_type = response.headers.get("content-type", "unknown")
+                  print(
+                      f"COPR API authentication failed: HTTP {response.status_code}; "
+                      f"content-type={content_type}; body={body}",
+                      file=sys.stderr,
+                  )
+              else:
+                  print(f"COPR API authentication failed: {exc}", file=sys.stderr)
+              raise SystemExit(1)
+
+          print(f"COPR API authentication validated for {username}.")
+          PY
+          }
+
+          configure_kerberos_keytab() {
+            configure_fedora_kerberos || return 1
+            keytab="$RUNNER_TEMP/copr.keytab"
+            ccache="$RUNNER_TEMP/copr.krb5cc"
+            printf '%s' "$COPR_KERBEROS_KEYTAB_B64" | base64 -d > "$keytab" || return 1
+            chmod 0600 "$keytab"
+            KRB5CCNAME="FILE:$ccache" kinit -kt "$keytab" "$COPR_KERBEROS_PRINCIPAL" || return 1
+            rm -f "$keytab"
+            export KRB5CCNAME="FILE:$ccache"
+            echo "KRB5CCNAME=$KRB5CCNAME" >> "$GITHUB_ENV"
+            configure_gssapi_client
+            kvno -S HTTP copr.fedorainfracloud.org >/dev/null || return 1
+            cache_copr_gssapi_session || return 1
+          }
+
+          configure_fedora_password() {
+            configure_fedora_kerberos || return 1
+            ccache="$RUNNER_TEMP/copr.krb5cc"
+            armor="$RUNNER_TEMP/copr.krb5cc.armor"
+            otp="$(oathtool --totp --base32 "$COPR_FEDORA_OTP_SECRET")" || return 1
+            KRB5CCNAME="FILE:$armor" kinit -n @FEDORAPROJECT.ORG || return 1
+            printf '%s%s\n' "$COPR_FEDORA_PASSWORD" "$otp" \
+              | KRB5CCNAME="FILE:$ccache" kinit -T "FILE:$armor" "${COPR_FEDORA_USERNAME}@FEDORAPROJECT.ORG" || return 1
+            KRB5CCNAME="FILE:$armor" kdestroy || true
+            export KRB5CCNAME="FILE:$ccache"
+            echo "KRB5CCNAME=$KRB5CCNAME" >> "$GITHUB_ENV"
+            configure_gssapi_client
+            kvno -S HTTP copr.fedorainfracloud.org >/dev/null || return 1
+            cache_copr_gssapi_session || return 1
+          }
+
+          try_copr_auth() {
+            label="$1"
+            shift
+            rm -f ~/.config/copr
+            rm -rf ~/.cache/copr
+            if "$@" && validate_copr_auth; then
+              echo "COPR authentication configured with ${label}."
+              return 0
+            fi
+            echo "COPR authentication failed with ${label}; trying the next configured method." >&2
+            return 1
+          }
+
+          configured=0
+          if [[ -n "${COPR_KERBEROS_PRINCIPAL:-}" && -n "${COPR_KERBEROS_KEYTAB_B64:-}" ]]; then
+            try_copr_auth "Kerberos keytab" configure_kerberos_keytab && configured=1
+          fi
+          if [[ "$configured" -eq 0 && -n "${COPR_FEDORA_USERNAME:-}" && -n "${COPR_FEDORA_PASSWORD:-}" && -n "${COPR_FEDORA_OTP_SECRET:-}" ]]; then
+            try_copr_auth "Fedora password and OTP" configure_fedora_password && configured=1
+          fi
+          if [[ "$configured" -eq 0 && -n "${COPR_LOGIN:-}" && -n "${COPR_TOKEN:-}" ]]; then
+            try_copr_auth "API token" configure_token && configured=1
+          fi
+          if [[ "$configured" -eq 0 ]]; then
+            echo "No configured COPR authentication method succeeded." >&2
+            exit 1
+          fi
+
+      - name: Build SRPM
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          rpm_top="$(mktemp -d "/tmp/seerrng-rpmbuild-${version}.XXXXXX")"
+          mkdir -p "$rpm_top"/{SOURCES,SPECS,SRPMS}
+          cp "seerrng-v${version}-linux-x64.tar.gz" "$rpm_top/SOURCES/"
+          cp packaging/aur/seerrng.{service,env,sysusers,tmpfiles} "$rpm_top/SOURCES/"
+          cp packaging/rpm/seerrng.spec "$rpm_top/SPECS/"
+          sed -i "s/^Version:.*/Version:        ${version}/" "$rpm_top/SPECS/seerrng.spec"
+          rpmbuild -bs "$rpm_top/SPECS/seerrng.spec" --define "_topdir $rpm_top"
+          srpm="$rpm_top/SRPMS/seerrng-${version}-1.src.rpm"
+          test -f "$srpm"
+          mkdir -p dist
+          cp "$srpm" "dist/seerrng-${version}-1.src.rpm"
+          echo "SEERRNG_SRPM=dist/seerrng-${version}-1.src.rpm" >> "$GITHUB_ENV"
+
+      - name: Ensure COPR project exists
+        env:
+          COPR_PROJECT: ${{ secrets.COPR_PROJECT }}
+        run: |
+          set -euo pipefail
+          project="${COPR_PROJECT:-seerrng}"
+          if [[ "$project" == */* ]]; then
+            copr_full_name="$project"
+          else
+            copr_full_name="$(copr-cli whoami)/$project"
+          fi
+          instructions="dnf copr enable ${copr_full_name} && dnf install seerrng"
+          chroots=(
+            fedora-43-x86_64
+            fedora-rawhide-x86_64
+          )
+          copr_args=()
+          for chroot in "${chroots[@]}"; do
+            copr_args+=(--chroot "$chroot")
+          done
+          if copr-cli get "$project" >/dev/null 2>&1; then
+            copr-cli modify "$project" \
+              "${copr_args[@]}" \
+              --description "SeerrNG RPM builds" \
+              --instructions "$instructions"
+          else
+            copr-cli create "$project" \
+              "${copr_args[@]}" \
+            --description "SeerrNG RPM builds" \
+            --instructions "$instructions"
+          fi
+
+      - name: Upload to COPR
+        env:
+          COPR_PROJECT: ${{ secrets.COPR_PROJECT }}
+        run: |
+          srpm="${SEERRNG_SRPM:?Build SRPM step did not publish an SRPM path}"
+          test -f "$srpm"
+          copr-cli build \
+            --chroot fedora-43-x86_64 \
+            --chroot fedora-rawhide-x86_64 \
+            --nowait \
+            "${COPR_PROJECT:-seerrng}" "$srpm"

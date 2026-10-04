@@ -1,0 +1,640 @@
+import ImageFader from '@app/components/Common/ImageFader';
+import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import PageTitle from '@app/components/Common/PageTitle';
+import ProgressCircle from '@app/components/Common/ProgressCircle';
+import RequestCard from '@app/components/RequestCard';
+import Slider from '@app/components/Slider';
+import TitleCard from '@app/components/TitleCard';
+import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
+import ProfileHeader from '@app/components/UserProfile/ProfileHeader';
+import { getPositiveQueryParamNumber } from '@app/hooks/useUpdateQueryParams';
+import { Permission, UserType, useUser } from '@app/hooks/useUser';
+import ErrorPage from '@app/pages/_error';
+import defineMessages from '@app/utils/defineMessages';
+import { ArrowRightCircleIcon } from '@heroicons/react/24/outline';
+import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
+import type {
+  QuotaResponse,
+  QuotaStatus,
+  UserRequestsResponse,
+  UserWatchDataResponse,
+} from '@server/interfaces/api/userInterfaces';
+import type { BookDetails } from '@server/models/Book';
+import type { ComicDetails } from '@server/models/Comic';
+import type { MagazineDetails } from '@server/models/Magazine';
+import type { MovieDetails } from '@server/models/Movie';
+import type { MusicDetails } from '@server/models/Music';
+import type { TvDetails } from '@server/models/Tv';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useState } from 'react';
+import { useIntl } from 'react-intl';
+import useSWR from 'swr';
+
+const messages = defineMessages('components.UserProfile', {
+  recentrequests: 'Recent Requests',
+  limit: '{remaining} of {limit}',
+  requestsperdays: '{limit} remaining',
+  unlimited: 'Unlimited',
+  totalrequests: 'Total Requests',
+  pastdays: '{type} (past {days} days)',
+  movierequests: 'Movie Requests',
+  seriesrequest: 'Series Requests',
+  musicrequests: 'Music Requests',
+  bookrequests: 'Book Requests',
+  comicrequests: 'Comic Requests',
+  magazinerequests: 'Magazine Requests',
+  recentlywatched: 'Recently Watched',
+  plexwatchlist: 'Watchlist',
+  localWatchlist: "{username}'s Watchlist",
+  emptywatchlist: 'Items added to this watchlist will appear here.',
+});
+
+type MediaTitle =
+  | MovieDetails
+  | TvDetails
+  | MusicDetails
+  | BookDetails
+  | ComicDetails
+  | MagazineDetails;
+
+const hasBackdropPath = (
+  media: MediaTitle
+): media is MovieDetails | TvDetails => {
+  return 'backdropPath' in media && !!media.backdropPath;
+};
+
+const QuotaSummaryCard = ({
+  title,
+  quota,
+}: {
+  title: string;
+  quota: QuotaStatus;
+}) => {
+  const intl = useIntl();
+  const label = quota.limit
+    ? intl.formatMessage(messages.pastdays, { type: title, days: quota.days })
+    : title;
+
+  return (
+    <div
+      className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+        quota.restricted
+          ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+          : 'ring-gray-700'
+      } sm:p-6`}
+    >
+      <dt
+        className={`truncate text-sm font-bold ${
+          quota.restricted ? 'text-red-500' : 'text-gray-300'
+        }`}
+      >
+        {label}
+      </dt>
+      <dd
+        className={`mt-1 flex items-center text-sm ${
+          quota.restricted ? 'text-red-500' : 'text-white'
+        }`}
+      >
+        {quota.limit ? (
+          <>
+            <ProgressCircle
+              progress={Math.round(
+                ((quota.remaining ?? 0) / quota.limit) * 100
+              )}
+              useHeatLevel
+              className="mr-2 h-8 w-8"
+            />
+            <span className="text-3xl font-semibold">
+              {intl.formatMessage(messages.limit, {
+                remaining: quota.remaining,
+                limit: quota.limit,
+              })}
+            </span>
+          </>
+        ) : (
+          <span className="text-3xl font-semibold">
+            {intl.formatMessage(messages.unlimited)}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+};
+
+const UserProfile = () => {
+  const intl = useIntl();
+  const router = useRouter();
+  const userId = getPositiveQueryParamNumber(router.query.userId);
+  const { user, error } = useUser({
+    id: userId,
+  });
+  const { user: currentUser, hasPermission: currentHasPermission } = useUser();
+  const [availableTitles, setAvailableTitles] = useState<
+    Record<number, MediaTitle>
+  >({});
+
+  const { data: requests, error: requestError } = useSWR<UserRequestsResponse>(
+    user &&
+      (user.id === currentUser?.id ||
+        currentHasPermission(
+          [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+          { type: 'or' }
+        ))
+      ? `/api/v1/user/${user?.id}/requests?take=10&skip=0`
+      : null
+  );
+  const { data: quota } = useSWR<QuotaResponse>(
+    user &&
+      (user.id === currentUser?.id ||
+        currentHasPermission(
+          [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+          { type: 'and' }
+        ))
+      ? `/api/v1/user/${user.id}/quota`
+      : null
+  );
+  const { data: watchData, error: watchDataError } =
+    useSWR<UserWatchDataResponse>(
+      user?.userType === UserType.PLEX &&
+        (user.id === currentUser?.id || currentHasPermission(Permission.ADMIN))
+        ? `/api/v1/user/${user.id}/watch_data`
+        : null
+    );
+
+  const { data: watchlistItems, error: watchlistError } =
+    useSWR<WatchlistResponse>(
+      user?.id === currentUser?.id ||
+        currentHasPermission(
+          [Permission.MANAGE_REQUESTS, Permission.WATCHLIST_VIEW],
+          {
+            type: 'or',
+          }
+        )
+        ? `/api/v1/user/${user?.id}/watchlist`
+        : null,
+      {
+        revalidateOnMount: true,
+      }
+    );
+
+  const updateAvailableTitles = useCallback(
+    (requestId: number, mediaTitle: MediaTitle) => {
+      setAvailableTitles((titles) => ({
+        ...titles,
+        [requestId]: mediaTitle,
+      }));
+    },
+    []
+  );
+
+  useEffect(() => {
+    setAvailableTitles({});
+  }, [user?.id]);
+
+  if (!user && !error) {
+    return <LoadingSpinner />;
+  }
+
+  if (!user) {
+    return <ErrorPage statusCode={404} />;
+  }
+
+  const watchlistSliderTitle = intl.formatMessage(
+    user.userType === UserType.PLEX
+      ? messages.plexwatchlist
+      : messages.localWatchlist,
+    { username: user.displayName }
+  );
+
+  return (
+    <>
+      <PageTitle title={user.displayName} />
+      {Object.keys(availableTitles).length > 0 && (
+        <div className="absolute -top-16 right-0 left-0 z-0 h-96">
+          <ImageFader
+            key={user.id}
+            isDarker
+            backgroundImages={Object.values(availableTitles)
+              .filter(hasBackdropPath)
+              .map(
+                (media) =>
+                  `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${media.backdropPath}`
+              )
+              .slice(0, 6)}
+          />
+        </div>
+      )}
+      <ProfileHeader user={user} />
+      {quota &&
+        (user.id === currentUser?.id ||
+          currentHasPermission(
+            [Permission.MANAGE_USERS, Permission.MANAGE_REQUESTS],
+            { type: 'and' }
+          )) && (
+          <div className="relative z-40">
+            <dl className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-4">
+              <div className="overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ring-gray-700 sm:p-6">
+                <dt className="truncate text-sm font-bold text-gray-300">
+                  {intl.formatMessage(messages.totalrequests)}
+                </dt>
+                <dd className="mt-1 text-3xl font-semibold text-white">
+                  <Link
+                    href={
+                      currentHasPermission(
+                        [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+                        { type: 'or' }
+                      )
+                        ? `/users/${user?.id}/requests?filter=all`
+                        : '/requests'
+                    }
+                  >
+                    {intl.formatNumber(user.requestCount)}
+                  </Link>
+                </dd>
+              </div>
+              <div
+                className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+                  quota.movie.restricted
+                    ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+                    : 'ring-gray-700'
+                } sm:p-6`}
+              >
+                <dt
+                  className={`truncate text-sm font-bold ${
+                    quota.movie.restricted ? 'text-red-500' : 'text-gray-300'
+                  }`}
+                >
+                  {quota.movie.limit
+                    ? intl.formatMessage(messages.pastdays, {
+                        type: intl.formatMessage(messages.movierequests),
+                        days: quota?.movie.days,
+                      })
+                    : intl.formatMessage(messages.movierequests)}
+                </dt>
+                <dd
+                  className={`mt-1 flex items-center text-sm ${
+                    quota.movie.restricted ? 'text-red-500' : 'text-white'
+                  }`}
+                >
+                  {quota.movie.limit ? (
+                    <>
+                      <ProgressCircle
+                        progress={Math.round(
+                          ((quota?.movie.remaining ?? 0) /
+                            (quota?.movie.limit ?? 1)) *
+                            100
+                        )}
+                        useHeatLevel
+                        className="mr-2 h-8 w-8"
+                      />
+                      <div>
+                        {intl.formatMessage(messages.requestsperdays, {
+                          limit: (
+                            <span className="text-3xl font-semibold">
+                              {intl.formatMessage(messages.limit, {
+                                remaining: quota.movie.remaining,
+                                limit: quota.movie.limit,
+                              })}
+                            </span>
+                          ),
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-3xl font-semibold">
+                      {intl.formatMessage(messages.unlimited)}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div
+                className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+                  quota.tv.restricted
+                    ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+                    : 'ring-gray-700'
+                } sm:p-6`}
+              >
+                <dt
+                  className={`truncate text-sm font-bold ${
+                    quota.tv.restricted ? 'text-red-500' : 'text-gray-300'
+                  }`}
+                >
+                  {quota.tv.limit
+                    ? intl.formatMessage(messages.pastdays, {
+                        type: intl.formatMessage(messages.seriesrequest),
+                        days: quota?.tv.days,
+                      })
+                    : intl.formatMessage(messages.seriesrequest)}
+                </dt>
+                <dd
+                  className={`mt-1 flex items-center text-sm ${
+                    quota.tv.restricted ? 'text-red-500' : 'text-white'
+                  }`}
+                >
+                  {quota.tv.limit ? (
+                    <>
+                      <ProgressCircle
+                        progress={Math.round(
+                          ((quota?.tv.remaining ?? 0) /
+                            (quota?.tv.limit ?? 1)) *
+                            100
+                        )}
+                        useHeatLevel
+                        className="mr-2 h-8 w-8"
+                      />
+                      <div>
+                        {intl.formatMessage(messages.requestsperdays, {
+                          limit: (
+                            <span className="text-3xl font-semibold">
+                              {intl.formatMessage(messages.limit, {
+                                remaining: quota.tv.remaining,
+                                limit: quota.tv.limit,
+                              })}
+                            </span>
+                          ),
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-3xl font-semibold">
+                      {intl.formatMessage(messages.unlimited)}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div
+                className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+                  quota.music.restricted
+                    ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+                    : 'ring-gray-700'
+                } sm:p-6`}
+              >
+                <dt
+                  className={`truncate text-sm font-bold ${
+                    quota.music.restricted ? 'text-red-500' : 'text-gray-300'
+                  }`}
+                >
+                  {quota.music.limit
+                    ? intl.formatMessage(messages.pastdays, {
+                        type: intl.formatMessage(messages.musicrequests),
+                        days: quota?.music.days,
+                      })
+                    : intl.formatMessage(messages.musicrequests)}
+                </dt>
+                <dd
+                  className={`mt-1 flex items-center text-sm ${
+                    quota.music.restricted ? 'text-red-500' : 'text-white'
+                  }`}
+                >
+                  {quota.music.limit ? (
+                    <>
+                      <ProgressCircle
+                        progress={Math.round(
+                          ((quota?.music.remaining ?? 0) /
+                            (quota?.music.limit ?? 1)) *
+                            100
+                        )}
+                        useHeatLevel
+                        className="mr-2 h-8 w-8"
+                      />
+                      <div>
+                        {intl.formatMessage(messages.requestsperdays, {
+                          limit: (
+                            <span className="text-3xl font-semibold">
+                              {intl.formatMessage(messages.limit, {
+                                remaining: quota.music.remaining,
+                                limit: quota.music.limit,
+                              })}
+                            </span>
+                          ),
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-3xl font-semibold">
+                      {intl.formatMessage(messages.unlimited)}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div
+                className={`overflow-hidden rounded-lg bg-gray-800/50 px-4 py-5 shadow ring-1 ${
+                  quota.book.restricted
+                    ? 'bg-gradient-to-t from-red-900 to-transparent ring-red-500'
+                    : 'ring-gray-700'
+                } sm:p-6`}
+              >
+                <dt
+                  className={`truncate text-sm font-bold ${
+                    quota.book.restricted ? 'text-red-500' : 'text-gray-300'
+                  }`}
+                >
+                  {quota.book.limit
+                    ? intl.formatMessage(messages.pastdays, {
+                        type: intl.formatMessage(messages.bookrequests),
+                        days: quota?.book.days,
+                      })
+                    : intl.formatMessage(messages.bookrequests)}
+                </dt>
+                <dd
+                  className={`mt-1 flex items-center text-sm ${
+                    quota.book.restricted ? 'text-red-500' : 'text-white'
+                  }`}
+                >
+                  {quota.book.limit ? (
+                    <>
+                      <ProgressCircle
+                        progress={Math.round(
+                          ((quota?.book.remaining ?? 0) /
+                            (quota?.book.limit ?? 1)) *
+                            100
+                        )}
+                        useHeatLevel
+                        className="mr-2 h-8 w-8"
+                      />
+                      <div>
+                        {intl.formatMessage(messages.requestsperdays, {
+                          limit: (
+                            <span className="text-3xl font-semibold">
+                              {intl.formatMessage(messages.limit, {
+                                remaining: quota.book.remaining,
+                                limit: quota.book.limit,
+                              })}
+                            </span>
+                          ),
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-3xl font-semibold">
+                      {intl.formatMessage(messages.unlimited)}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <QuotaSummaryCard
+                title={intl.formatMessage(messages.comicrequests)}
+                quota={quota.comic}
+              />
+              <QuotaSummaryCard
+                title={intl.formatMessage(messages.magazinerequests)}
+                quota={quota.magazine}
+              />
+            </dl>
+          </div>
+        )}
+      {(user.id === currentUser?.id ||
+        currentHasPermission(
+          [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+          { type: 'or' }
+        )) &&
+        (!requests || !!requests.results.length) &&
+        !requestError && (
+          <>
+            <Slider
+              heading={
+                <>
+                  <Link
+                    href={
+                      currentHasPermission(
+                        [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+                        { type: 'or' }
+                      )
+                        ? `/users/${user?.id}/requests?filter=all`
+                        : '/requests'
+                    }
+                    className="page-heading"
+                  >
+                    <span>{intl.formatMessage(messages.recentrequests)}</span>
+                    <ArrowRightCircleIcon />
+                  </Link>
+                </>
+              }
+              sliderKey="requests"
+              disableItemContentVisibility
+              isLoading={!requests}
+              items={(requests?.results ?? []).map((request) => (
+                <RequestCard
+                  key={`request-slider-item-${request.id}`}
+                  request={request}
+                  onTitleData={updateAvailableTitles}
+                />
+              ))}
+              placeholder={<RequestCard.Placeholder />}
+            />
+          </>
+        )}
+      {(user.id === currentUser?.id ||
+        currentHasPermission(
+          [Permission.MANAGE_REQUESTS, Permission.WATCHLIST_VIEW],
+          { type: 'or' }
+        )) &&
+        (!watchlistItems ||
+          !!watchlistItems.results.length ||
+          (user.id === currentUser?.id &&
+            (user.settings?.watchlistSyncMovies ||
+              user.settings?.watchlistSyncTv ||
+              user.settings?.watchlistSyncMusic ||
+              user.settings?.watchlistSyncBooks ||
+              user.settings?.watchlistSyncComics))) &&
+        !watchlistError && (
+          <>
+            <Slider
+              heading={
+                <>
+                  <Link
+                    href={
+                      user.id === currentUser?.id
+                        ? '/profile/watchlist'
+                        : `/users/${user.id}/watchlist`
+                    }
+                    className="page-heading"
+                  >
+                    <span>{watchlistSliderTitle}</span>
+                    <ArrowRightCircleIcon />
+                  </Link>
+                </>
+              }
+              sliderKey="watchlist"
+              isLoading={!watchlistItems}
+              isEmpty={!!watchlistItems && watchlistItems.results.length === 0}
+              emptyMessage={intl.formatMessage(messages.emptywatchlist)}
+              items={watchlistItems?.results.map((item) => (
+                <div key={`watchlist-slider-item-${item.ratingKey}`}>
+                  {item.mediaType === 'music' && item.mbId ? (
+                    <TitleCard
+                      id={item.mbId}
+                      title={item.title}
+                      mediaType="album"
+                      isAddedToWatchlist={true}
+                    />
+                  ) : item.mediaType === 'book' && item.externalId ? (
+                    <TitleCard
+                      id={item.externalId}
+                      title={item.title}
+                      mediaType="book"
+                      isAddedToWatchlist={true}
+                    />
+                  ) : item.mediaType === 'comic' && item.externalId ? (
+                    <TitleCard
+                      id={item.externalId}
+                      title={item.title}
+                      mediaType="comic"
+                      isAddedToWatchlist={true}
+                    />
+                  ) : item.tmdbId ? (
+                    <TmdbTitleCard
+                      id={item.tmdbId}
+                      tmdbId={item.tmdbId}
+                      type={item.mediaType === 'tv' ? 'tv' : 'movie'}
+                      title={item.title}
+                    />
+                  ) : null}
+                </div>
+              ))}
+            />
+          </>
+        )}
+      {user.userType === UserType.PLEX &&
+        (user.id === currentUser?.id ||
+          currentHasPermission(Permission.ADMIN)) &&
+        (!watchData || !!watchData.recentlyWatched?.length) &&
+        !watchDataError && (
+          <>
+            <Slider
+              heading={
+                <>
+                  <div className="page-heading">
+                    <span>{intl.formatMessage(messages.recentlywatched)}</span>
+                  </div>
+                </>
+              }
+              sliderKey="media"
+              isLoading={!watchData}
+              items={watchData?.recentlyWatched
+                ?.filter(
+                  (item) =>
+                    item.mediaType === 'movie' || item.mediaType === 'tv'
+                )
+                .map((item) => (
+                  <TmdbTitleCard
+                    key={`media-slider-item-${item.id}`}
+                    id={item.id}
+                    tmdbId={item.tmdbId}
+                    tvdbId={item.tvdbId}
+                    type={item.mediaType === 'tv' ? 'tv' : 'movie'}
+                    title={item.searchMetadata?.title ?? undefined}
+                    posterPath={item.searchMetadata?.posterPath ?? undefined}
+                    summary={item.searchMetadata?.overview ?? undefined}
+                    year={item.searchMetadata?.releaseDate?.slice(0, 4)}
+                  />
+                ))}
+            />
+          </>
+        )}
+    </>
+  );
+};
+
+export default UserProfile;

@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: seerrng
+Source: https://github.com/snapetech/seerrng
+
+Files: *
+Copyright:
+ 2020 sct
+ Seerr contributors
+ 2026 snapetech and SeerrNG contributors
+License: MIT

@@ -1,0 +1,124 @@
+import { isAuthenticationError } from '@app/utils/auth';
+import { UserType } from '@server/constants/user';
+import type {
+  CardTextVisibility,
+  UserMediaFilterPins,
+  UserPreferredLanguages,
+  UserSettingsCardTextResponse,
+  UserSettingsDetailDisclosuresByMedia,
+} from '@server/interfaces/api/userSettingsInterfaces';
+import type { PermissionCheckOptions } from '@server/lib/permissions';
+import { Permission, hasPermission } from '@server/lib/permissions';
+import type { NotificationAgentKey } from '@server/lib/settings';
+import type { AdvancedThemeOverrides } from '@server/utils/advancedThemeOverrides';
+import type { DetailDisclosureOrder } from '@server/utils/detailDisclosureOrder';
+import { useRouter } from 'next/router';
+import type { MutatorCallback } from 'swr';
+import useSWR from 'swr';
+
+export { Permission, UserType };
+export type { PermissionCheckOptions };
+
+export interface User {
+  id: number;
+  warnings: string[];
+  plexId?: number | null;
+  plexUsername?: string | null;
+  jellyfinUsername?: string | null;
+  username?: string;
+  displayName: string;
+  email: string;
+  avatar: string;
+  permissions: number;
+  userType: number;
+  createdAt: Date;
+  updatedAt: Date;
+  requestCount: number;
+  settings?: UserSettings;
+}
+
+type NotificationAgentTypes = Record<NotificationAgentKey, number>;
+
+export interface UserSettings {
+  discoverRegion?: string;
+  streamingRegion?: string;
+  originalLanguage?: string;
+  preferredLanguages?: UserPreferredLanguages;
+  locale?: string;
+  notificationTypes: Partial<NotificationAgentTypes>;
+  watchlistSyncMovies?: boolean;
+  watchlistSyncTv?: boolean;
+  watchlistSyncMusic?: boolean;
+  watchlistSyncBooks?: boolean;
+  watchlistSyncComics?: boolean;
+  watchlistSyncMagazines?: boolean;
+  cardTextVisibilityMovie?: CardTextVisibility;
+  cardTextVisibilityTv?: CardTextVisibility;
+  cardTextVisibilityAlbum?: CardTextVisibility;
+  cardTextVisibilityBook?: CardTextVisibility;
+  cardTextVisibility?: UserSettingsCardTextResponse;
+  detailDisclosureCastPinned?: boolean;
+  detailDisclosureCrewPinned?: boolean;
+  detailDisclosureArtistsPinned?: boolean;
+  detailDisclosureSubjectTagsPinned?: boolean;
+  detailDisclosurePins?: UserSettingsDetailDisclosuresByMedia;
+  detailDisclosureOrder?: DetailDisclosureOrder;
+  mediaFilterPins?: UserMediaFilterPins;
+  advancedThemeOverrides?: AdvancedThemeOverrides | null;
+  themePalette?: string;
+}
+
+interface UserHookResponse {
+  user?: User;
+  loading: boolean;
+  error: string;
+  revalidate: (
+    data?: User | Promise<User> | MutatorCallback<User> | undefined,
+    shouldRevalidate?: boolean | undefined
+  ) => Promise<User | undefined>;
+  hasPermission: (
+    permission: Permission | Permission[],
+    options?: PermissionCheckOptions
+  ) => boolean;
+}
+
+export const useUser = ({
+  id,
+  initialData,
+}: { id?: number; initialData?: User } = {}): UserHookResponse => {
+  const router = useRouter();
+  const isAuthPage = /^\/(login|setup|resetpassword(?:\/|$))/.test(
+    router.pathname
+  );
+
+  const {
+    data,
+    error,
+    mutate: revalidate,
+  } = useSWR<User>(id ? `/api/v1/user/${id}` : `/api/v1/auth/me`, {
+    fallbackData: initialData,
+    refreshInterval: !isAuthPage ? 120000 : 0,
+    dedupingInterval: 60000,
+    revalidateOnFocus: false,
+    revalidateOnMount: !initialData && !isAuthPage,
+    revalidateOnReconnect: !isAuthPage,
+    errorRetryCount: 3,
+    errorRetryInterval: 5000,
+    shouldRetryOnError: (error) => !isAuthPage && !isAuthenticationError(error),
+  });
+
+  const checkPermission = (
+    permission: Permission | Permission[],
+    options?: PermissionCheckOptions
+  ): boolean => {
+    return hasPermission(permission, data?.permissions ?? 0, options);
+  };
+
+  return {
+    user: data,
+    loading: !data && !error,
+    error,
+    hasPermission: checkPermission,
+    revalidate,
+  };
+};

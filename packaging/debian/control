@@ -1,0 +1,15 @@
+Source: seerrng
+Section: web
+Priority: optional
+Maintainer: snapetech <seerrng@proton.me>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: seerrng
+Architecture: amd64
+Depends: nodejs (>= 24.15.0), adduser, ${misc:Depends}
+Description: Standalone media request and discovery service
+ SeerrNG can be configured to integrate with external Plex, Jellyfin, Emby,
+ Sonarr, Radarr, Lidarr, and Readarr-compatible services. Those services are
+ optional and are managed separately from this package.

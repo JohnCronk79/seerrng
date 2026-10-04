@@ -1,0 +1,23 @@
+name: Package Smoke Disabled
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to validate
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  disabled:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: packaging/smoke/package-smoke seerrng github-archive "$RELEASE_TAG" --arch amd64
