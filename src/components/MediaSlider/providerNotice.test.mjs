@@ -39,7 +39,6 @@ const attributeIn = (parsed, element, name) =>
       ts.isJsxAttribute(property) &&
       property.name.getText(parsed.source) === name
   )?.initializer;
-const attribute = (element, name) => attributeIn(contract, element, name);
 const expressionIn = (parsed, element, name) =>
   attributeIn(parsed, element, name)?.expression;
 const expression = (element, name) => expressionIn(contract, element, name);
