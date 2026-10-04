@@ -4159,6 +4159,12 @@
     }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .poster-layout[data-poster-state='loading'] {
+      animation: none;
+    }
+  }
+
   .poster-layout [data-poster-region='overlay'] {
     border-radius: inherit;
   }

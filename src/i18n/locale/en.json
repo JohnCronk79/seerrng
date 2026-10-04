@@ -960,6 +960,7 @@
   "components.Layout.Sidebar.users": "User List",
   "components.Layout.ThemePicker.darkMode": "Dark mode",
   "components.Layout.ThemePicker.lightMode": "Light mode",
+  "components.Layout.ThemePicker.saveError": "Could not save your theme. Please try again.",
   "components.Layout.ThemePicker.themePicker": "Theme picker",
   "components.Layout.ThemePicker.toggle": "Toggle",
   "components.Layout.UserDropdown.MiniQuotaDisplay.bookrequests": "Book Requests",

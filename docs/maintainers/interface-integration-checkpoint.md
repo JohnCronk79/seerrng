@@ -299,3 +299,63 @@ Fill these fields with observed facts; unknown means pending, never assumed.
 The contributor and Keith's AI must use the same checked-in instructions and
 gate, adapted to the newer target without discarding its valid security/backend
 fixes. If the target advances, pin the new head and repeat invalidated checks.
+
+## Preview merge and validation — October 4, 2026
+
+This section supersedes earlier descriptions of the current command bindings and
+publication authority; historical receipts above remain unchanged. John selected
+the accepted preview and authorized integration with Keith's current main,
+scoped Fix-it repairs, source-specific engine validation, separate guarded
+compilation, and a laptop preview on port 5071 with an independent copy of the
+5070 configuration/database. The final preview is shown only after those checks
+complete. John's visual review remains required before any PR.
+
+The pinned upstream base is `a96fafa07c77a2d6d95badeb9f60c32a6b4a47c9`
+(3.48.3). The exact accepted working-byte checkpoint is
+`d9338138acf269a37018d2fedc7b7daa8dce2d2d`, whose common ancestor with upstream
+is `e7305281797cd7527c3b1c0a83ff144218ad506a`. The three-way inventory contains
+311 accepted paths and 361 upstream paths, 308 overlapping paths, and eight
+manual conflicts. The accepted screen semantics are already present upstream;
+MediaSlider retains its newer TMDB stale/error retry notice and poster fallback.
+Testing instructions are reconciled to the reviewed engine, while actual public
+package commands and hooks preserve their existing bindings.
+
+The reviewed combined engine uses this integrated candidate's existing tests and
+supplemental checks with fresh inventory, case ledger and source/environment
+pins. The archived comprehensive runner is not an additional mandatory test run.
+`pnpm build` runs translation/shared-visual guards and compilation separately.
+The saved 3.48.1 engine receipt remains historical and cannot certify this source.
+All iterative source, dependencies, evidence, caches, test and compile work remain
+in Docker-managed Linux storage. The original accepted preview remains preserved.
+
+Current evidence and the bounded Fix-it repair ledger are being recorded in the
+owned Linux evidence volume. Final tests, compile, deployment health and visual
+acceptance remain pending until their actual receipts are verified. No live
+provider writes are authorized by this validation.
+
+## Theme adoption and publication authority — October 4, 2026
+
+John subsequently requested a one-time switch to SeerrNG for new installations
+and existing accounts upgrading to this build or a later build containing this
+migration. The stable migration adds an account palette default and clears old
+active advanced-theme overrides once. After login, another supported palette
+can be selected and saved to that account. Later logins and upgrades retain that
+choice; the migration is not a per-version or per-login reset. Appearance mode
+and unrelated account preferences are preserved.
+
+John explicitly authorized submission to `snapetech/seerrng` after passing tests,
+using his previously approved AI disclosure, and automatic follow-up repairs
+for relevant PR failures. This supersedes the earlier pending preview-review
+publication gate. It does not certify new physical drag/touch, browser/Cypress,
+live-provider or PostgreSQL-service testing. The accepted visual decisions remain
+his; no new whole-site visual acceptance is claimed.
+
+The pre-theme integrated tree passed the full reviewed engine (3,994 passed,
+four existing conditional PostgreSQL skips, zero failures; 555 files) in
+344.227 seconds. Its separate guarded compilation completed in 117.572 seconds,
+after 11.150 seconds of prebuild guards. Those are historical receipts for tree
+`473af0fd9c7479c9e58c043115e285727691ccd7`, not proof for the theme amendment.
+John explicitly waived another compile and requested tests only for the amended
+source. A fresh source-bound engine run and static checks must establish that
+amendment's actual result before publication. No production deployment or merge
+of Keith's PR is authorized by this overnight finalization request.

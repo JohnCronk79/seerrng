@@ -1036,6 +1036,9 @@ components:
     UserSettings:
       type: object
       properties:
+        themePalette:
+          type: string
+          description: Account theme preference. SeerrNG is adopted once on installation or upgrade; subsequent user choices survive later upgrades.
         username:
           type: string
           nullable: true
@@ -9954,6 +9957,44 @@ paths:
                 type: object
                 additionalProperties:
                   type: string
+  /user/{userId}/settings/theme:
+    post:
+      summary: Save the signed-in user's theme preference
+      tags: [users]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [palette]
+              properties:
+                palette:
+                  type: string
+                  maxLength: 32
+      responses:
+        '200':
+          description: Confirmed account theme preference
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [themePalette]
+                properties:
+                  themePalette:
+                    type: string
+        '400':
+          description: Invalid theme palette
+        '403':
+          description: Only the signed-in user can change their theme
   /user/{userId}/settings/advanced-theme:
     post:
       summary: Save or clear a user's advanced theme overrides
@@ -10448,9 +10489,6 @@ paths:
                   totalResults:
                     type: number
                     example: 200
-                  stale:
-                    type: boolean
-                    description: True when saved results are served because TMDB is unavailable.
                   results:
                     type: array
                     items:
@@ -10772,6 +10810,9 @@ paths:
                   totalResults:
                     type: number
                     example: 200
+                  stale:
+                    type: boolean
+                    description: True when saved results are served because TMDB is unavailable.
                   results:
                     type: array
                     items:
