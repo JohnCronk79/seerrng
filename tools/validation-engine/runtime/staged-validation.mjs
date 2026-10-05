@@ -284,8 +284,20 @@ export async function executeStagedValidation(binding, options) {
         caseLedgers,
       };
     } else if (owner.stage === 'repository') {
-      const operation = () =>
-        executeRepository(binding.repositoryPlan, { signal });
+      const operation = async () => {
+        try {
+          return await executeRepository(binding.repositoryPlan, { signal });
+        } catch (error) {
+          if (error.repositoryEvidence) {
+            evidence.set(unit.id, {
+              status: 'failed',
+              reason: error.message,
+              repositoryEvidence: error.repositoryEvidence,
+            });
+          }
+          throw error;
+        }
+      };
       result = withRepositoryIsolation
         ? await withRepositoryIsolation(operation, {
             candidate: binding.plan.candidate,

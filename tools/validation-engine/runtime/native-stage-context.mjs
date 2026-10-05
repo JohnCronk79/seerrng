@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   accessSync,
+  appendFileSync,
   chmodSync,
   constants,
   existsSync,
@@ -695,7 +696,11 @@ export function repositoryIsolationReadiness(
   };
 }
 
-export function repositoryNativeCases(command, receipt, { vitestReport } = {}) {
+export function repositoryNativeCases(
+  command,
+  receipt,
+  { vitestReport, collectFailures = false } = {}
+) {
   if (command.kind === 'check') return null;
   if (command.kind === 'vitest') {
     if (!vitestReport || !Array.isArray(vitestReport.testResults))
@@ -706,11 +711,41 @@ export function repositoryNativeCases(command, receipt, { vitestReport } = {}) {
     }));
     if (files.some((file) => !Array.isArray(file.cases)))
       throw new Error('Vitest assertion closure is missing');
+    if (collectFailures) {
+      const names = files.map((file) =>
+        path
+          .relative(command.cwd, path.resolve(command.cwd, file.file))
+          .split(path.sep)
+          .join('/')
+      );
+      if (
+        !Array.isArray(command.files) ||
+        !command.files.length ||
+        command.files.some((file) => !safe(file)) ||
+        new Set(command.files).size !== command.files.length ||
+        names.length !== command.files.length ||
+        new Set(names).size !== names.length ||
+        names.some((name) => !command.files.includes(name))
+      )
+        throw new Error(
+          'Native Vitest source ownership is incomplete or duplicated'
+        );
+    }
     const cases = files.flatMap((file) =>
-      file.cases.map((entry) => ({
+      file.cases.map((entry, ordinal) => ({
         file: file.file,
         name: entry.fullName ?? entry.title,
         status: entry.status,
+        ...(collectFailures
+          ? {
+              caseId: JSON.stringify([
+                file.file,
+                ordinal,
+                entry.fullName ?? entry.title,
+              ]),
+              failureMessages: entry.failureMessages ?? [],
+            }
+          : {}),
       }))
     );
     if (
@@ -727,6 +762,20 @@ export function repositoryNativeCases(command, receipt, { vitestReport } = {}) {
       )
     )
       throw new Error('Unknown native Vitest case status');
+    if (
+      collectFailures &&
+      cases.some(
+        (entry) =>
+          typeof entry.name !== 'string' ||
+          !entry.name ||
+          (entry.status === 'failed' &&
+            (!Array.isArray(entry.failureMessages) ||
+              !entry.failureMessages.length))
+      )
+    )
+      throw new Error(
+        'Native Vitest case identity/failure diagnostic is incomplete'
+      );
     const counts = {
       passed: cases.filter((entry) => entry.status === 'passed').length,
       failed: cases.filter((entry) => entry.status === 'failed').length,
@@ -738,8 +787,9 @@ export function repositoryNativeCases(command, receipt, { vitestReport } = {}) {
       counts.passed !== vitestReport.numPassedTests ||
       counts.failed !== vitestReport.numFailedTests ||
       cases.length !== vitestReport.numTotalTests ||
-      vitestReport.success !== true ||
-      counts.failed
+      vitestReport.success !== (counts.failed === 0) ||
+      counts.passed + counts.failed < 1 ||
+      (!collectFailures && counts.failed)
     )
       throw new Error(
         'Native Vitest cases/summary closure is incomplete or failed'
@@ -763,11 +813,256 @@ export function repositoryNativeCases(command, receipt, { vitestReport } = {}) {
         ? 'bin/run-tooling-tests.mjs'
         : 'node:test';
   const ledger = readNodeTapHierarchy(raw.subarray(marker), runner);
-  if (!ledger.complete || ledger.counts.failed || ledger.counts.passed < 1)
+  if (
+    !ledger.complete ||
+    (!collectFailures && ledger.counts.failed) ||
+    ledger.counts.passed + ledger.counts.failed < 1
+  )
     throw new Error(
       `Native repository case closure failed: ${ledger.issues.join('; ')}`
     );
   return { ...ledger, files: command.files, nativeRunner: runner };
+}
+
+// A native assertion failure is distinct from interrupted/incomplete execution.
+// Read actual complete logs; a claimed status or digest alone cannot admit it.
+export function requireRepositoryNativeReceipt(receipt, scratchRoot) {
+  if (
+    !receipt ||
+    !['passed', 'failed'].includes(receipt.status) ||
+    !Number.isSafeInteger(receipt.exitCode) ||
+    receipt.exitCode < 0 ||
+    (receipt.status === 'passed'
+      ? receipt.exitCode !== 0
+      : receipt.exitCode === 0) ||
+    receipt.lifecycle?.spawned !== true ||
+    receipt.lifecycle?.completed !== true ||
+    receipt.lifecycle?.cleanupVerified !== true ||
+    receipt.aborted !== false ||
+    receipt.timedOut !== false ||
+    receipt.signal !== null ||
+    receipt.spawnError ||
+    !Number.isFinite(receipt.wallMs) ||
+    receipt.wallMs < 0
+  )
+    throw new Error(
+      'Incomplete native repository execution cannot collect failures'
+    );
+  for (const stream of ['stdout', 'stderr']) {
+    const file = receipt[`${stream}Log`];
+    if (typeof file !== 'string' || !beneath(scratchRoot, path.resolve(file)))
+      throw new Error('Native repository log is not owned by scratch');
+    const bytes = readFileSync(
+      regular(
+        scratchRoot,
+        path.relative(scratchRoot, file).split(path.sep).join('/')
+      ).absolute
+    );
+    if (
+      bytes.length !== receipt[`${stream}Bytes`] ||
+      hash(bytes) !== receipt[`${stream}Sha256`] ||
+      receipt[`${stream}Truncated`] !== false ||
+      bytes.toString('utf8') !== receipt[stream]
+    )
+      throw new Error('Native repository full log/hash closure is incomplete');
+  }
+  return receipt;
+}
+
+// Append actual terminal receipts independently of each stage's pass/fail result.
+// Raw streams remain in their hashed logs; never copy command environments here.
+export function createNativeProcessReceiptLedger(scratchRoot, candidate) {
+  const file = path.join(scratchRoot, 'native-command-receipts.jsonl');
+  writeFileSync(file, `${JSON.stringify({ schema: 1, candidate })}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
+  const pending = new Map();
+  const completed = new Map();
+  let sequence = 0;
+  return {
+    begin: (id, command, role = 'command') => {
+      if (
+        typeof id !== 'string' ||
+        !id ||
+        !['command', 'server'].includes(role) ||
+        pending.has(id) ||
+        completed.has(id)
+      )
+        throw new Error('Native process receipt identity is not fresh');
+      pending.set(id, {
+        sequence: ++sequence,
+        id,
+        commandId: command.id ?? command.name ?? null,
+        role,
+      });
+    },
+    complete: (id, receipt) => {
+      const owner = pending.get(id);
+      if (!owner) throw new Error('Native process receipt has no active owner');
+      const record = {
+        ...owner,
+        status: receipt.status,
+        exitCode: receipt.exitCode,
+        signal: receipt.signal,
+        aborted: receipt.aborted,
+        timedOut: receipt.timedOut,
+        spawnError: receipt.spawnError,
+        wallMs: receipt.wallMs,
+        lifecycle: receipt.lifecycle,
+        stdoutLog: receipt.stdoutLog,
+        stderrLog: receipt.stderrLog,
+        stdoutBytes: receipt.stdoutBytes,
+        stderrBytes: receipt.stderrBytes,
+        stdoutSha256: receipt.stdoutSha256,
+        stderrSha256: receipt.stderrSha256,
+      };
+      appendFileSync(file, `${JSON.stringify(record)}\n`);
+      completed.set(id, record);
+      pending.delete(id);
+    },
+    describe: () => ({
+      file,
+      sha256: hash(readFileSync(file)),
+      records: completed.size,
+      pending: [...pending.values()],
+      cleanupVerified:
+        pending.size === 0 &&
+        [...completed.values()].every(
+          (record) =>
+            record.lifecycle?.completed === true &&
+            record.lifecycle?.cleanupVerified === true
+        ),
+    }),
+  };
+}
+
+export async function executeNativeRepository(
+  plan,
+  {
+    nativeRun,
+    scratchRoot,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    inherited,
+    signal,
+    workers,
+  }
+) {
+  const receipts = [],
+    caseLedgers = [],
+    attemptedSteps = [];
+  try {
+    const totals = await executePlan(plan, {
+      stdout,
+      stderr,
+      inherited,
+      signal,
+      workers,
+      collectFailures: true,
+      executor: async (command, execution) => {
+        attemptedSteps.push(command.name);
+        let receipt;
+        try {
+          receipt = await nativeRun({
+            ...command,
+            cwd: plan.root,
+            env: execution.env,
+          });
+        } catch (error) {
+          if (command.kind === 'check' || error.receipt?.status !== 'failed') {
+            if (error.receipt) receipts.push(error.receipt);
+            throw error;
+          }
+          receipt = error.receipt;
+        }
+        receipts.push(receipt);
+        requireRepositoryNativeReceipt(receipt, scratchRoot);
+        if (receipt.id !== (command.id ?? command.name))
+          throw new Error(
+            'Native repository receipt command identity mismatch'
+          );
+        let vitestReport;
+        if (command.kind === 'vitest') {
+          const file = command.args
+            .find((arg) => arg.startsWith('--outputFile.json='))
+            ?.slice('--outputFile.json='.length);
+          if (
+            !file ||
+            !beneath(execution.env.CONFIG_DIRECTORY, path.resolve(file))
+          )
+            throw new Error('Native Vitest output file is not bound');
+          const bytes = readFileSync(
+            regular(
+              execution.env.CONFIG_DIRECTORY,
+              path
+                .relative(execution.env.CONFIG_DIRECTORY, file)
+                .split(path.sep)
+                .join('/')
+            ).absolute
+          );
+          const artifact = path.join(scratchRoot, 'native-vitest-report.json');
+          writeFileSync(artifact, bytes, { flag: 'wx' });
+          receipt.nativeReport = { file: artifact, sha256: hash(bytes) };
+          vitestReport = JSON.parse(bytes);
+        }
+        const ledger = repositoryNativeCases(
+          { ...command, cwd: plan.root },
+          receipt,
+          { vitestReport, collectFailures: true }
+        );
+        if (ledger) caseLedgers.push(ledger);
+        return {
+          output: `${receipt.stdout}\n${receipt.stderr}`,
+          nativeReceipt: receipt,
+          caseLedger: ledger,
+        };
+      },
+    });
+    const counts = [...totals.values()];
+    const actual = caseLedgers.reduce(
+      (sum, ledger) => ({
+        passed: sum.passed + ledger.counts.passed,
+        failed: sum.failed + ledger.counts.failed,
+        skipped: sum.skipped + ledger.counts.skipped,
+      }),
+      { passed: 0, failed: 0, skipped: 0 }
+    );
+    if (
+      actual.passed + actual.failed !==
+        counts.reduce((sum, count) => sum + count.active, 0) ||
+      actual.passed + actual.failed + actual.skipped !==
+        counts.reduce((sum, count) => sum + count.total, 0)
+    )
+      throw new Error(
+        'Original repository totals do not close against native case ledgers'
+      );
+    return {
+      status: actual.failed ? 'failed' : 'passed',
+      cases: actual,
+      caseLedgers,
+      totals: Object.fromEntries(totals),
+      commands: receipts,
+      failures: totals.failures,
+      resultReuse: false,
+    };
+  } catch (error) {
+    error.repositoryEvidence = {
+      commands: receipts,
+      caseLedgers,
+      attemptedSteps,
+      unexecutedSteps: plan.steps
+        .filter((step) => !attemptedSteps.includes(step.name))
+        .map((step) => ({
+          name: step.name,
+          kind: step.kind,
+          reason: 'Earlier native infrastructure or prerequisite failure',
+        })),
+      completed: false,
+      resultReuse: false,
+    };
+    throw error;
+  }
 }
 
 export function evaluatorHeadroom({
@@ -962,6 +1257,7 @@ export async function createNativeStageContext(
 ) {
   const capacity = detectWorkerCapacity({ sourceRoot, environment: inherited });
   const snapshot = createOwnedSourceSnapshot(sourceRoot, { scratchParent });
+  let processReceipts;
   try {
     // Public operator identity is resolved on the real checkout, not from copied
     // credentials/config. Retain only that approved login for existing Vitest's
@@ -981,6 +1277,10 @@ export async function createNativeStageContext(
       codeqlScratch = path.join(snapshot.scratchRoot, 'codeql');
     for (const directory of [logs, home, supplementalFixtures, codeqlScratch])
       mkdirSync(directory);
+    processReceipts = createNativeProcessReceiptLedger(
+      snapshot.scratchRoot,
+      snapshot.candidate
+    );
     const env = nativeEnvironment(inherited, home);
     const dependencyRoot = realpathSync(path.join(sourceRoot, 'node_modules'));
     const dependencyProof = readonlyMountProof(dependencyRoot);
@@ -1060,6 +1360,7 @@ export async function createNativeStageContext(
           memory,
         };
       }
+      processReceipts.begin(id, command);
       try {
         const receipt = await runCommand(
           {
@@ -1084,16 +1385,19 @@ export async function createNativeStageContext(
             stderrLog: path.join(logs, `${id}.stderr.log`),
           }
         );
+        processReceipts.complete(id, receipt);
         return {
           ...materializeNativeReceipt(receipt),
           ...(resourceAdmission ? { resourceAdmission } : {}),
         };
       } catch (error) {
-        if (error.receipt)
+        if (error.receipt) {
+          processReceipts.complete(id, error.receipt);
           error.receipt = {
             ...materializeNativeReceipt(error.receipt),
             ...(resourceAdmission ? { resourceAdmission } : {}),
           };
+        }
         throw error;
       } finally {
         if (docsLinkSnapshot) verifySourceSnapshot(docsLinkSnapshot);
@@ -1572,73 +1876,20 @@ export async function createNativeStageContext(
           throw new Error(
             'Repository loopback-only network boundary changed before native execution'
           );
-        const receipts = [];
-        const caseLedgers = [];
-        const totals = await executePlan(plan, {
+        return executeNativeRepository(plan, {
+          nativeRun,
+          scratchRoot: snapshot.scratchRoot,
           stdout,
           stderr,
           inherited: env,
           signal,
           workers: capacity.configuredWorkers,
-          executor: async (command, execution) => {
-            const receipt = await nativeRun({
-              ...command,
-              cwd: plan.root,
-              env: execution.env,
-            });
-            receipts.push(receipt);
-            let vitestReport;
-            if (command.kind === 'vitest') {
-              const file = command.args
-                .find((arg) => arg.startsWith('--outputFile.json='))
-                ?.slice('--outputFile.json='.length);
-              if (!file)
-                throw new Error('Native Vitest output file is not bound');
-              const bytes = readFileSync(file);
-              vitestReport = JSON.parse(bytes);
-              const artifact = path.join(
-                snapshot.scratchRoot,
-                'native-vitest-report.json'
-              );
-              writeFileSync(artifact, bytes, { flag: 'wx' });
-              receipt.nativeReport = { file: artifact, sha256: hash(bytes) };
-            }
-            const ledger = repositoryNativeCases(command, receipt, {
-              vitestReport,
-            });
-            if (ledger) caseLedgers.push(ledger);
-            return `${receipt.stdout}\n${receipt.stderr}`;
-          },
         });
-        const counts = [...totals.values()];
-        const actual = caseLedgers.reduce(
-          (sum, ledger) => ({
-            passed: sum.passed + ledger.counts.passed,
-            failed: sum.failed + ledger.counts.failed,
-            skipped: sum.skipped + ledger.counts.skipped,
-          }),
-          { passed: 0, failed: 0, skipped: 0 }
-        );
-        if (
-          actual.passed !==
-            counts.reduce((sum, count) => sum + count.active, 0) ||
-          actual.passed + actual.skipped !==
-            counts.reduce((sum, count) => sum + count.total, 0)
-        )
-          throw new Error(
-            'Original repository totals do not close against native case ledgers'
-          );
-        return {
-          status: 'passed',
-          cases: actual,
-          caseLedgers,
-          totals: Object.fromEntries(totals),
-          commands: receipts,
-          resultReuse: false,
-        };
       },
-      startServer: async (descriptor) =>
-        startCommand(descriptor, {
+      startServer: async (descriptor) => {
+        const id = `${++ordinal}-browser-server`;
+        processReceipts.begin(id, descriptor, 'server');
+        const service = startCommand(descriptor, {
           root: descriptor.cwd,
           env: descriptor.env,
           stdout,
@@ -1647,7 +1898,23 @@ export async function createNativeStageContext(
           logDirectory: logs,
           stdoutLog: path.join(logs, 'browser-server.stdout.log'),
           stderrLog: path.join(logs, 'browser-server.stderr.log'),
-        }),
+        });
+        const exit = service.exit.then((receipt) => {
+          processReceipts.complete(id, receipt);
+          return receipt;
+        });
+        return {
+          ...service,
+          exit,
+          stop: async () => {
+            try {
+              return await service.stop();
+            } finally {
+              await exit;
+            }
+          },
+        };
+      },
       waitForReady: async (url, { service }) =>
         service.waitForReady(
           async () => {
@@ -1706,6 +1973,7 @@ export async function createNativeStageContext(
       snapshot,
       pendingMetadata,
       derivedArtifacts,
+      describeNativeProcessReceipts: processReceipts.describe,
       cleanup: async (error) => {
         preserveTemporary ||= error?.preserveTemporary === true;
         await verifySource();
@@ -1714,6 +1982,8 @@ export async function createNativeStageContext(
     };
   } catch (error) {
     error.scratchRoot = snapshot.scratchRoot;
+    if (processReceipts)
+      error.nativeProcessReceiptLedger = processReceipts.describe();
     error.preserveTemporary = true;
     try {
       verifySourceSnapshot(snapshot);

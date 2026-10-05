@@ -1,6 +1,7 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
 import {
   createStagedValidation,
   executeStagedValidation,
@@ -220,6 +221,48 @@ test('changed source or boundary rejects every later native admission', async ()
     /Frozen source\/boundary changed/
   );
   assert.equal(starts, 0);
+});
+
+test('infrastructure failure retains partial repository evidence without claiming complete case execution', async () => {
+  const partial = {
+    completed: false,
+    caseLedgers: [{ counts: { passed: 3, failed: 0, skipped: 1 } }],
+    commands: [{ status: 'timed-out' }],
+    unexecutedSteps: [{ name: 'Tooling', reason: 'Earlier timeout' }],
+    resultReuse: false,
+  };
+  let restored = false;
+  const report = await executeStagedValidation(
+    createStagedValidation(input()),
+    {
+      executeRepository: async () => {
+        throw Object.assign(new Error('Native owner timed out'), {
+          repositoryEvidence: partial,
+        });
+      },
+      withRepositoryIsolation: async (operation) => {
+        try {
+          return await operation();
+        } finally {
+          restored = true;
+        }
+      },
+      run: async () => {
+        throw new Error('Focused later-stage failure');
+      },
+      readFile: async () => '',
+      writeArtifact: async () => {},
+      verifySource: async () => {},
+    }
+  );
+  assert.equal(restored, true);
+  assert.equal(report.status, 'failed');
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.nativeEvidence['native-repository'].repositoryEvidence,
+    partial
+  );
+  assert.equal(report.results[0].caseAttempts, null);
 });
 
 test('missing lifecycle/source/native executor callbacks fail before admission', async () => {

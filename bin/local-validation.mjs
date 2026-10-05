@@ -1020,8 +1020,11 @@ export async function executePlan(
     executor = runCommand,
     signal,
     workers,
+    collectFailures = false,
   } = {}
 ) {
+  if (typeof collectFailures !== 'boolean')
+    throw new Error('Internal failure collection must be explicit');
   if (
     workers !== undefined &&
     (!Number.isSafeInteger(workers) || workers < 1 || workers > 256)
@@ -1030,6 +1033,7 @@ export async function executePlan(
   const directory = mkdtempSync(join(tmpdir(), prefix));
   const env = isolatedEnvironment(directory, inherited);
   const totals = new Map();
+  const failures = [];
   let preserveTemporary = false;
   try {
     for (const original of plan.steps) {
@@ -1056,13 +1060,52 @@ export async function executePlan(
         );
       }
       stdout.write(`\n[${step.name}]\n`);
-      const output = await executor(step, {
+      const executionResult = await executor(step, {
         root: plan.root,
         env,
         stdout,
         stderr,
         signal,
       });
+      const output = collectFailures ? executionResult.output : executionResult;
+      let nativeCount;
+      if (collectFailures && step.kind !== 'check') {
+        const receipt = executionResult.nativeReceipt,
+          ledger = executionResult.caseLedger,
+          counts = ledger?.counts;
+        if (
+          !receipt ||
+          !['passed', 'failed'].includes(receipt.status) ||
+          receipt.lifecycle?.completed !== true ||
+          receipt.lifecycle?.cleanupVerified !== true ||
+          receipt.aborted !== false ||
+          receipt.timedOut !== false ||
+          receipt.signal !== null ||
+          receipt.spawnError ||
+          !Number.isSafeInteger(receipt.exitCode) ||
+          receipt.exitCode < 0 ||
+          !counts ||
+          !Object.values(counts).every(
+            (value) => Number.isSafeInteger(value) && value >= 0
+          ) ||
+          !Array.isArray(ledger.cases) ||
+          ledger.cases.length !==
+            counts.passed + counts.failed + counts.skipped ||
+          counts.passed + counts.failed < 1 ||
+          (receipt.status === 'passed'
+            ? receipt.exitCode !== 0 || counts.failed !== 0
+            : receipt.exitCode === 0 || counts.failed < 1)
+        )
+          throw new Error(
+            'Complete native case ledger required for internal failure collection'
+          );
+        nativeCount = {
+          total: ledger.cases.length,
+          active: counts.passed + counts.failed,
+        };
+        if (counts.failed)
+          failures.push({ name: step.name, kind: step.kind, receipt, counts });
+      }
       if (step.kind !== 'check') {
         let count;
         if (step.kind === 'vitest') {
@@ -1079,8 +1122,21 @@ export async function executePlan(
             count.active > count.total
           )
             throw new Error('Invalid Vitest test summary');
-          if (result.numFailedTests > 0 || result.success === false)
+          if (
+            !collectFailures &&
+            (result.numFailedTests > 0 || result.success === false)
+          )
             throw new Error('Vitest report contains failed tests');
+          if (
+            collectFailures &&
+            (result.success !==
+              (executionResult.caseLedger.counts.failed === 0) ||
+              count.total !== nativeCount.total ||
+              count.active !== nativeCount.active)
+          )
+            throw new Error(
+              'Vitest native failure/count closure is incomplete'
+            );
           const actual = new Set(
             (result.testResults || []).map((entry) =>
               slash(relative(plan.root, resolve(plan.root, entry.name)))
@@ -1095,6 +1151,12 @@ export async function executePlan(
               'Vitest excluded or added files outside its discovered ownership; refusing partial success'
             );
         } else count = testCount(output);
+        if (
+          collectFailures &&
+          (count.total !== nativeCount.total ||
+            count.active !== nativeCount.active)
+        )
+          throw new Error('Native failure/count closure is incomplete');
         const previous = totals.get(step.kind) || { total: 0, active: 0 };
         totals.set(step.kind, {
           total: previous.total + count.total,
@@ -1107,6 +1169,7 @@ export async function executePlan(
         throw new Error(`Unexpected zero active tests: ${kind}`);
     }
     if (!totals.size) throw new Error('No test lanes executed');
+    if (collectFailures) totals.failures = failures;
     return totals;
   } catch (error) {
     preserveTemporary = error.preserveTemporary === true;

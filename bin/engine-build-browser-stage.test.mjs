@@ -169,7 +169,7 @@ test('fixture preparation preserves source-entity disk seeding without changing 
   const { plan } = await fixture(t);
   assert.deepEqual(plan.prepare.args, ['cypress:prepare']);
   assert.equal(plan.prepare.env.NODE_ENV, 'development');
-  assert.equal(plan.prepare.env.WITH_MIGRATIONS, 'false');
+  assert.equal(plan.prepare.env.WITH_MIGRATIONS, 'true');
   assert.equal(plan.prepare.env.CONFIG_DIRECTORY, plan.fixtureRoot);
   for (const command of [...plan.build, plan.server, plan.browser]) {
     assert.equal(command.env.NODE_ENV, 'production');

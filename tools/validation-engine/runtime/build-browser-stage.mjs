@@ -231,10 +231,11 @@ export async function createBuildBrowserStages(options) {
     ]),
     // The workflow's ts-node preparation uses source entities and a disk DB.
     // Production selects compiled entity constructors; test selects memory DB.
+    // Seed through native migrations so production does not rerun initial CREATEs.
     prepare: command('cypress-fixture-prepare', ['cypress:prepare'], {
       ...env,
       NODE_ENV: 'development',
-      WITH_MIGRATIONS: 'false',
+      WITH_MIGRATIONS: 'true',
     }),
     exportConfig: Object.freeze({
       id: 'cypress-fixture-external-config',
