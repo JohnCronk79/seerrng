@@ -1,6 +1,13 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
+import {
+  createHostedGithubPlan,
+  githubChangedFilesRange,
+  reconcileHostedGithubNeeds,
+} from '../tools/validation-engine/runtime/hosted-github-plan.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
 import {
   createStagedValidation,
@@ -14,6 +21,69 @@ const candidate = {
   tree: 'c'.repeat(40),
   lockSha256: 'd'.repeat(64),
   sourceSha256: sha,
+};
+const workflowHashes = {
+  ci: '1'.repeat(64),
+  codeql: '2'.repeat(64),
+  cypress: '3'.repeat(64),
+  testDocs: '4'.repeat(64),
+  docsLinks: '5'.repeat(64),
+  helm: '6'.repeat(64),
+};
+const githubEvent = (overrides = {}) => ({
+  name: 'pull_request',
+  runId: '12345',
+  runAttempt: '1',
+  executionSha: candidate.commit,
+  headSha: 'e'.repeat(40),
+  baseSha: 'f'.repeat(40),
+  ref: 'refs/pull/42/merge',
+  baseRef: 'main',
+  actorType: 'User',
+  pathFilterMode: 'changed-files',
+  ...overrides,
+});
+const hostedInput = (overrides = {}) => ({
+  candidate,
+  event: githubEvent(),
+  changedFiles: ['tools/validation-engine/runtime/staged-validation.mjs'],
+  workflowHashes,
+  ...overrides,
+});
+const githubNeeds = (plan) =>
+  Object.fromEntries([
+    [
+      'engine-plan',
+      {
+        result: 'success',
+        outputs: {
+          planSha256: plan.planSha256,
+          runId: plan.event.runId,
+          runAttempt: plan.event.runAttempt,
+          executionSha: plan.event.executionSha,
+          headSha: plan.event.headSha,
+        },
+      },
+    ],
+    ...plan.units.map((unit) => [
+      unit.needsKey,
+      { result: unit.applicable ? 'success' : 'skipped', outputs: {} },
+    ]),
+  ]);
+const canonicalJson = (value) => {
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  if (value && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  return JSON.stringify(value);
+};
+const rehashPlan = (plan) => {
+  const copy = structuredClone(plan);
+  delete copy.planSha256;
+  return createHash('sha256').update(canonicalJson(copy)).digest('hex');
 };
 const input = () => ({
   runId: 'stage-regression',
@@ -364,4 +434,402 @@ test('unsupported, duplicate and unproved applicability is rejected', () => {
   ]) {
     assert.throws(() => createStagedValidation({ ...input(), prChecks }));
   }
+});
+
+test('hosted GitHub plan is deterministic and preserves native job parallelism', () => {
+  const first = createHostedGithubPlan(
+    hostedInput({
+      changedFiles: [
+        'bin/run-local-validation.mjs',
+        'tools/validation-engine/runtime/staged-validation.mjs',
+      ],
+    })
+  );
+  const reorderedHashes = Object.fromEntries(
+    Object.entries(workflowHashes).reverse()
+  );
+  const second = createHostedGithubPlan(
+    hostedInput({
+      changedFiles: [
+        'tools/validation-engine/runtime/staged-validation.mjs',
+        'bin/run-local-validation.mjs',
+      ],
+      workflowHashes: reorderedHashes,
+    })
+  );
+
+  assert.equal(first.schema, 'seerrng-hosted-github-plan/v1');
+  assert.equal(first.planSha256, second.planSha256);
+  assert.deepEqual(first, second);
+  assert.equal(first.resultReuse, false);
+  assert.equal(first.units.length, 10);
+  assert.ok(
+    first.units.every(
+      (unit) =>
+        unit.required &&
+        unit.dependsOn.length === 1 &&
+        unit.dependsOn[0] === 'engine-plan'
+    )
+  );
+  assert.deepEqual(
+    first.units.filter((unit) => !unit.applicable).map((unit) => unit.id),
+    ['helm-lint-test']
+  );
+  assert.deepEqual(
+    first.externalMetadata.map((entry) => entry.id),
+    ['github-pr-title', 'github-pr-template', 'github-merge-conflict-state']
+  );
+  assert.equal(Object.isFrozen(first), true);
+  assert.equal(Object.isFrozen(first.units[0]), true);
+});
+
+test('hosted GitHub applicability matches native event, branch and path filters', () => {
+  const applicableIds = (options) =>
+    createHostedGithubPlan(options)
+      .units.filter((unit) => unit.applicable)
+      .map((unit) => unit.id);
+  const botDocs = hostedInput({
+    event: githubEvent({ actorType: 'Bot' }),
+    changedFiles: ['docs/maintainers/example.md'],
+  });
+  assert.deepEqual(applicableIds(botDocs), [
+    'ci-jellyfin-plugin',
+    'ci-i18n',
+    'ci-test',
+    'ci-unit-test',
+    'test-docs-build',
+    'docs-links',
+  ]);
+
+  const engineMarkdown = hostedInput({
+    event: githubEvent({ actorType: 'Bot' }),
+    changedFiles: ['tools/validation-engine/README.md'],
+  });
+  assert.deepEqual(applicableIds(engineMarkdown), [
+    'ci-jellyfin-plugin',
+    'ci-i18n',
+    'ci-test',
+    'ci-unit-test',
+    'codeql-analyze',
+    'cypress-run',
+    'test-docs-build',
+    'docs-links',
+  ]);
+
+  const charts = hostedInput({ changedFiles: ['charts/seerrng/values.yaml'] });
+  assert.deepEqual(applicableIds(charts), [
+    'ci-jellyfin-plugin',
+    'ci-release-notes',
+    'ci-i18n',
+    'ci-test',
+    'ci-unit-test',
+    'codeql-analyze',
+    'helm-lint-test',
+  ]);
+
+  const centralCaller = hostedInput({
+    changedFiles: ['.github/workflows/ci.yml'],
+  });
+  assert.deepEqual(applicableIds(centralCaller), [
+    'ci-jellyfin-plugin',
+    'ci-release-notes',
+    'ci-i18n',
+    'ci-test',
+    'ci-unit-test',
+    'codeql-analyze',
+    'cypress-run',
+    'test-docs-build',
+    'docs-links',
+    'helm-lint-test',
+  ]);
+
+  for (const [pathFilterMode, baseSha] of [
+    ['run-all-large-update', 'f'.repeat(40)],
+    ['run-all-new-branch', '0'.repeat(40)],
+  ]) {
+    const fallbackPush = hostedInput({
+      event: githubEvent({
+        name: 'push',
+        headSha: candidate.commit,
+        baseSha,
+        ref: 'refs/heads/main',
+        baseRef: null,
+        actorType: null,
+        pathFilterMode,
+      }),
+      changedFiles: [],
+    });
+    assert.deepEqual(
+      applicableIds(fallbackPush),
+      [
+        'ci-jellyfin-plugin',
+        'ci-release-notes',
+        'ci-i18n',
+        'ci-test',
+        'ci-unit-test',
+        'codeql-analyze',
+        'cypress-run',
+        'test-docs-build',
+        'docs-links',
+        'helm-lint-test',
+      ],
+      pathFilterMode
+    );
+  }
+  const largePullRequest = hostedInput({
+    event: githubEvent({ pathFilterMode: 'run-all-large-update' }),
+    changedFiles: [],
+  });
+  assert.deepEqual(applicableIds(largePullRequest), [
+    'ci-jellyfin-plugin',
+    'ci-release-notes',
+    'ci-i18n',
+    'ci-test',
+    'ci-unit-test',
+    'codeql-analyze',
+    'cypress-run',
+    'test-docs-build',
+    'docs-links',
+    'helm-lint-test',
+  ]);
+  assert.throws(
+    () =>
+      createHostedGithubPlan(
+        hostedInput({
+          event: githubEvent({
+            name: 'push',
+            headSha: candidate.commit,
+            baseSha: '0'.repeat(40),
+            ref: 'refs/heads/main',
+            baseRef: null,
+            actorType: null,
+          }),
+        })
+      ),
+    /new-branch path fallback/
+  );
+  assert.throws(
+    () =>
+      createHostedGithubPlan(
+        hostedInput({
+          event: githubEvent({ pathFilterMode: 'run-all-new-branch' }),
+        })
+      ),
+    /Pull requests require a valid changed-file mode/
+  );
+
+  const slashBranch = hostedInput({
+    event: githubEvent({ baseRef: 'release/next' }),
+  });
+  assert.deepEqual(applicableIds(slashBranch), []);
+});
+
+test('hosted changed-file ranges preserve native PR and push diff semantics', () => {
+  const base = '1'.repeat(40);
+  const head = '2'.repeat(40);
+  assert.equal(
+    githubChangedFilesRange('pull_request', base, head),
+    `${base}...${head}`
+  );
+  assert.equal(githubChangedFilesRange('push', base, head), `${base}..${head}`);
+  assert.throws(
+    () => githubChangedFilesRange('schedule', base, head),
+    /pull_request and push only/
+  );
+  assert.throws(
+    () => githubChangedFilesRange('push', 'bad', head),
+    /diff endpoints/
+  );
+});
+
+test('hosted GitHub plan binds tested execution separately from PR branch head', () => {
+  const pullRequest = createHostedGithubPlan(hostedInput());
+  assert.equal(pullRequest.event.executionSha, candidate.commit);
+  assert.notEqual(pullRequest.event.headSha, pullRequest.event.executionSha);
+  assert.throws(
+    () =>
+      createHostedGithubPlan(
+        hostedInput({
+          event: githubEvent({ executionSha: 'f'.repeat(40) }),
+        })
+      ),
+    /execution identity must bind the candidate/
+  );
+  assert.throws(
+    () =>
+      createHostedGithubPlan(
+        hostedInput({
+          event: githubEvent({
+            name: 'push',
+            ref: 'refs/heads/main',
+            baseRef: null,
+            actorType: null,
+          }),
+        })
+      ),
+    /Push head and execution identities must match/
+  );
+});
+
+test('hosted GitHub reconciliation accepts only exact current-run needs', () => {
+  const plan = createHostedGithubPlan(hostedInput());
+  const report = reconcileHostedGithubNeeds(plan, githubNeeds(plan));
+  assert.equal(report.schema, 'seerrng-hosted-github-reconciliation/v1');
+  assert.equal(report.status, 'passed');
+  assert.equal(report.ok, true);
+  assert.equal(report.scope, 'native-jobs');
+  assert.equal(report.complete, false);
+  assert.equal(report.externalMetadataStatus, 'external-not-reconciled');
+  assert.equal(report.planSha256, plan.planSha256);
+  assert.deepEqual(report.jobs, {
+    expected: 10,
+    applicable: 9,
+    succeeded: 9,
+    skipped: 1,
+  });
+  assert.deepEqual(
+    report.stages.map(({ id, expected, succeeded, skipped, status }) => ({
+      id,
+      expected,
+      succeeded,
+      skipped,
+      status,
+    })),
+    [
+      {
+        id: 'repository',
+        expected: 4,
+        succeeded: 4,
+        skipped: 0,
+        status: 'passed',
+      },
+      {
+        id: 'codeql',
+        expected: 1,
+        succeeded: 1,
+        skipped: 0,
+        status: 'passed',
+      },
+      {
+        id: 'build',
+        expected: 4,
+        succeeded: 3,
+        skipped: 1,
+        status: 'passed',
+      },
+      {
+        id: 'browser',
+        expected: 1,
+        succeeded: 1,
+        skipped: 0,
+        status: 'passed',
+      },
+    ]
+  );
+  assert.equal(report.resultReuse, false);
+  assert.equal(Object.isFrozen(report), true);
+
+  const pushPlan = createHostedGithubPlan(
+    hostedInput({
+      event: githubEvent({
+        name: 'push',
+        headSha: candidate.commit,
+        ref: 'refs/heads/main',
+        baseRef: null,
+        actorType: null,
+      }),
+    })
+  );
+  const pushReport = reconcileHostedGithubNeeds(
+    pushPlan,
+    githubNeeds(pushPlan)
+  );
+  assert.equal(pushReport.complete, true);
+  assert.equal(pushReport.externalMetadataStatus, 'not-applicable');
+});
+
+test('hosted GitHub reconciliation rejects incomplete, stale and nonpassing needs', () => {
+  const plan = createHostedGithubPlan(hostedInput());
+  const mutation = (change) => {
+    const needs = structuredClone(githubNeeds(plan));
+    change(needs);
+    return needs;
+  };
+
+  assert.throws(
+    () =>
+      reconcileHostedGithubNeeds(
+        plan,
+        mutation((needs) => delete needs['unit-test'])
+      ),
+    /needs set mismatch/
+  );
+  assert.throws(
+    () =>
+      reconcileHostedGithubNeeds(
+        plan,
+        mutation((needs) => {
+          needs.unplanned = { result: 'success', outputs: {} };
+        })
+      ),
+    /needs set mismatch/
+  );
+  for (const result of ['failure', 'cancelled', 'skipped'])
+    assert.throws(
+      () =>
+        reconcileHostedGithubNeeds(
+          plan,
+          mutation((needs) => {
+            needs['unit-test'].result = result;
+          })
+        ),
+      /unit-test expected success/
+    );
+  assert.throws(
+    () =>
+      reconcileHostedGithubNeeds(
+        plan,
+        mutation((needs) => {
+          needs.helm.result = 'success';
+        })
+      ),
+    /helm expected skipped/
+  );
+  for (const field of [
+    'planSha256',
+    'runId',
+    'runAttempt',
+    'executionSha',
+    'headSha',
+  ])
+    assert.throws(
+      () =>
+        reconcileHostedGithubNeeds(
+          plan,
+          mutation((needs) => {
+            needs['engine-plan'].outputs[field] = 'stale';
+          })
+        ),
+      new RegExp(`Stale or unbound engine-plan ${field}`)
+    );
+  assert.throws(
+    () =>
+      reconcileHostedGithubNeeds(
+        plan,
+        mutation((needs) => {
+          needs['engine-plan'].result = 'cancelled';
+        })
+      ),
+    /engine-plan did not succeed/
+  );
+});
+
+test('hosted GitHub reconciliation rejects duplicate planned needs bindings', () => {
+  const plan = structuredClone(createHostedGithubPlan(hostedInput()));
+  plan.units[1].needsKey = plan.units[0].needsKey;
+  plan.planSha256 = rehashPlan(plan);
+  assert.throws(
+    () => reconcileHostedGithubNeeds(plan, githubNeeds(plan)),
+    /Duplicate hosted validation unit binding/
+  );
 });

@@ -29,8 +29,43 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  engine-plan:
+    name: Validation engine plan
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      planSha256: ${{ steps.plan.outputs.planSha256 }}
+      runId: ${{ steps.plan.outputs.runId }}
+      runAttempt: ${{ steps.plan.outputs.runAttempt }}
+      executionSha: ${{ steps.plan.outputs.executionSha }}
+      headSha: ${{ steps.plan.outputs.headSha }}
+      codeql: ${{ steps.plan.outputs.codeql }}
+      cypress: ${{ steps.plan.outputs.cypress }}
+      testDocs: ${{ steps.plan.outputs.testDocs }}
+      docsLinks: ${{ steps.plan.outputs.docsLinks }}
+      helm: ${{ steps.plan.outputs.helm }}
+    steps:
+      - name: Checkout complete candidate history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: 'package.json'
+          package-manager-cache: false
+
+      - name: Create current-run hosted validation plan
+        id: plan
+        run: node bin/run-local-validation.mjs --github-plan --json
+
   jellyfin-plugin:
     name: Build Jellyfin bridge plugin
+    needs: engine-plan
     timeout-minutes: 15
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -61,6 +96,7 @@ jobs:
 
   release-notes:
     name: Release-note contract
+    needs: engine-plan
     timeout-minutes: 10
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot')
     runs-on: ubuntu-latest
@@ -102,6 +138,7 @@ jobs:
 
   i18n:
     name: i18n Check
+    needs: engine-plan
     timeout-minutes: 30
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -143,6 +180,7 @@ jobs:
         run: pnpm security:council
   test:
     name: Lint & Test Build
+    needs: engine-plan
     timeout-minutes: 30
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -195,6 +233,7 @@ jobs:
 
   unit-test:
     name: Unit Tests
+    needs: engine-plan
     timeout-minutes: 75
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -241,6 +280,90 @@ jobs:
         if: success() || failure() # always run even if the previous step fails
         with:
           report_paths: 'report.xml'
+
+  codeql:
+    name: CodeQL
+    needs: engine-plan
+    if: needs.engine-plan.outputs.codeql == 'true'
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    uses: ./.github/workflows/codeql.yml
+
+  cypress:
+    name: Cypress Tests
+    needs: engine-plan
+    if: needs.engine-plan.outputs.cypress == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cypress.yml
+    secrets:
+      CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+
+  test-docs:
+    name: Test Docs
+    needs: engine-plan
+    if: needs.engine-plan.outputs.testDocs == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-docs.yml
+
+  docs-links:
+    name: Check Docs Links
+    needs: engine-plan
+    if: needs.engine-plan.outputs.docsLinks == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docs-link-check.yml
+
+  helm:
+    name: Lint and Test Charts
+    needs: engine-plan
+    if: needs.engine-plan.outputs.helm == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint-helm-charts.yml
+
+  engine-reconcile:
+    name: Native validation engine result
+    needs:
+      - engine-plan
+      - jellyfin-plugin
+      - release-notes
+      - i18n
+      - test
+      - unit-test
+      - codeql
+      - cypress
+      - test-docs
+      - docs-links
+      - helm
+    if: >-
+      always() &&
+      (github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout complete candidate history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: 'package.json'
+          package-manager-cache: false
+
+      - name: Reconcile current-run hosted validation results
+        env:
+          SEERRNG_ENGINE_NEEDS_JSON: ${{ toJSON(needs) }}
+          SEERRNG_ENGINE_EXPECTED_PLAN_SHA256: ${{ needs.engine-plan.outputs.planSha256 }}
+        run: node bin/run-local-validation.mjs --github-reconcile --json
 
   preflight-deploy:
     name: Preflight deployment host

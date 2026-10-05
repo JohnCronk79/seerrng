@@ -3,38 +3,13 @@
 name: Test Docs
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'docs/**'
-      - 'gen-docs/**'
-      - 'tools/validation-engine/**'
-      - 'bin/**'
-      - 'vitest.config.mts'
-      - 'server/test/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/test-docs.yml'
-  push:
-    branches:
-      - main
-    paths:
-      - 'docs/**'
-      - 'gen-docs/**'
-      - 'tools/validation-engine/**'
-      - 'bin/**'
-      - 'vitest.config.mts'
-      - 'server/test/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/test-docs.yml'
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: test-docs-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

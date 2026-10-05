@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withGitBashOnPath } from './platform-tools.mjs';
@@ -20,6 +21,7 @@ export function parseToolingWorkers(args) {
 }
 
 const portableTests = [
+  'bin/engine-browser-readiness.test.mjs',
   'bin/engine-cpu-capacity.test.mjs',
   'bin/engine-vitest-binding.test.mjs',
   'bin/engine-codeql-stage.test.mjs',
@@ -27,6 +29,8 @@ const portableTests = [
   'bin/engine-staged-validation.test.mjs',
   'bin/engine-pr-check-stages.test.mjs',
   'bin/engine-native-stage-context.test.mjs',
+  'bin/engine-native-accounting.test.mjs',
+  'bin/engine-native-process-ledger.test.mjs',
   'bin/engine-workflow-triggers.test.mjs',
   'bin/engine-controller-ordering.test.mjs',
   'bin/local-validation.test.mjs',
@@ -54,6 +58,19 @@ const portableTests = [
   'scripts/verify-container-manifest.test.mjs',
   'packaging/unraid/unraid-template.test.mjs',
 ];
+
+const registeredToolingTests = new Set(portableTests);
+const unregisteredEngineTests = readdirSync(
+  fileURLToPath(new URL('.', import.meta.url))
+)
+  .filter((file) => /^engine-.*\.test\.mjs$/.test(file))
+  .map((file) => `bin/${file}`)
+  .filter((file) => !registeredToolingTests.has(file));
+if (unregisteredEngineTests.length) {
+  throw new Error(
+    `Engine tooling suites are not registered: ${unregisteredEngineTests.join(', ')}`
+  );
+}
 
 const posixOnlyTests = [
   'deploy/bookshelf-hardcover-migration.test.mjs',

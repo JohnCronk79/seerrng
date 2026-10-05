@@ -42,9 +42,20 @@ internal host contexts can supply those proofs through the existing engine APIs;
 the public entry does not yet acquire a complete context on an ordinary checkout
 and reports incomplete when the required proofs are absent. Development provisioning is not part of
 this engine, and no separate end-user runner or command is introduced.
-Current GitHub workflows still invoke their separate native jobs, not this staged
-development gate. Their native Vitest configuration already uses the automatic
-GitHub CPU policy; that alone does not establish staged-engine integration.
+Pull-request and main-branch CI now place the existing native jobs behind a
+current-run hosted engine plan and reconcile their exact results afterward. The
+five jobs already in `ci.yml` and five existing reusable workflows remain native
+and run in parallel after planning; the engine does not replace their commands,
+actions, runner images or environment split. Reconciliation fails closed on a
+missing, extra, stale, failed, cancelled or unexpectedly skipped result, and it
+does not reuse a prior run. Dedicated scheduled and manual workflow launches
+remain native standalone runs rather than being reported as a full hosted-engine
+pass. Trusted pull-request title, template and mergeability checks also remain
+separate external metadata.
+Because each hosted plan is bound to one run attempt and result reuse is disabled,
+retry the complete workflow rather than using GitHub's failed-jobs-only rerun. A
+failed-jobs-only attempt deliberately cannot combine earlier successful jobs with
+new results to produce an aggregate pass.
 An expanded continuous baseline must be identified by its own frozen candidate,
 complete native receipts and measured lifecycle, not the archived result below.
 Focused adapter tests are not evidence of a successful full scan, build, browser
