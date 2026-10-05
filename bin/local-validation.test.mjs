@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +25,7 @@ import {
   preflight,
   removeOwnedTemporaryDirectory,
   runCommand,
+  startCommand,
   testCount,
   toolingOwnership,
   validateGovernanceSources,
@@ -721,3 +723,240 @@ test('duplicate Vitest ownership or failed report cannot become a passing gate',
     f.cleanup();
   }
 });
+
+test('native receipts separate streams, preserve full byte hashes and retain owned logs', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-native-logs-'));
+  try {
+    const stdoutLog = join(directory, 'stdout.log'),
+      stderrLog = join(directory, 'stderr.log');
+    const receipt = await runCommand(
+      {
+        id: 'structured',
+        name: 'structured fixture',
+        command: process.execPath,
+        args: [
+          '-e',
+          'process.stdout.write("stdout data"); process.stderr.write("stderr data");',
+        ],
+      },
+      {
+        root,
+        env: process.env,
+        stdout: sink,
+        stderr: sink,
+        receipt: true,
+        maxCaptureBytes: 6,
+        logDirectory: directory,
+        stdoutLog,
+        stderrLog,
+      }
+    );
+    assert.equal(receipt.id, 'structured');
+    assert.equal(receipt.status, 'passed');
+    assert.equal(receipt.exitCode, 0);
+    assert.equal(receipt.stdout, 't data');
+    assert.equal(receipt.stderr, 'r data');
+    assert.equal(receipt.stdoutTruncated, true);
+    assert.equal(readFileSync(stdoutLog, 'utf8'), 'stdout data');
+    assert.equal(readFileSync(stderrLog, 'utf8'), 'stderr data');
+    assert.equal(
+      receipt.stdoutSha256,
+      createHash('sha256').update('stdout data').digest('hex')
+    );
+    assert.equal(
+      receipt.stderrSha256,
+      createHash('sha256').update('stderr data').digest('hex')
+    );
+    assert.ok(receipt.wallMs >= 0);
+    assert.equal(receipt.lifecycle.completed, true);
+    assert.equal(receipt.lifecycle.cleanupVerified, true);
+    await assert.rejects(
+      runCommand(
+        { command: process.execPath, args: [] },
+        { root, logDirectory: directory, stdoutLog }
+      ),
+      /EEXIST/
+    );
+    await assert.rejects(
+      runCommand(
+        { command: process.execPath, args: [] },
+        { root, logDirectory: root, stdoutLog: join(root, 'no-source-log') }
+      ),
+      /unsafe/
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('failure, spawn failure, timeout and pre-abort attach truthful incomplete process receipts', async () => {
+  const options = {
+    root,
+    env: process.env,
+    stdout: sink,
+    stderr: sink,
+    receipt: true,
+    terminationGraceMs: 50,
+  };
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'failed',
+        name: 'failed',
+        command: process.execPath,
+        args: ['-e', 'console.error("native failure"); process.exit(9);'],
+      },
+      options
+    ),
+    (error) =>
+      error.exitCode === 9 &&
+      error.receipt.status === 'failed' &&
+      error.receipt.stderr.includes('native failure')
+  );
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'missing',
+        command: join(tmpdir(), 'seerrng-missing-native-command'),
+        args: [],
+      },
+      options
+    ),
+    (error) =>
+      error.receipt.status === 'incomplete' &&
+      error.receipt.lifecycle.spawned === false &&
+      error.receipt.lifecycle.completed === false
+  );
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'timeout',
+        name: 'timeout',
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000);'],
+      },
+      { ...options, timeoutMs: 30 }
+    ),
+    (error) =>
+      error.receipt.timedOut &&
+      error.receipt.status === 'timed-out' &&
+      error.receipt.lifecycle.cleanupVerified
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runCommand(
+      { id: 'never-spawned', command: process.execPath, args: [] },
+      { ...options, signal: controller.signal }
+    ),
+    (error) => error.receipt.aborted && !error.receipt.lifecycle.spawned
+  );
+  await assert.rejects(
+    runCommand(
+      { command: process.execPath, args: [] },
+      { ...options, timeoutMs: 0 }
+    ),
+    /Invalid process/
+  );
+});
+
+test('managed readiness and owned server stop reuse native runner without claiming a passed test', async () => {
+  const handle = startCommand(
+    {
+      id: 'managed',
+      name: 'managed',
+      command: process.execPath,
+      args: [
+        '-e',
+        'console.log("server started"); setInterval(() => {}, 1000);',
+      ],
+    },
+    {
+      root,
+      env: process.env,
+      stdout: sink,
+      stderr: sink,
+      terminationGraceMs: 100,
+    }
+  );
+  const ready = await handle.waitForReady(
+    async ({ pid }) => pid === handle.pid,
+    { timeoutMs: 1000, pollMs: 10 }
+  );
+  assert.equal(ready.ready, true);
+  const stopped = await handle.stop();
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.stopped, true);
+  assert.equal(stopped.lifecycle.cleanupVerified, true);
+  assert.equal(await handle.exit, stopped);
+  assert.equal(await handle.stop(), stopped);
+});
+
+test('managed premature exit, health failure and readiness timeout fail and drain the owned process', async () => {
+  const options = {
+    root,
+    env: process.env,
+    stdout: sink,
+    stderr: sink,
+    terminationGraceMs: 50,
+  };
+  for (const mode of ['exit', 'health-failure', 'readiness-timeout']) {
+    const handle = startCommand(
+      {
+        id: mode,
+        name: mode,
+        command: process.execPath,
+        args: [
+          '-e',
+          mode === 'exit' ? 'process.exit(2)' : 'setInterval(() => {}, 1000)',
+        ],
+      },
+      options
+    );
+    await assert.rejects(
+      handle.waitForReady(
+        async () => {
+          if (mode === 'health-failure') throw new Error('health failure');
+          return false;
+        },
+        { timeoutMs: mode === 'exit' ? 1000 : 40, pollMs: 5 }
+      ),
+      /before readiness|health failure|readiness timed out/
+    );
+    const receipt = await handle.exit;
+    assert.equal(receipt.lifecycle.cleanupVerified, true);
+    assert.notEqual(receipt.status, 'passed');
+  }
+});
+
+test(
+  'POSIX owned descendant cleanup failure cannot be labelled successful',
+  { skip: process.platform === 'win32' },
+  async () => {
+    await assert.rejects(
+      runCommand(
+        {
+          id: 'orphaned-descendant',
+          name: 'orphaned descendant',
+          command: process.execPath,
+          args: [
+            '-e',
+            'require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}).unref();',
+          ],
+        },
+        {
+          root,
+          env: process.env,
+          stdout: sink,
+          stderr: sink,
+          receipt: true,
+          terminationGraceMs: 50,
+        }
+      ),
+      (error) =>
+        error.receipt.status === 'incomplete' &&
+        error.preserveTemporary === true &&
+        /descendants|termination/.test(error.message)
+    );
+  }
+);

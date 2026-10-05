@@ -1,13 +1,17 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
   lstatSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -579,101 +583,354 @@ export function testCount(output) {
   };
 }
 
-export function runCommand(step, options) {
-  return new Promise((complete, reject) => {
-    let tail = '';
-    let termination = Promise.resolve();
-    let terminationError;
-    let forceTermination;
-    const child = spawn(step.command, step.args, {
-      cwd: options.root,
+function processError(receipt) {
+  const message = !receipt.lifecycle.cleanupVerified
+    ? `Validation interrupted; child cleanup uncertain: ${receipt.lifecycle.cleanupError}`
+    : receipt.aborted
+      ? 'Validation interrupted'
+      : receipt.timedOut
+        ? `${receipt.name} timed out`
+        : `${receipt.name} failed (${receipt.signal || receipt.exitCode || receipt.spawnError || 'incomplete'})`;
+  return Object.assign(new Error(message), {
+    receipt,
+    exitCode: receipt.exitCode || 1,
+    preserveTemporary: !receipt.lifecycle.cleanupVerified,
+  });
+}
+
+function commandLog(file, directory, sourceRoot) {
+  if (file === undefined) return null;
+  if (!directory || !isAbsolute(directory) || !isAbsolute(file))
+    throw new Error('Persistent native logs need absolute owned log paths');
+  const parent = realpathSync(directory),
+    absolute = resolve(file);
+  if (
+    parent === resolve(sourceRoot) ||
+    inside(resolve(sourceRoot), parent) ||
+    !inside(parent, absolute) ||
+    dirname(absolute) !== parent ||
+    lstatSync(directory).isSymbolicLink()
+  )
+    throw new Error('Refusing unsafe or source-owned native log path');
+  // Exclusive creation refuses an existing file or symlink; never overwrite logs.
+  return { path: absolute, fd: openSync(absolute, 'wx', 0o600) };
+}
+
+// Both short checks and long-lived disposable servers share this owned runner.
+export function startCommand(step, options = {}) {
+  const root = options.root ?? step.cwd ?? process.cwd();
+  const stdout = options.stdout ?? process.stdout,
+    stderr = options.stderr ?? process.stderr;
+  const maxCaptureBytes = options.maxCaptureBytes ?? 2_000_000;
+  const graceMs = options.terminationGraceMs ?? 5000;
+  for (const [name, value] of [
+    ['maxCaptureBytes', maxCaptureBytes],
+    ['terminationGraceMs', graceMs],
+    ...(options.timeoutMs === undefined
+      ? []
+      : [['timeoutMs', options.timeoutMs]]),
+  ])
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`Invalid process ${name}`);
+  if (options.signal?.aborted)
+    throw Object.assign(
+      new Error('Validation interrupted before child spawn'),
+      {
+        receipt: {
+          id: step.id ?? step.name,
+          aborted: true,
+          lifecycle: {
+            spawned: false,
+            completed: false,
+            cleanupVerified: true,
+          },
+        },
+      }
+    );
+  const logs = {};
+  try {
+    logs.stdout = commandLog(options.stdoutLog, options.logDirectory, root);
+    logs.stderr = commandLog(options.stderrLog, options.logDirectory, root);
+  } catch (error) {
+    for (const log of Object.values(logs)) if (log) closeSync(log.fd);
+    throw error;
+  }
+  const startedAt = new Date().toISOString(),
+    started = performance.now();
+  let child;
+  try {
+    child = spawn(step.command, step.args, {
+      cwd: root,
       env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
       windowsHide: true,
       detached: process.platform !== 'win32',
     });
-    const capture = (target) => (data) => {
-      target.write(data);
-      tail = (tail + data.toString()).slice(-2_000_000);
-    };
-    child.stdout.on('data', capture(options.stdout));
-    child.stderr.on('data', capture(options.stderr));
-    const interrupt = () => {
+  } catch (error) {
+    for (const log of Object.values(logs)) if (log) closeSync(log.fd);
+    throw error;
+  }
+  const capture = {
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+    stdoutBytes: 0,
+    stderrBytes: 0,
+  };
+  const hashes = { stdout: createHash('sha256'), stderr: createHash('sha256') };
+  let tail = '',
+    spawnError = null,
+    cleanupError = null,
+    aborted = false,
+    timedOut = false,
+    stopped = false,
+    settled = false;
+  let termination = null,
+    timeout,
+    receipt;
+  const delay = (milliseconds) =>
+    new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+  const groupExists = () => {
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      if (error.code === 'ESRCH') return false;
+      throw error;
+    }
+  };
+  const terminate = () => {
+    if (termination) return termination;
+    termination = (async () => {
       if (!child.pid) return;
-      if (process.platform === 'win32') {
-        termination = new Promise((finished) => {
-          const killer = spawn(
-            join(
-              process.env.SystemRoot || 'C:\\Windows',
-              'System32',
-              'taskkill.exe'
-            ),
-            ['/PID', String(child.pid), '/T', '/F'],
-            { shell: false, windowsHide: true, stdio: 'ignore' }
-          );
-          killer.on('error', (error) => {
-            terminationError = error;
-            child.kill();
-            finished();
+      try {
+        if (process.platform === 'win32') {
+          await new Promise((resolveKill, rejectKill) => {
+            const killer = spawn(
+              join(
+                process.env.SystemRoot || 'C:\\Windows',
+                'System32',
+                'taskkill.exe'
+              ),
+              ['/PID', String(child.pid), '/T', '/F'],
+              { shell: false, windowsHide: true, stdio: 'ignore' }
+            );
+            killer.once('error', rejectKill);
+            killer.once('close', (status) =>
+              status === 0
+                ? resolveKill()
+                : rejectKill(
+                    new Error('Unable to terminate the validation process tree')
+                  )
+            );
           });
-          killer.on('close', (status) => {
-            if (status !== 0) {
-              terminationError = new Error(
-                'Unable to terminate the validation process tree'
-              );
-              child.kill();
-            }
-            finished();
-          });
-        });
-      } else {
-        try {
+        } else {
+          if (!groupExists()) return;
           process.kill(-child.pid, 'SIGTERM');
-          forceTermination = setTimeout(() => {
-            try {
-              process.kill(-child.pid, 'SIGKILL');
-            } catch (error) {
-              if (error.code !== 'ESRCH') terminationError = error;
-            }
-          }, 5000);
-          forceTermination.unref();
-        } catch (error) {
-          if (error.code !== 'ESRCH') {
-            terminationError = error;
-            child.kill();
-          }
+          const deadline = performance.now() + graceMs;
+          while (groupExists() && performance.now() < deadline)
+            await delay(Math.min(25, graceMs));
+          if (groupExists()) process.kill(-child.pid, 'SIGKILL');
+          const killDeadline = performance.now() + 1000;
+          while (groupExists() && performance.now() < killDeadline)
+            await delay(25);
+          if (groupExists())
+            throw new Error(
+              'Owned process group still present after termination'
+            );
+        }
+      } catch (error) {
+        if (error.code !== 'ESRCH') {
+          cleanupError = error.message;
+          child.kill('SIGKILL');
         }
       }
-    };
-    options.signal?.addEventListener('abort', interrupt, { once: true });
-    if (options.signal?.aborted) interrupt();
-    child.on('error', reject);
-    child.on('close', async (status, signal) => {
-      clearTimeout(forceTermination);
+    })();
+    return termination;
+  };
+  const interrupt = () => {
+    aborted = true;
+    void terminate();
+  };
+  options.signal?.addEventListener('abort', interrupt, { once: true });
+  if (options.signal?.aborted) interrupt();
+  if (options.timeoutMs !== undefined)
+    timeout = setTimeout(() => {
+      timedOut = true;
+      void terminate();
+    }, options.timeoutMs);
+  const receive = (stream, target) => (data) => {
+    try {
+      target.write(data);
+      if (logs[stream]) {
+        let offset = 0;
+        while (offset < data.length)
+          offset += writeSync(
+            logs[stream].fd,
+            data,
+            offset,
+            data.length - offset
+          );
+      }
+      hashes[stream].update(data);
+      capture[`${stream}Bytes`] += data.length;
+      capture[stream] = Buffer.concat([capture[stream], data]).subarray(
+        -maxCaptureBytes
+      );
+      tail = (tail + data.toString()).slice(-maxCaptureBytes);
+    } catch (error) {
+      cleanupError = `Native output capture failed: ${error.message}`;
+      void terminate();
+    }
+  };
+  child.stdout.on('data', receive('stdout', stdout));
+  child.stderr.on('data', receive('stderr', stderr));
+  const exit = new Promise((complete) => {
+    child.once('error', (error) => {
+      spawnError = error.message;
+    });
+    // A leader exiting does not prove its same-group descendants have stopped.
+    child.once('exit', () => {
+      if (process.platform !== 'win32' && child.pid && !termination) {
+        try {
+          if (groupExists()) {
+            cleanupError =
+              'Native command left running process-group descendants';
+            void terminate();
+          }
+        } catch (error) {
+          cleanupError = error.message;
+          void terminate();
+        }
+      }
+    });
+    child.once('close', async (exitCode, signal) => {
+      clearTimeout(timeout);
       options.signal?.removeEventListener('abort', interrupt);
       await termination;
-      if (terminationError)
-        reject(
-          Object.assign(
-            new Error(
-              `Validation interrupted; child cleanup uncertain: ${terminationError.message}`
-            ),
-            { preserveTemporary: true }
-          )
-        );
-      else if (options.signal?.aborted)
-        reject(new Error('Validation interrupted'));
-      else if (status !== 0)
-        reject(
-          Object.assign(
-            new Error(`${step.name} failed (${signal || status})`),
-            { exitCode: status || 1 }
-          )
-        );
-      else complete(tail);
+      for (const log of Object.values(logs))
+        if (log) {
+          try {
+            closeSync(log.fd);
+          } catch (error) {
+            cleanupError ??= error.message;
+          }
+        }
+      receipt = {
+        id: step.id ?? step.name,
+        name: step.name ?? step.id,
+        pid: child.pid ?? null,
+        exitCode,
+        signal,
+        aborted,
+        timedOut,
+        stopped,
+        spawnError,
+        startedAt,
+        wallMs: performance.now() - started,
+        stdout: capture.stdout.toString(),
+        stderr: capture.stderr.toString(),
+        output: tail,
+        stdoutBytes: capture.stdoutBytes,
+        stderrBytes: capture.stderrBytes,
+        stdoutTruncated: capture.stdoutBytes > maxCaptureBytes,
+        stderrTruncated: capture.stderrBytes > maxCaptureBytes,
+        stdoutSha256: hashes.stdout.digest('hex'),
+        stderrSha256: hashes.stderr.digest('hex'),
+        stdoutLog: logs.stdout?.path ?? null,
+        stderrLog: logs.stderr?.path ?? null,
+        lifecycle: {
+          spawned: child.pid !== undefined,
+          completed: !spawnError,
+          cleanupVerified: !cleanupError,
+          cleanupError,
+        },
+      };
+      receipt.status =
+        cleanupError || spawnError
+          ? 'incomplete'
+          : aborted
+            ? 'aborted'
+            : timedOut
+              ? 'timed-out'
+              : stopped
+                ? 'stopped'
+                : exitCode === 0 && !signal
+                  ? 'passed'
+                  : 'failed';
+      settled = true;
+      complete(receipt);
     });
   });
+  const handle = {
+    pid: child.pid ?? null,
+    exit,
+    stop: async () => {
+      if (!settled) {
+        stopped = true;
+        await terminate();
+      }
+      const result = await exit;
+      if (!result.lifecycle.cleanupVerified) throw processError(result);
+      return result;
+    },
+    waitForReady: async (health, { timeoutMs = 60_000, pollMs = 100 } = {}) => {
+      if (
+        typeof health !== 'function' ||
+        !Number.isSafeInteger(timeoutMs) ||
+        timeoutMs < 1 ||
+        !Number.isSafeInteger(pollMs) ||
+        pollMs < 1
+      )
+        throw new Error('Invalid managed process readiness contract');
+      let readinessTimeout;
+      const unavailable = exit.then((result) => {
+        throw Object.assign(
+          new Error(
+            `Managed process exited before readiness (${result.status})`
+          ),
+          { receipt: result }
+        );
+      });
+      const expiration = new Promise((_, rejectReady) => {
+        readinessTimeout = setTimeout(
+          () => rejectReady(new Error('Managed process readiness timed out')),
+          timeoutMs
+        );
+      });
+      const poll = async () => {
+        while (!settled) {
+          if (await health({ pid: handle.pid, signal: options.signal }))
+            return {
+              pid: handle.pid,
+              ready: true,
+              wallMs: performance.now() - started,
+            };
+          await delay(pollMs);
+        }
+        return unavailable;
+      };
+      try {
+        return await Promise.race([poll(), unavailable, expiration]);
+      } catch (error) {
+        try {
+          error.receipt = await handle.stop();
+        } catch (cleanup) {
+          throw cleanup;
+        }
+        throw error;
+      } finally {
+        clearTimeout(readinessTimeout);
+      }
+    },
+  };
+  return handle;
+}
+
+export async function runCommand(step, options = {}) {
+  const receipt = await startCommand(step, options).exit;
+  if (receipt.status !== 'passed') throw processError(receipt);
+  return options.receipt === true ? receipt : receipt.output;
 }
 
 export async function executePlan(

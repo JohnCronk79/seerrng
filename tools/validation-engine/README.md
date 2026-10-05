@@ -13,8 +13,26 @@ The five existing quiet owners run serially after the independent batch, not
 alongside it. Native tooling regression tests are registered in Seerr's existing
 tooling-test command, which the GitHub CI security check already invokes.
 
-This binding is the first PR-parity implementation increment, not a completed
-staged baseline. The archive's immutable-consumer/source-repair guarantees are
+Native stage adapters and the existing reviewed coordinator are now bound under
+`runtime/`: repository checks/tests, CodeQL, production build, then Cypress.
+Each stage reserves the selected worker budget exclusively; these reservations
+are not a measurement of operating-system threads. CodeQL preserves both Actions
+and JavaScript scans, default plus security-and-quality queries, the workflow's
+model pack, and actual findings. Cypress preserves the native spec inventory,
+case attempts and conditional skips, reusing only this run's successful build.
+It remains one native browser process until isolated sharding is demonstrated.
+
+Supplemental descriptors include council boundary checks, documentation security
+and builds, the .NET 9 Jellyfin plugin and disposable smoke, release contracts,
+conditional charts, and advisory links. Missing prerequisites remain blocked;
+trusted-base GitHub metadata checks remain separately pending. No local report
+may silently represent those as executed passes. The existing process runner
+provides stream hashes, persistent owned logs and managed server cleanup rather
+than introducing another runner. Its historical string-returning API remains.
+
+Automatic full-gate integration and the expanded baseline are still pending.
+Focused adapter tests are not evidence of a successful full scan, build, browser
+suite, or performance improvement. The archive's immutable-consumer/source-repair guarantees are
 unchanged. A native Vitest run does not by itself establish a full frozen source
 manifest, lifecycle proof, complete case ledger, or retained-green cache closure.
 
