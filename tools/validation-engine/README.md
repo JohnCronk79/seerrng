@@ -36,12 +36,17 @@ native test-only behavior. Preparation creates owned source copies and binds
 native receipts, full output logs, actual case ledgers, tool versions, dependency
 locks and read-only references. Completed and failed execution evidence is kept.
 
-Automatic provisioning of isolated execution on arbitrary development machines
-and the expanded baseline are still pending. The full gate requires an actually
-verified repository network boundary, private Docker fixtures, browser provider
-isolation and complete Git history/tags. The current internal host integration
-supplies those proofs; a normal environment without them reports incomplete,
-not passed. No separate end-user runner or command is introduced.
+The full gate requires a verified repository network boundary, private Docker
+fixtures, browser provider isolation and complete Git history/tags. Reviewed
+internal host contexts can supply those proofs through the existing engine APIs;
+the public entry does not yet acquire a complete context on an ordinary checkout
+and reports incomplete when the required proofs are absent. Development provisioning is not part of
+this engine, and no separate end-user runner or command is introduced.
+Current GitHub workflows still invoke their separate native jobs, not this staged
+development gate. Their native Vitest configuration already uses the automatic
+GitHub CPU policy; that alone does not establish staged-engine integration.
+An expanded continuous baseline must be identified by its own frozen candidate,
+complete native receipts and measured lifecycle, not the archived result below.
 Focused adapter tests are not evidence of a successful full scan, build, browser
 suite, or performance improvement. The archive's immutable-consumer/source-repair guarantees are
 unchanged. A native Vitest run does not by itself establish a full frozen source
@@ -53,9 +58,9 @@ the exact frozen recipes and inventory from the latest successful V7 run.
 The original RC1 status remains historical; `LATEST-RESULT.txt` records the
 later V7 result separately. The inventory identifies every saved file.
 
-The latest full run tested SeerrNG 3.48.1 at commit
-`897adeefa77371abed217e7d454d29cf0985b58b`, not this preview's dirty working
-source. It passed 3,983 cases across 553 test files, with zero failures and four
+The archived reference run tested SeerrNG 3.48.1 at commit
+`897adeefa77371abed217e7d454d29cf0985b58b`, not the currently selected candidate.
+It passed 3,983 cases across 553 test files, with zero failures and four
 existing PostgreSQL conditional skips, in 5m36.205s including host lifecycle.
 No application repair was needed in that run. Browser/Cypress, CodeQL,
 compilation and release/deployment checks are not acceptance implied by it.

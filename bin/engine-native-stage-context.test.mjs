@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
+import fs, {
   chmodSync,
   existsSync,
   mkdirSync,
@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -197,6 +198,59 @@ test(
       () => createOwnedSourceSnapshot(root, { scratchParent: root }),
       /outside authoritative source/
     );
+  }
+);
+
+test(
+  'metadata substitution after regular-file classification cannot copy an outside file',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const { root, parent } = fixture(t);
+    const checkedPath = path.join(root, '.git/objects/race-probe');
+    const outside = path.join(parent, 'outside-owned-marker.txt');
+    writeFileSync(checkedPath, 'original metadata bytes\n');
+    writeFileSync(outside, 'outside-owned-marker\n');
+    const originalLstat = fs.lstatSync;
+    let swapped = false;
+    let copiedOutside = false;
+    fs.lstatSync = function (file, ...args) {
+      const result = originalLstat.call(this, file, ...args);
+      if (file === checkedPath && !swapped) {
+        swapped = true;
+        fs.unlinkSync(checkedPath);
+        symlinkSync(outside, checkedPath);
+      }
+      return result;
+    };
+    syncBuiltinESMExports();
+    try {
+      assert.throws(
+        () => {
+          const snapshot = createOwnedSourceSnapshot(root, {
+            scratchParent: parent,
+          });
+          copiedOutside =
+            readFileSync(
+              path.join(snapshot.root, '.git/objects/race-probe'),
+              'utf8'
+            ) === 'outside-owned-marker\n';
+        },
+        /ELOOP|symlink|changed/,
+        'A checked path must not be reopened as an outside symlink'
+      );
+    } finally {
+      fs.lstatSync = originalLstat;
+      syncBuiltinESMExports();
+      t.diagnostic(
+        `swapPerformed=${swapped}; outsideBytesCopied=${copiedOutside}`
+      );
+    }
+    assert.equal(
+      swapped,
+      true,
+      'The reproduction must reach the real metadata read'
+    );
+    assert.equal(copiedOutside, false);
   }
 );
 

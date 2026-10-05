@@ -6,11 +6,14 @@ import {
   accessSync,
   appendFileSync,
   chmodSync,
+  closeSync,
   constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -140,6 +143,37 @@ function regular(root, file) {
   if (!stat.isFile()) throw new Error(`Source special entry: ${file}`);
   return { absolute, stat };
 }
+function readCheckedRegularFile(file, checked) {
+  // Bind classification and bytes to one descriptor, not a second pathname
+  // lookup. NOFOLLOW rejects replacement links; NONBLOCK avoids waiting on a
+  // substituted FIFO before its actual descriptor type can be rejected.
+  const descriptor = openSync(
+    file,
+    constants.O_RDONLY |
+      (constants.O_NOFOLLOW ?? 0) |
+      (constants.O_NONBLOCK ?? 0)
+  );
+  try {
+    const before = fstatSync(descriptor);
+    const unchanged = (stat) =>
+      stat.isFile() &&
+      ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
+        (key) => stat[key] === checked[key]
+      );
+    if (!unchanged(before))
+      throw new Error(
+        'Checked regular file changed before its descriptor read'
+      );
+    const bytes = readFileSync(descriptor);
+    if (!unchanged(fstatSync(descriptor)) || bytes.length !== before.size)
+      throw new Error(
+        'Checked regular file changed during its descriptor read'
+      );
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
+}
 function copyMetadata(from, to) {
   if (!existsSync(from)) return;
   const stat = lstatSync(from);
@@ -153,7 +187,7 @@ function copyMetadata(from, to) {
       copyMetadata(path.join(from, name), path.join(to, name));
     }
   } else if (stat.isFile())
-    writeFileSync(to, readFileSync(from), { flag: 'wx' });
+    writeFileSync(to, readCheckedRegularFile(from, stat), { flag: 'wx' });
   else throw new Error('Special Git metadata entry is unsafe');
 }
 
@@ -422,7 +456,7 @@ function derivedOutputManifest(snapshot, enabled) {
           entries.push({
             path: file,
             bytes: stat.size,
-            sha256: hash(readFileSync(absolute)),
+            sha256: hash(readCheckedRegularFile(absolute, stat)),
           });
       } else throw new Error('Derived documentation contains a special entry');
     }
@@ -603,7 +637,7 @@ function closure(root) {
           path: file,
           mode: stat.mode & 0o111 ? '100755' : '100644',
           bytes: stat.size,
-          sha256: hash(readFileSync(absolute)),
+          sha256: hash(readCheckedRegularFile(absolute, stat)),
         });
       else throw new Error('Special entry in native closure');
     }
