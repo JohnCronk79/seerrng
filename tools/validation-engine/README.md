@@ -1,8 +1,22 @@
 # Saved SeerrNG validation engine
 
-This is an add-only preservation copy for later use. It does not replace the
-preview's tests, application code, package commands or hooks, and saving it did
-not run tests, compile, start a preview or deploy anything.
+The archive below preserves the reviewed engine and historical evidence.
+Its CPU-capacity module is now also bound into the application's native Vitest
+configuration under `runtime/`. Normal `test`, `test:vitest`, and `test:ci`
+commands stay unchanged; no separate engine or user launch command is added.
+The existing development gate preserves its dynamically discovered ownership
+when generating a native Vitest subset configuration.
+
+Independent files use the selected capacity in isolated forks with a fresh
+temporary configuration per file and the original setup/network/database guards.
+The five existing quiet owners run serially after the independent batch, not
+alongside it. Native tooling regression tests are registered in Seerr's existing
+tooling-test command, which the GitHub CI security check already invokes.
+
+This binding is the first PR-parity implementation increment, not a completed
+staged baseline. The archive's immutable-consumer/source-repair guarantees are
+unchanged. A native Vitest run does not by itself establish a full frozen source
+manifest, lifecycle proof, complete case ledger, or retained-green cache closure.
 
 `validation-engine-v1.1.0.tar.gz` contains the hash-verified reusable
 controller, reviewed repair/retest components and AI setup instructions, plus
@@ -19,8 +33,9 @@ compilation and release/deployment checks are not acceptance implied by it.
 
 Worker capacity is selected inside the engine from effective logical CPUs after
 visible-CPU and cgroup limits. The universal default is `max(1, N - 1)` workers.
-When the public GitHub login `JohnCronk79` is detected through GitHub Actions or
-ordinary Git identity, the same engine automatically uses `2N`. This follows the
+GitHub Actions uses `N` workers regardless of actor identity. Locally, when the
+public GitHub login `JohnCronk79` is detected through ordinary Git identity,
+the same engine automatically uses `2N`. This follows the
 operator across development machines without using a machine name, OS account,
 Docker volume, credential lookup or separate runner. An explicit bounded worker
 override remains available to maintainers. The historical V7 result still records
@@ -42,4 +57,5 @@ its original 24-slot configuration; it is not evidence for this updated policy.
 All tests already present in the preview remain in their original locations.
 The saved recipe archive is deliberately not unpacked into those locations:
 that would create duplicate test discovery or overwrite a different revision.
-No future run is automatically authorized by this preservation operation.
+Only reviewed runtime modules are bound into the normal native test setup.
+The archived reference recipes remain outside automatic test discovery.

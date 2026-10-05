@@ -22,6 +22,8 @@ import {
 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import { detectWorkerCapacity } from '../tools/validation-engine/runtime/cpu-capacity.mjs';
 
 const roots = ['server', 'src', 'bin', 'scripts', 'deploy', 'packaging'];
 const candidate = /\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
@@ -536,8 +538,29 @@ export function removeOwnedTemporaryDirectory(directory, parent = tmpdir()) {
   rmSync(absolute, { recursive: true, force: true });
 }
 
-export function vitestConfigSource(config, root, files) {
-  return `import original from ${JSON.stringify(pathToFileURL(config).href)};\nexport default async (environment) => {\n const base = await (typeof original === 'function' ? original(environment) : original);\n if (!base || typeof base !== 'object' || Array.isArray(base)) throw new Error('Unsupported Vitest config');\n if (base.test?.projects?.length) throw new Error('Vitest projects need explicit ownership');\n return {...base, root: ${JSON.stringify(root)}, test: {...base.test, include: ${JSON.stringify(files)}, passWithNoTests: false}};\n};\n`;
+export function vitestConfigSource(
+  config,
+  root,
+  files,
+  workers = detectWorkerCapacity({ sourceRoot: root }).configuredWorkers
+) {
+  const binding = new URL(
+    '../tools/validation-engine/runtime/vitest-binding.mjs',
+    import.meta.url
+  ).href;
+  return `import original from ${JSON.stringify(pathToFileURL(config).href)};
+import { engineVitestProjects, isEngineVitestProjects } from ${JSON.stringify(binding)};
+export default async (environment) => {
+ const base = await (typeof original === 'function' ? original(environment) : original);
+ if (!base || typeof base !== 'object' || Array.isArray(base)) throw new Error('Unsupported Vitest config');
+ if (base.test?.projects?.length && !isEngineVitestProjects(base.test.projects)) throw new Error('Vitest projects need explicit ownership');
+ const test = {...base.test};
+ // Vite concatenates inherited arrays. Root includes would broaden both
+ // child projects and execute some files twice instead of partitioning them.
+ delete test.include; delete test.exclude; delete test.projects;
+ return {...base, root: ${JSON.stringify(root)}, test: {...test, maxWorkers: ${JSON.stringify(workers)}, projects: engineVitestProjects({ files: ${JSON.stringify(files)}, exclude: base.test?.exclude ?? ['node_modules/**', 'dist/**'], workers: ${JSON.stringify(workers)} }), passWithNoTests: false}};
+};
+`;
 }
 
 export function testCount(output) {
@@ -701,14 +724,23 @@ export async function executePlan(
             total: result.numTotalTests,
             active: result.numPassedTests + result.numFailedTests,
           };
-          if (!Number.isInteger(count.total) || !Number.isInteger(count.active))
+          if (
+            !Number.isSafeInteger(count.total) ||
+            !Number.isSafeInteger(count.active) ||
+            count.total < 0 ||
+            count.active < 0 ||
+            count.active > count.total
+          )
             throw new Error('Invalid Vitest test summary');
+          if (result.numFailedTests > 0 || result.success === false)
+            throw new Error('Vitest report contains failed tests');
           const actual = new Set(
             (result.testResults || []).map((entry) =>
               slash(relative(plan.root, resolve(plan.root, entry.name)))
             )
           );
           if (
+            result.testResults?.length !== step.files.length ||
             actual.size !== step.files.length ||
             step.files.some((file) => !actual.has(file))
           )

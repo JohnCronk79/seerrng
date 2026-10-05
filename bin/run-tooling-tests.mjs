@@ -2,6 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { withGitBashOnPath } from './platform-tools.mjs';
 
 const portableTests = [
+  'bin/engine-cpu-capacity.test.mjs',
+  'bin/engine-vitest-binding.test.mjs',
+  'bin/local-validation.test.mjs',
   'bin/check-current-batch-contract-lib.test.mjs',
   'bin/check-i18n-lib.test.mjs',
   'bin/extract-messages-lib.test.mjs',

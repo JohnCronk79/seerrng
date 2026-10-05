@@ -655,3 +655,69 @@ test('Vitest must produce a valid report with active tests and cleanup still run
     f.cleanup();
   }
 });
+
+test('duplicate Vitest ownership or failed report cannot become a passing gate', async () => {
+  const f = fixture();
+  try {
+    const plan = {
+      root: f.directory,
+      steps: [
+        {
+          name: 'Vitest fixture',
+          command: process.execPath,
+          args: [
+            '<temporary-vitest-config>',
+            '--outputFile.json=<temporary-vitest-report>',
+          ],
+          kind: 'vitest',
+          config: join(f.directory, 'vitest.config.mts'),
+          files: ['src/component.test.ts'],
+        },
+      ],
+    };
+    const file = { name: join(f.directory, 'src/component.test.ts') };
+    for (const [report, expected] of [
+      [
+        {
+          numTotalTests: 2,
+          numPassedTests: 2,
+          numFailedTests: 0,
+          testResults: [file, file],
+        },
+        /excluded or added files/,
+      ],
+      [
+        {
+          numTotalTests: 1,
+          numPassedTests: 0,
+          numFailedTests: 1,
+          testResults: [file],
+        },
+        /failed tests/,
+      ],
+      [
+        {
+          numTotalTests: 1,
+          numPassedTests: 2,
+          numFailedTests: 0,
+          testResults: [file],
+        },
+        /Invalid Vitest/,
+      ],
+    ]) {
+      await assert.rejects(
+        executePlan(plan, {
+          stdout: sink,
+          stderr: sink,
+          executor: async (step) => {
+            writeFileSync(step.args[1].split('=')[1], JSON.stringify(report));
+            return '';
+          },
+        }),
+        expected
+      );
+    }
+  } finally {
+    f.cleanup();
+  }
+});
