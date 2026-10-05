@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -24,12 +25,15 @@ import {
   preflight,
   removeOwnedTemporaryDirectory,
   runCommand,
+  startCommand,
   testCount,
   toolingOwnership,
+  validateDependencyReference,
   validateGovernanceSources,
   validatePackageBindings,
   vitestConfigSource,
 } from './local-validation.mjs';
+import { parseToolingWorkers } from './run-tooling-tests.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ts = loadTypeScript(root);
@@ -177,6 +181,124 @@ test('tooling declarations fail closed for missing, duplicate, or dynamic owners
   }
 });
 
+test('tooling worker options accept only one bounded concurrency argument', () => {
+  assert.equal(parseToolingWorkers([]), undefined);
+  for (const workers of [1, 2, 24, 256])
+    assert.equal(parseToolingWorkers([`--workers=${workers}`]), workers);
+  for (const args of [
+    ['--workers=0'],
+    ['--workers=257'],
+    ['--workers=-1'],
+    ['--workers=1.5'],
+    ['--workers=01'],
+    ['--workers=1e2'],
+    ['--workers=1 '],
+    ['--workers', '1'],
+    ['--workers=1', '--workers=2'],
+    ['--unknown'],
+    ['--test-name-pattern=green'],
+    ['--test-shard=1/2'],
+    ['--test-concurrency=1'],
+    [1],
+    null,
+  ])
+    assert.throws(() => parseToolingWorkers(args), /Tooling/);
+});
+
+test('tooling concurrency recognition preserves exact platform inventory and rejects filters or duplicate launches', () => {
+  const declarations =
+    'const portableTests = ["a"]; const posixOnlyTests = ["b"]; const tests = process.platform === "win32" ? portableTests : [...portableTests, ...posixOnlyTests];';
+  const legacy = 'spawnSync(process.execPath, ["--test", ...tests], {});';
+  const bounded =
+    'spawnSync(process.execPath, ["--test", `--test-concurrency=${workers}`, ...tests], {});';
+  assert.deepEqual(
+    toolingOwnership(declarations + bounded, ts),
+    toolingOwnership(declarations + legacy, ts)
+  );
+  assert.deepEqual(
+    toolingOwnership(
+      readFileSync(join(root, 'bin/run-tooling-tests.mjs'), 'utf8'),
+      ts
+    ).get('posixOnlyTests').length,
+    9
+  );
+  for (const changed of [
+    bounded.replace('...tests', '...tests.filter(Boolean)'),
+    bounded.replace('...tests', '...tests.slice(1)'),
+    bounded.replace('...tests', '"--test-name-pattern=green", ...tests'),
+    bounded.replace('...tests', '"--test-shard=1/2", ...tests'),
+    bounded.replace('process.execPath', '"node"'),
+    bounded + legacy,
+  ])
+    assert.throws(
+      () => toolingOwnership(declarations + changed, ts),
+      /Unsupported tooling execution selection/
+    );
+  assert.throws(
+    () =>
+      toolingOwnership(
+        declarations.replace(
+          '[...portableTests, ...posixOnlyTests]',
+          'portableTests'
+        ) + bounded,
+        ts
+      ),
+    /Unsupported tooling execution selection/
+  );
+});
+
+test('execution forwards the sealed worker budget only to tooling without changing test selection or caller descriptors', async () => {
+  for (const workers of [undefined, 1, 24, 256]) {
+    const steps = [
+      {
+        name: 'tooling fixture',
+        command: process.execPath,
+        args: ['bin/run-tooling-tests.mjs'],
+        kind: 'tooling',
+      },
+      {
+        name: 'native fixture',
+        command: process.execPath,
+        args: ['--test', '--test-concurrency=1', 'src/native.test.mjs'],
+        kind: 'node-js',
+      },
+      {
+        name: 'check fixture',
+        command: process.execPath,
+        args: ['bin/check-i18n.js'],
+        kind: 'check',
+      },
+    ];
+    const before = structuredClone(steps),
+      observed = [];
+    const totals = await executePlan(
+      { root, steps },
+      {
+        workers,
+        stdout: sink,
+        stderr: sink,
+        inherited: { ...process.env, NODE_OPTIONS: '--test-concurrency=999' },
+        executor: async (step, { env }) => {
+          assert.equal(env.NODE_OPTIONS, undefined);
+          observed.push(step);
+          return '# tests 1\n# pass 1\n# fail 0\n';
+        },
+      }
+    );
+    assert.deepEqual(
+      observed[0].args,
+      workers === undefined
+        ? before[0].args
+        : [...before[0].args, `--workers=${workers}`]
+    );
+    assert.deepEqual(observed[1].args, before[1].args);
+    assert.deepEqual(observed[2].args, before[2].args);
+    assert.deepEqual(steps, before);
+    assert.equal(totals.get('tooling').active, 1);
+    assert.equal(totals.get('node-js').active, 1);
+  }
+});
+
 test('plan is read-only, partitions framework runs and preserves the original Vitest configuration', () => {
   const f = fixture();
   try {
@@ -219,6 +341,129 @@ test('plan is read-only, partitions framework runs and preserves the original Vi
     );
   } finally {
     f.cleanup();
+  }
+});
+
+test('canonical engine binding uses the existing CI adapter once without changing ordinary native commands', () => {
+  const f = fixture();
+  try {
+    assert.throws(
+      () =>
+        createPlan(f.directory, {
+          testsOnly: true,
+          ts,
+          canonicalTypescript: true,
+        }),
+      /required file/
+    );
+    f.write('server/test/vitestNodeTest.ts', 'export const test = () => {};');
+    f.write(
+      'vitest.config.mts',
+      "export default {resolve: {alias: {'node:test': resolve(projectRoot, 'server/test/vitestNodeTest.ts')}}, test: {}};"
+    );
+    const plan = createPlan(f.directory, {
+      testsOnly: true,
+      ts,
+      canonicalTypescript: true,
+    });
+    assert.equal(plan.steps.filter(({ kind }) => kind === 'node-ts').length, 0);
+    assert.deepEqual(plan.steps.find(({ kind }) => kind === 'vitest').files, [
+      'server/native.test.ts',
+      'src/component.test.ts',
+      'src/native.test.tsx',
+    ]);
+    assert.equal(
+      new Set(plan.steps.flatMap(({ files = [] }) => files)).size,
+      plan.inventory.length
+    );
+    assert.equal(
+      plan.inventory.filter(({ originalOwner }) => originalOwner === 'node-ts')
+        .length,
+      2
+    );
+    assert.equal(
+      createPlan(f.directory, { testsOnly: true, ts }).steps.filter(
+        ({ kind }) => kind === 'node-ts'
+      ).length,
+      1
+    );
+    f.write('vitest.config.mts', 'export default {};');
+    assert.throws(
+      () =>
+        createPlan(f.directory, {
+          testsOnly: true,
+          ts,
+          canonicalTypescript: true,
+        }),
+      /native node:test adapter/
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('external dependency references require actual read-only mount and exact source/installed locks', () => {
+  const f = fixture();
+  const dependencies = mkdtempSync(
+    join(tmpdir(), 'seerrng-dependency-reference-')
+  );
+  try {
+    const lock = 'lockfileVersion: 9\n';
+    f.write('pnpm-lock.yaml', lock);
+    mkdirSync(join(dependencies, '.pnpm'));
+    writeFileSync(join(dependencies, '.pnpm/lock.yaml'), lock);
+    rmSync(join(f.directory, 'node_modules'), { recursive: true });
+    symlinkSync(
+      dependencies,
+      join(f.directory, 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
+    const reference = {
+      root: dependencies,
+      readonlyProof: { verified: true },
+      lockSha256: createHash('sha256').update(lock).digest('hex'),
+    };
+    const options = {
+      platform: 'linux',
+      mountInfo: `1 0 0:1 / ${dependencies} ro - tmpfs tmpfs ro\n`,
+    };
+    assert.equal(
+      validateDependencyReference(f.directory, reference, options),
+      dependencies
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(f.directory, reference, {
+          ...options,
+          mountInfo: options.mountInfo.replaceAll(' ro', ' rw'),
+        }),
+      /actually mounted read-only/
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(
+          f.directory,
+          { ...reference, readonlyProof: { verified: false } },
+          options
+        ),
+      /actual read-only/
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(f.directory, reference, {
+          ...options,
+          platform: 'win32',
+        }),
+      /actual read-only/
+    );
+    writeFileSync(join(dependencies, '.pnpm/lock.yaml'), 'different-lock');
+    assert.throws(
+      () => validateDependencyReference(f.directory, reference, options),
+      /lockfile mismatch/
+    );
+  } finally {
+    f.cleanup();
+    rmSync(dependencies, { recursive: true });
   }
 });
 
@@ -605,6 +850,7 @@ test('Vitest must produce a valid report with active tests and cleanup still run
     const executor = async (step, { env }) => {
       directory = env.CONFIG_DIRECTORY;
       assert.match(readFileSync(step.args[0], 'utf8'), /component\.test\.ts/);
+      assert.match(readFileSync(step.args[0], 'utf8'), /maxWorkers: 4/);
       writeFileSync(
         step.args[1].split('=')[1],
         JSON.stringify({
@@ -617,12 +863,21 @@ test('Vitest must produce a valid report with active tests and cleanup still run
       return '';
     };
     assert.equal(
-      (await executePlan(plan, { executor, stdout: sink, stderr: sink })).get(
-        'vitest'
-      ).total,
+      (
+        await executePlan(plan, {
+          executor,
+          stdout: sink,
+          stderr: sink,
+          workers: 4,
+        })
+      ).get('vitest').total,
       1
     );
     assert.equal(existsSync(directory), false);
+    await assert.rejects(
+      executePlan(plan, { workers: 0 }),
+      /sealed native worker budget/
+    );
     await assert.rejects(
       executePlan(plan, {
         executor: async () => '',
@@ -654,3 +909,306 @@ test('Vitest must produce a valid report with active tests and cleanup still run
     f.cleanup();
   }
 });
+
+test('duplicate Vitest ownership or failed report cannot become a passing gate', async () => {
+  const f = fixture();
+  try {
+    const plan = {
+      root: f.directory,
+      steps: [
+        {
+          name: 'Vitest fixture',
+          command: process.execPath,
+          args: [
+            '<temporary-vitest-config>',
+            '--outputFile.json=<temporary-vitest-report>',
+          ],
+          kind: 'vitest',
+          config: join(f.directory, 'vitest.config.mts'),
+          files: ['src/component.test.ts'],
+        },
+      ],
+    };
+    const file = { name: join(f.directory, 'src/component.test.ts') };
+    for (const [report, expected] of [
+      [
+        {
+          numTotalTests: 2,
+          numPassedTests: 2,
+          numFailedTests: 0,
+          testResults: [file, file],
+        },
+        /excluded or added files/,
+      ],
+      [
+        {
+          numTotalTests: 1,
+          numPassedTests: 0,
+          numFailedTests: 1,
+          testResults: [file],
+        },
+        /failed tests/,
+      ],
+      [
+        {
+          numTotalTests: 1,
+          numPassedTests: 2,
+          numFailedTests: 0,
+          testResults: [file],
+        },
+        /Invalid Vitest/,
+      ],
+    ]) {
+      await assert.rejects(
+        executePlan(plan, {
+          stdout: sink,
+          stderr: sink,
+          executor: async (step) => {
+            writeFileSync(step.args[1].split('=')[1], JSON.stringify(report));
+            return '';
+          },
+        }),
+        expected
+      );
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('native receipts separate streams, preserve full byte hashes and retain owned logs', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-native-logs-'));
+  try {
+    const stdoutLog = join(directory, 'stdout.log'),
+      stderrLog = join(directory, 'stderr.log');
+    const receipt = await runCommand(
+      {
+        id: 'structured',
+        name: 'structured fixture',
+        command: process.execPath,
+        args: [
+          '-e',
+          'process.stdout.write("stdout data"); process.stderr.write("stderr data");',
+        ],
+      },
+      {
+        root,
+        env: process.env,
+        stdout: sink,
+        stderr: sink,
+        receipt: true,
+        maxCaptureBytes: 6,
+        logDirectory: directory,
+        stdoutLog,
+        stderrLog,
+      }
+    );
+    assert.equal(receipt.id, 'structured');
+    assert.equal(receipt.status, 'passed');
+    assert.equal(receipt.exitCode, 0);
+    assert.equal(receipt.stdout, 't data');
+    assert.equal(receipt.stderr, 'r data');
+    assert.equal(receipt.stdoutTruncated, true);
+    assert.equal(readFileSync(stdoutLog, 'utf8'), 'stdout data');
+    assert.equal(readFileSync(stderrLog, 'utf8'), 'stderr data');
+    assert.equal(
+      receipt.stdoutSha256,
+      createHash('sha256').update('stdout data').digest('hex')
+    );
+    assert.equal(
+      receipt.stderrSha256,
+      createHash('sha256').update('stderr data').digest('hex')
+    );
+    assert.ok(receipt.wallMs >= 0);
+    assert.equal(receipt.lifecycle.completed, true);
+    assert.equal(receipt.lifecycle.cleanupVerified, true);
+    await assert.rejects(
+      runCommand(
+        { command: process.execPath, args: [] },
+        { root, logDirectory: directory, stdoutLog }
+      ),
+      /EEXIST/
+    );
+    await assert.rejects(
+      runCommand(
+        { command: process.execPath, args: [] },
+        { root, logDirectory: root, stdoutLog: join(root, 'no-source-log') }
+      ),
+      /unsafe/
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('failure, spawn failure, timeout and pre-abort attach truthful incomplete process receipts', async () => {
+  const options = {
+    root,
+    env: process.env,
+    stdout: sink,
+    stderr: sink,
+    receipt: true,
+    terminationGraceMs: 50,
+  };
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'failed',
+        name: 'failed',
+        command: process.execPath,
+        args: ['-e', 'console.error("native failure"); process.exit(9);'],
+      },
+      options
+    ),
+    (error) =>
+      error.exitCode === 9 &&
+      error.receipt.status === 'failed' &&
+      error.receipt.stderr.includes('native failure')
+  );
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'missing',
+        command: join(tmpdir(), 'seerrng-missing-native-command'),
+        args: [],
+      },
+      options
+    ),
+    (error) =>
+      error.receipt.status === 'incomplete' &&
+      error.receipt.lifecycle.spawned === false &&
+      error.receipt.lifecycle.completed === false
+  );
+  await assert.rejects(
+    runCommand(
+      {
+        id: 'timeout',
+        name: 'timeout',
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000);'],
+      },
+      { ...options, timeoutMs: 30 }
+    ),
+    (error) =>
+      error.receipt.timedOut &&
+      error.receipt.status === 'timed-out' &&
+      error.receipt.lifecycle.cleanupVerified
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runCommand(
+      { id: 'never-spawned', command: process.execPath, args: [] },
+      { ...options, signal: controller.signal }
+    ),
+    (error) => error.receipt.aborted && !error.receipt.lifecycle.spawned
+  );
+  await assert.rejects(
+    runCommand(
+      { command: process.execPath, args: [] },
+      { ...options, timeoutMs: 0 }
+    ),
+    /Invalid process/
+  );
+});
+
+test('managed readiness and owned server stop reuse native runner without claiming a passed test', async () => {
+  const handle = startCommand(
+    {
+      id: 'managed',
+      name: 'managed',
+      command: process.execPath,
+      args: [
+        '-e',
+        'console.log("server started"); setInterval(() => {}, 1000);',
+      ],
+    },
+    {
+      root,
+      env: process.env,
+      stdout: sink,
+      stderr: sink,
+      terminationGraceMs: 100,
+    }
+  );
+  const ready = await handle.waitForReady(
+    async ({ pid }) => pid === handle.pid,
+    { timeoutMs: 1000, pollMs: 10 }
+  );
+  assert.equal(ready.ready, true);
+  const stopped = await handle.stop();
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.stopped, true);
+  assert.equal(stopped.lifecycle.cleanupVerified, true);
+  assert.equal(await handle.exit, stopped);
+  assert.equal(await handle.stop(), stopped);
+});
+
+test('managed premature exit, health failure and readiness timeout fail and drain the owned process', async () => {
+  const options = {
+    root,
+    env: process.env,
+    stdout: sink,
+    stderr: sink,
+    terminationGraceMs: 50,
+  };
+  for (const mode of ['exit', 'health-failure', 'readiness-timeout']) {
+    const handle = startCommand(
+      {
+        id: mode,
+        name: mode,
+        command: process.execPath,
+        args: [
+          '-e',
+          mode === 'exit' ? 'process.exit(2)' : 'setInterval(() => {}, 1000)',
+        ],
+      },
+      options
+    );
+    await assert.rejects(
+      handle.waitForReady(
+        async () => {
+          if (mode === 'health-failure') throw new Error('health failure');
+          return false;
+        },
+        { timeoutMs: mode === 'exit' ? 1000 : 40, pollMs: 5 }
+      ),
+      /before readiness|health failure|readiness timed out/
+    );
+    const receipt = await handle.exit;
+    assert.equal(receipt.lifecycle.cleanupVerified, true);
+    assert.notEqual(receipt.status, 'passed');
+  }
+});
+
+test(
+  'POSIX owned descendant cleanup failure cannot be labelled successful',
+  { skip: process.platform === 'win32' },
+  async () => {
+    await assert.rejects(
+      runCommand(
+        {
+          id: 'orphaned-descendant',
+          name: 'orphaned descendant',
+          command: process.execPath,
+          args: [
+            '-e',
+            'require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}).unref();',
+          ],
+        },
+        {
+          root,
+          env: process.env,
+          stdout: sink,
+          stderr: sink,
+          receipt: true,
+          terminationGraceMs: 50,
+        }
+      ),
+      (error) =>
+        error.receipt.status === 'incomplete' &&
+        error.preserveTemporary === true &&
+        /descendants|termination/.test(error.message)
+    );
+  }
+);

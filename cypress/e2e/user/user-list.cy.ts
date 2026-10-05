@@ -88,7 +88,7 @@ describe('User List', () => {
 
     cy.get(
       '[data-testid=user-list-row] [data-testid=user-list-username-link]'
-    ).then(($links) => {
+    ).should(($links) => {
       const displayNames = $links
         .toArray()
         .map((el) => (el as HTMLElement).innerText.trim().toLowerCase());
