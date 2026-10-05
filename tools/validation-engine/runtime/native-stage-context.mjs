@@ -1268,6 +1268,20 @@ function packLocations(resolved, name, desiredVersion = null) {
   return [...found.values()][0];
 }
 
+export async function resolveReviewedPrMetadata(
+  callback,
+  candidate,
+  ownedPaths
+) {
+  if (callback === undefined) return undefined;
+  if (typeof callback !== 'function')
+    throw new Error('Reviewed PR metadata must come from an explicit callback');
+  return await callback(
+    Object.freeze({ ...candidate }),
+    Object.freeze({ ...ownedPaths })
+  );
+}
+
 export async function createNativeStageContext(
   sourceRoot,
   {
@@ -1281,6 +1295,7 @@ export async function createNativeStageContext(
     verifyDockerFixture,
     verifyGitHistory,
     withRepositoryIsolation,
+    reviewedPrMetadata,
   } = {}
 ) {
   const capacity = detectWorkerCapacity({ sourceRoot, environment: inherited });
@@ -1765,6 +1780,11 @@ export async function createNativeStageContext(
     } catch {
       // A missing remote default branch remains unknown, never inferred.
     }
+    const metadata = await resolveReviewedPrMetadata(
+      reviewedPrMetadata,
+      snapshot.candidate,
+      { fixtureRoot: supplementalFixtures, scratchRoot: snapshot.scratchRoot }
+    );
     const supplemental = await createSupplementalPrStages({
       root: supplementalSnapshot.root,
       linksRoot: docsLinkSnapshot.root,
@@ -1776,6 +1796,7 @@ export async function createNativeStageContext(
       env,
       configuredWorkers: capacity.configuredWorkers,
       defaultBranch,
+      metadata,
     });
     const normalized = normalizeSupplementalPrChecks(supplemental);
     const pendingMetadata = normalized.pendingMetadata;

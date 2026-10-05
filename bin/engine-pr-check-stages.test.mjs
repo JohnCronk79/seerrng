@@ -14,6 +14,8 @@ import {
   supplementalApplicability,
   supplementalCompletion,
 } from '../tools/validation-engine/runtime/pr-check-stages.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
+import { resolveReviewedPrMetadata } from '../tools/validation-engine/runtime/native-stage-context.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const candidate = {
@@ -468,6 +470,147 @@ test('PR release body requires exact source/head/base and full Git closure; no o
     'GitHub-native-pending'
   );
   await writeFile(bodyFile, 'changed');
+  await assert.rejects(
+    createSupplementalPrStages({ ...options, metadata, tools: allTools() }),
+    /body bytes changed/
+  );
+});
+
+test('reviewed release metadata callback is optional, explicit, isolated and invoked once', async () => {
+  const paths = { fixtureRoot: '/owned/fixtures', scratchRoot: '/owned' };
+  assert.equal(
+    await resolveReviewedPrMetadata(undefined, candidate, paths),
+    undefined
+  );
+  for (const invalid of [null, {}, 'metadata'])
+    await assert.rejects(
+      resolveReviewedPrMetadata(invalid, candidate, paths),
+      /explicit callback/
+    );
+  let calls = 0;
+  const result = { source: 'proposed-reviewed' };
+  assert.equal(
+    await resolveReviewedPrMetadata(
+      async (actual, owned) => {
+        calls += 1;
+        assert.deepEqual(actual, candidate);
+        assert.deepEqual(owned, paths);
+        assert.notEqual(actual, candidate);
+        assert.notEqual(owned, paths);
+        assert(Object.isFrozen(actual));
+        assert(Object.isFrozen(owned));
+        assert.throws(() => {
+          actual.commit = 'changed';
+        }, TypeError);
+        assert.throws(() => {
+          owned.fixtureRoot = '/escape';
+        }, TypeError);
+        return result;
+      },
+      candidate,
+      paths
+    ),
+    result
+  );
+  assert.equal(calls, 1);
+  await assert.rejects(
+    resolveReviewedPrMetadata(
+      () => {
+        throw new Error('review refused');
+      },
+      candidate,
+      paths
+    ),
+    /review refused/
+  );
+});
+
+test('reviewed release callback preserves native candidate, body, history and GitHub metadata gates', async (t) => {
+  const options = await fixture(t);
+  const bodyFile = path.join(options.fixtureRoot, 'local-review-body.txt');
+  const body = 'Reviewed local validation metadata; not a GitHub PR body.';
+  await writeFile(bodyFile, body);
+  const metadata = await resolveReviewedPrMetadata(
+    (actual, owned) => ({
+      source: 'proposed-reviewed',
+      head: actual.commit,
+      headTree: actual.tree,
+      headSourceSha256: actual.sourceSha256,
+      base: 'f'.repeat(40),
+      authorType: 'User',
+      bodyFile: path.join(owned.fixtureRoot, 'local-review-body.txt'),
+      bodySha256: hash(body),
+    }),
+    candidate,
+    options
+  );
+  const plan = await createSupplementalPrStages({
+    ...options,
+    metadata,
+    tools: allTools(),
+  });
+  assert.equal(byId(plan, 'release-note-contract').state, 'ready');
+  assert.deepEqual(byId(plan, 'release-note-contract').args, [
+    'scripts/check-release-notes.mjs',
+    '--base',
+    metadata.base,
+    '--head',
+    candidate.commit,
+    '--pr-body',
+    bodyFile,
+    '--summary-file',
+    path.join(options.fixtureRoot, 'release-note-summary.md'),
+  ]);
+  const normalized = normalizeSupplementalPrChecks(plan);
+  assert.equal(
+    normalized.prChecks.find((check) => check.id === 'release-note-contract')
+      .status,
+    'ready'
+  );
+  assert(
+    !normalized.pendingMetadata.some(
+      (check) => check.id === 'release-note-contract'
+    )
+  );
+  for (const id of [
+    'github-pr-title',
+    'github-pr-template',
+    'github-merge-conflict-state',
+  ])
+    assert(normalized.pendingMetadata.some((check) => check.id === id));
+  for (const patch of [
+    { head: 'e'.repeat(40) },
+    { headTree: 'e'.repeat(40) },
+    { headSourceSha256: 'e'.repeat(64) },
+    { base: 'invalid' },
+    { source: 'unreviewed' },
+    { authorType: 'unknown' },
+    { bodyFile: path.join(options.scratchRoot, 'outside-fixtures.txt') },
+  ]) {
+    const stale = await createSupplementalPrStages({
+      ...options,
+      metadata: { ...metadata, ...patch },
+      tools: allTools(),
+    });
+    assert.equal(
+      byId(stale, 'release-note-contract').state,
+      'GitHub-native-pending'
+    );
+  }
+  for (const key of ['completeHistory', 'completeTags']) {
+    const tools = allTools();
+    tools.git[key] = false;
+    const blocked = await createSupplementalPrStages({
+      ...options,
+      metadata,
+      tools,
+    });
+    assert.equal(
+      byId(blocked, 'release-note-contract').state,
+      'prerequisite-blocked'
+    );
+  }
+  await writeFile(bodyFile, `${body} changed`);
   await assert.rejects(
     createSupplementalPrStages({ ...options, metadata, tools: allTools() }),
     /body bytes changed/
