@@ -297,6 +297,9 @@ export async function createSupplementalPrStages(options) {
   });
   const docsBuild = command('docs-production-build', 'pnpm', ['build'], {
     ...docsOptions,
+    // Installed dependencies are immutable in the engine's owned host. Avoid
+    // filesystem-cache work that cannot be committed into that reference.
+    env: { ...env, DOCUSAURUS_NO_PERSISTENT_CACHE: '1' },
     lane: 'compile',
     dependsOn: [docsGenerate.id],
     writes: ['gen-docs/.docusaurus/', 'gen-docs/build/'],

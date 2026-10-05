@@ -158,6 +158,31 @@ test('native supplemental reporting and compiler lifetime are sealed without cha
     'unix:///owned/docker.sock'
   );
 });
+test('only the immutable-dependency docs build disables its persistent compiler cache', async (t) => {
+  const options = await fixture(t);
+  const env = { DOCUSAURUS_NO_PERSISTENT_CACHE: '', PRESERVED: 'native-input' };
+  const plan = await createSupplementalPrStages({
+    ...options,
+    tools: allTools(),
+    env,
+  });
+  const build = byId(plan, 'docs-production-build');
+  assert.equal(build.command, 'pnpm');
+  assert.deepEqual(build.args, ['build']);
+  assert.equal(build.cwd, path.join(options.root, 'gen-docs'));
+  assert.equal(build.env.DOCUSAURUS_NO_PERSISTENT_CACHE, '1');
+  assert.equal(build.env.PRESERVED, 'native-input');
+  assert.deepEqual(build.dependsOn, ['docs-api-generate']);
+  assert.deepEqual(build.writes, ['gen-docs/.docusaurus/', 'gen-docs/build/']);
+  for (const check of plan.checks)
+    if (check.command && check.id !== build.id)
+      assert.equal(check.env.DOCUSAURUS_NO_PERSISTENT_CACHE, '');
+  assert.deepEqual(env, {
+    DOCUSAURUS_NO_PERSISTENT_CACHE: '',
+    PRESERVED: 'native-input',
+  });
+});
+
 const receipt = (id, state = 'executed-pass') => ({
   id,
   state,
