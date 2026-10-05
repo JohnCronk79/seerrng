@@ -27,6 +27,7 @@ const portableTests = [
   'bin/engine-staged-validation.test.mjs',
   'bin/engine-pr-check-stages.test.mjs',
   'bin/engine-native-stage-context.test.mjs',
+  'bin/engine-workflow-triggers.test.mjs',
   'bin/engine-controller-ordering.test.mjs',
   'bin/local-validation.test.mjs',
   'bin/check-current-batch-contract-lib.test.mjs',

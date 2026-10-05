@@ -19,6 +19,9 @@ on:
       - 'next.config.ts'
       - 'tsconfig.json'
       - '.github/workflows/cypress.yml'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
   push:
     branches: [main]
     paths:
@@ -33,6 +36,9 @@ on:
       - 'next.config.ts'
       - 'tsconfig.json'
       - '.github/workflows/cypress.yml'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
 
 permissions:
   contents: read

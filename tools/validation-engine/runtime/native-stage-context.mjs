@@ -652,6 +652,49 @@ function closure(root) {
   };
 }
 
+export function nativeInputFileIdentity(file, expectedRealpath) {
+  const absolute = path.resolve(file),
+    actual = realpathSync(absolute);
+  if (expectedRealpath !== undefined && actual !== expectedRealpath)
+    throw new Error(`Frozen native input path changed: ${absolute}`);
+  const stat = lstatSync(actual);
+  return {
+    path: absolute,
+    realpath: actual,
+    mode: stat.mode & 0o111 ? '100755' : '100644',
+    sha256: hash(readCheckedRegularFile(actual, stat)),
+  };
+}
+
+// A read-only consumer mount does not stop another consumer changing the same
+// backing volume. Recheck actual bytes at the existing source admission/exit
+// boundary; this is input freshness, never a retained test-result cache.
+export function verifyNativeInputFreshness({ closures, files }) {
+  for (const reference of closures) {
+    for (const alias of reference.paths ?? [reference.root])
+      if (realpathSync(alias) !== reference.root)
+        throw new Error(`Frozen native input path changed: ${alias}`);
+    const actual = closure(reference.root);
+    if (
+      actual.root !== reference.root ||
+      actual.sha256 !== reference.sha256 ||
+      actual.entries !== reference.entries ||
+      actual.representation !== reference.representation
+    )
+      throw new Error(`Frozen native input closure changed: ${reference.root}`);
+  }
+  for (const reference of files) {
+    const actual = nativeInputFileIdentity(reference.path, reference.realpath);
+    if (
+      actual.realpath !== reference.realpath ||
+      actual.mode !== reference.mode ||
+      actual.sha256 !== reference.sha256
+    )
+      throw new Error(`Frozen native input file changed: ${reference.path}`);
+  }
+  return true;
+}
+
 export function findNativeExecutable(name, environment = process.env) {
   if (!/^[A-Za-z0-9_-]+$/.test(name))
     throw new Error('Unsafe native executable name');
@@ -1259,7 +1302,7 @@ async function inspectTools(discoveryEnv, env, run) {
       tools[id] = {
         verified: true,
         executable,
-        executableSha256: hash(readFileSync(executable)),
+        executableSha256: nativeInputFileIdentity(executable).sha256,
         version:
           versionOutput.match(/v?(\d+\.\d+(?:\.\d+)?(?:[-+][\w.-]+)?)/)?.[1] ??
           versionOutput,
@@ -1397,6 +1440,22 @@ export async function createNativeStageContext(
         'Installed dependency lockfile does not match the actual frozen source lockfile'
       );
     const dependency = closure(dependencyRoot);
+    const inputClosures = [
+      {
+        ...dependency,
+        paths: [
+          path.join(sourceRoot, 'node_modules'),
+          path.join(snapshot.root, 'node_modules'),
+        ],
+      },
+    ];
+    const inputFiles = [nativeInputFileIdentity(process.execPath)];
+    if (existsSync(installedLock)) {
+      const installed = nativeInputFileIdentity(installedLock);
+      if (installed.sha256 !== installedLockSha256)
+        throw new Error('Installed dependency lock changed during preparation');
+      inputFiles.push(installed);
+    }
     let ordinal = 0;
     let supplementalSnapshot, docsLinkSnapshot;
     const derivedOutputs = new Set(),
@@ -1525,6 +1584,17 @@ export async function createNativeStageContext(
           },
           configReadonlyProof: proof,
         });
+        for (const [file, expected] of [
+          [schema.absolute, tools.ct.configSha256.chartSchema],
+          [lint.absolute, tools.ct.configSha256.lintconf],
+        ]) {
+          const identity = nativeInputFileIdentity(file);
+          if (identity.sha256 !== expected)
+            throw new Error(
+              'Chart-testing configuration changed during preparation'
+            );
+          inputFiles.push(identity);
+        }
       } catch (error) {
         tools.ct.configProofFailure = error.message;
       }
@@ -1643,6 +1713,16 @@ export async function createNativeStageContext(
         lockSha256,
         closure: closure(docsDeps),
       };
+      inputClosures.push({
+        ...tools.docsDependencies.closure,
+        paths: [docsDeps, path.join(snapshot.root, 'gen-docs/node_modules')],
+      });
+      if (existsSync(installedDocsLock)) {
+        const installed = nativeInputFileIdentity(installedDocsLock);
+        if (tools.docsDependencies.verified && installed.sha256 !== lockSha256)
+          throw new Error('Installed docs lock changed during preparation');
+        inputFiles.push(installed);
+      }
     }
     const workflowText = readFileSync(
       path.join(snapshot.root, '.github/workflows/codeql.yml'),
@@ -1711,13 +1791,18 @@ export async function createNativeStageContext(
         version: modelVersion,
         ...closure(path.dirname(model.path)),
       });
+      const cliClosure = closure(path.dirname(executable));
       codeqlToolchain = {
         cliPath: executable,
         cliVersion: nativeVersion.version,
-        sha256: closure(path.dirname(executable)).sha256,
+        sha256: cliClosure.sha256,
         packs,
         nativeVersion,
       };
+      inputClosures.push(
+        { ...cliClosure, paths: [path.dirname(executable)] },
+        ...packs.map((pack) => ({ ...pack, paths: [pack.root] }))
+      );
       const memoryAdmission = liveEvaluatorHeadroom();
       codeqlToolchain.memoryAdmission = memoryAdmission;
       // Do not reserve all free RAM on a large runner. The native evaluator's
@@ -1777,6 +1862,23 @@ export async function createNativeStageContext(
         path.join(supplementalSnapshot.root, 'gen-docs/node_modules'),
         process.platform === 'win32' ? 'junction' : 'dir'
       );
+    inputClosures[0].paths.push(
+      path.join(supplementalSnapshot.root, 'node_modules')
+    );
+    if (tools.docsDependencies?.verified)
+      inputClosures
+        .find((reference) => reference.root === realpathSync(docsDeps))
+        .paths.push(
+          path.join(supplementalSnapshot.root, 'gen-docs/node_modules')
+        );
+    for (const tool of Object.values(tools)) {
+      if (!tool.verified || !tool.executable || !tool.executableSha256)
+        continue;
+      const identity = nativeInputFileIdentity(tool.executable);
+      if (identity.sha256 !== tool.executableSha256)
+        throw new Error('Native executable changed during preparation');
+      inputFiles.push(identity);
+    }
     docsLinkSnapshot = createOwnedDocsLinkSnapshot(snapshot);
     let networkBoundaryProof = nativeNetworkBoundary();
     if (typeof verifyNetworkBoundary === 'function') {
@@ -1851,10 +1953,11 @@ export async function createNativeStageContext(
       platform: process.platform,
       arch: process.arch,
       node: process.version,
-      nodeExecutableSha256: hash(readFileSync(process.execPath)),
+      nodeExecutableSha256: inputFiles[0].sha256,
       dependency,
       dependencyProof,
       installedLockSha256,
+      nativeInputFreshness: { closures: inputClosures, files: inputFiles },
       codeqlToolchain,
       tools,
       networkBoundaryProof,
@@ -1885,6 +1988,10 @@ export async function createNativeStageContext(
       verifySourceSnapshot(snapshot);
       verifySourceSnapshot(docsLinkSnapshot);
       verifySourceSnapshot(supplementalSnapshot, { derivedOutputs });
+      verifyNativeInputFreshness({
+        closures: inputClosures,
+        files: inputFiles,
+      });
       if (networkBoundaryProof.isolated) {
         if (typeof verifyNetworkBoundary === 'function') {
           const fresh = validateNativeBoundaryProof(

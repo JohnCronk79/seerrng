@@ -75,7 +75,57 @@ Docker volume, credential lookup or separate runner. An explicit bounded worker
 override remains available to maintainers. The historical V7 result still records
 its original 24-slot configuration; it is not evidence for this updated policy.
 
-## Reuse
+## Runtime safeguards and developer judgment
+
+The engine orchestrates execution; the repository's independently maintained
+tests define correctness. Developers update tests and fixtures alongside bug
+fixes, features, behavior and visual changes without adopting an engine-specific
+test format. Shared visual checks belong in that coverage: accepted semantic
+class ownership and the no-new-Tailwind rules apply to affected consumers,
+regardless of which developer changed them. During development, use affected
+checks rather than repeated whole-suite or all-platform builds. Before a commit
+or PR, run the complete applicable PR-check coverage and required compilation
+against the exact candidate. Discovery must follow its current tests, not a
+frozen reference inventory; report genuinely unavailable hosted/platform checks
+as unverified, never passing.
+
+These safeguards belong to the existing engine, not a per-change agent checklist:
+
+- `bin/local-validation.mjs` discovers the current repository's native test files
+  and retains selected ownership. Native result readers check actual case counts,
+  identities, duplicates and output closure; discovery is not proof that an
+  intended behavioral assertion was written or preserved.
+- `runtime/native-stage-context.mjs` pins actual candidate bytes, modes and
+  source/dependency/tool identities and checks freshness at execution boundaries.
+  Fixture configuration and process ownership remain run-local, with existing
+  network/provider guards. Missing context prerequisites block execution.
+- `runtime/cpu-capacity.mjs`, `controller.mjs` and `staged-validation.mjs` enforce
+  detected capacity, exclusive stage budgets, ordered barriers and declared
+  dependencies. `vitest-binding.mjs` handles independent files and quiet owners.
+  This is not a claim of archived per-file impact/cost scheduling in every runner.
+- Native adapters retain original commands/assertions, case outcomes, skips,
+  timings and process/log receipts. Failed required checks and missing coverage
+  cannot become an overall pass; GitHub-native metadata remains separately pending.
+- Browser execution requires this run's successful build for the same candidate.
+  Ordered independent stages may still collect evidence after a prior failure;
+  that does not turn the candidate into a passing result.
+
+The bound staged engine explicitly sets `resultReuse: false`. It does not accept
+previous green test results, compute automatic transitive repair selections or
+edit source. Archived repair/retest modules are reference implementations, not
+features imported by the normal staged entry. Compiled-build reuse currently
+validates successful receipts, candidate/root identity and required output
+existence, not a full compiled-artifact byte/mode seal. Do not claim guarantees
+the bound implementation does not enforce.
+
+Developer judgment remains limited to maintaining meaningful behavior tests with
+the implementation, deciding whether a genuinely superseded assertion needs an
+equally meaningful replacement, and diagnosing/repairing real failures under the
+applicable authorization. Do not weaken tests to obtain a pass. Verify a repair
+with affected checks; the engine reports the observed outcomes, not code-review
+approval or unperformed human/provider review.
+
+## Archived reference reuse
 
 1. Extract into a separate development workspace, outside automatic test globs.
 2. Read `engine/AI-INSTRUCTIONS.txt`, the target repo's AGENTS and Fix-it rules.

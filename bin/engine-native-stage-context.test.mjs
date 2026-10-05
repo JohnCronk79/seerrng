@@ -28,6 +28,7 @@ import {
   findNativeExecutable,
   materializeNativeReceipt,
   nativeEnvironment,
+  nativeInputFileIdentity,
   nativeNetworkBoundary,
   prepareJellyfinTemporaryDirectory,
   readNativeStageArtifact,
@@ -35,6 +36,7 @@ import {
   repositoryIsolationReadiness,
   repositoryNativeCases,
   validateNativeBoundaryProof,
+  verifyNativeInputFreshness,
   verifySourceSnapshot,
 } from '../tools/validation-engine/runtime/native-stage-context.mjs';
 
@@ -329,6 +331,153 @@ test('read-only dependency proof uses the innermost actual mount, not ancestor o
     false
   );
 });
+
+function inputClosure(root, files) {
+  const entries = files.sort().map((file) => {
+    const identity = nativeInputFileIdentity(path.join(root, file));
+    const bytes = readFileSync(identity.path);
+    return {
+      path: file,
+      mode: identity.mode,
+      bytes: bytes.length,
+      sha256: sha(bytes),
+    };
+  });
+  return {
+    root: fs.realpathSync(root),
+    sha256: sha(Buffer.from(`${JSON.stringify(entries, null, 2)}\n`)),
+    entries: entries.length,
+    representation:
+      'sorted-native-tree-regular-bytes-modes-internal-symlink-targets-json-v1',
+  };
+}
+
+test('native input freshness accepts unchanged real dependency/tool closures and installed locks', (t) => {
+  const { parent } = fixture(t);
+  const dependencies = path.join(parent, 'dependencies');
+  const tools = path.join(parent, 'tools');
+  mkdirSync(path.join(dependencies, '.pnpm'), { recursive: true });
+  mkdirSync(tools);
+  const lock = path.join(dependencies, '.pnpm/lock.yaml');
+  const executable = path.join(tools, 'native-tool');
+  writeFileSync(lock, 'lockfileVersion: 9.0\n');
+  writeFileSync(
+    path.join(dependencies, 'module.mjs'),
+    'export const value = 1;\n'
+  );
+  writeFileSync(executable, 'native executable bytes');
+  const inputs = {
+    closures: [
+      inputClosure(dependencies, ['.pnpm/lock.yaml', 'module.mjs']),
+      inputClosure(tools, ['native-tool']),
+    ],
+    files: [nativeInputFileIdentity(lock), nativeInputFileIdentity(executable)],
+  };
+  assert.equal(verifyNativeInputFreshness(inputs), true);
+  assert.equal(verifyNativeInputFreshness(inputs), true);
+});
+
+test('native input freshness rejects changed dependencies, additions, deletions and executable modes', (t) => {
+  const { parent } = fixture(t);
+  const root = path.join(parent, 'dependencies');
+  mkdirSync(root);
+  const file = path.join(root, 'module.mjs');
+  const bytes = 'original dependency bytes';
+  writeFileSync(file, bytes, { mode: 0o644 });
+  const inputs = { closures: [inputClosure(root, ['module.mjs'])], files: [] };
+  writeFileSync(file, 'changed dependency bytes');
+  assert.throws(() => verifyNativeInputFreshness(inputs), /closure changed/);
+  writeFileSync(file, bytes);
+  const added = path.join(root, 'new.mjs');
+  writeFileSync(added, 'previously unsealed input');
+  assert.throws(() => verifyNativeInputFreshness(inputs), /closure changed/);
+  rmSync(added);
+  rmSync(file);
+  assert.throws(() => verifyNativeInputFreshness(inputs), /closure changed/);
+  writeFileSync(file, bytes, { mode: 0o644 });
+  if (process.platform !== 'win32') {
+    chmodSync(file, 0o755);
+    assert.throws(() => verifyNativeInputFreshness(inputs), /closure changed/);
+    chmodSync(file, 0o644);
+  }
+  assert.equal(verifyNativeInputFreshness(inputs), true);
+});
+
+test('native input freshness rejects changed CodeQL CLI, query and model tree bytes', (t) => {
+  const { parent } = fixture(t);
+  const closures = ['cli', 'queries', 'models'].map((name) => {
+    const root = path.join(parent, name);
+    mkdirSync(root);
+    writeFileSync(path.join(root, 'input'), `${name} original bytes`);
+    return inputClosure(root, ['input']);
+  });
+  const inputs = { closures, files: [] };
+  for (const reference of closures) {
+    const file = path.join(reference.root, 'input');
+    const original = readFileSync(file);
+    writeFileSync(file, 'changed native tool/query/model bytes');
+    assert.throws(() => verifyNativeInputFreshness(inputs), /closure changed/);
+    writeFileSync(file, original);
+  }
+  assert.equal(verifyNativeInputFreshness(inputs), true);
+});
+
+test('native input freshness rejects changed installed locks and individual native executables', (t) => {
+  const { parent } = fixture(t);
+  const files = [
+    'app-installed-lock',
+    'docs-installed-lock',
+    'native-executable',
+    'chart-config',
+  ].map((name) => {
+    const file = path.join(parent, name);
+    writeFileSync(file, `${name} original bytes`);
+    return nativeInputFileIdentity(file);
+  });
+  const inputs = { closures: [], files };
+  for (const reference of files) {
+    const original = readFileSync(reference.path);
+    writeFileSync(reference.path, 'changed captured input');
+    assert.throws(() => verifyNativeInputFreshness(inputs), /file changed/);
+    writeFileSync(reference.path, original);
+  }
+  assert.equal(verifyNativeInputFreshness(inputs), true);
+});
+
+test(
+  'native input freshness rejects redirected dependency aliases even when replacement bytes match',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const { parent } = fixture(t);
+    const roots = ['original', 'replacement'].map((name) => {
+      const root = path.join(parent, name);
+      mkdirSync(root);
+      writeFileSync(path.join(root, 'module.mjs'), 'identical bytes');
+      return root;
+    });
+    const alias = path.join(parent, 'node_modules');
+    symlinkSync(roots[0], alias);
+    const fileInputs = {
+      closures: [],
+      files: [nativeInputFileIdentity(path.join(alias, 'module.mjs'))],
+    };
+    const inputs = {
+      closures: [{ ...inputClosure(roots[0], ['module.mjs']), paths: [alias] }],
+      files: [],
+    };
+    assert.equal(verifyNativeInputFreshness(inputs), true);
+    rmSync(alias);
+    symlinkSync(roots[1], alias);
+    assert.throws(
+      () => verifyNativeInputFreshness(inputs),
+      /input path changed/
+    );
+    assert.throws(
+      () => verifyNativeInputFreshness(fileInputs),
+      /input path changed/
+    );
+  }
+);
 
 test('provider isolation is only proven by an observed loopback-only Linux namespace', () => {
   const loopback = { lo: [{ address: '127.0.0.1', internal: true }] };

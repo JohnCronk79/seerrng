@@ -286,7 +286,7 @@ Fill these fields with observed facts; unknown means pending, never assumed.
    skips/todos, platform exclusions, lint/type/static/style results and build result.
    `pnpm test` is test partitions only; `test:ci` is Vitest-only. Browser/Cypress
    suites are separate. Linux is required for complete POSIX tooling coverage.
-5. Desktop/narrow reference locations and John's acceptance per page/state,
+5. Desktop/narrow reference locations and applicable reviewer evidence per page/state,
    including loading/error/empty, keyboard/focus/disabled, open menus and reorder.
    An automated screenshot or computed-style result is not human acceptance.
 6. Live Plex evidence separately from mocked native coverage; safe prerequisites
@@ -308,7 +308,9 @@ the accepted preview and authorized integration with Keith's current main,
 scoped Fix-it repairs, source-specific engine validation, separate guarded
 compilation, and a laptop preview on port 5071 with an independent copy of the
 5070 configuration/database. The final preview is shown only after those checks
-complete. John's visual review remains required before any PR.
+complete. Visual-review evidence is separate from automated verification;
+applicable human review may be performed by the maintainer or an authorized
+reviewer and does not require John's personal visual approval.
 
 The pinned upstream base is `a96fafa07c77a2d6d95badeb9f60c32a6b4a47c9`
 (3.48.3). The exact accepted working-byte checkpoint is
@@ -359,3 +361,25 @@ John explicitly waived another compile and requested tests only for the amended
 source. A fresh source-bound engine run and static checks must establish that
 amendment's actual result before publication. No production deployment or merge
 of Keith's PR is authorized by this overnight finalization request.
+
+## Personal visual-approval requirement removed — October 5, 2026
+
+John directed removal of the requirement for his personal visual approval from
+our instructions. Neither test execution/completion nor otherwise authorized
+contribution or release work depends on John's personal visual sign-off.
+This correction supersedes any older named approval gate in this checkpoint;
+historical review receipts remain historical, not current requirements.
+Automated checks, applicable maintainer authorization, and truthful reporting of
+visual evidence remain unchanged. The test-engine maintenance section in
+`AGENTS.md` is retained pending John's review; no relocation or removal of that
+section is authorized by this correction.
+
+## Engine procedure removed from agent instructions — October 5, 2026
+
+John subsequently authorized removing the engine-maintenance procedure from
+`AGENTS.md`. That file retains a short engine documentation route, not the
+47-line execution checklist. Existing automatic safeguards remain in the bound
+runtime; engine documentation distinguishes implemented behavior from archived
+reference features and limited developer judgment. This supersedes the earlier
+instruction to retain the section pending review. No different source base,
+application changes, new runner or framework is authorized by this correction.

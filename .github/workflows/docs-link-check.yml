@@ -10,6 +10,12 @@ on:
       - 'docs/**'
       - 'gen-docs/**'
       - '.github/workflows/docs-link-check.yml'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
+      - 'server/test/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
   push:
     branches:
       - main
@@ -17,6 +23,12 @@ on:
       - 'docs/**'
       - 'gen-docs/**'
       - '.github/workflows/docs-link-check.yml'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
+      - 'server/test/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
   schedule:
     - cron: '50 7 * * 5'
   workflow_dispatch:

@@ -9,6 +9,26 @@ on:
     paths:
       - 'docs/**'
       - 'gen-docs/**'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
+      - 'server/test/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/test-docs.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'gen-docs/**'
+      - 'tools/validation-engine/**'
+      - 'bin/**'
+      - 'vitest.config.mts'
+      - 'server/test/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/test-docs.yml'
 
 permissions:
   contents: read
