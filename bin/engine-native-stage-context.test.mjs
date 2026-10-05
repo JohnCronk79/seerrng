@@ -20,6 +20,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
+  createNativeStageContext,
   createOwnedDocsLinkSnapshot,
   createOwnedSourceSnapshot,
   disposeSourceSnapshot,
@@ -64,6 +65,22 @@ function fixture(t) {
   git(root, 'tag', 'fixture-v1');
   return { root, parent };
 }
+
+test('invalid worker overrides fail before allocating a disposable source copy', async (t) => {
+  const { root, parent } = fixture(t);
+  const before = readdirSync(parent).sort();
+  for (const workerOverride of [0, -1, 1.5, 257, '1', NaN]) {
+    await assert.rejects(
+      createNativeStageContext(root, {
+        scratchParent: parent,
+        inherited: {},
+        workerOverride,
+      }),
+      /Worker override/
+    );
+    assert.deepEqual(readdirSync(parent).sort(), before);
+  }
+});
 
 test('snapshot seals actual working bytes/modes, includes unignored files and omits credentials', (t) => {
   const { root, parent } = fixture(t);

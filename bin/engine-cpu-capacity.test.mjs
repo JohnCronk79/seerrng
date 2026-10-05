@@ -102,13 +102,16 @@ test('the ordinary one-CPU floor remains one worker', () => {
 });
 
 test('an explicit worker override remains authoritative', () => {
-  const result = selectWorkerCapacity({
-    availableLogicalCpus: 12,
-    override: 7,
-    operatorGithubLogin: 'JohnCronk79',
-  });
-  assert.equal(result.configuredWorkers, 7);
-  assert.equal(result.policy, 'explicit-worker-override');
+  for (const override of [1, 7, 24]) {
+    const result = selectWorkerCapacity({
+      availableLogicalCpus: 12,
+      override,
+      operatorGithubLogin: 'JohnCronk79',
+    });
+    assert.equal(result.configuredWorkers, override);
+    assert.equal(result.effectiveLogicalCpus, 12);
+    assert.equal(result.policy, 'explicit-worker-override');
+  }
 });
 
 test('GitHub Actions actors and ordinary Git identity resolve without credentials', () => {

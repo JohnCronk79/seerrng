@@ -245,6 +245,7 @@ export function toolingOwnership(source, ts) {
   const arrays = new Map();
   let selection;
   let invocation = false;
+  let invocations = 0;
   const visit = (node) => {
     if (
       ts.isVariableDeclaration(node) &&
@@ -261,14 +262,18 @@ export function toolingOwnership(source, ts) {
       ts.isIdentifier(node.expression) &&
       node.expression.text === 'spawnSync'
     ) {
+      invocations += 1;
       const argumentsText = node.arguments
         .slice(0, 2)
         .map((argument) =>
           argument.getText(tree).replace(/\s/g, '').replace(/"/g, "'")
         );
-      invocation ||=
+      invocation =
         argumentsText[0] === 'process.execPath' &&
-        argumentsText[1] === "['--test',...tests]";
+        [
+          "['--test',...tests]",
+          "['--test',`--test-concurrency=${workers}`,...tests]",
+        ].includes(argumentsText[1]);
     }
     if (
       ts.isVariableDeclaration(node) &&
@@ -308,7 +313,8 @@ export function toolingOwnership(source, ts) {
   if (
     selection !==
       "process.platform==='win32'?portableTests:[...portableTests,...posixOnlyTests]" ||
-    !invocation
+    !invocation ||
+    invocations !== 1
   )
     throw new Error(
       'Unsupported tooling execution selection; review ownership before running'
@@ -1039,6 +1045,8 @@ export async function executePlan(
     for (const original of plan.steps) {
       if (signal?.aborted) throw new Error('Validation interrupted');
       const step = { ...original, args: [...original.args] };
+      if (step.kind === 'tooling' && workers !== undefined)
+        step.args.push(`--workers=${workers}`);
       const report = join(directory, 'vitest-report.json');
       if (step.kind === 'vitest') {
         const config = join(directory, 'vitest.config.mjs');

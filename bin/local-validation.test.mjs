@@ -33,6 +33,7 @@ import {
   validatePackageBindings,
   vitestConfigSource,
 } from './local-validation.mjs';
+import { parseToolingWorkers } from './run-tooling-tests.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ts = loadTypeScript(root);
@@ -177,6 +178,124 @@ test('tooling declarations fail closed for missing, duplicate, or dynamic owners
     );
   } finally {
     f.cleanup();
+  }
+});
+
+test('tooling worker options accept only one bounded concurrency argument', () => {
+  assert.equal(parseToolingWorkers([]), undefined);
+  for (const workers of [1, 2, 24, 256])
+    assert.equal(parseToolingWorkers([`--workers=${workers}`]), workers);
+  for (const args of [
+    ['--workers=0'],
+    ['--workers=257'],
+    ['--workers=-1'],
+    ['--workers=1.5'],
+    ['--workers=01'],
+    ['--workers=1e2'],
+    ['--workers=1 '],
+    ['--workers', '1'],
+    ['--workers=1', '--workers=2'],
+    ['--unknown'],
+    ['--test-name-pattern=green'],
+    ['--test-shard=1/2'],
+    ['--test-concurrency=1'],
+    [1],
+    null,
+  ])
+    assert.throws(() => parseToolingWorkers(args), /Tooling/);
+});
+
+test('tooling concurrency recognition preserves exact platform inventory and rejects filters or duplicate launches', () => {
+  const declarations =
+    'const portableTests = ["a"]; const posixOnlyTests = ["b"]; const tests = process.platform === "win32" ? portableTests : [...portableTests, ...posixOnlyTests];';
+  const legacy = 'spawnSync(process.execPath, ["--test", ...tests], {});';
+  const bounded =
+    'spawnSync(process.execPath, ["--test", `--test-concurrency=${workers}`, ...tests], {});';
+  assert.deepEqual(
+    toolingOwnership(declarations + bounded, ts),
+    toolingOwnership(declarations + legacy, ts)
+  );
+  assert.deepEqual(
+    toolingOwnership(
+      readFileSync(join(root, 'bin/run-tooling-tests.mjs'), 'utf8'),
+      ts
+    ).get('posixOnlyTests').length,
+    9
+  );
+  for (const changed of [
+    bounded.replace('...tests', '...tests.filter(Boolean)'),
+    bounded.replace('...tests', '...tests.slice(1)'),
+    bounded.replace('...tests', '"--test-name-pattern=green", ...tests'),
+    bounded.replace('...tests', '"--test-shard=1/2", ...tests'),
+    bounded.replace('process.execPath', '"node"'),
+    bounded + legacy,
+  ])
+    assert.throws(
+      () => toolingOwnership(declarations + changed, ts),
+      /Unsupported tooling execution selection/
+    );
+  assert.throws(
+    () =>
+      toolingOwnership(
+        declarations.replace(
+          '[...portableTests, ...posixOnlyTests]',
+          'portableTests'
+        ) + bounded,
+        ts
+      ),
+    /Unsupported tooling execution selection/
+  );
+});
+
+test('execution forwards the sealed worker budget only to tooling without changing test selection or caller descriptors', async () => {
+  for (const workers of [undefined, 1, 24, 256]) {
+    const steps = [
+      {
+        name: 'tooling fixture',
+        command: process.execPath,
+        args: ['bin/run-tooling-tests.mjs'],
+        kind: 'tooling',
+      },
+      {
+        name: 'native fixture',
+        command: process.execPath,
+        args: ['--test', '--test-concurrency=1', 'src/native.test.mjs'],
+        kind: 'node-js',
+      },
+      {
+        name: 'check fixture',
+        command: process.execPath,
+        args: ['bin/check-i18n.js'],
+        kind: 'check',
+      },
+    ];
+    const before = structuredClone(steps),
+      observed = [];
+    const totals = await executePlan(
+      { root, steps },
+      {
+        workers,
+        stdout: sink,
+        stderr: sink,
+        inherited: { ...process.env, NODE_OPTIONS: '--test-concurrency=999' },
+        executor: async (step, { env }) => {
+          assert.equal(env.NODE_OPTIONS, undefined);
+          observed.push(step);
+          return '# tests 1\n# pass 1\n# fail 0\n';
+        },
+      }
+    );
+    assert.deepEqual(
+      observed[0].args,
+      workers === undefined
+        ? before[0].args
+        : [...before[0].args, `--workers=${workers}`]
+    );
+    assert.deepEqual(observed[1].args, before[1].args);
+    assert.deepEqual(observed[2].args, before[2].args);
+    assert.deepEqual(steps, before);
+    assert.equal(totals.get('tooling').active, 1);
+    assert.equal(totals.get('node-js').active, 1);
   }
 });
 

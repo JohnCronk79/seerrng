@@ -1323,6 +1323,7 @@ export async function createNativeStageContext(
     stderr = process.stderr,
     inherited = process.env,
     signal,
+    workerOverride = null,
     scratchParent = tmpdir(),
     prerequisiteReferences = {},
     verifyNetworkBoundary,
@@ -1332,7 +1333,11 @@ export async function createNativeStageContext(
     reviewedPrMetadata,
   } = {}
 ) {
-  const capacity = detectWorkerCapacity({ sourceRoot, environment: inherited });
+  const capacity = detectWorkerCapacity({
+    sourceRoot,
+    environment: inherited,
+    override: workerOverride,
+  });
   const snapshot = createOwnedSourceSnapshot(sourceRoot, { scratchParent });
   let processReceipts;
   try {
