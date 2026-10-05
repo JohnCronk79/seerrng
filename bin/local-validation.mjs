@@ -995,11 +995,7 @@ export function startCommand(step, options = {}) {
       try {
         return await Promise.race([poll(), unavailable, expiration]);
       } catch (error) {
-        try {
-          error.receipt = await handle.stop();
-        } catch (cleanup) {
-          throw cleanup;
-        }
+        error.receipt = await handle.stop();
         throw error;
       } finally {
         clearTimeout(readinessTimeout);
@@ -1023,8 +1019,14 @@ export async function executePlan(
     inherited = process.env,
     executor = runCommand,
     signal,
+    workers,
   } = {}
 ) {
+  if (
+    workers !== undefined &&
+    (!Number.isSafeInteger(workers) || workers < 1 || workers > 256)
+  )
+    throw new Error('Invalid sealed native worker budget');
   const directory = mkdtempSync(join(tmpdir(), prefix));
   const env = isolatedEnvironment(directory, inherited);
   const totals = new Map();
@@ -1042,7 +1044,7 @@ export async function executePlan(
             step.config,
             plan.root,
             step.files,
-            undefined,
+            workers,
             join(directory, 'vitest-cache')
           ),
           { flag: 'wx' }

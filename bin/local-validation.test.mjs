@@ -732,6 +732,7 @@ test('Vitest must produce a valid report with active tests and cleanup still run
     const executor = async (step, { env }) => {
       directory = env.CONFIG_DIRECTORY;
       assert.match(readFileSync(step.args[0], 'utf8'), /component\.test\.ts/);
+      assert.match(readFileSync(step.args[0], 'utf8'), /maxWorkers: 4/);
       writeFileSync(
         step.args[1].split('=')[1],
         JSON.stringify({
@@ -744,12 +745,21 @@ test('Vitest must produce a valid report with active tests and cleanup still run
       return '';
     };
     assert.equal(
-      (await executePlan(plan, { executor, stdout: sink, stderr: sink })).get(
-        'vitest'
-      ).total,
+      (
+        await executePlan(plan, {
+          executor,
+          stdout: sink,
+          stderr: sink,
+          workers: 4,
+        })
+      ).get('vitest').total,
       1
     );
     assert.equal(existsSync(directory), false);
+    await assert.rejects(
+      executePlan(plan, { workers: 0 }),
+      /sealed native worker budget/
+    );
     await assert.rejects(
       executePlan(plan, {
         executor: async () => '',

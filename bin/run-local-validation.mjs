@@ -2,7 +2,9 @@
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { createNativeStageContext } from '../tools/validation-engine/runtime/native-stage-context.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { executeStagedValidation } from '../tools/validation-engine/runtime/staged-validation.mjs';
 import {
   createPlan,

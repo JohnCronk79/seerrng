@@ -23,28 +23,41 @@ const input = () => ({
     inventory: [{ file: 'server/example.test.ts', selected: true }],
     steps: [{ name: 'native repository suite' }],
   },
-  codeqlPlan: { sourceIdentity: { sha256: sha } },
+  codeqlPlan: {
+    sourceIdentity: { sha256: sha },
+    artifacts: [],
+    steps: [{ id: 'codeql-probe' }],
+  },
   buildBrowserPlan: {
     candidate,
     configuredWorkers: 24,
     specs: ['cypress/e2e/example.cy.ts'],
+    build: [{ id: 'production-build' }],
   },
 });
 
 test('existing coordinator binds four exclusive ordered native stages', () => {
   const binding = createStagedValidation(input());
   assert.deepEqual(
-    binding.plan.lanes.map(({ id, dependsOn }) => ({ id, dependsOn })),
+    binding.plan.lanes.map(({ id, dependsOn, after }) => ({
+      id,
+      dependsOn,
+      after,
+    })),
     [
-      { id: 'repository', dependsOn: [] },
-      { id: 'codeql', dependsOn: ['repository'] },
-      { id: 'build', dependsOn: ['codeql'] },
-      { id: 'browser', dependsOn: ['build'] },
+      { id: 'repository', dependsOn: [], after: [] },
+      { id: 'codeql', dependsOn: [], after: ['repository'] },
+      { id: 'build', dependsOn: [], after: ['codeql'] },
+      { id: 'browser', dependsOn: [], after: ['build'] },
     ]
   );
   assert.equal(binding.plan.maxSlots, 24);
   assert.ok(binding.plan.units.every((unit) => unit.slots === 24));
   assert.equal(binding.resultReuse, false);
+  assert.deepEqual(
+    binding.plan.units.find((unit) => unit.id === 'native-browser').dependsOn,
+    ['native-build']
+  );
 });
 
 test('capacity follows supplied Actions budget, not hardcoded local24', () => {
@@ -96,19 +109,19 @@ test('required missing tool blocks that stage, GitHub metadata stays separately 
   assert.equal(binding.applicability.length, 2);
 });
 
-test('failed or zero-active repository suite blocks all later expensive stages', async () => {
+test('failed or zero-active repository suite retains failure while independent stages still attempt execution', async () => {
   for (const result of [
     { status: 'failed', cases: { passed: 1, failed: 1, skipped: 0 } },
     { status: 'passed', cases: { passed: 0, failed: 0, skipped: 4 } },
   ]) {
-    let nativeStarts = 0;
+    const nativeStarts = [];
     const report = await executeStagedValidation(
       createStagedValidation(input()),
       {
         executeRepository: async () => result,
-        run: async () => {
-          nativeStarts++;
-          throw new Error('Must not start');
+        run: async (command) => {
+          nativeStarts.push(command.id);
+          throw new Error('Focused fixture rejects native invocation');
         },
         readFile: async () => '',
         writeArtifact: async () => {},
@@ -117,12 +130,96 @@ test('failed or zero-active repository suite blocks all later expensive stages',
     );
     assert.equal(report.status, 'failed');
     assert.equal(report.ok, false);
-    assert.equal(nativeStarts, 0);
+    assert.deepEqual(nativeStarts, ['codeql-probe', 'production-build']);
     assert.deepEqual(
-      report.results.slice(1).map((unit) => unit.status),
-      ['blocked', 'blocked', 'blocked']
+      report.results.map((unit) => unit.status),
+      ['failed', 'failed', 'failed', 'blocked']
     );
   }
+});
+
+test('independent supplemental checks continue sequentially after primary and supplemental failures', async () => {
+  const options = input();
+  options.prChecks = ['first', 'second'].map((id) => ({
+    id,
+    stage: 'repository',
+    required: true,
+    status: 'ready',
+    commands: [{ id }],
+  }));
+  const binding = createStagedValidation(options);
+  assert.deepEqual(
+    binding.plan.units.find((unit) => unit.id === 'pr-first').after,
+    ['native-repository']
+  );
+  assert.deepEqual(
+    binding.plan.units.find((unit) => unit.id === 'pr-second').after,
+    ['pr-first']
+  );
+  const calls = [];
+  const report = await executeStagedValidation(binding, {
+    executeRepository: async () => ({
+      status: 'failed',
+      cases: { passed: 1, failed: 1, skipped: 0 },
+    }),
+    run: async (command) => {
+      calls.push(command.id);
+      if (command.id !== 'second')
+        throw new Error('Focused native failure fixture');
+      return {
+        status: 'passed',
+        exitCode: 0,
+        wallMs: 1,
+        lifecycle: { completed: true },
+      };
+    },
+    readFile: async () => '',
+    writeArtifact: async () => {},
+    verifySource: async () => {},
+  });
+  assert.deepEqual(calls, [
+    'first',
+    'second',
+    'codeql-probe',
+    'production-build',
+  ]);
+  assert.equal(
+    report.results.find((unit) => unit.id === 'pr-first').status,
+    'failed'
+  );
+  assert.equal(
+    report.results.find((unit) => unit.id === 'pr-second').status,
+    'passed'
+  );
+  assert.equal(report.ok, false);
+  assert.equal(report.status, 'failed');
+});
+
+test('changed source or boundary rejects every later native admission', async () => {
+  let changed = false;
+  let starts = 0;
+  await assert.rejects(
+    executeStagedValidation(createStagedValidation(input()), {
+      executeRepository: async () => {
+        changed = true;
+        return {
+          status: 'failed',
+          cases: { passed: 1, failed: 1, skipped: 0 },
+        };
+      },
+      run: async () => {
+        starts++;
+        throw new Error('No unsafe native starts');
+      },
+      readFile: async () => '',
+      writeArtifact: async () => {},
+      verifySource: async () => {
+        if (changed) throw new Error('Frozen source/boundary changed');
+      },
+    }),
+    /Frozen source\/boundary changed/
+  );
+  assert.equal(starts, 0);
 });
 
 test('missing lifecycle/source/native executor callbacks fail before admission', async () => {

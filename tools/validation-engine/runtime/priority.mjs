@@ -46,7 +46,9 @@ export function effectiveDependencies(plan) {
   const laneClosure = (id, seen = new Set()) => {
     if (seen.has(id)) return seen;
     seen.add(id);
-    lanes.get(id).dependsOn.forEach((parent) => laneClosure(parent, seen));
+    [...lanes.get(id).dependsOn, ...(lanes.get(id).after ?? [])].forEach(
+      (parent) => laneClosure(parent, seen)
+    );
     return seen;
   };
   return new Map(
@@ -55,11 +57,13 @@ export function effectiveDependencies(plan) {
       [
         ...new Set([
           ...unit.dependsOn,
-          ...lanes
-            .get(unit.lane)
-            .dependsOn.flatMap((id) =>
-              [...laneClosure(id)].flatMap((laneId) => laneUnits.get(laneId))
-            ),
+          ...(unit.after ?? []),
+          ...[
+            ...lanes.get(unit.lane).dependsOn,
+            ...(lanes.get(unit.lane).after ?? []),
+          ].flatMap((id) =>
+            [...laneClosure(id)].flatMap((laneId) => laneUnits.get(laneId))
+          ),
         ]),
       ],
     ])

@@ -106,6 +106,7 @@ export function preparePlan(input) {
     if (typeof lane.required !== 'boolean')
       throw new Error('lane required must be boolean');
     lane.dependsOn = list(lane.dependsOn ?? [], 'lane dependencies');
+    lane.after = list(lane.after ?? [], 'lane completion order');
     lane.prerequisites ??= [];
     if (!Array.isArray(lane.prerequisites))
       throw new Error('prerequisites must be an array');
@@ -139,6 +140,7 @@ export function preparePlan(input) {
       throw new Error('unit slot demand exceeds hard budget');
     }
     unit.dependsOn = list(unit.dependsOn ?? [], 'unit dependencies');
+    unit.after = list(unit.after ?? [], 'unit completion order');
     for (const field of ['reads', 'writes', 'files']) {
       unit[field] = list(unit[field], field).map((key) =>
         resourceKey(key, plan.caseSensitive)
@@ -174,10 +176,14 @@ export function preparePlan(input) {
   for (const lane of lanes.values()) {
     if (lane.dependsOn.some((id) => !lanes.has(id)))
       throw new Error('unknown lane dependency');
+    if (lane.after.some((id) => !lanes.has(id)))
+      throw new Error('unknown lane completion order');
   }
   for (const unit of units.values()) {
     if (unit.dependsOn.some((id) => !units.has(id)))
       throw new Error('unknown unit dependency');
+    if (unit.after.some((id) => !units.has(id)))
+      throw new Error('unknown unit completion order');
   }
   // Lane completion depends on its units; units depend on declared parent
   // lanes and other units. Detect mixed lane/unit cycles BEFORE an executor.
@@ -189,12 +195,16 @@ export function preparePlan(input) {
         .filter((u) => u.lane === lane.id)
         .map((u) => `u:${u.id}`)
     );
-    graph.get(`l:${lane.id}`).push(...lane.dependsOn.map((id) => `l:${id}`));
+    graph
+      .get(`l:${lane.id}`)
+      .push(...[...lane.dependsOn, ...lane.after].map((id) => `l:${id}`));
   }
   for (const unit of units.values()) {
     graph.set(`u:${unit.id}`, [
-      ...unit.dependsOn.map((id) => `u:${id}`),
-      ...lanes.get(unit.lane).dependsOn.map((id) => `l:${id}`),
+      ...[...unit.dependsOn, ...unit.after].map((id) => `u:${id}`),
+      ...[...lanes.get(unit.lane).dependsOn, ...lanes.get(unit.lane).after].map(
+        (id) => `l:${id}`
+      ),
     ]);
   }
   const visiting = new Set();
@@ -330,6 +340,23 @@ export async function coordinate(
         status: laneStatus(laneById.get(id)),
       })),
   ];
+  // Ordering is not a success/data dependency. Inspect every producer record,
+  // because a lane's aggregate status can be failed while another unit is active.
+  const terminal = (record) =>
+    [
+      'passed',
+      'failed',
+      'blocked',
+      'cancelled',
+      'not-selected',
+      'pending-prerequisite',
+    ].includes(record.status);
+  const completedOrder = (unit) =>
+    unit.after.every((id) => terminal(records.get(id))) &&
+    laneById.get(unit.lane).after.every((id) => {
+      const producers = plan.units.filter((producer) => producer.lane === id);
+      return producers.every((producer) => terminal(records.get(producer.id)));
+    });
   if (execute) {
     for (const unit of plan.units) {
       const record = records.get(unit.id);
@@ -351,7 +378,8 @@ export async function coordinate(
   }
   const ready = (unit) =>
     records.get(unit.id).status === 'queued' &&
-    dependencies(unit).every((dep) => dep.status === 'passed');
+    dependencies(unit).every((dep) => dep.status === 'passed') &&
+    completedOrder(unit);
   const executeUnit = async (unit) => {
     const record = records.get(unit.id);
     const start = performance.now();

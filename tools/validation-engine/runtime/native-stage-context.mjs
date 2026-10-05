@@ -1515,6 +1515,7 @@ export async function createNativeStageContext(
           stderr,
           inherited: env,
           signal,
+          workers: capacity.configuredWorkers,
           executor: async (command, execution) => {
             const receipt = await nativeRun({
               ...command,

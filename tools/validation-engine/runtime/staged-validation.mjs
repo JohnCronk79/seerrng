@@ -75,7 +75,8 @@ export function createStagedValidation({
     id,
     kind: id === 'build' ? 'compile' : 'check',
     required: true,
-    dependsOn: ordinal ? [stages[ordinal - 1]] : [],
+    dependsOn: [],
+    after: ordinal ? [stages[ordinal - 1]] : [],
     prerequisites: [],
   }));
   const units = stages.map((stage) => {
@@ -95,7 +96,8 @@ export function createStagedValidation({
           : stage === 'browser'
             ? [...buildBrowserPlan.specs]
             : [],
-      dependsOn: [],
+      dependsOn: stage === 'browser' ? ['native-build'] : [],
+      after: [],
     };
   });
   for (const check of prChecks) {
@@ -139,7 +141,8 @@ export function createStagedValidation({
       reads: ['source-manifest'],
       writes: [`scratch-${check.stage}`],
       files: [...(check.files ?? [])],
-      dependsOn: [`native-${check.stage}`],
+      dependsOn: [],
+      after: [units.filter((unit) => unit.lane === check.stage).at(-1).id],
     });
   }
   const plan = preparePlan({
