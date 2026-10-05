@@ -333,12 +333,10 @@ export async function coordinate(
       id: `unit:${id}`,
       status: records.get(id).status,
     })),
-    ...laneById
-      .get(unit.lane)
-      .dependsOn.map((id) => ({
-        id: `lane:${id}`,
-        status: laneStatus(laneById.get(id)),
-      })),
+    ...laneById.get(unit.lane).dependsOn.map((id) => ({
+      id: `lane:${id}`,
+      status: laneStatus(laneById.get(id)),
+    })),
   ];
   // Ordering is not a success/data dependency. Inspect every producer record,
   // because a lane's aggregate status can be failed while another unit is active.

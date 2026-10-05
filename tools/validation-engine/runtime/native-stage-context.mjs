@@ -305,6 +305,24 @@ const declaredDerived = (file, enabled) =>
   (enabled.has('docs-api') && file.startsWith('docs/api/')) ||
   (enabled.has('chart-docs') && /^charts\/.+\/README\.md$/.test(file));
 
+// The native link-check workflow only checks its checkout: it does not install
+// Docusaurus or regenerate docs. Preserve its exact globs on a separate clean
+// source input, rather than adding excludes that could hide repository docs.
+export function createOwnedDocsLinkSnapshot(snapshot) {
+  verifySourceSnapshot(snapshot);
+  const links = createOwnedSourceSnapshot(snapshot.authoritativeRoot, {
+    scratchParent: snapshot.scratchRoot,
+  });
+  if (links.candidate.sourceSha256 !== snapshot.candidate.sourceSha256)
+    throw new Error('Docs link source differs from the frozen candidate');
+  for (const relative of ['node_modules', 'gen-docs/node_modules'])
+    if (existsSync(path.join(links.root, relative)))
+      throw new Error(
+        'Docs link checkout must not contain installed dependencies'
+      );
+  return links;
+}
+
 export function verifySourceSnapshot(
   snapshot,
   { derivedOutputs = new Set() } = {}
@@ -959,7 +977,7 @@ export async function createNativeStageContext(
       );
     const dependency = closure(dependencyRoot);
     let ordinal = 0;
-    let supplementalSnapshot;
+    let supplementalSnapshot, docsLinkSnapshot;
     const derivedOutputs = new Set(),
       derivedArtifacts = [];
     const nativeRun = async (command, options = {}) => {
@@ -1039,6 +1057,7 @@ export async function createNativeStageContext(
           };
         throw error;
       } finally {
+        if (docsLinkSnapshot) verifySourceSnapshot(docsLinkSnapshot);
         if (supplementalSnapshot) {
           verifySourceSnapshot(supplementalSnapshot, { derivedOutputs });
           if (derivedOutputs.size) {
@@ -1327,6 +1346,7 @@ export async function createNativeStageContext(
         path.join(supplementalSnapshot.root, 'gen-docs/node_modules'),
         process.platform === 'win32' ? 'junction' : 'dir'
       );
+    docsLinkSnapshot = createOwnedDocsLinkSnapshot(snapshot);
     let networkBoundaryProof = nativeNetworkBoundary();
     if (typeof verifyNetworkBoundary === 'function') {
       try {
@@ -1368,6 +1388,7 @@ export async function createNativeStageContext(
     } catch {}
     const supplemental = await createSupplementalPrStages({
       root: supplementalSnapshot.root,
+      linksRoot: docsLinkSnapshot.root,
       scratchRoot: snapshot.scratchRoot,
       fixtureRoot: supplementalFixtures,
       candidate: snapshot.candidate,
@@ -1423,6 +1444,7 @@ export async function createNativeStageContext(
     let preserveTemporary = false;
     const verifySource = async () => {
       verifySourceSnapshot(snapshot);
+      verifySourceSnapshot(docsLinkSnapshot);
       verifySourceSnapshot(supplementalSnapshot, { derivedOutputs });
       if (networkBoundaryProof.isolated) {
         if (typeof verifyNetworkBoundary === 'function') {

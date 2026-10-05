@@ -102,6 +102,35 @@ const allTools = () => ({
   lychee: binary('0.24.2'),
   docsDependencies: { verified: true, lockSha256: hash('locked docs') },
 });
+
+test('native docs link globs run on an independent checkout without changing selection', async (t) => {
+  const options = await fixture(t);
+  const linksRoot = path.join(options.scratchRoot, 'link-checkout');
+  await mkdir(linksRoot);
+  const plan = await createSupplementalPrStages({
+    ...options,
+    linksRoot,
+    tools: allTools(),
+  });
+  const scan = plan.checks.find(
+    (check) => check.id === 'docs-links-native-scan'
+  );
+  assert.equal(scan.cwd, linksRoot);
+  assert.deepEqual(scan.args.slice(-4), [
+    './docs/**/*.md',
+    './docs/**/*.mdx',
+    './gen-docs/**/*.md',
+    './gen-docs/**/*.mdx',
+  ]);
+  const council = plan.checks.find(
+    (check) => check.id === 'council-workflow-boundaries'
+  );
+  assert.equal(council.cwd, options.root);
+  await assert.rejects(
+    createSupplementalPrStages({ ...options, linksRoot: options.fixtureRoot }),
+    /owned scratch source/
+  );
+});
 const byId = (plan, id) => plan.checks.find((check) => check.id === id);
 const receipt = (id, state = 'executed-pass') => ({
   id,

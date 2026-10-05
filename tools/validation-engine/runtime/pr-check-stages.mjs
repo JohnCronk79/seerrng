@@ -99,6 +99,7 @@ export function supplementalApplicability({
 export async function createSupplementalPrStages(options) {
   const {
     root,
+    linksRoot = root,
     scratchRoot,
     fixtureRoot,
     candidate,
@@ -136,6 +137,15 @@ export async function createSupplementalPrStages(options) {
   )
     throw new Error(
       'Supplemental outputs require an owned scratch source copy and separate fixtures'
+    );
+  const linksSource = await realpath(linksRoot);
+  if (
+    !owned(scratch, linksSource) ||
+    linksSource === fixtures ||
+    owned(fixtures, linksSource)
+  )
+    throw new Error(
+      'Docs link inputs require an owned scratch source checkout'
     );
   const workflowHashes = {};
   for (const name of workflows) {
@@ -535,6 +545,7 @@ export async function createSupplementalPrStages(options) {
       './gen-docs/**/*.mdx',
     ],
     {
+      cwd: linksSource,
       selection: applicability.links,
       prerequisites: ['lychee'],
       networkDependent: true,
