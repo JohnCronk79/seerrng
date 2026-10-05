@@ -165,10 +165,11 @@ test('inherited runtime/database/provider/cloud credentials are removed, not mac
   assert.equal(env.RUN_LIVE_AUTH_AUDIT, 'false');
 });
 
-test('fixture preparation preserves source-entity disk seeding without changing production runtime', async (t) => {
+test('fixture preparation reuses compiled-entity disk seeding without changing production runtime', async (t) => {
   const { plan } = await fixture(t);
-  assert.deepEqual(plan.prepare.args, ['cypress:prepare']);
-  assert.equal(plan.prepare.env.NODE_ENV, 'development');
+  assert.equal(plan.prepare.command, process.execPath);
+  assert.deepEqual(plan.prepare.args, ['dist/scripts/prepareTestDb.js']);
+  assert.equal(plan.prepare.env.NODE_ENV, 'production');
   assert.equal(plan.prepare.env.WITH_MIGRATIONS, 'true');
   assert.equal(plan.prepare.env.CONFIG_DIRECTORY, plan.fixtureRoot);
   for (const command of [...plan.build, plan.server, plan.browser]) {
