@@ -91,6 +91,29 @@ const git = (root, args, input) =>
     }
   );
 
+export async function probeNativeBrowserReadiness(
+  baseUrl,
+  { fetchImpl = globalThis.fetch } = {}
+) {
+  try {
+    // The initialized app redirects logged-out homepage requests to /login.
+    // Require both the database health check and the actual Next login page.
+    for (const [pathname, expectedStatus] of [
+      ['/api/v1/status/ready', 204],
+      ['/login', 200],
+    ]) {
+      const response = await fetchImpl(new URL(pathname, baseUrl).href, {
+        signal: AbortSignal.timeout(2000),
+        redirect: 'error',
+      });
+      if (response.status !== expectedStatus) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function nativeEnvironment(inherited, home) {
   const env = buildBrowserEnvironment(inherited, home, 5056);
   env.HOME = home;
@@ -967,7 +990,12 @@ export async function executeNativeRepository(
           receipt = await nativeRun({
             ...command,
             cwd: plan.root,
-            env: execution.env,
+            env: {
+              ...execution.env,
+              ...(command.kind === 'tooling'
+                ? { NODE_OPTIONS: '--test-reporter=tap' }
+                : {}),
+            },
           });
         } catch (error) {
           if (command.kind === 'check' || error.receipt?.status !== 'failed') {
@@ -1916,20 +1944,10 @@ export async function createNativeStageContext(
         };
       },
       waitForReady: async (url, { service }) =>
-        service.waitForReady(
-          async () => {
-            try {
-              const response = await fetch(url, {
-                signal: AbortSignal.timeout(2000),
-                redirect: 'error',
-              });
-              return response.status === 200;
-            } catch {
-              return false;
-            }
-          },
-          { timeoutMs: 30_000, pollMs: 100 }
-        ),
+        service.waitForReady(() => probeNativeBrowserReadiness(url), {
+          timeoutMs: 30_000,
+          pollMs: 100,
+        }),
     };
     const localBlocked = [...normalized.prChecks, ...blockers].filter(
       (check) => check.required && check.status === 'prerequisite-blocked'

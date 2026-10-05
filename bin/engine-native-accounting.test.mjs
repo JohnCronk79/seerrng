@@ -54,6 +54,10 @@ function fixture(t, mode = {}) {
   let ordinal = 0;
   const nativeRun = async (command) => {
     calls.push(command.kind);
+    assert.equal(
+      command.env.NODE_OPTIONS,
+      command.kind === 'tooling' ? '--test-reporter=tap' : undefined
+    );
     const failed =
       (mode.failedVitest && command.kind === 'vitest') ||
       (mode.failedNode && command.kind === 'node-js');
