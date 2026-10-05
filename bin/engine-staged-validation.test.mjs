@@ -132,6 +132,81 @@ test('missing lifecycle/source/native executor callbacks fail before admission',
   );
 });
 
+test('repository-only isolation surrounds execution and restores before source guards', async () => {
+  const calls = [];
+  let isolated = false;
+  const report = await executeStagedValidation(
+    createStagedValidation(input()),
+    {
+      executeRepository: async () => {
+        assert.equal(isolated, true);
+        calls.push('repository');
+        return {
+          status: 'failed',
+          cases: { passed: 1, failed: 1, skipped: 0 },
+        };
+      },
+      withRepositoryIsolation: async (operation, admission) => {
+        assert.deepEqual(admission.candidate, candidate);
+        assert.match(admission.unitId, /repository/);
+        isolated = true;
+        calls.push('isolate');
+        try {
+          return await operation();
+        } finally {
+          isolated = false;
+          calls.push('restore');
+        }
+      },
+      run: async () => {
+        throw new Error('Later stages must not start');
+      },
+      readFile: async () => '',
+      writeArtifact: async () => {},
+      verifySource: async () => {
+        assert.equal(isolated, false);
+        calls.push('guard');
+      },
+    }
+  );
+  assert.equal(report.status, 'failed');
+  assert.deepEqual(calls.slice(0, 5), [
+    'guard',
+    'isolate',
+    'repository',
+    'restore',
+    'guard',
+  ]);
+});
+
+test('repository isolation restoration is awaited on native rejection', async () => {
+  let restored = false;
+  const report = await executeStagedValidation(
+    createStagedValidation(input()),
+    {
+      executeRepository: async () => {
+        throw new Error('Native failed');
+      },
+      withRepositoryIsolation: async (operation) => {
+        try {
+          return await operation();
+        } finally {
+          await Promise.resolve();
+          restored = true;
+        }
+      },
+      run: async () => {
+        throw new Error('Must not start');
+      },
+      readFile: async () => '',
+      writeArtifact: async () => {},
+      verifySource: async () => {},
+    }
+  );
+  assert.equal(report.status, 'failed');
+  assert.equal(restored, true);
+});
+
 test('unsupported, duplicate and unproved applicability is rejected', () => {
   for (const prChecks of [
     [{ id: 'x', stage: 'not-a-stage', required: true, status: 'ready' }],

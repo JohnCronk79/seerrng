@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  acceptNativeLycheeResult,
   acceptSupplementalNativeCases,
   createSupplementalPrStages,
   normalizeSupplementalPrChecks,
@@ -83,12 +84,22 @@ const allTools = () => ({
     scratchBindPathsVerified: true,
     loopbackReachabilityVerified: true,
   },
-  ct: binary(),
+  ct: {
+    ...binary('3.14.0'),
+    executable: '/owned/ct/ct',
+    configDir: '/owned/ct/etc',
+    configSha256: {
+      chartSchema:
+        'a554cca0ea6454b6359f88f505146d79fbad7077bdc0572dcf698c0f3e033c53',
+      lintconf:
+        '8dee081250acc0e2619674392c67f2801051b5de37289591a54e4b38aa77802e',
+    },
+  },
   helm: binary(),
   helmDocs: binary('1.14.2'),
-  yamllint: binary(),
-  yamale: binary(),
-  lychee: binary(),
+  yamllint: { ...binary('1.33.0'), executable: '/owned/venv/bin/yamllint' },
+  yamale: { ...binary('6.0.0'), executable: '/owned/venv/bin/yamale' },
+  lychee: binary('0.24.2'),
   docsDependencies: { verified: true, lockSha256: hash('locked docs') },
 });
 const byId = (plan, id) => plan.checks.find((check) => check.id === id);
@@ -189,14 +200,168 @@ test('native supplementary commands preserve .NET9, pinned smoke, required build
     'docs-image-parser-security',
   ]);
   assert(byId(plan, 'charts-native-lint').args.includes('--all'));
-  const links = byId(plan, 'docs-links-advisory');
-  assert.equal(links.required, false);
+  const links = byId(plan, 'docs-links-native-scan');
+  assert.equal(links.required, true);
+  assert.equal(byId(plan, 'docs-links-advisory').required, false);
+  assert.equal(byId(plan, 'docs-links-advisory').command, undefined);
+  assert(links.args.includes('markdown'));
+  assert(links.args.includes('task'));
   assert(links.args.includes('200..204,300..304,307,308,404,429,999'));
   assert.equal(links.env.GITHUB_TOKEN, '');
+  assert.equal(
+    byId(plan, 'charts-native-lint').env.CT_CONFIG_DIR,
+    '/owned/ct/etc'
+  );
+  assert(byId(plan, 'charts-native-lint').env.PATH.includes('/owned/venv/bin'));
   assert.equal(
     byId(plan, 'council-native-tooling').state,
     'delegated-to-native-owner'
   );
+});
+
+test('action-pinned chart validators, ct bundled configs and lychee versions cannot silently drift', async (t) => {
+  const options = await fixture(t);
+  for (const [name, version, id] of [
+    ['ct', '3.13.0', 'charts-native-lint'],
+    ['yamllint', '1.38.0', 'charts-native-lint'],
+    ['yamale', '6.1.0', 'charts-native-lint'],
+    ['lychee', '0.24.3', 'docs-links-native-scan'],
+  ]) {
+    const tools = allTools();
+    tools[name].version = version;
+    assert.equal(
+      byId(await createSupplementalPrStages({ ...options, tools }), id).state,
+      'prerequisite-blocked'
+    );
+  }
+  const tools = allTools();
+  tools.ct.configSha256.lintconf = 'f'.repeat(64);
+  assert.equal(
+    byId(
+      await createSupplementalPrStages({ ...options, tools }),
+      'charts-native-lint'
+    ).state,
+    'prerequisite-blocked'
+  );
+});
+
+const lycheeMarkdown = (total = 2) =>
+  '# Summary\n\n| Status | Count |\n|---|---|\n' +
+  [
+    ['🔍 Total', total],
+    ['🔗 Unique', total],
+    ['✅ Successful', 0],
+    ['⏳ Timeouts', 0],
+    ['🔀 Redirected', 0],
+    ['👻 Excluded', 0],
+    ['❓ Unknown', 0],
+    ['🚫 Errors', total],
+    ['⛔ Unsupported', 0],
+  ]
+    .map(([label, count]) => `| ${label} | ${count} |`)
+    .join('\n') +
+  '\n';
+const lycheeReceipt = (exitCode = 2) => ({
+  status: exitCode === 0 ? 'passed' : 'failed',
+  exitCode,
+  wallMs: 12,
+  lifecycle: {
+    completed: true,
+    cleanupVerified: true,
+    aborted: false,
+    timedOut: false,
+    signal: null,
+  },
+});
+
+test('one native Lychee scan accepts only proven exits0/2 and distinguishes advisory links from required empty/configuration failure', async (t) => {
+  const plan = await createSupplementalPrStages({
+    ...(await fixture(t)),
+    tools: allTools(),
+  });
+  const scan = byId(plan, 'docs-links-native-scan');
+  const nativeLychee = acceptNativeLycheeResult(
+    scan,
+    lycheeReceipt(),
+    lycheeMarkdown()
+  );
+  assert.equal(nativeLychee.status, 'passed');
+  assert.equal(nativeLychee.linkOutcome, 'advisory-findings');
+  assert.equal(nativeLychee.counts.total, 2);
+  const completion = supplementalCompletion(plan, [
+    { ...receipt(scan.id), nativeLychee },
+  ]);
+  assert.equal(
+    completion.checks.find((check) => check.id === scan.id).outcome,
+    'executed-pass'
+  );
+  assert.equal(
+    completion.checks.find((check) => check.id === 'docs-links-advisory')
+      .outcome,
+    'advisory'
+  );
+  assert.throws(
+    () => supplementalCompletion(plan, [receipt(scan.id)]),
+    /Unproved native Lychee/
+  );
+  assert.throws(
+    () => acceptNativeLycheeResult(scan, lycheeReceipt(), lycheeMarkdown(0)),
+    /zero links/
+  );
+  for (const exit of [1, 3, 127])
+    assert.throws(
+      () =>
+        acceptNativeLycheeResult(scan, lycheeReceipt(exit), lycheeMarkdown()),
+      /execution\/configuration/
+    );
+  for (const patch of [
+    { completed: false },
+    { cleanupVerified: false },
+    { aborted: true },
+    { timedOut: true },
+    { signal: 'SIGTERM' },
+  ])
+    assert.throws(
+      () =>
+        acceptNativeLycheeResult(
+          scan,
+          {
+            ...lycheeReceipt(),
+            lifecycle: { ...lycheeReceipt().lifecycle, ...patch },
+          },
+          lycheeMarkdown()
+        ),
+      /lifecycle/
+    );
+  assert.throws(
+    () =>
+      acceptNativeLycheeResult(
+        scan,
+        { ...lycheeReceipt(), wallMs: undefined },
+        lycheeMarkdown()
+      ),
+    /lifecycle/
+  );
+  assert.throws(
+    () =>
+      acceptNativeLycheeResult(
+        scan,
+        lycheeReceipt(),
+        lycheeMarkdown() + '| 🔍 Total | 2 |\n'
+      ),
+    /duplicate/
+  );
+  assert.throws(
+    () => acceptNativeLycheeResult(scan, lycheeReceipt(), '# Summary\n'),
+    /count/
+  );
+  const normalized = normalizeSupplementalPrChecks(plan);
+  assert.equal(
+    normalized.prChecks.filter((check) => check.id.startsWith('docs-links'))
+      .length,
+    1
+  );
+  assert.equal(normalized.derivedCoverageReferences[0].owner, scan.id);
 });
 
 test('wrong SDK, helm-docs version, lockfile or daemon paths block their check', async (t) => {

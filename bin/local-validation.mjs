@@ -316,14 +316,64 @@ export function toolingOwnership(source, ts) {
   return arrays;
 }
 
-function requireFile(root, file) {
+export function validateDependencyReference(
+  root,
+  reference,
+  {
+    platform = process.platform,
+    mountInfo = platform === 'linux'
+      ? readFileSync('/proc/self/mountinfo', 'utf8')
+      : '',
+  } = {}
+) {
+  if (
+    !reference ||
+    reference.readonlyProof?.verified !== true ||
+    platform !== 'linux'
+  )
+    throw new Error('An actual read-only dependency reference is required');
+  const dependencyRoot = realpathSync(reference.root);
+  if (realpathSync(join(root, 'node_modules')) !== dependencyRoot)
+    throw new Error(
+      'Dependency reference does not match the selected source link'
+    );
+  const mounts = mountInfo
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.split(' '))
+    .filter(
+      (parts) =>
+        parts[4] &&
+        (dependencyRoot === parts[4].replaceAll('\\040', ' ') ||
+          inside(parts[4].replaceAll('\\040', ' '), dependencyRoot))
+    )
+    .sort((a, b) => b[4].length - a[4].length);
+  if (!mounts[0]?.[5].split(',').includes('ro'))
+    throw new Error('Dependency reference is not actually mounted read-only');
+  const sourceLock = createHash('sha256')
+    .update(readFileSync(join(root, 'pnpm-lock.yaml')))
+    .digest('hex');
+  const installedLock = createHash('sha256')
+    .update(readFileSync(join(dependencyRoot, '.pnpm', 'lock.yaml')))
+    .digest('hex');
+  if (sourceLock !== reference.lockSha256 || installedLock !== sourceLock)
+    throw new Error('Read-only dependency reference lockfile mismatch');
+  return dependencyRoot;
+}
+
+function requireFile(root, file, dependencyRoot) {
   const absolute = resolve(root, file);
   if (
     !inside(root, absolute) ||
     !existsSync(absolute) ||
     !lstatSync(absolute).isFile() ||
     lstatSync(absolute).size === 0 ||
-    !inside(root, realpathSync(absolute))
+    !(
+      inside(root, realpathSync(absolute)) ||
+      (dependencyRoot &&
+        file.startsWith('node_modules/') &&
+        inside(dependencyRoot, realpathSync(absolute)))
+    )
   ) {
     throw new Error(`Missing, empty or unsafe required file: ${file}`);
   }
@@ -402,17 +452,47 @@ export function chunkArguments(files, maxCharacters = 20_000) {
 
 export function createPlan(
   root,
-  { testsOnly = false, platform = process.platform, ts } = {}
+  {
+    testsOnly = false,
+    platform = process.platform,
+    ts,
+    canonicalTypescript = false,
+    dependencyReference,
+  } = {}
 ) {
   root = realpathSync(root);
   const inventory = discoverTests(root, {
     platform,
     ts: ts || loadTypeScript(root),
   });
+  if (typeof canonicalTypescript !== 'boolean')
+    throw new Error('Explicit canonical TypeScript binding is required');
+  if (canonicalTypescript) {
+    const config = readFileSync(requireFile(root, 'vitest.config.mts'), 'utf8');
+    requireFile(root, 'server/test/vitestNodeTest.ts');
+    if (
+      !/['"]node:test['"]\s*:\s*resolve\(projectRoot,\s*['"]server\/test\/vitestNodeTest\.ts['"]\)/.test(
+        config
+      )
+    )
+      throw new Error(
+        'Canonical execution requires the repository native node:test adapter'
+      );
+    for (const entry of inventory) {
+      if (entry.owner === 'node-ts') {
+        entry.originalOwner = entry.owner;
+        entry.owner = 'vitest';
+        entry.executionBinding = 'repository-native-node-test-adapter';
+      }
+    }
+  }
   const steps = [];
   const add = (name, args, kind = 'check') =>
     steps.push({ name, command: process.execPath, args, kind });
-  const required = (file) => requireFile(root, file);
+  const dependencyRoot = dependencyReference
+    ? validateDependencyReference(root, dependencyReference)
+    : undefined;
+  const required = (file) => requireFile(root, file, dependencyRoot);
   if (!testsOnly) {
     for (const [name, file] of [
       ['Translations', 'bin/check-i18n.js'],
@@ -443,6 +523,7 @@ export function createPlan(
     add('Client types', [tsc, '--noEmit']);
   }
   for (const owner of ['vitest', 'node-ts', 'node-js', 'tooling']) {
+    if (canonicalTypescript && owner === 'node-ts') continue;
     const files = inventory
       .filter((entry) => entry.owner === owner && entry.selected)
       .map((entry) => entry.file);
@@ -505,7 +586,7 @@ export function createPlan(
       }
     }
   }
-  return { root, platform, testsOnly, inventory, steps };
+  return { root, platform, testsOnly, canonicalTypescript, inventory, steps };
 }
 
 export function isolatedEnvironment(directory, inherited = process.env) {
@@ -546,7 +627,8 @@ export function vitestConfigSource(
   config,
   root,
   files,
-  workers = detectWorkerCapacity({ sourceRoot: root }).configuredWorkers
+  workers = detectWorkerCapacity({ sourceRoot: root }).configuredWorkers,
+  cacheDirectory
 ) {
   const binding = new URL(
     '../tools/validation-engine/runtime/vitest-binding.mjs',
@@ -562,7 +644,7 @@ export default async (environment) => {
  // Vite concatenates inherited arrays. Root includes would broaden both
  // child projects and execute some files twice instead of partitioning them.
  delete test.include; delete test.exclude; delete test.projects;
- return {...base, root: ${JSON.stringify(root)}, test: {...test, maxWorkers: ${JSON.stringify(workers)}, projects: engineVitestProjects({ files: ${JSON.stringify(files)}, exclude: base.test?.exclude ?? ['node_modules/**', 'dist/**'], workers: ${JSON.stringify(workers)} }), passWithNoTests: false}};
+ return {...base, root: ${JSON.stringify(root)}, ${cacheDirectory ? `cacheDir: ${JSON.stringify(cacheDirectory)},` : ''} test: {...test, maxWorkers: ${JSON.stringify(workers)}, projects: engineVitestProjects({ files: ${JSON.stringify(files)}, exclude: base.test?.exclude ?? ['node_modules/**', 'dist/**'], workers: ${JSON.stringify(workers)} }), passWithNoTests: false}};
 };
 `;
 }
@@ -956,7 +1038,13 @@ export async function executePlan(
         const config = join(directory, 'vitest.config.mjs');
         writeFileSync(
           config,
-          vitestConfigSource(step.config, plan.root, step.files),
+          vitestConfigSource(
+            step.config,
+            plan.root,
+            step.files,
+            undefined,
+            join(directory, 'vitest-cache')
+          ),
           { flag: 'wx' }
         );
         step.args = step.args.map((arg) =>

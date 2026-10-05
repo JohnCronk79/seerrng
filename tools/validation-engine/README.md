@@ -30,7 +30,18 @@ may silently represent those as executed passes. The existing process runner
 provides stream hashes, persistent owned logs and managed server cleanup rather
 than introducing another runner. Its historical string-returning API remains.
 
-Automatic full-gate integration and the expanded baseline are still pending.
+The existing `validate:development` entry now selects these stages automatically;
+`--help` and `--plan` remain read-only, and `--tests-only` retains the original
+native test-only behavior. Preparation creates owned source copies and binds
+native receipts, full output logs, actual case ledgers, tool versions, dependency
+locks and read-only references. Completed and failed execution evidence is kept.
+
+Automatic provisioning of isolated execution on arbitrary development machines
+and the expanded baseline are still pending. The full gate requires an actually
+verified repository network boundary, private Docker fixtures, browser provider
+isolation and complete Git history/tags. The current internal host integration
+supplies those proofs; a normal environment without them reports incomplete,
+not passed. No separate end-user runner or command is introduced.
 Focused adapter tests are not evidence of a successful full scan, build, browser
 suite, or performance improvement. The archive's immutable-consumer/source-repair guarantees are
 unchanged. A native Vitest run does not by itself establish a full frozen source

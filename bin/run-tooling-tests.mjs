@@ -8,6 +8,7 @@ const portableTests = [
   'bin/engine-build-browser-stage.test.mjs',
   'bin/engine-staged-validation.test.mjs',
   'bin/engine-pr-check-stages.test.mjs',
+  'bin/engine-native-stage-context.test.mjs',
   'bin/local-validation.test.mjs',
   'bin/check-current-batch-contract-lib.test.mjs',
   'bin/check-i18n-lib.test.mjs',

@@ -8,7 +8,10 @@ import {
 import { validateCodeqlOutputs } from './codeql-stage.mjs';
 import { coordinate, preparePlan } from './controller.mjs';
 import { readNodeTapHierarchy } from './node-tap-hierarchy.mjs';
-import { acceptSupplementalNativeCases } from './pr-check-stages.mjs';
+import {
+  acceptNativeLycheeResult,
+  acceptSupplementalNativeCases,
+} from './pr-check-stages.mjs';
 
 const digest = (value) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -168,6 +171,7 @@ export async function executeStagedValidation(binding, options) {
     readFile,
     writeArtifact,
     verifySource,
+    withRepositoryIsolation,
     signal,
   } = options;
   if (
@@ -178,10 +182,38 @@ export async function executeStagedValidation(binding, options) {
     throw new Error(
       'Existing native executors, artifact and source guards are required'
     );
+  if (
+    withRepositoryIsolation !== undefined &&
+    typeof withRepositoryIsolation !== 'function'
+  )
+    throw new Error('Repository isolation admission must be a native callback');
   const evidence = new Map();
   let buildReceipt;
   const nativeRun = async (command, executionOptions) => {
-    const receipt = await run(command, executionOptions);
+    if (command.lycheeLedger) {
+      try {
+        await readFile(command.lycheeLedger.reportFile);
+        throw new Error('Native Lychee report path is not fresh');
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+    let receipt;
+    try {
+      receipt = await run(command, executionOptions);
+    } catch (error) {
+      if (!command.lycheeLedger || !error.receipt) throw error;
+      receipt = error.receipt;
+    }
+    if (command.lycheeLedger) {
+      const nativeLychee = acceptNativeLycheeResult(
+        command,
+        receipt,
+        await readFile(command.lycheeLedger.reportFile)
+      );
+      // Preserve actual child exit/status: only the native operational guard passes.
+      return { ...receipt, nativeLychee };
+    }
     if (
       receipt?.status !== 'passed' ||
       receipt.exitCode !== 0 ||
@@ -235,9 +267,10 @@ export async function executeStagedValidation(binding, options) {
         !!failure ||
         receipts.some(
           (receipt) =>
-            receipt.status !== 'passed' ||
-            receipt.exitCode !== 0 ||
-            receipt.lifecycle?.completed !== true
+            receipt.nativeLychee?.status !== 'passed' &&
+            (receipt.status !== 'passed' ||
+              receipt.exitCode !== 0 ||
+              receipt.lifecycle?.completed !== true)
         );
       result = {
         status: failed ? 'failed' : 'passed',
@@ -248,7 +281,15 @@ export async function executeStagedValidation(binding, options) {
         caseLedgers,
       };
     } else if (owner.stage === 'repository') {
-      result = await executeRepository(binding.repositoryPlan, { signal });
+      const operation = () =>
+        executeRepository(binding.repositoryPlan, { signal });
+      result = withRepositoryIsolation
+        ? await withRepositoryIsolation(operation, {
+            candidate: binding.plan.candidate,
+            unitId: unit.id,
+            signal,
+          })
+        : await operation();
       cases = counts(result.cases);
       if (cases.passed + cases.failed < 1)
         throw new Error('Repository suite executed zero active cases');

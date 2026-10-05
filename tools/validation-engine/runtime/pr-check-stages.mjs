@@ -19,6 +19,13 @@ const ready = (receipt) =>
   receipt?.verified === true &&
   sha(receipt.executableSha256) &&
   typeof receipt.version === 'string';
+export const supplementalPinnedTools = Object.freeze({
+  ct: '3.14.0',
+  helmDocs: '1.14.2',
+  yamllint: '1.33.0',
+  yamale: '6.0.0',
+  lychee: '0.24.2',
+});
 const workflows = [
   'ci.yml',
   'test-docs.yml',
@@ -170,6 +177,19 @@ export async function createSupplementalPrStages(options) {
     baseBranch,
   });
   const checks = [];
+  const checkPinnedTools = (descriptor, names) => {
+    if (descriptor.state !== 'ready') return;
+    for (const name of names) {
+      if (
+        tools[name]?.version.replace(/^v/, '') !== supplementalPinnedTools[name]
+      ) {
+        descriptor.state = 'prerequisite-blocked';
+        descriptor.missingPrerequisites.push(
+          `${name}:${supplementalPinnedTools[name]}`
+        );
+      }
+    }
+  };
   const command = (
     id,
     executable,
@@ -413,13 +433,18 @@ export async function createSupplementalPrStages(options) {
       writes: ['charts/**/README.md'],
     }
   );
-  if (
-    helmDocs.state === 'ready' &&
-    tools.helmDocs.version.replace(/^v/, '') !== '1.14.2'
-  ) {
-    helmDocs.state = 'prerequisite-blocked';
-    helmDocs.missingPrerequisites.push('helmDocs:1.14.2');
-  }
+  checkPinnedTools(helmDocs, ['helmDocs']);
+  const chartEnv = {
+    ...env,
+    CT_CONFIG_DIR: tools.ct?.configDir ?? '',
+    PATH: [
+      ...['yamllint', 'yamale', 'helm']
+        .map((name) => tools[name]?.executable)
+        .filter((file) => file && path.isAbsolute(file))
+        .map((file) => path.dirname(file)),
+      env.PATH ?? process.env.PATH ?? '',
+    ].join(path.delimiter),
+  };
   const chartArgs =
     scope === 'full'
       ? ['lint', '--all', '--validate-maintainers=false']
@@ -429,8 +454,8 @@ export async function createSupplementalPrStages(options) {
           defaultBranch ?? '',
           '--validate-maintainers=false',
         ];
-  if (scope === 'pr')
-    command(
+  if (scope === 'pr') {
+    const listChanged = command(
       'charts-list-changed',
       tools.ct?.executable ?? 'ct',
       ['list-changed', '--target-branch', defaultBranch ?? ''],
@@ -439,8 +464,11 @@ export async function createSupplementalPrStages(options) {
         selection: applicability.charts,
         prerequisites: ['ct', 'git'],
         dependsOn: [helmDocs.id],
+        env: chartEnv,
       }
     );
+    checkPinnedTools(listChanged, ['ct']);
+  }
   const chartLint = command(
     'charts-native-lint',
     tools.ct?.executable ?? 'ct',
@@ -452,8 +480,21 @@ export async function createSupplementalPrStages(options) {
       dependsOn: [scope === 'pr' ? 'charts-list-changed' : helmDocs.id],
       nativeCondition:
         scope === 'pr' ? 'charts-list-changed:nonempty-native-output' : null,
+      env: chartEnv,
     }
   );
+  checkPinnedTools(chartLint, ['ct', 'yamllint', 'yamale']);
+  if (
+    chartLint.state === 'ready' &&
+    (!path.isAbsolute(tools.ct?.configDir ?? '') ||
+      tools.ct?.configSha256?.chartSchema !==
+        'a554cca0ea6454b6359f88f505146d79fbad7077bdc0572dcf698c0f3e033c53' ||
+      tools.ct?.configSha256?.lintconf !==
+        '8dee081250acc0e2619674392c67f2801051b5de37289591a54e4b38aa77802e')
+  ) {
+    chartLint.state = 'prerequisite-blocked';
+    chartLint.missingPrerequisites.push('ct:source-bound-bundled-etc');
+  }
   if (chartLint.state === 'ready' && !gitReady) {
     chartLint.state = 'prerequisite-blocked';
     chartLint.missingPrerequisites.push('git:complete-history-and-target-ref');
@@ -467,10 +508,17 @@ export async function createSupplementalPrStages(options) {
         descriptor.missingPrerequisites.push('git:repository-default-branch');
       }
     }
-  command(
-    'docs-links-advisory',
+  const lycheeReport = path.join(fixtures, 'lychee-out.md');
+  const links = command(
+    'docs-links-native-scan',
     tools.lychee?.executable ?? 'lychee',
     [
+      '--format',
+      'markdown',
+      '--mode',
+      'task',
+      '--output',
+      lycheeReport,
       '--verbose',
       '--no-progress',
       '--accept',
@@ -487,13 +535,31 @@ export async function createSupplementalPrStages(options) {
       './gen-docs/**/*.mdx',
     ],
     {
-      required: false,
       selection: applicability.links,
       prerequisites: ['lychee'],
       networkDependent: true,
-      env: { ...env, GITHUB_TOKEN: '' },
+      writes: [lycheeReport],
+      env: { ...env, GITHUB_TOKEN: '', GH_TOKEN: '', GITLAB_TOKEN: '' },
+      lycheeLedger: {
+        format: 'lychee-0.24.2-markdown-v1',
+        reportFile: lycheeReport,
+        failIfEmpty: true,
+        linkFailureExitCode: 2,
+      },
     }
   );
+  checkPinnedTools(links, ['lychee']);
+  checks.push({
+    id: 'docs-links-advisory',
+    lane: links.lane,
+    required: false,
+    state: links.state === 'ready' ? 'derived-from-native-owner' : links.state,
+    owner: links.id,
+    candidate,
+    applicability: links.applicability,
+    reason:
+      'Link findings derive from the same native scan; zero links and runtime/configuration errors fail its required operational guard',
+  });
   for (const [id, reason] of [
     [
       'github-pr-title',
@@ -553,12 +619,18 @@ export function supplementalCompletion(plan, results) {
   const checks = plan.checks.map((check) => {
     if (check.state === 'not-applicable-with-trigger-proof')
       return { ...check, outcome: check.state };
-    const receipt = byId.get(check.id);
+    const receipt =
+      byId.get(check.id) ??
+      (check.state === 'derived-from-native-owner'
+        ? byId.get(check.owner)
+        : null);
     if (!receipt)
       return {
         ...check,
         outcome:
-          check.state === 'ready' || check.state === 'delegated-to-native-owner'
+          check.state === 'ready' ||
+          check.state === 'delegated-to-native-owner' ||
+          check.state === 'derived-from-native-owner'
             ? 'pending'
             : check.state,
       };
@@ -573,6 +645,16 @@ export function supplementalCompletion(plan, results) {
       throw new Error(`Invalid supplemental outcome: ${check.id}`);
     if (check.required && receipt.state === 'advisory')
       throw new Error(`Required check cannot become advisory: ${check.id}`);
+    if (
+      check.lycheeLedger &&
+      receipt.state === 'executed-pass' &&
+      (receipt.nativeLychee?.status !== 'passed' ||
+        receipt.nativeLychee?.sourceSha256 !== plan.candidate.sourceSha256 ||
+        !sha(receipt.nativeLychee?.reportSha256) ||
+        !Number.isSafeInteger(receipt.nativeLychee?.counts?.total) ||
+        receipt.nativeLychee.counts.total < 1)
+    )
+      throw new Error(`Unproved native Lychee operational guard: ${check.id}`);
     if (
       receipt.state === 'not-applicable-with-trigger-proof' &&
       (!check.nativeCondition || !receipt.triggerProofSha256)
@@ -619,6 +701,7 @@ export function normalizeSupplementalPrChecks(plan) {
   const prChecks = [];
   const pendingMetadata = [];
   const delegatedCoverageReferences = [];
+  const derivedCoverageReferences = [];
   const normalize = (ids, id = ids[0]) => {
     const checks = ids.map((key) => raw.get(key)).filter(Boolean);
     for (const check of checks) consumed.add(check.id);
@@ -677,6 +760,10 @@ export function normalizeSupplementalPrChecks(plan) {
       delegatedCoverageReferences.push(check);
       continue;
     }
+    if (check.id === 'docs-links-advisory') {
+      derivedCoverageReferences.push(check);
+      continue;
+    }
     if (
       check.lane === 'github-native' ||
       check.state === 'GitHub-native-pending'
@@ -686,7 +773,83 @@ export function normalizeSupplementalPrChecks(plan) {
     }
     normalize([check.id]);
   }
-  return { prChecks, pendingMetadata, delegatedCoverageReferences };
+  return {
+    prChecks,
+    pendingMetadata,
+    delegatedCoverageReferences,
+    derivedCoverageReferences,
+  };
+}
+
+// One scan, two conclusions: required execution/empty guard and advisory link findings.
+// Root must use this only with the executor's own complete receipt and fresh report bytes.
+export function acceptNativeLycheeResult(descriptor, receipt, reportBytes) {
+  if (descriptor.lycheeLedger?.format !== 'lychee-0.24.2-markdown-v1')
+    throw new Error('Exact native Lychee ledger binding is required');
+  const lifecycle = receipt?.lifecycle;
+  if (
+    !['passed', 'failed'].includes(receipt?.status) ||
+    lifecycle?.completed !== true ||
+    lifecycle?.cleanupVerified !== true ||
+    (receipt?.aborted ?? lifecycle?.aborted) !== false ||
+    (receipt?.timedOut ?? lifecycle?.timedOut) !== false ||
+    (Object.hasOwn(receipt, 'signal') ? receipt.signal : lifecycle?.signal) !==
+      null ||
+    receipt?.spawnError ||
+    !Number.isFinite(receipt?.wallMs) ||
+    receipt.wallMs < 0 ||
+    ![0, 2].includes(receipt.exitCode) ||
+    (receipt.exitCode === 0) !== (receipt.status === 'passed')
+  )
+    throw new Error('Lychee native execution/configuration/lifecycle failed');
+  if (typeof reportBytes !== 'string' && !Buffer.isBuffer(reportBytes))
+    throw new Error('Fresh native Lychee Markdown bytes are required');
+  const bytes = Buffer.isBuffer(reportBytes)
+    ? reportBytes
+    : Buffer.from(reportBytes);
+  const text = bytes.toString('utf8');
+  if (!text.startsWith('# Summary\n') && !text.startsWith('# Summary\r\n'))
+    throw new Error('Incomplete native Lychee summary');
+  const counts = {};
+  for (const [key, label] of Object.entries({
+    total: '🔍 Total',
+    unique: '🔗 Unique',
+    successful: '✅ Successful',
+    timeouts: '⏳ Timeouts',
+    redirected: '🔀 Redirected',
+    excluded: '👻 Excluded',
+    unknown: '❓ Unknown',
+    errors: '🚫 Errors',
+    unsupported: '⛔ Unsupported',
+  })) {
+    const rows = text
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith(`| ${label}`));
+    const match =
+      rows.length === 1 && rows[0].match(/^\| [^|]+\|\s*(\d+)\s*\|$/);
+    if (!match || !Number.isSafeInteger(Number(match[1])))
+      throw new Error(`Missing/duplicate native Lychee ${key} count`);
+    counts[key] = Number(match[1]);
+  }
+  if (counts.total === 0)
+    throw new Error('Native Lychee found zero links (action failIfEmpty=true)');
+  if (
+    counts.unique > counts.total ||
+    Object.entries(counts).some(
+      ([key, value]) => key !== 'total' && value > counts.total
+    )
+  )
+    throw new Error('Inconsistent native Lychee counts');
+  return {
+    status: 'passed',
+    sourceSha256: descriptor.candidate.sourceSha256,
+    reportSha256: digest(bytes),
+    counts,
+    nativeExitCode: receipt.exitCode,
+    linkOutcome:
+      receipt.exitCode === 2 ? 'advisory-findings' : 'no-failing-links',
+    reportFile: descriptor.lycheeLedger.reportFile,
+  };
 }
 
 export function acceptSupplementalNativeCases(

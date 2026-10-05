@@ -28,6 +28,7 @@ import {
   startCommand,
   testCount,
   toolingOwnership,
+  validateDependencyReference,
   validateGovernanceSources,
   validatePackageBindings,
   vitestConfigSource,
@@ -221,6 +222,129 @@ test('plan is read-only, partitions framework runs and preserves the original Vi
     );
   } finally {
     f.cleanup();
+  }
+});
+
+test('canonical engine binding uses the existing CI adapter once without changing ordinary native commands', () => {
+  const f = fixture();
+  try {
+    assert.throws(
+      () =>
+        createPlan(f.directory, {
+          testsOnly: true,
+          ts,
+          canonicalTypescript: true,
+        }),
+      /required file/
+    );
+    f.write('server/test/vitestNodeTest.ts', 'export const test = () => {};');
+    f.write(
+      'vitest.config.mts',
+      "export default {resolve: {alias: {'node:test': resolve(projectRoot, 'server/test/vitestNodeTest.ts')}}, test: {}};"
+    );
+    const plan = createPlan(f.directory, {
+      testsOnly: true,
+      ts,
+      canonicalTypescript: true,
+    });
+    assert.equal(plan.steps.filter(({ kind }) => kind === 'node-ts').length, 0);
+    assert.deepEqual(plan.steps.find(({ kind }) => kind === 'vitest').files, [
+      'server/native.test.ts',
+      'src/component.test.ts',
+      'src/native.test.tsx',
+    ]);
+    assert.equal(
+      new Set(plan.steps.flatMap(({ files = [] }) => files)).size,
+      plan.inventory.length
+    );
+    assert.equal(
+      plan.inventory.filter(({ originalOwner }) => originalOwner === 'node-ts')
+        .length,
+      2
+    );
+    assert.equal(
+      createPlan(f.directory, { testsOnly: true, ts }).steps.filter(
+        ({ kind }) => kind === 'node-ts'
+      ).length,
+      1
+    );
+    f.write('vitest.config.mts', 'export default {};');
+    assert.throws(
+      () =>
+        createPlan(f.directory, {
+          testsOnly: true,
+          ts,
+          canonicalTypescript: true,
+        }),
+      /native node:test adapter/
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('external dependency references require actual read-only mount and exact source/installed locks', () => {
+  const f = fixture();
+  const dependencies = mkdtempSync(
+    join(tmpdir(), 'seerrng-dependency-reference-')
+  );
+  try {
+    const lock = 'lockfileVersion: 9\n';
+    f.write('pnpm-lock.yaml', lock);
+    mkdirSync(join(dependencies, '.pnpm'));
+    writeFileSync(join(dependencies, '.pnpm/lock.yaml'), lock);
+    rmSync(join(f.directory, 'node_modules'), { recursive: true });
+    symlinkSync(
+      dependencies,
+      join(f.directory, 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
+    const reference = {
+      root: dependencies,
+      readonlyProof: { verified: true },
+      lockSha256: createHash('sha256').update(lock).digest('hex'),
+    };
+    const options = {
+      platform: 'linux',
+      mountInfo: `1 0 0:1 / ${dependencies} ro - tmpfs tmpfs ro\n`,
+    };
+    assert.equal(
+      validateDependencyReference(f.directory, reference, options),
+      dependencies
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(f.directory, reference, {
+          ...options,
+          mountInfo: options.mountInfo.replaceAll(' ro', ' rw'),
+        }),
+      /actually mounted read-only/
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(
+          f.directory,
+          { ...reference, readonlyProof: { verified: false } },
+          options
+        ),
+      /actual read-only/
+    );
+    assert.throws(
+      () =>
+        validateDependencyReference(f.directory, reference, {
+          ...options,
+          platform: 'win32',
+        }),
+      /actual read-only/
+    );
+    writeFileSync(join(dependencies, '.pnpm/lock.yaml'), 'different-lock');
+    assert.throws(
+      () => validateDependencyReference(f.directory, reference, options),
+      /lockfile mismatch/
+    );
+  } finally {
+    f.cleanup();
+    rmSync(dependencies, { recursive: true });
   }
 });
 
