@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
   acceptNativeLycheeResult,
   acceptSupplementalNativeCases,
@@ -132,6 +133,29 @@ test('native docs link globs run on an independent checkout without changing sel
   );
 });
 const byId = (plan, id) => plan.checks.find((check) => check.id === id);
+
+test('native supplemental reporting and compiler lifetime are sealed without changing test selection', async (t) => {
+  const plan = await createSupplementalPrStages({
+    ...(await fixture(t)),
+    tools: allTools(),
+    env: {
+      NODE_OPTIONS: '--require=untrusted',
+      DOCKER_HOST: 'unix:///owned/docker.sock',
+    },
+  });
+  const security = byId(plan, 'docs-image-parser-security');
+  assert.deepEqual(security.args, ['test:security']);
+  assert.equal(security.env.NODE_OPTIONS, '--test-reporter=tap');
+  assert.ok(
+    byId(plan, 'jellyfin-plugin-publish').args.includes(
+      '--disable-build-servers'
+    )
+  );
+  assert.equal(
+    byId(plan, 'jellyfin-plugin-native-smoke').env.DOCKER_HOST,
+    'unix:///owned/docker.sock'
+  );
+});
 const receipt = (id, state = 'executed-pass') => ({
   id,
   state,

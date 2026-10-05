@@ -20,6 +20,7 @@ import {
 } from 'node:fs';
 import { freemem, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import path from 'node:path';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node runtime cannot resolve application aliases.
 import {
   createPlan,
   executePlan,
@@ -30,7 +31,11 @@ import {
   buildBrowserEnvironment,
   createBuildBrowserStages,
 } from './build-browser-stage.mjs';
-import { createCodeqlSteps, readCodeqlWorkflow } from './codeql-stage.mjs';
+import {
+  createCodeqlSteps,
+  readCodeqlQueryPackMetadata,
+  readCodeqlWorkflow,
+} from './codeql-stage.mjs';
 import { detectWorkerCapacity } from './cpu-capacity.mjs';
 import { readNodeTapHierarchy } from './node-tap-hierarchy.mjs';
 import {
@@ -55,6 +60,7 @@ const safe = (file) =>
   typeof file === 'string' &&
   file &&
   !path.isAbsolute(file) &&
+  // eslint-disable-next-line no-control-regex -- Reject unsafe control characters in source-relative paths.
   !/[\x00-\x1f\\]/.test(file) &&
   file.split('/').every((part) => part && part !== '.' && part !== '..');
 const git = (root, args, input) =>
@@ -450,6 +456,37 @@ export function readonlyMountProof(
   };
 }
 
+// Only exact sealed read-only query manifests may be read outside scratch.
+export function readNativeStageArtifact(
+  file,
+  { scratchRoot, queryPacks = [] },
+  mountProof = readonlyMountProof
+) {
+  const absolute = path.resolve(file);
+  const pack = queryPacks.find(
+    (pack) =>
+      pack.qlpackSha256 && absolute === path.join(pack.root, 'qlpack.yml')
+  );
+  if (pack) {
+    if (
+      !/^[a-f0-9]{64}$/.test(pack.qlpackSha256) ||
+      realpathSync(pack.root) !== pack.root ||
+      !mountProof(pack.root).verified
+    )
+      throw new Error('Query manifest requires its sealed read-only pack root');
+    const bytes = readFileSync(regular(pack.root, 'qlpack.yml').absolute);
+    if (hash(bytes) !== pack.qlpackSha256)
+      throw new Error('Sealed query manifest bytes changed');
+    return bytes;
+  }
+  return readFileSync(
+    regular(
+      scratchRoot,
+      path.relative(scratchRoot, absolute).split(path.sep).join('/')
+    ).absolute
+  );
+}
+
 export function nativeNetworkBoundary({
   platform = process.platform,
   interfaces = networkInterfaces(),
@@ -582,7 +619,9 @@ export function findNativeExecutable(name, environment = process.env) {
         accessSync(actual, constants.X_OK);
         return actual;
       }
-    } catch {}
+    } catch {
+      // An inaccessible PATH candidate is not a verified native executable.
+    }
   }
   return null;
 }
@@ -1272,6 +1311,11 @@ export async function createNativeStageContext(
           name,
           version: pack.version,
           ...closure(path.dirname(pack.path)),
+          ...readCodeqlQueryPackMetadata(readFileSync(pack.path), {
+            name,
+            version: pack.version,
+            cliVersion: nativeVersion.version,
+          }),
         });
       }
       const [modelName, modelVersion] = workflow.modelPack.split('@'),
@@ -1310,7 +1354,8 @@ export async function createNativeStageContext(
       }
       // Additional-packs is part of the sealed native command recipe, never an
       // unrecorded executable override after the plan is approved.
-      const { planSha256, ...unsealed } = codeqlPlan;
+      const unsealed = { ...codeqlPlan };
+      delete unsealed.planSha256;
       codeqlPlan.planSha256 = hash(JSON.stringify(unsealed));
     } catch (error) {
       blocked('native-codeql-toolchain', 'codeql', error.message);
@@ -1385,7 +1430,9 @@ export async function createNativeStageContext(
       ])
         .trim()
         .replace(/^refs\/remotes\/origin\//, '');
-    } catch {}
+    } catch {
+      // A missing remote default branch remains unknown, never inferred.
+    }
     const supplemental = await createSupplementalPrStages({
       root: supplementalSnapshot.root,
       linksRoot: docsLinkSnapshot.root,
@@ -1496,15 +1543,10 @@ export async function createNativeStageContext(
       signal,
       run: nativeRun,
       readFile: async (file) =>
-        readFileSync(
-          regular(
-            snapshot.scratchRoot,
-            path
-              .relative(snapshot.scratchRoot, path.resolve(file))
-              .split(path.sep)
-              .join('/')
-          ).absolute
-        ),
+        readNativeStageArtifact(file, {
+          scratchRoot: snapshot.scratchRoot,
+          queryPacks: codeqlToolchain?.packs ?? [],
+        }),
       writeArtifact: async (artifact) => {
         if (
           !beneath(codeqlScratch, path.resolve(artifact.path)) ||

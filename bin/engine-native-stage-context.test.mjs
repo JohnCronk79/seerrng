@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
   createOwnedDocsLinkSnapshot,
   createOwnedSourceSnapshot,
@@ -27,6 +28,7 @@ import {
   nativeEnvironment,
   nativeNetworkBoundary,
   prepareJellyfinTemporaryDirectory,
+  readNativeStageArtifact,
   readonlyMountProof,
   repositoryIsolationReadiness,
   repositoryNativeCases,
@@ -387,6 +389,53 @@ test('complete native output is materialized only when persistent byte count/has
   assert.throws(
     () => materializeNativeReceipt({ ...receipt, stdoutLog: null }),
     /no complete persistent log/
+  );
+});
+
+test('artifact reader permits only exact sealed read-only query manifests outside scratch', (t) => {
+  const { parent } = fixture(t);
+  const scratchRoot = path.join(parent, 'artifact-scratch');
+  const packRoot = path.join(parent, 'query-pack');
+  mkdirSync(scratchRoot);
+  mkdirSync(packRoot);
+  const manifest = path.join(packRoot, 'qlpack.yml');
+  const bytes = Buffer.from('name: codeql/actions-queries\nversion: 0.6.36\n');
+  writeFileSync(manifest, bytes);
+  const options = {
+    scratchRoot,
+    queryPacks: [{ root: packRoot, qlpackSha256: sha(bytes) }],
+  };
+  assert.deepEqual(
+    readNativeStageArtifact(manifest, options, () => ({ verified: true })),
+    bytes
+  );
+  assert.throws(
+    () =>
+      readNativeStageArtifact(manifest, options, () => ({ verified: false })),
+    /read-only/
+  );
+  assert.throws(
+    () => readNativeStageArtifact(manifest, { ...options, queryPacks: [] }),
+    /Unsafe/
+  );
+  const unrelated = path.join(packRoot, 'other.yml');
+  writeFileSync(unrelated, bytes);
+  assert.throws(
+    () =>
+      readNativeStageArtifact(unrelated, options, () => ({ verified: true })),
+    /Unsafe/
+  );
+  writeFileSync(manifest, 'changed');
+  assert.throws(
+    () =>
+      readNativeStageArtifact(manifest, options, () => ({ verified: true })),
+    /bytes changed/
+  );
+  const output = path.join(scratchRoot, 'result.sarif');
+  writeFileSync(output, 'native output');
+  assert.equal(
+    readNativeStageArtifact(output, options).toString(),
+    'native output'
   );
 });
 

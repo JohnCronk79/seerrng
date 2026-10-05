@@ -36,6 +36,7 @@ export function resourceKey(value, caseSensitive = true) {
     typeof value !== 'string' ||
     !value ||
     value.trim() !== value ||
+    // eslint-disable-next-line no-control-regex -- Reject unsafe control characters in source-relative resource keys.
     /[\\:*?"<>|\x00-\x1f\x7f]/.test(value) ||
     value.normalize('NFC') !== value ||
     value.startsWith('/') ||

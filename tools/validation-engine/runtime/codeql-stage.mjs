@@ -11,6 +11,54 @@ const fail = (message) => {
   throw new Error(`CodeQL stage: ${message}`);
 };
 
+// Read the exact vendor manifest identity, not an arbitrary SARIF suffix.
+// This deliberately supports only the reviewed native qlpack metadata shape.
+export function readCodeqlQueryPackMetadata(contents, expected) {
+  const text = contents.toString();
+  const scalar = (key) => {
+    const values = [
+      ...text.matchAll(new RegExp(`^${key}:\\s*(\\S+)\\s*$`, 'gm')),
+    ];
+    if (values.length !== 1) fail(`ambiguous query pack ${key}`);
+    return values[0][1];
+  };
+  if (
+    scalar('name') !== expected.name ||
+    scalar('version') !== expected.version
+  )
+    fail('installed query pack manifest identity mismatch');
+  const blocks = [
+    ...text.matchAll(
+      /^buildMetadata:\s*\r?\n((?:[ \t]+[^\r\n]*(?:\r?\n|$))*)/gm
+    ),
+  ];
+  if (
+    blocks.length > 1 ||
+    (text.match(/^buildMetadata:/gm)?.length ?? 0) !== blocks.length
+  )
+    fail('unsupported query pack build metadata');
+  let buildMetadataSha = null;
+  if (blocks.length) {
+    const fields = blocks[0][1].trim().split(/\r?\n/);
+    const sha = fields
+      .find((line) => /^\s*sha: [a-f0-9]{40}$/.test(line))
+      ?.trim()
+      .slice(5);
+    const cli = fields
+      .find((line) => /^\s*cliVersion: \d+\.\d+\.\d+$/.test(line))
+      ?.trim()
+      .slice(12);
+    if (fields.length !== 2 || !sha || cli !== expected.cliVersion)
+      fail('unsupported query pack build metadata');
+    buildMetadataSha = sha;
+  }
+  return {
+    sarifSemanticVersion: `${expected.version}${buildMetadataSha ? `+${buildMetadataSha}` : ''}`,
+    buildMetadataSha,
+    qlpackSha256: hash(contents),
+  };
+}
+
 function absolute(value, label) {
   if (typeof value !== 'string' || !value || /[\0\r\n]/.test(value))
     fail(`invalid ${label}`);
@@ -140,6 +188,19 @@ export function createCodeqlSteps({
     fail('pack closure names, versions and SHA256 values required');
   if (new Set(packs.map((pack) => pack.name)).size !== packs.length)
     fail('duplicate pack identity');
+  for (const pack of packs) {
+    if (pack.sarifSemanticVersion !== undefined) {
+      absolute(pack.root, 'query pack root');
+      if (
+        !sha256.test(pack.qlpackSha256 ?? '') ||
+        (pack.buildMetadataSha !== null &&
+          !/^[a-f0-9]{40}$/.test(pack.buildMetadataSha ?? '')) ||
+        pack.sarifSemanticVersion !==
+          `${pack.version}${pack.buildMetadataSha ? `+${pack.buildMetadataSha}` : ''}`
+      )
+        fail('unsealed query pack SARIF identity');
+    }
+  }
   for (const language of workflow.languages) {
     if (!packs.some((pack) => pack.name === `codeql/${language}-queries`))
       fail(`missing ${language} query pack closure`);
@@ -286,6 +347,22 @@ export async function validateCodeqlOutputs(
   }
   const languages = [];
   for (const output of plan.outputs) {
+    if (output.queryPack.sarifSemanticVersion !== undefined) {
+      const root = absolute(output.queryPack.root, 'query pack root');
+      const manifest = await readFile(
+        root.implementation.join(root.value, 'qlpack.yml')
+      );
+      if (hash(manifest) !== output.queryPack.qlpackSha256)
+        fail('installed query pack manifest changed during scan');
+      const metadata = readCodeqlQueryPackMetadata(manifest, {
+        ...output.queryPack,
+        cliVersion: plan.toolchain.cliVersion,
+      });
+      if (
+        metadata.sarifSemanticVersion !== output.queryPack.sarifSemanticVersion
+      )
+        fail('installed query pack SARIF identity mismatch');
+    }
     const bytes = await readFile(output.path);
     let sarif;
     try {
@@ -330,7 +407,7 @@ export async function validateCodeqlOutputs(
     if (
       !extension ||
       (extension.semanticVersion ?? extension.version) !==
-        output.queryPack.version
+        (output.queryPack.sarifSemanticVersion ?? output.queryPack.version)
     )
       fail('SARIF query pack identity mismatch');
     if (

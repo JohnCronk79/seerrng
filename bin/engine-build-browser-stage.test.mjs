@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
   acceptNativeCypressResults,
   buildBrowserEnvironment,
@@ -162,6 +163,21 @@ test('inherited runtime/database/provider/cloud credentials are removed, not mac
     assert(!Object.hasOwn(env, key), key);
   assert.equal(env.CYPRESS_RECORD_KEY, '');
   assert.equal(env.RUN_LIVE_AUTH_AUDIT, 'false');
+});
+
+test('fixture preparation preserves source-entity disk seeding without changing production runtime', async (t) => {
+  const { plan } = await fixture(t);
+  assert.deepEqual(plan.prepare.args, ['cypress:prepare']);
+  assert.equal(plan.prepare.env.NODE_ENV, 'development');
+  assert.equal(plan.prepare.env.WITH_MIGRATIONS, 'false');
+  assert.equal(plan.prepare.env.CONFIG_DIRECTORY, plan.fixtureRoot);
+  for (const command of [...plan.build, plan.server, plan.browser]) {
+    assert.equal(command.env.NODE_ENV, 'production');
+    assert.equal(command.env.WITH_MIGRATIONS, 'true');
+    assert.equal(command.env.CONFIG_DIRECTORY, plan.fixtureRoot);
+  }
+  assert.equal(plan.env.NODE_ENV, 'production');
+  assert(Object.isFrozen(plan.prepare.env));
 });
 
 test('production and fixture scopes fail closed on authoritative source or an existing fixture', async (t) => {

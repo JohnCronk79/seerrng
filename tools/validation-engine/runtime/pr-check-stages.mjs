@@ -142,7 +142,8 @@ export async function createSupplementalPrStages(options) {
   if (
     !owned(scratch, linksSource) ||
     linksSource === fixtures ||
-    owned(fixtures, linksSource)
+    owned(fixtures, linksSource) ||
+    owned(linksSource, fixtures)
   )
     throw new Error(
       'Docs link inputs require an owned scratch source checkout'
@@ -277,7 +278,12 @@ export async function createSupplementalPrStages(options) {
     'docs-image-parser-security',
     'pnpm',
     ['test:security'],
-    docsOptions
+    {
+      ...docsOptions,
+      // Keep the exact native package script, but seal its machine-readable
+      // reporter instead of relying on Node's version-dependent default.
+      env: { ...env, NODE_OPTIONS: '--test-reporter=tap' },
+    }
   );
   docsSecurity.caseLedger = {
     format: 'node-tap13-hierarchy-v1',
@@ -311,6 +317,8 @@ export async function createSupplementalPrStages(options) {
       'integrations/jellyfin-plugin/SeerrNG.JellyfinBridge.csproj',
       '--configuration',
       'Release',
+      // Disposable native commands must not leave persistent compiler servers.
+      '--disable-build-servers',
       '--output',
       path.join(fixtures, 'jellyfin-plugin-output'),
     ],
