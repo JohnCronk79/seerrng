@@ -7,7 +7,12 @@ import {
   createDistributedAdaptiveSchedule,
   estimateAdaptiveTestWork,
   updateAdaptiveTimingProfile,
+  verifyDistributedAdaptiveSchedule,
 } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
+import {
+  canonicalJsonSha256,
+} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const repositoryIdentitySha256 = '9'.repeat(64);
 const alternateRepositoryIdentitySha256 = '8'.repeat(64);
@@ -100,6 +105,7 @@ const worker = ({
   currentLoadPermille = 0,
   memory = null,
   localInteractiveReserveThreads,
+  runsOnControllerHost = false,
   adapterIds = ['native-generic'],
 }) => ({
   id,
@@ -111,11 +117,98 @@ const worker = ({
   currentLoadPermille,
   memory,
   localInteractiveReserveThreads,
+  runsOnControllerHost,
   benchmark: {
     valid: true,
     performanceScorePermille,
   },
 });
+
+const scheduleExpectations = (schedule) => ({
+  expectedApplicationId: schedule.applicationId,
+  expectedProfileSha256: schedule.profileSha256,
+  expectedRepositoryIdentitySha256: schedule.repositoryIdentitySha256,
+  expectedScheduleSha256: schedule.scheduleSha256,
+  expectedTestInventorySha256: schedule.testInventorySha256,
+});
+
+const scheduledTest = (schedule, testId) =>
+  schedule.slots
+    .flatMap((slot) => slot.tests)
+    .find((entry) => entry.id === testId);
+
+const rehashSchedule = (schedule, mutate) => {
+  const changed = structuredClone(schedule);
+  mutate(changed);
+  const { scheduleSha256: _scheduleSha256, ...unsigned } = changed;
+  changed.scheduleSha256 = canonicalJsonSha256(unsigned);
+  return changed;
+};
+
+const refreshScheduleInventoryHash = (schedule) => {
+  schedule.testInventorySha256 = canonicalJsonSha256(
+    schedule.slots
+      .flatMap((slot) => slot.tests)
+      .map((entry) => ({
+        id: entry.id,
+        fingerprint: entry.fingerprint,
+        applicationId: schedule.applicationId,
+        laneId: entry.laneId,
+        adapterId: entry.adapterId,
+        repositoryIdentitySha256: schedule.repositoryIdentitySha256,
+        dependencies: entry.dependencies,
+      }))
+      .toSorted((left, right) =>
+        left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+      )
+  );
+};
+
+const continuousDependencyFixture = () => {
+  const selectedScope = scope('linux-x64', 'worker-standard', {
+    selectedN: 2,
+  });
+  const results = [
+    resultEntry('unit/long.test.ts', 100),
+    resultEntry('unit/short.test.ts', 10),
+    resultEntry('unit/followup.test.ts', 10),
+    resultEntry('unit/final.test.ts', 10),
+  ];
+  const profile = updateAdaptiveTimingProfile(
+    createAdaptiveTimingProfile(),
+    observation({
+      selectedScope,
+      runId: 'continuous-green',
+      performanceScorePermille: 100,
+      results,
+    })
+  ).profile;
+  const tests = [
+    testEntry('unit/final.test.ts', 'unit/final.test.ts-v1', {
+      dependencies: ['unit/followup.test.ts'],
+    }),
+    testEntry('unit/followup.test.ts', 'unit/followup.test.ts-v1', {
+      dependencies: ['unit/short.test.ts'],
+    }),
+    testEntry('unit/long.test.ts'),
+    testEntry('unit/short.test.ts'),
+  ];
+  const workers = [
+    worker({
+      id: 'worker-a',
+      selectedScope,
+      threads: 4,
+      performanceScorePermille: 100,
+      concurrency: { mode: 'explicit', threads: 2 },
+    }),
+  ];
+  return {
+    profile,
+    tests,
+    workers,
+    schedule: createDistributedAdaptiveSchedule({ tests, workers, profile }),
+  };
+};
 
 test('worker admission applies explicit N, load, memory, and local reserve without using clock speed', () => {
   const candidate = {
@@ -125,7 +218,8 @@ test('worker admission applies explicit N, load, memory, and local reserve witho
       threads: 16,
       performanceScorePermille: 200,
       concurrency: { mode: 'explicit', threads: 4 },
-      role: 'controller',
+      role: 'worker',
+      runsOnControllerHost: true,
       currentLoadPermille: 250,
       memory: {
         availableBytes: 6_000,
@@ -137,6 +231,7 @@ test('worker admission applies explicit N, load, memory, and local reserve witho
     clockSpeedMhz: 9_999,
   };
   const admitted = assessDistributedWorkerCapacity(candidate);
+  assert.equal(admitted.schema, 'seerrng-distributed-worker-capacity/v2');
   assert.equal(admitted.concurrencyPolicy, 'explicit');
   assert.equal(admitted.configuredThreadBudget, 4);
   assert.equal(admitted.loadReservedThreads, 4);
@@ -157,7 +252,8 @@ test('explicit N fails closed while auto N adapts to current capacity', () => {
     threads: 8,
     performanceScorePermille: 100,
     currentLoadPermille: 250,
-    role: 'controller',
+    role: 'worker',
+    runsOnControllerHost: true,
   };
   const rejected = assessDistributedWorkerCapacity(
     worker({
@@ -187,6 +283,53 @@ test('explicit N fails closed while auto N adapts to current capacity', () => {
   assert.equal(unavailable.admissionStatus, 'unavailable');
   assert.equal(unavailable.admissionReason, 'no-current-capacity');
   assert.equal(unavailable.admittedThreads, 0);
+});
+
+test('worker role and controller-host placement remain independent', () => {
+  const selectedScope = scope('linux-x64', 'standard');
+  const remote = assessDistributedWorkerCapacity(
+    worker({
+      id: 'remote-worker',
+      selectedScope,
+      threads: 8,
+      performanceScorePermille: 100,
+      localInteractiveReserveThreads: 3,
+      runsOnControllerHost: false,
+    })
+  );
+  assert.equal(remote.role, 'worker');
+  assert.equal(remote.runsOnControllerHost, false);
+  assert.equal(remote.interactiveReservedThreads, 0);
+  assert.equal(remote.availableThreads, 8);
+
+  const local = assessDistributedWorkerCapacity(
+    worker({
+      id: 'local-worker',
+      selectedScope,
+      threads: 8,
+      performanceScorePermille: 100,
+      runsOnControllerHost: true,
+    })
+  );
+  assert.equal(local.role, 'worker');
+  assert.equal(local.runsOnControllerHost, true);
+  assert.equal(local.interactiveReservedThreads, 1);
+  assert.equal(local.availableThreads, 7);
+
+  assert.throws(
+    () =>
+      assessDistributedWorkerCapacity(
+        worker({
+          id: 'invalid-role',
+          selectedScope,
+          threads: 8,
+          performanceScorePermille: 100,
+          role: 'controller',
+          runsOnControllerHost: true,
+        })
+      ),
+    /role must be worker/
+  );
 });
 
 test('an unmeasured worker receives a conservative benchmark weight', () => {
@@ -225,10 +368,10 @@ test('an unmeasured worker receives a conservative benchmark weight', () => {
     ]
   );
   assert.deepEqual(
-    schedule.stages[0].slots[0].tests.map((entry) => entry.id),
+    schedule.slots[0].tests.map((entry) => entry.id),
     ['unit/a.test.ts']
   );
-  assert.deepEqual(schedule.stages[0].slots[1].tests, []);
+  assert.deepEqual(schedule.slots[1].tests, []);
 });
 
 test('timing calibration is isolated by environment and worker class', () => {
@@ -568,6 +711,21 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
     profile,
   });
   assert.deepEqual(reordered, first);
+  assert.deepEqual(
+    verifyDistributedAdaptiveSchedule(first, scheduleExpectations(first)),
+    first
+  );
+  assert.equal(Object.isFrozen(first), true);
+  assert.equal(Object.isFrozen(first.workers), true);
+  assert.equal(Object.isFrozen(first.workers[0]), true);
+  assert.equal(Object.isFrozen(first.slots), true);
+  assert.equal(Object.isFrozen(first.slots[0].tests), true);
+  assert.equal(Object.isFrozen(first.slots[0].tests[0]), true);
+  assert.equal(first.schema, 'seerrng-distributed-adaptive-schedule/v2');
+  assert.equal(
+    first.algorithm,
+    'deterministic-heterogeneous-dependency-list/v1'
+  );
   assert.equal(first.applicationId, 'seerrng');
   assert.equal(first.repositoryIdentitySha256, repositoryIdentitySha256);
   assert.deepEqual(
@@ -582,10 +740,10 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
     ]
   );
   assert.deepEqual(
-    first.stages[0].slots.map((slot) => [
+    first.slots.map((slot) => [
       slot.slotId,
       slot.tests.map((entry) => entry.id),
-      slot.predictedWallMs,
+      slot.predictedFinishOffsetMs,
     ]),
     [
       ['worker-a.slot-1', ['unit/b.test.ts'], 50],
@@ -622,10 +780,10 @@ test('one test occupies one slot and cannot claim divisible N speedup', () => {
     ],
     profile,
   });
-  assert.equal(schedule.stages[0].slots.length, 4);
-  assert.equal(schedule.stages[0].slots[0].predictedWallMs, 100);
+  assert.equal(schedule.slots.length, 4);
+  assert.equal(schedule.slots[0].predictedFinishOffsetMs, 100);
   assert.deepEqual(
-    schedule.stages[0].slots.map((slot) => slot.tests.length),
+    schedule.slots.map((slot) => slot.tests.length),
     [1, 0, 0, 0]
   );
   assert.equal(schedule.predictedWallMs, 100);
@@ -702,7 +860,7 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
     profile: createAdaptiveTimingProfile(),
   });
   assert.deepEqual(
-    schedule.stages[0].slots.map((slot) => [
+    schedule.slots.map((slot) => [
       slot.workerId,
       slot.tests.map((entry) => entry.id),
     ]),
@@ -736,50 +894,47 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
   );
 });
 
-test('dependencies form deterministic readiness stages before slot assignment', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
-  const schedule = createDistributedAdaptiveSchedule({
-    tests: [
-      testEntry('unit/d.test.ts', 'd-v1', {
-        dependencies: ['unit/b.test.ts', 'unit/c.test.ts'],
-      }),
-      testEntry('unit/c.test.ts'),
-      testEntry('unit/b.test.ts', 'b-v1', {
-        dependencies: ['unit/a.test.ts'],
-      }),
-      testEntry('unit/a.test.ts'),
-    ],
-    workers: [
-      worker({
-        id: 'worker-a',
-        selectedScope,
-        threads: 4,
-        performanceScorePermille: 100,
-        concurrency: { mode: 'explicit', threads: 2 },
-      }),
-    ],
-    profile: createAdaptiveTimingProfile(),
+test('dependencies release continuously without a global stage barrier', () => {
+  const { profile, schedule, tests, workers } = continuousDependencyFixture();
+  const reordered = createDistributedAdaptiveSchedule({
+    tests: [...tests].reverse(),
+    workers,
+    profile,
   });
+  assert.deepEqual(reordered, schedule);
+
+  const long = scheduledTest(schedule, 'unit/long.test.ts');
+  const short = scheduledTest(schedule, 'unit/short.test.ts');
+  const followup = scheduledTest(schedule, 'unit/followup.test.ts');
+  const final = scheduledTest(schedule, 'unit/final.test.ts');
   assert.deepEqual(
-    schedule.stages.map((stage) => ({
-      testIds: stage.testIds,
-      readyAfterTestIds: stage.readyAfterTestIds,
-    })),
     [
-      {
-        testIds: ['unit/a.test.ts', 'unit/c.test.ts'],
-        readyAfterTestIds: [],
-      },
-      {
-        testIds: ['unit/b.test.ts'],
-        readyAfterTestIds: ['unit/a.test.ts'],
-      },
-      {
-        testIds: ['unit/d.test.ts'],
-        readyAfterTestIds: ['unit/b.test.ts', 'unit/c.test.ts'],
-      },
+      [long.predictedStartOffsetMs, long.predictedFinishOffsetMs],
+      [short.predictedStartOffsetMs, short.predictedFinishOffsetMs],
+      [followup.predictedStartOffsetMs, followup.predictedFinishOffsetMs],
+      [final.predictedStartOffsetMs, final.predictedFinishOffsetMs],
+    ],
+    [
+      [0, 100],
+      [0, 10],
+      [10, 20],
+      [20, 30],
     ]
   );
+  assert.deepEqual(
+    schedule.slots.map((slot) => slot.tests.map((entry) => entry.id)),
+    [
+      ['unit/long.test.ts'],
+      [
+        'unit/short.test.ts',
+        'unit/followup.test.ts',
+        'unit/final.test.ts',
+      ],
+    ]
+  );
+  assert.equal(schedule.predictedWallMs, 100);
+
+  const selectedScope = scope('linux-x64', 'worker-standard');
   assert.throws(
     () =>
       createDistributedAdaptiveSchedule({
@@ -802,6 +957,126 @@ test('dependencies form deterministic readiness stages before slot assignment', 
         profile: createAdaptiveTimingProfile(),
       }),
     /dependencies contain a cycle/
+  );
+});
+
+test('schedule verifier rejects external bindings and hostile rehashes', () => {
+  const { schedule } = continuousDependencyFixture();
+  assert.deepEqual(
+    verifyDistributedAdaptiveSchedule(schedule, scheduleExpectations(schedule)),
+    schedule
+  );
+
+  for (const [field, value, message] of [
+    ['expectedScheduleSha256', 'f'.repeat(64), /trusted hash/],
+    ['expectedApplicationId', 'another-app', /another application/],
+    [
+      'expectedRepositoryIdentitySha256',
+      alternateRepositoryIdentitySha256,
+      /another repository/,
+    ],
+    ['expectedTestInventorySha256', 'f'.repeat(64), /another test inventory/],
+    ['expectedProfileSha256', 'f'.repeat(64), /another timing profile/],
+  ])
+    assert.throws(
+      () =>
+        verifyDistributedAdaptiveSchedule(schedule, {
+          ...scheduleExpectations(schedule),
+          [field]: value,
+        }),
+      message
+    );
+
+  const dependencyBeforePredecessor = rehashSchedule(schedule, (changed) => {
+    const followup = scheduledTest(changed, 'unit/followup.test.ts');
+    followup.dependencies = ['unit/long.test.ts'];
+    refreshScheduleInventoryHash(changed);
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        dependencyBeforePredecessor,
+        scheduleExpectations(dependencyBeforePredecessor)
+      ),
+    /before its dependency/
+  );
+
+  const overlappingSlot = rehashSchedule(schedule, (changed) => {
+    const final = scheduledTest(changed, 'unit/final.test.ts');
+    final.predictedStartOffsetMs = 15;
+    final.predictedFinishOffsetMs = 25;
+    changed.slots[1].predictedFinishOffsetMs = 25;
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        overlappingSlot,
+        scheduleExpectations(overlappingSlot)
+      ),
+    /overlap/
+  );
+
+  const incompatibleAdapter = rehashSchedule(schedule, (changed) => {
+    changed.workers[0].adapterIds = ['another-adapter'];
+    changed.workerCapacitiesSha256 = canonicalJsonSha256(changed.workers);
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        incompatibleAdapter,
+        scheduleExpectations(incompatibleAdapter)
+      ),
+    /incompatible adapter/
+  );
+
+  const duplicateSequence = rehashSchedule(schedule, (changed) => {
+    scheduledTest(changed, 'unit/long.test.ts').sequence = 2;
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        duplicateSequence,
+        scheduleExpectations(duplicateSequence)
+      ),
+    /sequences must be contiguous/
+  );
+
+  const reversedSequenceTimeline = rehashSchedule(schedule, (changed) => {
+    scheduledTest(changed, 'unit/long.test.ts').sequence = 4;
+    scheduledTest(changed, 'unit/short.test.ts').sequence = 1;
+    scheduledTest(changed, 'unit/followup.test.ts').sequence = 2;
+    scheduledTest(changed, 'unit/final.test.ts').sequence = 3;
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        reversedSequenceTimeline,
+        scheduleExpectations(reversedSequenceTimeline)
+      ),
+    /sequence timeline is not canonical/
+  );
+
+  const wrongWall = rehashSchedule(schedule, (changed) => {
+    changed.predictedWallMs = 99;
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        wrongWall,
+        scheduleExpectations(wrongWall)
+      ),
+    /predicted wall time is inconsistent/
+  );
+
+  const staleSeal = structuredClone(schedule);
+  staleSeal.policySha256 = 'f'.repeat(64);
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        staleSeal,
+        scheduleExpectations(schedule)
+      ),
+    /seal does not match/
   );
 });
 

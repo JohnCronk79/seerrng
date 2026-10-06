@@ -5,9 +5,78 @@ import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 export const DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA =
   'seerrng-distributed-adaptive-profile/v1';
 export const DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA =
-  'seerrng-distributed-adaptive-schedule/v1';
+  'seerrng-distributed-adaptive-schedule/v2';
 export const DISTRIBUTED_WORKER_CAPACITY_SCHEMA =
-  'seerrng-distributed-worker-capacity/v1';
+  'seerrng-distributed-worker-capacity/v2';
+
+const DISTRIBUTED_ADAPTIVE_SCHEDULE_ALGORITHM =
+  'deterministic-heterogeneous-dependency-list/v1';
+const SCHEDULE_KEYS = [
+  'algorithm',
+  'applicationId',
+  'policySha256',
+  'predictedWallMs',
+  'profileSchema',
+  'profileSha256',
+  'repositoryIdentitySha256',
+  'scheduleSha256',
+  'schema',
+  'slots',
+  'testInventorySha256',
+  'workerCapacitiesSha256',
+  'workers',
+];
+const SCHEDULE_SLOT_KEYS = [
+  'performanceScorePermille',
+  'predictedBusyMs',
+  'predictedFinishOffsetMs',
+  'slotId',
+  'slotIndex',
+  'tests',
+  'workerId',
+];
+const SCHEDULE_TEST_KEYS = [
+  'adapterId',
+  'criticalPathWorkUnits',
+  'dependencies',
+  'estimateSource',
+  'estimatedWorkUnits',
+  'fingerprint',
+  'id',
+  'laneId',
+  'predictedDurationMs',
+  'predictedFinishOffsetMs',
+  'predictedStartOffsetMs',
+  'sequence',
+];
+const CAPACITY_KEYS = [
+  'adapterIds',
+  'admissionReason',
+  'admissionStatus',
+  'admittedThreads',
+  'availableThreads',
+  'capacityWeight',
+  'concurrencyPolicy',
+  'configuredThreadBudget',
+  'effectiveLogicalThreads',
+  'interactiveReservedThreads',
+  'loadReservedThreads',
+  'memoryLimitedThreads',
+  'performanceScorePermille',
+  'performanceScoreSource',
+  'role',
+  'runsOnControllerHost',
+  'schema',
+  'scope',
+  'workerId',
+];
+const VERIFY_SCHEDULE_EXPECTATION_KEYS = [
+  'expectedApplicationId',
+  'expectedProfileSha256',
+  'expectedRepositoryIdentitySha256',
+  'expectedScheduleSha256',
+  'expectedTestInventorySha256',
+];
 
 const DEFAULT_POLICY = Object.freeze({
   acceptedRunWindow: 32,
@@ -28,6 +97,14 @@ const compareText = (left, right) =>
 const compareNumberDescending = (left, right) =>
   left === right ? 0 : left > right ? -1 : 1;
 
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function plainObject(value, label) {
   if (
     !value ||
@@ -41,7 +118,10 @@ function plainObject(value, label) {
 
 function exactKeys(value, expected, label) {
   plainObject(value, label);
-  const actual = Object.keys(value).toSorted(compareText);
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => typeof key !== 'string'))
+    throw new Error(`${label} fields are not canonical`);
+  const actual = ownKeys.toSorted(compareText);
   const wanted = [...expected].toSorted(compareText);
   if (
     actual.length !== wanted.length ||
@@ -501,11 +581,14 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     'current worker load'
   );
   const role = worker.role ?? 'worker';
-  if (!['controller', 'worker'].includes(role))
-    throw new Error('Distributed worker role must be controller or worker');
+  if (role !== 'worker')
+    throw new Error('Distributed worker role must be worker');
+  const runsOnControllerHost = worker.runsOnControllerHost ?? false;
+  if (typeof runsOnControllerHost !== 'boolean')
+    throw new Error('Controller-host placement must be boolean');
   const requestedInteractiveReserve =
     worker.localInteractiveReserveThreads ??
-    (role === 'controller'
+    (runsOnControllerHost
       ? normalizedPolicy.controllerReserveThreads
       : 0);
   nonnegativeInteger(
@@ -513,7 +596,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     'local interactive thread reserve'
   );
   const interactiveReservedThreads =
-    role === 'controller' ? requestedInteractiveReserve : 0;
+    runsOnControllerHost ? requestedInteractiveReserve : 0;
   const loadReservedThreads = Math.ceil(
     checkedMultiply(
       effectiveLogicalThreads,
@@ -580,6 +663,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     scope,
     adapterIds,
     role,
+    runsOnControllerHost,
     concurrencyPolicy,
     configuredThreadBudget,
     effectiveLogicalThreads,
@@ -843,23 +927,12 @@ function conservativeColdPerformanceScore(workers, policy) {
   return Math.min(policy.coldStartPerformanceScorePermille, fraction);
 }
 
-function compareProjectedSlotLoad(left, right) {
-  const leftProduct =
-    BigInt(left.projectedWorkUnits) *
-    BigInt(right.capacity.performanceScorePermille);
-  const rightProduct =
-    BigInt(right.projectedWorkUnits) *
-    BigInt(left.capacity.performanceScorePermille);
-  if (leftProduct < rightProduct) return -1;
-  if (leftProduct > rightProduct) return 1;
-  return (
-    compareText(left.capacity.workerId, right.capacity.workerId) ||
-    left.state.slotIndex - right.state.slotIndex
-  );
-}
-
-function dependencyReadyStages(tests) {
+function dependencyGraph(tests) {
   const testsById = new Map(tests.map((test) => [test.id, test]));
+  const successors = new Map(tests.map((test) => [test.id, []]));
+  const remainingDependencies = new Map(
+    tests.map((test) => [test.id, test.dependencies.length])
+  );
   for (const test of tests)
     for (const dependency of test.dependencies) {
       if (dependency === test.id)
@@ -868,25 +941,29 @@ function dependencyReadyStages(tests) {
         throw new Error(
           `Distributed test ${test.id} has unknown dependency: ${dependency}`
         );
+      successors.get(dependency).push(test.id);
     }
-  const remaining = new Map(testsById);
-  const completed = new Set();
-  const stages = [];
-  while (remaining.size > 0) {
-    const ready = [...remaining.values()]
-      .filter((test) =>
-        test.dependencies.every((dependency) => completed.has(dependency))
-      )
-      .toSorted((left, right) => compareText(left.id, right.id));
-    if (!ready.length)
-      throw new Error('Distributed schedule test dependencies contain a cycle');
-    stages.push(ready);
-    for (const test of ready) {
-      remaining.delete(test.id);
-      completed.add(test.id);
+  for (const entries of successors.values()) entries.sort(compareText);
+  const ready = tests
+    .filter((test) => test.dependencies.length === 0)
+    .map((test) => test.id)
+    .toSorted(compareText);
+  const topologicalIds = [];
+  while (ready.length) {
+    const testId = ready.shift();
+    topologicalIds.push(testId);
+    for (const successorId of successors.get(testId)) {
+      const remaining = remainingDependencies.get(successorId) - 1;
+      remainingDependencies.set(successorId, remaining);
+      if (remaining === 0) {
+        ready.push(successorId);
+        ready.sort(compareText);
+      }
     }
   }
-  return stages;
+  if (topologicalIds.length !== tests.length)
+    throw new Error('Distributed schedule test dependencies contain a cycle');
+  return { successors, topologicalIds };
 }
 
 function timingScopeFor(test, capacity) {
@@ -907,109 +984,697 @@ function slotStates(capacities) {
       capacity,
       slotId: `${capacity.workerId}.slot-${index + 1}`,
       slotIndex: index + 1,
-      estimatedWorkUnits: 0,
+      predictedBusyMs: 0,
+      predictedFinishOffsetMs: 0,
       tests: [],
     }))
   );
 }
 
-function scheduleDependencyStage({
-  stageIndex,
+function testInventorySha256(tests) {
+  return canonicalJsonSha256(
+    [...tests]
+      .toSorted((left, right) => compareText(left.id, right.id))
+      .map((test) => ({
+        id: test.id,
+        fingerprint: test.fingerprint,
+        applicationId: test.applicationId,
+        laneId: test.laneId,
+        adapterId: test.adapterId,
+        repositoryIdentitySha256: test.repositoryIdentitySha256,
+        dependencies: test.dependencies,
+      }))
+  );
+}
+
+function prepareSchedulingCandidates({
   tests,
   capacities,
   profile,
   policy,
+  graph,
 }) {
-  const states = slotStates(capacities);
-  const candidates = tests
-    .map((test) => {
-      const eligibleCapacities = capacities.filter((capacity) =>
-        capacity.adapterIds.includes(test.adapterId)
-      );
-      if (!eligibleCapacities.length)
-        throw new Error(
-          `No admitted worker supports adapter ${test.adapterId} for ${test.id}`
-        );
-      const estimates = new Map(
-        eligibleCapacities.map((capacity) => [
-          capacity.workerId,
-          estimateAdaptiveTestWork(
-            profile,
-            { scope: timingScopeFor(test, capacity), test },
-            policy
-          ),
-        ])
-      );
-      return {
-        test,
-        estimates,
-        orderingWeight: [...estimates.values()].reduce(
-          (maximum, estimate) => Math.max(maximum, estimate.workUnits),
-          0
-        ),
-      };
-    })
-    .toSorted(
-      (left, right) =>
-        compareNumberDescending(left.orderingWeight, right.orderingWeight) ||
-        compareText(left.test.id, right.test.id)
+  const candidates = new Map();
+  for (const test of tests) {
+    const eligibleCapacities = capacities.filter((capacity) =>
+      capacity.adapterIds.includes(test.adapterId)
     );
-  for (const candidate of candidates) {
-    const choices = states
-      .filter((state) => candidate.estimates.has(state.capacity.workerId))
-      .map((state) => {
-        const estimate = candidate.estimates.get(state.capacity.workerId);
-        return {
-          state,
-          estimate,
-          capacity: state.capacity,
-          projectedWorkUnits: checkedAdd(
-            state.estimatedWorkUnits,
-            estimate.workUnits,
-            `projected work for ${state.slotId}`
-          ),
-        };
-      });
-    choices.sort(compareProjectedSlotLoad);
-    const selected = choices[0];
-    selected.state.estimatedWorkUnits = selected.projectedWorkUnits;
-    selected.state.tests.push({
-      id: candidate.test.id,
-      fingerprint: candidate.test.fingerprint,
-      applicationId: candidate.test.applicationId,
-      laneId: candidate.test.laneId,
-      adapterId: candidate.test.adapterId,
-      repositoryIdentitySha256: candidate.test.repositoryIdentitySha256,
-      dependencies: candidate.test.dependencies,
-      estimatedWorkUnits: selected.estimate.workUnits,
-      estimateSource: selected.estimate.source,
+    if (!eligibleCapacities.length)
+      throw new Error(
+        `No admitted worker supports adapter ${test.adapterId} for ${test.id}`
+      );
+    const estimates = new Map(
+      eligibleCapacities.map((capacity) => [
+        capacity.workerId,
+        estimateAdaptiveTestWork(
+          profile,
+          { scope: timingScopeFor(test, capacity), test },
+          policy
+        ),
+      ])
+    );
+    candidates.set(test.id, {
+      test,
+      estimates,
+      orderingWeight: [...estimates.values()].reduce(
+        (maximum, estimate) => Math.max(maximum, estimate.workUnits),
+        0
+      ),
+      criticalPathWorkUnits: 0,
     });
   }
+  for (const testId of [...graph.topologicalIds].reverse()) {
+    const candidate = candidates.get(testId);
+    const successorWeight = graph.successors
+      .get(testId)
+      .reduce(
+        (maximum, successorId) =>
+          Math.max(
+            maximum,
+            candidates.get(successorId).criticalPathWorkUnits
+          ),
+        0
+      );
+    candidate.criticalPathWorkUnits = checkedAdd(
+      candidate.orderingWeight,
+      successorWeight,
+      `critical path work for ${testId}`
+    );
+  }
+  return candidates;
+}
+
+function compareReadyCandidates(left, right) {
+  return (
+    compareNumberDescending(
+      left.criticalPathWorkUnits,
+      right.criticalPathWorkUnits
+    ) ||
+    compareNumberDescending(left.orderingWeight, right.orderingWeight) ||
+    compareText(left.test.id, right.test.id)
+  );
+}
+
+function predictedDurationMs(estimate, capacity, label) {
+  positiveInteger(estimate.workUnits, `${label} work estimate`);
+  positiveInteger(
+    capacity.performanceScorePermille,
+    `${label} performance score`
+  );
+  return positiveInteger(
+    Math.ceil(estimate.workUnits / capacity.performanceScorePermille),
+    `${label} predicted duration`
+  );
+}
+
+function createContinuousSchedule({ tests, capacities, profile, policy }) {
+  const graph = dependencyGraph(tests);
+  const candidates = prepareSchedulingCandidates({
+    tests,
+    capacities,
+    profile,
+    policy,
+    graph,
+  });
+  const states = slotStates(capacities);
+  const pending = new Set(tests.map((test) => test.id));
+  const completed = new Set();
+  const running = new Map();
+  let currentOffsetMs = 0;
+  let nextSequence = 1;
+
+  while (pending.size > 0) {
+    for (const [testId, finishOffsetMs] of running)
+      if (finishOffsetMs <= currentOffsetMs) {
+        running.delete(testId);
+        completed.add(testId);
+      }
+
+    while (true) {
+      const freeSlots = states.filter(
+        (state) => state.predictedFinishOffsetMs <= currentOffsetMs
+      );
+      if (!freeSlots.length) break;
+      const ready = [...pending]
+        .map((testId) => candidates.get(testId))
+        .filter((candidate) =>
+          candidate.test.dependencies.every((dependency) =>
+            completed.has(dependency)
+          )
+        )
+        .toSorted(compareReadyCandidates);
+      let selectedCandidate = null;
+      let eligibleSlots = [];
+      for (const candidate of ready) {
+        const matching = freeSlots.filter((state) =>
+          candidate.estimates.has(state.capacity.workerId)
+        );
+        if (matching.length) {
+          selectedCandidate = candidate;
+          eligibleSlots = matching;
+          break;
+        }
+      }
+      if (!selectedCandidate) break;
+      const choices = eligibleSlots
+        .map((state) => {
+          const estimate = selectedCandidate.estimates.get(
+            state.capacity.workerId
+          );
+          return {
+            state,
+            estimate,
+            durationMs: predictedDurationMs(
+              estimate,
+              state.capacity,
+              selectedCandidate.test.id
+            ),
+          };
+        })
+        .toSorted(
+          (left, right) =>
+            left.durationMs - right.durationMs ||
+            compareText(
+              left.state.capacity.workerId,
+              right.state.capacity.workerId
+            ) ||
+            left.state.slotIndex - right.state.slotIndex
+        );
+      const selected = choices[0];
+      const finishOffsetMs = checkedAdd(
+        currentOffsetMs,
+        selected.durationMs,
+        `predicted finish for ${selectedCandidate.test.id}`
+      );
+      selected.state.tests.push({
+        sequence: nextSequence,
+        id: selectedCandidate.test.id,
+        fingerprint: selectedCandidate.test.fingerprint,
+        laneId: selectedCandidate.test.laneId,
+        adapterId: selectedCandidate.test.adapterId,
+        dependencies: selectedCandidate.test.dependencies,
+        criticalPathWorkUnits: selectedCandidate.criticalPathWorkUnits,
+        estimatedWorkUnits: selected.estimate.workUnits,
+        estimateSource: selected.estimate.source,
+        predictedStartOffsetMs: currentOffsetMs,
+        predictedDurationMs: selected.durationMs,
+        predictedFinishOffsetMs: finishOffsetMs,
+      });
+      selected.state.predictedBusyMs = checkedAdd(
+        selected.state.predictedBusyMs,
+        selected.durationMs,
+        `predicted busy time for ${selected.state.slotId}`
+      );
+      selected.state.predictedFinishOffsetMs = finishOffsetMs;
+      pending.delete(selectedCandidate.test.id);
+      running.set(selectedCandidate.test.id, finishOffsetMs);
+      nextSequence += 1;
+    }
+
+    if (pending.size === 0) break;
+    const futureFinishes = [...running.values()].filter(
+      (finishOffsetMs) => finishOffsetMs > currentOffsetMs
+    );
+    if (!futureFinishes.length)
+      throw new Error('Distributed scheduler cannot make dependency progress');
+    currentOffsetMs = Math.min(...futureFinishes);
+  }
+
   const slots = states.map((state) => ({
     slotId: state.slotId,
-    slotIndex: state.slotIndex,
     workerId: state.capacity.workerId,
+    slotIndex: state.slotIndex,
     performanceScorePermille: state.capacity.performanceScorePermille,
-    estimatedWorkUnits: state.estimatedWorkUnits,
-    predictedWallMs: Math.ceil(
-      state.estimatedWorkUnits / state.capacity.performanceScorePermille
-    ),
+    predictedBusyMs: state.predictedBusyMs,
+    predictedFinishOffsetMs: state.predictedFinishOffsetMs,
     tests: state.tests,
   }));
-  const predictedWallMs = slots.reduce(
-    (maximum, slot) => Math.max(maximum, slot.predictedWallMs),
-    0
-  );
   return {
-    stageIndex,
-    readyAfterTestIds: uniqueSorted(
-      new Set(tests.flatMap((test) => test.dependencies)),
-      `distributed dependency stage ${stageIndex}`
-    ),
-    testIds: tests.map((test) => test.id).toSorted(compareText),
-    predictedWallMs,
     slots,
+    predictedWallMs: slots.reduce(
+      (maximum, slot) =>
+        Math.max(maximum, slot.predictedFinishOffsetMs),
+      0
+    ),
   };
+}
+
+function equalArray(left, right) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function normalizeScheduleCapacity(value, index) {
+  const label = `distributed schedule worker capacity ${index}`;
+  exactKeys(value, CAPACITY_KEYS, label);
+  if (value.schema !== DISTRIBUTED_WORKER_CAPACITY_SCHEMA)
+    throw new Error('Unsupported distributed worker capacity schema');
+  exactKeys(value.scope, ['environment', 'workerClass'], `${label} scope`);
+  if (!Array.isArray(value.adapterIds))
+    throw new Error(`${label} adapter IDs must be an array`);
+  const adapterIds = uniqueSorted(
+    value.adapterIds.map((adapterId) =>
+      nonemptyText(adapterId, `${label} adapter ID`)
+    ),
+    `${label} adapter IDs`
+  );
+  if (!equalArray(adapterIds, value.adapterIds))
+    throw new Error(`${label} adapter IDs are not canonical`);
+  if (value.role !== 'worker')
+    throw new Error(`${label} role is invalid`);
+  if (typeof value.runsOnControllerHost !== 'boolean')
+    throw new Error(`${label} controller-host placement is invalid`);
+  if (!['auto', 'explicit'].includes(value.concurrencyPolicy))
+    throw new Error(`${label} concurrency policy is invalid`);
+  if (!['admitted', 'rejected', 'unavailable'].includes(value.admissionStatus))
+    throw new Error(`${label} admission status is invalid`);
+  if (
+    !['measured-benchmark', 'cold-start-conservative'].includes(
+      value.performanceScoreSource
+    )
+  )
+    throw new Error(`${label} performance score source is invalid`);
+  if (
+    value.admissionReason !== null &&
+    ![
+      'explicit-thread-budget-unavailable',
+      'no-current-capacity',
+    ].includes(value.admissionReason)
+  )
+    throw new Error(`${label} admission reason is invalid`);
+  const capacity = {
+    schema: DISTRIBUTED_WORKER_CAPACITY_SCHEMA,
+    workerId: nonemptyText(value.workerId, `${label} worker ID`),
+    scope: workerScopeIdentity(value.scope, `${label} scope`),
+    adapterIds,
+    role: value.role,
+    runsOnControllerHost: value.runsOnControllerHost,
+    concurrencyPolicy: value.concurrencyPolicy,
+    configuredThreadBudget: positiveInteger(
+      value.configuredThreadBudget,
+      `${label} configured thread budget`
+    ),
+    effectiveLogicalThreads: positiveInteger(
+      value.effectiveLogicalThreads,
+      `${label} effective logical threads`
+    ),
+    loadReservedThreads: nonnegativeInteger(
+      value.loadReservedThreads,
+      `${label} load-reserved threads`
+    ),
+    interactiveReservedThreads: nonnegativeInteger(
+      value.interactiveReservedThreads,
+      `${label} interactive-reserved threads`
+    ),
+    memoryLimitedThreads: nonnegativeInteger(
+      value.memoryLimitedThreads,
+      `${label} memory-limited threads`
+    ),
+    availableThreads: nonnegativeInteger(
+      value.availableThreads,
+      `${label} available threads`
+    ),
+    admissionStatus: value.admissionStatus,
+    admissionReason: value.admissionReason,
+    admittedThreads: nonnegativeInteger(
+      value.admittedThreads,
+      `${label} admitted threads`
+    ),
+    performanceScoreSource: value.performanceScoreSource,
+    performanceScorePermille: positiveInteger(
+      value.performanceScorePermille,
+      `${label} performance score`
+    ),
+    capacityWeight: nonnegativeInteger(
+      value.capacityWeight,
+      `${label} capacity weight`
+    ),
+  };
+  if (
+    capacity.availableThreads > capacity.effectiveLogicalThreads ||
+    capacity.admittedThreads > capacity.availableThreads ||
+    (!capacity.runsOnControllerHost &&
+      capacity.interactiveReservedThreads !== 0) ||
+    capacity.capacityWeight !==
+      checkedMultiply(
+        capacity.admittedThreads,
+        capacity.performanceScorePermille,
+        `${label} capacity weight`
+      )
+  )
+    throw new Error(`${label} capacity arithmetic is inconsistent`);
+  if (
+    (capacity.admissionStatus === 'admitted' &&
+      (capacity.admittedThreads === 0 || capacity.admissionReason !== null)) ||
+    (capacity.admissionStatus === 'rejected' &&
+      (capacity.admittedThreads !== 0 ||
+        capacity.concurrencyPolicy !== 'explicit' ||
+        capacity.admissionReason !== 'explicit-thread-budget-unavailable')) ||
+    (capacity.admissionStatus === 'unavailable' &&
+      (capacity.admittedThreads !== 0 ||
+        capacity.admissionReason !== 'no-current-capacity'))
+  )
+    throw new Error(`${label} admission state is inconsistent`);
+  return capacity;
+}
+
+function normalizeScheduledTest(value, label) {
+  exactKeys(value, SCHEDULE_TEST_KEYS, label);
+  if (!Array.isArray(value.dependencies))
+    throw new Error(`${label} dependencies must be an array`);
+  const dependencies = uniqueSorted(
+    value.dependencies.map((dependency) =>
+      nonemptyText(dependency, `${label} dependency`)
+    ),
+    `${label} dependencies`
+  );
+  if (!equalArray(dependencies, value.dependencies))
+    throw new Error(`${label} dependencies are not canonical`);
+  if (
+    !['profile', 'cold-start', 'changed-test', 'new-test'].includes(
+      value.estimateSource
+    )
+  )
+    throw new Error(`${label} estimate source is invalid`);
+  const test = {
+    sequence: positiveInteger(value.sequence, `${label} sequence`),
+    id: nonemptyText(value.id, `${label} ID`),
+    fingerprint: nonemptyText(value.fingerprint, `${label} fingerprint`),
+    laneId: nonemptyText(value.laneId, `${label} lane ID`),
+    adapterId: nonemptyText(value.adapterId, `${label} adapter ID`),
+    dependencies,
+    criticalPathWorkUnits: positiveInteger(
+      value.criticalPathWorkUnits,
+      `${label} critical path work`
+    ),
+    estimatedWorkUnits: positiveInteger(
+      value.estimatedWorkUnits,
+      `${label} estimated work`
+    ),
+    estimateSource: value.estimateSource,
+    predictedStartOffsetMs: nonnegativeInteger(
+      value.predictedStartOffsetMs,
+      `${label} predicted start offset`
+    ),
+    predictedDurationMs: positiveInteger(
+      value.predictedDurationMs,
+      `${label} predicted duration`
+    ),
+    predictedFinishOffsetMs: nonnegativeInteger(
+      value.predictedFinishOffsetMs,
+      `${label} predicted finish offset`
+    ),
+  };
+  if (
+    test.predictedFinishOffsetMs !==
+    checkedAdd(
+      test.predictedStartOffsetMs,
+      test.predictedDurationMs,
+      `${label} predicted timeline`
+    )
+  )
+    throw new Error(`${label} predicted timeline is inconsistent`);
+  return test;
+}
+
+function normalizeScheduleSlot(value, index) {
+  const label = `distributed schedule slot ${index}`;
+  exactKeys(value, SCHEDULE_SLOT_KEYS, label);
+  if (!Array.isArray(value.tests))
+    throw new Error(`${label} tests must be an array`);
+  return {
+    slotId: nonemptyText(value.slotId, `${label} ID`),
+    workerId: nonemptyText(value.workerId, `${label} worker ID`),
+    slotIndex: positiveInteger(value.slotIndex, `${label} index`),
+    performanceScorePermille: positiveInteger(
+      value.performanceScorePermille,
+      `${label} performance score`
+    ),
+    predictedBusyMs: nonnegativeInteger(
+      value.predictedBusyMs,
+      `${label} predicted busy time`
+    ),
+    predictedFinishOffsetMs: nonnegativeInteger(
+      value.predictedFinishOffsetMs,
+      `${label} predicted finish offset`
+    ),
+    tests: value.tests.map((test, testIndex) =>
+      normalizeScheduledTest(test, `${label} test ${testIndex}`)
+    ),
+  };
+}
+
+function unsignedSchedule(value) {
+  const { scheduleSha256: _scheduleSha256, ...unsigned } = value;
+  return unsigned;
+}
+
+function normalizeAndValidateSchedule(value) {
+  exactKeys(value, SCHEDULE_KEYS, 'distributed adaptive schedule');
+  if (value.schema !== DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA)
+    throw new Error('Unsupported distributed adaptive schedule schema');
+  if (value.algorithm !== DISTRIBUTED_ADAPTIVE_SCHEDULE_ALGORITHM)
+    throw new Error('Unsupported distributed adaptive schedule algorithm');
+  if (value.profileSchema !== DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA)
+    throw new Error('Unsupported distributed adaptive profile binding');
+  if (!Array.isArray(value.workers) || !value.workers.length)
+    throw new Error('Distributed adaptive schedule workers must be nonempty');
+  const workers = value.workers.map(normalizeScheduleCapacity);
+  for (let index = 1; index < workers.length; index += 1)
+    if (compareText(workers[index - 1].workerId, workers[index].workerId) >= 0)
+      throw new Error(
+        'Distributed adaptive schedule workers are not canonical'
+      );
+  const workerCapacitiesSha256 = sha256Digest(
+    value.workerCapacitiesSha256,
+    'worker capacities hash'
+  );
+  if (workerCapacitiesSha256 !== canonicalJsonSha256(workers))
+    throw new Error(
+      'Distributed worker capacity hash does not match its contents'
+    );
+  if (!Array.isArray(value.slots) || !value.slots.length)
+    throw new Error('Distributed adaptive schedule slots must be nonempty');
+  const slots = value.slots.map(normalizeScheduleSlot);
+  const expectedSlots = workers.flatMap((worker) =>
+    Array.from({ length: worker.admittedThreads }, (_, index) => ({
+      slotId: `${worker.workerId}.slot-${index + 1}`,
+      workerId: worker.workerId,
+      slotIndex: index + 1,
+    }))
+  );
+  if (slots.length !== expectedSlots.length)
+    throw new Error(
+      'Distributed schedule slots do not match admitted capacity'
+    );
+  const workerById = new Map(
+    workers.map((worker) => [worker.workerId, worker])
+  );
+  for (const [index, slot] of slots.entries()) {
+    const expected = expectedSlots[index];
+    const worker = workerById.get(slot.workerId);
+    if (
+      !expected ||
+      slot.slotId !== expected.slotId ||
+      slot.workerId !== expected.workerId ||
+      slot.slotIndex !== expected.slotIndex ||
+      !worker ||
+      slot.performanceScorePermille !== worker.performanceScorePermille
+    )
+      throw new Error('Distributed schedule slots are not canonical');
+    let priorFinishOffsetMs = 0;
+    let predictedBusyMs = 0;
+    for (const [testIndex, test] of slot.tests.entries()) {
+      if (
+        testIndex > 0 &&
+        (test.predictedStartOffsetMs < priorFinishOffsetMs ||
+          test.sequence <= slot.tests[testIndex - 1].sequence)
+      )
+        throw new Error(
+          'Distributed schedule slot tests overlap or are not canonical'
+        );
+      if (!worker.adapterIds.includes(test.adapterId))
+        throw new Error(
+          'Distributed schedule assigned an incompatible adapter'
+        );
+      const expectedDurationMs = Math.ceil(
+        test.estimatedWorkUnits / worker.performanceScorePermille
+      );
+      if (test.predictedDurationMs !== expectedDurationMs)
+        throw new Error(
+          'Distributed schedule predicted duration is inconsistent'
+        );
+      predictedBusyMs = checkedAdd(
+        predictedBusyMs,
+        test.predictedDurationMs,
+        `predicted busy time for ${slot.slotId}`
+      );
+      priorFinishOffsetMs = test.predictedFinishOffsetMs;
+    }
+    if (
+      slot.predictedBusyMs !== predictedBusyMs ||
+      slot.predictedFinishOffsetMs !== priorFinishOffsetMs
+    )
+      throw new Error('Distributed schedule slot summary is inconsistent');
+  }
+
+  const scheduledTests = slots.flatMap((slot) => slot.tests);
+  if (!scheduledTests.length)
+    throw new Error('Distributed adaptive schedule must contain tests');
+  const testIds = scheduledTests.map((test) => test.id);
+  if (new Set(testIds).size !== testIds.length)
+    throw new Error('Distributed adaptive schedule repeats a test');
+  const testsBySequence = [...scheduledTests].toSorted(
+    (left, right) => left.sequence - right.sequence
+  );
+  if (testsBySequence.some((test, index) => test.sequence !== index + 1))
+    throw new Error('Distributed schedule sequences must be contiguous');
+  for (let index = 1; index < testsBySequence.length; index += 1)
+    if (
+      testsBySequence[index].predictedStartOffsetMs <
+      testsBySequence[index - 1].predictedStartOffsetMs
+    )
+      throw new Error(
+        'Distributed schedule sequence timeline is not canonical'
+      );
+  dependencyGraph(scheduledTests);
+  const testById = new Map(scheduledTests.map((test) => [test.id, test]));
+  for (const test of scheduledTests)
+    for (const dependencyId of test.dependencies) {
+      const dependency = testById.get(dependencyId);
+      if (
+        dependency.predictedFinishOffsetMs > test.predictedStartOffsetMs
+      )
+        throw new Error(
+          'Distributed schedule starts a test before its dependency'
+        );
+      if (dependency.criticalPathWorkUnits <= test.criticalPathWorkUnits)
+        throw new Error(
+          'Distributed schedule critical path priority is inconsistent'
+        );
+    }
+  const applicationId = nonemptyText(
+    value.applicationId,
+    'schedule application ID'
+  );
+  const repositoryIdentitySha256 = sha256Digest(
+    value.repositoryIdentitySha256,
+    'schedule repository identity'
+  );
+  const inventoryTests = scheduledTests.map((test) => ({
+    id: test.id,
+    fingerprint: test.fingerprint,
+    applicationId,
+    laneId: test.laneId,
+    adapterId: test.adapterId,
+    repositoryIdentitySha256,
+    dependencies: test.dependencies,
+  }));
+  const testInventoryIdentity = sha256Digest(
+    value.testInventorySha256,
+    'schedule test inventory hash'
+  );
+  if (testInventoryIdentity !== testInventorySha256(inventoryTests))
+    throw new Error('Distributed schedule test inventory hash does not match');
+  const predictedWallMs = nonnegativeInteger(
+    value.predictedWallMs,
+    'distributed schedule predicted wall time'
+  );
+  if (
+    predictedWallMs !==
+    slots.reduce(
+      (maximum, slot) =>
+        Math.max(maximum, slot.predictedFinishOffsetMs),
+      0
+    )
+  )
+    throw new Error('Distributed schedule predicted wall time is inconsistent');
+  const schedule = {
+    schema: DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA,
+    algorithm: DISTRIBUTED_ADAPTIVE_SCHEDULE_ALGORITHM,
+    applicationId,
+    repositoryIdentitySha256,
+    testInventorySha256: testInventoryIdentity,
+    profileSha256: sha256Digest(value.profileSha256, 'schedule profile hash'),
+    policySha256: sha256Digest(value.policySha256, 'schedule policy hash'),
+    workerCapacitiesSha256,
+    profileSchema: DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA,
+    workers,
+    slots,
+    predictedWallMs,
+    scheduleSha256: sha256Digest(value.scheduleSha256, 'schedule hash'),
+  };
+  if (
+    schedule.scheduleSha256 !== canonicalJsonSha256(unsignedSchedule(schedule))
+  )
+    throw new Error(
+      'Distributed adaptive schedule seal does not match its contents'
+    );
+  return schedule;
+}
+
+export function verifyDistributedAdaptiveSchedule(value, expectations) {
+  exactKeys(
+    expectations,
+    VERIFY_SCHEDULE_EXPECTATION_KEYS,
+    'distributed schedule expectations'
+  );
+  const expectedScheduleSha256 = sha256Digest(
+    expectations.expectedScheduleSha256,
+    'expected schedule hash'
+  );
+  const expectedApplicationId = nonemptyText(
+    expectations.expectedApplicationId,
+    'expected schedule application ID'
+  );
+  const expectedRepositoryIdentitySha256 = sha256Digest(
+    expectations.expectedRepositoryIdentitySha256,
+    'expected schedule repository identity'
+  );
+  const expectedTestInventorySha256 = sha256Digest(
+    expectations.expectedTestInventorySha256,
+    'expected schedule test inventory hash'
+  );
+  const expectedProfileSha256 = sha256Digest(
+    expectations.expectedProfileSha256,
+    'expected schedule profile hash'
+  );
+  const schedule = normalizeAndValidateSchedule(value);
+  if (schedule.scheduleSha256 !== expectedScheduleSha256)
+    throw new Error(
+      'Distributed adaptive schedule does not match its trusted hash'
+    );
+  if (schedule.applicationId !== expectedApplicationId)
+    throw new Error(
+      'Distributed adaptive schedule belongs to another application'
+    );
+  if (
+    schedule.repositoryIdentitySha256 !== expectedRepositoryIdentitySha256
+  )
+    throw new Error(
+      'Distributed adaptive schedule belongs to another repository'
+    );
+  if (schedule.testInventorySha256 !== expectedTestInventorySha256)
+    throw new Error('Distributed adaptive schedule has another test inventory');
+  if (schedule.profileSha256 !== expectedProfileSha256)
+    throw new Error('Distributed adaptive schedule has another timing profile');
+  return deepFreeze(schedule);
+}
+
+function sealSchedule(value) {
+  const schedule = {
+    ...value,
+    scheduleSha256: canonicalJsonSha256(value),
+  };
+  return verifyDistributedAdaptiveSchedule(schedule, {
+    expectedScheduleSha256: schedule.scheduleSha256,
+    expectedApplicationId: schedule.applicationId,
+    expectedRepositoryIdentitySha256: schedule.repositoryIdentitySha256,
+    expectedTestInventorySha256: schedule.testInventorySha256,
+    expectedProfileSha256: schedule.profileSha256,
+  });
 }
 
 export function createDistributedAdaptiveSchedule({
@@ -1075,31 +1740,24 @@ export function createDistributedAdaptiveSchedule({
   );
   if (!admittedCapacities.length)
     throw new Error('No distributed worker passed capacity admission');
-  const stages = dependencyReadyStages(tests).map((stageTests, stageIndex) =>
-    scheduleDependencyStage({
-      stageIndex,
-      tests: stageTests,
-      capacities: admittedCapacities,
-      profile,
-      policy: normalizedPolicy,
-    })
-  );
-  return {
+  const { slots, predictedWallMs } = createContinuousSchedule({
+    tests,
+    capacities: admittedCapacities,
+    profile,
+    policy: normalizedPolicy,
+  });
+  return sealSchedule({
     schema: DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA,
-    algorithm: 'deterministic-heterogeneous-slot-lpt/v1',
+    algorithm: DISTRIBUTED_ADAPTIVE_SCHEDULE_ALGORITHM,
     applicationId: applicationIds[0],
     repositoryIdentitySha256: repositoryIdentitySha256s[0],
+    testInventorySha256: testInventorySha256(tests),
+    profileSha256: canonicalJsonSha256(profile),
+    policySha256: canonicalJsonSha256(normalizedPolicy),
+    workerCapacitiesSha256: canonicalJsonSha256(capacities),
     profileSchema: profile.schema,
     workers: capacities,
-    predictedWallMs: stages.reduce(
-      (total, stage) =>
-        checkedAdd(
-          total,
-          stage.predictedWallMs,
-          'distributed schedule predicted wall time'
-        ),
-      0
-    ),
-    stages,
-  };
+    slots,
+    predictedWallMs,
+  });
 }
