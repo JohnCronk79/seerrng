@@ -13,11 +13,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  admitHostedGithubUnit,
-  executeHostedTestLane,
+  admitHostedGithubUnit as admitHostedGithubUnitCore,
+  executeHostedTestLane as executeHostedTestLaneCore,
   loadHostedReceiptDirectory,
+  materializeHostedVitestLane as materializeHostedVitestLaneCore,
   reconcileHostedGithubExecution,
-  sealHostedGithubUnitReceipt,
+  sealHostedGithubUnitReceipt as sealHostedGithubUnitReceiptCore,
   verifyHostedAdmissionDecision,
   verifyHostedGithubPlanContext,
   verifyHostedUnitReceipt,
@@ -34,6 +35,67 @@ import {
 
 const temporary = new Set();
 const hash = (value) => createHash('sha256').update(value).digest('hex');
+const UNIT_CASE_ID = 'shard-01-of-04';
+const CYPRESS_CASE_ID = 'shard-01-of-07';
+
+function caseLane(plan, unitId, caseId, laneId) {
+  const unit = plan.units.find((entry) => entry.id === unitId);
+  const assignment = unit?.caseAssignments.find(
+    (entry) => entry.caseId === caseId
+  );
+  const lane = assignment?.lanes.find((entry) => entry.id === laneId);
+  if (!lane)
+    throw new Error(`Missing fixture case lane: ${unitId}/${caseId}/${laneId}`);
+  return lane;
+}
+
+function caseForFile(plan, unitId, laneId, file) {
+  const unit = plan.units.find((entry) => entry.id === unitId);
+  const matches = unit?.caseAssignments.filter((assignment) =>
+    assignment.lanes.some(
+      (lane) => lane.id === laneId && lane.files.includes(file)
+    )
+  );
+  if (matches?.length !== 1)
+    throw new Error(`Fixture file is not assigned exactly once: ${file}`);
+  return matches[0].caseId;
+}
+
+function bindShardedCase(options) {
+  const caseId =
+    options.caseId ??
+    (options.unitId === 'ci-unit-test'
+      ? UNIT_CASE_ID
+      : options.unitId === 'cypress-run'
+        ? CYPRESS_CASE_ID
+        : undefined);
+  let environment = options.environment;
+  if (
+    options.unitId === 'cypress-run' &&
+    environment &&
+    !Object.hasOwn(environment, 'SEERRNG_ENGINE_CYPRESS_FILES')
+  ) {
+    environment = {
+      ...environment,
+      SEERRNG_ENGINE_CYPRESS_FILES: caseLane(
+        options.plan,
+        options.unitId,
+        caseId,
+        'cypress'
+      ).files.join(','),
+    };
+  }
+  return { ...options, ...(caseId ? { caseId } : {}), environment };
+}
+
+const admitHostedGithubUnit = (options) =>
+  admitHostedGithubUnitCore(bindShardedCase(options));
+const executeHostedTestLane = (options) =>
+  executeHostedTestLaneCore(bindShardedCase(options));
+const materializeHostedVitestLane = (options) =>
+  materializeHostedVitestLaneCore(bindShardedCase(options));
+const sealHostedGithubUnitReceipt = (options) =>
+  sealHostedGithubUnitReceiptCore(bindShardedCase(options));
 
 test.afterEach(() => {
   for (const directory of temporary)
@@ -152,7 +214,9 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
     `
   );
   write(root, 'server/native.test.ts', "import test from 'node:test';\n");
+  write(root, 'server/extra.test.ts', "import { test } from 'vitest';\n");
   write(root, 'src/unit.test.tsx', "import { test } from 'vitest';\n");
+  write(root, 'src/extra.test.tsx', "import { test } from 'vitest';\n");
   write(
     root,
     'src/native.test.mjs',
@@ -165,6 +229,16 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
       ? "import test from 'node:test'; void test;\n"
       : "import test from 'node:test'; import assert from 'node:assert/strict'; test('native two', () => assert.equal(2, 2));\n"
   );
+  write(
+    root,
+    'server/native-three.test.mjs',
+    "import test from 'node:test'; test('native three', () => {});\n"
+  );
+  write(
+    root,
+    'src/native-four.test.mjs',
+    "import test from 'node:test'; test('native four', () => {});\n"
+  );
   write(root, 'bin/tool.test.mjs', "import test from 'node:test';\n");
   write(root, 'deploy/posix.test.mjs', "import test from 'node:test';\n");
   write(
@@ -172,7 +246,20 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
     'gen-docs/scripts/image-size-security.test.mjs',
     "import test from 'node:test'; test('docs security', () => {});\n"
   );
-  write(root, 'cypress/e2e/login.cy.ts', "describe('login', () => {});\n");
+  for (const name of [
+    'admin',
+    'discover',
+    'login',
+    'profile',
+    'request',
+    'search',
+    'settings',
+  ])
+    write(
+      root,
+      `cypress/e2e/${name}.cy.ts`,
+      `describe('${name}', () => {});\n`
+    );
   const workflowFiles = {
     ci: '.github/workflows/ci.yml',
     codeql: '.github/workflows/codeql.yml',
@@ -313,6 +400,7 @@ function writeVitestJunit(
   root,
   plan,
   {
+    caseId = UNIT_CASE_ID,
     files,
     zeroFile = null,
     failureFile = null,
@@ -321,7 +409,7 @@ function writeVitestJunit(
     partialSkippedFile = null,
   } = {}
 ) {
-  const lane = plan.testInventory.lanes.find((entry) => entry.id === 'vitest');
+  const lane = caseLane(plan, 'ci-unit-test', caseId, 'vitest');
   files ??= lane.files;
   const suites = files.map((file) => {
     const tests = file === zeroFile ? 0 : file === partialSkippedFile ? 2 : 1;
@@ -359,13 +447,25 @@ function writeVitestJunit(
   return report;
 }
 
-async function createUnitTestEvidence({ root, plan, environment, receiptDir }) {
-  const nodeReport = path.join(root, 'seerrng-engine-node-tests.json');
+async function createUnitTestEvidence({
+  root,
+  plan,
+  environment,
+  receiptDir,
+  caseId = UNIT_CASE_ID,
+  evidenceRoot = root,
+}) {
+  mkdirSync(evidenceRoot, { recursive: true });
+  const nodeReport = path.join(
+    evidenceRoot,
+    'seerrng-engine-node-tests.json'
+  );
   await executeHostedTestLane({
     root,
     plan,
     expectedPlanSha256: plan.planSha256,
     unitId: 'ci-unit-test',
+    caseId,
     laneId: 'node-test-mjs',
     receiptDir,
     reportFile: nodeReport,
@@ -374,15 +474,91 @@ async function createUnitTestEvidence({ root, plan, environment, receiptDir }) {
     stderr: { write() {} },
   });
   return {
-    junit: writeVitestJunit(root, plan),
+    junit: writeVitestJunit(evidenceRoot, plan, { caseId }),
     node: nodeReport,
   };
+}
+
+function writeCypressEvidence({
+  root,
+  plan,
+  caseId = CYPRESS_CASE_ID,
+  evidenceRoot = root,
+  active = true,
+}) {
+  const specs = caseLane(plan, 'cypress-run', caseId, 'cypress').files;
+  const runs = specs.map((spec) => {
+    const state = active ? 'passed' : 'pending';
+    return {
+      spec: {
+        relative: spec,
+        absolute: path.join(root, ...spec.split('/')),
+      },
+      error: null,
+      tests: [
+        {
+          title: ['fixture', spec],
+          state,
+          attempts: active ? [{ state: 'passed' }] : [],
+          duration: active ? 1 : null,
+          displayError: null,
+        },
+      ],
+      stats: {
+        passes: active ? 1 : 0,
+        failures: 0,
+        pending: active ? 0 : 1,
+        skipped: 0,
+        tests: 1,
+      },
+    };
+  });
+  mkdirSync(evidenceRoot, { recursive: true });
+  const report = path.join(
+    evidenceRoot,
+    'seerrng-engine-cypress-result.json'
+  );
+  writeFileSync(
+    report,
+    `${JSON.stringify({
+      schema: 'seerrng-hosted-cypress-result/v1',
+      planSha256: plan.planSha256,
+      unitId: 'cypress-run',
+      caseId,
+      specs,
+      native: {
+        status: 'finished',
+        runs,
+        totalPassed: active ? specs.length : 0,
+        totalFailed: 0,
+        totalPending: active ? 0 : specs.length,
+        totalSkipped: 0,
+        totalTests: specs.length,
+        totalDuration: active ? specs.length : 0,
+        browserName: 'Electron',
+        cypressVersion: 'fixture',
+      },
+    })}\n`
+  );
+  return report;
 }
 
 test('hosted admission is execute-only and rejects a finalized success', async () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   verifyHostedGithubPlanContext(root, plan, { environment });
+  assert.throws(
+    () =>
+      admitHostedGithubUnitCore({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'ci-unit-test',
+        receiptDir: path.join(root, 'receipts-without-case'),
+        environment,
+      }),
+    /Exact hosted engine case is required/
+  );
   const first = admitHostedGithubUnit({
     root,
     plan,
@@ -392,7 +568,7 @@ test('hosted admission is execute-only and rejects a finalized success', async (
     environment,
   });
   const { admission } = first;
-  assert.equal(admission.caseId, 'default');
+  assert.equal(admission.caseId, UNIT_CASE_ID);
   assert.equal(first.decision.action, 'execute');
   assert.equal(first.decision.schema, 'seerrng-hosted-admission-decision/v2');
   assert.deepEqual(Object.keys(first.decision).toSorted(), [
@@ -595,6 +771,94 @@ test('Cypress admission rejects a symlinked runner-temp config boundary', () => 
   );
 });
 
+test('Cypress admission and native evidence are bound to one exact shard', () => {
+  const { root, plan, environment } = fixture();
+  assert.throws(
+    () =>
+      admitHostedGithubUnit({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'cypress-run',
+        receiptDir: path.join(root, 'receipts-mismatched-specs'),
+        environment: {
+          ...environment,
+          SEERRNG_ENGINE_CYPRESS_FILES: 'cypress/e2e/unplanned.cy.ts',
+        },
+      }),
+    /specs do not match the planned shard/
+  );
+
+  const receiptDir = path.join(root, 'receipts');
+  admitHostedGithubUnit({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'cypress-run',
+    receiptDir,
+    environment,
+  });
+  assert.throws(
+    () =>
+      sealHostedGithubUnitReceipt({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'cypress-run',
+        receiptDir,
+        jobStatus: 'success',
+        environment,
+      }),
+    /requires its exact hosted evidence set/
+  );
+  const evidence = writeCypressEvidence({ root, plan });
+  const forged = JSON.parse(readFileSync(evidence, 'utf8'));
+  forged.caseId = 'shard-02-of-07';
+  writeFileSync(evidence, `${JSON.stringify(forged)}\n`);
+  assert.throws(
+    () =>
+      sealHostedGithubUnitReceipt({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'cypress-run',
+        receiptDir,
+        jobStatus: 'success',
+        evidenceFiles: [evidence],
+        environment,
+      }),
+    /not bound to its unit\/case/
+  );
+});
+
+test('a pending-only Cypress shard seals for aggregate active-test review', () => {
+  const { root, plan, environment } = fixture();
+  const receiptDir = path.join(root, 'receipts');
+  admitHostedGithubUnit({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'cypress-run',
+    receiptDir,
+    environment,
+  });
+  const evidence = writeCypressEvidence({ root, plan, active: false });
+  const sealed = sealHostedGithubUnitReceipt({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'cypress-run',
+    receiptDir,
+    jobStatus: 'success',
+    evidenceFiles: [evidence],
+    environment,
+  });
+  const cypress = sealed.receipt.caseResults.lanes[0];
+  assert.equal(cypress.active, 0);
+  assert.equal(cypress.pending, 1);
+  assert.equal(cypress.failures, 0);
+});
+
 test('external Cypress log symlinks allow the admitted settings snapshot to seal', () => {
   const { root, plan, environment, configDirectory } = fixture();
   const receiptDir = path.join(root, 'receipts');
@@ -621,6 +885,7 @@ test('external Cypress log symlinks allow the admitted settings snapshot to seal
     path.join(configDirectory, 'logs/server.log'),
     'normal runtime output\n'
   );
+  const cypressEvidence = writeCypressEvidence({ root, plan });
   const sealed = sealHostedGithubUnitReceipt({
     root,
     plan,
@@ -628,6 +893,7 @@ test('external Cypress log symlinks allow the admitted settings snapshot to seal
     unitId: 'cypress-run',
     receiptDir,
     jobStatus: 'success',
+    evidenceFiles: [cypressEvidence],
     environment: { ...environment, STORE_PATH: '/post-install/store' },
   });
   assert.equal(
@@ -639,6 +905,14 @@ test('external Cypress log symlinks allow the admitted settings snapshot to seal
     sealed.receipt.successReceipt.identity.setup.configSha256,
     admitted.admission.identity.setup.configSha256
   );
+  const cypress = sealed.receipt.caseResults.lanes[0];
+  assert.equal(cypress.proof, 'native-cypress-per-case-closure');
+  assert.deepEqual(
+    cypress.files,
+    caseLane(plan, 'cypress-run', CYPRESS_CASE_ID, 'cypress').files
+  );
+  assert.equal(cypress.active, 1);
+  assert.equal(cypress.failures, 0);
 
   writeAbsolute(
     path.join(configDirectory, 'settings.json'),
@@ -824,6 +1098,10 @@ test('Cypress push success cannot be admitted a second time', () => {
     receiptDir,
     environment: pushEnvironment,
   });
+  const cypressEvidence = writeCypressEvidence({
+    root,
+    plan: pushPlan,
+  });
   sealHostedGithubUnitReceipt({
     root,
     plan: pushPlan,
@@ -831,6 +1109,7 @@ test('Cypress push success cannot be admitted a second time', () => {
     unitId: 'cypress-run',
     receiptDir,
     jobStatus: 'success',
+    evidenceFiles: [cypressEvidence],
     environment: pushEnvironment,
   });
   assert.throws(
@@ -982,7 +1261,69 @@ test('hosted admission rejects a different attempt and plan hash', () => {
   );
 });
 
-test('engine executes the complete omitted native Node lane at exactly GitHub N', async () => {
+test('Vitest materialization binds one admitted shard at exactly GitHub N', () => {
+  const { root, plan, environment, runnerTemp } = fixture();
+  const receiptDir = path.join(root, 'receipts');
+  const outputFile = path.join(runnerTemp, 'seerrng-engine-vitest.config.mts');
+  assert.throws(
+    () =>
+      materializeHostedVitestLane({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'ci-unit-test',
+        receiptDir,
+        outputFile,
+        environment,
+      }),
+    /Missing hosted admission/
+  );
+  admitHostedGithubUnit({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'ci-unit-test',
+    receiptDir,
+    environment,
+  });
+  assert.throws(
+    () =>
+      materializeHostedVitestLane({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'ci-unit-test',
+        receiptDir,
+        outputFile: path.join(root, 'unsafe-vitest.config.mts'),
+        environment,
+      }),
+    /exact runner-temp path/
+  );
+  const result = materializeHostedVitestLane({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'ci-unit-test',
+    receiptDir,
+    outputFile,
+    environment,
+  });
+  const expected = caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest');
+  assert.equal(result.schema, 'seerrng-hosted-vitest-materialization/v1');
+  assert.equal(result.caseId, UNIT_CASE_ID);
+  assert.deepEqual(result.files, expected.files);
+  assert.equal(result.filesSha256, expected.filesSha256);
+  assert.ok(result.configuredWorkers > 0);
+  assert.match(result.configSha256, /^[a-f0-9]{64}$/);
+  const source = readFileSync(outputFile, 'utf8');
+  assert.ok(source.includes(`files: ${JSON.stringify(expected.files)}`));
+  assert.ok(
+    source.includes(`maxWorkers: ${JSON.stringify(result.configuredWorkers)}`)
+  );
+  assert.match(source, /passWithNoTests: false/);
+});
+
+test('engine executes one planned native Node shard at exactly GitHub N', async () => {
   const { root, plan, environment } = fixture();
   const reportFile = path.join(root, 'seerrng-engine-node-tests.json');
   const receiptDir = path.join(root, 'receipts');
@@ -1038,23 +1379,29 @@ test('engine executes the complete omitted native Node lane at exactly GitHub N'
   });
   assert.equal(result.status, 'passed');
   assert.equal(result.unitId, 'ci-unit-test');
-  assert.equal(result.caseId, 'default');
-  assert.equal(result.files.length, 2);
+  assert.equal(result.caseId, UNIT_CASE_ID);
+  assert.deepEqual(
+    result.files,
+    caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'node-test-mjs').files
+  );
   assert.equal(result.capacity.githubActions, true);
   assert.equal(
     result.capacity.configuredWorkers,
     result.capacity.effectiveLogicalCpus
   );
   assert.equal(result.caseLedger.counts.failed, 0);
-  assert.ok(result.caseLedger.counts.passed >= 2);
+  assert.ok(result.caseLedger.counts.passed >= 1);
   assert.deepEqual(
     result.caseLedger.reports.map(({ file }) => file),
     result.files
   );
   assert.ok(
     result.caseLedger.reports.every(
-      ({ tests, reportSha256 }) =>
-        tests > 0 && /^[a-f0-9]{64}$/.test(reportSha256)
+      ({ tests, reportSha256, wallMs }) =>
+        tests > 0 &&
+        /^[a-f0-9]{64}$/.test(reportSha256) &&
+        Number.isFinite(wallMs) &&
+        wallMs >= 0
     )
   );
   assert.equal(
@@ -1078,22 +1425,29 @@ test('engine executes the complete omitted native Node lane at exactly GitHub N'
   );
   assert.deepEqual(
     sealed.receipt.caseResults.lanes[0].files,
-    plan.testInventory.lanes.find((lane) => lane.id === 'vitest').files
+    caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest').files
   );
   assert.deepEqual(
     sealed.receipt.caseResults.lanes[1].files,
-    plan.testInventory.lanes.find((lane) => lane.id === 'node-test-mjs').files
+    caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'node-test-mjs').files
   );
 });
 
 test('engine rejects a planned native Node file with no observed cases', async () => {
   const { root, plan, environment } = fixture({ zeroCaseNativeFile: true });
   const receiptDir = path.join(root, 'receipts');
+  const caseId = caseForFile(
+    plan,
+    'ci-unit-test',
+    'node-test-mjs',
+    'server/native-two.test.mjs'
+  );
   admitHostedGithubUnit({
     root,
     plan,
     expectedPlanSha256: plan.planSha256,
     unitId: 'ci-unit-test',
+    caseId,
     receiptDir,
     environment,
   });
@@ -1103,6 +1457,7 @@ test('engine rejects a planned native Node file with no observed cases', async (
       plan,
       expectedPlanSha256: plan.planSha256,
       unitId: 'ci-unit-test',
+      caseId,
       laneId: 'node-test-mjs',
       receiptDir,
       reportFile: path.join(root, 'seerrng-engine-node-tests.json'),
@@ -1114,7 +1469,7 @@ test('engine rejects a planned native Node file with no observed cases', async (
   );
 });
 
-test('unit receipt preserves a successful intentionally skipped Vitest suite', async () => {
+test('unit receipt preserves a successful intentionally skipped Vitest case', async () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   admitHostedGithubUnit({
@@ -1131,10 +1486,13 @@ test('unit receipt preserves a successful intentionally skipped Vitest suite', a
     environment,
     receiptDir,
   });
-  const skippedFile = plan.testInventory.lanes.find(
-    (lane) => lane.id === 'vitest'
+  const skippedFile = caseLane(
+    plan,
+    'ci-unit-test',
+    UNIT_CASE_ID,
+    'vitest'
   ).files[0];
-  writeVitestJunit(root, plan, { allSkippedFile: skippedFile });
+  writeVitestJunit(root, plan, { partialSkippedFile: skippedFile });
   const { receipt } = sealHostedGithubUnitReceipt({
     root,
     plan,
@@ -1147,7 +1505,7 @@ test('unit receipt preserves a successful intentionally skipped Vitest suite', a
   });
   const vitest = receipt.caseResults.lanes.find((lane) => lane.id === 'vitest');
   assert.equal(vitest.skipped, 1);
-  assert.ok(vitest.active < vitest.fileCount);
+  assert.equal(vitest.active, 1);
   assert.equal(vitest.active + vitest.skipped, vitest.tests);
   assert.equal(verifyHostedUnitReceipt(receipt), receipt);
 });
@@ -1157,8 +1515,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'missing Vitest suite',
       mutate({ root, plan }) {
-        const files = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
+        const files = caseLane(
+          plan,
+          'ci-unit-test',
+          UNIT_CASE_ID,
+          'vitest'
         ).files;
         writeVitestJunit(root, plan, { files: files.slice(1) });
       },
@@ -1167,8 +1528,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'duplicate Vitest suite',
       mutate({ root, plan }) {
-        const files = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
+        const files = caseLane(
+          plan,
+          'ci-unit-test',
+          UNIT_CASE_ID,
+          'vitest'
         ).files;
         writeVitestJunit(root, plan, { files: [files[0], files[0]] });
       },
@@ -1177,8 +1541,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'extra Vitest suite',
       mutate({ root, plan }) {
-        const files = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
+        const files = caseLane(
+          plan,
+          'ci-unit-test',
+          UNIT_CASE_ID,
+          'vitest'
         ).files;
         writeVitestJunit(root, plan, {
           files: [...files, 'src/unplanned.test.ts'],
@@ -1189,8 +1556,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'zero-test Vitest suite',
       mutate({ root, plan }) {
-        const file = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
+        const file = caseLane(
+          plan,
+          'ci-unit-test',
+          UNIT_CASE_ID,
+          'vitest'
         ).files[0];
         writeVitestJunit(root, plan, { zeroFile: file });
       },
@@ -1206,8 +1576,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'failed Vitest suite',
       mutate({ root, plan }) {
-        const file = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
+        const file = caseLane(
+          plan,
+          'ci-unit-test',
+          UNIT_CASE_ID,
+          'vitest'
         ).files[0];
         writeVitestJunit(root, plan, { failureFile: file });
       },
@@ -1277,8 +1650,12 @@ test('unit success seals active and skipped Vitest counts', async () => {
     environment,
     receiptDir,
   });
-  const file = plan.testInventory.lanes.find((lane) => lane.id === 'vitest')
-    .files[0];
+  const file = caseLane(
+    plan,
+    'ci-unit-test',
+    UNIT_CASE_ID,
+    'vitest'
+  ).files[0];
   writeVitestJunit(root, plan, { partialSkippedFile: file });
   const sealed = sealHostedGithubUnitReceipt({
     root,
@@ -1304,6 +1681,11 @@ test('reconciliation requires every planned unit case and its success ledger', a
   for (const unit of plan.units) {
     assert.equal(unit.applicable, true, unit.id);
     for (const caseId of unit.cases) {
+      const evidenceRoot = path.join(
+        root,
+        'case-evidence',
+        `${unit.id}--${caseId}`
+      );
       admitHostedGithubUnit({
         root,
         plan,
@@ -1320,8 +1702,24 @@ test('reconciliation requires every planned unit case and its success ledger', a
               plan,
               environment,
               receiptDir,
+              caseId,
+              evidenceRoot,
             })
           : null;
+      const cypressEvidence =
+        unit.id === 'cypress-run'
+          ? writeCypressEvidence({
+              root,
+              plan,
+              caseId,
+              evidenceRoot,
+            })
+          : null;
+      const evidenceFiles = unitEvidence
+        ? [unitEvidence.junit, unitEvidence.node]
+        : cypressEvidence
+          ? [cypressEvidence]
+          : [];
       sealHostedGithubUnitReceipt({
         root,
         plan,
@@ -1330,13 +1728,25 @@ test('reconciliation requires every planned unit case and its success ledger', a
         caseId,
         receiptDir,
         jobStatus: 'success',
-        evidenceFiles: unitEvidence
-          ? [unitEvidence.junit, unitEvidence.node]
-          : [],
+        evidenceFiles,
         environment,
       });
+      for (const evidenceFile of evidenceFiles) {
+        const archived = path.join(
+          receiptDir,
+          `${unit.id}--${caseId}.evidence-${path.basename(evidenceFile)}`
+        );
+        assert.deepEqual(readFileSync(archived), readFileSync(evidenceFile));
+      }
     }
   }
+  writeFileSync(
+    path.join(
+      receiptDir,
+      'ci-unit-test--shard-01-of-04.evidence-raw.receipt.json'
+    ),
+    '{"untrusted":true}\n'
+  );
   const needs = Object.fromEntries([
     [
       'engine-plan',
@@ -1357,14 +1767,37 @@ test('reconciliation requires every planned unit case and its success ledger', a
     ]),
   ]);
   const evidence = loadHostedReceiptDirectory(receiptDir);
-  assert.equal(evidence.admissions.length, 11);
+  assert.equal(evidence.admissions.length, 20);
   const report = reconcileHostedGithubExecution(plan, needs, evidence);
   assert.equal(report.schema, 'seerrng-hosted-github-reconciliation/v2');
   assert.equal(report.status, 'passed');
   assert.equal(report.resultReuse, false);
-  assert.equal(report.receipts.expected, 11);
-  assert.equal(report.receipts.succeeded, 11);
-  assert.equal(report.receipts.ledgerEntries, 11);
+  assert.equal(report.receipts.expected, 20);
+  assert.equal(report.receipts.succeeded, 20);
+  assert.equal(report.receipts.ledgerEntries, 20);
+  assert.deepEqual(report.shardedLanes, [
+    {
+      id: 'vitest',
+      cases: 4,
+      files: 4,
+      active: 4,
+      status: 'passed',
+    },
+    {
+      id: 'node-test-mjs',
+      cases: 4,
+      files: 4,
+      active: 4,
+      status: 'passed',
+    },
+    {
+      id: 'cypress',
+      cases: 7,
+      files: 7,
+      active: 7,
+      status: 'passed',
+    },
+  ]);
   assert.throws(
     () =>
       reconcileHostedGithubExecution(plan, needs, {

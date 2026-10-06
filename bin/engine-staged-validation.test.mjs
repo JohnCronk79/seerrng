@@ -1,6 +1,7 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
@@ -20,6 +21,15 @@ import {
 const sha = 'a'.repeat(64);
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const hostedTestInventory = createHostedTestInventory(repositoryRoot);
+const hostedTimingProfile = JSON.parse(
+  readFileSync(
+    new URL(
+      '../tools/validation-engine/hosted-test-timing-profile.json',
+      import.meta.url
+    ),
+    'utf8'
+  )
+);
 const candidate = {
   repository: 'JohnCronk79/seerrng',
   commit: 'b'.repeat(40),
@@ -442,7 +452,7 @@ test('unsupported, duplicate and unproved applicability is rejected', () => {
   }
 });
 
-test('hosted GitHub plan is deterministic and binds the staged native DAG', () => {
+test('hosted GitHub plan is deterministic and binds the distributed native DAG', () => {
   const first = createHostedGithubPlan(
     hostedInput({
       changedFiles: [
@@ -464,11 +474,61 @@ test('hosted GitHub plan is deterministic and binds the staged native DAG', () =
     })
   );
 
-  assert.equal(first.schema, 'seerrng-hosted-github-plan/v3');
+  assert.equal(first.schema, 'seerrng-hosted-github-plan/v5');
   assert.equal(first.planSha256, second.planSha256);
   assert.deepEqual(first, second);
   assert.equal(first.resultReuse, false);
   assert.equal(first.units.length, 10);
+  assert.equal(
+    first.units.reduce((total, unit) => total + unit.cases.length, 0),
+    20
+  );
+  assert.deepEqual(first.scheduling, {
+    schema: 'seerrng-hosted-test-scheduling/v1',
+    maximumConcurrentCases: 20,
+    totalCases: 20,
+    fixedCases: 9,
+    assignmentAlgorithm: 'deterministic-longest-processing-time/v1',
+    tieBreakers: ['file-path-ascending', 'shard-index-ascending'],
+    allocations: [
+      {
+        unitId: 'ci-unit-test',
+        caseIds: [
+          'shard-01-of-04',
+          'shard-02-of-04',
+          'shard-03-of-04',
+          'shard-04-of-04',
+        ],
+      },
+      {
+        unitId: 'cypress-run',
+        caseIds: [
+          'shard-01-of-07',
+          'shard-02-of-07',
+          'shard-03-of-07',
+          'shard-04-of-07',
+          'shard-05-of-07',
+          'shard-06-of-07',
+          'shard-07-of-07',
+        ],
+      },
+    ],
+    timingProfile: {
+      path: 'tools/validation-engine/hosted-test-timing-profile.json',
+      schema: 'seerrng-hosted-test-timing-profile/v1',
+      sha256: first.scheduling.timingProfile.sha256,
+      source: first.scheduling.timingProfile.source,
+    },
+  });
+  assert.match(first.scheduling.timingProfile.sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(hostedTimingProfile.model, {
+    cypressUnknownMethod: 'maximum-observed-spec-wall-duration',
+    githubLogicalCpusPerRunner: 4,
+    nativeNodeFullWallMs: 27000,
+    nativeNodeMethod: 'source-bytes-proportional-to-full-wall-time',
+    vitestOverheadMethod: 'aggregate-non-test-duration-divided-by-file-count',
+    vitestUnknownMethod: 'p95-observed-file-duration',
+  });
   assert.deepEqual(
     first.units.map(({ id, stage, dependsOn }) => ({ id, stage, dependsOn })),
     [
@@ -495,42 +555,32 @@ test('hosted GitHub plan is deterministic and binds the staged native DAG', () =
       {
         id: 'codeql-analyze',
         stage: 'codeql',
-        dependsOn: [
-          'ci-release-notes',
-          'ci-i18n',
-          'ci-unit-test',
-          'docs-links',
-        ],
+        dependsOn: ['engine-plan'],
       },
       {
         id: 'ci-jellyfin-plugin',
         stage: 'build',
-        dependsOn: ['codeql-analyze'],
+        dependsOn: ['engine-plan'],
       },
       {
         id: 'ci-test',
         stage: 'build',
-        dependsOn: ['codeql-analyze'],
+        dependsOn: ['engine-plan'],
       },
       {
         id: 'test-docs-build',
         stage: 'build',
-        dependsOn: ['codeql-analyze'],
+        dependsOn: ['engine-plan'],
       },
       {
         id: 'helm-lint-test',
         stage: 'build',
-        dependsOn: ['codeql-analyze'],
+        dependsOn: ['engine-plan'],
       },
       {
         id: 'cypress-run',
         stage: 'browser',
-        dependsOn: [
-          'ci-jellyfin-plugin',
-          'ci-test',
-          'test-docs-build',
-          'helm-lint-test',
-        ],
+        dependsOn: ['engine-plan'],
       },
     ]
   );
@@ -548,6 +598,61 @@ test('hosted GitHub plan is deterministic and binds the staged native DAG', () =
       { id: 'cypress-run', testLanes: ['cypress'] },
     ]
   );
+  const unitShards = first.units.find((unit) => unit.id === 'ci-unit-test');
+  const cypressShards = first.units.find((unit) => unit.id === 'cypress-run');
+  assert.deepEqual(unitShards.cases, [
+    'shard-01-of-04',
+    'shard-02-of-04',
+    'shard-03-of-04',
+    'shard-04-of-04',
+  ]);
+  assert.deepEqual(cypressShards.cases, [
+    'shard-01-of-07',
+    'shard-02-of-07',
+    'shard-03-of-07',
+    'shard-04-of-07',
+    'shard-05-of-07',
+    'shard-06-of-07',
+    'shard-07-of-07',
+  ]);
+  const shardStrategies = {
+    vitest: 'timing-profile-topology-lpt/v1',
+    'node-test-mjs': 'inventory-bytes-proportional-wall-lpt/v1',
+    cypress: 'timing-profile-lpt/v1',
+  };
+  for (const unit of [unitShards, cypressShards]) {
+    assert.deepEqual(
+      unit.caseAssignments.map((assignment) => assignment.caseId),
+      unit.cases
+    );
+    assert.ok(
+      unit.caseAssignments.every(
+        (assignment) =>
+          assignment.mode === 'shard' &&
+          assignment.weightUnit === 'estimated-wall-ms' &&
+          assignment.estimatedWeight > 0 &&
+          assignment.lanes.length === unit.testLanes.length
+      )
+    );
+    for (const laneId of unit.testLanes) {
+      const expected = first.testInventory.lanes.find(
+        (lane) => lane.id === laneId
+      ).files;
+      const assigned = unit.caseAssignments.flatMap((assignment) => {
+        const lane = assignment.lanes.find((entry) => entry.id === laneId);
+        assert.equal(lane.mode, 'shard');
+        assert.equal(lane.strategy, shardStrategies[laneId]);
+        assert.equal(lane.weightUnit, 'estimated-wall-ms');
+        assert.ok(lane.estimatedWeight > 0);
+        assert.match(lane.filesSha256, /^[a-f0-9]{64}$/);
+        assert.ok(lane.files.length > 0);
+        return lane.files;
+      });
+      assert.equal(assigned.length, expected.length);
+      assert.equal(new Set(assigned).size, expected.length);
+      assert.deepEqual(assigned.toSorted(), expected);
+    }
+  }
   assert.deepEqual(
     first.units.filter((unit) => !unit.applicable).map((unit) => unit.id),
     ['helm-lint-test']
@@ -558,6 +663,7 @@ test('hosted GitHub plan is deterministic and binds the staged native DAG', () =
   );
   assert.equal(Object.isFrozen(first), true);
   assert.equal(Object.isFrozen(first.units[0]), true);
+  assert.equal(Object.isFrozen(unitShards.caseAssignments[0]), true);
 });
 
 test('hosted GitHub applicability matches native event, branch and path filters', () => {
@@ -908,5 +1014,58 @@ test('hosted GitHub reconciliation rejects duplicate planned needs bindings', ()
   assert.throws(
     () => reconcileHostedGithubNeeds(plan, githubNeeds(plan)),
     /Duplicate hosted validation unit binding/
+  );
+});
+
+test('hosted GitHub plan fails closed on scheduling-profile or shard-closure drift', () => {
+  const mutate = (change) => {
+    const plan = structuredClone(createHostedGithubPlan(hostedInput()));
+    change(plan);
+    plan.planSha256 = rehashPlan(plan);
+    return plan;
+  };
+  const laneHash = (files) =>
+    createHash('sha256').update(canonicalJson(files)).digest('hex');
+
+  const profileDrift = mutate((plan) => {
+    plan.scheduling.timingProfile.sha256 = '0'.repeat(64);
+  });
+  assert.throws(
+    () => reconcileHostedGithubNeeds(profileDrift, githubNeeds(profileDrift)),
+    /scheduling policy does not match the sealed profile/
+  );
+
+  for (const mutation of ['missing', 'duplicate']) {
+    const plan = mutate((candidatePlan) => {
+      const unit = candidatePlan.units.find(
+        (entry) => entry.id === 'ci-unit-test'
+      );
+      const firstLane = unit.caseAssignments[0].lanes.find(
+        (lane) => lane.id === 'vitest'
+      );
+      if (mutation === 'missing') firstLane.files.pop();
+      else {
+        const secondLane = unit.caseAssignments[1].lanes.find(
+          (lane) => lane.id === 'vitest'
+        );
+        firstLane.files[0] = secondLane.files[0];
+      }
+      firstLane.filesSha256 = laneHash(firstLane.files);
+    });
+    assert.throws(
+      () => reconcileHostedGithubNeeds(plan, githubNeeds(plan)),
+      /case lane does not close exactly once: vitest/,
+      mutation
+    );
+  }
+});
+
+test('hosted GitHub plan rejects an inter-unit scheduling barrier', () => {
+  const plan = structuredClone(createHostedGithubPlan(hostedInput()));
+  plan.units.at(-1).dependsOn = ['ci-test'];
+  plan.planSha256 = rehashPlan(plan);
+  assert.throws(
+    () => reconcileHostedGithubNeeds(plan, githubNeeds(plan)),
+    /fan out directly from engine-plan/
   );
 });

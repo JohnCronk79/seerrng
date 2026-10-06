@@ -3,8 +3,15 @@
 // the bound workflows preserve each native executor and runner environment.
 import { createHash } from 'node:crypto';
 import { assertHostedTestInventory } from './hosted-test-inventory.mjs';
+import {
+  assertHostedSchedulingPlan,
+  createHostedCaseAssignments,
+  createHostedSchedulingPolicy,
+  HOSTED_CYPRESS_CASES,
+  HOSTED_UNIT_CASES,
+} from './hosted-test-sharding.mjs';
 
-const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v3';
+const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v5';
 const RECONCILIATION_SCHEMA = 'seerrng-hosted-github-reconciliation/v2';
 const HASH40 = /^[a-f0-9]{40}$/;
 const HASH64 = /^[a-f0-9]{64}$/;
@@ -16,7 +23,6 @@ const PATH_FILTER_MODES = new Set([
   'run-all-new-branch',
 ]);
 const STAGES = ['repository', 'codeql', 'build', 'browser'];
-const STAGE_INDEX = new Map(STAGES.map((stage, index) => [stage, index]));
 const WORKFLOW_KEYS = [
   'ci',
   'codeql',
@@ -32,6 +38,7 @@ const PLAN_KEYS = [
   'externalMetadata',
   'planSha256',
   'resultReuse',
+  'scheduling',
   'schema',
   'testInventory',
   'units',
@@ -55,19 +62,6 @@ const EXTERNAL_PR_METADATA = [
   },
 ];
 const RESULT_REUSE = false;
-const REPOSITORY_UNITS = [
-  'ci-release-notes',
-  'ci-i18n',
-  'ci-unit-test',
-  'docs-links',
-];
-const BUILD_UNITS = [
-  'ci-jellyfin-plugin',
-  'ci-test',
-  'test-docs-build',
-  'helm-lint-test',
-];
-
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 export function githubChangedFilesRange(eventName, baseSha, headSha) {
@@ -373,9 +367,9 @@ function unit({
   };
 }
 
-function validationUnits(event, changedFiles, workflowHashes) {
+function validationUnits(event, changedFiles, workflowHashes, testInventory) {
   const applies = applicability(event, changedFiles);
-  return [
+  const units = [
     unit({
       id: 'ci-release-notes',
       needsKey: 'release-notes',
@@ -406,6 +400,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       workflowSha256: workflowHashes.ci,
       job: 'unit-test',
       stage: 'repository',
+      cases: [...HOSTED_UNIT_CASES],
       testLanes: ['vitest', 'node-test-mjs'],
       dependsOn: ['engine-plan'],
       applicable: applies.ci,
@@ -430,7 +425,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       job: 'analyze',
       stage: 'codeql',
       cases: ['actions', 'javascript'],
-      dependsOn: [...REPOSITORY_UNITS],
+      dependsOn: ['engine-plan'],
       applicable: applies.codeql,
       reason: 'CodeQL event, branch and ordered path filters',
     }),
@@ -441,7 +436,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       workflowSha256: workflowHashes.ci,
       job: 'jellyfin-plugin',
       stage: 'build',
-      dependsOn: ['codeql-analyze'],
+      dependsOn: ['engine-plan'],
       applicable: applies.ci,
       reason: 'CI job: pull request or push to main',
     }),
@@ -452,7 +447,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       workflowSha256: workflowHashes.ci,
       job: 'test',
       stage: 'build',
-      dependsOn: ['codeql-analyze'],
+      dependsOn: ['engine-plan'],
       applicable: applies.ci,
       reason: 'CI job: pull request or push to main',
     }),
@@ -464,7 +459,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       job: 'test-build',
       stage: 'build',
       testLanes: ['docs-security'],
-      dependsOn: ['codeql-analyze'],
+      dependsOn: ['engine-plan'],
       applicable: applies.testDocs,
       reason: 'Test Docs main-branch and path filters',
     }),
@@ -475,7 +470,7 @@ function validationUnits(event, changedFiles, workflowHashes) {
       workflowSha256: workflowHashes.helm,
       job: 'lint-test',
       stage: 'build',
-      dependsOn: ['codeql-analyze'],
+      dependsOn: ['engine-plan'],
       applicable: applies.helm,
       reason: 'Helm lint main-branch and chart path filters',
     }),
@@ -486,12 +481,17 @@ function validationUnits(event, changedFiles, workflowHashes) {
       workflowSha256: workflowHashes.cypress,
       job: 'cypress-run',
       stage: 'browser',
+      cases: [...HOSTED_CYPRESS_CASES],
       testLanes: ['cypress'],
-      dependsOn: [...BUILD_UNITS],
+      dependsOn: ['engine-plan'],
       applicable: applies.cypress,
       reason: 'Cypress event, branch and path filters',
     }),
   ];
+  return units.map((entry) => ({
+    ...entry,
+    caseAssignments: createHostedCaseAssignments(entry, testInventory),
+  }));
 }
 
 function assertPlan(plan) {
@@ -549,7 +549,18 @@ function assertPlan(plan) {
   const changedFiles = changedFileList(plan.changedFiles);
   const workflows = workflowIdentity(plan.workflowHashes);
   const testInventory = assertHostedTestInventory(plan.testInventory);
-  const expectedUnits = validationUnits(event, changedFiles, workflows);
+  const expectedScheduling = createHostedSchedulingPolicy();
+  const expectedUnits = validationUnits(
+    event,
+    changedFiles,
+    workflows,
+    testInventory
+  );
+  assertHostedSchedulingPlan({
+    units: plan.units,
+    testInventory,
+    scheduling: plan.scheduling,
+  });
   const assignedTestLanes = plan.units.flatMap((entry) => entry.testLanes);
   const expectedTestLanes = testInventory.lanes.map((lane) => lane.id);
   if (
@@ -558,21 +569,12 @@ function assertPlan(plan) {
     expectedTestLanes.some((lane) => !assignedTestLanes.includes(lane))
   )
     throw new Error('Hosted units do not close the complete test inventory');
-  for (const entry of plan.units) {
-    for (const dependency of entry.dependsOn) {
-      if (dependency === 'engine-plan') {
-        if (entry.stage !== 'repository')
-          throw new Error('Only repository units may depend on engine-plan');
-        continue;
-      }
-      const owner = plan.units.find((unit) => unit.id === dependency);
-      if (
-        !owner ||
-        STAGE_INDEX.get(owner.stage) >= STAGE_INDEX.get(entry.stage)
-      )
-        throw new Error('Hosted unit dependency must be in an earlier stage');
-    }
-  }
+  for (const entry of plan.units)
+    if (
+      entry.dependsOn.length !== 1 ||
+      entry.dependsOn[0] !== 'engine-plan'
+    )
+      throw new Error('Hosted units must fan out directly from engine-plan');
   const expectedMetadata =
     event.name === 'pull_request' ? EXTERNAL_PR_METADATA : [];
   if (
@@ -581,6 +583,7 @@ function assertPlan(plan) {
     canonicalJson(changedFiles) !== canonicalJson(plan.changedFiles) ||
     canonicalJson(workflows) !== canonicalJson(plan.workflowHashes) ||
     canonicalJson(testInventory) !== canonicalJson(plan.testInventory) ||
+    canonicalJson(expectedScheduling) !== canonicalJson(plan.scheduling) ||
     canonicalJson(expectedUnits) !== canonicalJson(plan.units) ||
     canonicalJson(expectedMetadata) !== canonicalJson(plan.externalMetadata) ||
     plan.resultReuse !== RESULT_REUSE
@@ -605,6 +608,7 @@ export function createHostedGithubPlan({
   const boundChangedFiles = changedFileList(changedFiles);
   const boundWorkflowHashes = workflowIdentity(workflowHashes);
   const boundTestInventory = assertHostedTestInventory(testInventory);
+  const scheduling = createHostedSchedulingPolicy();
   const unsigned = {
     schema: PLAN_SCHEMA,
     candidate: boundCandidate,
@@ -612,7 +616,13 @@ export function createHostedGithubPlan({
     changedFiles: boundChangedFiles,
     workflowHashes: boundWorkflowHashes,
     testInventory: structuredClone(boundTestInventory),
-    units: validationUnits(boundEvent, boundChangedFiles, boundWorkflowHashes),
+    scheduling,
+    units: validationUnits(
+      boundEvent,
+      boundChangedFiles,
+      boundWorkflowHashes,
+      boundTestInventory
+    ),
     externalMetadata:
       boundEvent.name === 'pull_request'
         ? structuredClone(EXTERNAL_PR_METADATA)

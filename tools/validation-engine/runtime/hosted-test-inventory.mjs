@@ -500,7 +500,10 @@ export function assertHostedTestInventory(inventory) {
         ? VITEST_TEST.test(entry.file) &&
           ['node:test', 'vitest'].includes(entry.framework)
         : entry.owner === 'cypress'
-          ? CYPRESS_SPEC.test(entry.file) && entry.framework === 'cypress'
+          // Cypress Action transports explicit specs as one comma-delimited value.
+          ? CYPRESS_SPEC.test(entry.file) &&
+            !entry.file.includes(',') &&
+            entry.framework === 'cypress'
           : entry.owner === 'docs-security'
             ? entry.file === DOCS_SECURITY_TEST &&
               entry.framework === 'node:test'

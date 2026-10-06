@@ -874,6 +874,69 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       message: /GitHub test-lane mode requires --unit/,
     },
     {
+      args: [
+        '--github-materialize-test-lane',
+        '--plan-file',
+        'missing-plan.json',
+      ],
+      message: /GitHub test-lane materialization mode requires --unit/,
+    },
+    {
+      args: [
+        '--github-materialize-test-lane',
+        '--unit',
+        'ci-unit-test',
+        '--plan-file',
+        'missing-plan.json',
+      ],
+      message: /GitHub test-lane materialization mode requires --case/,
+    },
+    {
+      args: [
+        '--github-materialize-test-lane',
+        '--unit',
+        'ci-unit-test',
+        '--case',
+        'shard-01-of-04',
+        '--lane',
+        'vitest',
+        '--plan-file',
+        'missing-plan.json',
+        '--expected-plan-sha256',
+        'sha',
+        '--receipt-dir',
+        'receipts',
+        '--output-file',
+        'vitest.config.mts',
+        '--report-file',
+        'report.json',
+      ],
+      message:
+        /GitHub test-lane materialization mode does not accept --report-file/,
+    },
+    {
+      args: [
+        '--github-materialize-test-lane',
+        '--unit',
+        'ci-unit-test',
+        '--case',
+        'shard-01-of-04',
+        '--lane',
+        'vitest',
+        '--plan-file',
+        'missing-plan.json',
+        '--expected-plan-sha256',
+        'sha',
+        '--receipt-dir',
+        'receipts',
+        '--output-file',
+        'first.config.mts',
+        '--output-file',
+        'second.config.mts',
+      ],
+      message: /Duplicate option: --output-file/,
+    },
+    {
       args: ['--github-receipt', '--plan-file', 'missing-plan.json'],
       message: /GitHub receipt mode requires --unit/,
     },
@@ -931,6 +994,42 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       JSON.stringify(args)
     );
   }
+});
+
+test('CLI materialization mode accepts only its complete bounded option set', () => {
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const result = spawnSync(
+    process.execPath,
+    [
+      cli,
+      '--github-materialize-test-lane',
+      '--unit',
+      'ci-unit-test',
+      '--case',
+      'shard-01-of-04',
+      '--lane',
+      'vitest',
+      '--plan-file',
+      'missing-plan.json',
+      '--expected-plan-sha256',
+      'a'.repeat(64),
+      '--receipt-dir',
+      'receipts',
+      '--output-file',
+      'vitest.config.mts',
+      '--json',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      windowsHide: true,
+    }
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Missing hosted GitHub plan/);
+  assert.doesNotMatch(result.stderr, /does not accept|requires --/);
 });
 
 test('interruption cancels the owned child process tree and prevents later steps', async () => {

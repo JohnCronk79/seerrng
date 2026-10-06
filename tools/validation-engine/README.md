@@ -4,9 +4,10 @@ This is the authoritative operating guide for the validation engine bound into
 this repository. Use the existing `validate:development` entry point. Do not
 create another launcher, runner, frozen inventory, or copied test bundle.
 
-The engine owns discovery, stage order, worker selection, candidate binding, and
-result accounting. Existing native test runners, commands, action pins, runner
-environments, assertions, and fixtures remain authoritative within that plan.
+The engine owns discovery, execution topology, worker selection, candidate
+binding, and result accounting. Existing native test runners, commands, action
+pins, runner environments, assertions, and fixtures remain authoritative within
+that plan.
 
 ## Developer commands
 
@@ -35,8 +36,8 @@ pnpm validate:development
 A reviewed host may supply containment and proof callbacks to the bound engine
 APIs. It may provide mounts, disposable fixtures, network boundaries, and
 durable evidence storage. It must not rediscover tests, choose substitute
-commands, reorder stages, reinterpret results, or decide that an incomplete run
-passed.
+commands, alter planned dependencies, reinterpret results, or decide that an
+incomplete run passed.
 
 There is no public worker-count option. Internal host overrides exist only for
 reviewed engine integration and tests; ordinary baselines must use automatic
@@ -114,21 +115,25 @@ immutable plan bound to the repository, event, run ID, run attempt, execution
 commit, tree, lockfile, changed files, workflow definitions, and complete test
 inventory.
 
-The engine owns this fixed ordered graph:
+The immutable plan contains 10 logical validation units. Their matrices expand
+to exactly 20 runner cases: nine fixed cases, four Unit shards, and seven
+Cypress shards. Repository checks, both CodeQL cases, the existing build and
+supplemental jobs, and Cypress can therefore use independent runner machines
+concurrently after planning. The four stage names remain coverage and timing
+classifications; they are not hosted scheduling barriers.
 
-1. Repository units run in parallel: release notes, i18n/tooling, unit tests, and
-   applicable documentation links.
-2. CodeQL runs after repository units finish, with separate Actions and
-   JavaScript cases.
-3. Build units run in parallel after CodeQL finishes: Jellyfin plugin and smoke,
-   the existing Alpine lint/production build, documentation build/security, and
-   Helm validation.
-4. Cypress runs after the build units finish.
+Each hosted unit depends only on the immutable engine plan. Cypress preserves
+its own same-job build and does not consume the separate Alpine production-build
+job. Final reconciliation is the fan-in barrier and still rejects every
+required failure, cancellation, missing result, or unexpected skip.
 
-These are ordering barriers. Later stages use diagnostic continuation after an
-earlier failure unless the workflow is cancelled. Final reconciliation still
-rejects every required failure, cancellation, missing result, or unexpected
-skip.
+A committed timing profile from a named successful baseline is a scheduling
+hint only. The engine uses deterministic longest-processing-time assignment,
+accounts for Vitest's parallel and serial-only projects, uses a recorded p95
+fallback for an unknown Vitest file, and uses the recorded maximum for an
+unknown Cypress spec. The live inventory remains the sole authority for
+coverage. Timing data can change placement but can never skip a test or satisfy
+a result.
 
 After a job completes the native setup required to establish its dependency and
 runner identity, each applicable unit or matrix case:
@@ -149,19 +154,23 @@ the missing required receipt makes final reconciliation fail closed; the native
 job log remains the failure evidence. No pre-admission failure can be reported as
 an engine success.
 
-The unit-test job preserves `pnpm test:ci` and also runs the dynamically
-discovered native Node lane with exactly `N` effective workers. A successful
-receipt requires the JUnit report to contain every planned Vitest file exactly
+Each of the four unit-test cases preserves `pnpm test:ci`, materializing only its
+planned Vitest subset into a runner-temporary configuration, and also runs its
+planned native Node subset with exactly `N` effective workers. A successful
+receipt requires the JUnit report to contain every assigned Vitest file exactly
 once with active tests and no failures or errors. The engine-owned Node result
-must match the same admission, worker capacity, inventory, and lane. Each
+must match the same admission, worker capacity, inventory, and assignment. Each
 planned native Node file runs in its own isolated process through an `N`-wide
 engine pool and must produce a nonempty complete TAP hierarchy; the sealed
-per-file reports, files, case counts, and aggregate result must all reconcile.
+per-file reports, files, timings, case counts, and aggregate result must all
+reconcile.
 
-The existing Alpine production-build job remains intact. Cypress separately
-performs one Ubuntu `pnpm cypress:build` inside the Cypress job, then the pinned
-Cypress action reuses that same-job build instead of building again. No compiled
-build is transferred between different runner environments.
+The existing Alpine production-build job remains intact. Each of the seven
+Cypress cases separately performs one Ubuntu `pnpm cypress:build`, then the
+pinned Cypress action runs only that case's planned spec subset against its
+same-job build. Its native per-spec, case, attempt, and aggregate evidence must
+close that assignment. No compiled build is transferred between different
+runner environments.
 
 Final reconciliation downloads the immutable plan and the complete current-
 attempt admission, receipt, and ledger artifacts. It requires exactly one
@@ -169,6 +178,9 @@ successful sealed artifact set for every applicable unit case. It verifies the
 planned artifact set and the candidate, workflow, command, test-inventory,
 admission, result, and ledger bindings. GitHub's native job logs remain the
 evidence for action-managed tool setup that is not itself safely reusable.
+For every sharded lane, reconciliation also rejects missing, extra, or duplicate
+files and requires the successful case results to cover the canonical lane
+exactly once with active tests in aggregate.
 
 Path- or event-inapplicable jobs must be skipped exactly as planned. Pull-request
 title, template, and merge-conflict checks remain external GitHub metadata and
@@ -205,8 +217,9 @@ the plan.
 
 Local execution retains native receipts, logs, case outcomes, skips, timings,
 and process ownership/cleanup evidence. Hosted execution retains GitHub's native
-job logs and, for work that reaches engine admission, sealed admissions,
-evidence manifests, parsed unit-test closure summaries, success receipts, and
+job logs and, for work that reaches engine admission, case-qualified copies of
+the raw JUnit, native Node, and Cypress result files alongside sealed admissions,
+evidence manifests, parsed closure summaries, success receipts, and
 attempt-scoped ledgers.
 
 The engine does not install development dependencies, provision missing tools,

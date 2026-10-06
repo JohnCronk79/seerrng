@@ -25,8 +25,10 @@ const validationCli = readFileSync(
   path.join(root, 'bin/run-local-validation.mjs'),
   'utf8'
 ).replaceAll('\r\n', '\n');
-const repositoryUnits = ['release-notes', 'i18n', 'unit-test', 'docs-links'];
-const buildUnits = ['jellyfin-plugin', 'test', 'test-docs', 'helm'];
+const cypressConfig = readFileSync(
+  path.join(root, 'cypress.config.ts'),
+  'utf8'
+).replaceAll('\r\n', '\n');
 const directUnits = {
   'jellyfin-plugin': 'ci-jellyfin-plugin',
   'release-notes': 'ci-release-notes',
@@ -55,6 +57,14 @@ test('the immutable plan is an attempt-bound artifact consumed by every unit', (
   assert.match(publish.with.name, /github\.run_id/);
   assert.match(publish.with.name, /github\.run_attempt/);
   assert.equal(publish.with['retention-days'], 1);
+  assert.equal(
+    plan.outputs.unitMatrix,
+    '${{ steps.plan.outputs.unitMatrix }}'
+  );
+  assert.equal(
+    plan.outputs.cypressMatrix,
+    '${{ steps.plan.outputs.cypressMatrix }}'
+  );
 
   for (const [jobId, unitId] of Object.entries(directUnits)) {
     const job = ci.workflow.jobs[jobId];
@@ -114,36 +124,54 @@ test('hosted admission outputs expose execution only', () => {
     assert.equal(validationCli.includes(forbidden), false, forbidden);
 });
 
-test('the fixed GitHub graph preserves stage barriers and within-stage parallelism', () => {
+test('the fixed GitHub graph fans out after planning and fans in for reconciliation', () => {
   const jobs = ci.workflow.jobs;
-  for (const id of repositoryUnits) {
+  const validationJobs = [
+    ...Object.keys(directUnits),
+    ...Object.keys(reusableUnits),
+  ];
+  for (const id of validationJobs) {
     assert.deepEqual(needs(jobs[id]), new Set(['engine-plan']), id);
     assert.match(jobs[id].if, /always\(\)/, id);
     assert.match(jobs[id].if, /!cancelled\(\)/, id);
     assert.match(jobs[id].if, /needs\.engine-plan\.result == 'success'/, id);
   }
-  assert.deepEqual(
-    needs(jobs.codeql),
-    new Set(['engine-plan', ...repositoryUnits])
-  );
-  for (const id of buildUnits)
-    assert.deepEqual(needs(jobs[id]), new Set(['engine-plan', 'codeql']), id);
-  assert.deepEqual(
-    needs(jobs.cypress),
-    new Set(['engine-plan', ...buildUnits])
-  );
-
-  for (const id of ['codeql', ...buildUnits, 'cypress']) {
-    const condition = jobs[id].if;
-    assert.match(condition, /always\(\)/, id);
-    assert.match(condition, /!cancelled\(\)/, id);
-    assert.match(condition, /needs\.engine-plan\.result == 'success'/, id);
-    assert.doesNotMatch(condition, /needs\.(?!engine-plan)[\w-]+\.result/, id);
-  }
+  for (const id of validationJobs)
+    assert.doesNotMatch(
+      jobs[id].if,
+      /needs\.(?!engine-plan)[\w-]+\.result/,
+      id
+    );
   assert.match(jobs.codeql.if, /outputs\.codeql == 'true'/);
   assert.match(jobs['test-docs'].if, /outputs\.testDocs == 'true'/);
   assert.match(jobs.helm.if, /outputs\.helm == 'true'/);
   assert.match(jobs.cypress.if, /outputs\.cypress == 'true'/);
+});
+
+test('the weighted Unit and Cypress shard matrices consume the sealed plan outputs', () => {
+  const unit = ci.workflow.jobs['unit-test'];
+  const cypress = ci.workflow.jobs.cypress;
+  assert.equal(unit.strategy['fail-fast'], false);
+  assert.equal(unit.strategy['max-parallel'], 4);
+  assert.equal(
+    unit.strategy.matrix,
+    '${{ fromJSON(needs.engine-plan.outputs.unitMatrix) }}'
+  );
+  assert.match(unit.name, /matrix\.case_id/);
+  assert.equal(unit.env.SEERRNG_ENGINE_CASE_ID, '${{ matrix.case_id }}');
+
+  assert.equal(cypress.strategy['fail-fast'], false);
+  assert.equal(cypress.strategy['max-parallel'], 7);
+  assert.equal(
+    cypress.strategy.matrix,
+    '${{ fromJSON(needs.engine-plan.outputs.cypressMatrix) }}'
+  );
+  assert.match(cypress.name, /matrix\.case_id/);
+  assert.equal(cypress.with.case_id, '${{ matrix.case_id }}');
+  assert.equal(cypress.with.specs, '${{ matrix.specs }}');
+  assert.match(validationCli, /const unitMatrix = \{\s*include:/);
+  assert.match(validationCli, /const cypressMatrix = \{\s*include:/);
+  assert.match(validationCli, /specs: lane\.files\.join\(','\)/);
 });
 
 test('direct native jobs execute only after admission and preserve sealed receipts', () => {
@@ -171,9 +199,13 @@ test('direct native jobs execute only after admission and preserve sealed receip
     assert.ok(seal, id);
     assert.ok(publish, id);
     assert.equal(admit.id, 'engine-admission', id);
+    const firstAfterAdmission =
+      id === 'unit-test'
+        ? 'Materialize planned Vitest shard'
+        : nativeValidation[id][0];
     assert.equal(
       stepIndex(job, 'Admit engine unit') + 1,
-      stepIndex(job, nativeValidation[id][0]),
+      stepIndex(job, firstAfterAdmission),
       id
     );
     assert.ok(
@@ -207,16 +239,42 @@ test('direct native jobs execute only after admission and preserve sealed receip
     assert.match(publish.with.name, /github\.run_attempt/, id);
     assert.equal(publish.with['if-no-files-found'], 'error', id);
   }
+  const unit = jobs['unit-test'];
+  assert.match(stepNamed(unit, 'Admit engine unit').run, /--case/);
+  assert.match(stepNamed(unit, 'Seal engine unit receipt').run, /--case/);
+  assert.match(
+    stepNamed(unit, 'Publish engine unit receipt').with.name,
+    /matrix\.case_id/
+  );
 });
 
-test('the unit job preserves Vitest and adds the engine-owned native Node lane', () => {
+test('the unit matrix materializes and executes only each planned test shard', () => {
   const job = ci.workflow.jobs['unit-test'];
+  const materialize = stepNamed(job, 'Materialize planned Vitest shard');
   const vitest = stepNamed(job, 'Run tests');
   const nodeTests = stepNamed(job, 'Run engine-owned native Node tests');
   const receipt = stepNamed(job, 'Seal engine unit receipt');
-  assert.equal(vitest.run, 'pnpm test:ci');
+  assert.match(materialize.run, /--github-materialize-test-lane/);
+  assert.match(materialize.run, /--unit "\$SEERRNG_ENGINE_UNIT_ID"/);
+  assert.match(materialize.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
+  assert.match(materialize.run, /--lane vitest/);
+  assert.match(materialize.run, /--receipt-dir /);
+  assert.match(
+    materialize.run,
+    /--output-file "\$RUNNER_TEMP\/seerrng-engine-vitest\.config\.mts"/
+  );
+  assert.match(
+    materialize.if,
+    /steps\.engine-admission\.outputs\.execute == 'true'/
+  );
+  assert.match(vitest.run, /pnpm test:ci --/);
+  assert.match(
+    vitest.run,
+    /--config "\$RUNNER_TEMP\/seerrng-engine-vitest\.config\.mts"/
+  );
   assert.match(nodeTests.run, /--github-run-test-lane/);
   assert.match(nodeTests.run, /--unit "\$SEERRNG_ENGINE_UNIT_ID"/);
+  assert.match(nodeTests.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
   assert.match(nodeTests.run, /--lane node-test-mjs/);
   assert.match(nodeTests.run, /--plan-file /);
   assert.match(nodeTests.run, /--expected-plan-sha256 /);
@@ -230,10 +288,18 @@ test('the unit job preserves Vitest and adds the engine-owned native Node lane',
     receipt.run,
     /--evidence "\$RUNNER_TEMP\/seerrng-engine-node-tests\.json"/
   );
+  assert.match(receipt.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
 });
 
 test('reusable native workflows require binding inputs and emit receipts', () => {
   const standalone = new Set(['codeql', 'cypress', 'docs-links']);
+  const commonInputs = [
+    'plan_sha256',
+    'engine_run_id',
+    'engine_run_attempt',
+    'execution_sha',
+    'unit_id',
+  ];
   const firstValidation = {
     codeql: 'Initialize CodeQL',
     cypress: 'Build Cypress application once on Ubuntu',
@@ -247,18 +313,16 @@ test('reusable native workflows require binding inputs and emit receipts', () =>
     const inputs = workflow.on.workflow_call.inputs;
     assert.deepEqual(
       new Set(Object.keys(inputs)),
-      new Set([
-        'plan_sha256',
-        'engine_run_id',
-        'engine_run_attempt',
-        'execution_sha',
-        'unit_id',
-      ]),
+      new Set(
+        jobId === 'cypress'
+          ? [...commonInputs, 'case_id', 'specs']
+          : commonInputs
+      ),
       jobId
     );
-    for (const input of Object.values(inputs)) {
-      assert.equal(input.required, true, jobId);
+    for (const [inputId, input] of Object.entries(inputs)) {
       assert.equal(input.type, 'string', jobId);
+      assert.equal(input.required, true, `${jobId}/${inputId}`);
     }
     for (const job of Object.values(workflow.jobs)) {
       assert.ok(
@@ -359,10 +423,11 @@ test('Helm scopes committed chart changes before read-only documentation validat
   assert.match(receipt.if, /always\(\)/);
 });
 
-test('Cypress builds once on Ubuntu and the pinned action reuses that build', () => {
+test('each planned Cypress shard seals its exact specs and native result', () => {
   const { text, workflow } = readWorkflow('cypress');
   const job = workflow.jobs['cypress-run'];
   const configure = stepNamed(job, 'Configure Cypress runtime directory');
+  const configureResult = stepNamed(job, 'Configure Cypress engine result');
   const prepare = stepNamed(job, 'Prepare Cypress runtime configuration');
   const exportConfig = stepNamed(job, 'Export external runtime configuration');
   const admission = stepNamed(job, 'Admit engine unit');
@@ -374,6 +439,15 @@ test('Cypress builds once on Ubuntu and the pinned action reuses that build', ()
     /CONFIG_DIRECTORY=.*\$RUNNER_TEMP\/seerrng-cypress-runtime-config/
   );
   assert.match(configure.run, />> "\$GITHUB_ENV"/);
+  assert.match(
+    configureResult.run,
+    /SEERRNG_ENGINE_CYPRESS_REPORT=.*\$RUNNER_TEMP\/seerrng-engine-cypress-result\.json/
+  );
+  assert.equal(job.env.SEERRNG_ENGINE_UNIT_ID, '${{ inputs.unit_id }}');
+  assert.equal(job.env.SEERRNG_ENGINE_CASE_ID, '${{ inputs.case_id }}');
+  assert.equal(job.env.SEERRNG_ENGINE_CYPRESS_FILES, '${{ inputs.specs }}');
+  assert.match(job.name, /inputs\.case_id/);
+  assert.match(workflow.concurrency.group, /inputs\.case_id/);
   for (const name of [
     'Prepare Cypress runtime configuration',
     'Export external runtime configuration',
@@ -401,11 +475,28 @@ test('Cypress builds once on Ubuntu and the pinned action reuses that build', ()
   assert.equal(run.with.build, undefined);
   assert.equal(run.with.install, false);
   assert.equal(run.with.start, 'env E2E_TESTS=true pnpm start');
+  assert.equal(run.with.spec, '${{ inputs.specs }}');
   assert.equal(text.match(/pnpm cypress:build/g)?.length, 1);
   assert.match(
     run.uses,
     /^cypress-io\/github-action@789d836053c5ca389c2905fc0c9f2909da778c46/
   );
+  assert.match(admission.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
+  assert.match(receipt.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
+  assert.match(
+    receipt.run,
+    /--evidence "\$SEERRNG_ENGINE_CYPRESS_REPORT"/
+  );
+  assert.match(
+    stepNamed(job, 'Publish engine unit receipt').with.name,
+    /cypress-run-\$\{\{ inputs\.case_id \}\}/
+  );
+  assert.match(cypressConfig, /on\('after:run'/);
+  assert.match(cypressConfig, /seerrng-hosted-cypress-result\/v1/);
+  assert.match(cypressConfig, /planSha256:/);
+  assert.match(cypressConfig, /caseId:/);
+  assert.match(cypressConfig, /specs: engineSpecs/);
+  assert.match(cypressConfig, /native: results/);
 });
 
 test('native environments, commands, permissions, and action pins are preserved', () => {

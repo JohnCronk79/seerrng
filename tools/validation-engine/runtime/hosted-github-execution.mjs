@@ -18,7 +18,9 @@ import {
   isolatedEnvironment,
   removeOwnedTemporaryDirectory,
   runCommand,
+  vitestConfigSource,
 } from '../../../bin/local-validation.mjs';
+import { acceptNativeCypressResults } from './build-browser-stage.mjs';
 import { detectWorkerCapacity } from './cpu-capacity.mjs';
 import {
   assertHostedGithubPlan,
@@ -48,6 +50,8 @@ export const HOSTED_TEST_LANE_RESULT_SCHEMA =
   'seerrng-hosted-test-lane-result/v2';
 
 const HASH64 = /^[a-f0-9]{64}$/;
+const HOSTED_CONTROL_FILE =
+  /^([a-z0-9][a-z0-9-]{0,255})\.(admission|receipt|ledger)\.json$/;
 const JOB_STATUSES = new Set(['success', 'failure', 'cancelled']);
 const EVENT_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024;
 const BEHAVIOR_INPUT_MAX_BYTES = 4 * 1024 * 1024;
@@ -58,6 +62,8 @@ const UNIT_TEST_EVIDENCE = Object.freeze({
   vitest: 'report.xml',
   node: 'seerrng-engine-node-tests.json',
 });
+const CYPRESS_TEST_EVIDENCE = 'seerrng-engine-cypress-result.json';
+const HOSTED_CYPRESS_RESULT_SCHEMA = 'seerrng-hosted-cypress-result/v1';
 const COMMAND_ENVIRONMENT = Object.freeze([
   'CI',
   'GITHUB_ACTIONS',
@@ -391,6 +397,19 @@ function hostedBehaviorState(root, plan, unit, caseId, environment) {
       targetBranchSha256: sha256(payload.repository.default_branch),
     };
   } else if (unit.id === 'cypress-run') {
+    const assigned = selectedLane(plan, unit, caseId, 'cypress');
+    if (
+      assigned.files.some(
+        (file) =>
+          file.includes(',') ||
+          file.includes('\r') ||
+          file.includes('\n')
+      )
+    )
+      throw new Error('Hosted Cypress spec paths are unsafe for transport');
+    const expectedFiles = assigned.files.join(',');
+    if (environment.SEERRNG_ENGINE_CYPRESS_FILES !== expectedFiles)
+      throw new Error('Hosted Cypress specs do not match the planned shard');
     const payload = githubEventPayload(plan, environment);
     const message =
       plan.event.name === 'pull_request'
@@ -407,6 +426,7 @@ function hostedBehaviorState(root, plan, unit, caseId, environment) {
         plan.event.name === 'push'
           ? 'record-secret-presence-not-bindable-at-admission'
           : 'record-disabled',
+      specsSha256: sha256(expectedFiles),
     };
     state.files.push(cypressRuntimeSettings(root, environment));
   }
@@ -424,6 +444,7 @@ function hostedSetupIdentity(root, plan, unit, caseId, environment) {
       planSha256: plan.planSha256,
       workflowSha256: unit.workflowSha256,
       testInventorySha256: plan.testInventory.inventorySha256,
+      assignmentSha256: jsonSha256(selectedCaseAssignment(unit, caseId)),
       configSha256,
     }),
     fixturesSha256: plan.candidate.sourceSha256,
@@ -458,20 +479,52 @@ function actionPinsSha256(source) {
   return jsonSha256(pins);
 }
 
-function laneInventory(plan, unit) {
-  return plan.testInventory.lanes
-    .filter((lane) => unit.testLanes.includes(lane.id))
-    .map((lane) => ({
-      id: lane.id,
-      command: lane.command,
-      files: lane.files.map((file) => {
+function selectedCaseAssignment(unit, caseId) {
+  const assignments = unit.caseAssignments.filter(
+    (assignment) => assignment.caseId === caseId
+  );
+  if (assignments.length !== 1)
+    throw new Error(
+      `Missing exact hosted case assignment: ${unit.id}/${caseId}`
+    );
+  return assignments[0];
+}
+
+function selectedLane(plan, unit, caseId, laneId) {
+  const assignment = selectedCaseAssignment(unit, caseId);
+  const scheduled = assignment.lanes.find((lane) => lane.id === laneId);
+  const inventory = plan.testInventory.lanes.find((lane) => lane.id === laneId);
+  if (!scheduled || !inventory || !unit.testLanes.includes(laneId))
+    throw new Error(
+      `Missing hosted lane assignment: ${unit.id}/${caseId}/${laneId}`
+    );
+  return { ...scheduled, command: inventory.command };
+}
+
+function laneInventory(plan, unit, caseId) {
+  const assignment = selectedCaseAssignment(unit, caseId);
+  return assignment.lanes.map((scheduled) => {
+    const inventory = plan.testInventory.lanes.find(
+      (lane) => lane.id === scheduled.id
+    );
+    if (!inventory)
+      throw new Error(`Missing hosted test lane: ${scheduled.id}`);
+    return {
+      id: scheduled.id,
+      mode: scheduled.mode,
+      strategy: scheduled.strategy,
+      estimatedWeight: scheduled.estimatedWeight,
+      filesSha256: scheduled.filesSha256,
+      command: inventory.command,
+      files: scheduled.files.map((file) => {
         const entry = plan.testInventory.entries.find(
           (candidate) => candidate.file === file
         );
         if (!entry) throw new Error(`Missing hosted test entry: ${file}`);
         return { file, sourceSha256: entry.sourceSha256 };
       }),
-    }));
+    };
+  });
 }
 
 export function createHostedWorkIdentity({
@@ -514,7 +567,10 @@ export function createHostedWorkIdentity({
       caseInventorySha256: jsonSha256({
         selectedCase: resolved.caseId,
         cases: resolved.unit.cases,
-        lanes: laneInventory(plan, resolved.unit),
+        assignmentSha256: jsonSha256(
+          selectedCaseAssignment(resolved.unit, resolved.caseId)
+        ),
+        lanes: laneInventory(plan, resolved.unit, resolved.caseId),
       }),
     },
     command: {
@@ -733,6 +789,8 @@ function evidenceManifest(files, { required }) {
       return { name: path.basename(absolute), missing: true };
     }
     const stat = regularFile(absolute, 'hosted evidence');
+    if (stat.size > HOSTED_RESULT_MAX_BYTES)
+      throw new Error('Hosted evidence exceeds its safe limit');
     const name = path.basename(absolute);
     if (names.has(name))
       throw new Error(`Duplicate hosted evidence name: ${name}`);
@@ -740,6 +798,26 @@ function evidenceManifest(files, { required }) {
     return { name, bytes: stat.size, sha256: sha256(readFileSync(absolute)) };
   });
   return entries.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+function archiveHostedEvidence(receiptDir, unitId, caseId, files) {
+  const prefix = slug(unitId, caseId);
+  for (const file of files) {
+    const source = path.resolve(file);
+    if (!existsSync(source)) continue;
+    const stat = regularFile(source, 'hosted evidence archive input');
+    if (stat.size > HOSTED_RESULT_MAX_BYTES)
+      throw new Error('Hosted evidence archive input exceeds its safe limit');
+    const name = path.basename(source);
+    const target = path.join(
+      path.resolve(receiptDir),
+      `${prefix}.evidence-${name}`
+    );
+    writeFileSync(target, readFileSync(source), {
+      flag: 'wx',
+      mode: 0o600,
+    });
+  }
 }
 
 function exactStringArray(value, expected, label) {
@@ -988,6 +1066,7 @@ function verifyNativeNodeLaneReport({
       'reportSha256',
       'skipped',
       'tests',
+      'wallMs',
     ]);
   const reportFiles = reports.map((report) => report.file);
   const reportIntegers = reports.flatMap((report) => [
@@ -1005,6 +1084,8 @@ function verifyNativeNodeLaneReport({
     const skipped = observed.filter((entry) => entry?.status === 'skip').length;
     return (
       HASH64.test(report.reportSha256 ?? '') &&
+      Number.isFinite(report.wallMs) &&
+      report.wallMs >= 0 &&
       report.tests > 0 &&
       report.rawBytes > 0 &&
       report.active === report.passed &&
@@ -1071,6 +1152,72 @@ function verifyNativeNodeLaneReport({
   };
 }
 
+function verifyHostedCypressReport({
+  file,
+  plan,
+  unit,
+  caseId,
+  lane,
+  root,
+}) {
+  const stat = regularFile(file, 'hosted Cypress result');
+  if (stat.size > HOSTED_RESULT_MAX_BYTES)
+    throw new Error('Hosted Cypress result exceeds its safe size limit');
+  const bytes = readFileSync(file);
+  let result;
+  try {
+    result = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error('Hosted Cypress result is not valid JSON');
+  }
+  exactKeys(result, 'hosted Cypress result', [
+    'caseId',
+    'native',
+    'planSha256',
+    'schema',
+    'specs',
+    'unitId',
+  ]);
+  exactStringArray(result.specs, lane.files, 'Hosted Cypress specs');
+  if (
+    result.schema !== HOSTED_CYPRESS_RESULT_SCHEMA ||
+    result.planSha256 !== plan.planSha256 ||
+    result.unitId !== unit.id ||
+    result.caseId !== caseId
+  )
+    throw new Error('Hosted Cypress result is not bound to its unit/case');
+  const accepted = acceptNativeCypressResults(
+    {
+      schema: 1,
+      candidate: plan.candidate,
+      specs: result.specs,
+      native: result.native,
+    },
+    {
+      root: path.resolve(root),
+      candidate: plan.candidate,
+      specs: lane.files,
+    },
+    { allowNoActiveTests: true }
+  );
+  if (accepted.status !== 'passed' || accepted.counts.failed !== 0)
+    throw new Error('Hosted Cypress shard did not pass');
+  return {
+    id: lane.id,
+    proof: 'native-cypress-per-case-closure',
+    files: [...lane.files],
+    fileCount: lane.files.length,
+    tests: accepted.cases.length,
+    active: accepted.counts.passed + accepted.counts.failed,
+    passed: accepted.counts.passed,
+    failures: accepted.counts.failed,
+    pending: accepted.counts.pending,
+    skipped: accepted.counts.skipped,
+    durationMs: accepted.durationMs,
+    reportSha256: sha256(bytes),
+  };
+}
+
 function createHostedCaseResults({
   root,
   plan,
@@ -1086,16 +1233,21 @@ function createHostedCaseResults({
       path.resolve(file),
     ])
   );
+  const expectedEvidence =
+    unit.id === 'ci-unit-test'
+      ? Object.values(UNIT_TEST_EVIDENCE)
+      : unit.id === 'cypress-run'
+        ? [CYPRESS_TEST_EVIDENCE]
+        : [];
   if (
-    unit.id === 'ci-unit-test' &&
-    (evidenceByName.size !== 2 ||
-      !evidenceByName.has(UNIT_TEST_EVIDENCE.vitest) ||
-      !evidenceByName.has(UNIT_TEST_EVIDENCE.node))
+    evidenceByName.size !== expectedEvidence.length ||
+    expectedEvidence.some((name) => !evidenceByName.has(name))
   )
-    throw new Error('Unit-test success requires its exact two evidence files');
+    throw new Error(
+      `${unit.id} success requires its exact hosted evidence set`
+    );
   const lanes = unit.testLanes.map((laneId) => {
-    const lane = plan.testInventory.lanes.find((entry) => entry.id === laneId);
-    if (!lane) throw new Error(`Missing planned hosted test lane: ${laneId}`);
+    const lane = selectedLane(plan, unit, caseId, laneId);
     if (laneId === 'vitest')
       return verifyVitestJunitReport(
         evidenceByName.get(UNIT_TEST_EVIDENCE.vitest),
@@ -1111,6 +1263,15 @@ function createHostedCaseResults({
         lane,
         root,
         environment,
+      });
+    if (laneId === 'cypress')
+      return verifyHostedCypressReport({
+        file: evidenceByName.get(CYPRESS_TEST_EVIDENCE),
+        plan,
+        unit,
+        caseId,
+        lane,
+        root,
       });
     return { id: laneId, proof: 'workflow-bound-native-exit' };
   });
@@ -1140,8 +1301,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
   const evidenceByName = new Map(evidence.map((entry) => [entry.name, entry]));
   for (const [index, laneId] of unit.testLanes.entries()) {
     const actual = value.lanes[index];
-    const lane = plan.testInventory.lanes.find((entry) => entry.id === laneId);
-    if (!lane) throw new Error(`Missing planned hosted test lane: ${laneId}`);
+    const lane = selectedLane(plan, unit, caseId, laneId);
     if (laneId === 'vitest') {
       exactKeys(actual, 'hosted Vitest case results', [
         'active',
@@ -1208,6 +1368,48 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
         throw new Error(
           'Hosted native Node case results failed reconciliation'
         );
+    } else if (laneId === 'cypress') {
+      exactKeys(actual, 'hosted Cypress case results', [
+        'active',
+        'durationMs',
+        'failures',
+        'fileCount',
+        'files',
+        'id',
+        'passed',
+        'pending',
+        'proof',
+        'reportSha256',
+        'skipped',
+        'tests',
+      ]);
+      exactStringArray(actual.files, lane.files, 'Hosted Cypress result files');
+      if (
+        actual.id !== laneId ||
+        actual.proof !== 'native-cypress-per-case-closure' ||
+        actual.fileCount !== lane.files.length ||
+        ![
+          actual.tests,
+          actual.active,
+          actual.passed,
+          actual.failures,
+          actual.pending,
+          actual.skipped,
+        ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
+        (actual.durationMs !== null &&
+          (!Number.isSafeInteger(actual.durationMs) || actual.durationMs < 0)) ||
+        actual.active !== actual.passed + actual.failures ||
+        actual.tests !==
+          actual.passed +
+            actual.failures +
+            actual.pending +
+            actual.skipped ||
+        actual.failures !== 0 ||
+        !HASH64.test(actual.reportSha256 ?? '') ||
+        actual.reportSha256 !==
+          evidenceByName.get(CYPRESS_TEST_EVIDENCE)?.sha256
+      )
+        throw new Error('Hosted Cypress case results failed reconciliation');
     } else {
       exactKeys(actual, 'hosted native workflow case results', ['id', 'proof']);
       if (actual.id !== laneId || actual.proof !== 'workflow-bound-native-exit')
@@ -1221,6 +1423,17 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
       !evidenceByName.has(UNIT_TEST_EVIDENCE.node))
   )
     throw new Error('Unit-test evidence set failed reconciliation');
+  if (
+    unit.id === 'cypress-run' &&
+    (evidenceByName.size !== 1 ||
+      !evidenceByName.has(CYPRESS_TEST_EVIDENCE))
+  )
+    throw new Error('Cypress evidence set failed reconciliation');
+  if (
+    !['ci-unit-test', 'cypress-run'].includes(unit.id) &&
+    evidenceByName.size !== 0
+  )
+    throw new Error('Unexpected hosted evidence for native workflow result');
   return value;
 }
 
@@ -1352,6 +1565,12 @@ export function sealHostedGithubUnitReceipt({
           environment,
         })
       : null;
+  archiveHostedEvidence(
+    receiptDir,
+    unitId,
+    resolved.caseId,
+    evidenceFiles
+  );
   let successReceipt = null;
   if (jobStatus === 'success') {
     successReceipt = createSuccessReceipt({
@@ -1402,14 +1621,16 @@ export function loadHostedReceiptDirectory(receiptDir) {
   const ledgers = [];
   for (const entry of readdirSync(receiptDir, { withFileTypes: true })) {
     if (!entry.isFile() || entry.isSymbolicLink()) continue;
+    const control = HOSTED_CONTROL_FILE.exec(entry.name);
+    if (!control) continue;
     const file = path.join(receiptDir, entry.name);
-    if (entry.name.endsWith('.admission.json'))
+    if (control[2] === 'admission')
       admissions.push(verifyAdmission(JSON.parse(readFileSync(file, 'utf8'))));
-    else if (entry.name.endsWith('.receipt.json'))
+    else if (control[2] === 'receipt')
       receipts.push(
         verifyHostedUnitReceipt(JSON.parse(readFileSync(file, 'utf8')))
       );
-    else if (entry.name.endsWith('.ledger.json'))
+    else if (control[2] === 'ledger')
       ledgers.push(parseRunScopedLedger(readFileSync(file, 'utf8')));
   }
   return { admissions, receipts, ledgers };
@@ -1429,7 +1650,8 @@ function assertPlannedHostedIdentity(plan, unit, caseId, identity) {
     caseInventorySha256: jsonSha256({
       selectedCase: caseId,
       cases: unit.cases,
-      lanes: laneInventory(plan, unit),
+      assignmentSha256: jsonSha256(selectedCaseAssignment(unit, caseId)),
+      lanes: laneInventory(plan, unit, caseId),
     }),
   };
   const expectedCommand = {
@@ -1444,6 +1666,7 @@ function assertPlannedHostedIdentity(plan, unit, caseId, identity) {
     planSha256: plan.planSha256,
     workflowSha256: unit.workflowSha256,
     testInventorySha256: plan.testInventory.inventorySha256,
+    assignmentSha256: jsonSha256(selectedCaseAssignment(unit, caseId)),
     configSha256: identity.setup.configSha256,
   });
   if (
@@ -1486,6 +1709,53 @@ function exactArtifactMap(values, expectedKeys, label) {
       `Hosted ${label} set does not close the planned unit cases`
     );
   return new Map(entries);
+}
+
+function reconcileShardedLaneCoverage(plan, expectedCases, receiptMap) {
+  const summaries = [];
+  for (const inventoryLane of plan.testInventory.lanes) {
+    const cases = expectedCases.filter(({ unit, caseId }) =>
+      selectedCaseAssignment(unit, caseId).lanes.some(
+        (lane) => lane.id === inventoryLane.id && lane.mode === 'shard'
+      )
+    );
+    if (cases.length === 0) continue;
+    const actualFiles = [];
+    let active = 0;
+    for (const { key, caseId } of cases) {
+      const actual = receiptMap
+        .get(key)
+        ?.caseResults?.lanes?.find((lane) => lane.id === inventoryLane.id);
+      if (!actual || !Array.isArray(actual.files))
+        throw new Error(
+          `Hosted sharded result is missing: ${inventoryLane.id}/${caseId}`
+        );
+      actualFiles.push(...actual.files);
+      if (Number.isSafeInteger(actual.active)) active += actual.active;
+    }
+    const expectedFiles = [...inventoryLane.files].toSorted();
+    const observedFiles = [...actualFiles].toSorted();
+    if (
+      actualFiles.length !== expectedFiles.length ||
+      new Set(actualFiles).size !== actualFiles.length ||
+      jsonSha256(observedFiles) !== jsonSha256(expectedFiles)
+    )
+      throw new Error(
+        `Hosted ${inventoryLane.id} shards do not close the full lane exactly once`
+      );
+    if (active < 1)
+      throw new Error(
+        `Hosted ${inventoryLane.id} shards contain no active tests in aggregate`
+      );
+    summaries.push({
+      id: inventoryLane.id,
+      cases: cases.length,
+      files: actualFiles.length,
+      active,
+      status: 'passed',
+    });
+  }
+  return summaries;
 }
 
 export function reconcileHostedGithubExecution(plan, needs, evidence) {
@@ -1583,6 +1853,11 @@ export function reconcileHostedGithubExecution(plan, needs, evidence) {
   const merged = mergeRunScopedLedgers(ledgers);
   if (merged.entries.length !== expectedCases.length)
     throw new Error('Hosted run ledgers do not close every planned unit case');
+  const shardedLanes = reconcileShardedLaneCoverage(
+    plan,
+    expectedCases,
+    receiptMap
+  );
   return Object.freeze({
     ...native,
     scope: 'engine-bound-native-jobs',
@@ -1592,8 +1867,90 @@ export function reconcileHostedGithubExecution(plan, needs, evidence) {
       ledgerEntries: merged.entries.length,
       ledgerSha256: merged.ledgerSha256,
     },
+    shardedLanes,
     resultReuse: false,
   });
+}
+
+export function materializeHostedVitestLane({
+  root,
+  plan,
+  expectedPlanSha256,
+  unitId,
+  caseId,
+  receiptDir,
+  outputFile,
+  environment = process.env,
+}) {
+  if (plan.planSha256 !== expectedPlanSha256)
+    throw new Error('Hosted Vitest materialization expected-plan hash mismatch');
+  verifyHostedGithubPlanContext(root, plan, { environment });
+  const resolved = resolveUnitCase(plan, unitId, caseId);
+  const lane = selectedLane(plan, resolved.unit, resolved.caseId, 'vitest');
+  const identity = createHostedWorkIdentity({
+    root,
+    plan,
+    unitId,
+    caseId: resolved.caseId,
+    environment,
+  });
+  const paths = receiptPaths(receiptDir, unitId, resolved.caseId);
+  regularFile(paths.admission, 'hosted admission');
+  regularFile(paths.ledger, 'hosted run ledger');
+  verifyAdmission(
+    JSON.parse(readFileSync(paths.admission, 'utf8')),
+    identity,
+    { unitId, caseId: resolved.caseId }
+  );
+  const ledger = parseRunScopedLedger(readFileSync(paths.ledger, 'utf8'));
+  if (ledger.entries.length !== 0 || existsSync(paths.receipt))
+    throw new Error(
+      'Hosted Vitest configuration cannot be created after finalization'
+    );
+  const capacity = detectWorkerCapacity({ sourceRoot: root, environment });
+  if (
+    capacity.githubActions !== true ||
+    capacity.configuredWorkers !== capacity.effectiveLogicalCpus
+  )
+    throw new Error('GitHub Vitest shard must use exactly N effective workers');
+  const runnerTemp = environment.RUNNER_TEMP;
+  if (typeof runnerTemp !== 'string' || !path.isAbsolute(runnerTemp))
+    throw new Error('Hosted Vitest requires an absolute GitHub runner temp');
+  const resolvedRunnerTemp = path.resolve(runnerTemp);
+  if (
+    !existsSync(resolvedRunnerTemp) ||
+    lstatSync(resolvedRunnerTemp).isSymbolicLink() ||
+    !lstatSync(resolvedRunnerTemp).isDirectory()
+  )
+    throw new Error('Hosted Vitest runner temp is unsafe');
+  outputFile = path.resolve(outputFile);
+  const expectedOutput = path.join(
+    resolvedRunnerTemp,
+    'seerrng-engine-vitest.config.mts'
+  );
+  if (outputFile !== expectedOutput)
+    throw new Error('Hosted Vitest config must use its exact runner-temp path');
+  const sourceConfig = path.resolve(root, 'vitest.config.mts');
+  regularFile(sourceConfig, 'repository Vitest config');
+  const source = vitestConfigSource(
+    sourceConfig,
+    path.resolve(root),
+    lane.files,
+    capacity.configuredWorkers,
+    path.join(resolvedRunnerTemp, 'seerrng-engine-vitest-cache')
+  );
+  writeFileSync(outputFile, source, { flag: 'wx', mode: 0o600 });
+  return {
+    schema: 'seerrng-hosted-vitest-materialization/v1',
+    planSha256: plan.planSha256,
+    unitId,
+    caseId: resolved.caseId,
+    laneId: lane.id,
+    files: [...lane.files],
+    filesSha256: lane.filesSha256,
+    configuredWorkers: capacity.configuredWorkers,
+    configSha256: sha256(Buffer.from(source)),
+  };
 }
 
 export async function executeHostedTestLane({
@@ -1617,8 +1974,7 @@ export async function executeHostedTestLane({
     throw new Error(
       `Hosted test lane is not assigned to ${unitId}/${resolved.caseId}`
     );
-  const lane = plan.testInventory.lanes.find((entry) => entry.id === laneId);
-  if (!lane) throw new Error(`Unplanned hosted test lane: ${laneId}`);
+  const lane = selectedLane(plan, resolved.unit, resolved.caseId, laneId);
   if (laneId !== 'node-test-mjs')
     throw new Error(
       'Only the missing native Node lane is engine-executed here'
@@ -1787,7 +2143,7 @@ export async function executeHostedTestLane({
     );
     throw error;
   }
-  const reports = outcomes.map(({ file, ledger: fileLedger }) => ({
+  const reports = outcomes.map(({ file, receipt, ledger: fileLedger }) => ({
     file,
     reportSha256: fileLedger.reportSha256,
     rawBytes: fileLedger.rawBytes,
@@ -1795,6 +2151,7 @@ export async function executeHostedTestLane({
     active: fileLedger.counts.passed + fileLedger.counts.failed,
     passed: fileLedger.counts.passed,
     skipped: fileLedger.counts.skipped,
+    wallMs: receipt.wallMs,
   }));
   const sum = (select) =>
     outcomes.reduce((total, outcome) => total + select(outcome.ledger), 0);

@@ -20,6 +20,7 @@ import {
   admitHostedGithubUnit,
   executeHostedTestLane,
   loadHostedReceiptDirectory,
+  materializeHostedVitestLane,
   readHostedGithubPlan,
   reconcileHostedGithubExecution,
   sealHostedGithubUnitReceipt,
@@ -167,6 +168,32 @@ function writeHostedPlanOutputs(plan, planFile) {
   const byWorkflow = Object.fromEntries(
     plan.units.map((unit) => [unit.workflow, unit.applicable])
   );
+  const unit = plan.units.find((entry) => entry.id === 'ci-unit-test');
+  const cypress = plan.units.find((entry) => entry.id === 'cypress-run');
+  if (!unit || !cypress)
+    throw new Error('Hosted plan is missing its sharded test units');
+  const unitMatrix = {
+    include: unit.caseAssignments.map((assignment) => ({
+      case_id: assignment.caseId,
+    })),
+  };
+  const cypressMatrix = {
+    include: cypress.caseAssignments.map((assignment) => {
+      const lane = assignment.lanes.find((entry) => entry.id === 'cypress');
+      if (
+        !lane ||
+        !lane.files.length ||
+        lane.files.some(
+          (file) =>
+            file.includes(',') ||
+            file.includes('\r') ||
+            file.includes('\n')
+        )
+      )
+        throw new Error('Hosted Cypress matrix contains unsafe specs');
+      return { case_id: assignment.caseId, specs: lane.files.join(',') };
+    }),
+  };
   const values = {
     planSha256: plan.planSha256,
     runId: plan.event.runId,
@@ -178,6 +205,8 @@ function writeHostedPlanOutputs(plan, planFile) {
     testDocs: byWorkflow.testDocs,
     docsLinks: byWorkflow.docsLinks,
     helm: byWorkflow.helm,
+    unitMatrix: JSON.stringify(unitMatrix),
+    cypressMatrix: JSON.stringify(cypressMatrix),
   };
   appendFileSync(
     output,
@@ -211,6 +240,7 @@ const flagOptions = new Set([
   '--tests-only',
   '--github-plan',
   '--github-admit',
+  '--github-materialize-test-lane',
   '--github-receipt',
   '--github-run-test-lane',
   '--github-reconcile',
@@ -220,6 +250,7 @@ const valueOptions = new Set([
   '--expected-plan-sha256',
   '--job-status',
   '--lane',
+  '--output-file',
   '--plan-file',
   '--receipt-dir',
   '--report-file',
@@ -286,6 +317,29 @@ const optionContracts = {
       '--expected-plan-sha256',
       '--receipt-dir',
       '--report-file',
+    ],
+  },
+  'github-materialize-test-lane': {
+    label: 'GitHub test-lane materialization mode',
+    allowed: new Set([
+      '--github-materialize-test-lane',
+      '--unit',
+      '--case',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--output-file',
+      '--json',
+    ]),
+    requiredValues: [
+      '--unit',
+      '--case',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--output-file',
     ],
   },
   'github-receipt': {
@@ -373,6 +427,7 @@ function validateOptions(options) {
   const hostedModes = [
     '--github-plan',
     '--github-admit',
+    '--github-materialize-test-lane',
     '--github-run-test-lane',
     '--github-receipt',
     '--github-reconcile',
@@ -425,6 +480,7 @@ if (!options) {
     .write(`Usage: node bin/run-local-validation.mjs [--tests-only] [--plan [--json]]
        node bin/run-local-validation.mjs --github-plan --plan-file FILE [--json]
        node bin/run-local-validation.mjs --github-admit --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR [--json]
+       node bin/run-local-validation.mjs --github-materialize-test-lane --unit ID --case ID --lane vitest --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --output-file FILE [--json]
        node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
        node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
        node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
@@ -437,6 +493,8 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
 --github-plan Create the current-run GitHub plan and native-job selections.
 --github-admit
               Bind one native job/case to the immutable current-attempt plan.
+--github-materialize-test-lane
+              Bind one planned Vitest shard into a runner-temp native config.
 --github-run-test-lane
               Run an engine-assigned native test lane with its sealed worker budget.
 --github-receipt
@@ -463,10 +521,15 @@ failures, partial output closure and zero active tests fail closed.\n`);
       if (hostedMode === '--github-plan') {
         const plan = createHostedGithubPlan(hostedGithubInput(root));
         writeHostedPlanOutputs(plan, requiredValue('--plan-file'));
+        const applicableUnits = plan.units.filter((unit) => unit.applicable);
+        const applicableCases = applicableUnits.reduce(
+          (total, unit) => total + unit.cases.length,
+          0
+        );
         process.stdout.write(
           has('--json')
             ? `${JSON.stringify(plan, null, 2)}\n`
-            : `Hosted GitHub plan ${plan.planSha256}: ${plan.units.filter((unit) => unit.applicable).length}/${plan.units.length} native jobs selected.\n`
+            : `Hosted GitHub plan ${plan.planSha256}: ${applicableUnits.length}/${plan.units.length} logical units selected across ${applicableCases} runner cases.\n`
         );
       } else {
         const planFile = requiredValue('--plan-file');
@@ -492,6 +555,23 @@ failures, partial output closure and zero active tests fail closed.\n`);
                   2
                 )}\n`
               : `Admitted ${result.admission.unitId}/${result.admission.caseId} for hosted plan ${plan.planSha256}: ${result.decision.action}.\n`
+          );
+        } else if (hostedMode === '--github-materialize-test-lane') {
+          if (requiredValue('--lane') !== 'vitest')
+            throw new Error('Hosted materialization supports Vitest only');
+          const result = materializeHostedVitestLane({
+            root,
+            plan,
+            expectedPlanSha256: requiredValue('--expected-plan-sha256'),
+            unitId: requiredValue('--unit'),
+            caseId: requiredValue('--case'),
+            receiptDir: requiredValue('--receipt-dir'),
+            outputFile: requiredValue('--output-file'),
+          });
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(result, null, 2)}\n`
+              : `Materialized ${result.unitId}/${result.caseId} ${result.laneId} shard with ${result.files.length} files and ${result.configuredWorkers} workers.\n`
           );
         } else if (hostedMode === '--github-run-test-lane') {
           const result = await executeHostedTestLane({

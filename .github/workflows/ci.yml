@@ -46,6 +46,8 @@ jobs:
       testDocs: ${{ steps.plan.outputs.testDocs }}
       docsLinks: ${{ steps.plan.outputs.docsLinks }}
       helm: ${{ steps.plan.outputs.helm }}
+      unitMatrix: ${{ steps.plan.outputs.unitMatrix }}
+      cypressMatrix: ${{ steps.plan.outputs.cypressMatrix }}
     steps:
       - name: Checkout complete candidate history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +80,7 @@ jobs:
 
   jellyfin-plugin:
     name: Build Jellyfin bridge plugin
-    needs: [engine-plan, codeql]
+    needs: engine-plan
     timeout-minutes: 15
     if: >-
       always() &&
@@ -354,7 +356,7 @@ jobs:
 
   test:
     name: Lint & Test Build
-    needs: [engine-plan, codeql]
+    needs: engine-plan
     timeout-minutes: 30
     if: >-
       always() &&
@@ -462,7 +464,7 @@ jobs:
           retention-days: 1
 
   unit-test:
-    name: Unit Tests
+    name: Unit Tests (${{ matrix.case_id }})
     needs: engine-plan
     timeout-minutes: 75
     if: >-
@@ -471,6 +473,10 @@ jobs:
       needs.engine-plan.result == 'success' &&
       (github.event_name == 'pull_request' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.engine-plan.outputs.unitMatrix) }}
     runs-on: ubuntu-latest
     container:
       image: node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
@@ -480,6 +486,7 @@ jobs:
       SEERRNG_ENGINE_RUN_ATTEMPT: ${{ needs.engine-plan.outputs.runAttempt }}
       SEERRNG_ENGINE_EXECUTION_SHA: ${{ needs.engine-plan.outputs.executionSha }}
       SEERRNG_ENGINE_UNIT_ID: ci-unit-test
+      SEERRNG_ENGINE_CASE_ID: ${{ matrix.case_id }}
     steps:
       - name: Install Git for complete checkout
         run: apk add --no-cache git
@@ -529,16 +536,33 @@ jobs:
           node bin/run-local-validation.mjs
           --github-admit
           --unit "$SEERRNG_ENGINE_UNIT_ID"
+          --case "$SEERRNG_ENGINE_CASE_ID"
           --plan-file "$RUNNER_TEMP/seerrng-engine-plan/hosted-plan.json"
           --expected-plan-sha256 "$SEERRNG_ENGINE_PLAN_SHA256"
           --receipt-dir "$RUNNER_TEMP/seerrng-engine-receipts"
+          --json
+
+      - name: Materialize planned Vitest shard
+        if: steps.engine-admission.outputs.execute == 'true'
+        run: >-
+          node bin/run-local-validation.mjs
+          --github-materialize-test-lane
+          --unit "$SEERRNG_ENGINE_UNIT_ID"
+          --case "$SEERRNG_ENGINE_CASE_ID"
+          --lane vitest
+          --plan-file "$RUNNER_TEMP/seerrng-engine-plan/hosted-plan.json"
+          --expected-plan-sha256 "$SEERRNG_ENGINE_PLAN_SHA256"
+          --receipt-dir "$RUNNER_TEMP/seerrng-engine-receipts"
+          --output-file "$RUNNER_TEMP/seerrng-engine-vitest.config.mts"
           --json
 
       - name: Run tests
         if: steps.engine-admission.outputs.execute == 'true'
         env:
           CI: true
-        run: pnpm test:ci
+        run: >-
+          pnpm test:ci --
+          --config "$RUNNER_TEMP/seerrng-engine-vitest.config.mts"
 
       - name: Run engine-owned native Node tests
         if: always() && steps.engine-admission.outputs.execute == 'true'
@@ -548,6 +572,7 @@ jobs:
           node bin/run-local-validation.mjs
           --github-run-test-lane
           --unit "$SEERRNG_ENGINE_UNIT_ID"
+          --case "$SEERRNG_ENGINE_CASE_ID"
           --lane node-test-mjs
           --plan-file "$RUNNER_TEMP/seerrng-engine-plan/hosted-plan.json"
           --expected-plan-sha256 "$SEERRNG_ENGINE_PLAN_SHA256"
@@ -570,6 +595,7 @@ jobs:
           node bin/run-local-validation.mjs
           --github-receipt
           --unit "$SEERRNG_ENGINE_UNIT_ID"
+          --case "$SEERRNG_ENGINE_CASE_ID"
           --plan-file "$RUNNER_TEMP/seerrng-engine-plan/hosted-plan.json"
           --expected-plan-sha256 "$SEERRNG_ENGINE_PLAN_SHA256"
           --receipt-dir "$RUNNER_TEMP/seerrng-engine-receipts"
@@ -582,19 +608,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: seerrng-engine-receipt-${{ github.run_id }}-${{ github.run_attempt }}-ci-unit-test
+          name: seerrng-engine-receipt-${{ github.run_id }}-${{ github.run_attempt }}-ci-unit-test-${{ matrix.case_id }}
           path: ${{ runner.temp }}/seerrng-engine-receipts
           if-no-files-found: error
           retention-days: 1
 
   codeql:
     name: CodeQL
-    needs:
-      - engine-plan
-      - release-notes
-      - i18n
-      - unit-test
-      - docs-links
+    needs: engine-plan
     if: >-
       always() &&
       !cancelled() &&
@@ -613,18 +634,17 @@ jobs:
       unit_id: codeql-analyze
 
   cypress:
-    name: Cypress Tests
-    needs:
-      - engine-plan
-      - jellyfin-plugin
-      - test
-      - test-docs
-      - helm
+    name: Cypress Tests (${{ matrix.case_id }})
+    needs: engine-plan
     if: >-
       always() &&
       !cancelled() &&
       needs.engine-plan.result == 'success' &&
       needs.engine-plan.outputs.cypress == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 7
+      matrix: ${{ fromJSON(needs.engine-plan.outputs.cypressMatrix) }}
     permissions:
       contents: read
     uses: ./.github/workflows/cypress.yml
@@ -634,12 +654,14 @@ jobs:
       engine_run_attempt: ${{ needs.engine-plan.outputs.runAttempt }}
       execution_sha: ${{ needs.engine-plan.outputs.executionSha }}
       unit_id: cypress-run
+      case_id: ${{ matrix.case_id }}
+      specs: ${{ matrix.specs }}
     secrets:
       CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
 
   test-docs:
     name: Test Docs
-    needs: [engine-plan, codeql]
+    needs: engine-plan
     if: >-
       always() &&
       !cancelled() &&
@@ -675,7 +697,7 @@ jobs:
 
   helm:
     name: Lint and Test Charts
-    needs: [engine-plan, codeql]
+    needs: engine-plan
     if: >-
       always() &&
       !cancelled() &&
