@@ -34,11 +34,12 @@ test('chart validation uses version-aware comparison for pull requests', () => {
 
   assert.equal(
     listChanged.if,
-    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request'"
+    "steps.engine-admission.outputs.execute == 'true'"
   );
+  assert.match(listChanged.run, /GITHUB_EVENT_NAME.*pull_request/iu);
   assert.equal(
     pullRequestLint.if,
-    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
+    "!cancelled() && steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
   );
   assert.match(pullRequestLint.run, /ct lint --target-branch/iu);
 });
@@ -50,7 +51,7 @@ test('centrally selected chart validation retains push-wide lint behavior', () =
 
   assert.equal(
     pushLint.if,
-    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'push'"
+    "!cancelled() && steps.engine-admission.outputs.execute == 'true' && github.event_name == 'push'"
   );
   assert.match(pushLint.run, /ct lint --all --validate-maintainers=false/iu);
   assert.ok(Object.hasOwn(workflow.on, 'workflow_call'));
