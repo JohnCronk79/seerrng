@@ -6,6 +6,8 @@ export const BROKER_PROTOCOL_VERSION = 2;
 export const BROKER_MESSAGE_SCHEMA = 'seerrng-validation-broker-message/v2';
 export const BROKER_LOGICAL_COMMAND_SCHEMA =
   'seerrng-validation-broker-logical-command/v1';
+export const BROKER_REPLAY_KEY_SCHEMA =
+  'seerrng-validation-broker-replay-key/v1';
 export const BROKER_BINDING_SCHEMA = 'seerrng-validation-broker-binding/v1';
 export const BROKER_APPLICATION_ISOLATION_SCHEMA =
   'seerrng-validation-broker-application-isolation/v1';
@@ -17,10 +19,13 @@ export const BROKER_CLEANUP_EVIDENCE_SCHEMA =
 export const BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND = 'failure';
 export const BROKER_WORKER_CONFIG_SCHEMA =
   'seerrng-validation-broker-worker-config/v1';
+export const MAX_BROKER_AUTH_WINDOW_MS = 60_000;
+export const MAX_BROKER_MESSAGE_BYTES = 32 * 1024 * 1024;
 export const MAX_EVIDENCE_BLOB_BYTES = 512 * 1024 * 1024;
 
 const HASH64 = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const NONCE = /^[A-Za-z0-9_-]{16,512}$/;
 const EVIDENCE_SCHEMA_TOKEN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_EVIDENCE_SCHEMA_TOKEN_BYTES = 256;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}$/;
@@ -348,12 +353,14 @@ function normalizeAuth(value) {
     )
   )
     throw new Error('Unsupported broker authentication algorithm');
+  if (typeof value.nonce !== 'string' || !NONCE.test(value.nonce))
+    throw new Error('Exact authentication nonce is required');
   const auth = {
     algorithm: value.algorithm,
     sessionId: identifier(value.sessionId, 'authentication session ID'),
     principalId: identifier(value.principalId, 'authentication principal ID'),
     keyId: identifier(value.keyId, 'authentication key ID'),
-    nonce: exactText(value.nonce, 'authentication nonce', 512),
+    nonce: value.nonce,
     issuedAtMs: safeInteger(value.issuedAtMs, 'Authentication issue time'),
     expiresAtMs: safeInteger(value.expiresAtMs, 'Authentication expiry time'),
     proof: value.proof,
@@ -362,7 +369,20 @@ function normalizeAuth(value) {
     throw new Error('Exact detached authentication proof is required');
   if (auth.expiresAtMs <= auth.issuedAtMs)
     throw new Error('Authentication expiry must follow its issue time');
+  if (auth.expiresAtMs - auth.issuedAtMs > MAX_BROKER_AUTH_WINDOW_MS)
+    throw new Error('Broker authentication window is too long');
   return auth;
+}
+
+export function brokerReplayKeySha256(value) {
+  plainObject(value, 'broker replay-key message');
+  const auth = normalizeAuth(value.auth);
+  return canonicalJsonSha256({
+    schema: BROKER_REPLAY_KEY_SCHEMA,
+    principalId: auth.principalId,
+    sessionId: auth.sessionId,
+    nonce: auth.nonce,
+  });
 }
 
 function normalizeExpectedEvidence(value) {
@@ -1268,8 +1288,22 @@ function expectedPrincipal(message) {
   throw new Error('Unsupported broker message principal');
 }
 
+function assertBrokerMessageByteLimit(value) {
+  let encoded;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error('Broker message must contain JSON values only');
+  }
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_BROKER_MESSAGE_BYTES)
+    throw new Error(
+      `Broker message exceeds ${MAX_BROKER_MESSAGE_BYTES} bytes`
+    );
+}
+
 function normalizeMessage(value) {
   exactObject(value, 'broker message', MESSAGE_KEYS);
+  assertBrokerMessageByteLimit(value);
   if (value.schema !== BROKER_MESSAGE_SCHEMA)
     throw new Error('Unsupported broker message schema');
   if (value.protocolVersion !== BROKER_PROTOCOL_VERSION)
@@ -1317,6 +1351,7 @@ function normalizeMessage(value) {
     throw new Error(
       'Logical command cannot be issued after its envelope is sent'
     );
+  assertBrokerMessageByteLimit(message);
   return message;
 }
 
@@ -1327,9 +1362,13 @@ export function createBrokerMessage(value) {
 export function brokerMessageSigningSha256(value) {
   plainObject(value, 'broker message signing input');
   plainObject(value.auth, 'broker authentication signing input');
+  const validationProof =
+    typeof value.auth.proof === 'string' && PROOF.test(value.auth.proof)
+      ? value.auth.proof
+      : 'A'.repeat(16);
   const message = normalizeMessage({
     ...value,
-    auth: { ...value.auth, proof: 'unsigned-proof-value' },
+    auth: { ...value.auth, proof: validationProof },
   });
   return canonicalJsonSha256({
     ...message,
@@ -1360,10 +1399,12 @@ export function authenticateBrokerMessage(
       'Broker message is not bound to the expected application submission and plan'
     );
   const signingSha256 = brokerMessageSigningSha256(message);
+  const replayKeySha256 = brokerReplayKeySha256(message);
   // The transport adapter owns credentials, cryptographic verification, and
   // nonce replay protection. This protocol never receives or stores secrets.
   const verified = verifyProof({
     auth: message.auth,
+    replayKeySha256,
     signingSha256,
     message,
   });

@@ -3,11 +3,15 @@ import { test } from 'node:test';
 import {
   BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
   BROKER_CLEANUP_EVIDENCE_SCHEMA,
+  BROKER_REPLAY_KEY_SCHEMA,
+  MAX_BROKER_AUTH_WINDOW_MS,
+  MAX_BROKER_MESSAGE_BYTES,
   MAX_EVIDENCE_BLOB_BYTES,
   authenticateBrokerMessage,
   brokerApplicationIsolationKeySha256,
   brokerEvidenceKeySha256,
   brokerMessageSigningSha256,
+  brokerReplayKeySha256,
   brokerResultKeySha256,
   createBrokerMessage,
   createBrokerWorkerConfig,
@@ -19,6 +23,9 @@ import {
   verifyBrokerCleanupEvidence,
   verifyBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
+import {
+  canonicalJsonSha256,
+} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const h = (character) => character.repeat(64);
 const controllerKinds = new Set([
@@ -436,6 +443,14 @@ test('detached session proof must be externally verified and time-valid', () => 
     observed.signingSha256,
     brokerMessageSigningSha256(authenticated)
   );
+  const exactReplayKeySha256 = canonicalJsonSha256({
+    schema: BROKER_REPLAY_KEY_SCHEMA,
+    principalId: 'worker-east',
+    sessionId: 'session-1',
+    nonce: 'nonce-value-0001',
+  });
+  assert.equal(observed.replayKeySha256, exactReplayKeySha256);
+  assert.equal(brokerReplayKeySha256(authenticated), exactReplayKeySha256);
   const unsigned = structuredClone(input);
   delete unsigned.auth.proof;
   assert.equal(brokerMessageSigningSha256(unsigned), observed.signingSha256);
@@ -477,6 +492,15 @@ test('detached session proof must be externally verified and time-valid', () => 
     /send time is in the future/
   );
   assert.equal(futureProofChecks, 0);
+  assert.throws(
+    () =>
+      authenticateBrokerMessage(input, {
+        expectedBinding: binding(),
+        nowMs: 2_600,
+        verifyProof: async () => true,
+      }),
+    /proof verifier must be synchronous/
+  );
   assert.doesNotThrow(() =>
     authenticateBrokerMessage(
       message('worker.register', registration(), 'worker-east', {
@@ -498,6 +522,227 @@ test('detached session proof must be externally verified and time-valid', () => 
       }),
     /expected application submission and plan/
   );
+});
+
+test('broker replay identity is broker-global to principal, session, and nonce', () => {
+  const first = createBrokerMessage(
+    message('worker.register', registration(), 'worker-east')
+  );
+  const changedContent = createBrokerMessage(
+    message(
+      'worker.register',
+      registration({ instanceId: 'worker-east-boot-2' }),
+      'worker-east',
+      { messageId: 'worker-register-changed-content' }
+    )
+  );
+  assert.equal(
+    brokerReplayKeySha256(first),
+    brokerReplayKeySha256(changedContent)
+  );
+  assert.equal(
+    brokerReplayKeySha256(first),
+    brokerReplayKeySha256({
+      auth: auth('worker-east', {
+        keyId: 'rotated-worker-key',
+        proof: 'B'.repeat(43),
+        issuedAtMs: 500,
+        expiresAtMs: 10_000,
+      }),
+    })
+  );
+
+  for (const changedAuth of [
+    auth('worker-east', { sessionId: 'session-2' }),
+    auth('worker-east', { nonce: 'nonce-value-0002' }),
+    auth('worker-west'),
+  ])
+    assert.notEqual(
+      brokerReplayKeySha256(first),
+      brokerReplayKeySha256({ auth: changedAuth })
+    );
+});
+
+test('a verifier can reject changed-content replay before authority is granted', () => {
+  const reservedReplayKeys = new Set();
+  const verifyProof = ({ replayKeySha256 }) => {
+    if (reservedReplayKeys.has(replayKeySha256)) return false;
+    reservedReplayKeys.add(replayKeySha256);
+    return true;
+  };
+  const first = message('worker.register', registration(), 'worker-east');
+  assert.doesNotThrow(() =>
+    authenticateBrokerMessage(first, {
+      expectedBinding: binding(),
+      nowMs: first.sentAtMs,
+      verifyProof,
+    })
+  );
+  const changedContent = message(
+    'worker.register',
+    registration({ instanceId: 'worker-east-boot-2' }),
+    'worker-east',
+    { messageId: 'worker-register-replayed-content' }
+  );
+  assert.throws(
+    () =>
+      authenticateBrokerMessage(changedContent, {
+        expectedBinding: binding(),
+        nowMs: changedContent.sentAtMs,
+        verifyProof,
+      }),
+    /proof was rejected/
+  );
+  const freshNonce = message(
+    'worker.register',
+    registration({ instanceId: 'worker-east-boot-2' }),
+    'worker-east',
+    {
+      auth: auth('worker-east', { nonce: 'nonce-value-0002' }),
+      messageId: 'worker-register-fresh-envelope',
+    }
+  );
+  assert.doesNotThrow(() =>
+    authenticateBrokerMessage(freshNonce, {
+      expectedBinding: binding(),
+      nowMs: freshNonce.sentAtMs,
+      verifyProof,
+    })
+  );
+});
+
+test('broker authentication bounds nonce and validity-window length', () => {
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.register', registration(), 'worker-east', {
+          auth: auth('worker-east', { nonce: 'n'.repeat(15) }),
+        })
+      ),
+    /Exact authentication nonce is required/
+  );
+  assert.doesNotThrow(() =>
+    createBrokerMessage(
+      message('worker.register', registration(), 'worker-east', {
+        auth: auth('worker-east', {
+          nonce: 'n'.repeat(16),
+          issuedAtMs: 1_000,
+          expiresAtMs: 1_000 + MAX_BROKER_AUTH_WINDOW_MS,
+        }),
+      })
+    )
+  );
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.register', registration(), 'worker-east', {
+          auth: auth('worker-east', { nonce: 'n'.repeat(513) }),
+        })
+      ),
+    /Exact authentication nonce is required/
+  );
+  for (const invalidNonce of [
+    'nonce value 0001',
+    'nonce.value.0001',
+    'nonce-value-é001',
+  ])
+    assert.throws(
+      () =>
+        createBrokerMessage(
+          message('worker.register', registration(), 'worker-east', {
+            auth: auth('worker-east', { nonce: invalidNonce }),
+          })
+        ),
+      /Exact authentication nonce is required/
+    );
+  assert.doesNotThrow(() =>
+    createBrokerMessage(
+      message('worker.register', registration(), 'worker-east', {
+        auth: auth('worker-east', { nonce: 'n'.repeat(512) }),
+      })
+    )
+  );
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.register', registration(), 'worker-east', {
+          auth: auth('worker-east', {
+            issuedAtMs: 1_000,
+            expiresAtMs: 1_001 + MAX_BROKER_AUTH_WINDOW_MS,
+          }),
+        })
+      ),
+    /authentication window is too long/
+  );
+});
+
+test('broker messages accept exactly 32 MiB of UTF-8 and reject the next byte', () => {
+  const grantWithBlob = (blob) => {
+    const plannedTask = sealBrokerTask(taskInput({ payload: { blob } }));
+    return message(
+      'lease.grant',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-size-boundary',
+        attempt: 1,
+        maxAttempts: plannedTask.maxAttempts,
+        expiresAtMs: 12_000,
+        task: plannedTask,
+      },
+      'controller-dev',
+      { messageId: 'grant-envelope-size-boundary' }
+    );
+  };
+  const minimumProof = 'A'.repeat(16);
+  const emptyInput = grantWithBlob('');
+  emptyInput.auth.proof = minimumProof;
+  const empty = createBrokerMessage(emptyInput);
+  const exactBlobLength =
+    MAX_BROKER_MESSAGE_BYTES - Buffer.byteLength(JSON.stringify(empty), 'utf8');
+  const exactBlob =
+    'é'.repeat(Math.floor(exactBlobLength / 2)) +
+    'x'.repeat(exactBlobLength % 2);
+  const exactInput = grantWithBlob(exactBlob);
+  exactInput.auth.proof = minimumProof;
+  const exact = createBrokerMessage(exactInput);
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(exact), 'utf8'),
+    MAX_BROKER_MESSAGE_BYTES
+  );
+  assert.doesNotThrow(() => brokerMessageSigningSha256(exact));
+  let proofChecks = 0;
+  assert.doesNotThrow(() =>
+    authenticateBrokerMessage(exact, {
+      expectedBinding: binding(),
+      nowMs: exact.sentAtMs,
+      verifyProof: () => {
+        proofChecks += 1;
+        return true;
+      },
+    })
+  );
+  assert.equal(proofChecks, 1);
+  const oversizedInput = grantWithBlob(`${exactBlob}x`);
+  oversizedInput.auth.proof = minimumProof;
+  assert.throws(
+    () => createBrokerMessage(oversizedInput),
+    /Broker message exceeds 33554432 bytes/
+  );
+  assert.throws(
+    () =>
+      authenticateBrokerMessage(oversizedInput, {
+        expectedBinding: binding(),
+        nowMs: oversizedInput.sentAtMs,
+        verifyProof: () => {
+          proofChecks += 1;
+          return true;
+        },
+      }),
+    /Broker message exceeds 33554432 bytes/
+  );
+  assert.equal(proofChecks, 1);
 });
 
 test('logical command identity survives a fresh authenticated envelope but rejects semantic drift', () => {
