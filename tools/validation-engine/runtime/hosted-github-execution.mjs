@@ -136,15 +136,6 @@ function regularFile(file, label) {
 }
 
 function readCheckedRegularFile(file, label, { allowMissing = false } = {}) {
-  let checked;
-  try {
-    checked = lstatSync(file);
-  } catch (error) {
-    if (allowMissing && error?.code === 'ENOENT') return null;
-    throw error;
-  }
-  if (checked.isSymbolicLink() || !checked.isFile())
-    throw new Error(`Unsafe ${label}: ${file}`);
   let descriptor;
   try {
     descriptor = openSync(
@@ -154,19 +145,42 @@ function readCheckedRegularFile(file, label, { allowMissing = false } = {}) {
         (constants.O_NONBLOCK ?? 0)
     );
   } catch (error) {
+    if (allowMissing && error?.code === 'ENOENT') return null;
     throw new Error(`Unsafe ${label}: ${file}`, { cause: error });
   }
   try {
     const before = fstatSync(descriptor);
-    const unchanged = (stat) =>
-      stat.isFile() &&
+    const sameFile = (left, right) =>
+      left.isFile() &&
+      right.isFile() &&
       ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
-        (key) => stat[key] === checked[key]
+        (key) => left[key] === right[key]
       );
-    if (!unchanged(before))
+    let checked;
+    try {
+      checked = lstatSync(file);
+    } catch (error) {
+      throw new Error(`${label} changed before its descriptor read`, {
+        cause: error,
+      });
+    }
+    if (checked.isSymbolicLink() || !sameFile(checked, before))
       throw new Error(`${label} changed before its descriptor read`);
     const bytes = readFileSync(descriptor);
-    if (!unchanged(fstatSync(descriptor)) || bytes.length !== before.size)
+    let afterPath;
+    try {
+      afterPath = lstatSync(file);
+    } catch (error) {
+      throw new Error(`${label} changed during its descriptor read`, {
+        cause: error,
+      });
+    }
+    if (
+      !sameFile(fstatSync(descriptor), before) ||
+      afterPath.isSymbolicLink() ||
+      !sameFile(afterPath, before) ||
+      bytes.length !== before.size
+    )
       throw new Error(`${label} changed during its descriptor read`);
     return bytes;
   } finally {

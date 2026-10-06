@@ -104,18 +104,6 @@ function checkedFile(root, file) {
   const absolute = path.resolve(root, file);
   if (!inside(root, absolute))
     throw new Error(`Missing hosted inventory input: ${file}`);
-  let checked;
-  try {
-    checked = lstatSync(absolute);
-  } catch (error) {
-    if (error?.code === 'ENOENT')
-      throw new Error(`Missing hosted inventory input: ${file}`, {
-        cause: error,
-      });
-    throw error;
-  }
-  if (checked.isSymbolicLink() || !checked.isFile())
-    throw new Error(`Unsafe hosted inventory input: ${file}`);
   let descriptor;
   try {
     descriptor = openSync(
@@ -131,15 +119,37 @@ function checkedFile(root, file) {
   }
   try {
     const before = fstatSync(descriptor);
-    const unchanged = (stat) =>
-      stat.isFile() &&
+    const sameFile = (left, right) =>
+      left.isFile() &&
+      right.isFile() &&
       ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
-        (key) => stat[key] === checked[key]
+        (key) => left[key] === right[key]
       );
-    if (!unchanged(before))
+    let checked;
+    try {
+      checked = lstatSync(absolute);
+    } catch (error) {
+      throw new Error(`Hosted inventory input changed before read: ${file}`, {
+        cause: error,
+      });
+    }
+    if (checked.isSymbolicLink() || !sameFile(checked, before))
       throw new Error(`Hosted inventory input changed before read: ${file}`);
     const bytes = readFileSync(descriptor);
-    if (!unchanged(fstatSync(descriptor)) || bytes.length !== before.size)
+    let afterPath;
+    try {
+      afterPath = lstatSync(absolute);
+    } catch (error) {
+      throw new Error(`Hosted inventory input changed during read: ${file}`, {
+        cause: error,
+      });
+    }
+    if (
+      !sameFile(fstatSync(descriptor), before) ||
+      afterPath.isSymbolicLink() ||
+      !sameFile(afterPath, before) ||
+      bytes.length !== before.size
+    )
       throw new Error(`Hosted inventory input changed during read: ${file}`);
     return { absolute, bytes };
   } finally {
