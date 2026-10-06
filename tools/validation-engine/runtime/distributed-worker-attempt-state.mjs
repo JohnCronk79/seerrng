@@ -129,7 +129,16 @@ const VERIFY_EXPECTATION_KEYS = new Set([
   'expectedWorkerId',
   'expectedWorkerSessionId',
 ]);
+const WORKER_ATTEMPT_TRANSITION_KINDS = new Set([
+  'genesis',
+  'attempt-start',
+  'attempt-finish',
+  'attempt-cleanup-required',
+  'attempt-cleanup-complete',
+]);
 const trustedStates = new WeakSet();
+// Runtime-only provenance is intentionally absent from persisted snapshots.
+const trustedTransitionProvenance = new WeakMap();
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -211,6 +220,43 @@ function nullableInteger(value, label) {
 
 function sameCanonical(left, right) {
   return canonicalJsonSha256(left) === canonicalJsonSha256(right);
+}
+
+function createWorkerAttemptTransitionDescriptor(kind, input, occurredAtMs) {
+  if (!WORKER_ATTEMPT_TRANSITION_KINDS.has(kind))
+    throw new Error('Unsupported worker attempt transition kind');
+  plainObject(input, 'worker attempt transition input');
+  integer(occurredAtMs, 'Worker attempt transition event time');
+  return deepFreeze({
+    kind,
+    inputSha256: canonicalJsonSha256(input),
+    occurredAtMs,
+  });
+}
+
+function bindWorkerAttemptTransitionProvenance(
+  state,
+  previousStateSha256,
+  kind,
+  input,
+  occurredAtMs
+) {
+  if (previousStateSha256 !== null)
+    digest(previousStateSha256, 'previous worker attempt state hash');
+  if (state.previousStateSha256 !== previousStateSha256)
+    throw new Error(
+      'Worker attempt transition provenance has an invalid predecessor'
+    );
+  const descriptor = createWorkerAttemptTransitionDescriptor(
+    kind,
+    input,
+    occurredAtMs
+  );
+  trustedTransitionProvenance.set(
+    state,
+    deepFreeze({ previousStateSha256, descriptor })
+  );
+  return state;
 }
 
 function assertBytes(value) {
@@ -823,17 +869,24 @@ function assertTrustedState(value) {
   return value;
 }
 
-function nextState(state, updatedAtMs, changes) {
+function nextState(state, updatedAtMs, changes, kind, input) {
   integer(updatedAtMs, 'Worker attempt transition time');
   if (updatedAtMs < state.updatedAtMs)
     throw new Error('Worker attempt transition time is not monotonic');
-  return sealState({
+  const next = sealState({
     ...state,
     ...changes,
     revision: state.revision + 1,
     previousStateSha256: state.stateSha256,
     updatedAtMs,
   });
+  return bindWorkerAttemptTransitionProvenance(
+    next,
+    state.stateSha256,
+    kind,
+    input,
+    updatedAtMs
+  );
 }
 
 export function createDistributedWorkerAttemptState(value) {
@@ -862,24 +915,36 @@ export function createDistributedWorkerAttemptState(value) {
   );
   if (createdAtMs < lease.grantedAtMs || createdAtMs >= lease.expiresAtMs)
     throw new Error('Worker attempt creation is outside its lease');
+  const bridgeSha256 = digest(value.bridgeSha256, 'execution bridge hash');
+  const sourceWorkspaceIdentitySha256 = digest(
+    value.sourceWorkspaceIdentitySha256,
+    'source workspace identity hash'
+  );
+  const input = {
+    binding,
+    bridgeSha256,
+    applicationIsolationKeySha256,
+    task,
+    lease,
+    sourceWorkspaceIdentitySha256,
+    adapters,
+    createdAtMs,
+  };
   const base = {
     schema: DISTRIBUTED_WORKER_ATTEMPT_STATE_SCHEMA,
     revision: 1,
     previousStateSha256: null,
-    bridgeSha256: digest(value.bridgeSha256, 'execution bridge hash'),
+    bridgeSha256,
     binding,
     bindingSha256: canonicalJsonSha256(binding),
     applicationIsolationKeySha256,
-    sourceWorkspaceIdentitySha256: digest(
-      value.sourceWorkspaceIdentitySha256,
-      'source workspace identity hash'
-    ),
+    sourceWorkspaceIdentitySha256,
     adapters,
     task,
     lease,
   };
   const attemptIdentitySha256 = distributedWorkerAttemptIdentitySha256(base);
-  return sealState({
+  const state = sealState({
     ...base,
     attemptIdentitySha256,
     status: 'pending',
@@ -894,6 +959,13 @@ export function createDistributedWorkerAttemptState(value) {
     failureReference: null,
     cleanup: null,
   });
+  return bindWorkerAttemptTransitionProvenance(
+    state,
+    null,
+    'genesis',
+    input,
+    createdAtMs
+  );
 }
 
 export function startDistributedWorkerAttempt(stateValue, value) {
@@ -908,11 +980,25 @@ export function startDistributedWorkerAttempt(stateValue, value) {
     state.attemptIdentitySha256,
     value.nativeProcess
   );
-  return nextState(state, startedAtMs, {
-    status: 'running',
+  const input = {
     startedAtMs,
-    nativeProcess,
-  });
+    nativeProcess: {
+      pid: nativeProcess.pid,
+      processStartIdentitySha256: nativeProcess.processStartIdentitySha256,
+      launchIdentitySha256: nativeProcess.launchIdentitySha256,
+    },
+  };
+  return nextState(
+    state,
+    startedAtMs,
+    {
+      status: 'running',
+      startedAtMs,
+      nativeProcess,
+    },
+    'attempt-start',
+    input
+  );
 }
 
 export function finishDistributedWorkerAttempt(stateValue, value) {
@@ -958,16 +1044,16 @@ export function finishDistributedWorkerAttempt(stateValue, value) {
     (outcome.status === 'failed' && failureReference === null)
   )
     throw new Error('Worker attempt failure reference contradicts its outcome');
-  const changes = {
-    status: 'finished',
+  const input = {
     finishedAtMs,
     outcome,
     evidenceReferences,
     resultReference,
     failureReference,
   };
+  const changes = { status: 'finished', ...input };
   assertReferenceSeparation({ ...state, ...changes });
-  return nextState(state, finishedAtMs, changes);
+  return nextState(state, finishedAtMs, changes, 'attempt-finish', input);
 }
 
 export function requireDistributedWorkerAttemptCleanup(stateValue, value) {
@@ -990,20 +1076,28 @@ export function requireDistributedWorkerAttemptCleanup(stateValue, value) {
     throw new Error(
       'Finished attempt cleanup cannot replace its failure reference'
     );
+  const reasonCode = identifier(value.reasonCode, 'cleanup reason code');
+  const input = { requiredAtMs, reasonCode, failureReference };
   const changes = {
     status: 'cleanup-required',
     failureReference:
       state.status === 'finished' ? state.failureReference : failureReference,
     cleanup: {
       originStatus: state.status,
-      reasonCode: identifier(value.reasonCode, 'cleanup reason code'),
+      reasonCode,
       requiredAtMs,
       completedAtMs: null,
       evidenceReference: null,
     },
   };
   assertReferenceSeparation({ ...state, ...changes });
-  return nextState(state, requiredAtMs, changes);
+  return nextState(
+    state,
+    requiredAtMs,
+    changes,
+    'attempt-cleanup-required',
+    input
+  );
 }
 
 export function cleanDistributedWorkerAttempt(stateValue, value) {
@@ -1018,6 +1112,7 @@ export function cleanDistributedWorkerAttempt(stateValue, value) {
     value.evidenceReference,
     'cleanup evidence reference'
   );
+  const input = { cleanedAtMs, evidenceReference };
   const changes = {
     status: 'cleaned',
     cleanup: {
@@ -1027,7 +1122,13 @@ export function cleanDistributedWorkerAttempt(stateValue, value) {
     },
   };
   assertReferenceSeparation({ ...state, ...changes });
-  return nextState(state, cleanedAtMs, changes);
+  return nextState(
+    state,
+    cleanedAtMs,
+    changes,
+    'attempt-cleanup-complete',
+    input
+  );
 }
 
 export function verifyDistributedWorkerAttemptState(value, expectations = {}) {
@@ -1192,6 +1293,115 @@ export function verifyDistributedWorkerAttemptTransition(
   if (expected.stateSha256 !== current.stateSha256)
     throw new Error('Worker attempt state does not match its legal transition');
   return current;
+}
+
+export function describeDistributedWorkerAttemptTransition(
+  previousStateValue,
+  currentValue,
+  expectations
+) {
+  const provenance = trustedTransitionProvenance.get(currentValue);
+  if (!provenance)
+    throw new Error(
+      'Worker attempt lacks trusted runtime transition provenance'
+    );
+  if (previousStateValue === null) {
+    const current = verifyDistributedWorkerAttemptState(
+      currentValue,
+      expectations
+    );
+    const input = {
+      binding: current.binding,
+      bridgeSha256: current.bridgeSha256,
+      applicationIsolationKeySha256: current.applicationIsolationKeySha256,
+      task: current.task,
+      lease: current.lease,
+      sourceWorkspaceIdentitySha256: current.sourceWorkspaceIdentitySha256,
+      adapters: current.adapters,
+      createdAtMs: current.createdAtMs,
+    };
+    const expected = createDistributedWorkerAttemptState(input);
+    if (expected.stateSha256 !== current.stateSha256)
+      throw new Error(
+        'Worker attempt state does not match its exact genesis operation'
+      );
+    const descriptor = createWorkerAttemptTransitionDescriptor(
+      'genesis',
+      input,
+      current.createdAtMs
+    );
+    if (
+      provenance.previousStateSha256 !== null ||
+      !sameCanonical(provenance.descriptor, descriptor)
+    )
+      throw new Error('Worker attempt genesis provenance does not match');
+    return provenance.descriptor;
+  }
+
+  const previous = assertTrustedState(previousStateValue);
+  const current = verifyDistributedWorkerAttemptTransition(
+    previous,
+    currentValue,
+    expectations
+  );
+  let kind;
+  let input;
+  if (previous.status === 'pending' && current.status === 'running') {
+    kind = 'attempt-start';
+    input = {
+      startedAtMs: current.startedAtMs,
+      nativeProcess: {
+        pid: current.nativeProcess.pid,
+        processStartIdentitySha256:
+          current.nativeProcess.processStartIdentitySha256,
+        launchIdentitySha256: current.nativeProcess.launchIdentitySha256,
+      },
+    };
+  } else if (previous.status === 'running' && current.status === 'finished') {
+    kind = 'attempt-finish';
+    input = {
+      finishedAtMs: current.finishedAtMs,
+      outcome: current.outcome,
+      evidenceReferences: current.evidenceReferences,
+      resultReference: current.resultReference,
+      failureReference: current.failureReference,
+    };
+  } else if (
+    BASE_STATUSES.has(previous.status) &&
+    current.status === 'cleanup-required'
+  ) {
+    kind = 'attempt-cleanup-required';
+    input = {
+      requiredAtMs: current.cleanup.requiredAtMs,
+      reasonCode: current.cleanup.reasonCode,
+      failureReference:
+        previous.status === 'finished' ? null : current.failureReference,
+    };
+  } else if (
+    previous.status === 'cleanup-required' &&
+    current.status === 'cleaned'
+  ) {
+    kind = 'attempt-cleanup-complete';
+    input = {
+      cleanedAtMs: current.cleanup.completedAtMs,
+      evidenceReference: current.cleanup.evidenceReference,
+    };
+  } else {
+    throw new Error('Worker attempt transition provenance is ambiguous');
+  }
+  const descriptor = createWorkerAttemptTransitionDescriptor(
+    kind,
+    input,
+    current.updatedAtMs
+  );
+  if (
+    provenance.previousStateSha256 !== previous.stateSha256 ||
+    !sameCanonical(provenance.descriptor, descriptor)
+  )
+    throw new Error(
+      'Worker attempt runtime provenance does not match its legal transition'
+    );
+  return provenance.descriptor;
 }
 
 export function snapshotDistributedWorkerAttemptState(stateValue) {

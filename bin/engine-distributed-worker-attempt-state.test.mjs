@@ -12,6 +12,7 @@ import {
   DISTRIBUTED_WORKER_ATTEMPT_STATE_SCHEMA,
   cleanDistributedWorkerAttempt,
   createDistributedWorkerAttemptState,
+  describeDistributedWorkerAttemptTransition,
   distributedWorkerAttemptIdentitySha256,
   finishDistributedWorkerAttempt,
   rehydrateDistributedWorkerAttemptState,
@@ -359,19 +360,32 @@ test('rehydration requires the trusted hash and can bind every external identity
   );
 });
 
-test('persisted revisions verify their exact predecessor and legal transition', () => {
+test('persisted predecessors remain usable but restored candidates lack runtime provenance', () => {
   const pending = createDistributedWorkerAttemptState(creationInput());
   const running = start(pending);
   const restoredPending = rehydrateDistributedWorkerAttemptState(
     JSON.parse(JSON.stringify(pending)),
     { expectedStateSha256: pending.stateSha256 }
   );
-  const restoredRunning = verifyDistributedWorkerAttemptTransition(
-    restoredPending,
+  const restoredRunning = rehydrateDistributedWorkerAttemptState(
     JSON.parse(JSON.stringify(running)),
     { expectedStateSha256: running.stateSha256 }
   );
-  assert.deepEqual(restoredRunning, running);
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(
+        restoredPending,
+        restoredRunning,
+        { expectedStateSha256: running.stateSha256 }
+      ),
+    /runtime transition provenance/
+  );
+  assert.equal(
+    describeDistributedWorkerAttemptTransition(restoredPending, running, {
+      expectedStateSha256: running.stateSha256,
+    }).kind,
+    'attempt-start'
+  );
 
   const alternateRunning = startDistributedWorkerAttempt(pending, {
     startedAtMs: 120,
@@ -404,6 +418,175 @@ test('persisted revisions verify their exact predecessor and legal transition', 
         { expectedStateSha256: resealedForgedPredecessor.stateSha256 }
       ),
     /does not match its legal transition/
+  );
+});
+
+test('transition provenance hashes the exact legal operation inputs and event times', () => {
+  const pending = createDistributedWorkerAttemptState(creationInput());
+  const running = start(pending);
+  const finished = fail(running);
+  const cleanupRequired = requireDistributedWorkerAttemptCleanup(finished, {
+    requiredAtMs: 220,
+    reasonCode: 'release-attempt-workspace',
+    failureReference: null,
+  });
+  const cleaned = cleanDistributedWorkerAttempt(cleanupRequired, {
+    cleanedAtMs: 240,
+    evidenceReference: reference('cleanup'),
+  });
+
+  const genesisInput = {
+    binding: pending.binding,
+    bridgeSha256: pending.bridgeSha256,
+    applicationIsolationKeySha256: pending.applicationIsolationKeySha256,
+    task: pending.task,
+    lease: pending.lease,
+    sourceWorkspaceIdentitySha256: pending.sourceWorkspaceIdentitySha256,
+    adapters: pending.adapters,
+    createdAtMs: pending.createdAtMs,
+  };
+  const descriptions = [
+    describeDistributedWorkerAttemptTransition(null, pending, {
+      expectedStateSha256: pending.stateSha256,
+    }),
+    describeDistributedWorkerAttemptTransition(pending, running, {
+      expectedStateSha256: running.stateSha256,
+    }),
+    describeDistributedWorkerAttemptTransition(running, finished, {
+      expectedStateSha256: finished.stateSha256,
+    }),
+    describeDistributedWorkerAttemptTransition(finished, cleanupRequired, {
+      expectedStateSha256: cleanupRequired.stateSha256,
+    }),
+    describeDistributedWorkerAttemptTransition(cleanupRequired, cleaned, {
+      expectedStateSha256: cleaned.stateSha256,
+    }),
+  ];
+
+  assert.deepEqual(descriptions, [
+    {
+      kind: 'genesis',
+      inputSha256: canonicalJsonSha256(genesisInput),
+      occurredAtMs: pending.createdAtMs,
+    },
+    {
+      kind: 'attempt-start',
+      inputSha256: canonicalJsonSha256({
+        startedAtMs: running.startedAtMs,
+        nativeProcess: processInput(),
+      }),
+      occurredAtMs: running.updatedAtMs,
+    },
+    {
+      kind: 'attempt-finish',
+      inputSha256: canonicalJsonSha256({
+        finishedAtMs: finished.finishedAtMs,
+        outcome: finished.outcome,
+        evidenceReferences: finished.evidenceReferences,
+        resultReference: finished.resultReference,
+        failureReference: finished.failureReference,
+      }),
+      occurredAtMs: finished.updatedAtMs,
+    },
+    {
+      kind: 'attempt-cleanup-required',
+      inputSha256: canonicalJsonSha256({
+        requiredAtMs: cleanupRequired.cleanup.requiredAtMs,
+        reasonCode: cleanupRequired.cleanup.reasonCode,
+        failureReference: null,
+      }),
+      occurredAtMs: cleanupRequired.updatedAtMs,
+    },
+    {
+      kind: 'attempt-cleanup-complete',
+      inputSha256: canonicalJsonSha256({
+        cleanedAtMs: cleaned.cleanup.completedAtMs,
+        evidenceReference: cleaned.cleanup.evidenceReference,
+      }),
+      occurredAtMs: cleaned.updatedAtMs,
+    },
+  ]);
+  for (const description of descriptions) {
+    assert.equal(Object.isFrozen(description), true);
+    assert.deepEqual(Object.keys(description).toSorted(), [
+      'inputSha256',
+      'kind',
+      'occurredAtMs',
+    ]);
+  }
+});
+
+test('transition provenance rejects non-genesis, wrong lineage, and untrusted hashes', () => {
+  const pending = createDistributedWorkerAttemptState(creationInput());
+  const running = start(pending);
+  const restoredPending = rehydrateDistributedWorkerAttemptState(
+    JSON.parse(JSON.stringify(pending)),
+    { expectedStateSha256: pending.stateSha256 }
+  );
+  const restoredRunning = rehydrateDistributedWorkerAttemptState(
+    JSON.parse(JSON.stringify(running)),
+    { expectedStateSha256: running.stateSha256 }
+  );
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(null, restoredPending, {
+        expectedStateSha256: pending.stateSha256,
+      }),
+    /runtime transition provenance/
+  );
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(pending, restoredRunning, {
+        expectedStateSha256: running.stateSha256,
+      }),
+    /runtime transition provenance/
+  );
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(null, running, {
+        expectedStateSha256: running.stateSha256,
+      }),
+    /exact genesis operation/
+  );
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(pending, running, {
+        expectedStateSha256: hash('wrong-trusted-state'),
+      }),
+    /trusted hash/
+  );
+
+  const alternateRunning = startDistributedWorkerAttempt(pending, {
+    startedAtMs: 120,
+    nativeProcess: processInput({
+      pid: 8_422,
+      processStartIdentitySha256: hash('pid-8422-start-marker'),
+    }),
+  });
+  const alternateDescription = describeDistributedWorkerAttemptTransition(
+    pending,
+    alternateRunning,
+    { expectedStateSha256: alternateRunning.stateSha256 }
+  );
+  const runningDescription = describeDistributedWorkerAttemptTransition(
+    pending,
+    running,
+    { expectedStateSha256: running.stateSha256 }
+  );
+  assert.notEqual(
+    alternateDescription.inputSha256,
+    runningDescription.inputSha256
+  );
+
+  const otherPending = createDistributedWorkerAttemptState(
+    creationInput({ createdAtMs: 111 })
+  );
+  assert.throws(
+    () =>
+      describeDistributedWorkerAttemptTransition(otherPending, running, {
+        expectedStateSha256: running.stateSha256,
+      }),
+    /not linked to its predecessor/
   );
 });
 

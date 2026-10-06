@@ -121,6 +121,8 @@ const QUEUE_KEYS = [
   'submissions',
 ];
 const trustedQueues = new WeakSet();
+// Runtime-only lineage is never serialized or restored by rehydration.
+const queueTransitionProvenance = new WeakMap();
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -544,6 +546,26 @@ function sealQueue(value) {
   return sealed;
 }
 
+function queueTransitionDescription(kind, inputSha256, occurredAtMs) {
+  return deepFreeze({ kind, inputSha256, occurredAtMs });
+}
+
+function sealQueueTransition(previousQueue, transition, value) {
+  const sealed = sealQueue(value);
+  if (sealed.revision !== previousQueue.revision + 1)
+    throw new Error('Queue transition must advance exactly one revision');
+  queueTransitionProvenance.set(
+    sealed,
+    Object.freeze({
+      kind: 'transition',
+      previousQueueSha256: previousQueue.queueSha256,
+      previousRevision: previousQueue.revision,
+      transition,
+    })
+  );
+  return sealed;
+}
+
 function exactNullable(value, label, normalizer) {
   return value === null ? null : normalizer(value, label);
 }
@@ -746,6 +768,60 @@ function assertTrustedQueue(value) {
   return value;
 }
 
+export function verifyDistributedControllerQueueTransition(
+  previousQueueValue,
+  candidateQueueValue
+) {
+  const candidate = assertTrustedQueue(candidateQueueValue);
+  const provenance = queueTransitionProvenance.get(candidate);
+  if (!provenance)
+    throw new Error(
+      'Distributed controller queue lacks runtime transition provenance'
+    );
+
+  if (previousQueueValue === null) {
+    if (
+      provenance.kind !== 'genesis' ||
+      candidate.revision !== 0 ||
+      candidate.nextSequence !== 1 ||
+      candidate.activeSubmissionId !== null ||
+      candidate.haltedBySubmissionId !== null ||
+      candidate.submissions.length !== 0
+    )
+      throw new Error(
+        'Distributed controller queue genesis is not an exact initial queue'
+      );
+    return candidate;
+  }
+
+  if (provenance.kind !== 'transition')
+    throw new Error(
+      'Distributed controller queue genesis cannot follow persisted state'
+    );
+  const previous = assertTrustedQueue(previousQueueValue);
+  if (previous.controllerId !== candidate.controllerId)
+    throw new Error('Queue transition crossed a controller boundary');
+  if (provenance.previousQueueSha256 !== previous.queueSha256)
+    throw new Error('Queue transition does not match its exact previous queue');
+  if (
+    provenance.previousRevision !== previous.revision ||
+    candidate.revision !== previous.revision + 1
+  )
+    throw new Error('Queue transition must advance exactly one revision');
+  return candidate;
+}
+
+export function describeDistributedControllerQueueTransition(
+  previousQueueValue,
+  candidateQueueValue
+) {
+  const candidate = verifyDistributedControllerQueueTransition(
+    previousQueueValue,
+    candidateQueueValue
+  );
+  return queueTransitionProvenance.get(candidate).transition;
+}
+
 function replaceRecord(queue, submissionId, transform) {
   let found = false;
   const submissions = queue.submissions.map((entry) => {
@@ -764,19 +840,34 @@ export function createDistributedControllerQueue({
 }) {
   if (!FAILURE_POLICIES.has(failurePolicy))
     throw new Error('Unsupported distributed queue failure policy');
-  return sealQueue({
+  const creationInput = {
     controllerId: identifier(controllerId, 'controller ID'),
     failurePolicy,
     maxSubmissions: integer(maxSubmissions, 'Queue submission limit', {
       minimum: 1,
       maximum: MAX_DISTRIBUTED_QUEUE_SUBMISSIONS,
     }),
+  };
+  const queue = sealQueue({
+    ...creationInput,
     revision: 0,
     nextSequence: 1,
     activeSubmissionId: null,
     haltedBySubmissionId: null,
     submissions: [],
   });
+  queueTransitionProvenance.set(
+    queue,
+    Object.freeze({
+      kind: 'genesis',
+      transition: queueTransitionDescription(
+        'genesis',
+        canonicalJsonSha256(creationInput),
+        null
+      ),
+    })
+  );
+  return queue;
 }
 
 export function enqueueDistributedApp(queueValue, submissionValue) {
@@ -823,7 +914,12 @@ export function enqueueDistributedApp(queueValue, submissionValue) {
     cleanupProof: null,
     finalizedAtMs: null,
   };
-  return sealQueue({
+  const transition = queueTransitionDescription(
+    'enqueue',
+    submission.submissionSha256,
+    null
+  );
+  return sealQueueTransition(queue, transition, {
     ...queue,
     revision: queue.revision + 1,
     nextSequence: queue.nextSequence + 1,
@@ -848,7 +944,15 @@ export function startNextDistributedApp(
   )
     throw new Error('Execution ID was already used by this queue');
   const normalizedStartedAtMs = integer(startedAtMs, 'Execution start time');
-  return sealQueue({
+  const transition = queueTransitionDescription(
+    'start',
+    canonicalJsonSha256({
+      executionId: normalizedExecutionId,
+      startedAtMs: normalizedStartedAtMs,
+    }),
+    normalizedStartedAtMs
+  );
+  return sealQueueTransition(queue, transition, {
     ...queue,
     revision: queue.revision + 1,
     activeSubmissionId: next.submission.submissionId,
@@ -893,7 +997,12 @@ export function recordDistributedTerminalReconciliation(
     reconciliation.completedAtMs < active.startedAtMs
   )
     throw new Error('Terminal reconciliation is not bound to the active app');
-  return sealQueue({
+  const transition = queueTransitionDescription(
+    'terminal-reconciliation',
+    reconciliation.terminalReconciliationSha256,
+    reconciliation.completedAtMs
+  );
+  return sealQueueTransition(queue, transition, {
     ...queue,
     revision: queue.revision + 1,
     submissions: replaceRecord(queue, queue.activeSubmissionId, (entry) => ({
@@ -930,7 +1039,12 @@ export function recordDistributedCleanupProof(
     proof.completedAtMs < active.terminalReconciliation.completedAtMs
   )
     throw new Error('Cleanup proof is not bound to the active terminal result');
-  return sealQueue({
+  const transition = queueTransitionDescription(
+    'cleanup-proof',
+    proof.cleanupProofSha256,
+    proof.completedAtMs
+  );
+  return sealQueueTransition(queue, transition, {
     ...queue,
     revision: queue.revision + 1,
     submissions: replaceRecord(queue, queue.activeSubmissionId, (entry) => ({
@@ -963,7 +1077,12 @@ export function advanceDistributedControllerQueue(
     terminalStatus === 'failed' && queue.failurePolicy === 'stop-on-failure'
       ? active.submission.submissionId
       : null;
-  return sealQueue({
+  const transition = queueTransitionDescription(
+    'advance',
+    canonicalJsonSha256({ finalizedAtMs: normalizedFinalizedAtMs }),
+    normalizedFinalizedAtMs
+  );
+  return sealQueueTransition(queue, transition, {
     ...queue,
     revision: queue.revision + 1,
     activeSubmissionId: null,

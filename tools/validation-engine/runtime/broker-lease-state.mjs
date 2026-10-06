@@ -67,7 +67,23 @@ const LEASE_STATE_KEYS = [
   'workerSessionId',
 ];
 const RESULT_STATE_KEYS = ['acceptedAtMs', 'submission', 'submissionSha256'];
+const BROKER_TRANSITION_INPUT_SCHEMA =
+  'seerrng-validation-broker-transition-input/v1';
+const BROKER_TRANSITION_KINDS = new Set([
+  'genesis',
+  'lease.cancel',
+  'lease.cleanup-recover',
+  'lease.expire',
+  'lease.grant',
+  'lease.renew',
+  'worker.cancelled',
+  'worker.capacity',
+  'worker.heartbeat',
+  'worker.register',
+  'worker.result',
+]);
 const trustedStates = new WeakSet();
+const trustedTransitions = new WeakMap();
 
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -123,6 +139,47 @@ function exactDigest(value, label) {
   if (typeof value !== 'string' || !HASH64.test(value))
     throw new Error(`Exact ${label} is required`);
   return value;
+}
+
+function brokerTransitionInputSha256(kind, input) {
+  if (!BROKER_TRANSITION_KINDS.has(kind))
+    throw new Error('Unsupported broker transition kind');
+  plainRecord(input, 'broker transition input');
+  return canonicalJsonSha256({
+    schema: BROKER_TRANSITION_INPUT_SCHEMA,
+    kind,
+    ...input,
+  });
+}
+
+function createBrokerTransitionDescriptor(kind, inputSha256, occurredAtMs) {
+  if (!BROKER_TRANSITION_KINDS.has(kind))
+    throw new Error('Unsupported broker transition kind');
+  exactDigest(inputSha256, 'broker transition input hash');
+  if (occurredAtMs !== null)
+    safeInteger(occurredAtMs, 'Broker transition time');
+  return deepFreeze({ kind, inputSha256, occurredAtMs });
+}
+
+function brokerMessageTransition(message, occurredAtMs = message.sentAtMs) {
+  return createBrokerTransitionDescriptor(
+    message.kind,
+    brokerTransitionInputSha256(message.kind, {
+      messageSha256: canonicalJsonSha256(message),
+    }),
+    occurredAtMs
+  );
+}
+
+function brokerAcceptedMessageTransition(message, acceptedAtMs) {
+  return createBrokerTransitionDescriptor(
+    message.kind,
+    brokerTransitionInputSha256(message.kind, {
+      messageSha256: canonicalJsonSha256(message),
+      acceptedAtMs,
+    }),
+    acceptedAtMs
+  );
 }
 
 function uniqueField(entries, field, label) {
@@ -304,7 +361,28 @@ function validatePersistedAssignmentHistory(state, taskById) {
   }
 }
 
-function sealState(value) {
+function sealState(value, previousStateValue, transitionDescriptor) {
+  const previousState =
+    previousStateValue === null ? null : assertState(previousStateValue);
+  exactRecord(transitionDescriptor, 'broker transition descriptor', [
+    'inputSha256',
+    'kind',
+    'occurredAtMs',
+  ]);
+  const descriptor = createBrokerTransitionDescriptor(
+    transitionDescriptor.kind,
+    transitionDescriptor.inputSha256,
+    transitionDescriptor.occurredAtMs
+  );
+  if (
+    (previousState === null && descriptor.kind !== 'genesis') ||
+    (previousState !== null && descriptor.kind === 'genesis')
+  )
+    throw new Error('Broker transition provenance has an invalid predecessor');
+  if (previousState !== null && value.stateSha256 !== previousState.stateSha256)
+    throw new Error(
+      'Broker transition was not built from its exact predecessor'
+    );
   const state = {
     schema: BROKER_LEASE_STATE_SCHEMA,
     binding: value.binding,
@@ -333,6 +411,13 @@ function sealState(value) {
   };
   const sealed = deepFreeze({ ...state, stateSha256: stateHash(state) });
   trustedStates.add(sealed);
+  trustedTransitions.set(
+    sealed,
+    deepFreeze({
+      previousStateSha256: previousState?.stateSha256 ?? null,
+      descriptor,
+    })
+  );
   return sealed;
 }
 
@@ -646,6 +731,43 @@ function assertState(value) {
   return value;
 }
 
+export function verifyBrokerLeaseStateTransition(
+  previousStateValue,
+  currentStateValue
+) {
+  describeBrokerLeaseStateTransition(previousStateValue, currentStateValue);
+  return currentStateValue;
+}
+
+export function describeBrokerLeaseStateTransition(
+  previousStateValue,
+  currentStateValue
+) {
+  const current = assertState(currentStateValue);
+  const provenance = trustedTransitions.get(current);
+  if (!provenance)
+    throw new Error('Broker state lacks trusted transition provenance');
+  if (previousStateValue === null) {
+    if (
+      provenance.previousStateSha256 !== null ||
+      provenance.descriptor.kind !== 'genesis'
+    )
+      throw new Error('Broker state is not a trusted genesis');
+    const expected = createBrokerLeaseState({
+      binding: current.binding,
+      expectedTasks: current.expectedTasks,
+      workerConfig: current.workerConfig,
+    });
+    if (expected.stateSha256 !== current.stateSha256)
+      throw new Error('Broker genesis does not match its exact initial state');
+    return provenance.descriptor;
+  }
+  const previous = assertState(previousStateValue);
+  if (provenance.previousStateSha256 !== previous.stateSha256)
+    throw new Error('Broker state is not linked to its persisted predecessor');
+  return provenance.descriptor;
+}
+
 function assertWorkerMessageBinding(worker, message, body) {
   if (
     worker.registration.instanceId !== body.instanceId ||
@@ -692,15 +814,25 @@ function beginLogicalCommand(state, message) {
   return { command, duplicate: false };
 }
 
-function sealCommandApplication(state, changes, command, appliedAtMs) {
-  return sealState({
-    ...state,
-    ...changes,
-    appliedCommands: state.appliedCommands.concat({
-      command,
-      appliedAtMs,
-    }),
-  });
+function sealCommandApplication(
+  state,
+  changes,
+  command,
+  appliedAtMs,
+  { inputSha256 = command.commandSha256, occurredAtMs = appliedAtMs } = {}
+) {
+  return sealState(
+    {
+      ...state,
+      ...changes,
+      appliedCommands: state.appliedCommands.concat({
+        command,
+        appliedAtMs,
+      }),
+    },
+    state,
+    createBrokerTransitionDescriptor(command.kind, inputSha256, occurredAtMs)
+  );
 }
 
 function replaceWorker(state, worker) {
@@ -757,15 +889,29 @@ export function createBrokerLeaseState({
       'Broker tasks must match their application submission isolation key'
     );
   validateExpectedTaskCatalog(expectedTasks, workerConfig);
-  return sealState({
-    binding,
-    workerConfig,
-    expectedTasks,
-    appliedCommands: [],
-    workers: [],
-    leases: [],
-    results: [],
-  });
+  return sealState(
+    {
+      binding,
+      workerConfig,
+      expectedTasks,
+      appliedCommands: [],
+      workers: [],
+      leases: [],
+      results: [],
+    },
+    null,
+    createBrokerTransitionDescriptor(
+      'genesis',
+      brokerTransitionInputSha256('genesis', {
+        binding,
+        expectedTasks: [...expectedTasks].toSorted((left, right) =>
+          compareText(left.taskId, right.taskId)
+        ),
+        workerConfig,
+      }),
+      null
+    )
+  );
 }
 
 export function registerBrokerWorker(stateValue, messageValue) {
@@ -807,10 +953,14 @@ export function registerBrokerWorker(stateValue, messageValue) {
     admission: null,
     heartbeat: null,
   };
-  return sealState({
-    ...state,
-    workers: replaceWorker(state, worker),
-  });
+  return sealState(
+    {
+      ...state,
+      workers: replaceWorker(state, worker),
+    },
+    state,
+    brokerMessageTransition(message)
+  );
 }
 
 export function recordBrokerCapacity(stateValue, messageValue) {
@@ -859,7 +1009,11 @@ export function recordBrokerCapacity(stateValue, messageValue) {
     admission,
     heartbeat: null,
   };
-  return sealState({ ...state, workers: replaceWorker(state, updated) });
+  return sealState(
+    { ...state, workers: replaceWorker(state, updated) },
+    state,
+    brokerMessageTransition(message)
+  );
 }
 
 export function recordBrokerHeartbeat(stateValue, messageValue) {
@@ -887,7 +1041,11 @@ export function recordBrokerHeartbeat(stateValue, messageValue) {
   if (!exactArray(heartbeat.activeLeases, expected))
     throw new Error('Heartbeat does not close the worker active lease set');
   const updated = { ...worker, heartbeat };
-  return sealState({ ...state, workers: replaceWorker(state, updated) });
+  return sealState(
+    { ...state, workers: replaceWorker(state, updated) },
+    state,
+    brokerMessageTransition(message)
+  );
 }
 
 function expectedTask(state, taskId) {
@@ -1315,7 +1473,11 @@ export function acknowledgeBrokerCancellation(
     cleanupAcceptedAtMs: acceptedAtMs,
     cleanupEvidence: acknowledgement.cleanupEvidence,
   };
-  return sealState({ ...state, leases: replaceLease(state, updated) });
+  return sealState(
+    { ...state, leases: replaceLease(state, updated) },
+    state,
+    brokerAcceptedMessageTransition(message, acceptedAtMs)
+  );
 }
 
 export function recoverBrokerLeaseCleanup(
@@ -1393,7 +1555,15 @@ export function recoverBrokerLeaseCleanup(
     state,
     { leases: replaceLease(state, updated) },
     logicalCommand.command,
-    message.sentAtMs
+    message.sentAtMs,
+    {
+      inputSha256: brokerTransitionInputSha256(message.kind, {
+        commandSha256: logicalCommand.command.commandSha256,
+        messageSha256: canonicalJsonSha256(message),
+        acceptedAtMs,
+      }),
+      occurredAtMs: acceptedAtMs,
+    }
   );
 }
 
@@ -1418,7 +1588,17 @@ export function expireBrokerLeases(stateValue, nowMs) {
         lease.cancellationRequestedAtMs ?? lease.expiresAtMs,
     };
   });
-  return changed ? sealState({ ...state, leases }) : state;
+  return changed
+    ? sealState(
+        { ...state, leases },
+        state,
+        createBrokerTransitionDescriptor(
+          'lease.expire',
+          brokerTransitionInputSha256('lease.expire', { nowMs }),
+          nowMs
+        )
+      )
+    : state;
 }
 
 function assertResultEvidence(task, result) {
@@ -1540,11 +1720,15 @@ export function acceptBrokerResult(
     submissionSha256,
     submission,
   });
-  const next = sealState({
-    ...state,
-    leases: replaceLease(state, completedLease),
-    results: state.results.concat(result),
-  });
+  const next = sealState(
+    {
+      ...state,
+      leases: replaceLease(state, completedLease),
+      results: state.results.concat(result),
+    },
+    state,
+    brokerAcceptedMessageTransition(message, acceptedAtMs)
+  );
   return { state: next, disposition: 'accepted', result };
 }
 

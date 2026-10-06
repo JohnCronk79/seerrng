@@ -7,6 +7,7 @@ import {
   createBrokerLeaseState,
   createBrokerReconciliationInput,
   createBrokerResultAcknowledgementBody,
+  describeBrokerLeaseStateTransition,
   expireBrokerLeases,
   grantBrokerLease,
   recordBrokerCapacity,
@@ -16,6 +17,7 @@ import {
   rehydrateBrokerLeaseState,
   renewBrokerLease,
   verifyBrokerLeaseState,
+  verifyBrokerLeaseStateTransition,
 } from '../tools/validation-engine/runtime/broker-lease-state.mjs';
 import {
   authenticateBrokerMessage,
@@ -227,6 +229,104 @@ function admittedState(tasks = [task()]) {
   );
   return state;
 }
+
+test('broker transition provenance accepts only constructed genesis and exact legal predecessors', () => {
+  const genesis = initialState();
+  assert.equal(verifyBrokerLeaseStateTransition(null, genesis), genesis);
+  const genesisDescription = describeBrokerLeaseStateTransition(null, genesis);
+  assert.deepEqual(Reflect.ownKeys(genesisDescription).toSorted(), [
+    'inputSha256',
+    'kind',
+    'occurredAtMs',
+  ]);
+  assert.equal(Object.isFrozen(genesisDescription), true);
+  assert.equal(genesisDescription.kind, 'genesis');
+  assert.match(genesisDescription.inputSha256, /^[a-f0-9]{64}$/);
+  assert.equal(genesisDescription.occurredAtMs, null);
+  assert.equal(
+    describeBrokerLeaseStateTransition(null, initialState()).inputSha256,
+    genesisDescription.inputSha256
+  );
+
+  const restoredGenesis = rehydrateBrokerLeaseState(genesis, {
+    expectedBinding: binding(),
+    expectedStateSha256: genesis.stateSha256,
+  });
+  assert.throws(
+    () => verifyBrokerLeaseStateTransition(null, restoredGenesis),
+    /lacks trusted transition provenance/
+  );
+
+  const registrationMessage = authenticated(
+    'worker.register',
+    registration(),
+    'worker-east',
+    1_500
+  );
+  const registered = registerBrokerWorker(genesis, registrationMessage);
+  assert.equal(
+    verifyBrokerLeaseStateTransition(genesis, registered),
+    registered
+  );
+  const registeredDescription = describeBrokerLeaseStateTransition(
+    genesis,
+    registered
+  );
+  assert.deepEqual(registeredDescription, {
+    kind: 'worker.register',
+    inputSha256: registeredDescription.inputSha256,
+    occurredAtMs: 1_500,
+  });
+  assert.match(registeredDescription.inputSha256, /^[a-f0-9]{64}$/);
+  assert.equal(Object.isFrozen(registeredDescription), true);
+
+  const restoredRegistered = rehydrateBrokerLeaseState(registered, {
+    expectedBinding: binding(),
+    expectedStateSha256: registered.stateSha256,
+  });
+  assert.throws(
+    () => verifyBrokerLeaseStateTransition(genesis, restoredRegistered),
+    /lacks trusted transition provenance/
+  );
+  assert.throws(
+    () =>
+      verifyBrokerLeaseStateTransition(
+        initialState([task('task-2')]),
+        registered
+      ),
+    /not linked to its persisted predecessor/
+  );
+
+  const plannedTask = task();
+  const admitted = admittedState([plannedTask]);
+  const grantMessage = authenticated(
+    'lease.grant',
+    grantBody(plannedTask),
+    'controller-dev',
+    3_000
+  );
+  const granted = grantBrokerLease(admitted, grantMessage);
+  const grantDescription = describeBrokerLeaseStateTransition(
+    admitted,
+    granted
+  );
+  assert.deepEqual(grantDescription, {
+    kind: 'lease.grant',
+    inputSha256: grantMessage.command.commandSha256,
+    occurredAtMs: 3_000,
+  });
+  assert.equal(Object.isFrozen(grantDescription), true);
+
+  const expired = expireBrokerLeases(granted, 8_000);
+  const expiryDescription = describeBrokerLeaseStateTransition(
+    granted,
+    expired
+  );
+  assert.equal(expiryDescription.kind, 'lease.expire');
+  assert.match(expiryDescription.inputSha256, /^[a-f0-9]{64}$/);
+  assert.equal(expiryDescription.occurredAtMs, 8_000);
+  assert.equal(Object.isFrozen(expiryDescription), true);
+});
 
 function grantBody(plannedTask, overrides = {}) {
   return {
@@ -1843,14 +1943,48 @@ test('controller recovery clears only expired cleanup with independently verifie
   assert.equal(state.stateSha256, blockedStateSha256);
   assert.equal(state.leases[0].state, 'cleanup-required');
 
+  const delayedEnvelopeValue = structuredClone(recoveryMessage);
+  delayedEnvelopeValue.sentAtMs = 8_601;
+  const delayedEnvelope = authenticateBrokerMessage(delayedEnvelopeValue, {
+    expectedBinding: binding(),
+    nowMs: 8_601,
+    verifyProof: () => true,
+  });
+  assert.equal(
+    delayedEnvelope.command.commandSha256,
+    recoveryMessage.command.commandSha256
+  );
+
   let observed;
-  state = recoverBrokerLeaseCleanup(state, recoveryMessage, {
+  const recovered = recoverBrokerLeaseCleanup(state, recoveryMessage, {
     acceptedAtMs: 8_700,
     verifyCleanupEvidence(value) {
       observed = value;
       return true;
     },
   });
+  const delayedRecovery = recoverBrokerLeaseCleanup(state, delayedEnvelope, {
+    acceptedAtMs: 8_700,
+    verifyCleanupEvidence: () => true,
+  });
+  const recoveryProvenance = describeBrokerLeaseStateTransition(
+    state,
+    recovered
+  );
+  const delayedProvenance = describeBrokerLeaseStateTransition(
+    state,
+    delayedRecovery
+  );
+  assert.equal(recoveryProvenance.kind, 'lease.cleanup-recover');
+  assert.equal(delayedProvenance.kind, recoveryProvenance.kind);
+  assert.equal(delayedProvenance.occurredAtMs, 8_700);
+  assert.notEqual(
+    delayedProvenance.inputSha256,
+    recoveryProvenance.inputSha256
+  );
+  assert.equal(recovered.appliedCommands.at(-1).appliedAtMs, 8_600);
+  assert.equal(delayedRecovery.appliedCommands.at(-1).appliedAtMs, 8_601);
+  state = recovered;
   assert.equal(observed.lease.leaseId, 'lease-task-1-1');
   assert.equal(
     observed.cleanupEvidence.cleanupEvidenceSha256,

@@ -44,6 +44,7 @@ const portableTests = [
   'bin/engine-distributed-controller-queue.test.mjs',
   'bin/engine-distributed-evidence-artifact.test.mjs',
   'bin/engine-distributed-execution-bridge.test.mjs',
+  'bin/engine-distributed-state-store.test.mjs',
   'bin/engine-distributed-worker-attempt-state.test.mjs',
   'bin/engine-distributed-worker-config.test.mjs',
   'bin/local-validation.test.mjs',

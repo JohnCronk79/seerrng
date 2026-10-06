@@ -12,6 +12,7 @@ import {
   DISTRIBUTED_TERMINAL_RECONCILIATION_SCHEMA,
   advanceDistributedControllerQueue,
   createDistributedControllerQueue,
+  describeDistributedControllerQueueTransition,
   distributedApplicationIsolationKeySha256,
   enqueueDistributedApp,
   recordDistributedCleanupProof,
@@ -23,10 +24,21 @@ import {
   snapshotDistributedControllerQueue,
   startNextDistributedApp,
   verifyDistributedAppSubmission,
+  verifyDistributedControllerQueueTransition,
 } from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
 
 const controllerId = 'controller-a';
 const acceptAuthentication = () => true;
+
+function assertTransitionDescription(actual, expected) {
+  assert.deepEqual(Reflect.ownKeys(actual), [
+    'kind',
+    'inputSha256',
+    'occurredAtMs',
+  ]);
+  assert.deepEqual(actual, expected);
+  assert.equal(Object.isFrozen(actual), true);
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -543,5 +555,190 @@ test('sealed snapshot supports verified rehydration but performs no persistence'
         verifyAuthentication: () => false,
       }),
     /authentication proof was rejected/
+  );
+});
+
+test('queue transition provenance accepts only fresh genesis and exact legal lineage', () => {
+  const genesis = createDistributedControllerQueue({ controllerId });
+  assert.equal(
+    verifyDistributedControllerQueueTransition(null, genesis),
+    genesis
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(null, genesis),
+    {
+      kind: 'genesis',
+      inputSha256: canonicalJsonSha256({
+        controllerId,
+        failurePolicy: 'stop-on-failure',
+        maxSubmissions: 64,
+      }),
+      occurredAtMs: null,
+    }
+  );
+
+  const genesisSnapshot = snapshotDistributedControllerQueue(genesis);
+  const restoredGenesis = rehydrateDistributedControllerQueue(genesisSnapshot, {
+    expectedControllerId: controllerId,
+    expectedQueueSha256: genesis.queueSha256,
+    verifyAuthentication: acceptAuthentication,
+  });
+  assert.throws(
+    () => verifyDistributedControllerQueueTransition(null, restoredGenesis),
+    /lacks runtime transition provenance/
+  );
+  assert.throws(
+    () => describeDistributedControllerQueueTransition(null, restoredGenesis),
+    /lacks runtime transition provenance/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedControllerQueueTransition(
+        null,
+        structuredClone(genesis)
+      ),
+    /not trusted runtime state/
+  );
+
+  const lineageSubmission = sealDistributedAppSubmission(
+    submissionInput('lineage-alpha')
+  );
+  const queued = enqueueDistributedApp(restoredGenesis, lineageSubmission);
+  assert.equal(queued.revision, restoredGenesis.revision + 1);
+  assert.equal(
+    verifyDistributedControllerQueueTransition(restoredGenesis, queued),
+    queued
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(restoredGenesis, queued),
+    {
+      kind: 'enqueue',
+      inputSha256: lineageSubmission.submissionSha256,
+      occurredAtMs: null,
+    }
+  );
+  assert.throws(
+    () => verifyDistributedControllerQueueTransition(null, queued),
+    /not an exact initial queue/
+  );
+
+  const running = startNextDistributedApp(queued, {
+    executionId: 'execution-lineage-alpha',
+    startedAtMs: 11,
+  });
+  assert.equal(
+    verifyDistributedControllerQueueTransition(queued, running),
+    running
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(queued, running),
+    {
+      kind: 'start',
+      inputSha256: canonicalJsonSha256({
+        executionId: 'execution-lineage-alpha',
+        startedAtMs: 11,
+      }),
+      occurredAtMs: 11,
+    }
+  );
+  const terminalReconciliation = terminalFor(running);
+  const reconciled = recordDistributedTerminalReconciliation(
+    running,
+    terminalReconciliation,
+    { verifyAuthentication: acceptAuthentication }
+  );
+  assert.equal(
+    verifyDistributedControllerQueueTransition(running, reconciled),
+    reconciled
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(running, reconciled),
+    {
+      kind: 'terminal-reconciliation',
+      inputSha256: terminalReconciliation.terminalReconciliationSha256,
+      occurredAtMs: terminalReconciliation.completedAtMs,
+    }
+  );
+  const cleanupProof = cleanupFor(reconciled);
+  const cleaned = recordDistributedCleanupProof(
+    reconciled,
+    cleanupProof,
+    { verifyAuthentication: acceptAuthentication }
+  );
+  assert.equal(
+    verifyDistributedControllerQueueTransition(reconciled, cleaned),
+    cleaned
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(reconciled, cleaned),
+    {
+      kind: 'cleanup-proof',
+      inputSha256: cleanupProof.cleanupProofSha256,
+      occurredAtMs: cleanupProof.completedAtMs,
+    }
+  );
+  const finalized = advanceDistributedControllerQueue(cleaned, {
+    finalizedAtMs: 40,
+  });
+  assert.equal(
+    verifyDistributedControllerQueueTransition(cleaned, finalized),
+    finalized
+  );
+  assertTransitionDescription(
+    describeDistributedControllerQueueTransition(cleaned, finalized),
+    {
+      kind: 'advance',
+      inputSha256: canonicalJsonSha256({ finalizedAtMs: 40 }),
+      occurredAtMs: 40,
+    }
+  );
+
+  const unrelatedPrevious = createDistributedControllerQueue({
+    controllerId,
+    maxSubmissions: 63,
+  });
+  assert.throws(
+    () =>
+      verifyDistributedControllerQueueTransition(unrelatedPrevious, queued),
+    /does not match its exact previous queue/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedControllerQueueTransition(
+        structuredClone(restoredGenesis),
+        queued
+      ),
+    /not trusted runtime state/
+  );
+
+  const queuedSnapshot = snapshotDistributedControllerQueue(queued);
+  const restoredQueued = rehydrateDistributedControllerQueue(queuedSnapshot, {
+    expectedControllerId: controllerId,
+    expectedQueueSha256: queued.queueSha256,
+    verifyAuthentication: acceptAuthentication,
+  });
+  assert.throws(
+    () =>
+      verifyDistributedControllerQueueTransition(
+        restoredGenesis,
+        restoredQueued
+      ),
+    /lacks runtime transition provenance/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedControllerQueueTransition(
+        restoredGenesis,
+        structuredClone(queued)
+      ),
+    /not trusted runtime state/
+  );
+  assert.throws(
+    () =>
+      describeDistributedControllerQueueTransition(
+        restoredGenesis,
+        structuredClone(queued)
+      ),
+    /not trusted runtime state/
   );
 });
