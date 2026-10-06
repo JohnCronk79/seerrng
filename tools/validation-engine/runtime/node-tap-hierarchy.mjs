@@ -1,13 +1,64 @@
 import { createHash } from 'node:crypto';
+import { inspect } from 'node:util';
+
+const tapEscape = (input) =>
+  String(input)
+    .replaceAll('\b', '\\b')
+    .replaceAll('\f', '\\f')
+    .replaceAll('\t', '\\t')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\v', '\\v')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('#', '\\#');
+const inspected = (input) =>
+  inspect(input, { colors: false, breakLength: Infinity });
 // Actual Node TAP13 hierarchy reader. Pure metadata mapping, never execution.
-export function readNodeTapHierarchy(reportBytes, file) {
-  if (!Buffer.isBuffer(reportBytes) || typeof file !== 'string' || !file)
+export function readNodeTapHierarchy(
+  reportBytes,
+  file,
+  { sourceEntries = [] } = {}
+) {
+  if (
+    !Buffer.isBuffer(reportBytes) ||
+    typeof file !== 'string' ||
+    !file ||
+    !Array.isArray(sourceEntries) ||
+    sourceEntries.some(
+      (source) =>
+        !source ||
+        typeof source.name !== 'string' ||
+        !source.name ||
+        typeof source.absoluteFile !== 'string' ||
+        !source.absoluteFile
+    ) ||
+    new Set(sourceEntries.map((source) => source.name)).size !==
+      sourceEntries.length ||
+    new Set(sourceEntries.map((source) => source.absoluteFile)).size !==
+      sourceEntries.length
+  )
     throw Error('Actual native report bytes/file required');
   const lines = reportBytes.toString('utf8').split(/\r?\n/),
     issues = [],
     nodes = [],
     cases = [],
-    summaries = {};
+    summaries = {},
+    sourceEntryByReporterName = new Map(
+      sourceEntries.map((source, index) => {
+        const reporterName = tapEscape(source.name);
+        return [
+          reporterName,
+          {
+            reporterName,
+            ordinal: index + 1,
+            location: inspected(`${source.absoluteFile}:1:1`),
+          },
+        ];
+      })
+    ),
+    consumedSourceFailures = new Set();
+  if (sourceEntryByReporterName.size !== sourceEntries.length)
+    throw Error('Actual native report bytes/file required');
   let cursor = 0;
   const issue = (message) => issues.push(message);
   const indent = (n) => ' '.repeat(n);
@@ -58,9 +109,8 @@ export function readNodeTapHierarchy(reportBytes, file) {
         }
         const rawCompletion = lines[cursor++],
           directive = /^(.*?) # (SKIP|TODO)(?: (.*))?$/i.exec(completion[3]);
-        const resultName = directive ? directive[1] : completion[3];
-        if (Number(completion[2]) !== ordinal || resultName !== name)
-          issue('Node case ordinal/name mismatch');
+        const resultName = directive ? directive[1] : completion[3],
+          reportedOrdinal = Number(completion[2]);
         const diagnostic = [];
         if (lines[cursor] === indent(n + 2) + '---') {
           do {
@@ -83,6 +133,43 @@ export function readNodeTapHierarchy(reportBytes, file) {
           : completion[1] === 'ok'
             ? 'passed'
             : 'failed';
+        // When a test module cannot load, Node reports the failed source file as
+        // a top-level test using its runner-specific source ordinal, not the next
+        // top-level case ordinal. Admit only the exact reporter name, ordinal,
+        // and absolute location derived from the frozen command root. Every
+        // ordinary case still requires strict sequential ordinal/name closure.
+        const sourceLocation = /^\s+location: (.+)$/m.exec(rawDiagnostic)?.[1],
+          sourceEntry = sourceEntryByReporterName.get(name),
+          sourceFailureSignature =
+            n === 0 &&
+            status === 'failed' &&
+            type === 'test' &&
+            resultName === name &&
+            /^\s+failureType: 'testCodeFailure'$/m.test(rawDiagnostic) &&
+            (/^\s+exitCode: (?:-[1-9]\d*|[1-9]\d*)$/m.test(rawDiagnostic) ||
+              /^\s+signal: (?!~$|null$).+$/m.test(rawDiagnostic)) &&
+            /^\s+error: 'test failed'$/m.test(rawDiagnostic) &&
+            /^\s+code: 'ERR_TEST_FAILURE'$/m.test(rawDiagnostic),
+          registeredSourceFailure =
+            sourceFailureSignature &&
+            sourceEntry?.ordinal === reportedOrdinal &&
+            sourceLocation === sourceEntry?.location &&
+            !consumedSourceFailures.has(name),
+          sourceNamedTopLevel =
+            n === 0 && type === 'test' && resultName === name && sourceEntry;
+        if (registeredSourceFailure) consumedSourceFailures.add(name);
+        if (sourceNamedTopLevel && status !== 'failed')
+          issue('Native source wrapper has no discovered cases');
+        else if (
+          (sourceFailureSignature || sourceNamedTopLevel) &&
+          !registeredSourceFailure
+        )
+          issue('Node case ordinal/name mismatch');
+        else if (
+          (reportedOrdinal !== ordinal || resultName !== name) &&
+          !registeredSourceFailure
+        )
+          issue('Node case ordinal/name mismatch');
         if (directive && completion[1] === 'not ok')
           issue('Contradictory native directive/failure');
         const node = {
