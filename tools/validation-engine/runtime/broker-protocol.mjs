@@ -2,8 +2,10 @@
 // Transport-neutral protocol contracts for distributed validation workers.
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
-export const BROKER_PROTOCOL_VERSION = 1;
-export const BROKER_MESSAGE_SCHEMA = 'seerrng-validation-broker-message/v1';
+export const BROKER_PROTOCOL_VERSION = 2;
+export const BROKER_MESSAGE_SCHEMA = 'seerrng-validation-broker-message/v2';
+export const BROKER_LOGICAL_COMMAND_SCHEMA =
+  'seerrng-validation-broker-logical-command/v1';
 export const BROKER_BINDING_SCHEMA = 'seerrng-validation-broker-binding/v1';
 export const BROKER_APPLICATION_ISOLATION_SCHEMA =
   'seerrng-validation-broker-application-isolation/v1';
@@ -22,11 +24,21 @@ const MESSAGE_KEYS = [
   'auth',
   'binding',
   'body',
+  'command',
   'kind',
   'messageId',
   'protocolVersion',
   'schema',
   'sentAtMs',
+];
+const LOGICAL_COMMAND_KEYS = [
+  'applicationIsolationKeySha256',
+  'bodySha256',
+  'commandId',
+  'commandSha256',
+  'issuedAtMs',
+  'kind',
+  'schema',
 ];
 const BINDING_KEYS = [
   'applicationId',
@@ -125,6 +137,17 @@ const CLEANUP_EVIDENCE_INPUT_KEYS = [
   'workerId',
   'workerSessionId',
 ];
+const CLEANUP_RECOVERY_KEYS = [
+  'applicationIsolationKeySha256',
+  'attempt',
+  'cleanupEvidence',
+  'instanceId',
+  'leaseId',
+  'recoveredAtMs',
+  'taskId',
+  'workerId',
+  'workerSessionId',
+];
 const CAPABILITY_KEYS = [
   'adapterIds',
   'architecture',
@@ -152,6 +175,7 @@ const CONTROLLER_KINDS = new Set([
   'lease.grant',
   'lease.renew',
   'lease.cancel',
+  'lease.cleanup-recover',
   'result.ack',
 ]);
 const MESSAGE_KINDS = new Set([...WORKER_KINDS, ...CONTROLLER_KINDS]);
@@ -323,11 +347,9 @@ function normalizeTaskAssignment(value) {
     workerId,
     slotId,
     slotIndex,
-    slotPosition: safeInteger(
-      value.slotPosition,
-      'Assigned slot position',
-      { minimum: 1 }
-    ),
+    slotPosition: safeInteger(value.slotPosition, 'Assigned slot position', {
+      minimum: 1,
+    }),
   };
 }
 
@@ -689,15 +711,10 @@ function cleanupEvidenceSeal(value) {
 }
 
 function normalizeCleanupEvidenceWithoutSeal(value, binding) {
-  exactObject(
-    value,
-    'cleanup evidence input',
-    CLEANUP_EVIDENCE_INPUT_KEYS
-  );
+  exactObject(value, 'cleanup evidence input', CLEANUP_EVIDENCE_INPUT_KEYS);
   const evidence = {
     schema: BROKER_CLEANUP_EVIDENCE_SCHEMA,
-    applicationIsolationKeySha256:
-      brokerApplicationIsolationKeySha256(binding),
+    applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(binding),
     workerId: identifier(value.workerId, 'worker ID'),
     instanceId: identifier(value.instanceId, 'worker instance ID'),
     workerSessionId: identifier(
@@ -760,7 +777,9 @@ export function verifyBrokerCleanupEvidence(bindingValue, value) {
     value.applicationIsolationKeySha256 !==
     evidence.applicationIsolationKeySha256
   )
-    throw new Error('Cleanup evidence crossed an application isolation boundary');
+    throw new Error(
+      'Cleanup evidence crossed an application isolation boundary'
+    );
   const sealed = {
     ...evidence,
     cleanupEvidenceSha256: cleanupEvidenceSeal(evidence),
@@ -795,7 +814,10 @@ function normalizeCancellationAcknowledgement(value, binding) {
       value.cancelledAtMs,
       'Cancellation completion time'
     ),
-    cleanupEvidence: verifyBrokerCleanupEvidence(binding, value.cleanupEvidence),
+    cleanupEvidence: verifyBrokerCleanupEvidence(
+      binding,
+      value.cleanupEvidence
+    ),
   };
   const cleanup = acknowledgement.cleanupEvidence;
   if (
@@ -811,6 +833,53 @@ function normalizeCancellationAcknowledgement(value, binding) {
       'Cancellation acknowledgement is not bound to its cleanup evidence'
     );
   return acknowledgement;
+}
+
+function normalizeCleanupRecovery(value, binding) {
+  exactObject(value, 'controller cleanup recovery', CLEANUP_RECOVERY_KEYS);
+  const recovery = {
+    applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(binding),
+    workerId: identifier(value.workerId, 'worker ID'),
+    instanceId: identifier(value.instanceId, 'worker instance ID'),
+    workerSessionId: identifier(
+      value.workerSessionId,
+      'worker authentication session ID'
+    ),
+    leaseId: identifier(value.leaseId, 'lease ID'),
+    taskId: identifier(value.taskId, 'task ID'),
+    attempt: safeInteger(value.attempt, 'Task attempt', { minimum: 1 }),
+    recoveredAtMs: safeInteger(
+      value.recoveredAtMs,
+      'Cleanup recovery observation time'
+    ),
+    cleanupEvidence: verifyBrokerCleanupEvidence(
+      binding,
+      value.cleanupEvidence
+    ),
+  };
+  const cleanup = recovery.cleanupEvidence;
+  if (
+    value.applicationIsolationKeySha256 !==
+      recovery.applicationIsolationKeySha256 ||
+    cleanup.applicationIsolationKeySha256 !==
+      recovery.applicationIsolationKeySha256
+  )
+    throw new Error(
+      'Cleanup recovery crossed an application isolation boundary'
+    );
+  if (
+    cleanup.workerId !== recovery.workerId ||
+    cleanup.instanceId !== recovery.instanceId ||
+    cleanup.workerSessionId !== recovery.workerSessionId ||
+    cleanup.leaseId !== recovery.leaseId ||
+    cleanup.taskId !== recovery.taskId ||
+    cleanup.attempt !== recovery.attempt ||
+    cleanup.completedAtMs > recovery.recoveredAtMs
+  )
+    throw new Error(
+      'Cleanup recovery is not bound to its exact cleanup evidence'
+    );
+  return recovery;
 }
 
 export function brokerResultKeySha256(bindingValue, taskId, attempt) {
@@ -929,8 +998,7 @@ function normalizeResult(value, binding) {
   if (new Set(evidenceIds).size !== evidenceIds.length)
     throw new Error('Worker result evidence IDs must be exact-once');
   const result = {
-    applicationIsolationKeySha256:
-      brokerApplicationIsolationKeySha256(binding),
+    applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(binding),
     workerId: identifier(value.workerId, 'worker ID'),
     instanceId: identifier(value.instanceId, 'worker instance ID'),
     workerSessionId: identifier(
@@ -951,8 +1019,7 @@ function normalizeResult(value, binding) {
   if (value.resultKeySha256 !== result.resultKeySha256)
     throw new Error('Worker result identity is not bound to its task attempt');
   if (
-    value.applicationIsolationKeySha256 !==
-    result.applicationIsolationKeySha256
+    value.applicationIsolationKeySha256 !== result.applicationIsolationKeySha256
   )
     throw new Error('Worker result crossed an application isolation boundary');
   return result;
@@ -1010,6 +1077,8 @@ function normalizeBody(kind, value, binding) {
       return normalizeLeaseRenewal(value);
     case 'lease.cancel':
       return normalizeCancellation(value);
+    case 'lease.cleanup-recover':
+      return normalizeCleanupRecovery(value, binding);
     case 'worker.result':
       return normalizeResult(value, binding);
     case 'result.ack':
@@ -1017,6 +1086,109 @@ function normalizeBody(kind, value, binding) {
     default:
       throw new Error('Unsupported broker message kind');
   }
+}
+
+function logicalCommandSeal(value) {
+  const unsigned = { ...value };
+  delete unsigned.commandSha256;
+  return canonicalJsonSha256(unsigned);
+}
+
+function normalizeLogicalCommandIdentity(value) {
+  exactObject(value, 'broker logical command', LOGICAL_COMMAND_KEYS);
+  if (value.schema !== BROKER_LOGICAL_COMMAND_SCHEMA)
+    throw new Error('Unsupported broker logical command schema');
+  if (!CONTROLLER_KINDS.has(value.kind))
+    throw new Error('Unsupported broker logical command kind');
+  const command = {
+    schema: BROKER_LOGICAL_COMMAND_SCHEMA,
+    applicationIsolationKeySha256: digest(
+      value.applicationIsolationKeySha256,
+      'logical command application isolation hash'
+    ),
+    commandId: identifier(value.commandId, 'logical command ID'),
+    kind: value.kind,
+    issuedAtMs: safeInteger(value.issuedAtMs, 'Logical command issue time'),
+    bodySha256: digest(value.bodySha256, 'logical command body hash'),
+  };
+  const sealed = { ...command, commandSha256: logicalCommandSeal(command) };
+  if (value.commandSha256 !== sealed.commandSha256)
+    throw new Error('Logical command seal does not match its identity');
+  return sealed;
+}
+
+function normalizeLogicalCommand(value, binding, kind, body) {
+  const command = normalizeLogicalCommandIdentity(value);
+  if (command.kind !== kind)
+    throw new Error('Broker logical command kind does not match its message');
+  if (
+    command.applicationIsolationKeySha256 !==
+    brokerApplicationIsolationKeySha256(binding)
+  )
+    throw new Error(
+      'Logical command crossed an application isolation boundary'
+    );
+  if (command.bodySha256 !== canonicalJsonSha256(body))
+    throw new Error(
+      'Logical command body hash does not match its message body'
+    );
+  return command;
+}
+
+export function sealBrokerLogicalCommand({
+  binding: bindingValue,
+  kind,
+  commandId,
+  issuedAtMs,
+  body: bodyValue,
+}) {
+  if (!CONTROLLER_KINDS.has(kind))
+    throw new Error('Only controller messages may carry logical commands');
+  const binding = normalizeBinding(bindingValue);
+  const body = normalizeBody(kind, bodyValue, binding);
+  const command = {
+    schema: BROKER_LOGICAL_COMMAND_SCHEMA,
+    applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(binding),
+    commandId: identifier(commandId, 'logical command ID'),
+    kind,
+    issuedAtMs: safeInteger(issuedAtMs, 'Logical command issue time'),
+    bodySha256: canonicalJsonSha256(body),
+  };
+  return deepFreeze({
+    ...command,
+    commandSha256: logicalCommandSeal(command),
+  });
+}
+
+export function verifyBrokerLogicalCommand(
+  value,
+  { expectedBinding, expectedKind, expectedBody } = {}
+) {
+  const binding = normalizeBinding(expectedBinding);
+  if (expectedKind === undefined || expectedBody === undefined)
+    throw new Error(
+      'Logical command verification requires its expected kind and body'
+    );
+  const body = normalizeBody(expectedKind, expectedBody, binding);
+  return deepFreeze(
+    normalizeLogicalCommand(value, binding, expectedKind, body)
+  );
+}
+
+export function verifyBrokerLogicalCommandIdentity(
+  value,
+  { expectedBinding } = {}
+) {
+  const command = deepFreeze(normalizeLogicalCommandIdentity(value));
+  if (
+    expectedBinding !== undefined &&
+    command.applicationIsolationKeySha256 !==
+      brokerApplicationIsolationKeySha256(expectedBinding)
+  )
+    throw new Error(
+      'Logical command crossed an application isolation boundary'
+    );
+  return command;
 }
 
 function expectedPrincipal(message) {
@@ -1034,6 +1206,14 @@ function normalizeMessage(value) {
   if (!MESSAGE_KINDS.has(value.kind))
     throw new Error('Unsupported broker message kind');
   const binding = normalizeBinding(value.binding);
+  const body = normalizeBody(value.kind, value.body, binding);
+  const command = CONTROLLER_KINDS.has(value.kind)
+    ? normalizeLogicalCommand(value.command, binding, value.kind, body)
+    : value.command === null
+      ? null
+      : (() => {
+          throw new Error('Worker messages cannot carry logical commands');
+        })();
   const message = {
     schema: BROKER_MESSAGE_SCHEMA,
     protocolVersion: BROKER_PROTOCOL_VERSION,
@@ -1042,7 +1222,8 @@ function normalizeMessage(value) {
     sentAtMs: safeInteger(value.sentAtMs, 'Message send time'),
     binding,
     auth: normalizeAuth(value.auth),
-    body: normalizeBody(value.kind, value.body, binding),
+    command,
+    body,
   };
   if (message.auth.principalId !== expectedPrincipal(message))
     throw new Error('Authenticated principal cannot send this message');
@@ -1060,6 +1241,10 @@ function normalizeMessage(value) {
   )
     throw new Error(
       'Broker message was sent outside its authenticated session'
+    );
+  if (message.command && message.command.issuedAtMs > message.sentAtMs)
+    throw new Error(
+      'Logical command cannot be issued after its envelope is sent'
     );
   return message;
 }

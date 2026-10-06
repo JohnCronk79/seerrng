@@ -11,12 +11,20 @@ import {
   evaluateConfiguredWorkerAdmission,
   resolveConfiguredWorkerN,
   sealBrokerCleanupEvidence,
+  sealBrokerLogicalCommand,
   sealBrokerTask,
   verifyBrokerCleanupEvidence,
   verifyBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
 
 const h = (character) => character.repeat(64);
+const controllerKinds = new Set([
+  'lease.grant',
+  'lease.renew',
+  'lease.cancel',
+  'lease.cleanup-recover',
+  'result.ack',
+]);
 
 function binding(overrides = {}) {
   return {
@@ -138,9 +146,9 @@ function auth(principalId, overrides = {}) {
 }
 
 function message(kind, body, principalId, overrides = {}) {
-  return {
-    schema: 'seerrng-validation-broker-message/v1',
-    protocolVersion: 1,
+  const value = {
+    schema: 'seerrng-validation-broker-message/v2',
+    protocolVersion: 2,
     messageId: `${kind.replaceAll('.', '-')}-1`,
     kind,
     sentAtMs: 2_500,
@@ -148,6 +156,20 @@ function message(kind, body, principalId, overrides = {}) {
     auth: auth(principalId),
     body,
     ...overrides,
+  };
+  return {
+    ...value,
+    command:
+      overrides.command ??
+      (controllerKinds.has(kind)
+        ? sealBrokerLogicalCommand({
+            binding: value.binding,
+            kind,
+            commandId: `${value.messageId}-command`,
+            issuedAtMs: value.sentAtMs,
+            body: value.body,
+          })
+        : null),
   };
 }
 
@@ -203,9 +225,7 @@ test('task v2 seals canonical worker slots and dependency identities', () => {
   );
   assert.throws(
     () =>
-      sealBrokerTask(
-        taskInput({ dependencyTaskIds: ['task-a', 'task-a'] })
-      ),
+      sealBrokerTask(taskInput({ dependencyTaskIds: ['task-a', 'task-a'] })),
     /duplicates/
   );
   assert.throws(
@@ -344,7 +364,7 @@ test('controller resolves automatic or explicit worker N against safe live capac
         workerConfig(),
         registration(),
         capacity({ safeAvailableN: 13 })
-    ),
+      ),
     /registered safe worker limit/
   );
   assert.throws(
@@ -371,7 +391,7 @@ test('messages require exact protocol versions, fields, and sending principals',
   const registrationMessage = createBrokerMessage(
     message('worker.register', registration(), 'worker-east')
   );
-  assert.equal(registrationMessage.protocolVersion, 1);
+  assert.equal(registrationMessage.protocolVersion, 2);
   assert.equal(Object.isFrozen(registrationMessage.body.capabilities), true);
 
   assert.throws(
@@ -385,7 +405,7 @@ test('messages require exact protocol versions, fields, and sending principals',
     () =>
       createBrokerMessage(
         message('worker.register', registration(), 'worker-east', {
-          protocolVersion: 2,
+          protocolVersion: 3,
         })
       ),
     /protocol version/
@@ -415,10 +435,7 @@ test('detached session proof must be externally verified and time-valid', () => 
   );
   const unsigned = structuredClone(input);
   delete unsigned.auth.proof;
-  assert.equal(
-    brokerMessageSigningSha256(unsigned),
-    observed.signingSha256
-  );
+  assert.equal(brokerMessageSigningSha256(unsigned), observed.signingSha256);
 
   assert.throws(
     () =>
@@ -477,6 +494,84 @@ test('detached session proof must be externally verified and time-valid', () => 
         verifyProof: () => true,
       }),
     /expected application submission and plan/
+  );
+});
+
+test('logical command identity survives a fresh authenticated envelope but rejects semantic drift', () => {
+  const plannedTask = sealBrokerTask(taskInput());
+  const body = {
+    workerId: 'worker-east',
+    instanceId: 'worker-east-boot-1',
+    workerSessionId: 'session-1',
+    leaseId: 'lease-1',
+    attempt: 1,
+    maxAttempts: plannedTask.maxAttempts,
+    expiresAtMs: 12_000,
+    task: plannedTask,
+  };
+  const command = sealBrokerLogicalCommand({
+    binding: binding(),
+    kind: 'lease.grant',
+    commandId: 'grant-unit-task-1-attempt-1',
+    issuedAtMs: 2_500,
+    body,
+  });
+  const first = createBrokerMessage(
+    message('lease.grant', body, 'controller-dev', {
+      messageId: 'grant-envelope-1',
+      command,
+      sentAtMs: 2_600,
+      auth: auth('controller-dev', {
+        expiresAtMs: 3_000,
+        nonce: 'grant-envelope-nonce-1',
+      }),
+    })
+  );
+  const resigned = createBrokerMessage(
+    message('lease.grant', body, 'controller-dev', {
+      messageId: 'grant-envelope-2',
+      command,
+      sentAtMs: 5_000,
+      auth: auth('controller-dev', {
+        sessionId: 'controller-session-2',
+        keyId: 'controller-key-2',
+        nonce: 'grant-envelope-nonce-2',
+        issuedAtMs: 4_500,
+        expiresAtMs: 6_000,
+      }),
+    })
+  );
+  assert.equal(first.command.commandSha256, resigned.command.commandSha256);
+  assert.notEqual(
+    brokerMessageSigningSha256(first),
+    brokerMessageSigningSha256(resigned)
+  );
+
+  const changedBody = { ...body, leaseId: 'lease-2' };
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('lease.grant', changedBody, 'controller-dev', {
+          messageId: 'grant-envelope-3',
+          command,
+          sentAtMs: 5_100,
+          auth: auth('controller-dev', {
+            nonce: 'grant-envelope-nonce-3',
+            issuedAtMs: 4_500,
+            expiresAtMs: 6_000,
+          }),
+        })
+      ),
+    /body hash does not match/
+  );
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.register', registration(), 'worker-east', {
+          command,
+        })
+      ),
+    /Worker messages cannot carry logical commands/
   );
 });
 
@@ -639,11 +734,7 @@ test('worker reports and results are bound to their authenticated session', () =
     taskSha256: plannedTask.taskSha256,
     attempt: 1,
     completedAtMs: 4_000,
-    resultKeySha256: brokerResultKeySha256(
-      binding(),
-      plannedTask.taskId,
-      1
-    ),
+    resultKeySha256: brokerResultKeySha256(binding(), plannedTask.taskId, 1),
     outcome: {
       status: 'failed',
       exitCode: 1,

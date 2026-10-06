@@ -11,6 +11,7 @@ import {
   grantBrokerLease,
   recordBrokerCapacity,
   recordBrokerHeartbeat,
+  recoverBrokerLeaseCleanup,
   registerBrokerWorker,
   rehydrateBrokerLeaseState,
   renewBrokerLease,
@@ -23,13 +24,19 @@ import {
   brokerResultKeySha256,
   createBrokerMessage,
   sealBrokerCleanupEvidence,
+  sealBrokerLogicalCommand,
   sealBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
-import {
-  canonicalJsonSha256,
-} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const h = (character) => character.repeat(64);
+const controllerKinds = new Set([
+  'lease.grant',
+  'lease.renew',
+  'lease.cancel',
+  'lease.cleanup-recover',
+  'result.ack',
+]);
 
 function binding(overrides = {}) {
   return {
@@ -157,15 +164,25 @@ function authenticated(
   sentAtMs = 2_500,
   authOverrides = {}
 ) {
+  const messageId = `message-${nextMessageId++}`;
   const value = {
-    schema: 'seerrng-validation-broker-message/v1',
-    protocolVersion: 1,
-    messageId: `message-${nextMessageId++}`,
+    schema: 'seerrng-validation-broker-message/v2',
+    protocolVersion: 2,
+    messageId,
     kind,
     sentAtMs,
     binding: binding(),
     auth: auth(principalId, authOverrides),
     body,
+    command: controllerKinds.has(kind)
+      ? sealBrokerLogicalCommand({
+          binding: binding(),
+          kind,
+          commandId: `command-${messageId}`,
+          issuedAtMs: sentAtMs,
+          body,
+        })
+      : null,
   };
   return authenticateBrokerMessage(value, {
     expectedBinding: binding(),
@@ -273,8 +290,7 @@ function resultBody(plannedTask, overrides = {}) {
 
 function cancellationAcknowledgement(plannedTask, overrides = {}) {
   const attempt = overrides.attempt ?? 1;
-  const leaseId =
-    overrides.leaseId ?? `lease-${plannedTask.taskId}-${attempt}`;
+  const leaseId = overrides.leaseId ?? `lease-${plannedTask.taskId}-${attempt}`;
   const cancellationRequestedAtMs =
     overrides.cancellationRequestedAtMs ?? 4_000;
   const cancelledAtMs = overrides.cancelledAtMs ?? 4_200;
@@ -301,6 +317,26 @@ function cancellationAcknowledgement(plannedTask, overrides = {}) {
   };
 }
 
+function cleanupRecovery(plannedTask, overrides = {}) {
+  const acknowledgement = cancellationAcknowledgement(plannedTask, {
+    cancellationRequestedAtMs: 8_000,
+    cancelledAtMs: 8_300,
+    ...overrides,
+  });
+  return {
+    applicationIsolationKeySha256:
+      brokerApplicationIsolationKeySha256(binding()),
+    workerId: acknowledgement.workerId,
+    instanceId: acknowledgement.instanceId,
+    workerSessionId: acknowledgement.workerSessionId,
+    leaseId: acknowledgement.leaseId,
+    taskId: acknowledgement.taskId,
+    attempt: acknowledgement.attempt,
+    recoveredAtMs: overrides.recoveredAtMs ?? 8_400,
+    cleanupEvidence: acknowledgement.cleanupEvidence,
+  };
+}
+
 const cleanupAcceptance = (acceptedAtMs = 4_400) => ({
   acceptedAtMs,
   verifyCleanupEvidence: () => true,
@@ -314,13 +350,14 @@ const resultAcceptance = (acceptedAtMs) => ({
 test('unlisted, unauthenticated, or over-capacity workers fail closed', () => {
   let state = initialState();
   const forged = createBrokerMessage({
-    schema: 'seerrng-validation-broker-message/v1',
-    protocolVersion: 1,
+    schema: 'seerrng-validation-broker-message/v2',
+    protocolVersion: 2,
     messageId: 'forged-registration',
     kind: 'worker.register',
     sentAtMs: 2_500,
     binding: binding(),
     auth: auth('worker-east'),
+    command: null,
     body: registration(),
   });
   assert.throws(
@@ -583,14 +620,13 @@ test('degraded capacity replaces stale admission without losing lease closure', 
 
 test('task inventory cannot cross an application submission boundary', () => {
   const alienTask = task('task-1', {
-    applicationIsolationKeySha256:
-      brokerApplicationIsolationKeySha256(
-        binding({
-          applicationId: 'another-app',
-          submissionId: 'submission-2',
-          submissionSequence: 2,
-        })
-      ),
+    applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(
+      binding({
+        applicationId: 'another-app',
+        submissionId: 'submission-2',
+        submissionSequence: 2,
+      })
+    ),
   });
   assert.throws(
     () => initialState([alienTask]),
@@ -637,13 +673,9 @@ test('worker instance, session, and report freshness bind every lease admission'
     () =>
       recordBrokerCapacity(
         state,
-        authenticated(
-          'worker.capacity',
-          staleCapacity,
-          'worker-east',
-          2_700,
-          { sessionId: 'session-2' }
-        )
+        authenticated('worker.capacity', staleCapacity, 'worker-east', 2_700, {
+          sessionId: 'session-2',
+        })
       ),
     /stale worker instance or session/
   );
@@ -654,12 +686,7 @@ test('leases require exact tasks, supported adapters, and admitted worker slots'
   let state = admittedState(tasks);
   state = grantBrokerLease(
     state,
-    authenticated(
-      'lease.grant',
-      grantBody(tasks[0]),
-      'controller-dev',
-      3_000
-    )
+    authenticated('lease.grant', grantBody(tasks[0]), 'controller-dev', 3_000)
   );
   state = grantBrokerLease(
     state,
@@ -698,6 +725,119 @@ test('leases require exact tasks, supported adapters, and admitted worker slots'
         )
       ),
     /task seal/
+  );
+});
+
+test('re-signed command envelopes are durable exact-once operations', () => {
+  const plannedTask = task();
+  let state = admittedState([plannedTask]);
+  const original = authenticated(
+    'lease.grant',
+    grantBody(plannedTask),
+    'controller-dev',
+    3_000,
+    { expiresAtMs: 3_100, nonce: 'original-grant-envelope' }
+  );
+  state = grantBrokerLease(state, original);
+  assert.equal(state.appliedCommands.length, 1);
+  assert.equal(
+    state.appliedCommands[0].command.commandSha256,
+    original.command.commandSha256
+  );
+
+  const resignedValue = structuredClone(original);
+  resignedValue.messageId = 'resigned-grant-envelope';
+  resignedValue.sentAtMs = 9_000;
+  resignedValue.auth = auth('controller-dev', {
+    sessionId: 'controller-session-2',
+    keyId: 'controller-key-2',
+    nonce: 'resigned-grant-envelope',
+    issuedAtMs: 8_500,
+    expiresAtMs: 9_500,
+  });
+  const resigned = authenticateBrokerMessage(resignedValue, {
+    expectedBinding: binding(),
+    nowMs: 9_000,
+    verifyProof: () => true,
+  });
+  const replayed = grantBrokerLease(state, resigned);
+  assert.equal(replayed, state);
+  assert.equal(replayed.appliedCommands.length, 1);
+
+  const conflictingBody = {
+    ...grantBody(plannedTask),
+    leaseId: 'conflicting-lease-id',
+  };
+  const conflictingValue = {
+    ...resignedValue,
+    messageId: 'conflicting-grant-envelope',
+    body: conflictingBody,
+    command: sealBrokerLogicalCommand({
+      binding: binding(),
+      kind: 'lease.grant',
+      commandId: original.command.commandId,
+      issuedAtMs: original.command.issuedAtMs,
+      body: conflictingBody,
+    }),
+    auth: auth('controller-dev', {
+      sessionId: 'controller-session-2',
+      keyId: 'controller-key-2',
+      nonce: 'conflicting-grant-envelope',
+      issuedAtMs: 8_500,
+      expiresAtMs: 9_500,
+    }),
+  };
+  const conflicting = authenticateBrokerMessage(conflictingValue, {
+    expectedBinding: binding(),
+    nowMs: 9_000,
+    verifyProof: () => true,
+  });
+  assert.throws(
+    () => grantBrokerLease(state, conflicting),
+    /command ID was reused with conflicting contents/
+  );
+
+  const aliasedValue = {
+    ...resignedValue,
+    messageId: 'aliased-grant-envelope',
+    command: sealBrokerLogicalCommand({
+      binding: binding(),
+      kind: 'lease.grant',
+      commandId: 'aliased-grant-command',
+      issuedAtMs: original.command.issuedAtMs,
+      body: original.body,
+    }),
+    auth: auth('controller-dev', {
+      sessionId: 'controller-session-2',
+      keyId: 'controller-key-2',
+      nonce: 'aliased-grant-envelope',
+      issuedAtMs: 8_500,
+      expiresAtMs: 9_500,
+    }),
+  };
+  const aliased = authenticateBrokerMessage(aliasedValue, {
+    expectedBinding: binding(),
+    nowMs: 9_000,
+    verifyProof: () => true,
+  });
+  assert.throws(
+    () => grantBrokerLease(state, aliased),
+    /reissued under another identity/
+  );
+
+  const duplicatedReceipt = JSON.parse(JSON.stringify(state));
+  duplicatedReceipt.appliedCommands.push(
+    structuredClone(duplicatedReceipt.appliedCommands[0])
+  );
+  delete duplicatedReceipt.stateSha256;
+  duplicatedReceipt.stateSha256 = canonicalJsonSha256(duplicatedReceipt);
+  assert.throws(
+    () =>
+      rehydrateBrokerLeaseState(duplicatedReceipt, {
+        expectedBinding: binding(),
+        expectedStateSha256: duplicatedReceipt.stateSha256,
+      }),
+    /duplicate identity/
   );
 });
 
@@ -1497,12 +1637,7 @@ test('reconciliation input cannot claim eligibility until every task closes once
   let state = admittedState(tasks);
   state = grantBrokerLease(
     state,
-    authenticated(
-      'lease.grant',
-      grantBody(tasks[0]),
-      'controller-dev',
-      3_000
-    )
+    authenticated('lease.grant', grantBody(tasks[0]), 'controller-dev', 3_000)
   );
   let input = createBrokerReconciliationInput(state, 4_000);
   assert.equal(input.ready, false);
@@ -1511,12 +1646,7 @@ test('reconciliation input cannot claim eligibility until every task closes once
 
   state = acceptBrokerResult(
     state,
-    authenticated(
-      'worker.result',
-      resultBody(tasks[0]),
-      'worker-east',
-      5_100
-    ),
+    authenticated('worker.result', resultBody(tasks[0]), 'worker-east', 5_100),
     resultAcceptance(5_200)
   ).state;
   state = grantBrokerLease(
@@ -1589,7 +1719,7 @@ test('persisted hashed state verifies and rehydrates without process-local trust
   );
 });
 
-test('rehydrated cleanup-required work stays blocked until its original session proves cleanup', () => {
+test('rehydrated cleanup-required work stays blocked until exact cleanup is proven', () => {
   const plannedTask = task();
   let state = admittedState([plannedTask]);
   state = grantBrokerLease(
@@ -1667,12 +1797,100 @@ test('rehydrated cleanup-required work stays blocked until its original session 
   );
 });
 
+test('controller recovery clears only expired cleanup with independently verified exact evidence', () => {
+  const plannedTask = task();
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = expireBrokerLeases(state, 8_000);
+  const recoveryMessage = authenticated(
+    'lease.cleanup-recover',
+    cleanupRecovery(plannedTask),
+    'controller-dev',
+    8_600
+  );
+  const blockedStateSha256 = state.stateSha256;
+  assert.throws(
+    () =>
+      recoverBrokerLeaseCleanup(state, recoveryMessage, {
+        acceptedAtMs: 8_700,
+      }),
+    /requires an independent verifier/
+  );
+  assert.throws(
+    () =>
+      recoverBrokerLeaseCleanup(state, recoveryMessage, {
+        acceptedAtMs: 8_700,
+        verifyCleanupEvidence: () => false,
+      }),
+    /not independently accepted/
+  );
+  assert.throws(
+    () =>
+      recoverBrokerLeaseCleanup(state, recoveryMessage, {
+        acceptedAtMs: 8_700,
+        verifyCleanupEvidence: () => Promise.resolve(true),
+      }),
+    /must be synchronous/
+  );
+  assert.equal(state.stateSha256, blockedStateSha256);
+  assert.equal(state.leases[0].state, 'cleanup-required');
+
+  let observed;
+  state = recoverBrokerLeaseCleanup(state, recoveryMessage, {
+    acceptedAtMs: 8_700,
+    verifyCleanupEvidence(value) {
+      observed = value;
+      return true;
+    },
+  });
+  assert.equal(observed.lease.leaseId, 'lease-task-1-1');
+  assert.equal(
+    observed.cleanupEvidence.cleanupEvidenceSha256,
+    recoveryMessage.body.cleanupEvidence.cleanupEvidenceSha256
+  );
+  assert.equal(state.leases[0].state, 'cancelled');
+  assert.equal(state.leases[0].cleanupDisposition, 'controller-recovery');
+  assert.equal(state.appliedCommands.length, 2);
+
+  const restored = rehydrateBrokerLeaseState(
+    JSON.parse(JSON.stringify(state)),
+    {
+      expectedBinding: binding(),
+      expectedStateSha256: state.stateSha256,
+    }
+  );
+  assert.equal(restored.leases[0].cleanupDisposition, 'controller-recovery');
+
+  const resignedValue = structuredClone(recoveryMessage);
+  resignedValue.messageId = 'resigned-cleanup-recovery-envelope';
+  resignedValue.sentAtMs = 60_000;
+  resignedValue.auth = auth('controller-dev', {
+    sessionId: 'controller-session-3',
+    keyId: 'controller-key-3',
+    nonce: 'resigned-cleanup-recovery-envelope',
+    issuedAtMs: 59_500,
+    expiresAtMs: 60_500,
+  });
+  const resigned = authenticateBrokerMessage(resignedValue, {
+    expectedBinding: binding(),
+    nowMs: 60_000,
+    verifyProof: () => true,
+  });
+  assert.equal(recoverBrokerLeaseCleanup(restored, resigned), restored);
+});
+
 test('task catalog rejects unknown, cyclic, unavailable, or discontinuous assignments', () => {
   assert.throws(
     () =>
-      initialState([
-        task('task-1', { dependencyTaskIds: ['missing-task'] }),
-      ]),
+      initialState([task('task-1', { dependencyTaskIds: ['missing-task'] })]),
     /unknown dependency/
   );
   assert.throws(
@@ -1762,15 +1980,10 @@ test('logical slots permit parallel slots but enforce each prior slot result', (
     },
   });
   let state = admittedState([first, next, parallel]);
-  assert.equal(state.schema, 'seerrng-validation-broker-lease-state/v2');
+  assert.equal(state.schema, 'seerrng-validation-broker-lease-state/v3');
   state = grantBrokerLease(
     state,
-    authenticated(
-      'lease.grant',
-      grantBody(first),
-      'controller-dev',
-      3_000
-    )
+    authenticated('lease.grant', grantBody(first), 'controller-dev', 3_000)
   );
   assert.throws(
     () =>
@@ -1794,10 +2007,10 @@ test('logical slots permit parallel slots but enforce each prior slot result', (
       3_100
     )
   );
-  assert.deepEqual(
-    state.leases.map((lease) => lease.taskId).toSorted(),
-    ['task-1', 'task-3']
-  );
+  assert.deepEqual(state.leases.map((lease) => lease.taskId).toSorted(), [
+    'task-1',
+    'task-3',
+  ]);
 
   const reassigned = task('task-1', {
     assignment: {
@@ -1926,12 +2139,7 @@ test('dependencies require accepted passing results while failed slot predecesso
   let diagnostic = admittedState([first, independentNext]);
   diagnostic = grantBrokerLease(
     diagnostic,
-    authenticated(
-      'lease.grant',
-      grantBody(first),
-      'controller-dev',
-      3_000
-    )
+    authenticated('lease.grant', grantBody(first), 'controller-dev', 3_000)
   );
   const diagnosticFailure = resultBody(first);
   diagnosticFailure.outcome = {
@@ -1942,12 +2150,7 @@ test('dependencies require accepted passing results while failed slot predecesso
   };
   diagnostic = acceptBrokerResult(
     diagnostic,
-    authenticated(
-      'worker.result',
-      diagnosticFailure,
-      'worker-east',
-      5_100
-    ),
+    authenticated('worker.result', diagnosticFailure, 'worker-east', 5_100),
     resultAcceptance(5_200)
   ).state;
   diagnostic = grantBrokerLease(

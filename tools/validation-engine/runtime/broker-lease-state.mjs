@@ -10,16 +10,18 @@ import {
   evaluateConfiguredWorkerAdmission,
   verifyBrokerBinding,
   verifyBrokerCleanupEvidence,
+  verifyBrokerLogicalCommandIdentity,
   verifyBrokerTask,
 } from './broker-protocol.mjs';
 
 export const BROKER_LEASE_STATE_SCHEMA =
-  'seerrng-validation-broker-lease-state/v2';
+  'seerrng-validation-broker-lease-state/v3';
 export const BROKER_RECONCILIATION_INPUT_SCHEMA =
   'seerrng-validation-broker-reconciliation-input/v2';
 export const BROKER_WORKER_FRESHNESS_MS = 30_000;
 
 const STATE_KEYS = [
+  'appliedCommands',
   'applicationIsolationKeySha256',
   'binding',
   'expectedTasks',
@@ -30,6 +32,7 @@ const STATE_KEYS = [
   'workerConfig',
   'workers',
 ];
+const APPLIED_COMMAND_KEYS = ['appliedAtMs', 'command'];
 const HASH64 = /^[a-f0-9]{64}$/;
 const WORKER_STATE_KEYS = [
   'admission',
@@ -49,6 +52,7 @@ const LEASE_STATE_KEYS = [
   'cancellationReasonCode',
   'cancellationRequestedAtMs',
   'cleanupAcceptedAtMs',
+  'cleanupDisposition',
   'cleanupEvidence',
   'expiresAtMs',
   'grantedAtMs',
@@ -62,11 +66,7 @@ const LEASE_STATE_KEYS = [
   'workerInstanceId',
   'workerSessionId',
 ];
-const RESULT_STATE_KEYS = [
-  'acceptedAtMs',
-  'submission',
-  'submissionSha256',
-];
+const RESULT_STATE_KEYS = ['acceptedAtMs', 'submission', 'submissionSha256'];
 const trustedStates = new WeakSet();
 
 function deepFreeze(value) {
@@ -199,9 +199,7 @@ function validateExpectedTaskCatalog(expectedTasks, workerConfig) {
       taskPrerequisites.size,
     ])
   );
-  const successors = new Map(
-    expectedTasks.map((task) => [task.taskId, []])
-  );
+  const successors = new Map(expectedTasks.map((task) => [task.taskId, []]));
   for (const [taskId, taskPrerequisites] of prerequisites)
     for (const prerequisiteTaskId of taskPrerequisites)
       successors.get(prerequisiteTaskId).push(taskId);
@@ -246,8 +244,7 @@ function priorSlotTask(expectedTasks, task) {
 function acceptedTaskResult(results, taskId, noLaterThanMs = Infinity) {
   return results.find(
     (entry) =>
-      entry.submission.taskId === taskId &&
-      entry.acceptedAtMs <= noLaterThanMs
+      entry.submission.taskId === taskId && entry.acceptedAtMs <= noLaterThanMs
   );
 }
 
@@ -318,6 +315,9 @@ function sealState(value) {
     expectedTasks: [...value.expectedTasks].toSorted((left, right) =>
       compareText(left.taskId, right.taskId)
     ),
+    appliedCommands: [...value.appliedCommands].toSorted((left, right) =>
+      compareText(left.command.commandId, right.command.commandId)
+    ),
     workers: [...value.workers].toSorted((left, right) =>
       compareText(left.workerId, right.workerId)
     ),
@@ -379,10 +379,34 @@ export function verifyBrokerLeaseState(
     )
   )
     throw new Error('Persisted task crossed an application isolation boundary');
-  const { taskById } = validateExpectedTaskCatalog(
-    expectedTasks,
-    workerConfig
-  );
+  const { taskById } = validateExpectedTaskCatalog(expectedTasks, workerConfig);
+
+  if (!Array.isArray(value.appliedCommands))
+    throw new Error('Persisted applied commands must be an array');
+  const commandIds = new Set();
+  const commandHashes = new Set();
+  const semanticCommands = new Set();
+  for (const application of value.appliedCommands) {
+    exactRecord(application, 'persisted applied command', APPLIED_COMMAND_KEYS);
+    safeInteger(application.appliedAtMs, 'Persisted command application time');
+    const command = verifyBrokerLogicalCommandIdentity(application.command, {
+      expectedBinding: binding,
+    });
+    if (application.appliedAtMs < command.issuedAtMs)
+      throw new Error('Persisted command was applied before it was issued');
+    const semanticKey = `${command.kind}\u0000${command.bodySha256}`;
+    if (
+      commandIds.has(command.commandId) ||
+      commandHashes.has(command.commandSha256) ||
+      semanticCommands.has(semanticKey)
+    )
+      throw new Error(
+        'Persisted applied commands contain a duplicate identity'
+      );
+    commandIds.add(command.commandId);
+    commandHashes.add(command.commandSha256);
+    semanticCommands.add(semanticKey);
+  }
 
   if (!Array.isArray(value.workers))
     throw new Error('Persisted broker workers must be an array');
@@ -397,9 +421,7 @@ export function verifyBrokerLeaseState(
       throw new Error('Persisted worker identity is inconsistent');
     safeInteger(worker.registeredAtMs, 'Persisted worker registration time');
     exactDigest(worker.registrationSha256, 'worker registration hash');
-    if (
-      worker.registrationSha256 !== canonicalJsonSha256(worker.registration)
-    )
+    if (worker.registrationSha256 !== canonicalJsonSha256(worker.registration))
       throw new Error('Persisted worker registration hash does not match');
     if ((worker.capacity === null) !== (worker.capacitySha256 === null))
       throw new Error('Persisted worker capacity hash pairing is invalid');
@@ -447,10 +469,11 @@ export function verifyBrokerLeaseState(
     if (
       lease.applicationIsolationKeySha256 !==
         value.applicationIsolationKeySha256 ||
-      lease.applicationIsolationKeySha256 !==
-        task.applicationIsolationKeySha256
+      lease.applicationIsolationKeySha256 !== task.applicationIsolationKeySha256
     )
-      throw new Error('Persisted lease crossed an application isolation boundary');
+      throw new Error(
+        'Persisted lease crossed an application isolation boundary'
+      );
     if (!worker)
       throw new Error('Persisted lease references an unknown worker');
     safeInteger(lease.attempt, 'Persisted lease attempt');
@@ -464,9 +487,13 @@ export function verifyBrokerLeaseState(
     )
       throw new Error('Persisted lease attempt or grant timeline is invalid');
     if (
-      !['active', 'cancelling', 'cleanup-required', 'cancelled', 'completed'].includes(
-        lease.state
-      )
+      ![
+        'active',
+        'cancelling',
+        'cleanup-required',
+        'cancelled',
+        'completed',
+      ].includes(lease.state)
     )
       throw new Error('Persisted lease has an unsupported lifecycle state');
     if (
@@ -480,6 +507,7 @@ export function verifyBrokerLeaseState(
         lease.cancellationMode !== null ||
         lease.cancellationReasonCode !== null ||
         lease.cancellationRequestedAtMs !== null ||
+        lease.cleanupDisposition !== null ||
         lease.cleanupEvidence !== null ||
         lease.cleanupAcceptedAtMs !== null ||
         lease.terminalAtMs !== null
@@ -495,6 +523,7 @@ export function verifyBrokerLeaseState(
         typeof lease.cancellationReasonCode !== 'string' ||
         !lease.cancellationReasonCode ||
         lease.cancellationRequestedAtMs < lease.grantedAtMs ||
+        lease.cleanupDisposition !== null ||
         lease.cleanupEvidence !== null ||
         lease.cleanupAcceptedAtMs !== null ||
         lease.terminalAtMs !== null
@@ -510,11 +539,17 @@ export function verifyBrokerLeaseState(
         lease.cleanupAcceptedAtMs,
         'Persisted cleanup acceptance time'
       );
-      const cleanup = verifyBrokerCleanupEvidence(binding, lease.cleanupEvidence);
+      const cleanup = verifyBrokerCleanupEvidence(
+        binding,
+        lease.cleanupEvidence
+      );
       if (
         !['abort-attempt', 'cancel-task'].includes(lease.cancellationMode) ||
         typeof lease.cancellationReasonCode !== 'string' ||
         !lease.cancellationReasonCode ||
+        !['worker-ack', 'controller-recovery'].includes(
+          lease.cleanupDisposition
+        ) ||
         lease.cancellationRequestedAtMs < lease.grantedAtMs ||
         lease.terminalAtMs < lease.cancellationRequestedAtMs ||
         lease.cleanupAcceptedAtMs < lease.terminalAtMs ||
@@ -538,6 +573,7 @@ export function verifyBrokerLeaseState(
         lease.cancellationMode !== null ||
         lease.cancellationReasonCode !== null ||
         lease.cancellationRequestedAtMs !== null ||
+        lease.cleanupDisposition !== null ||
         lease.cleanupEvidence !== null ||
         lease.cleanupAcceptedAtMs !== null
       )
@@ -616,19 +652,55 @@ function assertWorkerMessageBinding(worker, message, body) {
     worker.sessionId !== body.workerSessionId ||
     worker.sessionId !== message.auth.sessionId
   )
-    throw new Error('Broker message belongs to a stale worker instance or session');
+    throw new Error(
+      'Broker message belongs to a stale worker instance or session'
+    );
 }
 
 function assertBoundMessage(state, message, kind) {
   assertAuthenticatedBrokerMessage(message, kind);
   if (
-    canonicalJsonSha256(message.binding) !==
-    canonicalJsonSha256(state.binding)
+    canonicalJsonSha256(message.binding) !== canonicalJsonSha256(state.binding)
   )
     throw new Error(
       'Broker message belongs to a different application submission or execution'
     );
   return message;
+}
+
+function beginLogicalCommand(state, message) {
+  if (!message.command)
+    throw new Error('Controller state transition requires a logical command');
+  const command = verifyBrokerLogicalCommandIdentity(message.command, {
+    expectedBinding: state.binding,
+  });
+  const sameId = state.appliedCommands.find(
+    (entry) => entry.command.commandId === command.commandId
+  );
+  if (sameId) {
+    if (sameId.command.commandSha256 === command.commandSha256)
+      return { command, duplicate: true };
+    throw new Error('Logical command ID was reused with conflicting contents');
+  }
+  const sameSemanticCommand = state.appliedCommands.find(
+    (entry) =>
+      entry.command.kind === command.kind &&
+      entry.command.bodySha256 === command.bodySha256
+  );
+  if (sameSemanticCommand)
+    throw new Error('Logical command was reissued under another identity');
+  return { command, duplicate: false };
+}
+
+function sealCommandApplication(state, changes, command, appliedAtMs) {
+  return sealState({
+    ...state,
+    ...changes,
+    appliedCommands: state.appliedCommands.concat({
+      command,
+      appliedAtMs,
+    }),
+  });
 }
 
 function replaceWorker(state, worker) {
@@ -678,8 +750,7 @@ export function createBrokerLeaseState({
   if (
     expectedTasks.some(
       (task) =>
-        task.applicationIsolationKeySha256 !==
-        applicationIsolationKeySha256
+        task.applicationIsolationKeySha256 !== applicationIsolationKeySha256
     )
   )
     throw new Error(
@@ -690,6 +761,7 @@ export function createBrokerLeaseState({
     binding,
     workerConfig,
     expectedTasks,
+    appliedCommands: [],
     workers: [],
     leases: [],
     results: [],
@@ -748,8 +820,7 @@ export function recordBrokerCapacity(stateValue, messageValue) {
   const worker = state.workers.find(
     (entry) => entry.workerId === capacity.workerId
   );
-  if (!worker)
-    throw new Error('Capacity report requires a registered worker');
+  if (!worker) throw new Error('Capacity report requires a registered worker');
   assertWorkerMessageBinding(worker, message, capacity);
   if (
     capacity.observedAtMs < worker.registeredAtMs ||
@@ -899,16 +970,12 @@ function assertTaskDispatchReady(state, task, decisionAtMs) {
       dependencyTaskId,
       decisionAtMs
     );
-    if (!result)
-      throw new Error('Task requires an accepted dependency result');
+    if (!result) throw new Error('Task requires an accepted dependency result');
     if (result.submission.outcome.status !== 'passed')
       throw new Error('Task is blocked by a failed dependency');
   }
   const prior = priorSlotTask(state.expectedTasks, task);
-  if (
-    prior &&
-    !acceptedTaskResult(state.results, prior.taskId, decisionAtMs)
-  )
+  if (prior && !acceptedTaskResult(state.results, prior.taskId, decisionAtMs))
     throw new Error('Task requires its prior slot result to be accepted');
 }
 
@@ -945,34 +1012,33 @@ function assertFreshWorkerProof(
     worker.sessionId !== workerIdentity.workerSessionId
   )
     throw new Error(`${operation} targets a stale worker instance or session`);
-  if (
-    worker.heartbeat.capacitySequence !== worker.capacity.reportSequence
-  )
+  if (worker.heartbeat.capacitySequence !== worker.capacity.reportSequence)
     throw new Error(
       `${operation} heartbeat is not bound to the current capacity report`
     );
   if (
-    decisionAtMs - worker.capacity.observedAtMs >
-      BROKER_WORKER_FRESHNESS_MS ||
-    decisionAtMs - worker.heartbeat.observedAtMs >
-      BROKER_WORKER_FRESHNESS_MS ||
+    decisionAtMs - worker.capacity.observedAtMs > BROKER_WORKER_FRESHNESS_MS ||
+    decisionAtMs - worker.heartbeat.observedAtMs > BROKER_WORKER_FRESHNESS_MS ||
     worker.capacity.observedAtMs > decisionAtMs ||
     worker.heartbeat.observedAtMs > decisionAtMs
   )
-    throw new Error(`${operation} requires fresh worker capacity and heartbeat`);
+    throw new Error(
+      `${operation} requires fresh worker capacity and heartbeat`
+    );
   return worker;
 }
 
 export function grantBrokerLease(stateValue, messageValue) {
   const state = assertState(stateValue);
   const message = assertBoundMessage(state, messageValue, 'lease.grant');
+  const logicalCommand = beginLogicalCommand(state, message);
+  if (logicalCommand.duplicate) return state;
   const grant = message.body;
   const task = expectedTask(state, grant.task.taskId);
   if (task.taskSha256 !== grant.task.taskSha256)
     throw new Error('Lease task does not match the immutable expected task');
   if (
-    task.applicationIsolationKeySha256 !==
-    state.applicationIsolationKeySha256
+    task.applicationIsolationKeySha256 !== state.applicationIsolationKeySha256
   )
     throw new Error('Lease task crossed an application isolation boundary');
   if (grant.maxAttempts !== task.maxAttempts)
@@ -985,7 +1051,7 @@ export function grantBrokerLease(stateValue, messageValue) {
     throw new Error('Lease ID has already been used');
   if (state.results.some((entry) => entry.submission.taskId === task.taskId))
     throw new Error('Completed task cannot receive another lease');
-  assertTaskDispatchReady(state, task, message.sentAtMs);
+  assertTaskDispatchReady(state, task, message.command.issuedAtMs);
   const worker = assertFreshWorkerProof(
     state,
     grant,
@@ -1020,9 +1086,12 @@ export function grantBrokerLease(stateValue, messageValue) {
   }
   if (liveSlotLeases(state, task).length > 0)
     throw new Error('Assigned logical slot already has a live lease');
-  if (grant.expiresAtMs <= message.sentAtMs)
-    throw new Error('Lease must expire after it is granted');
-  if (grant.expiresAtMs > message.sentAtMs + task.timeoutMs)
+  if (
+    grant.expiresAtMs <= message.command.issuedAtMs ||
+    message.sentAtMs >= grant.expiresAtMs
+  )
+    throw new Error('Lease must remain live when its command is delivered');
+  if (grant.expiresAtMs > message.command.issuedAtMs + task.timeoutMs)
     throw new Error('Lease cannot exceed the immutable task timeout');
   const lease = {
     applicationIsolationKeySha256: state.applicationIsolationKeySha256,
@@ -1034,22 +1103,30 @@ export function grantBrokerLease(stateValue, messageValue) {
     workerSessionId: grant.workerSessionId,
     attempt: grant.attempt,
     maxAttempts: grant.maxAttempts,
-    grantedAtMs: message.sentAtMs,
+    grantedAtMs: message.command.issuedAtMs,
     expiresAtMs: grant.expiresAtMs,
     state: 'active',
     terminalAtMs: null,
     cancellationMode: null,
     cancellationReasonCode: null,
     cancellationRequestedAtMs: null,
+    cleanupDisposition: null,
     cleanupAcceptedAtMs: null,
     cleanupEvidence: null,
   };
-  return sealState({ ...state, leases: state.leases.concat(lease) });
+  return sealCommandApplication(
+    state,
+    { leases: state.leases.concat(lease) },
+    logicalCommand.command,
+    message.sentAtMs
+  );
 }
 
 export function renewBrokerLease(stateValue, messageValue) {
   const state = assertState(stateValue);
   const message = assertBoundMessage(state, messageValue, 'lease.renew');
+  const logicalCommand = beginLogicalCommand(state, message);
+  if (logicalCommand.duplicate) return state;
   const renewal = message.body;
   const lease = state.leases.find((entry) => entry.leaseId === renewal.leaseId);
   if (!lease || lease.state !== 'active')
@@ -1089,7 +1166,8 @@ export function renewBrokerLease(stateValue, messageValue) {
   )
     throw new Error('Lease renewal exceeds the current worker admission');
   if (
-    message.sentAtMs < lease.grantedAtMs ||
+    message.command.issuedAtMs < lease.grantedAtMs ||
+    message.command.issuedAtMs >= lease.expiresAtMs ||
     message.sentAtMs >= lease.expiresAtMs ||
     renewal.expiresAtMs <= lease.expiresAtMs
   )
@@ -1097,12 +1175,19 @@ export function renewBrokerLease(stateValue, messageValue) {
   if (renewal.expiresAtMs > lease.grantedAtMs + task.timeoutMs)
     throw new Error('Lease renewal cannot exceed the immutable task timeout');
   const updated = { ...lease, expiresAtMs: renewal.expiresAtMs };
-  return sealState({ ...state, leases: replaceLease(state, updated) });
+  return sealCommandApplication(
+    state,
+    { leases: replaceLease(state, updated) },
+    logicalCommand.command,
+    message.sentAtMs
+  );
 }
 
 export function cancelBrokerLease(stateValue, messageValue) {
   const state = assertState(stateValue);
   const message = assertBoundMessage(state, messageValue, 'lease.cancel');
+  const logicalCommand = beginLogicalCommand(state, message);
+  if (logicalCommand.duplicate) return state;
   const cancellation = message.body;
   const lease = state.leases.find(
     (entry) => entry.leaseId === cancellation.leaseId
@@ -1120,8 +1205,10 @@ export function cancelBrokerLease(stateValue, messageValue) {
   if (
     cancellation.requestedAtMs < lease.grantedAtMs ||
     cancellation.requestedAtMs >= lease.expiresAtMs ||
+    message.command.issuedAtMs < cancellation.requestedAtMs ||
+    message.command.issuedAtMs >= lease.expiresAtMs ||
     message.sentAtMs >= lease.expiresAtMs ||
-    cancellation.requestedAtMs > message.sentAtMs
+    message.command.issuedAtMs > message.sentAtMs
   )
     throw new Error('Cancellation time is outside the active lease history');
   const updated = {
@@ -1131,7 +1218,12 @@ export function cancelBrokerLease(stateValue, messageValue) {
     cancellationReasonCode: cancellation.reasonCode,
     cancellationRequestedAtMs: cancellation.requestedAtMs,
   };
-  return sealState({ ...state, leases: replaceLease(state, updated) });
+  return sealCommandApplication(
+    state,
+    { leases: replaceLease(state, updated) },
+    logicalCommand.command,
+    message.sentAtMs
+  );
 }
 
 export function acknowledgeBrokerCancellation(
@@ -1140,11 +1232,7 @@ export function acknowledgeBrokerCancellation(
   { acceptedAtMs, verifyCleanupEvidence } = {}
 ) {
   const state = assertState(stateValue);
-  const message = assertBoundMessage(
-    state,
-    messageValue,
-    'worker.cancelled'
-  );
+  const message = assertBoundMessage(state, messageValue, 'worker.cancelled');
   const acknowledgement = message.body;
   const lease = state.leases.find(
     (entry) => entry.leaseId === acknowledgement.leaseId
@@ -1168,7 +1256,9 @@ export function acknowledgeBrokerCancellation(
     (entry) => entry.workerId === acknowledgement.workerId
   );
   if (!worker)
-    throw new Error('Cancellation acknowledgement requires its registered worker');
+    throw new Error(
+      'Cancellation acknowledgement requires its registered worker'
+    );
   assertWorkerMessageBinding(worker, message, acknowledgement);
   if (
     acknowledgement.cleanupEvidence.applicationIsolationKeySha256 !==
@@ -1176,12 +1266,16 @@ export function acknowledgeBrokerCancellation(
     lease.applicationIsolationKeySha256 !==
       acknowledgement.cleanupEvidence.applicationIsolationKeySha256
   )
-    throw new Error('Cleanup evidence crossed an application isolation boundary');
+    throw new Error(
+      'Cleanup evidence crossed an application isolation boundary'
+    );
   if (
     acknowledgement.cleanupEvidence.cancellationRequestedAtMs !==
     lease.cancellationRequestedAtMs
   )
-    throw new Error('Cleanup evidence does not preserve the cancellation request');
+    throw new Error(
+      'Cleanup evidence does not preserve the cancellation request'
+    );
   if (lease.state === 'cancelled') {
     if (
       lease.cleanupEvidence?.cleanupEvidenceSha256 ===
@@ -1217,10 +1311,90 @@ export function acknowledgeBrokerCancellation(
     ...lease,
     state: 'cancelled',
     terminalAtMs: acknowledgement.cancelledAtMs,
+    cleanupDisposition: 'worker-ack',
     cleanupAcceptedAtMs: acceptedAtMs,
     cleanupEvidence: acknowledgement.cleanupEvidence,
   };
   return sealState({ ...state, leases: replaceLease(state, updated) });
+}
+
+export function recoverBrokerLeaseCleanup(
+  stateValue,
+  messageValue,
+  { acceptedAtMs, verifyCleanupEvidence } = {}
+) {
+  const state = assertState(stateValue);
+  const message = assertBoundMessage(
+    state,
+    messageValue,
+    'lease.cleanup-recover'
+  );
+  const logicalCommand = beginLogicalCommand(state, message);
+  if (logicalCommand.duplicate) return state;
+  const recovery = message.body;
+  const lease = state.leases.find(
+    (entry) => entry.leaseId === recovery.leaseId
+  );
+  if (!lease || lease.state !== 'cleanup-required')
+    throw new Error(
+      'Controller cleanup recovery requires an expired cleanup-required lease'
+    );
+  if (
+    lease.workerId !== recovery.workerId ||
+    lease.workerInstanceId !== recovery.instanceId ||
+    lease.workerSessionId !== recovery.workerSessionId ||
+    lease.taskId !== recovery.taskId ||
+    lease.attempt !== recovery.attempt
+  )
+    throw new Error(
+      'Controller cleanup recovery does not match its exact lease'
+    );
+  const cleanup = recovery.cleanupEvidence;
+  if (
+    recovery.applicationIsolationKeySha256 !==
+      state.applicationIsolationKeySha256 ||
+    cleanup.applicationIsolationKeySha256 !==
+      state.applicationIsolationKeySha256 ||
+    cleanup.cancellationRequestedAtMs !== lease.cancellationRequestedAtMs
+  )
+    throw new Error(
+      'Controller cleanup recovery crossed or changed its lease boundary'
+    );
+  safeInteger(acceptedAtMs, 'Cleanup recovery acceptance time');
+  if (typeof verifyCleanupEvidence !== 'function')
+    throw new Error('Cleanup recovery requires an independent verifier');
+  if (
+    recovery.recoveredAtMs < lease.expiresAtMs ||
+    recovery.recoveredAtMs > message.command.issuedAtMs ||
+    message.command.issuedAtMs > message.sentAtMs ||
+    acceptedAtMs < message.sentAtMs
+  )
+    throw new Error('Controller cleanup recovery timeline is not monotonic');
+  const verified = verifyCleanupEvidence({
+    binding: state.binding,
+    cleanupEvidence: cleanup,
+    lease,
+    message,
+    recovery,
+  });
+  if (verified && typeof verified.then === 'function')
+    throw new Error('Cleanup recovery verifier must be synchronous');
+  if (verified !== true)
+    throw new Error('Cleanup recovery evidence was not independently accepted');
+  const updated = {
+    ...lease,
+    state: 'cancelled',
+    terminalAtMs: cleanup.completedAtMs,
+    cleanupDisposition: 'controller-recovery',
+    cleanupAcceptedAtMs: acceptedAtMs,
+    cleanupEvidence: cleanup,
+  };
+  return sealCommandApplication(
+    state,
+    { leases: replaceLease(state, updated) },
+    logicalCommand.command,
+    message.sentAtMs
+  );
 }
 
 export function expireBrokerLeases(stateValue, nowMs) {
@@ -1239,8 +1413,7 @@ export function expireBrokerLeases(stateValue, nowMs) {
       state: 'cleanup-required',
       terminalAtMs: null,
       cancellationMode: lease.cancellationMode ?? 'abort-attempt',
-      cancellationReasonCode:
-        lease.cancellationReasonCode ?? 'lease-expired',
+      cancellationReasonCode: lease.cancellationReasonCode ?? 'lease-expired',
       cancellationRequestedAtMs:
         lease.cancellationRequestedAtMs ?? lease.expiresAtMs,
     };
@@ -1292,8 +1465,7 @@ export function acceptBrokerResult(
   const submission = message.body;
   const submissionSha256 = brokerSubmissionSha256(message);
   const existing = state.results.find(
-    (entry) =>
-      entry.submission.resultKeySha256 === submission.resultKeySha256
+    (entry) => entry.submission.resultKeySha256 === submission.resultKeySha256
   );
   if (existing) {
     if (existing.submissionSha256 !== submissionSha256)
@@ -1385,8 +1557,7 @@ export function createBrokerResultAcknowledgementBody(acceptance) {
     throw new Error('A result acceptance is required for acknowledgement');
   const { acceptedAtMs, submission, submissionSha256 } = acceptance.result;
   return deepFreeze({
-    applicationIsolationKeySha256:
-      submission.applicationIsolationKeySha256,
+    applicationIsolationKeySha256: submission.applicationIsolationKeySha256,
     workerId: submission.workerId,
     instanceId: submission.instanceId,
     workerSessionId: submission.workerSessionId,
@@ -1435,15 +1606,13 @@ export function createBrokerReconciliationInput(stateValue, nowMs) {
     binding: state.binding,
     applicationIsolationKeySha256: state.applicationIsolationKeySha256,
     stateSha256: state.stateSha256,
-    expectedTasks: state.expectedTasks.map(({
-      applicationIsolationKeySha256,
-      taskId,
-      taskSha256,
-    }) => ({
-      applicationIsolationKeySha256,
-      taskId,
-      taskSha256,
-    })),
+    expectedTasks: state.expectedTasks.map(
+      ({ applicationIsolationKeySha256, taskId, taskSha256 }) => ({
+        applicationIsolationKeySha256,
+        taskId,
+        taskSha256,
+      })
+    ),
     workerAdmissions: state.workers
       .filter((entry) => entry.admission)
       .map((entry) => entry.admission),
