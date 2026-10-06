@@ -16,8 +16,7 @@ const CYPRESS_SHARD_COUNT = 7;
 const HASH40 = /^[a-f0-9]{40}$/;
 const HASH64 = /^[a-f0-9]{64}$/;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/;
-const compareText = (left, right) =>
-  left < right ? -1 : left > right ? 1 : 0;
+const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const stableJson = (value) => {
   if (Array.isArray(value))
@@ -171,10 +170,7 @@ function timingProfile(value) {
       ['durationsMs', 'perFileOverheadMs', 'unknownFileDurationMs'],
       `hosted ${laneId} timing profile`
     );
-    nonnegativeInteger(
-      lane.perFileOverheadMs,
-      `${laneId} per-file overhead`
-    );
+    nonnegativeInteger(lane.perFileOverheadMs, `${laneId} per-file overhead`);
     positiveInteger(
       lane.unknownFileDurationMs,
       `${laneId} unknown-file duration`
@@ -432,7 +428,9 @@ function shardedCaseAssignments(unit, testInventory) {
     const caseLanes = unit.testLanes.map((laneId) => {
       const assignment = lanes.get(laneId)?.[index];
       if (!assignment || assignment.caseId !== caseId)
-        throw new Error(`Missing hosted shard assignment: ${unit.id}/${caseId}`);
+        throw new Error(
+          `Missing hosted shard assignment: ${unit.id}/${caseId}`
+        );
       return assignment.lane;
     });
     return {
@@ -491,7 +489,9 @@ function exactLaneClosure(unit, testInventory) {
       new Set(actual).size !== expected.length ||
       stableJson(actual.toSorted(compareText)) !== stableJson(expected)
     )
-      throw new Error(`Hosted case lane does not close exactly once: ${laneId}`);
+      throw new Error(
+        `Hosted case lane does not close exactly once: ${laneId}`
+      );
   }
 }
 
@@ -507,7 +507,9 @@ export function assertHostedSchedulingPlan({
     scheduling.fixedCases !== FIXED_CASES ||
     !HASH64.test(scheduling.timingProfile?.sha256 ?? '')
   )
-    throw new Error('Hosted scheduling policy does not match the sealed profile');
+    throw new Error(
+      'Hosted scheduling policy does not match the sealed profile'
+    );
   const unitTests = units.find((entry) => entry.id === 'ci-unit-test');
   const cypress = units.find((entry) => entry.id === 'cypress-run');
   if (

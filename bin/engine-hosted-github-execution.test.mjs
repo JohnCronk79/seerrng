@@ -456,10 +456,7 @@ async function createUnitTestEvidence({
   evidenceRoot = root,
 }) {
   mkdirSync(evidenceRoot, { recursive: true });
-  const nodeReport = path.join(
-    evidenceRoot,
-    'seerrng-engine-node-tests.json'
-  );
+  const nodeReport = path.join(evidenceRoot, 'seerrng-engine-node-tests.json');
   await executeHostedTestLane({
     root,
     plan,
@@ -514,10 +511,7 @@ function writeCypressEvidence({
     };
   });
   mkdirSync(evidenceRoot, { recursive: true });
-  const report = path.join(
-    evidenceRoot,
-    'seerrng-engine-cypress-result.json'
-  );
+  const report = path.join(evidenceRoot, 'seerrng-engine-cypress-result.json');
   writeFileSync(
     report,
     `${JSON.stringify({
@@ -1650,12 +1644,7 @@ test('unit success seals active and skipped Vitest counts', async () => {
     environment,
     receiptDir,
   });
-  const file = caseLane(
-    plan,
-    'ci-unit-test',
-    UNIT_CASE_ID,
-    'vitest'
-  ).files[0];
+  const file = caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest').files[0];
   writeVitestJunit(root, plan, { partialSkippedFile: file });
   const sealed = sealHostedGithubUnitReceipt({
     root,

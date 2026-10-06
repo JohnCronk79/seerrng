@@ -57,10 +57,7 @@ test('the immutable plan is an attempt-bound artifact consumed by every unit', (
   assert.match(publish.with.name, /github\.run_id/);
   assert.match(publish.with.name, /github\.run_attempt/);
   assert.equal(publish.with['retention-days'], 1);
-  assert.equal(
-    plan.outputs.unitMatrix,
-    '${{ steps.plan.outputs.unitMatrix }}'
-  );
+  assert.equal(plan.outputs.unitMatrix, '${{ steps.plan.outputs.unitMatrix }}');
   assert.equal(
     plan.outputs.cypressMatrix,
     '${{ steps.plan.outputs.cypressMatrix }}'
@@ -267,7 +264,8 @@ test('the unit matrix materializes and executes only each planned test shard', (
     materialize.if,
     /steps\.engine-admission\.outputs\.execute == 'true'/
   );
-  assert.match(vitest.run, /pnpm test:ci --/);
+  assert.match(vitest.run, /pnpm test:ci\s+--config/);
+  assert.doesNotMatch(vitest.run, /pnpm test:ci\s+--\s+--config/);
   assert.match(
     vitest.run,
     /--config "\$RUNNER_TEMP\/seerrng-engine-vitest\.config\.mts"/
@@ -483,10 +481,7 @@ test('each planned Cypress shard seals its exact specs and native result', () =>
   );
   assert.match(admission.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
   assert.match(receipt.run, /--case "\$SEERRNG_ENGINE_CASE_ID"/);
-  assert.match(
-    receipt.run,
-    /--evidence "\$SEERRNG_ENGINE_CYPRESS_REPORT"/
-  );
+  assert.match(receipt.run, /--evidence "\$SEERRNG_ENGINE_CYPRESS_REPORT"/);
   assert.match(
     stepNamed(job, 'Publish engine unit receipt').with.name,
     /cypress-run-\$\{\{ inputs\.case_id \}\}/

@@ -495,12 +495,12 @@ export function assertHostedTestInventory(inventory) {
       !TOOLING_GROUPS.includes(entry.toolingGroup)
     )
       throw new Error(`Hosted tooling group mismatch: ${entry.file}`);
+    // Cypress Action transports explicit specs as one comma-delimited value.
     const laneFileMatches =
       entry.owner === 'vitest'
         ? VITEST_TEST.test(entry.file) &&
           ['node:test', 'vitest'].includes(entry.framework)
         : entry.owner === 'cypress'
-          // Cypress Action transports explicit specs as one comma-delimited value.
           ? CYPRESS_SPEC.test(entry.file) &&
             !entry.file.includes(',') &&
             entry.framework === 'cypress'

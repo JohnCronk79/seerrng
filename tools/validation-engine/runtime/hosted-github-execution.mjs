@@ -1397,7 +1397,8 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
           actual.skipped,
         ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
         (actual.durationMs !== null &&
-          (!Number.isSafeInteger(actual.durationMs) || actual.durationMs < 0)) ||
+          (!Number.isSafeInteger(actual.durationMs) ||
+            actual.durationMs < 0)) ||
         actual.active !== actual.passed + actual.failures ||
         actual.tests !==
           actual.passed +
@@ -1565,12 +1566,7 @@ export function sealHostedGithubUnitReceipt({
           environment,
         })
       : null;
-  archiveHostedEvidence(
-    receiptDir,
-    unitId,
-    resolved.caseId,
-    evidenceFiles
-  );
+  archiveHostedEvidence(receiptDir, unitId, resolved.caseId, evidenceFiles);
   let successReceipt = null;
   if (jobStatus === 'success') {
     successReceipt = createSuccessReceipt({
@@ -1883,7 +1879,9 @@ export function materializeHostedVitestLane({
   environment = process.env,
 }) {
   if (plan.planSha256 !== expectedPlanSha256)
-    throw new Error('Hosted Vitest materialization expected-plan hash mismatch');
+    throw new Error(
+      'Hosted Vitest materialization expected-plan hash mismatch'
+    );
   verifyHostedGithubPlanContext(root, plan, { environment });
   const resolved = resolveUnitCase(plan, unitId, caseId);
   const lane = selectedLane(plan, resolved.unit, resolved.caseId, 'vitest');

@@ -561,7 +561,7 @@ jobs:
         env:
           CI: true
         run: >-
-          pnpm test:ci --
+          pnpm test:ci
           --config "$RUNNER_TEMP/seerrng-engine-vitest.config.mts"
 
       - name: Run engine-owned native Node tests

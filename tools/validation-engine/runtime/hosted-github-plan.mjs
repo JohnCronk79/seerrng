@@ -570,10 +570,7 @@ function assertPlan(plan) {
   )
     throw new Error('Hosted units do not close the complete test inventory');
   for (const entry of plan.units)
-    if (
-      entry.dependsOn.length !== 1 ||
-      entry.dependsOn[0] !== 'engine-plan'
-    )
+    if (entry.dependsOn.length !== 1 || entry.dependsOn[0] !== 'engine-plan')
       throw new Error('Hosted units must fan out directly from engine-plan');
   const expectedMetadata =
     event.name === 'pull_request' ? EXTERNAL_PR_METADATA : [];
