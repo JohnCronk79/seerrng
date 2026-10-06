@@ -283,6 +283,25 @@ test('inventory ignores dependency links but rejects source links', () => {
   );
 });
 
+test('inventory still rejects Cypress runtime links inside the source tree', () => {
+  const root = fixture();
+  const runtimeLogs = mkdtempSync(
+    path.join(tmpdir(), 'hosted-test-inventory-cypress-runtime-')
+  );
+  temporary.add(runtimeLogs);
+  writeFileSync(path.join(runtimeLogs, 'machine.log'), 'runtime output\n');
+  mkdirSync(path.join(root, 'cypress/runtime-config'), { recursive: true });
+  symlinkSync(
+    runtimeLogs,
+    path.join(root, 'cypress/runtime-config/logs'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
+  assert.throws(
+    () => createHostedTestInventory(root),
+    /Symlink in hosted test discovery scope: cypress\/runtime-config\/logs/
+  );
+});
+
 test('embedded inventory validation is pure and rejects tampering', () => {
   const root = fixture();
   const inventory = JSON.parse(JSON.stringify(createHostedTestInventory(root)));

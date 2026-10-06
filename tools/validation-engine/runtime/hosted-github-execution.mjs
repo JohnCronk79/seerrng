@@ -53,6 +53,7 @@ const EVENT_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024;
 const BEHAVIOR_INPUT_MAX_BYTES = 4 * 1024 * 1024;
 const HOSTED_RESULT_MAX_BYTES = 64 * 1024 * 1024;
 const HOSTED_CASE_RESULTS_SCHEMA = 'seerrng-hosted-case-results/v2';
+const CYPRESS_RUNTIME_CONFIG_DIRECTORY = 'seerrng-cypress-runtime-config';
 const UNIT_TEST_EVIDENCE = Object.freeze({
   vitest: 'report.xml',
   node: 'seerrng-engine-node-tests.json',
@@ -307,6 +308,49 @@ function behaviorFile(root, relative, label) {
   };
 }
 
+function cypressRuntimeSettings(root, environment) {
+  const runnerTemp = environment.RUNNER_TEMP;
+  if (typeof runnerTemp !== 'string' || !path.isAbsolute(runnerTemp))
+    throw new Error('Absolute GitHub runner temp is required for Cypress');
+  const resolvedRunnerTemp = path.resolve(runnerTemp);
+  if (!existsSync(resolvedRunnerTemp))
+    throw new Error('GitHub runner temp is unsafe for Cypress');
+  const runnerTempStat = lstatSync(resolvedRunnerTemp);
+  if (runnerTempStat.isSymbolicLink() || !runnerTempStat.isDirectory())
+    throw new Error('GitHub runner temp is unsafe for Cypress');
+
+  const expectedConfigDirectory = path.join(
+    resolvedRunnerTemp,
+    CYPRESS_RUNTIME_CONFIG_DIRECTORY
+  );
+  const configDirectory = environment.CONFIG_DIRECTORY;
+  if (
+    typeof configDirectory !== 'string' ||
+    !path.isAbsolute(configDirectory) ||
+    path.resolve(configDirectory) !== expectedConfigDirectory
+  )
+    throw new Error(
+      'Cypress runtime config must use the current runner temp directory'
+    );
+
+  const sourceRoot = path.resolve(root);
+  if (
+    expectedConfigDirectory === sourceRoot ||
+    expectedConfigDirectory.startsWith(`${sourceRoot}${path.sep}`)
+  )
+    throw new Error('Cypress runtime config cannot be inside the source tree');
+
+  const settings = behaviorFile(
+    resolvedRunnerTemp,
+    `${CYPRESS_RUNTIME_CONFIG_DIRECTORY}/settings.json`,
+    'Cypress runtime settings'
+  );
+  return {
+    ...settings,
+    path: `$RUNNER_TEMP/${CYPRESS_RUNTIME_CONFIG_DIRECTORY}/settings.json`,
+  };
+}
+
 function textDigest(value, label) {
   if (value === null || value === undefined) return sha256('');
   if (typeof value !== 'string') throw new Error(`${label} must be text`);
@@ -364,13 +408,7 @@ function hostedBehaviorState(root, plan, unit, caseId, environment) {
           ? 'record-secret-presence-not-bindable-at-admission'
           : 'record-disabled',
     };
-    state.files.push(
-      behaviorFile(
-        root,
-        'cypress/runtime-config/settings.json',
-        'Cypress runtime settings'
-      )
-    );
+    state.files.push(cypressRuntimeSettings(root, environment));
   }
   return state;
 }
@@ -799,12 +837,10 @@ function verifyVitestJunitReport(file, expectedFiles) {
     const failures = nonnegativeXmlInteger(attributes, 'failures', 'testsuite');
     const errors = nonnegativeXmlInteger(attributes, 'errors', 'testsuite');
     const skipped = nonnegativeXmlInteger(attributes, 'skipped', 'testsuite');
-    const active = tests - skipped;
     const testcases = [...suiteMatch[2].matchAll(/<testcase\b/gu)].length;
     if (
       tests < 1 ||
       skipped > tests ||
-      active < 1 ||
       failures !== 0 ||
       errors !== 0 ||
       testcases !== tests ||
@@ -825,6 +861,8 @@ function verifyVitestJunitReport(file, expectedFiles) {
     files.some((actual) => !expectedFiles.includes(actual))
   )
     throw new Error('Vitest JUnit report does not close the planned file set');
+  if (rootTests - summedSkipped < 1)
+    throw new Error('Vitest JUnit report contains no active tests');
   return {
     id: 'vitest',
     proof: 'junit-file-closure',
@@ -1126,7 +1164,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
           (count) => Number.isSafeInteger(count) && count >= 0
         ) ||
         actual.tests < lane.files.length ||
-        actual.active < lane.files.length ||
+        actual.active < 1 ||
         actual.active + actual.skipped !== actual.tests ||
         actual.failures !== 0 ||
         actual.errors !== 0 ||

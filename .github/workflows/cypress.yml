@@ -83,17 +83,16 @@ jobs:
           CYPRESS_CACHE_FOLDER: ~/.cache/Cypress
         run: pnpm exec cypress install
 
+      - name: Configure Cypress runtime directory
+        run: printf 'CONFIG_DIRECTORY=%s\n' "$RUNNER_TEMP/seerrng-cypress-runtime-config" >> "$GITHUB_ENV"
+
       - name: Prepare Cypress runtime configuration
-        env:
-          CONFIG_DIRECTORY: cypress/runtime-config
         run: pnpm cypress:prepare
 
       - name: Export external runtime configuration
         id: export-config
         run: |
           printf 'external_config=%s\n' "$(node scripts/export-external-config.mjs "$CONFIG_DIRECTORY/settings.json")" >> "$GITHUB_OUTPUT"
-        env:
-          CONFIG_DIRECTORY: cypress/runtime-config
 
       - name: Admit engine unit
         id: engine-admission
@@ -115,7 +114,6 @@ jobs:
           SEERR_EXTERNAL_CONFIG: ${{ steps.export-config.outputs.external_config }}
           WITH_MIGRATIONS: true
           E2E_TESTS: true
-          CONFIG_DIRECTORY: cypress/runtime-config
           PORT: 5056
         run: pnpm cypress:build
 
@@ -138,7 +136,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.event_name == 'push' && secrets.GITHUB_TOKEN || '' }}
           WITH_MIGRATIONS: true
           E2E_TESTS: true
-          CONFIG_DIRECTORY: cypress/runtime-config
           PORT: 5056
           # Fix test titles in cypress dashboard
           COMMIT_INFO_MESSAGE: ${{ github.event_name == 'pull_request' && github.event.pull_request.title || github.event.head_commit.message }}

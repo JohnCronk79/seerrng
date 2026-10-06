@@ -634,15 +634,11 @@ test('login backdrop titles wrap within the viewport boundary', () => {
   );
   assert.match(sharedTitle, /white-space: nowrap/);
   assert.match(backdropTitle, /right: 1rem/);
-  assert.match(
-    backdropTitle,
-    /max-width: min\(32rem, calc\(100vw - 2rem\)\)/
-  );
+  assert.match(backdropTitle, /max-width: min\(32rem, calc\(100vw - 2rem\)\)/);
   assert.match(backdropTitle, /overflow-wrap: anywhere/);
   assert.match(backdropTitle, /white-space: normal/);
   assert.ok(
-    css.indexOf('\n  .auth-backdrop-title {') >
-      css.indexOf('\n  .page-title,'),
+    css.indexOf('\n  .auth-backdrop-title {') > css.indexOf('\n  .page-title,'),
     'the auth layout role must override the shared title no-wrap declaration'
   );
 });

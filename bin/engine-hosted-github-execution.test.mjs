@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,10 +41,13 @@ test.afterEach(() => {
   temporary.clear();
 });
 
+function writeAbsolute(file, contents) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, contents);
+}
+
 function write(root, file, contents) {
-  const absolute = path.join(root, file);
-  mkdirSync(path.dirname(absolute), { recursive: true });
-  writeFileSync(absolute, contents);
+  writeAbsolute(path.join(root, file), contents);
 }
 
 function command(root, args, encoding = 'utf8') {
@@ -56,6 +60,14 @@ function command(root, args, encoding = 'utf8') {
 function fixture({ zeroCaseNativeFile = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'hosted-github-execution-'));
   temporary.add(root);
+  const runnerTemp = mkdtempSync(
+    path.join(tmpdir(), 'hosted-github-runner-temp-')
+  );
+  temporary.add(runnerTemp);
+  const configDirectory = path.join(
+    runnerTemp,
+    'seerrng-cypress-runtime-config'
+  );
   for (const directory of [
     'server',
     'src',
@@ -181,9 +193,8 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
   command(root, ['config', 'core.autocrlf', 'false']);
   command(root, ['add', '.']);
   command(root, ['commit', '-m', 'fixture']);
-  write(
-    root,
-    'cypress/runtime-config/settings.json',
+  writeAbsolute(
+    path.join(configDirectory, 'settings.json'),
     JSON.stringify({
       clientId: 'engine-fixture',
       main: { applicationTitle: 'SeerrNG Engine Fixture' },
@@ -256,12 +267,14 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
     GITHUB_REF: 'refs/pull/42/merge',
     GITHUB_BASE_REF: 'main',
     CI: 'true',
+    RUNNER_TEMP: runnerTemp,
+    CONFIG_DIRECTORY: configDirectory,
     RUNNER_OS: process.platform,
     RUNNER_ARCH: process.arch,
     ImageOS: 'engine-fixture',
     ImageVersion: '1',
   };
-  return { root, plan, environment };
+  return { root, plan, environment, runnerTemp, configDirectory };
 }
 
 function scopeFromPlan(plan) {
@@ -303,6 +316,7 @@ function writeVitestJunit(
     files,
     zeroFile = null,
     failureFile = null,
+    allSkipped = false,
     allSkippedFile = null,
     partialSkippedFile = null,
   } = {}
@@ -313,7 +327,9 @@ function writeVitestJunit(
     const tests = file === zeroFile ? 0 : file === partialSkippedFile ? 2 : 1;
     const failures = file === failureFile ? 1 : 0;
     const skipped =
-      file === allSkippedFile || file === partialSkippedFile ? 1 : 0;
+      allSkipped || file === allSkippedFile || file === partialSkippedFile
+        ? 1
+        : 0;
     const active = tests - skipped;
     const body = [
       ...(active
@@ -453,7 +469,7 @@ test('hosted admission is execute-only and rejects a finalized success', async (
 });
 
 test('admission binds narrow generated setup and ignores caches and secrets', () => {
-  const { root, plan, environment } = fixture();
+  const { root, plan, environment, configDirectory } = fixture();
   const baseline = admitHostedGithubUnit({
     root,
     plan,
@@ -465,7 +481,10 @@ test('admission binds narrow generated setup and ignores caches and secrets', ()
 
   write(root, 'node_modules/.cache/bundler/state.bin', 'cache noise\n');
   write(root, '.next/cache/webpack/state.bin', 'build cache noise\n');
-  write(root, 'cypress/runtime-config/logs/cypress.log', 'runtime log\n');
+  writeAbsolute(
+    path.join(configDirectory, 'logs/cypress.log'),
+    'runtime log\n'
+  );
   writeFileSync(
     path.join(root, '.git/description'),
     'irrelevant git metadata\n'
@@ -498,9 +517,8 @@ test('admission binds narrow generated setup and ignores caches and secrets', ()
   }).admission;
   assert.notEqual(differentTimezone.workKeySha256, baseline.workKeySha256);
 
-  write(
-    root,
-    'cypress/runtime-config/settings.json',
+  writeAbsolute(
+    path.join(configDirectory, 'settings.json'),
     JSON.stringify({
       clientId: 'changed-after-admission',
       main: { applicationTitle: 'Changed behavior' },
@@ -521,9 +539,75 @@ test('admission binds narrow generated setup and ignores caches and secrets', ()
   );
 });
 
-test('sealed admission snapshot remains bound when behavior changes', () => {
+test('Cypress admission rejects runtime settings inside the source tree', () => {
   const { root, plan, environment } = fixture();
+  const runnerTemp = root;
+  const configDirectory = path.join(root, 'seerrng-cypress-runtime-config');
+  writeAbsolute(
+    path.join(configDirectory, 'settings.json'),
+    JSON.stringify({ clientId: 'source-tree-runtime' })
+  );
+  assert.throws(
+    () =>
+      admitHostedGithubUnit({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'cypress-run',
+        receiptDir: path.join(root, 'receipts-source-runtime'),
+        environment: {
+          ...environment,
+          RUNNER_TEMP: runnerTemp,
+          CONFIG_DIRECTORY: configDirectory,
+        },
+      }),
+    /Cypress runtime config cannot be inside the source tree/
+  );
+});
+
+test('Cypress admission rejects a symlinked runner-temp config boundary', () => {
+  const { root, plan, environment, configDirectory } = fixture();
+  const linkedConfig = mkdtempSync(
+    path.join(tmpdir(), 'hosted-github-linked-cypress-config-')
+  );
+  temporary.add(linkedConfig);
+  writeAbsolute(
+    path.join(linkedConfig, 'settings.json'),
+    JSON.stringify({ clientId: 'linked-runtime' })
+  );
+  rmSync(configDirectory, { recursive: true, force: true });
+  symlinkSync(
+    linkedConfig,
+    configDirectory,
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
+  assert.throws(
+    () =>
+      admitHostedGithubUnit({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'cypress-run',
+        receiptDir: path.join(root, 'receipts-linked-runtime'),
+        environment,
+      }),
+    /Unsafe symbolic-link Cypress runtime settings/
+  );
+});
+
+test('external Cypress log symlinks allow the admitted settings snapshot to seal', () => {
+  const { root, plan, environment, configDirectory } = fixture();
   const receiptDir = path.join(root, 'receipts');
+  const machineLogsTarget = mkdtempSync(
+    path.join(tmpdir(), 'hosted-github-cypress-machine-logs-')
+  );
+  temporary.add(machineLogsTarget);
+  mkdirSync(path.join(configDirectory, 'logs'), { recursive: true });
+  symlinkSync(
+    machineLogsTarget,
+    path.join(configDirectory, 'logs/.machinelogs.json'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
   const admitted = admitHostedGithubUnit({
     root,
     plan,
@@ -533,9 +617,8 @@ test('sealed admission snapshot remains bound when behavior changes', () => {
     environment,
   });
   write(root, '.next/cache/build-output.bin', 'normal build output\n');
-  write(
-    root,
-    'cypress/runtime-config/logs/server.log',
+  writeAbsolute(
+    path.join(configDirectory, 'logs/server.log'),
     'normal runtime output\n'
   );
   const sealed = sealHostedGithubUnitReceipt({
@@ -547,11 +630,18 @@ test('sealed admission snapshot remains bound when behavior changes', () => {
     jobStatus: 'success',
     environment: { ...environment, STORE_PATH: '/post-install/store' },
   });
+  assert.equal(
+    sealed.receipt.admissionSha256,
+    admitted.admission.admissionSha256
+  );
   assert.equal(sealed.receipt.workKeySha256, admitted.admission.workKeySha256);
+  assert.equal(
+    sealed.receipt.successReceipt.identity.setup.configSha256,
+    admitted.admission.identity.setup.configSha256
+  );
 
-  write(
-    root,
-    'cypress/runtime-config/settings.json',
+  writeAbsolute(
+    path.join(configDirectory, 'settings.json'),
     JSON.stringify({ clientId: 'adversarial-change' })
   );
   assert.throws(
@@ -1024,6 +1114,44 @@ test('engine rejects a planned native Node file with no observed cases', async (
   );
 });
 
+test('unit receipt preserves a successful intentionally skipped Vitest suite', async () => {
+  const { root, plan, environment } = fixture();
+  const receiptDir = path.join(root, 'receipts');
+  admitHostedGithubUnit({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'ci-unit-test',
+    receiptDir,
+    environment,
+  });
+  const unitEvidence = await createUnitTestEvidence({
+    root,
+    plan,
+    environment,
+    receiptDir,
+  });
+  const skippedFile = plan.testInventory.lanes.find(
+    (lane) => lane.id === 'vitest'
+  ).files[0];
+  writeVitestJunit(root, plan, { allSkippedFile: skippedFile });
+  const { receipt } = sealHostedGithubUnitReceipt({
+    root,
+    plan,
+    expectedPlanSha256: plan.planSha256,
+    unitId: 'ci-unit-test',
+    receiptDir,
+    jobStatus: 'success',
+    evidenceFiles: [unitEvidence.junit, unitEvidence.node],
+    environment,
+  });
+  const vitest = receipt.caseResults.lanes.find((lane) => lane.id === 'vitest');
+  assert.equal(vitest.skipped, 1);
+  assert.ok(vitest.active < vitest.fileCount);
+  assert.equal(vitest.active + vitest.skipped, vitest.tests);
+  assert.equal(verifyHostedUnitReceipt(receipt), receipt);
+});
+
 test('unit success rejects incomplete or tampered native evidence', async () => {
   const scenarios = [
     {
@@ -1069,14 +1197,11 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
       message: /not a complete success/,
     },
     {
-      name: 'all-skipped Vitest suite',
+      name: 'all-skipped Vitest lane',
       mutate({ root, plan }) {
-        const file = plan.testInventory.lanes.find(
-          (lane) => lane.id === 'vitest'
-        ).files[0];
-        writeVitestJunit(root, plan, { allSkippedFile: file });
+        writeVitestJunit(root, plan, { allSkipped: true });
       },
-      message: /not a complete success/,
+      message: /contains no active tests/,
     },
     {
       name: 'failed Vitest suite',

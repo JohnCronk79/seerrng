@@ -562,6 +562,7 @@ jobs:
           steps.engine-admission.outputs.execute == 'true'
         with:
           report_paths: 'report.xml'
+          annotate_only: true
 
       - name: Seal engine unit receipt
         if: always() && steps.engine-admission.outputs.execute == 'true'

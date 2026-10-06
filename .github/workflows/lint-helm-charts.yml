@@ -75,26 +75,66 @@ jobs:
           --receipt-dir "$RUNNER_TEMP/seerrng-engine-receipts"
           --json
 
-      - name: Ensure documentation is updated
-        if: steps.engine-admission.outputs.execute == 'true'
-        uses: docker://jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c
-
       - name: Run chart-testing (list-changed)
         id: list-changed
-        if: >-
-          steps.engine-admission.outputs.execute == 'true' &&
-          github.event_name == 'pull_request'
+        if: steps.engine-admission.outputs.execute == 'true'
         env:
           TARGET_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          set -euo pipefail
+          charts_file="$RUNNER_TEMP/seerrng-helm-charts.txt"
+          : > "$charts_file"
+
+          if [[ "$GITHUB_EVENT_NAME" != 'pull_request' ]]; then
+            exit 0
+          fi
+
           changed=$(ct list-changed --target-branch "$TARGET_BRANCH")
           if [[ -n "$changed" ]]; then
+            printf '%s\n' "$changed" | tee "$charts_file"
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "$changed"
           fi
+
+      - name: Ensure documentation is updated
+        if: >-
+          !cancelled() &&
+          steps.engine-admission.outputs.execute == 'true' &&
+          (github.event_name == 'push' ||
+          steps.list-changed.outputs.changed == 'true')
+        env:
+          HELM_DOCS_IMAGE: jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c
+        run: |
+          set -euo pipefail
+          charts_file="$RUNNER_TEMP/seerrng-helm-charts.txt"
+
+          if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+            find charts -type f -name Chart.yaml -printf '%h\n' \
+              | sort -u > "$charts_file"
+          fi
+
+          while IFS= read -r chart; do
+            [[ -n "$chart" ]] || continue
+            case "$chart" in
+              charts/*) ;;
+              *)
+                echo "Unexpected chart path: $chart" >&2
+                exit 1
+                ;;
+            esac
+
+            generated=$(mktemp "$RUNNER_TEMP/helm-docs.XXXXXX")
+            docker run --rm \
+              --user "$(id -u):$(id -g)" \
+              --volume "$GITHUB_WORKSPACE:/helm-docs:ro" \
+              "$HELM_DOCS_IMAGE" \
+              --chart-search-root "$chart" \
+              --dry-run > "$generated"
+            diff --unified "$chart/README.md" "$generated"
+          done < "$charts_file"
 
       - name: Run chart-testing (pull request)
         if: >-
+          !cancelled() &&
           steps.engine-admission.outputs.execute == 'true' &&
           github.event_name == 'pull_request' &&
           steps.list-changed.outputs.changed == 'true'
@@ -104,6 +144,7 @@ jobs:
 
       - name: Run chart-testing (push)
         if: >-
+          !cancelled() &&
           steps.engine-admission.outputs.execute == 'true' &&
           github.event_name == 'push'
         run: ct lint --all --validate-maintainers=false

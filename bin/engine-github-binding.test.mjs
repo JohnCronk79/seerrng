@@ -239,7 +239,7 @@ test('reusable native workflows require binding inputs and emit receipts', () =>
     cypress: 'Build Cypress application once on Ubuntu',
     'test-docs': 'Test image parser boundaries',
     'docs-links': 'Run Lychee link checker',
-    helm: 'Ensure documentation is updated',
+    helm: 'Run chart-testing (list-changed)',
   };
   for (const [jobId, [file]] of Object.entries(reusableUnits)) {
     const name = file.replace(/\.yml$/, '');
@@ -324,11 +324,72 @@ test('reusable native workflows require binding inputs and emit receipts', () =>
   );
 });
 
+test('Helm scopes committed chart changes before read-only documentation validation', () => {
+  const { workflow } = readWorkflow('lint-helm-charts');
+  const job = workflow.jobs['lint-test'];
+  const listChanged = stepNamed(job, 'Run chart-testing (list-changed)');
+  const docs = stepNamed(job, 'Ensure documentation is updated');
+  const pullRequestLint = stepNamed(job, 'Run chart-testing (pull request)');
+  const pushLint = stepNamed(job, 'Run chart-testing (push)');
+  const receipt = stepNamed(job, 'Seal engine unit receipt');
+
+  assert.ok(
+    stepIndex(job, 'Run chart-testing (list-changed)') <
+      stepIndex(job, 'Ensure documentation is updated')
+  );
+  assert.ok(
+    stepIndex(job, 'Ensure documentation is updated') <
+      stepIndex(job, 'Seal engine unit receipt')
+  );
+  assert.match(listChanged.run, /ct list-changed --target-branch/);
+  assert.match(listChanged.run, /RUNNER_TEMP\/seerrng-helm-charts\.txt/);
+  assert.match(docs.if, /steps\.list-changed\.outputs\.changed == 'true'/);
+  assert.match(docs.if, /github\.event_name == 'push'/);
+  assert.match(docs.run, /docker run --rm/);
+  assert.match(docs.run, /--volume "\$GITHUB_WORKSPACE:\/helm-docs:ro"/);
+  assert.match(docs.run, /--dry-run/);
+  assert.match(docs.run, /diff --unified/);
+  assert.match(
+    pullRequestLint.run,
+    /ct lint --target-branch "\$TARGET_BRANCH" --validate-maintainers=false/
+  );
+  assert.match(pushLint.run, /ct lint --all --validate-maintainers=false/);
+  assert.match(pullRequestLint.if, /!cancelled\(\)/);
+  assert.match(pushLint.if, /!cancelled\(\)/);
+  assert.match(receipt.if, /always\(\)/);
+});
+
 test('Cypress builds once on Ubuntu and the pinned action reuses that build', () => {
   const { text, workflow } = readWorkflow('cypress');
   const job = workflow.jobs['cypress-run'];
+  const configure = stepNamed(job, 'Configure Cypress runtime directory');
+  const prepare = stepNamed(job, 'Prepare Cypress runtime configuration');
+  const exportConfig = stepNamed(job, 'Export external runtime configuration');
+  const admission = stepNamed(job, 'Admit engine unit');
   const build = stepNamed(job, 'Build Cypress application once on Ubuntu');
   const run = stepNamed(job, 'Cypress run');
+  const receipt = stepNamed(job, 'Seal engine unit receipt');
+  assert.match(
+    configure.run,
+    /CONFIG_DIRECTORY=.*\$RUNNER_TEMP\/seerrng-cypress-runtime-config/
+  );
+  assert.match(configure.run, />> "\$GITHUB_ENV"/);
+  for (const name of [
+    'Prepare Cypress runtime configuration',
+    'Export external runtime configuration',
+    'Admit engine unit',
+    'Build Cypress application once on Ubuntu',
+    'Cypress run',
+    'Seal engine unit receipt',
+  ])
+    assert.ok(
+      stepIndex(job, 'Configure Cypress runtime directory') <
+        stepIndex(job, name),
+      name
+    );
+  for (const step of [prepare, exportConfig, admission, build, run, receipt])
+    assert.equal(step.env?.CONFIG_DIRECTORY, undefined, step.name);
+  assert.doesNotMatch(text, /cypress\/runtime-config/);
   assert.equal(build.run, 'pnpm cypress:build');
   assert.equal(
     build.env.SEERR_EXTERNAL_CONFIG,
@@ -336,7 +397,6 @@ test('Cypress builds once on Ubuntu and the pinned action reuses that build', ()
   );
   assert.equal(build.env.WITH_MIGRATIONS, true);
   assert.equal(build.env.E2E_TESTS, true);
-  assert.equal(build.env.CONFIG_DIRECTORY, 'cypress/runtime-config');
   assert.equal(build.env.PORT, 5056);
   assert.equal(run.with.build, undefined);
   assert.equal(run.with.install, false);
@@ -396,7 +456,7 @@ test('native environments, commands, permissions, and action pins are preserved'
     'lint-helm-charts': [
       'azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310',
       'helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f',
-      'docker://jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c',
+      'jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c',
     ],
   };
   for (const [name, fragments] of Object.entries(required)) {

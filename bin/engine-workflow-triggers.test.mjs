@@ -123,7 +123,7 @@ test('hosted orchestration retains the original pinned native actions and comman
     'lint-helm-charts': [
       'azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310',
       'helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f',
-      'docker://jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c',
+      'jnorwood/helm-docs:v1.14.2@sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c',
     ],
   };
   for (const [name, fragments] of Object.entries(required)) {
