@@ -295,6 +295,11 @@ const cleanupAcceptance = (acceptedAtMs = 4_400) => ({
   verifyCleanupEvidence: () => true,
 });
 
+const resultAcceptance = (acceptedAtMs) => ({
+  acceptedAtMs,
+  verifyResultEvidence: () => true,
+});
+
 test('unlisted, unauthenticated, or over-capacity workers fail closed', () => {
   let state = initialState();
   const forged = createBrokerMessage({
@@ -339,11 +344,11 @@ test('unlisted, unauthenticated, or over-capacity workers fail closed', () => {
         state,
         authenticated(
           'worker.capacity',
-          capacity([], { safeAvailableN: 1 }),
+          capacity([], { safeAvailableN: 7 }),
           'worker-east'
         )
       ),
-    /Configured worker N exceeds safely reported capacity/
+    /registered safe worker limit/
   );
 });
 
@@ -369,6 +374,200 @@ test('registration and capacity admission preserve stable machine identity and N
       ),
     /at least 1/
   );
+});
+
+test('degraded capacity replaces stale admission without losing lease closure', () => {
+  const tasks = [
+    task('task-1', { timeoutMs: 120_000 }),
+    task('task-2', { timeoutMs: 120_000 }),
+  ];
+  let state = admittedState(tasks);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(tasks[0], { expiresAtMs: 60_000 }),
+      'controller-dev',
+      3_000
+    )
+  );
+  const admittedStateSha256 = state.stateSha256;
+  state = recordBrokerCapacity(
+    state,
+    authenticated(
+      'worker.capacity',
+      capacity(['lease-task-1-1'], {
+        reportSequence: 2,
+        observedAtMs: 4_000,
+        safeAvailableN: 1,
+      }),
+      'worker-east',
+      4_100
+    )
+  );
+  assert.notEqual(state.stateSha256, admittedStateSha256);
+  assert.equal(state.workers[0].capacity.safeAvailableN, 1);
+  assert.equal(state.workers[0].admission, null);
+  assert.equal(state.workers[0].heartbeat, null);
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 4_200,
+        capacitySequence: 2,
+        activeLeases: [
+          { leaseId: 'lease-task-1-1', taskId: 'task-1', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      4_300
+    )
+  );
+  const degradedStateSha256 = state.stateSha256;
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        state,
+        authenticated(
+          'lease.grant',
+          grantBody(tasks[1], { leaseId: 'lease-task-2-1' }),
+          'controller-dev',
+          4_400
+        )
+      ),
+    /admitted worker/
+  );
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-1-1',
+            taskId: 'task-1',
+            attempt: 1,
+            expiresAtMs: 70_000,
+          },
+          'controller-dev',
+          4_500
+        )
+      ),
+    /admitted worker/
+  );
+  assert.equal(state.stateSha256, degradedStateSha256);
+
+  state = recordBrokerCapacity(
+    state,
+    authenticated(
+      'worker.capacity',
+      capacity(['lease-task-1-1'], {
+        reportSequence: 3,
+        observedAtMs: 4_600,
+        safeAvailableN: 0,
+      }),
+      'worker-east',
+      4_700
+    )
+  );
+  assert.equal(state.workers[0].admission, null);
+  assert.equal(state.workers[0].heartbeat, null);
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 4_800,
+        capacitySequence: 3,
+        activeLeases: [
+          { leaseId: 'lease-task-1-1', taskId: 'task-1', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      4_900
+    )
+  );
+  state = recordBrokerCapacity(
+    state,
+    authenticated(
+      'worker.capacity',
+      capacity(['lease-task-1-1'], {
+        reportSequence: 4,
+        observedAtMs: 5_000,
+      }),
+      'worker-east',
+      5_100
+    )
+  );
+  assert.equal(state.workers[0].admission.selectedN, 2);
+  assert.equal(state.workers[0].heartbeat, null);
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-1-1',
+            taskId: 'task-1',
+            attempt: 1,
+            expiresAtMs: 70_000,
+          },
+          'controller-dev',
+          5_200
+        )
+      ),
+    /fresh capacity and heartbeat/
+  );
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 5_300,
+        capacitySequence: 4,
+        activeLeases: [
+          { leaseId: 'lease-task-1-1', taskId: 'task-1', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      5_400
+    )
+  );
+  state = renewBrokerLease(
+    state,
+    authenticated(
+      'lease.renew',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-task-1-1',
+        taskId: 'task-1',
+        attempt: 1,
+        expiresAtMs: 70_000,
+      },
+      'controller-dev',
+      5_500
+    )
+  );
+  assert.equal(state.leases[0].expiresAtMs, 70_000);
 });
 
 test('task inventory cannot cross an application submission boundary', () => {
@@ -503,6 +702,27 @@ test('heartbeats close the active lease set and renewals stay inside timeout', (
       3_000
     )
   );
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-1-1',
+            taskId: 'task-1',
+            attempt: 1,
+            expiresAtMs: 9_000,
+          },
+          'controller-dev',
+          3_400
+        )
+      ),
+    /heartbeat does not close the worker active lease set/
+  );
   state = recordBrokerHeartbeat(
     state,
     authenticated(
@@ -564,6 +784,132 @@ test('heartbeats close the active lease set and renewals stay inside timeout', (
   );
 });
 
+test('renewals require fresh capacity and a heartbeat bound to that report', () => {
+  const plannedTask = task('task-1', { timeoutMs: 120_000 });
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask, { expiresAtMs: 45_000 }),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 3_500,
+        capacitySequence: 1,
+        activeLeases: [
+          { leaseId: 'lease-task-1-1', taskId: 'task-1', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      3_600
+    )
+  );
+  const staleProofStateSha256 = state.stateSha256;
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-1-1',
+            taskId: 'task-1',
+            attempt: 1,
+            expiresAtMs: 60_000,
+          },
+          'controller-dev',
+          34_001
+        )
+      ),
+    /fresh worker capacity and heartbeat/
+  );
+  assert.equal(state.stateSha256, staleProofStateSha256);
+
+  state = recordBrokerCapacity(
+    state,
+    authenticated(
+      'worker.capacity',
+      capacity(['lease-task-1-1'], {
+        reportSequence: 2,
+        observedAtMs: 35_000,
+      }),
+      'worker-east',
+      35_100
+    )
+  );
+  assert.equal(state.workers[0].heartbeat, null);
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-1-1',
+            taskId: 'task-1',
+            attempt: 1,
+            expiresAtMs: 60_000,
+          },
+          'controller-dev',
+          35_200
+        )
+      ),
+    /fresh capacity and heartbeat/
+  );
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 35_300,
+        capacitySequence: 2,
+        activeLeases: [
+          { leaseId: 'lease-task-1-1', taskId: 'task-1', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      35_400
+    )
+  );
+  state = renewBrokerLease(
+    state,
+    authenticated(
+      'lease.renew',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-task-1-1',
+        taskId: 'task-1',
+        attempt: 1,
+        expiresAtMs: 60_000,
+      },
+      'controller-dev',
+      35_500
+    )
+  );
+  assert.equal(state.leases[0].expiresAtMs, 60_000);
+});
+
 test('expired attempts require accepted cleanup before retry and completed work cannot retry', () => {
   const plannedTask = task();
   let state = admittedState([plannedTask]);
@@ -589,7 +935,7 @@ test('expired attempts require accepted cleanup before retry and completed work 
           'worker-east',
           5_100
         ),
-        8_100
+        resultAcceptance(8_100)
       ),
     /exact active lease/
   );
@@ -662,7 +1008,7 @@ test('expired attempts require accepted cleanup before retry and completed work 
   const accepted = acceptBrokerResult(
     state,
     authenticated('worker.result', secondResult, 'worker-east', 10_100),
-    10_200
+    resultAcceptance(10_200)
   );
   assert.equal(accepted.disposition, 'accepted');
   assert.throws(
@@ -770,8 +1116,14 @@ test('result submission is idempotent and conflicting reuse fails closed', () =>
     'worker-east',
     5_100
   );
-  const first = acceptBrokerResult(state, resultMessage, 5_200);
-  const duplicate = acceptBrokerResult(first.state, resultMessage, 5_300);
+  const first = acceptBrokerResult(
+    state,
+    resultMessage,
+    resultAcceptance(5_200)
+  );
+  const duplicate = acceptBrokerResult(first.state, resultMessage, {
+    acceptedAtMs: 5_300,
+  });
   assert.equal(duplicate.disposition, 'duplicate');
   assert.equal(duplicate.state, first.state);
   const acknowledgement = createBrokerResultAcknowledgementBody(duplicate);
@@ -789,7 +1141,7 @@ test('result submission is idempotent and conflicting reuse fails closed', () =>
       acceptBrokerResult(
         first.state,
         authenticated('worker.result', conflict, 'worker-east', 5_100),
-        5_400
+        { acceptedAtMs: 5_400 }
       ),
     /Conflicting result reused an idempotency key/
   );
@@ -813,7 +1165,7 @@ test('passed results require their declared evidence contract', () => {
       acceptBrokerResult(
         state,
         authenticated('worker.result', missing, 'worker-east', 5_100),
-        5_200
+        resultAcceptance(5_200)
       ),
     /missing required evidence/
   );
@@ -824,10 +1176,84 @@ test('passed results require their declared evidence contract', () => {
       acceptBrokerResult(
         state,
         authenticated('worker.result', drifted, 'worker-east', 5_100),
-        5_200
+        resultAcceptance(5_200)
       ),
     /contract drifted/
   );
+});
+
+test('result acceptance requires synchronous independent evidence verification', () => {
+  const plannedTask = task();
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask),
+      'controller-dev',
+      3_000
+    )
+  );
+  const resultMessage = authenticated(
+    'worker.result',
+    resultBody(plannedTask),
+    'worker-east',
+    5_100
+  );
+  const stateBeforeVerification = structuredClone(state);
+  assert.throws(
+    () =>
+      acceptBrokerResult(state, resultMessage, {
+        acceptedAtMs: 5_200,
+      }),
+    /requires an independent verifier/
+  );
+  assert.throws(
+    () =>
+      acceptBrokerResult(state, resultMessage, {
+        acceptedAtMs: 5_200,
+        verifyResultEvidence: () => false,
+      }),
+    /not independently accepted/
+  );
+  assert.throws(
+    () =>
+      acceptBrokerResult(state, resultMessage, {
+        acceptedAtMs: 5_200,
+        verifyResultEvidence: () => Promise.resolve(true),
+      }),
+    /must be synchronous/
+  );
+  assert.throws(
+    () =>
+      acceptBrokerResult(state, resultMessage, {
+        acceptedAtMs: 5_200,
+        verifyResultEvidence: () => {
+          throw new Error('artifact verification failed');
+        },
+      }),
+    /artifact verification failed/
+  );
+  assert.equal(state.stateSha256, stateBeforeVerification.stateSha256);
+  assert.deepEqual(state.leases, stateBeforeVerification.leases);
+  assert.deepEqual(state.results, stateBeforeVerification.results);
+
+  let observed;
+  const accepted = acceptBrokerResult(state, resultMessage, {
+    acceptedAtMs: 5_200,
+    verifyResultEvidence(value) {
+      observed = value;
+      return true;
+    },
+  });
+  assert.equal(
+    observed.applicationIsolationKeySha256,
+    state.applicationIsolationKeySha256
+  );
+  assert.equal(observed.task.taskId, plannedTask.taskId);
+  assert.equal(observed.lease.leaseId, 'lease-task-1-1');
+  assert.equal(observed.submissionSha256, accepted.result.submissionSha256);
+  assert.equal(accepted.state.leases[0].state, 'completed');
 });
 
 test('cancellation distinguishes retryable attempt abort from terminal task cancel', () => {
@@ -1047,7 +1473,7 @@ test('completed native failure is closed but never success-eligible', () => {
   state = acceptBrokerResult(
     state,
     authenticated('worker.result', failure, 'worker-east', 5_100),
-    5_200
+    resultAcceptance(5_200)
   ).state;
   const input = createBrokerReconciliationInput(state, 6_000);
   assert.equal(input.ready, true);
@@ -1080,7 +1506,7 @@ test('reconciliation input cannot claim eligibility until every task closes once
       'worker-east',
       5_100
     ),
-    5_200
+    resultAcceptance(5_200)
   ).state;
   state = grantBrokerLease(
     state,
@@ -1102,7 +1528,7 @@ test('reconciliation input cannot claim eligibility until every task closes once
       'worker-east',
       5_400
     ),
-    5_500
+    resultAcceptance(5_500)
   ).state;
   input = createBrokerReconciliationInput(state, 6_000);
   assert.equal(input.ready, true);
@@ -1149,5 +1575,83 @@ test('persisted hashed state verifies and rehydrates without process-local trust
         expectedStateSha256: state.stateSha256,
       }),
     /seal does not match/
+  );
+});
+
+test('rehydrated cleanup-required work stays blocked until its original session proves cleanup', () => {
+  const plannedTask = task();
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = expireBrokerLeases(state, 8_000);
+  const restored = rehydrateBrokerLeaseState(
+    JSON.parse(JSON.stringify(state)),
+    {
+      expectedBinding: binding(),
+      expectedStateSha256: state.stateSha256,
+    }
+  );
+  const pending = createBrokerReconciliationInput(restored, 8_100);
+  assert.equal(pending.ready, false);
+  assert.deepEqual(pending.activeLeaseIds, ['lease-task-1-1']);
+  const pendingStateSha256 = restored.stateSha256;
+
+  assert.throws(
+    () =>
+      registerBrokerWorker(
+        restored,
+        authenticated(
+          'worker.register',
+          { ...registration(), instanceId: 'worker-east-boot-2' },
+          'worker-east',
+          8_200,
+          { sessionId: 'session-2' }
+        )
+      ),
+    /Cannot replace a worker registration with active leases/
+  );
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        restored,
+        authenticated(
+          'lease.grant',
+          grantBody(plannedTask, {
+            leaseId: 'lease-task-1-2',
+            attempt: 2,
+            expiresAtMs: 16_000,
+          }),
+          'controller-dev',
+          8_250
+        )
+      ),
+    /accepted cleanup evidence/
+  );
+  assert.equal(restored.stateSha256, pendingStateSha256);
+
+  const closed = acknowledgeBrokerCancellation(
+    restored,
+    authenticated(
+      'worker.cancelled',
+      cancellationAcknowledgement(plannedTask, {
+        cancellationRequestedAtMs: 8_000,
+        cancelledAtMs: 8_300,
+      }),
+      'worker-east',
+      8_400
+    ),
+    cleanupAcceptance(8_500)
+  );
+  assert.equal(closed.leases[0].state, 'cancelled');
+  assert.deepEqual(
+    createBrokerReconciliationInput(closed, 8_600).activeLeaseIds,
+    []
   );
 });

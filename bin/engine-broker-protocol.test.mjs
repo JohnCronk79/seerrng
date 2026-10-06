@@ -8,6 +8,7 @@ import {
   brokerResultKeySha256,
   createBrokerMessage,
   createBrokerWorkerConfig,
+  evaluateConfiguredWorkerAdmission,
   resolveConfiguredWorkerN,
   sealBrokerCleanupEvidence,
   sealBrokerTask,
@@ -227,6 +228,31 @@ test('controller resolves automatic or explicit worker N against safe live capac
     capacity()
   );
   assert.equal(explicit.selectedN, 7);
+  assert.equal(
+    evaluateConfiguredWorkerAdmission(
+      workerConfig('auto'),
+      registration(),
+      capacity({ safeAvailableN: 0 })
+    ),
+    null
+  );
+  assert.equal(
+    evaluateConfiguredWorkerAdmission(
+      workerConfig(11),
+      registration(),
+      capacity()
+    ),
+    null
+  );
+  assert.throws(
+    () =>
+      resolveConfiguredWorkerN(
+        workerConfig('auto'),
+        registration(),
+        capacity({ safeAvailableN: 0 })
+      ),
+    /no safely available capacity/
+  );
   assert.throws(
     () =>
       resolveConfiguredWorkerN(workerConfig(11), registration(), capacity()),
@@ -340,6 +366,37 @@ test('detached session proof must be externally verified and time-valid', () => 
         verifyProof: () => true,
       }),
     /not currently valid/
+  );
+  let futureProofChecks = 0;
+  assert.throws(
+    () =>
+      authenticateBrokerMessage(
+        message('worker.register', registration(), 'worker-east', {
+          sentAtMs: 2_601,
+        }),
+        {
+          expectedBinding: binding(),
+          nowMs: 2_600,
+          verifyProof: () => {
+            futureProofChecks += 1;
+            return true;
+          },
+        }
+      ),
+    /send time is in the future/
+  );
+  assert.equal(futureProofChecks, 0);
+  assert.doesNotThrow(() =>
+    authenticateBrokerMessage(
+      message('worker.register', registration(), 'worker-east', {
+        sentAtMs: 2_600,
+      }),
+      {
+        expectedBinding: binding(),
+        nowMs: 2_600,
+        verifyProof: () => true,
+      }
+    )
   );
   assert.throws(
     () =>

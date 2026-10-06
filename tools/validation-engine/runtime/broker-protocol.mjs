@@ -1043,6 +1043,8 @@ export function authenticateBrokerMessage(
   safeInteger(nowMs, 'Authentication clock');
   if (nowMs < message.auth.issuedAtMs || nowMs > message.auth.expiresAtMs)
     throw new Error('Broker authentication session is not currently valid');
+  if (message.sentAtMs > nowMs)
+    throw new Error('Broker message send time is in the future');
   if (
     expectedBinding !== undefined &&
     canonicalJsonSha256(message.binding) !==
@@ -1114,7 +1116,7 @@ export function createBrokerWorkerConfig(value) {
   });
 }
 
-export function resolveConfiguredWorkerN(
+function configuredWorkerAdmissionEvaluation(
   configValue,
   registrationValue,
   capacityValue
@@ -1147,23 +1149,60 @@ export function resolveConfiguredWorkerN(
     configured.configuredN === 'auto'
       ? capacity.safeAvailableN
       : configured.configuredN;
-  if (selectedN < 1)
+  const unavailableReason =
+    selectedN < 1
+      ? 'no-safe-capacity'
+      : selectedN > capacity.safeAvailableN
+        ? 'configured-capacity-unavailable'
+        : null;
+  return {
+    admission:
+      unavailableReason === null
+        ? deepFreeze({
+            workerId: registration.workerId,
+            instanceId: registration.instanceId,
+            workerSessionId: capacity.workerSessionId,
+            selectedN,
+            configuredN: configured.configuredN,
+            safeAvailableN: capacity.safeAvailableN,
+            performanceProfileSha256: capacity.performanceProfileSha256,
+            performanceScorePermille: capacity.performanceScorePermille,
+            configSha256: canonicalJsonSha256(config),
+            registrationSha256: canonicalJsonSha256(registration),
+            capacitySha256: canonicalJsonSha256(capacity),
+          })
+        : null,
+    unavailableReason,
+  };
+}
+
+export function evaluateConfiguredWorkerAdmission(
+  configValue,
+  registrationValue,
+  capacityValue
+) {
+  return configuredWorkerAdmissionEvaluation(
+    configValue,
+    registrationValue,
+    capacityValue
+  ).admission;
+}
+
+export function resolveConfiguredWorkerN(
+  configValue,
+  registrationValue,
+  capacityValue
+) {
+  const evaluation = configuredWorkerAdmissionEvaluation(
+    configValue,
+    registrationValue,
+    capacityValue
+  );
+  if (evaluation.unavailableReason === 'no-safe-capacity')
     throw new Error('Worker currently reports no safely available capacity');
-  if (selectedN > capacity.safeAvailableN)
+  if (evaluation.unavailableReason === 'configured-capacity-unavailable')
     throw new Error('Configured worker N exceeds safely reported capacity');
-  return deepFreeze({
-    workerId: registration.workerId,
-    instanceId: registration.instanceId,
-    workerSessionId: capacity.workerSessionId,
-    selectedN,
-    configuredN: configured.configuredN,
-    safeAvailableN: capacity.safeAvailableN,
-    performanceProfileSha256: capacity.performanceProfileSha256,
-    performanceScorePermille: capacity.performanceScorePermille,
-    configSha256: canonicalJsonSha256(config),
-    registrationSha256: canonicalJsonSha256(registration),
-    capacitySha256: canonicalJsonSha256(capacity),
-  });
+  return evaluation.admission;
 }
 
 export function brokerSubmissionSha256(message) {

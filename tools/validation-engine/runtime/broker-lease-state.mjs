@@ -7,7 +7,7 @@ import {
   brokerApplicationIsolationKeySha256,
   brokerSubmissionSha256,
   createBrokerWorkerConfig,
-  resolveConfiguredWorkerN,
+  evaluateConfiguredWorkerAdmission,
   verifyBrokerBinding,
   verifyBrokerCleanupEvidence,
   verifyBrokerTask,
@@ -601,7 +601,7 @@ export function recordBrokerCapacity(stateValue, messageValue) {
     if (capacity.observedAtMs < worker.capacity.observedAtMs)
       throw new Error('Capacity observation time cannot move backwards');
   }
-  const admission = resolveConfiguredWorkerN(
+  const admission = evaluateConfiguredWorkerAdmission(
     state.workerConfig,
     worker.registration,
     capacity
@@ -611,6 +611,7 @@ export function recordBrokerCapacity(stateValue, messageValue) {
     capacity,
     capacitySha256,
     admission,
+    heartbeat: null,
   };
   return sealState({ ...state, workers: replaceWorker(state, updated) });
 }
@@ -622,8 +623,8 @@ export function recordBrokerHeartbeat(stateValue, messageValue) {
   const worker = state.workers.find(
     (entry) => entry.workerId === heartbeat.workerId
   );
-  if (!worker?.capacity || !worker.admission)
-    throw new Error('Heartbeat requires an admitted worker capacity report');
+  if (!worker?.capacity)
+    throw new Error('Heartbeat requires a current worker capacity report');
   assertWorkerMessageBinding(worker, message, heartbeat);
   if (heartbeat.capacitySequence !== worker.capacity.reportSequence)
     throw new Error('Heartbeat is not bound to the current capacity report');
@@ -655,6 +656,42 @@ function priorTaskLeases(state, taskId) {
     .toSorted((left, right) => left.attempt - right.attempt);
 }
 
+function assertFreshWorkerProof(
+  state,
+  workerIdentity,
+  decisionAtMs,
+  operation
+) {
+  const worker = state.workers.find(
+    (entry) => entry.workerId === workerIdentity.workerId
+  );
+  if (!worker?.capacity || !worker.admission || !worker.heartbeat)
+    throw new Error(
+      `${operation} requires fresh capacity and heartbeat from an admitted worker`
+    );
+  if (
+    worker.registration.instanceId !== workerIdentity.instanceId ||
+    worker.sessionId !== workerIdentity.workerSessionId
+  )
+    throw new Error(`${operation} targets a stale worker instance or session`);
+  if (
+    worker.heartbeat.capacitySequence !== worker.capacity.reportSequence
+  )
+    throw new Error(
+      `${operation} heartbeat is not bound to the current capacity report`
+    );
+  if (
+    decisionAtMs - worker.capacity.observedAtMs >
+      BROKER_WORKER_FRESHNESS_MS ||
+    decisionAtMs - worker.heartbeat.observedAtMs >
+      BROKER_WORKER_FRESHNESS_MS ||
+    worker.capacity.observedAtMs > decisionAtMs ||
+    worker.heartbeat.observedAtMs > decisionAtMs
+  )
+    throw new Error(`${operation} requires fresh worker capacity and heartbeat`);
+  return worker;
+}
+
 export function grantBrokerLease(stateValue, messageValue) {
   const state = assertState(stateValue);
   const message = assertBoundMessage(state, messageValue, 'lease.grant');
@@ -675,27 +712,12 @@ export function grantBrokerLease(stateValue, messageValue) {
     throw new Error('Lease ID has already been used');
   if (state.results.some((entry) => entry.submission.taskId === task.taskId))
     throw new Error('Completed task cannot receive another lease');
-  const worker = state.workers.find(
-    (entry) => entry.workerId === grant.workerId
+  const worker = assertFreshWorkerProof(
+    state,
+    grant,
+    message.sentAtMs,
+    'Lease'
   );
-  if (!worker?.capacity || !worker.admission || !worker.heartbeat)
-    throw new Error(
-      'Lease requires fresh capacity and heartbeat from an admitted worker'
-    );
-  if (
-    worker.registration.instanceId !== grant.instanceId ||
-    worker.sessionId !== grant.workerSessionId
-  )
-    throw new Error('Lease targets a stale worker instance or session');
-  if (
-    message.sentAtMs - worker.capacity.observedAtMs >
-      BROKER_WORKER_FRESHNESS_MS ||
-    message.sentAtMs - worker.heartbeat.observedAtMs >
-      BROKER_WORKER_FRESHNESS_MS ||
-    worker.capacity.observedAtMs > message.sentAtMs ||
-    worker.heartbeat.observedAtMs > message.sentAtMs
-  )
-    throw new Error('Lease requires fresh worker capacity and heartbeat');
   if (!worker.registration.capabilities.adapterIds.includes(task.adapterId))
     throw new Error('Worker does not advertise the task native adapter');
   if (
@@ -762,6 +784,26 @@ export function renewBrokerLease(stateValue, messageValue) {
     lease.attempt !== renewal.attempt
   )
     throw new Error('Lease renewal identity does not match the active lease');
+  const worker = assertFreshWorkerProof(
+    state,
+    renewal,
+    message.sentAtMs,
+    'Lease renewal'
+  );
+  if (
+    !exactArray(
+      worker.heartbeat.activeLeases,
+      activeLeaseSummary(state, renewal.workerId)
+    )
+  )
+    throw new Error(
+      'Lease renewal heartbeat does not close the worker active lease set'
+    );
+  if (
+    activeWorkerLeases(state, renewal.workerId).length >
+    worker.admission.selectedN
+  )
+    throw new Error('Lease renewal exceeds the current worker admission');
   if (
     message.sentAtMs < lease.grantedAtMs ||
     message.sentAtMs >= lease.expiresAtMs ||
@@ -954,7 +996,11 @@ function assertResultEvidence(task, result) {
     throw new Error('Passed result is missing required evidence');
 }
 
-export function acceptBrokerResult(stateValue, messageValue, acceptedAtMs) {
+export function acceptBrokerResult(
+  stateValue,
+  messageValue,
+  { acceptedAtMs, verifyResultEvidence } = {}
+) {
   const state = assertState(stateValue);
   const message = assertBoundMessage(state, messageValue, 'worker.result');
   safeInteger(acceptedAtMs, 'Result acceptance time');
@@ -1014,6 +1060,21 @@ export function acceptBrokerResult(stateValue, messageValue, acceptedAtMs) {
     )
   )
     throw new Error('Evidence identity has already been accepted');
+  if (typeof verifyResultEvidence !== 'function')
+    throw new Error('Result evidence requires an independent verifier');
+  const verified = verifyResultEvidence({
+    binding: state.binding,
+    applicationIsolationKeySha256: state.applicationIsolationKeySha256,
+    task,
+    lease,
+    message,
+    submission,
+    submissionSha256,
+  });
+  if (verified && typeof verified.then === 'function')
+    throw new Error('Result evidence verifier must be synchronous');
+  if (verified !== true)
+    throw new Error('Result evidence was not independently accepted');
   const completedLease = {
     ...lease,
     state: 'completed',
