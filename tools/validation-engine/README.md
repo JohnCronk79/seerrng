@@ -91,7 +91,7 @@ documentation, release contracts, the Jellyfin plugin and disposable smoke,
 conditional Helm validation, and link checks. Missing required prerequisites
 make the result incomplete or failed; discovery is never reported as execution.
 
-Local staged execution does not reuse prior successful test results. Local build
+Local staged execution does not reuse successful test results. Local build
 reuse is limited to the successful build produced earlier in the same bound run
 for the same candidate.
 
@@ -136,12 +136,14 @@ runner identity, each applicable unit or matrix case:
 1. downloads the immutable plan;
 2. verifies the current candidate, workflows, and test inventory;
 3. admits its exact planned unit and case;
-4. either executes its existing native work or accepts an exact reusable success;
+4. executes its existing native work for the current attempt; an existing result
+   can never satisfy admission;
 5. preserves its sealed result, evidence manifest, and attempt-scoped ledger;
 6. uploads those artifacts for reconciliation.
 
 A successful execution creates the ledger's single success entry. Failed,
-cancelled, or incomplete work leaves the ledger blank and cannot be reused.
+cancelled, or incomplete work leaves the ledger blank. A second admission for
+the same unit/case fails closed instead of accepting the earlier result.
 If native runner setup fails before engine admission, the GitHub job fails and
 the missing required receipt makes final reconciliation fail closed; the native
 job log remains the failure evidence. No pre-admission failure can be reported as
@@ -174,30 +176,14 @@ are not represented as engine-executed native work. Standalone scheduled or
 manual reusable-workflow launches are native runs, not aggregate hosted-engine
 passes.
 
-## Result reuse and caches
+## Test results and caches
 
-Hosted result reuse is deliberately narrow:
-
-- every run attempt starts with an empty result ledger;
-- only the unit-test job is currently eligible, because it has both a bound
-  installed dependency lock and semantic native-result closure;
-- even that job may reuse only an exact duplicate of completed successful work
-  within the same run attempt;
-- the candidate, plan, unit, case, command, dependencies, tools, runner, setup,
-  workflow, admission, receipt, and ledger must all match;
-- CodeQL, builds, documentation, Helm, links, release, i18n/tooling, and Cypress
-  results are default-deny until their complete execution-defining setup can be
-  proved;
-- failed, cancelled, partial, missing, duplicated, or tampered work is never
-  reusable;
-- successes never cross run attempts, commits, candidates, or pull-request
-  updates.
-
-The normal hosted graph currently schedules every unit/case once and does not
-preload another job's receipt directory. Ordinary GitHub runs therefore execute
-each applicable unit once and receive no baseline speedup from result reuse. The
-eligible unit-test reuse path becomes active only if a deliberate same-attempt
-duplicate consumer is wired later with the matching sealed artifacts.
+Test-result reuse is disabled in every local and hosted mode. Every applicable
+unit/case executes its native validation work for the current run attempt.
+Admissions, receipts, and ledgers prove what executed for final aggregation;
+they are not a cache and cannot authorize skipping execution. Existing
+finalized artifacts, duplicate admissions, and duplicate ledger entries fail
+closed.
 
 A source repair therefore requires a new commit and new run; GitHub does not fix
 source code, and an earlier green result cannot be carried into the repaired
@@ -205,8 +191,10 @@ candidate. A failed-jobs-only rerun creates a new run attempt and cannot combine
 old successes with new results into an aggregate engine pass.
 
 Existing lock-bound dependency download caches may persist. They are not test-
-result caches. Same-job build reuse is allowed only where explicitly described
-above.
+result caches. Same-run build reuse is allowed only for the successful build
+explicitly described above: the local browser stage may consume its bound local
+build, and the Cypress job may consume its own same-job build. No compiled build
+or test result transfers between runner environments.
 
 ## Candidate binding and evidence
 

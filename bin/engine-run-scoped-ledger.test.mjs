@@ -5,7 +5,6 @@ import {
   createRunScopedLedger,
   createSuccessReceipt,
   createWorkIdentity,
-  findReusableSuccess,
   mergeRunScopedLedgers,
   parseRunScopedLedger,
   parseSuccessReceipt,
@@ -114,16 +113,18 @@ test('identity and success receipt construction is canonical and deterministic',
   assert.equal(Object.isFrozen(receipt.identity.command.args), true);
 });
 
-test('new ledgers are blank and reuse only an exact completed success', () => {
+test('new ledgers are blank and record each completed execution once', () => {
   const identity = createWorkIdentity(identityInput());
   const blank = createRunScopedLedger(scope());
   assert.deepEqual(blank.entries, []);
-  assert.equal(findReusableSuccess(blank, identity), null);
 
   const receipt = createSuccessReceipt({ identity, evidence: evidence() });
   const ledger = recordSuccessfulWork(blank, receipt);
-  assert.deepEqual(findReusableSuccess(ledger, identity), receipt);
-  assert.deepEqual(recordSuccessfulWork(ledger, receipt), ledger);
+  assert.deepEqual(ledger.entries, [receipt]);
+  assert.throws(
+    () => recordSuccessfulWork(ledger, receipt),
+    /duplicate successful work/
+  );
   assert.equal(Object.isFrozen(ledger.entries), true);
 });
 
@@ -134,10 +135,6 @@ test('every execution-defining field participates in the exact work key', () => 
     identity: original,
     evidence: evidence(),
   });
-  const ledger = recordSuccessfulWork(
-    createRunScopedLedger(scope(originalInput)),
-    receipt
-  );
   const changes = [
     [
       'unit.definitionSha256',
@@ -176,11 +173,10 @@ test('every execution-defining field participates in the exact work key', () => 
     const changed = identityInput();
     change(changed);
     assert.notEqual(workKeySha256(changed), receipt.workKeySha256, label);
-    assert.equal(findReusableSuccess(ledger, changed), null, label);
   }
 });
 
-test('new attempts, candidates, and plans cannot query or enter an old ledger', () => {
+test('new attempts, candidates, and plans cannot enter an old ledger', () => {
   const original = identityInput();
   const ledger = createRunScopedLedger(scope(original));
   const changes = [
@@ -194,11 +190,6 @@ test('new attempts, candidates, and plans cannot query or enter an old ledger', 
   for (const [label, change] of changes) {
     const changed = identityInput();
     change(changed);
-    assert.throws(
-      () => findReusableSuccess(ledger, changed),
-      /different run attempt, candidate, or plan/,
-      label
-    );
     assert.throws(
       () =>
         recordSuccessfulWork(
@@ -257,7 +248,7 @@ test('identity construction fails closed on missing and unknown fields', () => {
   assert.throws(() => canonicalJsonSha256(sparse), /dense JSON arrays/);
 });
 
-test('failure, incomplete, malformed, or conflicting receipts are never reusable', () => {
+test('failure, incomplete, malformed, or duplicate receipts are never recorded', () => {
   const identity = createWorkIdentity(identityInput());
   const good = createSuccessReceipt({ identity, evidence: evidence() });
   for (const outcome of [
@@ -269,7 +260,7 @@ test('failure, incomplete, malformed, or conflicting receipts are never reusable
     changed.outcome = outcome;
     assert.throws(
       () => verifySuccessReceipt(changed),
-      /Only completed successful work/
+      /Only completed successful work can be recorded/
     );
   }
   assert.throws(
@@ -297,7 +288,7 @@ test('failure, incomplete, malformed, or conflicting receipts are never reusable
   });
   assert.throws(
     () => recordSuccessfulWork(first, conflicting),
-    /Conflicting successful results/
+    /duplicate successful work/
   );
 });
 
@@ -350,13 +341,17 @@ test('verified ledgers merge deterministically and reject mixed scopes', () => {
     empty,
     createSuccessReceipt({ identity: secondIdentity, evidence: evidence('1') })
   );
-  const merged = mergeRunScopedLedgers([second, first, first]);
+  const merged = mergeRunScopedLedgers([second, first]);
   assert.equal(merged.entries.length, 2);
   assert.deepEqual(
     merged.entries.map((entry) => entry.workKeySha256),
     merged.entries
       .map((entry) => entry.workKeySha256)
       .toSorted((left, right) => left.localeCompare(right))
+  );
+  assert.throws(
+    () => mergeRunScopedLedgers([first, first]),
+    /duplicate successful work/
   );
 
   const otherInput = identityInput();

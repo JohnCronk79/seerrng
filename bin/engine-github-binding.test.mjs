@@ -21,6 +21,10 @@ const needs = (job) =>
   new Set(Array.isArray(job.needs) ? job.needs : [job.needs]);
 
 const ci = readWorkflow('ci');
+const validationCli = readFileSync(
+  path.join(root, 'bin/run-local-validation.mjs'),
+  'utf8'
+).replaceAll('\r\n', '\n');
 const repositoryUnits = ['release-notes', 'i18n', 'unit-test', 'docs-links'];
 const buildUnits = ['jellyfin-plugin', 'test', 'test-docs', 'helm'];
 const directUnits = {
@@ -99,6 +103,17 @@ test('the immutable plan is an attempt-bound artifact consumed by every unit', (
   }
 });
 
+test('hosted admission outputs expose execution only', () => {
+  assert.match(validationCli, /\['execute', 'true'\]/);
+  for (const forbidden of [
+    'reuseSuccess',
+    'reusableSuccessReceiptSha256',
+    'reusableHostedUnitReceiptSha256',
+    'reuse-success',
+  ])
+    assert.equal(validationCli.includes(forbidden), false, forbidden);
+});
+
 test('the fixed GitHub graph preserves stage barriers and within-stage parallelism', () => {
   const jobs = ci.workflow.jobs;
   for (const id of repositoryUnits) {
@@ -131,7 +146,7 @@ test('the fixed GitHub graph preserves stage barriers and within-stage paralleli
   assert.match(jobs.cypress.if, /outputs\.cypress == 'true'/);
 });
 
-test('direct native jobs execute only after admission and preserve reusable receipts', () => {
+test('direct native jobs execute only after admission and preserve sealed receipts', () => {
   const jobs = ci.workflow.jobs;
   const nativeValidation = {
     'jellyfin-plugin': [

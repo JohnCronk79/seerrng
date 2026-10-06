@@ -31,7 +31,6 @@ import {
   createRunScopedLedger,
   createSuccessReceipt,
   createWorkIdentity,
-  findReusableSuccess,
   mergeRunScopedLedgers,
   parseRunScopedLedger,
   recordSuccessfulWork,
@@ -43,7 +42,7 @@ import {
 
 export const HOSTED_ADMISSION_SCHEMA = 'seerrng-hosted-admission/v2';
 export const HOSTED_ADMISSION_DECISION_SCHEMA =
-  'seerrng-hosted-admission-decision/v1';
+  'seerrng-hosted-admission-decision/v2';
 export const HOSTED_UNIT_RECEIPT_SCHEMA = 'seerrng-hosted-unit-receipt/v2';
 export const HOSTED_TEST_LANE_RESULT_SCHEMA =
   'seerrng-hosted-test-lane-result/v2';
@@ -314,32 +313,15 @@ function textDigest(value, label) {
   return sha256(value);
 }
 
-function hostedReusePolicy(plan, unit) {
-  if (unit.id === 'ci-unit-test')
-    return {
-      eligible: true,
-      reason: 'unit-test-dependencies-and-native-evidence-bound',
-    };
-  if (unit.id === 'cypress-run' && plan.event.name === 'push')
-    return {
-      eligible: false,
-      reason: 'cypress-dashboard-secret-presence-is-step-scoped',
-    };
-  return {
-    eligible: false,
-    reason: 'unit-not-proven-safe-for-result-reuse',
-  };
-}
-
 function hostedBehaviorState(root, plan, unit, caseId, environment) {
   const state = {
-    schema: 'seerrng-hosted-behavior-state/v1',
+    schema: 'seerrng-hosted-behavior-state/v2',
     unitId: unit.id,
     caseId,
     environment: selectedEnvironment(environment, COMMAND_ENVIRONMENT),
     event: null,
     files: [],
-    reuse: hostedReusePolicy(plan, unit),
+    resultReuse: false,
   };
   if (unit.id === 'ci-release-notes') {
     const payload = githubEventPayload(plan, environment);
@@ -588,41 +570,26 @@ export function verifyHostedAdmissionDecision(value) {
     'action',
     'admissionSha256',
     'decisionSha256',
-    'reusableHostedUnitReceiptSha256',
-    'reusableSuccessReceiptSha256',
     'schema',
     'workKeySha256',
   ]);
   if (
     value.schema !== HOSTED_ADMISSION_DECISION_SCHEMA ||
-    !['execute', 'reuse-success'].includes(value.action) ||
+    value.action !== 'execute' ||
     !HASH64.test(value.admissionSha256 ?? '') ||
     !HASH64.test(value.workKeySha256 ?? '') ||
     value.decisionSha256 !== admissionDecisionHash(value)
   )
     throw new Error('Hosted admission decision seal or schema is invalid');
-  const receiptHashes = [
-    value.reusableSuccessReceiptSha256,
-    value.reusableHostedUnitReceiptSha256,
-  ];
-  if (
-    value.action === 'execute'
-      ? receiptHashes.some((digest) => digest !== null)
-      : receiptHashes.some((digest) => !HASH64.test(digest ?? ''))
-  )
-    throw new Error('Hosted admission decision is not fail-closed');
   return value;
 }
 
-function createAdmissionDecision(admission, reusableUnitReceipt = null) {
-  const reusableSuccess = reusableUnitReceipt?.successReceipt ?? null;
+function createAdmissionDecision(admission) {
   const unsigned = {
     schema: HOSTED_ADMISSION_DECISION_SCHEMA,
-    action: reusableSuccess ? 'reuse-success' : 'execute',
+    action: 'execute',
     admissionSha256: admission.admissionSha256,
     workKeySha256: admission.workKeySha256,
-    reusableSuccessReceiptSha256: reusableSuccess?.receiptSha256 ?? null,
-    reusableHostedUnitReceiptSha256: reusableUnitReceipt?.receiptSha256 ?? null,
   };
   return verifyHostedAdmissionDecision({
     ...unsigned,
@@ -688,88 +655,30 @@ export function admitHostedGithubUnit({
     ...unsigned,
     admissionSha256: admissionHash(unsigned),
   };
-  let admitted = admission;
   if (existsSync(paths.admission)) {
-    admitted = verifyAdmission(
+    const admitted = verifyAdmission(
       JSON.parse(readFileSync(paths.admission, 'utf8')),
       identity,
       { unitId, caseId: resolved.caseId }
     );
     if (admitted.admissionSha256 !== admission.admissionSha256)
       throw new Error('Conflicting hosted admission for one unit/case');
-  } else {
     if (ledger.entries.length > 0 || existsSync(paths.receipt))
       throw new Error(
-        'Hosted reuse artifacts exist without their original admission'
+        'Hosted unit/case is already finalized; test-result reuse is disabled'
       );
-    writeNewJson(paths.admission, admission);
-  }
-
-  const reusable = findReusableSuccess(ledger, identity);
-  const reusePolicy = hostedReusePolicy(plan, resolved.unit);
-  let reusableUnitReceipt = null;
-  if (existsSync(paths.receipt)) {
-    if (!reusePolicy.eligible)
-      throw new Error(
-        `Hosted unit/case is not reusable: ${reusePolicy.reason}`
-      );
-    reusableUnitReceipt = verifyHostedUnitReceipt(
-      JSON.parse(readFileSync(paths.receipt, 'utf8'))
-    );
-    if (!reusable)
-      throw new Error(
-        'Hosted unit/case is finalized without a reusable completed success'
-      );
-    if (
-      reusableUnitReceipt.unitId !== unitId ||
-      reusableUnitReceipt.caseId !== resolved.caseId ||
-      reusableUnitReceipt.planSha256 !== plan.planSha256 ||
-      reusableUnitReceipt.admissionSha256 !== admitted.admissionSha256 ||
-      reusableUnitReceipt.workKeySha256 !== admitted.workKeySha256 ||
-      reusableUnitReceipt.jobStatus !== 'success' ||
-      reusableUnitReceipt.successReceipt?.receiptSha256 !==
-        reusable.receiptSha256
-    )
-      throw new Error(
-        'Hosted reusable success is not bound to its unit/case artifacts'
-      );
-    verifyHostedCaseResults(
-      plan,
-      resolved.unit,
-      resolved.caseId,
-      reusableUnitReceipt.caseResults,
-      reusableUnitReceipt.evidence
-    );
-    const verifiedSuccess = verifySuccessReceipt(
-      reusableUnitReceipt.successReceipt,
-      identity
-    );
-    if (
-      verifiedSuccess.evidence.resultSha256 !==
-        jsonSha256({
-          unitId,
-          caseId: resolved.caseId,
-          jobStatus: 'success',
-        }) ||
-      verifiedSuccess.evidence.stdoutSha256 !== sha256('') ||
-      verifiedSuccess.evidence.stderrSha256 !== sha256('') ||
-      verifiedSuccess.evidence.artifactManifestSha256 !==
-        jsonSha256(reusableUnitReceipt.evidence) ||
-      verifiedSuccess.evidence.caseResultsSha256 !==
-        jsonSha256({
-          caseResults: reusableUnitReceipt.caseResults,
-          evidence: reusableUnitReceipt.evidence,
-        })
-    )
-      throw new Error('Hosted reusable success evidence failed binding');
-  } else if (reusable) {
     throw new Error(
-      'Hosted success ledger entry lacks its completed unit receipt'
+      'Hosted unit/case is already admitted; duplicate execution is not allowed'
     );
   }
+  if (ledger.entries.length > 0 || existsSync(paths.receipt))
+    throw new Error(
+      'Hosted result artifacts exist without their original admission'
+    );
+  writeNewJson(paths.admission, admission);
   return {
-    admission: admitted,
-    decision: createAdmissionDecision(admitted, reusableUnitReceipt),
+    admission,
+    decision: createAdmissionDecision(admission),
     paths,
   };
 }
@@ -1627,8 +1536,8 @@ export function reconcileHostedGithubExecution(plan, needs, evidence) {
       throw new Error(`Hosted success evidence failed binding: ${key}`);
     if (
       ledger.entries[0].receiptSha256 !== success.receiptSha256 ||
-      findReusableSuccess(ledger, admission.identity)?.receiptSha256 !==
-        success.receiptSha256
+      verifySuccessReceipt(ledger.entries[0], admission.identity)
+        .receiptSha256 !== success.receiptSha256
     )
       throw new Error(`Hosted run ledger failed binding: ${key}`);
   }
@@ -1645,10 +1554,7 @@ export function reconcileHostedGithubExecution(plan, needs, evidence) {
       ledgerEntries: merged.entries.length,
       ledgerSha256: merged.ledgerSha256,
     },
-    resultReuse: {
-      ...native.resultReuse,
-      successfulEntries: merged.entries.length,
-    },
+    resultReuse: false,
   });
 }
 

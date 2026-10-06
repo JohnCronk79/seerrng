@@ -464,18 +464,10 @@ test('hosted GitHub plan is deterministic and binds the staged native DAG', () =
     })
   );
 
-  assert.equal(first.schema, 'seerrng-hosted-github-plan/v2');
+  assert.equal(first.schema, 'seerrng-hosted-github-plan/v3');
   assert.equal(first.planSha256, second.planSha256);
   assert.deepEqual(first, second);
-  assert.deepEqual(first.resultReuse, {
-    scope: 'current-run-attempt-only',
-    initialState: 'empty',
-    eligible: 'exact-duplicate-success-only',
-    eligibleUnits: ['ci-unit-test'],
-    failuresReusable: false,
-    crossAttempt: false,
-    crossCandidate: false,
-  });
+  assert.equal(first.resultReuse, false);
   assert.equal(first.units.length, 10);
   assert.deepEqual(
     first.units.map(({ id, stage, dependsOn }) => ({ id, stage, dependsOn })),
@@ -759,7 +751,7 @@ test('hosted GitHub plan binds tested execution separately from PR branch head',
 test('hosted GitHub reconciliation accepts only exact current-run needs', () => {
   const plan = createHostedGithubPlan(hostedInput());
   const report = reconcileHostedGithubNeeds(plan, githubNeeds(plan));
-  assert.equal(report.schema, 'seerrng-hosted-github-reconciliation/v1');
+  assert.equal(report.schema, 'seerrng-hosted-github-reconciliation/v2');
   assert.equal(report.status, 'passed');
   assert.equal(report.ok, true);
   assert.equal(report.scope, 'native-jobs');
@@ -811,15 +803,7 @@ test('hosted GitHub reconciliation accepts only exact current-run needs', () => 
       },
     ]
   );
-  assert.deepEqual(report.resultReuse, {
-    scope: 'current-run-attempt-only',
-    initialState: 'empty',
-    eligible: 'exact-duplicate-success-only',
-    eligibleUnits: ['ci-unit-test'],
-    failuresReusable: false,
-    crossAttempt: false,
-    crossCandidate: false,
-  });
+  assert.equal(report.resultReuse, false);
   assert.equal(Object.isFrozen(report), true);
 
   const pushPlan = createHostedGithubPlan(

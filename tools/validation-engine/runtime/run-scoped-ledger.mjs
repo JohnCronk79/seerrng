@@ -1,5 +1,5 @@
 // Copyright (c) snapetech and SeerrNG contributors.
-// Tamper-evident, attempt-local success reuse for hosted engine work units.
+// Tamper-evident, attempt-local execution evidence for hosted engine work units.
 import { createHash } from 'node:crypto';
 
 export const RUN_SCOPED_WORK_IDENTITY_SCHEMA =
@@ -393,7 +393,7 @@ export function verifySuccessReceipt(value, expectedIdentity) {
     value.outcome.exitCode !== 0 ||
     value.outcome.completed !== true
   )
-    throw new Error('Only completed successful work can be reused');
+    throw new Error('Only completed successful work can be recorded');
   const receipt = {
     schema: RUN_SCOPED_SUCCESS_RECEIPT_SCHEMA,
     workKeySha256: key,
@@ -494,22 +494,9 @@ export function recordSuccessfulWork(ledgerValue, receiptValue) {
   const existing = ledger.entries.find(
     (entry) => entry.workKeySha256 === receipt.workKeySha256
   );
-  if (existing) {
-    if (existing.receiptSha256 !== receipt.receiptSha256)
-      throw new Error('Conflicting successful results for identical work');
-    return ledger;
-  }
+  if (existing)
+    throw new Error('Run-scoped ledger contains duplicate successful work');
   return sealLedger(ledger.scope, [...ledger.entries, receipt]);
-}
-
-export function findReusableSuccess(ledgerValue, identityValue) {
-  const ledger = verifyRunScopedLedger(ledgerValue);
-  const identity = normalizeWorkIdentity(identityValue);
-  assertScope(ledger.scope, identity);
-  const key = canonicalJsonSha256(identity);
-  const receipt = ledger.entries.find((entry) => entry.workKeySha256 === key);
-  if (!receipt) return null;
-  return verifySuccessReceipt(receipt, identity);
 }
 
 export function mergeRunScopedLedgers(ledgerValues) {

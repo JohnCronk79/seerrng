@@ -363,7 +363,7 @@ async function createUnitTestEvidence({ root, plan, environment, receiptDir }) {
   };
 }
 
-test('hosted admission reuses only its exact completed successful unit', async () => {
+test('hosted admission is execute-only and rejects a finalized success', async () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   verifyHostedGithubPlanContext(root, plan, { environment });
@@ -378,8 +378,27 @@ test('hosted admission reuses only its exact completed successful unit', async (
   const { admission } = first;
   assert.equal(admission.caseId, 'default');
   assert.equal(first.decision.action, 'execute');
-  assert.equal(first.decision.reusableSuccessReceiptSha256, null);
+  assert.equal(first.decision.schema, 'seerrng-hosted-admission-decision/v2');
+  assert.deepEqual(Object.keys(first.decision).toSorted(), [
+    'action',
+    'admissionSha256',
+    'decisionSha256',
+    'schema',
+    'workKeySha256',
+  ]);
   assert.equal(verifyHostedAdmissionDecision(first.decision), first.decision);
+  assert.throws(
+    () =>
+      admitHostedGithubUnit({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'ci-unit-test',
+        receiptDir,
+        environment,
+      }),
+    /already admitted; duplicate execution is not allowed/
+  );
   const unitEvidence = await createUnitTestEvidence({
     root,
     plan,
@@ -399,23 +418,17 @@ test('hosted admission reuses only its exact completed successful unit', async (
   assert.equal(receipt.jobStatus, 'success');
   assert.equal(receipt.successReceipt.outcome.completed, true);
   assert.equal(verifyHostedUnitReceipt(receipt), receipt);
-  const second = admitHostedGithubUnit({
-    root,
-    plan,
-    expectedPlanSha256: plan.planSha256,
-    unitId: 'ci-unit-test',
-    receiptDir,
-    environment,
-  });
-  assert.equal(second.admission.admissionSha256, admission.admissionSha256);
-  assert.equal(second.decision.action, 'reuse-success');
-  assert.equal(
-    second.decision.reusableSuccessReceiptSha256,
-    receipt.successReceipt.receiptSha256
-  );
-  assert.equal(
-    second.decision.reusableHostedUnitReceiptSha256,
-    receipt.receiptSha256
+  assert.throws(
+    () =>
+      admitHostedGithubUnit({
+        root,
+        plan,
+        expectedPlanSha256: plan.planSha256,
+        unitId: 'ci-unit-test',
+        receiptDir,
+        environment,
+      }),
+    /already finalized; test-result reuse is disabled/
   );
   const tampered = structuredClone(receipt);
   tampered.evidence[0].bytes += 1;
@@ -423,11 +436,19 @@ test('hosted admission reuses only its exact completed successful unit', async (
     () => verifyHostedUnitReceipt(tampered),
     /seal or schema is invalid/
   );
-  const tamperedDecision = structuredClone(second.decision);
-  tamperedDecision.action = 'execute';
+  const tamperedDecision = structuredClone(first.decision);
+  tamperedDecision.action = 'reuse-success';
   assert.throws(
     () => verifyHostedAdmissionDecision(tamperedDecision),
     /seal or schema is invalid/
+  );
+  assert.throws(
+    () =>
+      verifyHostedAdmissionDecision({
+        ...first.decision,
+        reusableSuccessReceiptSha256: receipt.successReceipt.receiptSha256,
+      }),
+    /exact field set/
   );
 });
 
@@ -500,7 +521,7 @@ test('admission binds narrow generated setup and ignores caches and secrets', ()
   );
 });
 
-test('sealed admission snapshot is stable but changed behavior cannot reuse it', () => {
+test('sealed admission snapshot remains bound when behavior changes', () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   const admitted = admitHostedGithubUnit({
@@ -592,7 +613,7 @@ test('admission binds the installed dependency lock for the executing workspace'
   assert.equal(rootAfter.workKeySha256, rootBefore.workKeySha256);
 });
 
-test('release-note reuse binds the exact event text used by the native step', () => {
+test('release-note admission binds the exact event text used by the native step', () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   admitHostedGithubUnit({
@@ -631,7 +652,7 @@ test('release-note reuse binds the exact event text used by the native step', ()
   );
 });
 
-test('hosted reuse is default-deny outside the fully proved unit job', () => {
+test('successful hosted work cannot be admitted a second time', () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   admitHostedGithubUnit({
@@ -661,11 +682,11 @@ test('hosted reuse is default-deny outside the fully proved unit job', () => {
         receiptDir,
         environment,
       }),
-    /not reusable: unit-not-proven-safe-for-result-reuse/
+    /already finalized; test-result reuse is disabled/
   );
 });
 
-test('Cypress push success is not reusable without a bound dashboard mode', () => {
+test('Cypress push success cannot be admitted a second time', () => {
   const { root, plan, environment } = fixture();
   const baseSha = 'd'.repeat(40);
   const pushPlan = createHostedGithubPlan({
@@ -732,11 +753,11 @@ test('Cypress push success is not reusable without a bound dashboard mode', () =
         receiptDir,
         environment: pushEnvironment,
       }),
-    /not reusable: cypress-dashboard-secret-presence-is-step-scoped/
+    /already finalized; test-result reuse is disabled/
   );
 });
 
-test('reuse rejects incomplete, failed, and tampered finalized artifacts', async () => {
+test('finalized artifacts never authorize a second execution', async () => {
   for (const mode of [
     'missing-receipt',
     'missing-ledger',
@@ -800,20 +821,14 @@ test('reuse rejects incomplete, failed, and tampered finalized artifacts', async
           receiptDir,
           environment,
         }),
-      mode === 'missing-receipt'
-        ? /lacks its completed unit receipt/
-        : mode === 'tampered'
-          ? /seal or schema is invalid/
-          : mode === 'resealed-case-results'
-            ? /does not match the planned inventory/
-            : /finalized without a reusable completed success/,
+      /already finalized; test-result reuse is disabled/,
       mode
     );
     assert.equal(admitted.decision.action, 'execute');
   }
 });
 
-test('a success for one planned case cannot reuse a distinct case', () => {
+test('distinct planned cases receive independent execute-only admissions', () => {
   const { root, plan, environment } = fixture();
   const receiptDir = path.join(root, 'receipts');
   admitHostedGithubUnit({
@@ -845,7 +860,13 @@ test('a success for one planned case cannot reuse a distinct case', () => {
     environment,
   });
   assert.equal(distinct.decision.action, 'execute');
-  assert.equal(distinct.decision.reusableSuccessReceiptSha256, null);
+  assert.deepEqual(Object.keys(distinct.decision).toSorted(), [
+    'action',
+    'admissionSha256',
+    'decisionSha256',
+    'schema',
+    'workKeySha256',
+  ]);
 });
 
 test('hosted admission rejects a different attempt and plan hash', () => {
@@ -1213,7 +1234,9 @@ test('reconciliation requires every planned unit case and its success ledger', a
   const evidence = loadHostedReceiptDirectory(receiptDir);
   assert.equal(evidence.admissions.length, 11);
   const report = reconcileHostedGithubExecution(plan, needs, evidence);
+  assert.equal(report.schema, 'seerrng-hosted-github-reconciliation/v2');
   assert.equal(report.status, 'passed');
+  assert.equal(report.resultReuse, false);
   assert.equal(report.receipts.expected, 11);
   assert.equal(report.receipts.succeeded, 11);
   assert.equal(report.receipts.ledgerEntries, 11);

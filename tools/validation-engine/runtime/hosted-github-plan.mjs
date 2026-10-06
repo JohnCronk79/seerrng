@@ -4,8 +4,8 @@
 import { createHash } from 'node:crypto';
 import { assertHostedTestInventory } from './hosted-test-inventory.mjs';
 
-const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v2';
-const RECONCILIATION_SCHEMA = 'seerrng-hosted-github-reconciliation/v1';
+const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v3';
+const RECONCILIATION_SCHEMA = 'seerrng-hosted-github-reconciliation/v2';
 const HASH40 = /^[a-f0-9]{40}$/;
 const HASH64 = /^[a-f0-9]{64}$/;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/;
@@ -54,15 +54,7 @@ const EXTERNAL_PR_METADATA = [
     status: 'external-not-reconciled',
   },
 ];
-const RESULT_REUSE_POLICY = Object.freeze({
-  scope: 'current-run-attempt-only',
-  initialState: 'empty',
-  eligible: 'exact-duplicate-success-only',
-  eligibleUnits: ['ci-unit-test'],
-  failuresReusable: false,
-  crossAttempt: false,
-  crossCandidate: false,
-});
+const RESULT_REUSE = false;
 const REPOSITORY_UNITS = [
   'ci-release-notes',
   'ci-i18n',
@@ -591,7 +583,7 @@ function assertPlan(plan) {
     canonicalJson(testInventory) !== canonicalJson(plan.testInventory) ||
     canonicalJson(expectedUnits) !== canonicalJson(plan.units) ||
     canonicalJson(expectedMetadata) !== canonicalJson(plan.externalMetadata) ||
-    canonicalJson(plan.resultReuse) !== canonicalJson(RESULT_REUSE_POLICY)
+    plan.resultReuse !== RESULT_REUSE
   )
     throw new Error('Hosted GitHub plan does not match native workflow policy');
   return plan;
@@ -625,7 +617,7 @@ export function createHostedGithubPlan({
       boundEvent.name === 'pull_request'
         ? structuredClone(EXTERNAL_PR_METADATA)
         : [],
-    resultReuse: structuredClone(RESULT_REUSE_POLICY),
+    resultReuse: RESULT_REUSE,
   };
   const plan = { ...unsigned, planSha256: planHash(unsigned) };
   assertPlan(plan);
@@ -727,6 +719,6 @@ export function reconcileHostedGithubNeeds(plan, needs) {
       plan.externalMetadata.length === 0
         ? 'not-applicable'
         : 'external-not-reconciled',
-    resultReuse: structuredClone(RESULT_REUSE_POLICY),
+    resultReuse: RESULT_REUSE,
   });
 }

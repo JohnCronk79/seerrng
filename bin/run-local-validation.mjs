@@ -191,22 +191,12 @@ function writeHostedAdmissionOutputs(decision) {
   const output = process.env.GITHUB_OUTPUT;
   if (!output)
     throw new Error('Hosted GitHub admission requires GITHUB_OUTPUT');
-  const reused = decision.action === 'reuse-success';
   appendFileSync(
     output,
     `${[
       ['action', decision.action],
-      ['execute', String(!reused)],
-      ['reuseSuccess', String(reused)],
+      ['execute', 'true'],
       ['decisionSha256', decision.decisionSha256],
-      [
-        'reusableSuccessReceiptSha256',
-        decision.reusableSuccessReceiptSha256 ?? '',
-      ],
-      [
-        'reusableHostedUnitReceiptSha256',
-        decision.reusableHostedUnitReceiptSha256 ?? '',
-      ],
     ]
       .map(([key, value]) => `${key}=${value}`)
       .join('\n')}\n`
