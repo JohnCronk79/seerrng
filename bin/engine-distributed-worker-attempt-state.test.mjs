@@ -5,6 +5,8 @@ import test from 'node:test';
 
 import {
   BROKER_BINDING_SCHEMA,
+  BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
+  MAX_EVIDENCE_BLOB_BYTES,
   brokerApplicationIsolationKeySha256,
   sealBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
@@ -14,9 +16,11 @@ import {
   createDistributedWorkerAttemptState,
   describeDistributedWorkerAttemptTransition,
   distributedWorkerAttemptIdentitySha256,
+  distributedWorkerCleanupEvidenceContent,
   finishDistributedWorkerAttempt,
   rehydrateDistributedWorkerAttemptState,
   requireDistributedWorkerAttemptCleanup,
+  sealTrustedDistributedWorkerCleanupEvidence,
   snapshotDistributedWorkerAttemptState,
   startDistributedWorkerAttempt,
   verifyDistributedWorkerAttemptState,
@@ -260,6 +264,19 @@ test('failed finish and post-finish cleanup retain result and failure evidence',
     reasonCode: 'release-attempt-workspace',
     failureReference: null,
   });
+  for (const schema of [
+    'seerrng-artifact//v1',
+    'seerrng artifact/v1',
+    'seerrng-artifact/v1\u0000',
+  ])
+    assert.throws(
+      () =>
+        cleanDistributedWorkerAttempt(cleanupRequired, {
+          cleanedAtMs: 240,
+          evidenceReference: reference('cleanup', { schema }),
+        }),
+      /Exact cleanup evidence reference schema token is required/
+    );
   const cleaned = cleanDistributedWorkerAttempt(cleanupRequired, {
     cleanedAtMs: 240,
     evidenceReference: reference('cleanup'),
@@ -273,6 +290,71 @@ test('failed finish and post-finish cleanup retain result and failure evidence',
   assert.equal(cleaned.previousStateSha256, cleanupRequired.stateSha256);
   assert.equal(cleaned.cleanup.evidenceReference.referenceId, 'cleanup');
   assert.equal(cleaned.resultReference.referenceId, 'result');
+  assert.deepEqual(distributedWorkerCleanupEvidenceContent(cleaned), {
+    evidenceId: 'cleanup',
+    evidenceSchema: 'seerrng-artifact/v1',
+    mediaType: 'application/json',
+    bytes: 128,
+    blobSha256: hash('content-cleanup'),
+  });
+  assert.throws(
+    () => distributedWorkerCleanupEvidenceContent(cleanupRequired),
+    /requires a cleaned worker attempt/
+  );
+});
+
+test('only a fresh cleanup transition can seal exact worker cleanup evidence', () => {
+  const bound = binding();
+  const finished = fail(
+    start(
+      createDistributedWorkerAttemptState(creationInput({ binding: bound }))
+    )
+  );
+  const cleanupRequired = requireDistributedWorkerAttemptCleanup(finished, {
+    requiredAtMs: 220,
+    reasonCode: 'release-attempt-workspace',
+    failureReference: null,
+  });
+  const cleaned = cleanDistributedWorkerAttempt(cleanupRequired, {
+    cleanedAtMs: 240,
+    evidenceReference: reference('cleanup'),
+  });
+  const cleanupContent = distributedWorkerCleanupEvidenceContent(cleaned);
+  const cleanupEvidence = sealTrustedDistributedWorkerCleanupEvidence(cleaned);
+
+  assert.equal(
+    cleanupEvidence.namespaceKind,
+    BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND
+  );
+  assert.equal(cleanupEvidence.taskSha256, cleaned.task.taskSha256);
+  assert.equal(cleanupEvidence.bridgeSha256, cleaned.bridgeSha256);
+  assert.deepEqual(
+    {
+      evidenceId: cleanupEvidence.evidenceId,
+      evidenceSchema: cleanupEvidence.evidenceSchema,
+      mediaType: cleanupEvidence.mediaType,
+      bytes: cleanupEvidence.bytes,
+      blobSha256: cleanupEvidence.blobSha256,
+    },
+    cleanupContent
+  );
+  assert.throws(
+    () => sealTrustedDistributedWorkerCleanupEvidence(cleanupRequired),
+    /requires a cleaned worker attempt/
+  );
+  assert.throws(
+    () => sealTrustedDistributedWorkerCleanupEvidence(structuredClone(cleaned)),
+    /was not created or rehydrated by this state machine/
+  );
+
+  const restored = rehydrateDistributedWorkerAttemptState(
+    structuredClone(cleaned),
+    { expectedStateSha256: cleaned.stateSha256 }
+  );
+  assert.throws(
+    () => sealTrustedDistributedWorkerCleanupEvidence(restored),
+    /requires trusted runtime cleanup transition provenance/
+  );
 });
 
 test('pending and running attempts can require cleanup without inventing completion', () => {
@@ -879,6 +961,31 @@ test('finish rejects incomplete, contradictory, aliased, or drifted evidence', (
         failureReference: null,
       }),
     /byte count must be a safe integer from 1/
+  );
+  const boundary = finishDistributedWorkerAttempt(running, {
+    finishedAtMs: 200,
+    outcome: passedOutcome,
+    evidenceReferences: [
+      reference('native-log', { bytes: MAX_EVIDENCE_BLOB_BYTES }),
+    ],
+    resultReference: reference('result'),
+    failureReference: null,
+  });
+  assert.equal(boundary.evidenceReferences[0].bytes, MAX_EVIDENCE_BLOB_BYTES);
+  assert.throws(
+    () =>
+      finishDistributedWorkerAttempt(running, {
+        finishedAtMs: 200,
+        outcome: passedOutcome,
+        evidenceReferences: [
+          reference('native-log', { bytes: MAX_EVIDENCE_BLOB_BYTES + 1 }),
+        ],
+        resultReference: reference('result'),
+        failureReference: null,
+      }),
+    new RegExp(
+      `byte count must be a safe integer from 1 through ${MAX_EVIDENCE_BLOB_BYTES}`
+    )
   );
 });
 

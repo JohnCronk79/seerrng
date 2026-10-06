@@ -130,6 +130,7 @@ const BRIDGE_EXPECTATION_KEYS = [
   'schedule',
   'taskCatalog',
 ];
+const trustedExecutionBridges = new WeakSet();
 
 const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 
@@ -678,7 +679,9 @@ export function createDistributedExecutionBridge(value) {
     ['brokerHandoff', 'queue', 'schedule', 'taskCatalog'],
     'distributed execution bridge sources'
   );
-  return deriveBridge(value);
+  const bridge = deriveBridge(value);
+  trustedExecutionBridges.add(bridge);
+  return bridge;
 }
 
 function validateAssignmentShape(value, index) {
@@ -743,6 +746,15 @@ function validateBridgeShape(value) {
     throw new Error('Execution bridge hash does not match its contents');
 }
 
+export function assertTrustedDistributedExecutionBridge(value) {
+  if (!trustedExecutionBridges.has(value))
+    throw new Error(
+      'Distributed execution bridge is not trusted controller runtime state'
+    );
+  validateBridgeShape(value);
+  return value;
+}
+
 export function verifyDistributedExecutionBridge(value, expectations) {
   exactKeys(
     expectations,
@@ -764,5 +776,6 @@ export function verifyDistributedExecutionBridge(value, expectations) {
   });
   if (!sameCanonical(value, expected))
     throw new Error('Execution bridge does not match its verified sources');
+  trustedExecutionBridges.add(expected);
   return expected;
 }

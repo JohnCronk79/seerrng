@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   BROKER_BINDING_SCHEMA,
+  MAX_EVIDENCE_BLOB_BYTES,
   brokerApplicationIsolationKeySha256,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
 import {
@@ -412,6 +413,10 @@ test('canonical paths reject traversal, alternate separators, and device forms',
 });
 
 test('artifact count and byte limits fail closed', () => {
+  assert.equal(
+    MAX_DISTRIBUTED_EVIDENCE_ARTIFACT_BYTES,
+    MAX_EVIDENCE_BLOB_BYTES
+  );
   const largeBlobMetadata = createDistributedEvidenceManifest(
     manifestInput({
       artifacts: [

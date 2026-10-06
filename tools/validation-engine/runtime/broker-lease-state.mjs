@@ -1407,6 +1407,7 @@ export function acknowledgeBrokerCancellation(
     lease.workerInstanceId !== acknowledgement.instanceId ||
     lease.workerSessionId !== acknowledgement.workerSessionId ||
     lease.taskId !== acknowledgement.taskId ||
+    lease.taskSha256 !== acknowledgement.cleanupEvidence.taskSha256 ||
     lease.attempt !== acknowledgement.attempt
   )
     throw new Error('Cancellation acknowledgement does not match its lease');
@@ -1506,6 +1507,7 @@ export function recoverBrokerLeaseCleanup(
     lease.workerInstanceId !== recovery.instanceId ||
     lease.workerSessionId !== recovery.workerSessionId ||
     lease.taskId !== recovery.taskId ||
+    lease.taskSha256 !== recovery.cleanupEvidence.taskSha256 ||
     lease.attempt !== recovery.attempt
   )
     throw new Error(

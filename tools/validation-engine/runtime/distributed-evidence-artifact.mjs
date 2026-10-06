@@ -1,9 +1,14 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 // Transport-neutral controller contract for persisted distributed evidence.
 import {
+  BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
+  MAX_EVIDENCE_BLOB_BYTES,
+  assertAuthenticatedBrokerMessage,
   brokerApplicationIsolationKeySha256,
+  normalizeEvidenceSchemaToken,
   verifyBrokerBinding,
 } from './broker-protocol.mjs';
+import { assertTrustedDistributedExecutionBridge } from './distributed-execution-bridge.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA =
@@ -17,7 +22,7 @@ export const DISTRIBUTED_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA =
 export const MAX_DISTRIBUTED_EVIDENCE_ARTIFACTS = 256;
 // Blob bytes live outside this metadata-only contract. These bounds admit
 // native browser video/log evidence while keeping one execution finite.
-export const MAX_DISTRIBUTED_EVIDENCE_ARTIFACT_BYTES = 512 * 1024 * 1024;
+export const MAX_DISTRIBUTED_EVIDENCE_ARTIFACT_BYTES = MAX_EVIDENCE_BLOB_BYTES;
 export const MAX_DISTRIBUTED_EVIDENCE_TOTAL_BYTES = 32 * 1024 * 1024 * 1024;
 export const MAX_DISTRIBUTED_EVIDENCE_PATH_BYTES = 1_024;
 export const MAX_DISTRIBUTED_EVIDENCE_PATH_SEGMENTS = 4;
@@ -108,6 +113,11 @@ const EXPECTED_ARTIFACT_KEYS = [
   'namespaceKind',
   'required',
   'schema',
+];
+const AUTHENTICATED_CLEANUP_MANIFEST_VERIFICATION_KEYS = [
+  'cancelledMessage',
+  'executionBridge',
+  'manifest',
 ];
 const RECEIPT_CREATE_KEYS = [
   'manifest',
@@ -338,7 +348,7 @@ function normalizeArtifactInput(value, index, context, outputNamespaces) {
       namespaceIdentitySha256,
       blobSha256
     ),
-    evidenceSchema: identifier(value.evidenceSchema, 'evidence schema'),
+    evidenceSchema: normalizeEvidenceSchemaToken(value.evidenceSchema),
     mediaType: mediaType(value.mediaType, 'evidence media type'),
     bytes: integer(value.bytes, 'Evidence byte count', {
       maximum: MAX_DISTRIBUTED_EVIDENCE_ARTIFACT_BYTES,
@@ -560,7 +570,10 @@ function normalizeExpectedArtifacts(value) {
         throw new Error('Expected evidence required flag must be boolean');
       return {
         evidenceId: identifier(entry.evidenceId, 'expected evidence ID'),
-        schema: identifier(entry.schema, 'expected evidence schema'),
+        schema: normalizeEvidenceSchemaToken(
+          entry.schema,
+          'expected evidence schema'
+        ),
         mediaType: mediaType(entry.mediaType, 'expected evidence media type'),
         required: entry.required,
         namespaceKind: namespaceKind(entry.namespaceKind),
@@ -626,6 +639,8 @@ export function createDistributedEvidenceManifest(value) {
   return sealed;
 }
 
+// Low-level generic verifier. Authenticated worker cancellation cleanup must
+// use verifyAuthenticatedDistributedCleanupEvidenceManifest below.
 export function verifyDistributedEvidenceManifest(value, expectations) {
   exactKeys(
     expectations,
@@ -714,6 +729,82 @@ export function verifyDistributedEvidenceManifest(value, expectations) {
     throw new Error('Evidence manifest has another output namespace set');
   assertExpectedArtifacts(manifest, expectations.expectedArtifacts);
   return deepFreeze(manifest);
+}
+
+// Runtime authority: the controller derives every cleanup expectation from one
+// authenticated cancellation and one controller-owned execution bridge.
+export function verifyAuthenticatedDistributedCleanupEvidenceManifest(value) {
+  exactKeys(
+    value,
+    AUTHENTICATED_CLEANUP_MANIFEST_VERIFICATION_KEYS,
+    'authenticated cleanup evidence manifest verification input'
+  );
+  const message = assertAuthenticatedBrokerMessage(
+    value.cancelledMessage,
+    'worker.cancelled'
+  );
+  const bridge = assertTrustedDistributedExecutionBridge(value.executionBridge);
+  const binding = verifyBrokerBinding(message.binding);
+  const brokerApplicationIsolationSha256 =
+    brokerApplicationIsolationKeySha256(binding);
+  const body = message.body;
+  const cleanup = body.cleanupEvidence;
+  const task = bridge.tasks.find((entry) => entry.taskId === body.taskId);
+
+  if (
+    !sameCanonical(bridge.binding, binding) ||
+    !task ||
+    task.applicationIsolationKeySha256 !== brokerApplicationIsolationSha256 ||
+    task.assignment.workerId !== body.workerId ||
+    task.taskSha256 !== cleanup.taskSha256 ||
+    bridge.bridgeSha256 !== cleanup.bridgeSha256 ||
+    body.attempt > task.maxAttempts
+  )
+    throw new Error(
+      'Authenticated cleanup message does not match its controller execution bridge'
+    );
+
+  const expected = createDistributedEvidenceManifest({
+    schema: DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA,
+    bridgeSha256: bridge.bridgeSha256,
+    binding,
+    executionId: binding.executionId,
+    queueApplicationIsolationKeySha256:
+      bridge.queueApplicationIsolationKeySha256,
+    brokerApplicationIsolationKeySha256: brokerApplicationIsolationSha256,
+    outputNamespaces: bridge.outputNamespaces,
+    workerId: body.workerId,
+    instanceId: body.instanceId,
+    workerSessionId: body.workerSessionId,
+    taskId: task.taskId,
+    taskSha256: task.taskSha256,
+    leaseId: body.leaseId,
+    attempt: body.attempt,
+    sourceSubmissionSha256: canonicalJsonSha256(body),
+    sourceCompletedAtMs: body.cancelledAtMs,
+    sourceMessageSha256: canonicalJsonSha256(message),
+    sourceMessageSentAtMs: message.sentAtMs,
+    artifacts: [
+      {
+        evidenceId: cleanup.evidenceId,
+        evidenceSchema: cleanup.evidenceSchema,
+        mediaType: cleanup.mediaType,
+        namespaceKind: BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
+        relativePath:
+          `${BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND}/` +
+          `${bridge.outputNamespaces.failureIdentitySha256}/` +
+          `${cleanup.blobSha256.slice(0, 2)}/${cleanup.blobSha256}`,
+        bytes: cleanup.bytes,
+        blobSha256: cleanup.blobSha256,
+      },
+    ],
+  });
+  const manifest = normalizeSealedManifest(value.manifest);
+  if (!sameCanonical(manifest, expected))
+    throw new Error(
+      'Authenticated cleanup evidence manifest does not match its controller execution authority'
+    );
+  return expected;
 }
 
 function receiptProjection(manifest) {

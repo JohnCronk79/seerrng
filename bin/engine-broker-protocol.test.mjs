@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
+  BROKER_CLEANUP_EVIDENCE_SCHEMA,
+  MAX_EVIDENCE_BLOB_BYTES,
   authenticateBrokerMessage,
   brokerApplicationIsolationKeySha256,
   brokerEvidenceKeySha256,
@@ -677,6 +680,39 @@ test('worker result messages reject duplicate or unbound evidence', () => {
   );
   assert.equal(accepted.body.evidence[0].evidenceKeySha256, evidenceKeySha256);
 
+  const empty = structuredClone(body);
+  empty.evidence[0].bytes = 0;
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.result', empty, 'worker-east', {
+          sentAtMs: 4_100,
+        })
+      ),
+    /Evidence byte count must be a safe integer of at least 1/
+  );
+  const boundary = structuredClone(body);
+  boundary.evidence[0].bytes = MAX_EVIDENCE_BLOB_BYTES;
+  assert.equal(
+    createBrokerMessage(
+      message('worker.result', boundary, 'worker-east', {
+        sentAtMs: 4_100,
+      })
+    ).body.evidence[0].bytes,
+    MAX_EVIDENCE_BLOB_BYTES
+  );
+  const overflow = structuredClone(body);
+  overflow.evidence[0].bytes = MAX_EVIDENCE_BLOB_BYTES + 1;
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message('worker.result', overflow, 'worker-east', {
+          sentAtMs: 4_100,
+        })
+      ),
+    /Evidence byte count must not exceed/
+  );
+
   const duplicate = structuredClone(body);
   duplicate.evidence.push(duplicate.evidence[0]);
   assert.throws(
@@ -756,29 +792,128 @@ test('worker reports and results are bound to their authenticated session', () =
   );
 });
 
-test('cleanup proof is sealed and bound to execution, lease, instance, and session', () => {
-  const cleanup = sealBrokerCleanupEvidence(binding(), {
+test('cleanup evidence v2 seals pre-message content and rejects v1', () => {
+  const cleanupInput = {
     workerId: 'worker-east',
     instanceId: 'worker-east-boot-1',
     workerSessionId: 'session-1',
     leaseId: 'lease-1',
     taskId: 'unit-task-1',
+    taskSha256: sealBrokerTask(taskInput()).taskSha256,
+    bridgeSha256: h('4'),
     attempt: 1,
     cancellationRequestedAtMs: 4_000,
     completedAtMs: 4_200,
-    artifactSha256: h('5'),
-  });
+    evidenceId: 'native-cleanup',
+    evidenceSchema: 'seerrng-artifact/v1',
+    mediaType: 'application/json',
+    bytes: 128,
+    blobSha256: h('5'),
+  };
+  const cleanup = sealBrokerCleanupEvidence(binding(), cleanupInput);
   assert.deepEqual(verifyBrokerCleanupEvidence(binding(), cleanup), cleanup);
+  assert.equal(cleanup.schema, BROKER_CLEANUP_EVIDENCE_SCHEMA);
+  assert.equal(cleanup.namespaceKind, BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND);
   assert.equal(
     cleanup.applicationIsolationKeySha256,
     brokerApplicationIsolationKeySha256(binding())
   );
-
-  const changedArtifact = structuredClone(cleanup);
-  changedArtifact.artifactSha256 = h('6');
+  const legacySchemaToken = sealBrokerCleanupEvidence(binding(), {
+    ...cleanupInput,
+    evidenceSchema: 'seerrng-native-cleanup-v1',
+  });
+  assert.equal(
+    verifyBrokerCleanupEvidence(binding(), legacySchemaToken).evidenceSchema,
+    'seerrng-native-cleanup-v1'
+  );
   assert.throws(
-    () => verifyBrokerCleanupEvidence(binding(), changedArtifact),
+    () =>
+      sealBrokerCleanupEvidence(binding(), {
+        ...cleanupInput,
+        bytes: 0,
+      }),
+    /Cleanup evidence byte count must be a safe integer of at least 1/
+  );
+  assert.equal(
+    sealBrokerCleanupEvidence(binding(), {
+      ...cleanupInput,
+      bytes: MAX_EVIDENCE_BLOB_BYTES,
+    }).bytes,
+    MAX_EVIDENCE_BLOB_BYTES
+  );
+  assert.throws(
+    () =>
+      sealBrokerCleanupEvidence(binding(), {
+        ...cleanupInput,
+        bytes: MAX_EVIDENCE_BLOB_BYTES + 1,
+      }),
+    /Cleanup evidence byte count must not exceed/
+  );
+  for (const evidenceSchema of [
+    '/seerrng-artifact/v1',
+    'seerrng-artifact/',
+    'seerrng-artifact//v1',
+    'seerrng-artifact/v1/extra',
+    'seerrng artifact/v1',
+    'seerrng-artifact/ v1',
+    'seerrng-artifact/v1\n',
+    'seerrng-artifact/v1\u0000',
+    `${'a'.repeat(128)}/${'b'.repeat(128)}`,
+  ])
+    assert.throws(
+      () =>
+        sealBrokerCleanupEvidence(binding(), {
+          ...cleanupInput,
+          evidenceSchema,
+        }),
+      /Exact cleanup evidence content schema token is required/
+    );
+
+  const changedBlob = structuredClone(cleanup);
+  changedBlob.blobSha256 = h('6');
+  assert.throws(
+    () => verifyBrokerCleanupEvidence(binding(), changedBlob),
     /seal does not match/
+  );
+  for (const [field, value] of [
+    ['taskSha256', h('6')],
+    ['bridgeSha256', h('7')],
+  ]) {
+    const changed = structuredClone(cleanup);
+    changed[field] = value;
+    assert.throws(
+      () => verifyBrokerCleanupEvidence(binding(), changed),
+      /identity is not bound|seal does not match/
+    );
+  }
+  const changedNamespace = structuredClone(cleanup);
+  changedNamespace.namespaceKind = 'evidence';
+  assert.throws(
+    () => verifyBrokerCleanupEvidence(binding(), changedNamespace),
+    /failure namespace/
+  );
+  const legacy = structuredClone(cleanup);
+  legacy.schema = 'seerrng-validation-broker-cleanup-evidence/v1';
+  assert.throws(
+    () => verifyBrokerCleanupEvidence(binding(), legacy),
+    /Unsupported cleanup evidence schema/
+  );
+  assert.throws(
+    () =>
+      sealBrokerCleanupEvidence(binding(), {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-1',
+        taskId: 'unit-task-1',
+        taskSha256: sealBrokerTask(taskInput()).taskSha256,
+        bridgeSha256: h('4'),
+        attempt: 1,
+        cancellationRequestedAtMs: 4_000,
+        completedAtMs: 4_200,
+        artifactSha256: h('5'),
+      }),
+    /exact field set/
   );
   assert.throws(
     () =>

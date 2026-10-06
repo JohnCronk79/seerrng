@@ -1,7 +1,10 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 // Sealed, transport-neutral lifecycle state for one native worker attempt.
 import {
+  MAX_EVIDENCE_BLOB_BYTES,
   brokerApplicationIsolationKeySha256,
+  normalizeEvidenceSchemaToken,
+  sealBrokerCleanupEvidence,
   verifyBrokerBinding,
   verifyBrokerTask,
 } from './broker-protocol.mjs';
@@ -182,20 +185,6 @@ function identifier(value, label) {
   return value;
 }
 
-function exactText(value, label, maximum = 256) {
-  if (
-    typeof value !== 'string' ||
-    !value ||
-    value.length > maximum ||
-    value.trim() !== value ||
-    value.normalize('NFC') !== value ||
-    // eslint-disable-next-line no-control-regex -- Persisted cross-machine text.
-    /[\x00-\x1f\x7f]/.test(value)
-  )
-    throw new Error(`Exact ${label} is required`);
-  return value;
-}
-
 function digest(value, label) {
   if (typeof value !== 'string' || !HASH64.test(value))
     throw new Error(`Exact ${label} is required`);
@@ -341,9 +330,12 @@ function normalizeReference(value, label) {
     throw new Error(`Exact ${label} media type is required`);
   return {
     referenceId: identifier(value.referenceId, `${label} ID`),
-    schema: exactText(value.schema, `${label} schema`),
+    schema: normalizeEvidenceSchemaToken(value.schema, `${label} schema`),
     mediaType: value.mediaType,
-    bytes: integer(value.bytes, `${label} byte count`, { minimum: 1 }),
+    bytes: integer(value.bytes, `${label} byte count`, {
+      maximum: MAX_EVIDENCE_BLOB_BYTES,
+      minimum: 1,
+    }),
     sha256: digest(value.sha256, `${label} content hash`),
     storageIdentitySha256: digest(
       value.storageIdentitySha256,
@@ -1129,6 +1121,67 @@ export function cleanDistributedWorkerAttempt(stateValue, value) {
     'attempt-cleanup-complete',
     input
   );
+}
+
+export function distributedWorkerCleanupEvidenceContent(stateValue) {
+  const state = assertTrustedState(stateValue);
+  if (state.status !== 'cleaned' || !state.cleanup?.evidenceReference)
+    throw new Error(
+      'Cleanup evidence content requires a cleaned worker attempt'
+    );
+  const reference = state.cleanup.evidenceReference;
+  return deepFreeze({
+    evidenceId: reference.referenceId,
+    evidenceSchema: reference.schema,
+    mediaType: reference.mediaType,
+    bytes: reference.bytes,
+    blobSha256: reference.sha256,
+  });
+}
+
+// Runtime authority: cleanup evidence is sealed only from one trusted cleaned
+// state so callers cannot override or independently reassemble its identities.
+export function sealTrustedDistributedWorkerCleanupEvidence(stateValue) {
+  const state = assertTrustedState(stateValue);
+  if (state.status !== 'cleaned' || !state.cleanup?.evidenceReference)
+    throw new Error(
+      'Cleanup evidence sealing requires a cleaned worker attempt'
+    );
+  const reference = state.cleanup.evidenceReference;
+  const provenance = trustedTransitionProvenance.get(state);
+  const expectedDescriptor = createWorkerAttemptTransitionDescriptor(
+    'attempt-cleanup-complete',
+    {
+      cleanedAtMs: state.cleanup.completedAtMs,
+      evidenceReference: reference,
+    },
+    state.updatedAtMs
+  );
+  if (
+    !provenance ||
+    provenance.previousStateSha256 !== state.previousStateSha256 ||
+    !sameCanonical(provenance.descriptor, expectedDescriptor)
+  )
+    throw new Error(
+      'Cleanup evidence sealing requires trusted runtime cleanup transition provenance'
+    );
+  return sealBrokerCleanupEvidence(state.binding, {
+    workerId: state.lease.workerId,
+    instanceId: state.lease.instanceId,
+    workerSessionId: state.lease.workerSessionId,
+    leaseId: state.lease.leaseId,
+    taskId: state.task.taskId,
+    taskSha256: state.task.taskSha256,
+    bridgeSha256: state.bridgeSha256,
+    attempt: state.lease.attempt,
+    cancellationRequestedAtMs: state.cleanup.requiredAtMs,
+    completedAtMs: state.cleanup.completedAtMs,
+    evidenceId: reference.referenceId,
+    evidenceSchema: reference.schema,
+    mediaType: reference.mediaType,
+    bytes: reference.bytes,
+    blobSha256: reference.sha256,
+  });
 }
 
 export function verifyDistributedWorkerAttemptState(value, expectations = {}) {

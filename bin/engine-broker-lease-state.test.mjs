@@ -400,10 +400,16 @@ function cancellationAcknowledgement(plannedTask, overrides = {}) {
     workerSessionId: 'session-1',
     leaseId,
     taskId: plannedTask.taskId,
+    taskSha256: overrides.taskSha256 ?? plannedTask.taskSha256,
+    bridgeSha256: overrides.bridgeSha256 ?? h('6'),
     attempt,
     cancellationRequestedAtMs,
     completedAtMs: cancelledAtMs,
-    artifactSha256: overrides.artifactSha256 ?? h('7'),
+    evidenceId: overrides.evidenceId ?? 'native-cleanup',
+    evidenceSchema: overrides.evidenceSchema ?? 'seerrng-native-cleanup-v1',
+    mediaType: overrides.mediaType ?? 'application/json',
+    bytes: overrides.bytes ?? 128,
+    blobSha256: overrides.blobSha256 ?? h('7'),
   });
   return {
     workerId: 'worker-east',
@@ -1579,6 +1585,22 @@ test('cancellation distinguishes retryable attempt abort from terminal task canc
         state,
         authenticated(
           'worker.cancelled',
+          cancellationAcknowledgement(plannedTask, {
+            taskSha256: h('8'),
+          }),
+          'worker-east',
+          4_300
+        ),
+        cleanupAcceptance()
+      ),
+    /does not match its lease/
+  );
+  assert.throws(
+    () =>
+      acknowledgeBrokerCancellation(
+        state,
+        authenticated(
+          'worker.cancelled',
           cancellationAcknowledgement(plannedTask),
           'worker-east',
           4_300
@@ -1617,7 +1639,7 @@ test('cancellation distinguishes retryable attempt abort from terminal task canc
         authenticated(
           'worker.cancelled',
           cancellationAcknowledgement(plannedTask, {
-            artifactSha256: h('8'),
+            blobSha256: h('8'),
           }),
           'worker-east',
           4_300
@@ -1895,6 +1917,20 @@ test('rehydrated cleanup-required work stays blocked until exact cleanup is prov
     createBrokerReconciliationInput(closed, 8_600).activeLeaseIds,
     []
   );
+
+  const legacyCleanup = structuredClone(closed);
+  legacyCleanup.leases[0].cleanupEvidence.schema =
+    'seerrng-validation-broker-cleanup-evidence/v1';
+  delete legacyCleanup.stateSha256;
+  legacyCleanup.stateSha256 = canonicalJsonSha256(legacyCleanup);
+  assert.throws(
+    () =>
+      rehydrateBrokerLeaseState(legacyCleanup, {
+        expectedBinding: binding(),
+        expectedStateSha256: legacyCleanup.stateSha256,
+      }),
+    /Unsupported cleanup evidence schema/
+  );
 });
 
 test('controller recovery clears only expired cleanup with independently verified exact evidence', () => {
@@ -1917,6 +1953,20 @@ test('controller recovery clears only expired cleanup with independently verifie
     8_600
   );
   const blockedStateSha256 = state.stateSha256;
+  const substitutedTaskRecovery = authenticated(
+    'lease.cleanup-recover',
+    cleanupRecovery(plannedTask, { taskSha256: h('8') }),
+    'controller-dev',
+    8_600
+  );
+  assert.throws(
+    () =>
+      recoverBrokerLeaseCleanup(state, substitutedTaskRecovery, {
+        acceptedAtMs: 8_700,
+        verifyCleanupEvidence: () => true,
+      }),
+    /does not match its exact lease/
+  );
   assert.throws(
     () =>
       recoverBrokerLeaseCleanup(state, recoveryMessage, {

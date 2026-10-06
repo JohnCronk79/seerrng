@@ -4,7 +4,14 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { createBrokerLeaseState } from '../tools/validation-engine/runtime/broker-lease-state.mjs';
-import { brokerApplicationIsolationKeySha256 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
+import {
+  BROKER_MESSAGE_SCHEMA,
+  BROKER_PROTOCOL_VERSION,
+  authenticateBrokerMessage,
+  brokerApplicationIsolationKeySha256,
+  createBrokerMessage,
+  sealBrokerCleanupEvidence,
+} from '../tools/validation-engine/runtime/broker-protocol.mjs';
 import {
   DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA,
   createAdaptiveTimingProfile,
@@ -22,11 +29,17 @@ import {
   DISTRIBUTED_EXECUTION_BRIDGE_SCHEMA,
   DISTRIBUTED_TASK_CATALOG_SCHEMA,
   DISTRIBUTED_TASK_PAYLOAD_SCHEMA,
+  assertTrustedDistributedExecutionBridge,
   createDistributedExecutionBridge,
   createDistributedTaskCatalog,
   verifyDistributedExecutionBridge,
   verifyDistributedTaskCatalog,
 } from '../tools/validation-engine/runtime/distributed-execution-bridge.mjs';
+import {
+  DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA,
+  createDistributedEvidenceManifest,
+  verifyAuthenticatedDistributedCleanupEvidenceManifest,
+} from '../tools/validation-engine/runtime/distributed-evidence-artifact.mjs';
 import {
   DISTRIBUTED_WORKER_CONFIG_SCHEMA,
   createDistributedBrokerHandoff,
@@ -35,6 +48,13 @@ import {
   distributedWorkerRole,
   distributedWorkerRunsOnControllerHost,
 } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
+import {
+  cleanDistributedWorkerAttempt,
+  createDistributedWorkerAttemptState,
+  distributedWorkerCleanupEvidenceContent,
+  requireDistributedWorkerAttemptCleanup,
+  sealTrustedDistributedWorkerCleanupEvidence,
+} from '../tools/validation-engine/runtime/distributed-worker-attempt-state.mjs';
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const controllerId = 'controller-a';
@@ -311,7 +331,233 @@ test('bridge maps one active queue record exactly into broker binding, tasks and
   );
   assert.ok(Object.isFrozen(bridge));
   assert.ok(Object.isFrozen(bridge.tasks[0].payload.assignment));
+  assert.equal(assertTrustedDistributedExecutionBridge(bridge), bridge);
+  assert.throws(
+    () => assertTrustedDistributedExecutionBridge(structuredClone(bridge)),
+    /not trusted controller runtime state/
+  );
   assert.deepEqual(verifyBridge(bridge, selected), bridge);
+});
+
+test('controller accepts cleanup manifests only from its exact runtime bridge', () => {
+  const selected = fixture();
+  const bridge = createBridge(selected);
+  const task = bridge.tasks.find((entry) => entry.taskId === 'task-unit-a');
+  assert.ok(task);
+  const lease = {
+    leaseId: 'lease-unit-a-1',
+    attempt: 1,
+    workerId: task.assignment.workerId,
+    machineIdentitySha256: hash(`${task.assignment.workerId}-machine`),
+    instanceId: `${task.assignment.workerId}-boot-1`,
+    workerSessionId: `${task.assignment.workerId}-session-1`,
+    grantedAtMs: 100,
+    expiresAtMs: 1_100,
+  };
+  const pending = createDistributedWorkerAttemptState({
+    binding: bridge.binding,
+    bridgeSha256: bridge.bridgeSha256,
+    applicationIsolationKeySha256:
+      bridge.brokerApplicationIsolationKeySha256,
+    task,
+    lease,
+    sourceWorkspaceIdentitySha256: hash('source-workspace-unit-a'),
+    adapters: selected.taskCatalog.adapters,
+    createdAtMs: 110,
+  });
+  const cleanupRequired = requireDistributedWorkerAttemptCleanup(pending, {
+    requiredAtMs: 120,
+    reasonCode: 'lease-revoked-before-launch',
+    failureReference: {
+      referenceId: 'failure-unit-a',
+      schema: 'seerrng-worker-failure/v1',
+      mediaType: 'application/json',
+      bytes: 96,
+      sha256: hash('failure-unit-a-content'),
+      storageIdentitySha256: hash('failure-unit-a-storage'),
+    },
+  });
+  const cleaned = cleanDistributedWorkerAttempt(cleanupRequired, {
+    cleanedAtMs: 140,
+    evidenceReference: {
+      referenceId: 'cleanup-unit-a',
+      schema: 'seerrng-worker-cleanup/v1',
+      mediaType: 'application/json',
+      bytes: 128,
+      sha256: hash('cleanup-unit-a-content'),
+      storageIdentitySha256: hash('cleanup-unit-a-storage'),
+    },
+  });
+  const cleanupEvidence = sealTrustedDistributedWorkerCleanupEvidence(cleaned);
+
+  function authenticateCancellation(evidence, messageId) {
+    const sealed = createBrokerMessage({
+      schema: BROKER_MESSAGE_SCHEMA,
+      protocolVersion: BROKER_PROTOCOL_VERSION,
+      messageId,
+      kind: 'worker.cancelled',
+      sentAtMs: 150,
+      binding: bridge.binding,
+      auth: {
+        algorithm: 'hmac-sha256',
+        sessionId: lease.workerSessionId,
+        principalId: lease.workerId,
+        keyId: 'worker-cleanup-key-1',
+        nonce: `${messageId}-nonce`,
+        issuedAtMs: 100,
+        expiresAtMs: 1_000,
+        proof: 'A'.repeat(43),
+      },
+      command: null,
+      body: {
+        workerId: lease.workerId,
+        instanceId: lease.instanceId,
+        workerSessionId: lease.workerSessionId,
+        leaseId: lease.leaseId,
+        taskId: task.taskId,
+        attempt: lease.attempt,
+        cancelledAtMs: cleaned.cleanup.completedAtMs,
+        cleanupEvidence: evidence,
+      },
+    });
+    return {
+      sealed,
+      authenticated: authenticateBrokerMessage(sealed, {
+        expectedBinding: bridge.binding,
+        nowMs: sealed.sentAtMs,
+        verifyProof: () => true,
+      }),
+    };
+  }
+
+  function manifestFor(message, overrides = {}) {
+    const outputNamespaces =
+      overrides.outputNamespaces ?? bridge.outputNamespaces;
+    const content = distributedWorkerCleanupEvidenceContent(cleaned);
+    return createDistributedEvidenceManifest({
+      schema: DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA,
+      bridgeSha256: overrides.bridgeSha256 ?? bridge.bridgeSha256,
+      binding: bridge.binding,
+      executionId: bridge.binding.executionId,
+      queueApplicationIsolationKeySha256:
+        overrides.queueApplicationIsolationKeySha256 ??
+        bridge.queueApplicationIsolationKeySha256,
+      brokerApplicationIsolationKeySha256:
+        bridge.brokerApplicationIsolationKeySha256,
+      outputNamespaces,
+      workerId: lease.workerId,
+      instanceId: lease.instanceId,
+      workerSessionId: lease.workerSessionId,
+      taskId: task.taskId,
+      taskSha256: overrides.taskSha256 ?? task.taskSha256,
+      leaseId: lease.leaseId,
+      attempt: lease.attempt,
+      sourceSubmissionSha256: canonicalJsonSha256(message.body),
+      sourceCompletedAtMs: message.body.cancelledAtMs,
+      sourceMessageSha256: canonicalJsonSha256(message),
+      sourceMessageSentAtMs: message.sentAtMs,
+      artifacts: [
+        {
+          ...content,
+          namespaceKind: 'failure',
+          relativePath:
+            `failure/${outputNamespaces.failureIdentitySha256}/` +
+            `${content.blobSha256.slice(0, 2)}/${content.blobSha256}`,
+        },
+      ],
+    });
+  }
+
+  const cancellation = authenticateCancellation(
+    cleanupEvidence,
+    'worker-cleanup-cancelled-1'
+  );
+  const manifest = manifestFor(cancellation.authenticated);
+  assert.deepEqual(
+    verifyAuthenticatedDistributedCleanupEvidenceManifest({
+      cancelledMessage: cancellation.authenticated,
+      executionBridge: bridge,
+      manifest,
+    }),
+    manifest
+  );
+  assert.throws(
+    () =>
+      verifyAuthenticatedDistributedCleanupEvidenceManifest({
+        cancelledMessage: cancellation.sealed,
+        executionBridge: bridge,
+        manifest,
+      }),
+    /has not passed authentication/
+  );
+  assert.throws(
+    () =>
+      verifyAuthenticatedDistributedCleanupEvidenceManifest({
+        cancelledMessage: cancellation.authenticated,
+        executionBridge: structuredClone(bridge),
+        manifest,
+      }),
+    /not trusted controller runtime state/
+  );
+
+  for (const drifted of [
+    manifestFor(cancellation.authenticated, {
+      bridgeSha256: hash('other-execution-bridge'),
+    }),
+    manifestFor(cancellation.authenticated, {
+      queueApplicationIsolationKeySha256: hash('other-queue-isolation'),
+    }),
+    manifestFor(cancellation.authenticated, {
+      outputNamespaces: {
+        cacheIdentitySha256: hash('other-cache-namespace'),
+        evidenceIdentitySha256: hash('other-evidence-namespace'),
+        failureIdentitySha256: hash('other-failure-namespace'),
+        resultsIdentitySha256: hash('other-results-namespace'),
+      },
+    }),
+  ])
+    assert.throws(
+      () =>
+        verifyAuthenticatedDistributedCleanupEvidenceManifest({
+          cancelledMessage: cancellation.authenticated,
+          executionBridge: bridge,
+          manifest: drifted,
+        }),
+      /does not match its controller execution authority/
+    );
+
+  const substitutedTaskEvidence = sealBrokerCleanupEvidence(bridge.binding, {
+    workerId: lease.workerId,
+    instanceId: lease.instanceId,
+    workerSessionId: lease.workerSessionId,
+    leaseId: lease.leaseId,
+    taskId: task.taskId,
+    taskSha256: hash('same-id-different-task'),
+    bridgeSha256: bridge.bridgeSha256,
+    attempt: lease.attempt,
+    cancellationRequestedAtMs: cleaned.cleanup.requiredAtMs,
+    completedAtMs: cleaned.cleanup.completedAtMs,
+    evidenceId: cleanupEvidence.evidenceId,
+    evidenceSchema: cleanupEvidence.evidenceSchema,
+    mediaType: cleanupEvidence.mediaType,
+    bytes: cleanupEvidence.bytes,
+    blobSha256: cleanupEvidence.blobSha256,
+  });
+  const substitutedTaskCancellation = authenticateCancellation(
+    substitutedTaskEvidence,
+    'worker-cleanup-cancelled-substituted-task'
+  );
+  assert.throws(
+    () =>
+      verifyAuthenticatedDistributedCleanupEvidenceManifest({
+        cancelledMessage: substitutedTaskCancellation.authenticated,
+        executionBridge: bridge,
+        manifest: manifestFor(substitutedTaskCancellation.authenticated, {
+          taskSha256: substitutedTaskEvidence.taskSha256,
+        }),
+      }),
+    /does not match its controller execution bridge/
+  );
 });
 
 test('catalog preserves explicit path-to-broker-ID mapping and binds every execution field', () => {

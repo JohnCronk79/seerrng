@@ -10,13 +10,19 @@ export const BROKER_BINDING_SCHEMA = 'seerrng-validation-broker-binding/v1';
 export const BROKER_APPLICATION_ISOLATION_SCHEMA =
   'seerrng-validation-broker-application-isolation/v1';
 export const BROKER_TASK_SCHEMA = 'seerrng-validation-broker-task/v2';
+// V2 intentionally carries pre-message blob identity. V1's artifact seal could
+// not be bound to the containing cancellation message without a hash cycle.
 export const BROKER_CLEANUP_EVIDENCE_SCHEMA =
-  'seerrng-validation-broker-cleanup-evidence/v1';
+  'seerrng-validation-broker-cleanup-evidence/v2';
+export const BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND = 'failure';
 export const BROKER_WORKER_CONFIG_SCHEMA =
   'seerrng-validation-broker-worker-config/v1';
+export const MAX_EVIDENCE_BLOB_BYTES = 512 * 1024 * 1024;
 
 const HASH64 = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const EVIDENCE_SCHEMA_TOKEN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_EVIDENCE_SCHEMA_TOKEN_BYTES = 256;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}$/;
 const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 const PROOF = /^[A-Za-z0-9_-]{16,8192}$/;
@@ -113,27 +119,40 @@ const EVIDENCE_KEYS = [
 ];
 const CLEANUP_EVIDENCE_KEYS = [
   'applicationIsolationKeySha256',
-  'artifactSha256',
   'attempt',
+  'blobSha256',
+  'bridgeSha256',
+  'bytes',
   'cancellationRequestedAtMs',
   'cleanupEvidenceSha256',
   'cleanupKeySha256',
   'completedAtMs',
+  'evidenceId',
+  'evidenceSchema',
   'instanceId',
   'leaseId',
+  'mediaType',
+  'namespaceKind',
   'schema',
   'taskId',
+  'taskSha256',
   'workerId',
   'workerSessionId',
 ];
 const CLEANUP_EVIDENCE_INPUT_KEYS = [
-  'artifactSha256',
   'attempt',
+  'blobSha256',
+  'bridgeSha256',
+  'bytes',
   'cancellationRequestedAtMs',
   'completedAtMs',
+  'evidenceId',
+  'evidenceSchema',
   'instanceId',
   'leaseId',
+  'mediaType',
   'taskId',
+  'taskSha256',
   'workerId',
   'workerSessionId',
 ];
@@ -239,6 +258,23 @@ function identifier(value, label) {
   return value;
 }
 
+export function normalizeEvidenceSchemaToken(value, label = 'evidence schema') {
+  if (
+    typeof value !== 'string' ||
+    value.normalize('NFC') !== value ||
+    Buffer.byteLength(value, 'utf8') > MAX_EVIDENCE_SCHEMA_TOKEN_BYTES
+  )
+    throw new Error(`Exact ${label} token is required`);
+  const segments = value.split('/');
+  if (
+    segments.length < 1 ||
+    segments.length > 2 ||
+    segments.some((segment) => !EVIDENCE_SCHEMA_TOKEN_SEGMENT.test(segment))
+  )
+    throw new Error(`Exact ${label} token is required`);
+  return value;
+}
+
 function digest(value, label) {
   if (typeof value !== 'string' || !HASH64.test(value))
     throw new Error(`Exact ${label} is required`);
@@ -249,6 +285,15 @@ function safeInteger(value, label, { minimum = 0 } = {}) {
   if (!Number.isSafeInteger(value) || value < minimum)
     throw new Error(`${label} must be a safe integer of at least ${minimum}`);
   return value;
+}
+
+function evidenceBytes(value, label, { minimum = 0 } = {}) {
+  const bytes = safeInteger(value, label, { minimum });
+  if (bytes > MAX_EVIDENCE_BLOB_BYTES)
+    throw new Error(
+      `${label} must not exceed ${MAX_EVIDENCE_BLOB_BYTES} bytes`
+    );
+  return bytes;
 }
 
 function uniqueIdentifiers(values, label) {
@@ -328,7 +373,7 @@ function normalizeExpectedEvidence(value) {
     throw new Error('Exact expected evidence media type is required');
   return {
     evidenceId: identifier(value.evidenceId, 'evidence ID'),
-    schema: identifier(value.schema, 'evidence schema'),
+    schema: normalizeEvidenceSchemaToken(value.schema),
     mediaType: value.mediaType,
     required: value.required,
   };
@@ -688,6 +733,7 @@ export function brokerCleanupKeySha256(bindingValue, value) {
   plainObject(value, 'cleanup evidence identity');
   return canonicalJsonSha256({
     binding: normalizeBinding(bindingValue),
+    bridgeSha256: digest(value.bridgeSha256, 'execution bridge hash'),
     workerId: identifier(value.workerId, 'worker ID'),
     instanceId: identifier(value.instanceId, 'worker instance ID'),
     workerSessionId: identifier(
@@ -696,6 +742,7 @@ export function brokerCleanupKeySha256(bindingValue, value) {
     ),
     leaseId: identifier(value.leaseId, 'lease ID'),
     taskId: identifier(value.taskId, 'task ID'),
+    taskSha256: digest(value.taskSha256, 'task hash'),
     attempt: safeInteger(value.attempt, 'Task attempt', { minimum: 1 }),
     cancellationRequestedAtMs: safeInteger(
       value.cancellationRequestedAtMs,
@@ -712,6 +759,8 @@ function cleanupEvidenceSeal(value) {
 
 function normalizeCleanupEvidenceWithoutSeal(value, binding) {
   exactObject(value, 'cleanup evidence input', CLEANUP_EVIDENCE_INPUT_KEYS);
+  if (typeof value.mediaType !== 'string' || !MEDIA_TYPE.test(value.mediaType))
+    throw new Error('Exact cleanup evidence media type is required');
   const evidence = {
     schema: BROKER_CLEANUP_EVIDENCE_SCHEMA,
     applicationIsolationKeySha256: brokerApplicationIsolationKeySha256(binding),
@@ -723,6 +772,8 @@ function normalizeCleanupEvidenceWithoutSeal(value, binding) {
     ),
     leaseId: identifier(value.leaseId, 'lease ID'),
     taskId: identifier(value.taskId, 'task ID'),
+    taskSha256: digest(value.taskSha256, 'task hash'),
+    bridgeSha256: digest(value.bridgeSha256, 'execution bridge hash'),
     attempt: safeInteger(value.attempt, 'Task attempt', { minimum: 1 }),
     cancellationRequestedAtMs: safeInteger(
       value.cancellationRequestedAtMs,
@@ -732,7 +783,17 @@ function normalizeCleanupEvidenceWithoutSeal(value, binding) {
       value.completedAtMs,
       'Cleanup evidence completion time'
     ),
-    artifactSha256: digest(value.artifactSha256, 'cleanup artifact hash'),
+    evidenceId: identifier(value.evidenceId, 'cleanup evidence ID'),
+    evidenceSchema: normalizeEvidenceSchemaToken(
+      value.evidenceSchema,
+      'cleanup evidence content schema'
+    ),
+    mediaType: value.mediaType,
+    bytes: evidenceBytes(value.bytes, 'Cleanup evidence byte count', {
+      minimum: 1,
+    }),
+    blobSha256: digest(value.blobSha256, 'cleanup evidence blob hash'),
+    namespaceKind: BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND,
   };
   if (evidence.completedAtMs < evidence.cancellationRequestedAtMs)
     throw new Error('Cleanup cannot complete before cancellation is requested');
@@ -742,6 +803,8 @@ function normalizeCleanupEvidenceWithoutSeal(value, binding) {
   };
 }
 
+// Low-level protocol primitive. Runtime workers must seal cleanup from their
+// trusted lifecycle state through the worker-attempt runtime authority.
 export function sealBrokerCleanupEvidence(bindingValue, value) {
   const evidence = normalizeCleanupEvidenceWithoutSeal(
     value,
@@ -757,6 +820,8 @@ export function verifyBrokerCleanupEvidence(bindingValue, value) {
   exactObject(value, 'cleanup evidence', CLEANUP_EVIDENCE_KEYS);
   if (value.schema !== BROKER_CLEANUP_EVIDENCE_SCHEMA)
     throw new Error('Unsupported cleanup evidence schema');
+  if (value.namespaceKind !== BROKER_CLEANUP_EVIDENCE_NAMESPACE_KIND)
+    throw new Error('Cleanup evidence must use the failure namespace');
   const evidence = normalizeCleanupEvidenceWithoutSeal(
     {
       workerId: value.workerId,
@@ -764,10 +829,16 @@ export function verifyBrokerCleanupEvidence(bindingValue, value) {
       workerSessionId: value.workerSessionId,
       leaseId: value.leaseId,
       taskId: value.taskId,
+      taskSha256: value.taskSha256,
+      bridgeSha256: value.bridgeSha256,
       attempt: value.attempt,
       cancellationRequestedAtMs: value.cancellationRequestedAtMs,
       completedAtMs: value.completedAtMs,
-      artifactSha256: value.artifactSha256,
+      evidenceId: value.evidenceId,
+      evidenceSchema: value.evidenceSchema,
+      mediaType: value.mediaType,
+      bytes: value.bytes,
+      blobSha256: value.blobSha256,
     },
     normalizeBinding(bindingValue)
   );
@@ -917,9 +988,9 @@ function normalizeEvidence(value, binding, taskId, attempt) {
       attempt,
       evidenceId
     ),
-    schema: identifier(value.schema, 'evidence schema'),
+    schema: normalizeEvidenceSchemaToken(value.schema),
     mediaType: value.mediaType,
-    bytes: safeInteger(value.bytes, 'Evidence byte count'),
+    bytes: evidenceBytes(value.bytes, 'Evidence byte count', { minimum: 1 }),
     sha256: digest(value.sha256, 'evidence hash'),
   };
   if (value.evidenceKeySha256 !== evidence.evidenceKeySha256)
