@@ -1,5 +1,5 @@
 // Copyright (c) snapetech and SeerrNG contributors.
-// Safe bridge from a locally derived tests-only plan to one distributed task.
+// Safe bridge from a locally derived tests-only plan to one selected task.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
@@ -27,6 +27,7 @@ export const DISTRIBUTED_NATIVE_TASK_RESULT_SCHEMA =
   'seerrng-distributed-native-task-result/v1';
 export const DEFAULT_DISTRIBUTED_NATIVE_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 export const MAX_DISTRIBUTED_NATIVE_TASK_TIMEOUT_MS = 60 * 60 * 1000;
+export const MAX_DISTRIBUTED_NATIVE_TASKS = 65_536;
 
 const INVENTORY_IDENTITY_SCHEMA =
   'seerrng-distributed-native-inventory-identity/v1';
@@ -396,15 +397,77 @@ function createAvailableTasks(plan, applicationId) {
       [...toolingSteps[0].files].toSorted(compareText)
     )
   );
+  if (tasks.length > MAX_DISTRIBUTED_NATIVE_TASKS)
+    throw new Error('Distributed native task inventory exceeds its safe bound');
   return tasks.toSorted((left, right) =>
     compareText(left.taskId, right.taskId)
   );
 }
 
+function verifyTaskFilesAtHead(root, tasks) {
+  const headFiles = new Map();
+  for (const record of git(
+    root,
+    ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'],
+    'Distributed native HEAD inventory'
+  ).split('\0')) {
+    if (!record) continue;
+    const separator = record.indexOf('\t');
+    if (separator < 0)
+      throw new Error('Distributed native HEAD inventory is malformed');
+    const metadata = record.slice(0, separator).split(' ');
+    if (metadata.length !== 3)
+      throw new Error('Distributed native HEAD inventory is malformed');
+    const [mode, type, objectId] = metadata;
+    headFiles.set(record.slice(separator + 1), { mode, type, objectId });
+  }
+
+  for (const file of new Set(tasks.flatMap((task) => task.files))) {
+    const entry = headFiles.get(file);
+    if (
+      !entry ||
+      entry.type !== 'blob' ||
+      !['100644', '100755'].includes(entry.mode) ||
+      !GIT_OBJECT.test(entry.objectId)
+    )
+      throw new Error(
+        `Distributed native task file is not an ordinary tracked HEAD blob: ${file}`
+      );
+    const absolute = resolve(root, ...file.split('/'));
+    const metadata = lstatSync(absolute);
+    const resolved = realpathSync(absolute);
+    const child = relative(root, resolved).split(sep).join('/');
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      child !== file ||
+      isAbsolute(child) ||
+      child.startsWith('../')
+    )
+      throw new Error(
+        `Distributed native task file escaped its tracked path: ${file}`
+      );
+    const contents = readFileSync(resolved);
+    const algorithm = entry.objectId.length === 40 ? 'sha1' : 'sha256';
+    const actualObjectId = createHash(algorithm)
+      .update(`blob ${contents.length}\0`)
+      .update(contents)
+      .digest('hex');
+    if (actualObjectId !== entry.objectId)
+      throw new Error(
+        `Distributed native task file does not match its HEAD blob: ${file}`
+      );
+  }
+}
+
 function normalizeAllowedTaskIds(value) {
-  if (!Array.isArray(value) || value.length === 0)
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > MAX_DISTRIBUTED_NATIVE_TASKS
+  )
     throw new Error(
-      'A nonempty local distributed native task allowlist is required'
+      'A nonempty local distributed native task allowlist within the supported bound is required'
     );
   const allowed = value.map((taskId) =>
     digest(taskId, 'allowed distributed native task ID')
@@ -461,16 +524,9 @@ function normalizeCatalog(value) {
   return { ...core, catalogSha256 };
 }
 
-function createCatalogAndPlan(rootValue, options) {
-  exactKeys(
-    options,
-    ['allowedTaskIds', 'applicationId'],
-    'distributed native catalog options'
-  );
-  let { applicationId, allowedTaskIds } = options;
+function deriveAvailableTasksAndPlan(rootValue, applicationId) {
   const root = normalizeRoot(rootValue);
   applicationId = identifier(applicationId, 'application ID');
-  const allowed = normalizeAllowedTaskIds(allowedTaskIds);
   const candidate = createCandidate(root);
   preflight(root, { testsOnly: true });
   const plan = createPlan(root, {
@@ -479,12 +535,11 @@ function createCatalogAndPlan(rootValue, options) {
     canonicalTypescript: false,
   });
   const available = createAvailableTasks(plan, applicationId);
-  const allowedSet = new Set(allowed);
-  const tasks = available.filter((task) => allowedSet.has(task.taskId));
-  if (tasks.length !== allowed.length)
-    throw new Error(
-      'Distributed native task allowlist names an unavailable task'
-    );
+  verifyTaskFilesAtHead(root, available);
+  return { root, applicationId, candidate, plan, available };
+}
+
+function sealCatalog({ root, applicationId, candidate, plan, tasks }) {
   const inventorySha256 = canonicalJsonSha256({
     schema: INVENTORY_IDENTITY_SCHEMA,
     applicationId,
@@ -508,8 +563,33 @@ function createCatalogAndPlan(rootValue, options) {
   return { root, plan, catalog };
 }
 
+function createCatalogAndPlan(rootValue, options) {
+  exactKeys(
+    options,
+    ['allowedTaskIds', 'applicationId'],
+    'distributed native catalog options'
+  );
+  const { applicationId, allowedTaskIds } = options;
+  const allowed = normalizeAllowedTaskIds(allowedTaskIds);
+  const derived = deriveAvailableTasksAndPlan(rootValue, applicationId);
+  const { available } = derived;
+  const allowedSet = new Set(allowed);
+  const tasks = available.filter((task) => allowedSet.has(task.taskId));
+  if (tasks.length !== allowed.length)
+    throw new Error(
+      'Distributed native task allowlist names an unavailable task'
+    );
+  return sealCatalog({ ...derived, tasks });
+}
+
 export function createDistributedNativeCatalog(root, options) {
   return createCatalogAndPlan(root, options).catalog;
+}
+
+export function discoverDistributedNativeCatalog(root, options) {
+  exactKeys(options, ['applicationId'], 'distributed native discovery options');
+  const derived = deriveAvailableTasksAndPlan(root, options.applicationId);
+  return sealCatalog({ ...derived, tasks: derived.available }).catalog;
 }
 
 export function createDistributedNativeTaskRequest(catalogValue, taskId) {

@@ -8,6 +8,7 @@ import {
   createDistributedNativeCatalog,
   createDistributedNativeTaskRequest,
   executeDistributedNativeTask,
+  MAX_DISTRIBUTED_NATIVE_TASKS,
   verifyDistributedNativeTaskResult,
 } from './distributed-native-adapter.mjs';
 import {
@@ -582,14 +583,15 @@ function normalizeApplications(applications) {
 function normalizeAllowedTaskIds(value) {
   if (
     !Array.isArray(value) ||
-    value.length !== 1 ||
+    value.length === 0 ||
+    value.length > MAX_DISTRIBUTED_NATIVE_TASKS ||
     value.some(
       (taskId) => typeof taskId !== 'string' || !HASH64.test(taskId)
     ) ||
     new Set(value).size !== value.length
   )
     throw new Error(
-      'This distributed milestone requires exactly one hashed task ID'
+      'Distributed workers require a nonempty bounded set of unique hashed task IDs'
     );
   return [...value];
 }
@@ -964,10 +966,11 @@ function verifyWorkerReport(
     throw new Error('Distributed worker candidate does not match controller');
   digest(application.catalogSha256, 'worker application catalog hash');
   digest(application.inventorySha256, 'worker application inventory hash');
-  if (application.taskCount !== 1)
-    throw new Error(
-      'Distributed worker must report exactly one executable task'
-    );
+  const taskCount = boundedInteger(
+    application.taskCount,
+    'Distributed worker executable task count',
+    { minimum: 1, maximum: MAX_DISTRIBUTED_NATIVE_TASKS }
+  );
   return deepFreeze({
     schema: report.schema,
     workerId: report.workerId,
@@ -986,7 +989,7 @@ function verifyWorkerReport(
         candidateSha256: application.candidateSha256,
         catalogSha256: application.catalogSha256,
         inventorySha256: application.inventorySha256,
-        taskCount: application.taskCount,
+        taskCount,
       },
     ],
   });

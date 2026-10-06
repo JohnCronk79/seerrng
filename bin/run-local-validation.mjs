@@ -45,6 +45,8 @@ import {
   configuredDistributedWorker,
   parseDistributedWorkerConfig,
 } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import { discoverDistributedNativeCatalog } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const git = (root, parameters, encoding = 'utf8') =>
@@ -255,6 +257,7 @@ const flagOptions = new Set([
   '--github-receipt',
   '--github-run-test-lane',
   '--github-reconcile',
+  '--distributed-discover',
   '--distributed-controller',
   '--distributed-worker',
 ]);
@@ -420,6 +423,17 @@ const optionContracts = {
     ],
     requiredRepeated: ['--app'],
   },
+  'distributed-discover': {
+    label: 'Distributed discovery mode',
+    allowed: new Set([
+      '--distributed-discover',
+      '--application',
+      '--app',
+      '--json',
+    ]),
+    requiredValues: ['--application'],
+    requiredRepeated: ['--app'],
+  },
   'distributed-worker': {
     label: 'Distributed worker mode',
     allowed: new Set([
@@ -505,6 +519,7 @@ function validateOptions(options) {
     throw new Error('Choose exactly one hosted GitHub mode');
 
   const distributedModes = [
+    '--distributed-discover',
     '--distributed-controller',
     '--distributed-worker',
   ].filter((option) => options.flags.has(option));
@@ -596,8 +611,9 @@ if (!options) {
        node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
        node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
        node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
+       node bin/run-local-validation.mjs --distributed-discover --app ID=ABSOLUTE_ROOT --application ID [--json]
        node bin/run-local-validation.mjs --distributed-controller --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --application ID --task ID --report-file ABSOLUTE_FILE [--timeout-ms MS]
-       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --allow-task ID --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
+       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --allow-task ID [--allow-task ID ...] --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
 
 Runs the existing engine's staged native PR-parity gate: repository checks,
 CodeQL, production builds, browser tests and applicable supplemental checks.
@@ -615,13 +631,15 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
               Seal one native job/case result and its current-attempt ledger entry.
 --github-reconcile
               Verify native needs and complete sealed receipts against the plan.
+--distributed-discover
+              Read the clean local tests-only plan and list its native task IDs.
 --distributed-controller
               Probe one configured trusted worker and run one locally derived task.
 --distributed-worker
               Serve locally derived native tasks for an authenticated controller.
---app         Register the one milestone application as ID=ABSOLUTE_ROOT.
---allow-task  Locally allow the one milestone task on a distributed worker.
---json        Machine-readable local plan, hosted plan, or hosted result.
+--app         Register the one distributed application as ID=ABSOLUTE_ROOT.
+--allow-task  Locally allow a discovered task on a distributed worker; repeatable.
+--json        Machine-readable local plan, distributed catalog, hosted plan, or hosted result.
 --help        Show help without reading the project or creating files.
 
 Distributed secrets are accepted only through SEERRNG_DISTRIBUTED_SHARED_SECRET.
@@ -639,7 +657,31 @@ failures, partial output closure and zero active tests fail closed.\n`);
     const hostedMode = selectedMode.hostedOption;
     const distributedMode = selectedMode.distributedOption;
     const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-    if (distributedMode) {
+    if (distributedMode === '--distributed-discover') {
+      const applications = parseDistributedApplicationBindings(
+        repeated('--app')
+      );
+      const applicationId = requiredValue('--application');
+      const application = applications.find(({ id }) => id === applicationId);
+      if (!application)
+        throw new Error(
+          `Distributed discovery does not register application: ${applicationId}`
+        );
+      const catalog = discoverDistributedNativeCatalog(application.root, {
+        applicationId,
+      });
+      if (has('--json'))
+        process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
+      else {
+        process.stdout.write(
+          `Distributed discovery ${catalog.catalogSha256}: ${catalog.tasks.length} locally derived tasks for ${applicationId} (${catalog.platform}).\n`
+        );
+        for (const task of catalog.tasks)
+          process.stdout.write(
+            `${task.taskId} ${task.adapterId} ${task.files.join(',')}\n`
+          );
+      }
+    } else if (distributedMode) {
       process.on('SIGINT', interrupt);
       process.on('SIGTERM', interrupt);
       const config = parseDistributedWorkerConfig(

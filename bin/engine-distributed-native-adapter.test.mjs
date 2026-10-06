@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import {
   createDistributedNativeCatalog,
   createDistributedNativeTaskRequest,
+  discoverDistributedNativeCatalog,
   distributedNativeTaskId,
   executeDistributedNativeTask,
   verifyDistributedNativeTaskResult,
@@ -16,6 +18,8 @@ import {
 } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+
+const engineRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 function write(root, file, content) {
   const path = join(root, ...file.split('/'));
@@ -119,7 +123,7 @@ function createFixture(t) {
   ])
     mkdirSync(join(root, ...directory.split('/')), { recursive: true });
 
-  write(root, '.gitignore', 'node_modules/\n');
+  write(root, '.gitignore', 'node_modules/\nignored-native.test.mjs\n');
   write(
     root,
     'package.json',
@@ -229,6 +233,220 @@ function resealNativeResult(value, change) {
   return { ...core, resultSha256: canonicalJsonSha256(core) };
 }
 
+test('native discovery seals every locally owned task before allowlist selection', (t) => {
+  const root = createFixture(t);
+  const discovered = discoverDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+  });
+  const repeated = discoverDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+  });
+
+  assert.deepEqual(repeated, discovered);
+  assert.equal(Object.isFrozen(discovered), true);
+  assert.equal(Object.isFrozen(discovered.tasks), true);
+  assert.equal(discovered.tasks.length, 5);
+  assert.deepEqual(
+    discovered.tasks.map(({ taskId }) => taskId),
+    discovered.tasks.map(({ taskId }) => taskId).toSorted()
+  );
+  for (const task of discovered.tasks) {
+    assert.deepEqual(Object.keys(task).toSorted(), [
+      'adapterId',
+      'files',
+      'schema',
+      'taskId',
+    ]);
+    assert.equal(
+      task.taskId,
+      distributedNativeTaskId({
+        applicationId: discovered.applicationId,
+        adapterId: task.adapterId,
+        files: task.files,
+      })
+    );
+    assert.equal('command' in task, false);
+    assert.equal('args' in task, false);
+    assert.equal('cwd' in task, false);
+    assert.equal('env' in task, false);
+  }
+
+  const toolingFiles = [
+    'bin/tooling.test.mjs',
+    ...(process.platform === 'win32' ? [] : ['deploy/posix.test.mjs']),
+  ];
+  assert.deepEqual(
+    discovered.tasks.flatMap(({ files }) => files).toSorted(),
+    [
+      'server/native-typescript.test.ts',
+      'src/vitest.test.ts',
+      'scripts/hanging-native.test.mjs',
+      'scripts/tiny-native.test.mjs',
+      ...toolingFiles,
+    ].toSorted()
+  );
+  const selectedIds = discovered.tasks
+    .filter(({ adapterId }) => adapterId !== 'tooling')
+    .slice(0, 2)
+    .map(({ taskId }) => taskId);
+  const selected = createDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+    allowedTaskIds: selectedIds,
+  });
+  assert.equal(selected.tasks.length, 2);
+  assert.deepEqual(
+    new Set(selected.tasks.map(({ taskId }) => taskId)),
+    new Set(selectedIds)
+  );
+  assert.equal(
+    selected.candidate.candidateSha256,
+    discovered.candidate.candidateSha256
+  );
+  assert.throws(
+    () =>
+      discoverDistributedNativeCatalog(root, {
+        applicationId: 'fixture-app',
+        allowedTaskIds: selectedIds,
+      }),
+    /exact field set/
+  );
+});
+
+test('distributed discovery CLI emits the local sealed catalog without execution or writes', (t) => {
+  const root = createFixture(t);
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(engineRoot, 'bin/run-local-validation.mjs'),
+      '--distributed-discover',
+      '--app',
+      `fixture-app=${root}`,
+      '--application',
+      'fixture-app',
+      '--json',
+    ],
+    {
+      cwd: engineRoot,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    }
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  const catalog = JSON.parse(result.stdout);
+  assert.equal(catalog.applicationId, 'fixture-app');
+  assert.equal(catalog.tasks.length, 5);
+  assert.equal(
+    catalog.tasks.some(({ files }) =>
+      files.includes('scripts/hanging-native.test.mjs')
+    ),
+    true
+  );
+  const plain = spawnSync(
+    process.execPath,
+    [
+      join(engineRoot, 'bin/run-local-validation.mjs'),
+      '--distributed-discover',
+      '--app',
+      `fixture-app=${root}`,
+      '--application',
+      'fixture-app',
+    ],
+    {
+      cwd: engineRoot,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    }
+  );
+  assert.ifError(plain.error);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stderr, '');
+  assert.match(plain.stdout, /5 locally derived tasks for fixture-app/);
+  for (const { taskId } of catalog.tasks)
+    assert.match(plain.stdout, new RegExp(taskId));
+  const status = spawnSync(
+    'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+    }
+  );
+  assert.ifError(status.error);
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(status.stdout, '');
+});
+
+test('native discovery rejects an ignored test file absent from HEAD', (t) => {
+  const root = createFixture(t);
+  write(
+    root,
+    'scripts/ignored-native.test.mjs',
+    "import test from 'node:test';\ntest('ignored native task',()=>{});\n"
+  );
+  const status = spawnSync(
+    'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+    }
+  );
+  assert.ifError(status.error);
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(status.stdout, '');
+  assert.throws(
+    () =>
+      discoverDistributedNativeCatalog(root, {
+        applicationId: 'fixture-app',
+      }),
+    /not an ordinary tracked HEAD blob: scripts\/ignored-native\.test\.mjs/
+  );
+});
+
+test('native discovery rejects tracked task bytes that differ from HEAD', (t) => {
+  const root = createFixture(t);
+  command(root, [
+    'update-index',
+    '--assume-unchanged',
+    'scripts/tiny-native.test.mjs',
+  ]);
+  write(
+    root,
+    'scripts/tiny-native.test.mjs',
+    "import test from 'node:test';\ntest('changed hidden native task',()=>{});\n"
+  );
+  const status = spawnSync(
+    'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+    }
+  );
+  assert.ifError(status.error);
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(status.stdout, '');
+  assert.throws(
+    () =>
+      discoverDistributedNativeCatalog(root, {
+        applicationId: 'fixture-app',
+      }),
+    /does not match its HEAD blob: scripts\/tiny-native\.test\.mjs/
+  );
+});
+
 test('native adapter derives, binds, and executes only one exact local task', async (t) => {
   const root = createFixture(t);
   const tinyTaskId = distributedNativeTaskId({
@@ -244,6 +462,14 @@ test('native adapter derives, binds, and executes only one exact local task', as
         allowedTaskIds: [],
       }),
     /nonempty local distributed native task allowlist/
+  );
+  assert.throws(
+    () =>
+      createDistributedNativeCatalog(root, {
+        applicationId: 'fixture-app',
+        allowedTaskIds: [tinyTaskId, 'f'.repeat(64)],
+      }),
+    /names an unavailable task/
   );
   assert.throws(
     () =>

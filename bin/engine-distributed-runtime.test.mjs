@@ -21,6 +21,7 @@ import {
   DISTRIBUTED_NATIVE_TASK_RESULT_SCHEMA,
   DISTRIBUTED_NATIVE_TASK_SCHEMA,
   distributedNativeTaskId,
+  MAX_DISTRIBUTED_NATIVE_TASKS,
 } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
@@ -49,6 +50,17 @@ const candidate = {
 const candidateSha256 = candidate.candidateSha256;
 const inventorySha256 = sha256('fixture-inventory');
 const taskId = distributedNativeTaskId({ applicationId, adapterId, files });
+const secondAdapterId = 'node-js';
+const secondFiles = ['bin/engine-distributed-native-adapter.test.mjs'];
+const secondTaskId = distributedNativeTaskId({
+  applicationId,
+  adapterId: secondAdapterId,
+  files: secondFiles,
+});
+const taskDefinitions = new Map([
+  [taskId, { adapterId, files }],
+  [secondTaskId, { adapterId: secondAdapterId, files: secondFiles }],
+]);
 
 const config = ({
   address = 'https://worker-one.test:7443',
@@ -71,20 +83,32 @@ const config = ({
     ],
   });
 
-const createCatalog = (selectedApplicationId = applicationId) => {
-  const task = {
-    schema: DISTRIBUTED_NATIVE_TASK_SCHEMA,
-    taskId,
-    adapterId,
-    files: [...files],
-  };
+const createCatalog = (
+  selectedApplicationId = applicationId,
+  selectedTaskIds = [taskId]
+) => {
+  const tasks = selectedTaskIds
+    .map((selectedTaskId) => {
+      const definition = taskDefinitions.get(selectedTaskId);
+      assert.ok(definition, `Unknown fixture task: ${selectedTaskId}`);
+      return {
+        schema: DISTRIBUTED_NATIVE_TASK_SCHEMA,
+        taskId: selectedTaskId,
+        adapterId: definition.adapterId,
+        files: [...definition.files],
+      };
+    })
+    .toSorted((left, right) => left.taskId.localeCompare(right.taskId));
   const core = {
     schema: DISTRIBUTED_NATIVE_CATALOG_SCHEMA,
     applicationId: selectedApplicationId,
     platform: process.platform,
     candidate,
-    inventorySha256,
-    tasks: [task],
+    inventorySha256:
+      tasks.length === 1 && tasks[0].taskId === taskId
+        ? inventorySha256
+        : sha256(tasks.map(({ taskId }) => taskId).join('\0')),
+    tasks,
   };
   return {
     ...core,
@@ -108,8 +132,11 @@ const outputEvidence = (value) => ({
 
 const createNativeResult = ({
   selectedCatalog = createCatalog(),
+  selectedTaskId = taskId,
   stdout = 'fixture passed\n',
 } = {}) => {
+  const selectedTask = taskDefinitions.get(selectedTaskId);
+  assert.ok(selectedTask, `Unknown fixture task: ${selectedTaskId}`);
   const stderr = '';
   const stdoutEvidence = outputEvidence(stdout);
   const stderrEvidence = outputEvidence(stderr);
@@ -140,12 +167,12 @@ const createNativeResult = ({
     applicationId: selectedCatalog.applicationId,
     candidateSha256: selectedCatalog.candidate.candidateSha256,
     catalogSha256: selectedCatalog.catalogSha256,
-    taskId,
-    adapterId,
-    files: [...files],
+    taskId: selectedTaskId,
+    adapterId: selectedTask.adapterId,
+    files: [...selectedTask.files],
     status: 'passed',
     wallMs: 2,
-    totals: { [adapterId]: { total: 1, active: 1 } },
+    totals: { [selectedTask.adapterId]: { total: 1, active: 1 } },
     receipt,
   };
   return { ...core, resultSha256: canonicalJsonSha256(core) };
@@ -304,7 +331,7 @@ const availableLoopbackPort = async () => {
   return port;
 };
 
-test('milestone admits exactly one absolute application and one task', () => {
+test('milestone admits one absolute application and a bounded local task set', () => {
   assert.deepEqual(parseDistributedApplicationBindings([`seerrng=${root}`]), [
     { id: applicationId, root },
   ]);
@@ -325,14 +352,65 @@ test('milestone admits exactly one absolute application and one task', () => {
     () => runtime({ applications: [] }),
     /exactly one application binding/
   );
+  assert.throws(() => runtime({ allowedTaskIds: [] }), /nonempty bounded set/);
   assert.throws(
-    () => runtime({ allowedTaskIds: [] }),
-    /exactly one hashed task ID/
+    () => runtime({ allowedTaskIds: [taskId, taskId] }),
+    /unique hashed task IDs/
   );
   assert.throws(
-    () => runtime({ allowedTaskIds: [taskId, sha256('another-task')] }),
-    /exactly one hashed task ID/
+    () =>
+      runtime({
+        allowedTaskIds: Array(MAX_DISTRIBUTED_NATIVE_TASKS + 1).fill(taskId),
+      }),
+    /nonempty bounded set/
   );
+});
+
+test('worker derives several allowed tasks locally and executes one selected task at a time', async () => {
+  const allowedTaskIds = [taskId, secondTaskId];
+  const selectedCatalog = createCatalog(applicationId, allowedTaskIds);
+  const worker = runtime({
+    allowedTaskIds,
+    catalogFactory(applicationRoot, options) {
+      assert.equal(applicationRoot, root);
+      assert.deepEqual(options, { applicationId, allowedTaskIds });
+      return selectedCatalog;
+    },
+    taskExecutor: async ({ request: selectedRequest }) => ({
+      selectedTaskId: selectedRequest.taskId,
+    }),
+  });
+  const report = await worker.handle({
+    kind: DISTRIBUTED_PROBE_KIND,
+    body: {
+      configSha256: config().configSha256,
+      applicationIds: [applicationId],
+    },
+  });
+  assert.equal(report.applications[0].taskCount, 2);
+  assert.equal(
+    report.applications[0].catalogSha256,
+    selectedCatalog.catalogSha256
+  );
+
+  for (const selectedTaskId of allowedTaskIds) {
+    const result = await worker.handle({
+      kind: DISTRIBUTED_TASK_KIND,
+      body: {
+        configSha256: config().configSha256,
+        runId: `run-${selectedTaskId.slice(0, 8)}`,
+        applicationId,
+        expectedCandidate: candidate,
+        request: request(
+          createCatalog(applicationId, [selectedTaskId]),
+          selectedTaskId
+        ),
+      },
+    });
+    assert.equal(result.taskId, selectedTaskId);
+    assert.equal(result.status, 'passed');
+    assert.deepEqual(result.result, { selectedTaskId });
+  }
 });
 
 test('worker probe reports only locally derived application and capacity data', async () => {
@@ -450,6 +528,43 @@ test('controller task path proves worker identity and uses the same local worker
   assert.deepEqual(result.result.result, createNativeResult());
 });
 
+test('controller accepts a bounded multi-task worker report while dispatching one task', async () => {
+  const allowedTaskIds = [taskId, secondTaskId];
+  const workerCatalog = createCatalog(applicationId, allowedTaskIds);
+  const worker = runtime({
+    allowedTaskIds,
+    catalogFactory: (_applicationRoot, { applicationId: selectedId }) =>
+      createCatalog(selectedId, allowedTaskIds),
+    taskExecutor: async () =>
+      createNativeResult({
+        selectedCatalog: workerCatalog,
+        selectedTaskId: secondTaskId,
+      }),
+  });
+  const result = await runDistributedControllerTask({
+    config: config(),
+    applications: [{ id: applicationId, root }],
+    workerId: 'worker-one',
+    applicationId,
+    taskId: secondTaskId,
+    runId: 'run-controller-multi-worker-catalog',
+    localRuntime: worker,
+    catalogFactory(applicationRoot, options) {
+      assert.equal(applicationRoot, root);
+      assert.deepEqual(options, {
+        applicationId,
+        allowedTaskIds: [secondTaskId],
+      });
+      return createCatalog(applicationId, [secondTaskId]);
+    },
+    requestFactory: request,
+  });
+  assert.equal(result.report.applications[0].taskCount, 2);
+  assert.equal(result.result.taskId, secondTaskId);
+  assert.deepEqual(result.result.result.files, secondFiles);
+  assert.equal(result.result.status, 'passed');
+});
+
 test('controller rejects malformed or tampered nested native results', async (t) => {
   const cases = [
     {
@@ -508,11 +623,18 @@ test('controller validates worker report evidence before dispatch', async (t) =>
       pattern: /Exact worker application inventory hash is required/,
     },
     {
-      name: 'more than the one milestone task',
+      name: 'zero executable tasks',
       mutate(report) {
-        report.applications[0].taskCount = 2;
+        report.applications[0].taskCount = 0;
       },
-      pattern: /exactly one executable task/,
+      pattern: /outside its supported range/,
+    },
+    {
+      name: 'too many executable tasks',
+      mutate(report) {
+        report.applications[0].taskCount = MAX_DISTRIBUTED_NATIVE_TASKS + 1;
+      },
+      pattern: /outside its supported range/,
     },
   ];
   for (const scenario of cases) {

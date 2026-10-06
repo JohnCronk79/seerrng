@@ -48,19 +48,30 @@ not manual replacements for the local commands.
 
 ## Distributed developer-fleet mode
 
-The first Mode 3 milestone is a deliberately narrow end-to-end worker proof. It
-uses this same `validate:development` entry point in controller or worker mode;
-there is no second runner. The controller probes one configured worker and asks
-it to execute one explicitly allowlisted task that both machines independently
-derive from their local tests-only plan.
+Mode 3 uses this same `validate:development` entry point for discovery,
+controller, and worker modes; there is no second runner. Read-only distributed
+discovery derives the complete local task catalog from the tests-only plan. A
+worker may locally allow a nonempty bounded subset of those task IDs. Each
+controller invocation still probes one configured worker and asks it to execute
+one selected task that both machines independently derive from local source.
 
 Each participating machine must already have the same clean committed source,
 tracked lockfile, supported Node and pnpm versions, and installed lockfile-bound
-dependencies. Mode 3 does not copy source or install dependencies. A task is
-identified by `distributedNativeTaskId()` from its application ID, native
-adapter ID, and canonical repository-relative file list. Workers accept only
-IDs named locally with `--allow-task`; a controller cannot transmit a command,
-arguments, working directory, environment, or executable path.
+dependencies. Every discovered task file must be an ordinary blob tracked by
+`HEAD`, and its working bytes must match that blob; ignored or hidden local test
+content fails discovery. Mode 3 does not copy source or install dependencies. A
+task is identified by `distributedNativeTaskId()` from its application ID,
+native adapter ID, and canonical repository-relative file list. Workers accept
+only IDs named locally with `--allow-task`; a controller cannot transmit a
+command, arguments, working directory, environment, or executable path.
+
+Use the following read-only form to print the sealed local catalog and its task
+IDs. It launches no native task and writes no report or repository file:
+
+```text
+pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng
+pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng --json
+```
 
 Remote workers require a configured HTTPS origin, a pinned certificate SHA-256
 fingerprint, the shared fleet secret in
@@ -70,28 +81,30 @@ it does not belong in the worker config, command line, logs, repository, or
 native test environment. Authenticated messages tolerate at most five seconds
 of clock skew, so participating machines must keep their clocks synchronized.
 
-Use `--help` for the exact bounded command forms. This milestone accepts exactly
-one `--app` and one worker `--allow-task`. The worker listens on the port in its
-configured HTTPS address. A remote worker remains active until interrupted. A
-controller writes one exclusive JSON report outside the source checkout for a
+Use `--help` for the exact bounded command forms. This slice accepts exactly one
+`--app`; a worker accepts one or more repeated, locally supplied `--allow-task`
+IDs. The worker listens on the port in its configured HTTPS address. A remote
+worker remains active until interrupted. A controller still selects exactly one
+`--task` and writes one exclusive JSON report outside the source checkout for a
 verified pass, a verified native failure, or a controlled pre-response failure.
 When `--worker-id` names the configured controller-local worker, the controller
 uses the same worker handler in-process without opening an HTTPS connection;
 set `controllerWorkerId` to `null` when proving the real HTTPS path.
 
-The initial SeerrNG acceptance task is the read-only Node test
+The initial SeerrNG acceptance regression task is the read-only Node test
 `src/styles/summaryTitleAlignment.test.mjs`, with task ID
 `328af7e5fe09aef94d14edba85a9fe72e76e232ed847286185112111faffc7a9`
 for application `seerrng` and adapter `node-js`. It reads only committed CSS and
 does not start the application, write files, use the network, or launch child
 processes.
 
-This milestone proves source identity, task allowlisting, authenticated
-transport, cancellation, native execution, result evidence, and local/remote
-worker parity. It does not yet claim whole-suite scheduling, performance
-weighting, timing-history reuse, multi-application queues, source distribution,
-disconnect retry, or controller-crash recovery. Those capabilities remain
-subsequent Mode 3 work and must not be inferred from a successful one-task run.
+The implemented slices prove source identity, local task discovery and
+allowlisting, authenticated transport, cancellation, one-at-a-time native
+execution, result evidence, and local/remote worker parity. They do not yet
+claim whole-suite scheduling, performance weighting, timing-history reuse,
+multi-application queues, source distribution, disconnect retry, or
+controller-crash recovery. Those capabilities remain subsequent Mode 3 work
+and must not be inferred from successful selected-task runs.
 
 ## Test discovery and ownership
 

@@ -1004,6 +1004,55 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       message: /Distributed controller mode requires --distributed-config/,
     },
     {
+      args: ['--distributed-discover'],
+      message: /Distributed discovery mode requires --application/,
+    },
+    {
+      args: ['--distributed-discover', '--application', 'seerrng'],
+      message: /Distributed discovery mode requires --app/,
+    },
+    ...[
+      ['--distributed-config', 'workers.json'],
+      ['--task', 'e'.repeat(64)],
+      ['--tls-cert', 'worker.pem'],
+      ['--report-file', resolve(tmpdir(), 'distributed-discovery.json')],
+    ].map(([option, optionValue]) => ({
+      args: [
+        '--distributed-discover',
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'seerrng',
+        option,
+        optionValue,
+      ],
+      message: new RegExp(
+        `Distributed discovery mode does not accept ${option}`
+      ),
+    })),
+    {
+      args: [
+        '--distributed-discover',
+        '--app',
+        `seerrng=${root}`,
+        '--app',
+        `other=${root}`,
+        '--application',
+        'seerrng',
+      ],
+      message: /exactly one --app/,
+    },
+    {
+      args: [
+        '--distributed-discover',
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'other',
+      ],
+      message: /does not register application: other/,
+    },
+    {
       args: ['--distributed-worker'],
       message: /Distributed worker mode requires --distributed-config/,
     },
