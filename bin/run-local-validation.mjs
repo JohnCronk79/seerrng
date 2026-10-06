@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { createNativeStageContext } from '../tools/validation-engine/runtime/native-stage-context.mjs';
@@ -32,6 +32,19 @@ import {
   preflight,
   printPlan,
 } from './local-validation.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import {
+  createDistributedControllerFailureReport,
+  createDistributedWorkerRuntime,
+  parseDistributedApplicationBindings,
+  runDistributedControllerTask,
+  startDistributedWorkerServer,
+} from '../tools/validation-engine/runtime/distributed-runtime.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import {
+  configuredDistributedWorker,
+  parseDistributedWorkerConfig,
+} from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const git = (root, parameters, encoding = 'utf8') =>
@@ -242,19 +255,34 @@ const flagOptions = new Set([
   '--github-receipt',
   '--github-run-test-lane',
   '--github-reconcile',
+  '--distributed-controller',
+  '--distributed-worker',
 ]);
 const valueOptions = new Set([
+  '--application',
   '--case',
+  '--distributed-config',
   '--expected-plan-sha256',
   '--job-status',
   '--lane',
+  '--listen-host',
   '--output-file',
   '--plan-file',
   '--receipt-dir',
   '--report-file',
+  '--task',
+  '--timeout-ms',
+  '--tls-cert',
+  '--tls-key',
   '--unit',
+  '--worker-id',
 ]);
-const repeatedValueOptions = new Set(['--evidence']);
+const repeatedValueOptions = new Set([
+  '--allow-controller',
+  '--allow-task',
+  '--app',
+  '--evidence',
+]);
 
 const optionContracts = {
   'local-full': {
@@ -371,6 +399,49 @@ const optionContracts = {
     ]),
     requiredValues: ['--plan-file', '--receipt-dir'],
   },
+  'distributed-controller': {
+    label: 'Distributed controller mode',
+    allowed: new Set([
+      '--distributed-controller',
+      '--distributed-config',
+      '--worker-id',
+      '--application',
+      '--task',
+      '--timeout-ms',
+      '--app',
+      '--report-file',
+    ]),
+    requiredValues: [
+      '--distributed-config',
+      '--worker-id',
+      '--application',
+      '--task',
+      '--report-file',
+    ],
+    requiredRepeated: ['--app'],
+  },
+  'distributed-worker': {
+    label: 'Distributed worker mode',
+    allowed: new Set([
+      '--distributed-worker',
+      '--distributed-config',
+      '--worker-id',
+      '--app',
+      '--tls-cert',
+      '--tls-key',
+      '--listen-host',
+      '--allow-controller',
+      '--allow-task',
+    ]),
+    requiredValues: [
+      '--distributed-config',
+      '--worker-id',
+      '--tls-cert',
+      '--tls-key',
+      '--listen-host',
+    ],
+    requiredRepeated: ['--app', '--allow-controller', '--allow-task'],
+  },
 };
 
 function parseOptions(args) {
@@ -433,14 +504,26 @@ function validateOptions(options) {
   if (hostedModes.length > 1)
     throw new Error('Choose exactly one hosted GitHub mode');
 
+  const distributedModes = [
+    '--distributed-controller',
+    '--distributed-worker',
+  ].filter((option) => options.flags.has(option));
+  if (distributedModes.length > 1)
+    throw new Error('Choose exactly one distributed mode');
+  if (hostedModes.length && distributedModes.length)
+    throw new Error('Hosted GitHub and distributed modes cannot be combined');
+
   const hostedOption = hostedModes[0] ?? null;
+  const distributedOption = distributedModes[0] ?? null;
   const name = hostedOption
     ? hostedOption.slice(2)
-    : options.flags.has('--plan')
-      ? 'local-plan'
-      : options.flags.has('--tests-only')
-        ? 'local-tests-only'
-        : 'local-full';
+    : distributedOption
+      ? distributedOption.slice(2)
+      : options.flags.has('--plan')
+        ? 'local-plan'
+        : options.flags.has('--tests-only')
+          ? 'local-tests-only'
+          : 'local-full';
   const contract = optionContracts[name];
   for (const option of names)
     if (!contract.allowed.has(option))
@@ -448,7 +531,10 @@ function validateOptions(options) {
   for (const option of contract.requiredValues)
     if (!options.values.has(option))
       throw new Error(`${contract.label} requires ${option}`);
-  return { name, hostedOption };
+  for (const option of contract.requiredRepeated ?? [])
+    if (!options.repeated.has(option))
+      throw new Error(`${contract.label} requires ${option}`);
+  return { name, hostedOption, distributedOption };
 }
 
 let options;
@@ -467,9 +553,37 @@ const value = (option) => options?.values.get(option);
 const repeated = (option) => options?.repeated.get(option) ?? [];
 const requiredValue = (option) => {
   const result = value(option);
-  if (!result) throw new Error(`Hosted mode requires ${option}`);
+  if (!result) throw new Error(`Selected mode requires ${option}`);
   return result;
 };
+
+function distributedFleetSecret() {
+  const encoded = process.env.SEERRNG_DISTRIBUTED_SHARED_SECRET;
+  if (
+    typeof encoded !== 'string' ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      encoded
+    )
+  )
+    throw new Error(
+      'Distributed mode requires canonical base64 SEERRNG_DISTRIBUTED_SHARED_SECRET'
+    );
+  const secret = Buffer.from(encoded, 'base64');
+  if (secret.length < 32 || secret.toString('base64') !== encoded) {
+    secret.fill(0);
+    throw new Error('Distributed fleet secret must contain at least 32 bytes');
+  }
+  delete process.env.SEERRNG_DISTRIBUTED_SHARED_SECRET;
+  return secret;
+}
+
+function positiveMilliseconds(option, fallback) {
+  const raw = value(option);
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d{0,8}$/.test(raw))
+    throw new Error(`${option} must be a positive integer`);
+  return Number(raw);
+}
 
 if (!options) {
   // The parse error above is the complete fail-closed result.
@@ -482,6 +596,8 @@ if (!options) {
        node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
        node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
        node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
+       node bin/run-local-validation.mjs --distributed-controller --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --application ID --task ID --report-file ABSOLUTE_FILE [--timeout-ms MS]
+       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --allow-task ID --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
 
 Runs the existing engine's staged native PR-parity gate: repository checks,
 CodeQL, production builds, browser tests and applicable supplemental checks.
@@ -499,10 +615,17 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
               Seal one native job/case result and its current-attempt ledger entry.
 --github-reconcile
               Verify native needs and complete sealed receipts against the plan.
+--distributed-controller
+              Probe one configured trusted worker and run one locally derived task.
+--distributed-worker
+              Serve locally derived native tasks for an authenticated controller.
+--app         Register the one milestone application as ID=ABSOLUTE_ROOT.
+--allow-task  Locally allow the one milestone task on a distributed worker.
 --json        Machine-readable local plan, hosted plan, or hosted result.
 --help        Show help without reading the project or creating files.
 
-Does not install dependencies, apply live migrations, or edit GitHub workflows.
+Distributed secrets are accepted only through SEERRNG_DISTRIBUTED_SHARED_SECRET.
+Does not install dependencies, synchronize source, apply live migrations, or edit GitHub workflows.
 Native, Vitest-only, tooling and CI commands retain their existing behavior.
 Builds and fixture migrations use an owned disposable source/configuration copy.
 Missing native tools, unproven isolation and pending GitHub checks are incomplete;
@@ -514,8 +637,137 @@ failures, partial output closure and zero active tests fail closed.\n`);
   let failure;
   try {
     const hostedMode = selectedMode.hostedOption;
+    const distributedMode = selectedMode.distributedOption;
     const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-    if (hostedMode) {
+    if (distributedMode) {
+      process.on('SIGINT', interrupt);
+      process.on('SIGTERM', interrupt);
+      const config = parseDistributedWorkerConfig(
+        readFileSync(resolve(requiredValue('--distributed-config')), 'utf8')
+      );
+      const workerId = requiredValue('--worker-id');
+      const applications = parseDistributedApplicationBindings(
+        repeated('--app')
+      );
+      const worker = configuredDistributedWorker(config, workerId);
+      if (distributedMode === '--distributed-worker') {
+        const address = new URL(worker.address);
+        const secret = distributedFleetSecret();
+        let service;
+        try {
+          service = await startDistributedWorkerServer({
+            config,
+            workerId,
+            applications,
+            allowedTaskIds: repeated('--allow-task'),
+            key: readFileSync(resolve(requiredValue('--tls-key'))),
+            certificate: readFileSync(resolve(requiredValue('--tls-cert'))),
+            secret,
+            allowedSourceAddresses: repeated('--allow-controller'),
+            host: requiredValue('--listen-host'),
+            port: Number(address.port || 443),
+          });
+          secret.fill(0);
+          const report = service.runtime.report(
+            applications.map(({ id }) => id)
+          );
+          process.stdout.write(
+            `Distributed worker ${worker.id} ready with ${report.capacity.configuredWorkers} slots for ${report.applications.length} application(s).\n`
+          );
+          if (!controller.signal.aborted)
+            await new Promise((resolveStop) =>
+              controller.signal.addEventListener('abort', resolveStop, {
+                once: true,
+              })
+            );
+        } finally {
+          secret.fill(0);
+          await service?.close();
+        }
+      } else {
+        const reportFile = requiredValue('--report-file');
+        const relation = relative(root, reportFile);
+        const outsideSource =
+          isAbsolute(relation) ||
+          relation === '..' ||
+          relation.startsWith(`..${sep}`);
+        if (!isAbsolute(reportFile) || relation === '' || !outsideSource)
+          throw new Error(
+            'Distributed report file must be absolute and outside the source checkout'
+          );
+        const localRuntime =
+          config.controllerWorkerId === worker.id
+            ? createDistributedWorkerRuntime({
+                config,
+                workerId,
+                applications,
+                allowedTaskIds: [requiredValue('--task')],
+              })
+            : null;
+        const applicationId = requiredValue('--application');
+        const taskId = requiredValue('--task');
+        const runId = randomUUID();
+        const startedAt = new Date().toISOString();
+        const started = performance.now();
+        const secret = localRuntime ? undefined : distributedFleetSecret();
+        let result;
+        let controllerError;
+        try {
+          result = await runDistributedControllerTask({
+            config,
+            applications,
+            workerId,
+            applicationId,
+            taskId,
+            runId,
+            secret,
+            timeoutMs: positiveMilliseconds('--timeout-ms', 30 * 60 * 1000),
+            localRuntime,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          controllerError = error;
+        } finally {
+          secret?.fill(0);
+          try {
+            await localRuntime?.drain();
+          } catch (error) {
+            controllerError ??= error;
+          }
+        }
+        if (controllerError)
+          result = createDistributedControllerFailureReport({
+            configSha256: config.configSha256,
+            controllerId: config.controllerId,
+            workerId: worker.id,
+            runId,
+            applicationId,
+            taskId,
+            startedAt,
+            wallMs: performance.now() - started,
+            error: controllerError,
+            controllerAborted: controller.signal.aborted,
+          });
+        writeFileSync(reportFile, `${JSON.stringify(result, null, 2)}\n`, {
+          flag: 'wx',
+          mode: 0o600,
+        });
+        if (result.controllerFailure) {
+          process.stderr.write(
+            `Distributed controller failed closed (${result.controllerFailure.errorCode}); remote outcome is unknown. Evidence: ${reportFile}\n`
+          );
+          process.exitCode = controller.signal.aborted ? 130 : 1;
+        } else if (result.result.status === 'failed') {
+          process.stderr.write(
+            `Distributed task ${result.result.taskId} failed on ${result.result.workerId} (${result.result.failure.reason}). Evidence: ${reportFile}\n`
+          );
+          process.exitCode = 1;
+        } else
+          process.stdout.write(
+            `Distributed task ${result.result.taskId} passed on ${result.result.workerId} in ${Math.round(result.result.wallMs)} ms. Evidence: ${reportFile}\n`
+          );
+      }
+    } else if (hostedMode) {
       if (hostedMode === '--github-plan') {
         const plan = createHostedGithubPlan(hostedGithubInput(root));
         writeHostedPlanOutputs(plan, requiredValue('--plan-file'));

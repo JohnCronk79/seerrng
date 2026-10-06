@@ -35,6 +35,15 @@ import {
   vitestConfigSource,
 } from './local-validation.mjs';
 import { parseToolingWorkers } from './run-tooling-tests.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
+import {
+  createDistributedControllerFailureReport,
+  createDistributedTaskFailureEvidence,
+  verifyDistributedControllerFailure,
+  verifyDistributedTaskFailureEvidence,
+} from '../tools/validation-engine/runtime/distributed-runtime.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ts = loadTypeScript(root);
@@ -375,7 +384,13 @@ test('canonical engine binding uses the existing CI adapter once without changin
     ]);
     assert.equal(
       new Set(plan.steps.flatMap(({ files = [] }) => files)).size,
-      plan.inventory.length
+      plan.inventory.filter(({ selected }) => selected).length
+    );
+    assert.equal(
+      plan.steps
+        .flatMap(({ files = [] }) => files)
+        .includes('deploy/posix.test.mjs'),
+      process.platform !== 'win32'
     );
     assert.equal(
       plan.inventory.filter(({ originalOwner }) => originalOwner === 'node-ts')
@@ -976,6 +991,60 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       ],
       message: /GitHub reconciliation mode does not accept --case/,
     },
+    {
+      args: ['--distributed-controller', '--distributed-worker'],
+      message: /Choose exactly one distributed mode/,
+    },
+    {
+      args: ['--github-plan', '--distributed-controller'],
+      message: /Hosted GitHub and distributed modes cannot be combined/,
+    },
+    {
+      args: ['--distributed-controller'],
+      message: /Distributed controller mode requires --distributed-config/,
+    },
+    {
+      args: ['--distributed-worker'],
+      message: /Distributed worker mode requires --distributed-config/,
+    },
+    {
+      args: [
+        '--distributed-controller',
+        '--distributed-config',
+        'workers.json',
+        '--worker-id',
+        'worker-one',
+        '--application',
+        'seerrng',
+        '--task',
+        'test-one',
+        '--report-file',
+        'report.json',
+        '--app',
+        `${root}=seerrng`,
+        '--tls-cert',
+        'worker.pem',
+      ],
+      message: /Distributed controller mode does not accept --tls-cert/,
+    },
+    {
+      args: [
+        '--distributed-worker',
+        '--distributed-config',
+        'workers.json',
+        '--worker-id',
+        'worker-one',
+        '--app',
+        `seerrng=${root}`,
+        '--tls-cert',
+        'worker.pem',
+        '--tls-key',
+        'worker.key',
+        '--listen-host',
+        '127.0.0.1',
+      ],
+      message: /Distributed worker mode requires --allow-controller/,
+    },
   ];
 
   for (const { args, message } of invalid) {
@@ -1030,6 +1099,189 @@ test('CLI materialization mode accepts only its complete bounded option set', ()
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Missing hosted GitHub plan/);
   assert.doesNotMatch(result.stderr, /does not accept|requires --/);
+});
+
+test('CLI distributed modes accept only their complete bounded option sets', () => {
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const taskId = 'e'.repeat(64);
+  const common = [
+    '--distributed-config',
+    'missing-workers.json',
+    '--worker-id',
+    'worker-one',
+    '--app',
+    `seerrng=${root}`,
+  ];
+  const modes = [
+    [
+      '--distributed-controller',
+      ...common,
+      '--application',
+      'seerrng',
+      '--task',
+      taskId,
+      '--report-file',
+      resolve(tmpdir(), 'distributed-result.json'),
+    ],
+    [
+      '--distributed-worker',
+      ...common,
+      '--tls-cert',
+      'worker.pem',
+      '--tls-key',
+      'worker.key',
+      '--listen-host',
+      '127.0.0.1',
+      '--allow-task',
+      taskId,
+      '--allow-controller',
+      '127.0.0.1',
+    ],
+  ];
+  for (const args of modes) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      windowsHide: true,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /ENOENT/);
+    assert.doesNotMatch(result.stderr, /does not accept|requires --/);
+  }
+});
+
+test('distributed reports must be outside the exact source checkout', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-report-boundary-'));
+  try {
+    const configFile = join(directory, 'workers.json');
+    const reportFile = join(root, '..evidence', 'result.json');
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, 'bin/run-local-validation.mjs'),
+        '--distributed-controller',
+        '--distributed-config',
+        configFile,
+        '--worker-id',
+        'worker-one',
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'seerrng',
+        '--task',
+        'e'.repeat(64),
+        '--report-file',
+        reportFile,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /outside the source checkout/);
+    assert.equal(existsSync(reportFile), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('distributed controller CLI writes controlled local failure evidence before exiting nonzero', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-controller-failure-'));
+  try {
+    const configFile = join(directory, 'workers.json');
+    const reportFile = join(directory, 'result.json');
+    const taskId = 'e'.repeat(64);
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, 'bin/run-local-validation.mjs'),
+        '--distributed-controller',
+        '--distributed-config',
+        configFile,
+        '--worker-id',
+        'worker-one',
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'seerrng',
+        '--task',
+        taskId,
+        '--report-file',
+        reportFile,
+        '--timeout-ms',
+        '250',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '',
+          SEERRNG_DISTRIBUTED_SHARED_SECRET: Buffer.alloc(32, 7).toString(
+            'base64'
+          ),
+        },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /failed closed/);
+    const evidence = JSON.parse(readFileSync(reportFile, 'utf8'));
+    assert.equal(evidence.report, null);
+    assert.equal(evidence.result, null);
+    assert.equal(evidence.controllerFailure.status, 'failed');
+    assert.equal(evidence.controllerFailure.remoteOutcome, 'unknown');
+    assert.equal(evidence.controllerFailure.errorCode, 'controller-error');
+    assert.deepEqual(
+      verifyDistributedControllerFailure(evidence.controllerFailure),
+      evidence.controllerFailure
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('interruption cancels the owned child process tree and prevents later steps', async () => {
@@ -1460,3 +1712,98 @@ test(
     );
   }
 );
+
+test('distributed failure evidence is bounded, controlled, hashed, and free of arbitrary error text', () => {
+  const hiddenErrorText = 'C:\\private\\developer-secret';
+  const failure = Object.assign(new Error(hiddenErrorText), {
+    stack: `stack containing ${hiddenErrorText}`,
+    receipt: {
+      exitCode: 1,
+      signal: null,
+      aborted: false,
+      timedOut: false,
+      wallMs: 25,
+      stdout: 'x'.repeat(5000),
+      stderr: 'bounded stderr',
+      stdoutBytes: 5000,
+      stderrBytes: 14,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutSha256: 'a'.repeat(64),
+      stderrSha256: 'b'.repeat(64),
+      lifecycle: {
+        spawned: true,
+        completed: true,
+        cleanupVerified: true,
+        cleanupError: null,
+      },
+    },
+  });
+  const evidence = createDistributedTaskFailureEvidence(failure);
+  assert.equal(evidence.reason, 'native-failed');
+  assert.equal(Array.from(evidence.receipt.stdoutTail).length, 4096);
+  assert.equal(evidence.receipt.stdoutTailTruncated, true);
+  assert.equal(evidence.receipt.stdoutBytes, 5000);
+  assert.equal(evidence.receipt.stdoutSha256, 'a'.repeat(64));
+  assert.equal(JSON.stringify(evidence).includes(hiddenErrorText), false);
+  assert.deepEqual(verifyDistributedTaskFailureEvidence(evidence), evidence);
+  assert.equal(Object.isFrozen(evidence.receipt.lifecycle), true);
+
+  const contradictoryCore = {
+    schema: evidence.schema,
+    reason: 'execution-error',
+    receipt: evidence.receipt,
+  };
+  assert.throws(
+    () =>
+      verifyDistributedTaskFailureEvidence({
+        ...contradictoryCore,
+        failureSha256: canonicalJsonSha256(contradictoryCore),
+      }),
+    /contradicts its receipt evidence/
+  );
+
+  const cleanupEvidence = createDistributedTaskFailureEvidence({
+    receipt: {
+      ...failure.receipt,
+      timedOut: true,
+      lifecycle: {
+        ...failure.receipt.lifecycle,
+        cleanupVerified: false,
+        cleanupError: hiddenErrorText,
+      },
+    },
+  });
+  assert.equal(cleanupEvidence.reason, 'cleanup-unverified');
+  assert.equal(cleanupEvidence.receipt.lifecycle.cleanupErrorPresent, true);
+  assert.equal(
+    JSON.stringify(cleanupEvidence).includes(hiddenErrorText),
+    false
+  );
+
+  const report = createDistributedControllerFailureReport({
+    configSha256: 'c'.repeat(64),
+    controllerId: 'controller-one',
+    workerId: 'worker-one',
+    runId: 'run-one',
+    applicationId: 'seerrng',
+    taskId: 'd'.repeat(64),
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 25,
+    error: Object.assign(new Error(hiddenErrorText), { code: 'ECONNRESET' }),
+  });
+  assert.deepEqual(Object.keys(report).toSorted(), [
+    'controllerFailure',
+    'report',
+    'result',
+  ]);
+  assert.equal(report.report, null);
+  assert.equal(report.result, null);
+  assert.equal(report.controllerFailure.errorCode, 'transport-unavailable');
+  assert.equal(report.controllerFailure.remoteOutcome, 'unknown');
+  assert.equal(JSON.stringify(report).includes(hiddenErrorText), false);
+  assert.deepEqual(
+    verifyDistributedControllerFailure(report.controllerFailure),
+    report.controllerFailure
+  );
+});
