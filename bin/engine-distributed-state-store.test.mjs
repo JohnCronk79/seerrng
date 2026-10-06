@@ -2,16 +2,20 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
+  copyFileSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  renameSync,
   realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -31,6 +35,11 @@ import {
   rehydrateDistributedControllerQueue,
   sealDistributedAppSubmission,
 } from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
+import {
+  createDistributedLocalStateRootConfig,
+  createDistributedLocalStateRootMarker,
+  deriveDistributedLocalStateRootPaths,
+} from '../tools/validation-engine/runtime/distributed-local-state-root.mjs';
 import {
   DISTRIBUTED_STATE_STORE_APPLICATION_ID,
   DISTRIBUTED_STATE_STORE_BUSY_TIMEOUT_MS,
@@ -55,12 +64,87 @@ function hash(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function databasePath(t, label) {
-  const directory = mkdtempSync(
+const rootContracts = new Map();
+const LEGACY_V1_SCHEMA_MANIFEST_SHA256 =
+  '489b8728a25cba54615a1d7eb68da9b83b605db47e9a6f5509b71fecd6505d56';
+
+function admissionExpectations(config) {
+  return {
+    expectedConfigSha256: config.configSha256,
+    expectedControllerId: config.controllerId,
+    expectedMachineIdentitySha256: config.machineIdentitySha256,
+    expectedPlatform: config.platform,
+    expectedRecoveryPolicySha256: config.recoveryPolicySha256,
+    expectedRole: config.role,
+    expectedRootIdentitySha256: config.rootIdentitySha256,
+    expectedWorkerId: config.workerId,
+  };
+}
+
+function databasePath(t, label, overrides = {}) {
+  const root = mkdtempSync(
     join(realpathSync.native(tmpdir()), `seerrng-${label}-`)
   );
-  t.after(() => rmSync(directory, { force: true, recursive: true }));
-  return join(directory, 'distributed-state.sqlite');
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  const role = overrides.role ?? 'controller';
+  const controllerId = overrides.controllerId ?? 'controller-a';
+  const workerId = role === 'worker' ? (overrides.workerId ?? 'worker-a') : null;
+  const machineIdentitySha256 =
+    overrides.machineIdentitySha256 ??
+    hash(role === 'worker' ? `${workerId}-machine` : `${controllerId}-machine`);
+  const config = createDistributedLocalStateRootConfig({
+    role,
+    controllerId,
+    workerId,
+    machineIdentitySha256,
+    platform: process.platform,
+    canonicalRoot: root,
+    localityAcceptance: {
+      status: 'operator-attested-local',
+      acceptedAtMs: 10,
+      acceptanceId: `locality-${label}`,
+    },
+    recoveryAcceptance: {
+      staleWriterAfterMs: overrides.staleWriterAfterMs ?? 30_000,
+      allowStaleWriterTakeover:
+        overrides.allowStaleWriterTakeover ?? false,
+      crashRecoveryAccepted: true,
+      acceptedAtMs: 11,
+      acceptanceId: `recovery-${label}`,
+    },
+  });
+  const marker = createDistributedLocalStateRootMarker({
+    config,
+    createdAtMs: 12,
+  });
+  const paths = deriveDistributedLocalStateRootPaths(config);
+  writeFileSync(paths.markerPath, JSON.stringify(marker));
+  rootContracts.set(paths.databasePath, {
+    config,
+    marker,
+    expectations: admissionExpectations(config),
+    paths,
+  });
+  return paths.databasePath;
+}
+
+function rootOptions(path) {
+  const contract = rootContracts.get(path);
+  assert.ok(contract, `Missing state-root fixture for ${path}`);
+  return {
+    config: contract.config,
+    marker: contract.marker,
+    expectations: contract.expectations,
+  };
+}
+
+function openOptions(path, overrides = {}) {
+  return {
+    ...rootOptions(path),
+    writer: writer('writer-b', 202, 20),
+    documentVerifiers: {},
+    ...overrides,
+  };
 }
 
 function openDatabase(path) {
@@ -79,26 +163,73 @@ function withDatabase(path, operation) {
   }
 }
 
-function owner(overrides = {}) {
-  return {
-    role: 'controller',
-    ownerId: 'controller-a',
-    controllerId: 'controller-a',
-    workerId: null,
-    machineIdentitySha256: null,
-    ...overrides,
-  };
-}
-
-function workerOwner(overrides = {}) {
-  return {
-    role: 'worker',
-    ownerId: 'worker-a',
-    controllerId: null,
-    workerId: 'worker-a',
-    machineIdentitySha256: hash('worker-a-machine'),
-    ...overrides,
-  };
+function rewriteAsLegacyV1Store(path) {
+  withDatabase(path, (database) => {
+    database.exec(`
+      ALTER TABLE distributed_store_metadata
+        RENAME TO distributed_store_metadata_v2;
+      CREATE TABLE distributed_store_metadata (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+        schema_manifest_sha256 TEXT NOT NULL CHECK (
+          length(schema_manifest_sha256) = 64 AND
+          schema_manifest_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        store_id TEXT NOT NULL UNIQUE CHECK (length(store_id) BETWEEN 1 AND 128),
+        owner_role TEXT NOT NULL CHECK (owner_role IN ('controller', 'worker')),
+        owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
+        controller_id TEXT,
+        worker_id TEXT,
+        machine_identity_sha256 TEXT CHECK (
+          machine_identity_sha256 IS NULL OR (
+            length(machine_identity_sha256) = 64 AND
+            machine_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+          )
+        ),
+        engine_version TEXT NOT NULL CHECK (length(engine_version) BETWEEN 1 AND 128),
+        canonical_hash_schema TEXT NOT NULL CHECK (
+          canonical_hash_schema = 'seerrng-canonical-json-sha256/v1'
+        ),
+        created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+        CHECK (
+          (owner_role = 'controller' AND controller_id IS NOT NULL AND
+            worker_id IS NULL AND machine_identity_sha256 IS NULL) OR
+          (owner_role = 'worker' AND worker_id IS NOT NULL AND
+            controller_id IS NULL AND machine_identity_sha256 IS NOT NULL)
+        )
+      ) STRICT;
+      INSERT INTO distributed_store_metadata (
+        singleton, schema_version, schema_manifest_sha256, store_id,
+        owner_role, owner_id, controller_id, worker_id,
+        machine_identity_sha256, engine_version, canonical_hash_schema,
+        created_at_ms
+      ) VALUES (
+        1, 1, '${LEGACY_V1_SCHEMA_MANIFEST_SHA256}', 'legacy-store-a',
+        'controller', 'controller-a', 'controller-a', NULL, NULL,
+        'state-store-test-v1', 'seerrng-canonical-json-sha256/v1', 10
+      );
+      DROP TABLE distributed_store_metadata_v2;
+      CREATE TRIGGER distributed_store_metadata_no_update
+        BEFORE UPDATE ON distributed_store_metadata
+        BEGIN SELECT RAISE(ABORT, 'distributed store metadata is immutable'); END;
+      CREATE TRIGGER distributed_store_metadata_no_delete
+        BEFORE DELETE ON distributed_store_metadata
+        BEGIN SELECT RAISE(ABORT, 'distributed store metadata is immutable'); END;
+      DROP TRIGGER distributed_schema_migration_no_update;
+      DROP TRIGGER distributed_schema_migration_no_delete;
+      DELETE FROM distributed_schema_migration;
+      INSERT INTO distributed_schema_migration (
+        version, migration_sha256, applied_at_ms
+      ) VALUES (1, '${LEGACY_V1_SCHEMA_MANIFEST_SHA256}', 10);
+      CREATE TRIGGER distributed_schema_migration_no_update
+        BEFORE UPDATE ON distributed_schema_migration
+        BEGIN SELECT RAISE(ABORT, 'distributed schema history is immutable'); END;
+      CREATE TRIGGER distributed_schema_migration_no_delete
+        BEFORE DELETE ON distributed_schema_migration
+        BEGIN SELECT RAISE(ABORT, 'distributed schema history is immutable'); END;
+      PRAGMA user_version = 1;
+    `);
+  });
 }
 
 function writer(token, processId, processStartedAtMs) {
@@ -107,9 +238,8 @@ function writer(token, processId, processStartedAtMs) {
 
 function initialize(path, overrides = {}) {
   return initializeDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    engineVersion: 'state-store-test-v1',
+    ...rootOptions(path),
+    engineVersion: 'state-store-test-v2',
     writer: writer('writer-a', 101, 1),
     initializedAtMs: 10,
     documentVerifiers: {},
@@ -285,41 +415,29 @@ test('history entries are deterministic and the adapter fails closed without its
     () => adapter.open('unused.sqlite', { fileMustExist: true, timeoutMs: 1 }),
     /requires pinned better-sqlite3/
   );
+  const legacyPath = databasePath(t, 'state-store-legacy-options');
+  const initialization = {
+    ...rootOptions(legacyPath),
+    engineVersion: 'state-store-test-v2',
+    writer: writer('writer-a', 101, 1),
+    initializedAtMs: 10,
+    documentVerifiers: {},
+  };
   assert.throws(
     () =>
       initializeDistributedStateStore({
-        databasePath: 'relative-state.sqlite',
-        owner: owner(),
-        engineVersion: 'state-store-test-v1',
-        writer: writer('writer-a', 101, 1),
-        initializedAtMs: 10,
-        documentVerifiers: {},
+        ...initialization,
+        databasePath: legacyPath,
       }),
-    /path must be absolute/
+    /unsupported field: databasePath/
   );
   assert.throws(
     () =>
       initializeDistributedStateStore({
-        databasePath: join(tmpdir(), 'invalid-controller-owner.sqlite'),
-        owner: owner({ machineIdentitySha256: hash('forged-machine') }),
-        engineVersion: 'state-store-test-v1',
-        writer: writer('writer-a', 101, 1),
-        initializedAtMs: 10,
-        documentVerifiers: {},
+        ...initialization,
+        owner: { role: 'controller' },
       }),
-    /owner fields do not match its role/
-  );
-  assert.throws(
-    () =>
-      initializeDistributedStateStore({
-        databasePath: join(tmpdir(), 'invalid-worker-owner.sqlite'),
-        owner: workerOwner({ machineIdentitySha256: null }),
-        engineVersion: 'state-store-test-v1',
-        writer: writer('writer-a', 101, 1),
-        initializedAtMs: 10,
-        documentVerifiers: {},
-      }),
-    /owner fields do not match its role/
+    /unsupported field: owner/
   );
   assert.throws(
     () =>
@@ -330,28 +448,40 @@ test('history entries are deterministic and the adapter fails closed without its
   );
 });
 
-test('schema v1 initializes once, enforces required pragmas, and reopens only an existing owned file', (t) => {
+test('schema v2 binds one admitted root and reopens only its derived database', (t) => {
   const path = databasePath(t, 'state-store-schema');
 
   assert.throws(
     () =>
-      openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-a', 101, 1),
-        documentVerifiers: {},
-      }),
-    /file is missing/
+      openDistributedStateStore(
+        openOptions(path, { writer: writer('writer-a', 101, 1) })
+      ),
+    /state directory is missing|file is missing/
   );
 
   const store = initialize(path);
   const database = openDatabase(path);
   assert.equal(store.metadata.storeId, 'store-a');
+  assert.equal(store.databasePath, path);
   assert.equal(store.writerEpoch, 1);
   assert.equal('database' in store, false);
   assert.equal('writer' in store, false);
   assert.equal(store.writer, undefined);
-  assert.equal(store.metadata.owner.machineIdentitySha256, null);
+  const root = rootContracts.get(path);
+  assert.equal(
+    store.metadata.owner.machineIdentitySha256,
+    root.config.machineIdentitySha256
+  );
+  assert.equal(store.metadata.owner.controllerId, 'controller-a');
+  assert.deepEqual(store.metadata.rootBinding, {
+    rootIdentitySha256: root.config.rootIdentitySha256,
+    rootConfigSha256: root.config.configSha256,
+    rootMarkerSha256: root.marker.markerSha256,
+    rootObjectFingerprintSha256: canonicalJsonSha256(
+      root.config.rootObjectFingerprint
+    ),
+    recoveryPolicySha256: root.config.recoveryPolicySha256,
+  });
   assert.throws(
     () => new store.constructor(Symbol('forged-state-store'), {}),
     /construction is private/
@@ -378,7 +508,10 @@ test('schema v1 initializes once, enforces required pragmas, and reopens only an
   assert.equal(
     database
       .prepare(
-        `SELECT schema_manifest_sha256, machine_identity_sha256
+        `SELECT schema_manifest_sha256, machine_identity_sha256,
+                root_identity_sha256, root_config_sha256,
+                root_marker_sha256, root_object_fingerprint_sha256,
+                recovery_policy_sha256
          FROM distributed_store_metadata WHERE singleton = 1`
       )
       .get().schema_manifest_sha256,
@@ -390,8 +523,19 @@ test('schema v1 initializes once, enforces required pragmas, and reopens only an
         'SELECT machine_identity_sha256 FROM distributed_store_metadata WHERE singleton = 1'
       )
       .get().machine_identity_sha256,
-    null
+    root.config.machineIdentitySha256
   );
+  const persistedBinding = database
+    .prepare(
+      `SELECT root_identity_sha256 AS rootIdentitySha256,
+              root_config_sha256 AS rootConfigSha256,
+              root_marker_sha256 AS rootMarkerSha256,
+              root_object_fingerprint_sha256 AS rootObjectFingerprintSha256,
+              recovery_policy_sha256 AS recoveryPolicySha256
+       FROM distributed_store_metadata WHERE singleton = 1`
+    )
+    .get();
+  assert.deepEqual(persistedBinding, store.metadata.rootBinding);
   assert.throws(() => initialize(path), /already exists/);
   assert.throws(
     () =>
@@ -405,30 +549,22 @@ test('schema v1 initializes once, enforces required pragmas, and reopens only an
   database.close();
   store.close();
 
-  const reopened = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-b', 202, 20),
-    documentVerifiers: {},
-  });
+  const reopened = openDistributedStateStore(openOptions(path));
   assert.equal(reopened.writerEpoch, 2);
   assert.throws(
     () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner({ ownerId: 'controller-b', controllerId: 'controller-b' }),
+        ...openOptions(path),
+        owner: { role: 'controller' },
         writer: writer('writer-c', 303, 30),
-        documentVerifiers: {},
       }),
-    /belongs to another owner/
+    /unsupported field: owner/
   );
   assert.throws(
     () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
+        ...openOptions(path),
         writer: writer('writer-c', 303, 30),
-        documentVerifiers: {},
         adapter: createBetterSqlite3StateStoreAdapter(),
       }),
     /unsupported field: adapter/
@@ -436,24 +572,192 @@ test('schema v1 initializes once, enforces required pragmas, and reopens only an
   reopened.close();
 });
 
-test('writer fencing rejects duplicate owners and requires explicit stale takeover', (t) => {
-  const path = databasePath(t, 'state-store-fence');
-  const original = initialize(path);
+test('copied state cannot transfer authority to another admitted root', (t) => {
+  const sourcePath = databasePath(t, 'state-store-copy-source');
+  const destinationPath = databasePath(t, 'state-store-copy-destination');
+  const source = rootContracts.get(sourcePath);
+  const destination = rootContracts.get(destinationPath);
+  const store = initialize(sourcePath, { storeId: 'copied-root-store' });
+  store.close();
+
+  mkdirSync(destination.paths.stateDirectory, { mode: 0o700 });
+  copyFileSync(sourcePath, destinationPath);
 
   assert.throws(
     () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-a', 101, 1),
-        documentVerifiers: {},
-        staleWriterAfterMs: 50,
+        ...openOptions(destinationPath),
+        expectations: source.expectations,
       }),
+    /config hash does not match|root identity hash does not match/
+  );
+  assert.throws(
+    () => openDistributedStateStore(openOptions(destinationPath)),
+    /belongs to another admitted root/
+  );
+});
+
+test('persisted owner metadata cannot transfer authority', (t) => {
+  const path = databasePath(t, 'state-store-owner-tamper');
+  const store = initialize(path);
+  store.close();
+  withDatabase(path, (database) => {
+    database.exec(`
+      DROP TRIGGER distributed_store_metadata_no_update;
+      UPDATE distributed_store_metadata
+      SET owner_id = 'controller-b', controller_id = 'controller-b'
+      WHERE singleton = 1;
+      CREATE TRIGGER distributed_store_metadata_no_update
+        BEFORE UPDATE ON distributed_store_metadata
+        BEGIN SELECT RAISE(ABORT, 'distributed store metadata is immutable'); END;
+    `);
+  });
+
+  assert.throws(
+    () => openDistributedStateStore(openOptions(path)),
+    /belongs to another owner/
+  );
+});
+
+test('open rejects schema v1 instead of silently migrating it', (t) => {
+  const path = databasePath(t, 'state-store-v1-rejection');
+  const store = initialize(path);
+  store.close();
+  rewriteAsLegacyV1Store(path);
+  withDatabase(path, (database) => {
+    assert.equal(database.pragma('user_version', { simple: true }), 1);
+    assert.deepEqual(
+      database
+        .pragma('table_info(distributed_store_metadata)')
+        .map((column) => column.name),
+      [
+        'singleton',
+        'schema_version',
+        'schema_manifest_sha256',
+        'store_id',
+        'owner_role',
+        'owner_id',
+        'controller_id',
+        'worker_id',
+        'machine_identity_sha256',
+        'engine_version',
+        'canonical_hash_schema',
+        'created_at_ms',
+      ]
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          `SELECT schema_version AS schemaVersion,
+                  schema_manifest_sha256 AS schemaManifestSha256
+           FROM distributed_store_metadata WHERE singleton = 1`
+        )
+        .get(),
+      {
+        schemaVersion: 1,
+        schemaManifestSha256: LEGACY_V1_SCHEMA_MANIFEST_SHA256,
+      }
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          `SELECT version, migration_sha256 AS migrationSha256
+           FROM distributed_schema_migration`
+        )
+        .get(),
+      {
+        version: 1,
+        migrationSha256: LEGACY_V1_SCHEMA_MANIFEST_SHA256,
+      }
+    );
+  });
+
+  assert.throws(
+    () => openDistributedStateStore(openOptions(path)),
+    /schema version is unsupported/
+  );
+});
+
+test('an open store re-admits its marker before every database operation', (t) => {
+  const path = databasePath(t, 'state-store-marker-readmission');
+  const root = rootContracts.get(path);
+  const store = initialize(path);
+  const replacementMarker = createDistributedLocalStateRootMarker({
+    config: root.config,
+    createdAtMs: 13,
+  });
+  writeFileSync(root.paths.markerPath, JSON.stringify(replacementMarker));
+
+  assert.throws(() => store.heartbeatWriter(), /marker hash does not match/);
+  assert.throws(
+    () => store.close({ releaseFence: false }),
+    /marker hash does not match|admission changed while closing/
+  );
+  assert.equal(store.closed, true);
+});
+
+test('an open store rejects state-directory identity drift', (t) => {
+  const path = databasePath(t, 'state-store-directory-drift');
+  const root = rootContracts.get(path);
+  const store = initialize(path);
+  const originalMode = Number(
+    lstatSync(root.paths.stateDirectory, { bigint: true }).mode & 0o777n
+  );
+  chmodSync(
+    root.paths.stateDirectory,
+    process.platform === 'win32' ? 0o444 : 0o755
+  );
+  try {
+    assert.throws(
+      () => store.heartbeatWriter(),
+      /state directory identity drifted/
+    );
+    assert.throws(
+      () => store.close({ releaseFence: false }),
+      /state directory identity drifted|admission changed while closing/
+    );
+    assert.equal(store.closed, true);
+  } finally {
+    chmodSync(root.paths.stateDirectory, originalMode);
+  }
+});
+
+test(
+  'an open POSIX store rejects database inode replacement',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const path = databasePath(t, 'state-store-database-drift');
+    const root = rootContracts.get(path);
+    const store = initialize(path);
+    const displacedPath = join(root.paths.stateDirectory, 'displaced.sqlite');
+    renameSync(path, displacedPath);
+    copyFileSync(displacedPath, path);
+    chmodSync(path, 0o600);
+
+    assert.throws(() => store.heartbeatWriter(), /database identity drifted/);
+    rmSync(path);
+    renameSync(displacedPath, path);
+    store.close({ releaseFence: false });
+    assert.equal(store.closed, true);
+  }
+);
+
+test('writer fencing rejects duplicate owners and obeys sealed recovery policy', (t) => {
+  const path = databasePath(t, 'state-store-fence', {
+    staleWriterAfterMs: 60_000,
+  });
+  const original = initialize(path);
+
+  assert.throws(
+    () =>
+      openDistributedStateStore(
+        openOptions(path, { writer: writer('writer-a', 101, 1) })
+      ),
     /already has an active writer/
   );
 
   withDatabase(path, (database) => {
-    const staleAtMs = Date.now() - 1_000;
+    const staleAtMs = Date.now() - 120_000;
     database
       .prepare(
         `UPDATE distributed_writer_fence
@@ -465,33 +769,80 @@ test('writer fencing rejects duplicate owners and requires explicit stale takeov
 
   assert.throws(
     () =>
+      openDistributedStateStore(
+        openOptions(path, { writer: writer('writer-b', 202, 20) })
+      ),
+    /recovery policy forbids stale-writer takeover/
+  );
+  assert.throws(
+    () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-b', 202, 20),
-        documentVerifiers: {},
+        ...openOptions(path),
         staleWriterAfterMs: 50,
       }),
-    /requires explicit stale-writer takeover/
+    /unsupported field: staleWriterAfterMs/
   );
+  assert.throws(
+    () =>
+      openDistributedStateStore({
+        ...openOptions(path),
+        allowStaleWriterTakeover: true,
+      }),
+    /unsupported field: allowStaleWriterTakeover/
+  );
+  original.close();
+});
 
-  const takeover = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-b', 202, 20),
-    documentVerifiers: {},
-    staleWriterAfterMs: 50,
+test('sealed stale takeover fences a still-open predecessor', (t) => {
+  const path = databasePath(t, 'state-store-live-predecessor-takeover', {
     allowStaleWriterTakeover: true,
+    staleWriterAfterMs: 600_000,
   });
+  const original = initialize(path);
+  withDatabase(path, (database) => {
+    const staleAtMs = Date.now() - 120_000;
+    database
+      .prepare(
+        `UPDATE distributed_writer_fence
+         SET acquired_at_ms = ?, heartbeat_at_ms = ?
+         WHERE singleton = 1 AND epoch = 1 AND owner_token = 'writer-a'`
+      )
+      .run(staleAtMs, staleAtMs);
+  });
+  assert.throws(
+    () =>
+      openDistributedStateStore(
+        openOptions(path, { writer: writer('writer-too-early', 202, 20) })
+      ),
+    /already has an active writer/
+  );
+  withDatabase(path, (database) => {
+    const staleAtMs = Date.now() - 1_200_000;
+    database
+      .prepare(
+        `UPDATE distributed_writer_fence
+         SET acquired_at_ms = ?, heartbeat_at_ms = ?
+         WHERE singleton = 1 AND epoch = 1 AND owner_token = 'writer-a'`
+      )
+      .run(staleAtMs, staleAtMs);
+  });
+
+  const takeover = openDistributedStateStore(
+    openOptions(path, { writer: writer('writer-takeover', 303, 30) })
+  );
   assert.equal(takeover.writerEpoch, 2);
   assert.throws(() => original.heartbeatWriter(), /writer fence was lost/);
   assert.throws(() => original.close(), /writer fence was lost/);
+  assert.equal(original.closed, true);
   assert.throws(() => original.heartbeatWriter(), /store is closed/);
   takeover.close();
 });
 
-test('crash-style close preserves exact state for explicit stale takeover', (t) => {
-  const path = databasePath(t, 'state-store-crash-reopen');
+test('crash-style close recovers only through the sealed takeover policy', (t) => {
+  const path = databasePath(t, 'state-store-crash-reopen', {
+    allowStaleWriterTakeover: true,
+    staleWriterAfterMs: 60_000,
+  });
   const store = initialize(path);
   const queue = createDistributedControllerQueue({
     controllerId: 'controller-a',
@@ -505,17 +856,15 @@ test('crash-style close preserves exact state for explicit stale takeover', (t) 
 
   assert.throws(
     () =>
-      openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-crash-reopen', 202, 20),
-        documentVerifiers: {},
-        staleWriterAfterMs: 60_000,
-      }),
+      openDistributedStateStore(
+        openOptions(path, {
+          writer: writer('writer-crash-reopen', 202, 20),
+        })
+      ),
     /already has an active writer/
   );
   withDatabase(path, (database) => {
-    const staleAtMs = Date.now() - 1_000;
+    const staleAtMs = Date.now() - 120_000;
     database
       .prepare(
         `UPDATE distributed_writer_fence
@@ -524,14 +873,11 @@ test('crash-style close preserves exact state for explicit stale takeover', (t) 
       )
       .run(staleAtMs, staleAtMs);
   });
-  const recovered = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-crash-reopen', 202, 20),
-    documentVerifiers: {},
-    staleWriterAfterMs: 50,
-    allowStaleWriterTakeover: true,
-  });
+  const recovered = openDistributedStateStore(
+    openOptions(path, {
+      writer: writer('writer-crash-reopen', 202, 20),
+    })
+  );
   assert.equal(recovered.writerEpoch, 2);
   assert.deepEqual(recovered.rehydrateQueueSnapshot(), queue);
   recovered.close();
@@ -563,12 +909,9 @@ test('writer acquisition advances beyond every persisted history epoch', (t) => 
     .run();
   database.close();
 
-  const reopened = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-b', 202, 21),
-    documentVerifiers: {},
-  });
+  const reopened = openDistributedStateStore(
+    openOptions(path, { writer: writer('writer-b', 202, 21) })
+  );
   assert.equal(reopened.writerEpoch, 2);
   reopened.close();
 });
@@ -624,23 +967,20 @@ test('nonmonotonic event provenance never controls writer heartbeat, takeover, o
   assert.deepEqual(historyTimes, [futureEventAtMs, 1]);
   assert.throws(
     () =>
-      openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-event-contender', 303, 30),
-        documentVerifiers: {},
-        staleWriterAfterMs: 60_000,
-      }),
+      openDistributedStateStore(
+        openOptions(path, {
+          writer: writer('writer-event-contender', 303, 30),
+        })
+      ),
     /already has an active writer/
   );
 
   store.close();
-  store = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-event-reopen', 404, 40),
-    documentVerifiers: {},
-  });
+  store = openDistributedStateStore(
+    openOptions(path, {
+      writer: writer('writer-event-reopen', 404, 40),
+    })
+  );
   assert.deepEqual(store.rehydrateQueueSnapshot(), queued);
   store.close();
 });
@@ -726,19 +1066,17 @@ test('sealed documents are immutable, idempotent, and verified on read', (t) => 
 
   assert.throws(
     () =>
-      openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-b', 202, 23),
-        documentVerifiers: {},
-      }),
+      openDistributedStateStore(
+        openOptions(path, {
+          writer: writer('writer-b', 202, 23),
+        })
+      ),
     /no registered verifier/
   );
   assert.throws(
     () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
+        ...openOptions(path),
         writer: writer('writer-b', 202, 23),
         documentVerifiers: {
           'test-document': (value) => ({ ...value, value: 'changed' }),
@@ -751,8 +1089,7 @@ test('sealed documents are immutable, idempotent, and verified on read', (t) => 
   assert.throws(
     () =>
       openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
+        ...openOptions(path),
         writer: writer('writer-b', 202, 23),
         documentVerifiers: {
           'test-document': (value, expectedContractSha256) => {
@@ -767,12 +1104,12 @@ test('sealed documents are immutable, idempotent, and verified on read', (t) => 
   );
   assert.equal(verificationCalls, 2);
 
-  store = openDistributedStateStore({
-    databasePath: path,
-    owner: owner(),
-    writer: writer('writer-b', 202, 23),
-    documentVerifiers,
-  });
+  store = openDistributedStateStore(
+    openOptions(path, {
+      writer: writer('writer-b', 202, 23),
+      documentVerifiers,
+    })
+  );
   assert.equal(store.writerEpoch, 2);
   assert.deepEqual(
     store.getSealedDocument({
@@ -786,9 +1123,25 @@ test('sealed documents are immutable, idempotent, and verified on read', (t) => 
 
 test('queue, broker, and worker-attempt snapshots persist through verified CAS history and rehydrate', (t) => {
   const controllerPath = databasePath(t, 'controller-state-snapshots');
-  const workerPath = databasePath(t, 'worker-state-snapshots');
-  const wrongWorkerPath = databasePath(t, 'wrong-worker-state-snapshots');
-  const wrongMachinePath = databasePath(t, 'wrong-machine-state-snapshots');
+  const workerPath = databasePath(t, 'worker-state-snapshots', {
+    role: 'worker',
+  });
+  const wrongWorkerPath = databasePath(t, 'wrong-worker-state-snapshots', {
+    role: 'worker',
+    workerId: 'worker-b',
+  });
+  const wrongMachinePath = databasePath(t, 'wrong-machine-state-snapshots', {
+    role: 'worker',
+    machineIdentitySha256: hash('worker-a-machine-2'),
+  });
+  const wrongControllerPath = databasePath(
+    t,
+    'wrong-controller-state-snapshots',
+    {
+      role: 'worker',
+      controllerId: 'controller-b',
+    }
+  );
   let controllerStore = initialize(controllerPath);
 
   const emptyQueue = createDistributedControllerQueue({
@@ -1008,12 +1361,11 @@ test('queue, broker, and worker-attempt snapshots persist through verified CAS h
   );
 
   controllerStore.close();
-  controllerStore = openDistributedStateStore({
-    databasePath: controllerPath,
-    owner: owner(),
-    writer: writer('writer-b', 202, 60),
-    documentVerifiers: {},
-  });
+  controllerStore = openDistributedStateStore(
+    openOptions(controllerPath, {
+      writer: writer('writer-b', 202, 60),
+    })
+  );
   assert.deepEqual(controllerStore.rehydrateQueueSnapshot(), queued);
   assert.deepEqual(
     controllerStore.rehydrateBrokerSnapshot({
@@ -1026,7 +1378,6 @@ test('queue, broker, and worker-attempt snapshots persist through verified CAS h
 
   const pending = workerAttempt(bound, task);
   const wrongWorkerStore = initialize(wrongWorkerPath, {
-    owner: workerOwner({ workerId: 'worker-b', ownerId: 'worker-b' }),
     storeId: 'worker-store-b',
   });
   assert.throws(
@@ -1040,7 +1391,6 @@ test('queue, broker, and worker-attempt snapshots persist through verified CAS h
   wrongWorkerStore.close();
 
   const wrongMachineStore = initialize(wrongMachinePath, {
-    owner: workerOwner({ machineIdentitySha256: hash('worker-a-machine-2') }),
     storeId: 'worker-store-wrong-machine',
   });
   assert.throws(
@@ -1053,10 +1403,23 @@ test('queue, broker, and worker-attempt snapshots persist through verified CAS h
   );
   wrongMachineStore.close();
 
+  const wrongControllerStore = initialize(wrongControllerPath, {
+    storeId: 'worker-store-wrong-controller',
+  });
+  assert.throws(
+    () =>
+      wrongControllerStore.persistWorkerAttemptSnapshot({
+        state: pending,
+        transition: transition(110),
+      }),
+    /does not belong to this worker state store/
+  );
+  wrongControllerStore.close();
+
   let workerStore = initialize(workerPath, {
-    owner: workerOwner(),
     storeId: 'worker-store-a',
   });
+  assert.equal(workerStore.metadata.owner.controllerId, 'controller-a');
   assert.equal(
     workerStore.metadata.owner.machineIdentitySha256,
     hash('worker-a-machine')
@@ -1202,24 +1565,11 @@ test('queue, broker, and worker-attempt snapshots persist through verified CAS h
   );
 
   workerStore.close();
-  assert.throws(
-    () =>
-      openDistributedStateStore({
-        databasePath: workerPath,
-        owner: workerOwner({
-          machineIdentitySha256: hash('worker-a-machine-2'),
-        }),
-        writer: writer('writer-wrong-machine', 303, 130),
-        documentVerifiers: {},
-      }),
-    /belongs to another owner/
+  workerStore = openDistributedStateStore(
+    openOptions(workerPath, {
+      writer: writer('writer-b', 202, 130),
+    })
   );
-  workerStore = openDistributedStateStore({
-    databasePath: workerPath,
-    owner: workerOwner(),
-    writer: writer('writer-b', 202, 130),
-    documentVerifiers: {},
-  });
   assert.deepEqual(
     workerStore.rehydrateWorkerAttemptSnapshot({
       attemptIdentitySha256: running.attemptIdentitySha256,
@@ -1240,13 +1590,10 @@ test('open fails closed when a schema object is removed', (t) => {
 
   assert.throws(
     () =>
-      openDistributedStateStore({
-        databasePath: path,
-        owner: owner(),
-        writer: writer('writer-b', 202, 20),
-        documentVerifiers: {},
-      }),
-    /schema objects do not match v1/
+      openDistributedStateStore(
+        openOptions(path, { writer: writer('writer-b', 202, 20) })
+      ),
+    /schema objects do not match v2/
   );
 });
 
@@ -1284,13 +1631,12 @@ test('open rejects every rogue non-internal schema name and object type', (t) =>
     database.close();
     assert.throws(
       () =>
-        openDistributedStateStore({
-          databasePath: path,
-          owner: owner(),
-          writer: writer(`writer-rogue-${index}`, 300 + index, 20),
-          documentVerifiers: {},
-        }),
-      /schema objects do not match v1/
+        openDistributedStateStore(
+          openOptions(path, {
+            writer: writer(`writer-rogue-${index}`, 300 + index, 20),
+          })
+        ),
+      /schema objects do not match v2/
     );
   }
 });
@@ -1362,46 +1708,28 @@ test('reopen rejects transition JSON, row, and hash tampering after its immutabl
 
     assert.throws(
       () =>
-        openDistributedStateStore({
-          databasePath: path,
-          owner: owner(),
-          writer: writer(`writer-tamper-${index}`, 500 + index, 20),
-          documentVerifiers: {},
-        }),
+        openDistributedStateStore(
+          openOptions(path, {
+            writer: writer(`writer-tamper-${index}`, 500 + index, 20),
+          })
+        ),
       /transition record hash does not match|not bound to its state history entry/
     );
   }
 });
 
 test(
-  'Windows database paths reject direct UNC, device, ADS, noncanonical, reparse, and unsafe sidecar locations',
+  'Windows admitted roots reject a state junction, hard-linked database, and unsafe sidecar',
   { skip: process.platform !== 'win32' },
   (t) => {
-    const invalidPaths = [
-      '\\\\server\\share\\state.sqlite',
-      '\\\\?\\C:\\state.sqlite',
-      '\\rooted-without-drive\\state.sqlite',
-      'C:\\state.sqlite:alternate-stream',
-      'C:\\state.\\store.sqlite',
-      'C:\\state \\store.sqlite',
-      'C:\\state\\CON\\store.sqlite',
-      'C:\\state\\nul.sqlite',
-    ];
-    for (const path of invalidPaths)
-      assert.throws(
-        () => initialize(path),
-        /Windows drive|direct UNC|alternate data stream|canonical Windows segments/
-      );
-
     const reparsePath = databasePath(t, 'state-store-reparse-parent');
-    const reparseRoot = dirname(reparsePath);
-    const realDirectory = join(reparseRoot, 'real-directory');
-    const aliasDirectory = join(reparseRoot, 'alias-directory');
+    const reparse = rootContracts.get(reparsePath);
+    const realDirectory = join(reparse.paths.root, 'real-state-directory');
     mkdirSync(realDirectory);
-    symlinkSync(realDirectory, aliasDirectory, 'junction');
+    symlinkSync(realDirectory, reparse.paths.stateDirectory, 'junction');
     assert.throws(
-      () => initialize(join(aliasDirectory, 'state.sqlite')),
-      /reparse-point alias|canonical-path alias/
+      () => initialize(reparsePath),
+      /ordinary non-symbolic directory|reparse-point alias|canonical-path alias/
     );
 
     const realFilePath = databasePath(t, 'state-store-reparse-file');
@@ -1409,20 +1737,23 @@ test(
       storeId: 'reparse-file-store',
     });
     realFileStore.close();
-    const aliasFilePath = join(dirname(realFilePath), 'alias-state.sqlite');
+    const aliasFilePath = join(
+      rootContracts.get(realFilePath).paths.root,
+      'alias-state.sqlite'
+    );
     linkSync(realFilePath, aliasFilePath);
     assert.throws(
       () =>
-        openDistributedStateStore({
-          databasePath: aliasFilePath,
-          owner: owner(),
-          writer: writer('writer-alias', 404, 20),
-          documentVerifiers: {},
-        }),
-      /regular non-symbolic file|reparse-point alias|canonical-path alias/
+        openDistributedStateStore(
+          openOptions(realFilePath, {
+            writer: writer('writer-alias', 404, 20),
+          })
+        ),
+      /regular non-symbolic file/
     );
 
     const sidecarPath = databasePath(t, 'state-store-unsafe-sidecar');
+    mkdirSync(rootContracts.get(sidecarPath).paths.stateDirectory);
     mkdirSync(`${sidecarPath}-wal`);
     assert.throws(
       () => initialize(sidecarPath),
@@ -1432,18 +1763,17 @@ test(
 );
 
 test(
-  'POSIX database paths reject symbolic parents, hard-linked files, and hard-linked sidecars',
+  'POSIX admitted roots reject symbolic, linked, and writable state files',
   { skip: process.platform === 'win32' },
   (t) => {
     const symbolicPath = databasePath(t, 'state-store-posix-symbolic-parent');
-    const symbolicRoot = dirname(symbolicPath);
-    const realDirectory = join(symbolicRoot, 'real-directory');
-    const aliasDirectory = join(symbolicRoot, 'alias\\directory');
+    const symbolic = rootContracts.get(symbolicPath);
+    const realDirectory = join(symbolic.paths.root, 'real-state-directory');
     mkdirSync(realDirectory);
-    symlinkSync(realDirectory, aliasDirectory, 'dir');
+    symlinkSync(realDirectory, symbolic.paths.stateDirectory, 'dir');
     assert.throws(
-      () => initialize(join(aliasDirectory, 'state.sqlite')),
-      /symbolic-link or reparse-point alias|canonical-path alias/
+      () => initialize(symbolicPath),
+      /ordinary non-symbolic directory|symbolic-link or reparse-point alias|canonical-path alias/
     );
 
     const realFilePath = databasePath(t, 'state-store-posix-hard-link');
@@ -1451,26 +1781,61 @@ test(
       storeId: 'posix-hard-link-store',
     });
     realFileStore.close();
-    const aliasFilePath = join(dirname(realFilePath), 'alias-state.sqlite');
+    const aliasFilePath = join(
+      rootContracts.get(realFilePath).paths.root,
+      'alias-state.sqlite'
+    );
     linkSync(realFilePath, aliasFilePath);
     assert.throws(
       () =>
-        openDistributedStateStore({
-          databasePath: aliasFilePath,
-          owner: owner(),
-          writer: writer('writer-posix-alias', 601, 20),
-          documentVerifiers: {},
-        }),
+        openDistributedStateStore(
+          openOptions(realFilePath, {
+            writer: writer('writer-posix-alias', 601, 20),
+          })
+        ),
       /regular non-symbolic file/
     );
 
     const sidecarPath = databasePath(t, 'state-store-posix-hard-sidecar');
-    const sidecarSource = join(dirname(sidecarPath), 'sidecar-source');
+    mkdirSync(rootContracts.get(sidecarPath).paths.stateDirectory);
+    const sidecarSource = join(
+      rootContracts.get(sidecarPath).paths.root,
+      'sidecar-source'
+    );
     writeFileSync(sidecarSource, 'unsafe-sidecar', 'utf8');
     linkSync(sidecarSource, `${sidecarPath}-wal`);
     assert.throws(
       () => initialize(sidecarPath),
       /sidecar must be a regular non-symbolic file/
+    );
+
+    const writableDatabasePath = databasePath(
+      t,
+      'state-store-posix-writable-database'
+    );
+    const writableDatabaseStore = initialize(writableDatabasePath, {
+      storeId: 'posix-writable-database-store',
+    });
+    writableDatabaseStore.close();
+    chmodSync(rootContracts.get(writableDatabasePath).paths.stateDirectory, 0o755);
+    chmodSync(writableDatabasePath, 0o660);
+    assert.throws(
+      () => openDistributedStateStore(openOptions(writableDatabasePath)),
+      /database must not be group- or world-writable/
+    );
+
+    const writableSidecarPath = databasePath(
+      t,
+      'state-store-posix-writable-sidecar'
+    );
+    mkdirSync(rootContracts.get(writableSidecarPath).paths.stateDirectory, {
+      mode: 0o755,
+    });
+    writeFileSync(`${writableSidecarPath}-wal`, 'unsafe-sidecar', 'utf8');
+    chmodSync(`${writableSidecarPath}-wal`, 0o660);
+    assert.throws(
+      () => initialize(writableSidecarPath),
+      /sidecar must not be group- or world-writable/
     );
   }
 );

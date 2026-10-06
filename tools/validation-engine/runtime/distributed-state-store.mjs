@@ -1,9 +1,16 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 // Synchronous, fail-closed persistence for distributed validation state.
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, parse, resolve } from 'node:path';
+import { dirname, parse, resolve } from 'node:path';
 
 import {
   describeBrokerLeaseStateTransition,
@@ -21,9 +28,10 @@ import {
   snapshotDistributedWorkerAttemptState,
   verifyDistributedWorkerAttemptState,
 } from './distributed-worker-attempt-state.mjs';
+import { verifyDistributedLocalStateRootAdmission } from './distributed-local-state-root.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
-export const DISTRIBUTED_STATE_STORE_SCHEMA_VERSION = 1;
+export const DISTRIBUTED_STATE_STORE_SCHEMA_VERSION = 2;
 export const DISTRIBUTED_STATE_ENTRY_SCHEMA =
   'seerrng-distributed-state-entry/v1';
 export const DISTRIBUTED_STATE_TRANSITION_RECORD_SCHEMA =
@@ -44,8 +52,6 @@ export const DISTRIBUTED_STATE_STORE_MAX_TRANSITION_BYTES = 64 * 1024;
 
 const HASH64 = /^[a-f0-9]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const DOS_DEVICE_SEGMENT =
-  /^(?:aux|clock\$|com[1-9]|con|conin\$|conout\$|lpt[1-9]|nul|prn)(?:\.|$)/i;
 const ZERO_SHA256 = '0'.repeat(64);
 const SQLITE_SIDECAR_SUFFIXES = ['-journal', '-shm', '-wal'];
 const require = createRequire(import.meta.url);
@@ -55,7 +61,7 @@ const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE distributed_store_metadata (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+    schema_version INTEGER NOT NULL CHECK (schema_version = 2),
     schema_manifest_sha256 TEXT NOT NULL CHECK (
       length(schema_manifest_sha256) = 64 AND
       schema_manifest_sha256 NOT GLOB '*[^0-9a-f]*'
@@ -63,13 +69,33 @@ const SCHEMA_STATEMENTS = [
     store_id TEXT NOT NULL UNIQUE CHECK (length(store_id) BETWEEN 1 AND 128),
     owner_role TEXT NOT NULL CHECK (owner_role IN ('controller', 'worker')),
     owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
-    controller_id TEXT,
-    worker_id TEXT,
-    machine_identity_sha256 TEXT CHECK (
-      machine_identity_sha256 IS NULL OR (
-        length(machine_identity_sha256) = 64 AND
-        machine_identity_sha256 NOT GLOB '*[^0-9a-f]*'
-      )
+    controller_id TEXT NOT NULL CHECK (length(controller_id) BETWEEN 1 AND 128),
+    worker_id TEXT CHECK (
+      worker_id IS NULL OR length(worker_id) BETWEEN 1 AND 128
+    ),
+    machine_identity_sha256 TEXT NOT NULL CHECK (
+      length(machine_identity_sha256) = 64 AND
+      machine_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    root_identity_sha256 TEXT NOT NULL CHECK (
+      length(root_identity_sha256) = 64 AND
+      root_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    root_config_sha256 TEXT NOT NULL CHECK (
+      length(root_config_sha256) = 64 AND
+      root_config_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    root_marker_sha256 TEXT NOT NULL CHECK (
+      length(root_marker_sha256) = 64 AND
+      root_marker_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    root_object_fingerprint_sha256 TEXT NOT NULL CHECK (
+      length(root_object_fingerprint_sha256) = 64 AND
+      root_object_fingerprint_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    recovery_policy_sha256 TEXT NOT NULL CHECK (
+      length(recovery_policy_sha256) = 64 AND
+      recovery_policy_sha256 NOT GLOB '*[^0-9a-f]*'
     ),
     engine_version TEXT NOT NULL CHECK (length(engine_version) BETWEEN 1 AND 128),
     canonical_hash_schema TEXT NOT NULL CHECK (
@@ -77,10 +103,9 @@ const SCHEMA_STATEMENTS = [
     ),
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
     CHECK (
-      (owner_role = 'controller' AND controller_id IS NOT NULL AND
-        worker_id IS NULL AND machine_identity_sha256 IS NULL) OR
-      (owner_role = 'worker' AND worker_id IS NOT NULL AND
-        controller_id IS NULL AND machine_identity_sha256 IS NOT NULL)
+      (owner_role = 'controller' AND owner_id = controller_id AND
+        worker_id IS NULL) OR
+      (owner_role = 'worker' AND worker_id IS NOT NULL AND owner_id = worker_id)
     )
   ) STRICT`,
   `CREATE TABLE distributed_schema_migration (
@@ -290,7 +315,7 @@ const EXPECTED_SCHEMA_OBJECTS = SCHEMA_STATEMENTS.map((statement) => {
 
 export const DISTRIBUTED_STATE_STORE_SCHEMA_MANIFEST_SHA256 =
   canonicalJsonSha256({
-    schema: 'seerrng-distributed-state-store-schema-manifest/v1',
+    schema: 'seerrng-distributed-state-store-schema-manifest/v2',
     version: DISTRIBUTED_STATE_STORE_SCHEMA_VERSION,
     statements: SCHEMA_STATEMENTS,
   });
@@ -419,41 +444,6 @@ function parseStoredJson(
   return value;
 }
 
-function normalizeAbsolutePath(value) {
-  exactText(value, 'distributed state database path', 32_768);
-  if (!isAbsolute(value))
-    throw new Error('Distributed state database path must be absolute');
-  if (process.platform === 'win32') {
-    if (!/^[A-Za-z]:[\\/]/.test(value))
-      throw new Error(
-        'Distributed state database path must use a fully-qualified Windows drive path'
-      );
-    if (/^[\\/]{2}/.test(value))
-      throw new Error(
-        'Distributed state database path must not use a direct UNC path or device namespace'
-      );
-    if (value.slice(2).includes(':'))
-      throw new Error(
-        'Distributed state database path must not use an NTFS alternate data stream'
-      );
-    const root = parse(value).root;
-    const segments = value.slice(root.length).split(/[\\/]/).filter(Boolean);
-    if (
-      segments.some(
-        (segment) =>
-          segment === '.' ||
-          segment === '..' ||
-          /[. ]$/.test(segment) ||
-          DOS_DEVICE_SEGMENT.test(segment)
-      )
-    )
-      throw new Error(
-        'Distributed state database path must use canonical Windows segments without DOS devices, trailing dots, or trailing spaces'
-      );
-  }
-  return resolve(value);
-}
-
 function pathIdentity(value) {
   const normalized = resolve(value);
   return process.platform === 'win32'
@@ -493,24 +483,44 @@ function verifyCanonicalComponents(value, { leafKind }) {
   }
 }
 
-function verifyOrdinaryFileIfPresent(value, label) {
+function decimalBigInt(value, label, { nonzero = false } = {}) {
+  if (
+    typeof value !== 'bigint' ||
+    value < 0n ||
+    (nonzero && value === 0n)
+  )
+    throw new Error(`${label} has no stable filesystem identity`);
+  return value.toString(10);
+}
+
+function verifyOrdinaryFileIfPresent(value, label, expectedDeviceId) {
   if (!existsSync(value)) return false;
-  const statistics = lstatSync(value);
+  const statistics = lstatSync(value, { bigint: true });
   if (
     statistics.isSymbolicLink() ||
     !statistics.isFile() ||
-    statistics.nlink !== 1
+    statistics.nlink !== 1n
   )
     throw new Error(
       `${label} must be a regular non-symbolic file with exactly one filesystem link`
     );
   verifyCanonicalComponents(value, { leafKind: 'file' });
-  return true;
+  const deviceId = decimalBigInt(statistics.dev, `${label} device`);
+  if (expectedDeviceId !== undefined && deviceId !== expectedDeviceId)
+    throw new Error(`${label} must be on the admitted root filesystem`);
+  if (process.platform !== 'win32' && (statistics.mode & 0o022n) !== 0n)
+    throw new Error(`${label} must not be group- or world-writable`);
+  return {
+    deviceId,
+    inodeId: decimalBigInt(statistics.ino, `${label} inode`, {
+      nonzero: true,
+    }),
+  };
 }
 
 function verifyDatabaseFilesystem(
   databasePath,
-  { fileMustExist, sidecarsMustBeAbsent = false }
+  { expectedDeviceId, fileMustExist, sidecarsMustBeAbsent = false }
 ) {
   // Physical locality (for example, mapped or mounted network storage) is an
   // integration/deployment precondition that portable Node path APIs cannot prove.
@@ -519,7 +529,8 @@ function verifyDatabaseFilesystem(
   });
   const databaseExists = verifyOrdinaryFileIfPresent(
     databasePath,
-    'Distributed state database'
+    'Distributed state database',
+    expectedDeviceId
   );
   if (fileMustExist && !databaseExists)
     throw new Error('Distributed state store file is missing');
@@ -527,13 +538,66 @@ function verifyDatabaseFilesystem(
     const sidecarPath = `${databasePath}${suffix}`;
     const sidecarExists = verifyOrdinaryFileIfPresent(
       sidecarPath,
-      `Distributed state SQLite ${suffix.slice(1)} sidecar`
+      `Distributed state SQLite ${suffix.slice(1)} sidecar`,
+      expectedDeviceId
     );
     if (sidecarsMustBeAbsent && sidecarExists)
       throw new Error(
         'New distributed state database must not have pre-existing SQLite sidecars'
       );
   }
+  return databaseExists;
+}
+
+function stateDirectoryIdentity(path, expectedDeviceId) {
+  let before;
+  try {
+    before = lstatSync(path, { bigint: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT')
+      throw new Error('Distributed state directory is missing');
+    throw error;
+  }
+  if (before.isSymbolicLink() || !before.isDirectory())
+    throw new Error(
+      'Distributed state directory must be an ordinary non-symbolic directory'
+    );
+  verifyCanonicalComponents(path, { leafKind: 'directory' });
+  if (realpathSync.native(path) !== path)
+    throw new Error(
+      'Distributed state directory must use its exact native canonical spelling'
+    );
+  const after = lstatSync(path, { bigint: true });
+  if (
+    !after.isDirectory() ||
+    after.isSymbolicLink() ||
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.mode !== after.mode
+  )
+    throw new Error(
+      'Distributed state directory changed during filesystem identity verification'
+    );
+  const deviceId = decimalBigInt(after.dev, 'Distributed state directory device');
+  if (deviceId !== expectedDeviceId)
+    throw new Error(
+      'Distributed state directory must be on the admitted root filesystem'
+    );
+  if (process.platform !== 'win32' && (after.mode & 0o022n) !== 0n)
+    throw new Error(
+      'Distributed state directory must not be group- or world-writable'
+    );
+  return deepFreeze({
+    deviceId,
+    inodeId: decimalBigInt(after.ino, 'Distributed state directory inode', {
+      nonzero: true,
+    }),
+    mode: decimalBigInt(after.mode, 'Distributed state directory mode'),
+  });
+}
+
+function sameFilesystemIdentity(left, right) {
+  return canonicalJsonSha256(left) === canonicalJsonSha256(right);
 }
 
 function normalizeOwner(value) {
@@ -555,28 +619,183 @@ function normalizeOwner(value) {
       value.workerId === null
         ? null
         : identifier(value.workerId, 'state store worker ID'),
-    machineIdentitySha256:
-      value.machineIdentitySha256 === null
-        ? null
-        : digest(
-            value.machineIdentitySha256,
-            'state store machine identity hash'
-          ),
+    machineIdentitySha256: digest(
+      value.machineIdentitySha256,
+      'state store machine identity hash'
+    ),
   };
   if (
     (owner.role === 'controller' &&
       (owner.controllerId === null ||
         owner.workerId !== null ||
-        owner.machineIdentitySha256 !== null)) ||
+        owner.ownerId !== owner.controllerId)) ||
     (owner.role === 'worker' &&
       (owner.workerId === null ||
-        owner.controllerId !== null ||
-        owner.machineIdentitySha256 === null))
+        owner.controllerId === null ||
+        owner.ownerId !== owner.workerId))
   )
     throw new Error(
       'Distributed state store owner fields do not match its role'
     );
   return owner;
+}
+
+function rootBindingFromAdmission(admission) {
+  return deepFreeze({
+    rootIdentitySha256: digest(
+      admission.config.rootIdentitySha256,
+      'state root identity hash'
+    ),
+    rootConfigSha256: digest(
+      admission.config.configSha256,
+      'state root config hash'
+    ),
+    rootMarkerSha256: digest(
+      admission.marker.markerSha256,
+      'state root marker hash'
+    ),
+    rootObjectFingerprintSha256: canonicalJsonSha256(
+      admission.config.rootObjectFingerprint
+    ),
+    recoveryPolicySha256: digest(
+      admission.config.recoveryPolicySha256,
+      'state root recovery policy hash'
+    ),
+  });
+}
+
+function ownerFromAdmission(admission) {
+  const { config } = admission;
+  return normalizeOwner({
+    role: config.role,
+    ownerId:
+      config.role === 'controller' ? config.controllerId : config.workerId,
+    controllerId: config.controllerId,
+    workerId: config.workerId,
+    machineIdentitySha256: config.machineIdentitySha256,
+  });
+}
+
+function createStateRootContext({ config, expectations, marker }) {
+  const frozenExpectations = deepFreeze(structuredClone(expectations));
+  const admission = verifyDistributedLocalStateRootAdmission({
+    config,
+    marker,
+    expectations: frozenExpectations,
+  });
+  return {
+    config: admission.config,
+    marker: admission.marker,
+    expectations: frozenExpectations,
+    paths: admission.paths,
+    owner: ownerFromAdmission(admission),
+    rootBinding: rootBindingFromAdmission(admission),
+    recoveryPolicy: admission.recoveryPolicy,
+  };
+}
+
+function readmitStateRoot(context) {
+  const admission = verifyDistributedLocalStateRootAdmission({
+    config: context.config,
+    marker: context.marker,
+    expectations: context.expectations,
+  });
+  const binding = rootBindingFromAdmission(admission);
+  if (
+    !sameFilesystemIdentity(binding, context.rootBinding) ||
+    admission.paths.databasePath !== context.paths.databasePath ||
+    admission.paths.stateDirectory !== context.paths.stateDirectory
+  )
+    throw new Error('Distributed state store root admission drifted');
+  return admission;
+}
+
+function verifyBoundStateStoreFilesystem(
+  context,
+  {
+    databaseMustExist,
+    expectedDatabaseIdentity,
+    expectedStateDirectoryIdentity,
+    sidecarsMustBeAbsent = false,
+  }
+) {
+  const admission = readmitStateRoot(context);
+  const expectedDeviceId = admission.config.rootObjectFingerprint.deviceId;
+  const directoryIdentityBefore = stateDirectoryIdentity(
+    admission.paths.stateDirectory,
+    expectedDeviceId
+  );
+  if (
+    expectedStateDirectoryIdentity !== undefined &&
+    !sameFilesystemIdentity(
+      directoryIdentityBefore,
+      expectedStateDirectoryIdentity
+    )
+  )
+    throw new Error('Distributed state directory identity drifted');
+  const databaseIdentity = verifyDatabaseFilesystem(
+    admission.paths.databasePath,
+    {
+      expectedDeviceId,
+      fileMustExist: databaseMustExist,
+      sidecarsMustBeAbsent,
+    }
+  );
+  if (
+    expectedDatabaseIdentity !== undefined &&
+    (!databaseIdentity ||
+      !sameFilesystemIdentity(databaseIdentity, expectedDatabaseIdentity))
+  )
+    throw new Error('Distributed state database identity drifted');
+  const directoryIdentity = stateDirectoryIdentity(
+    admission.paths.stateDirectory,
+    expectedDeviceId
+  );
+  if (!sameFilesystemIdentity(directoryIdentity, directoryIdentityBefore))
+    throw new Error(
+      'Distributed state directory changed during database filesystem verification'
+    );
+  if (
+    expectedStateDirectoryIdentity !== undefined &&
+    !sameFilesystemIdentity(directoryIdentity, expectedStateDirectoryIdentity)
+  )
+    throw new Error('Distributed state directory identity drifted');
+  return { admission, databaseIdentity, directoryIdentity };
+}
+
+function reserveNewDatabaseFile(databasePath) {
+  let descriptor;
+  try {
+    descriptor = openSync(databasePath, 'wx', 0o600);
+  } catch (error) {
+    if (error?.code === 'EEXIST')
+      throw new Error('Distributed state store already exists', {
+        cause: error,
+      });
+    throw error;
+  }
+  try {
+    closeSync(descriptor);
+  } catch (error) {
+    throw new Error(
+      'Distributed state store could not close its exclusive file reservation',
+      { cause: error }
+    );
+  }
+}
+
+function closeDatabaseAfterFailure(database, failure) {
+  try {
+    database.close();
+  } catch (closeError) {
+    throw new AggregateError(
+      [failure, closeError],
+      failure instanceof Error
+        ? failure.message
+        : 'Distributed state store operation and cleanup both failed'
+    );
+  }
+  throw failure;
 }
 
 function normalizeWriter(value) {
@@ -755,7 +974,7 @@ function verifySchemaObjects(database) {
   if (
     canonicalJsonSha256(rows) !== canonicalJsonSha256(EXPECTED_SCHEMA_OBJECTS)
   )
-    throw new Error('Distributed state store schema objects do not match v1');
+    throw new Error('Distributed state store schema objects do not match v2');
 }
 
 function stateHeadFromRow(row) {
@@ -1064,7 +1283,7 @@ function maximumSnapshotBytes(streamKind) {
   }
 }
 
-function verifyMetadata(database, expectedOwner) {
+function verifyMetadata(database, expectedOwner, expectedRootBinding) {
   const metadata = database
     .prepare(`SELECT * FROM distributed_store_metadata WHERE singleton = 1`)
     .get();
@@ -1094,6 +1313,30 @@ function verifyMetadata(database, expectedOwner) {
     owner.machineIdentitySha256 !== expectedOwner.machineIdentitySha256
   )
     throw new Error('Distributed state store belongs to another owner');
+  const rootBinding = {
+    rootIdentitySha256: digest(
+      metadata.root_identity_sha256,
+      'persisted state root identity hash'
+    ),
+    rootConfigSha256: digest(
+      metadata.root_config_sha256,
+      'persisted state root config hash'
+    ),
+    rootMarkerSha256: digest(
+      metadata.root_marker_sha256,
+      'persisted state root marker hash'
+    ),
+    rootObjectFingerprintSha256: digest(
+      metadata.root_object_fingerprint_sha256,
+      'persisted state root object fingerprint hash'
+    ),
+    recoveryPolicySha256: digest(
+      metadata.recovery_policy_sha256,
+      'persisted state root recovery policy hash'
+    ),
+  };
+  if (!sameFilesystemIdentity(rootBinding, expectedRootBinding))
+    throw new Error('Distributed state store belongs to another admitted root');
   const migrations = database
     .prepare(
       `SELECT version, migration_sha256
@@ -1110,6 +1353,7 @@ function verifyMetadata(database, expectedOwner) {
   return {
     storeId: metadata.store_id,
     owner,
+    rootBinding: deepFreeze(rootBinding),
     engineVersion: metadata.engine_version,
     createdAtMs: metadata.created_at_ms,
   };
@@ -1183,7 +1427,7 @@ function acquireWriterFenceLocked(
       throw new Error('Distributed state store already has an active writer');
     if (!allowStaleTakeover)
       throw new Error(
-        'Distributed state store requires explicit stale-writer takeover'
+        'Distributed state store recovery policy forbids stale-writer takeover'
       );
   }
   const nextEpoch = Math.max(currentEpoch, maximumPersistedEpoch) + 1;
@@ -1270,22 +1514,38 @@ function openWithAdapter(adapter, databasePath, fileMustExist) {
 class DistributedStateStore {
   #closed = false;
   #database;
+  #databaseIdentity;
   #databasePath;
   #documentVerifiers;
   #metadata;
+  #rootContext;
+  #stateDirectoryIdentity;
   #writer;
   #writerEpoch;
 
   constructor(
     constructionToken,
-    { database, databasePath, documentVerifiers, metadata, writer, writerEpoch }
+    {
+      database,
+      databaseIdentity,
+      databasePath,
+      documentVerifiers,
+      metadata,
+      rootContext,
+      stateDirectoryIdentity,
+      writer,
+      writerEpoch,
+    }
   ) {
     if (constructionToken !== STATE_STORE_CONSTRUCTION_TOKEN)
       throw new Error('Distributed state store construction is private');
     this.#database = database;
+    this.#databaseIdentity = databaseIdentity;
     this.#databasePath = databasePath;
     this.#documentVerifiers = documentVerifiers;
     this.#metadata = deepFreeze(structuredClone(metadata));
+    this.#rootContext = rootContext;
+    this.#stateDirectoryIdentity = stateDirectoryIdentity;
     this.#writer = deepFreeze(structuredClone(writer));
     this.#writerEpoch = writerEpoch;
   }
@@ -1310,44 +1570,91 @@ class DistributedStateStore {
     if (this.#closed) throw new Error('Distributed state store is closed');
   }
 
+  #verifyFilesystem() {
+    return verifyBoundStateStoreFilesystem(this.#rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: this.#databaseIdentity,
+      expectedStateDirectoryIdentity: this.#stateDirectoryIdentity,
+    });
+  }
+
+  #read(operation) {
+    this.#requireOpen();
+    this.#verifyFilesystem();
+    let value;
+    let operationError;
+    try {
+      value = operation();
+    } catch (error) {
+      operationError = error;
+    }
+    try {
+      this.#verifyFilesystem();
+    } catch (error) {
+      throw new Error(
+        'Distributed state store admission changed during database access',
+        { cause: error }
+      );
+    }
+    if (operationError) throw operationError;
+    return value;
+  }
+
   #write(operation) {
     this.#requireOpen();
-    const committed = createTransaction(this.#database, () => {
-      const fence = this.#database
-        .prepare(
-          `SELECT epoch, owner_token, heartbeat_at_ms
-           FROM distributed_writer_fence WHERE singleton = 1`
+    this.#verifyFilesystem();
+    let committed;
+    let operationError;
+    try {
+      committed = createTransaction(this.#database, () => {
+        const fence = this.#database
+          .prepare(
+            `SELECT epoch, owner_token, heartbeat_at_ms
+             FROM distributed_writer_fence WHERE singleton = 1`
+          )
+          .get();
+        if (
+          !fence ||
+          fence.epoch !== this.#writerEpoch ||
+          fence.owner_token !== this.#writer.token
         )
-        .get();
-      if (
-        !fence ||
-        fence.epoch !== this.#writerEpoch ||
-        fence.owner_token !== this.#writer.token
-      )
-        throw new Error('Distributed state store writer fence was lost');
-      const priorHeartbeatAtMs = integer(
-        fence.heartbeat_at_ms,
-        'Persisted writer heartbeat time'
-      );
-      const value = operation();
-      const heartbeatAtMs = localWallClockNowMs(priorHeartbeatAtMs);
-      const heartbeat = this.#database
-        .prepare(
-          `UPDATE distributed_writer_fence
-           SET heartbeat_at_ms = ?
-           WHERE singleton = 1 AND epoch = ? AND owner_token = ?
-             AND heartbeat_at_ms = ?`
-        )
-        .run(
-          heartbeatAtMs,
-          this.#writerEpoch,
-          this.#writer.token,
-          priorHeartbeatAtMs
+          throw new Error('Distributed state store writer fence was lost');
+        const priorHeartbeatAtMs = integer(
+          fence.heartbeat_at_ms,
+          'Persisted writer heartbeat time'
         );
-      if (heartbeat.changes !== 1)
-        throw new Error('Distributed state store writer fence was lost');
-      return { value };
-    })();
+        const value = operation();
+        const heartbeatAtMs = localWallClockNowMs(priorHeartbeatAtMs);
+        const heartbeat = this.#database
+          .prepare(
+            `UPDATE distributed_writer_fence
+             SET heartbeat_at_ms = ?
+             WHERE singleton = 1 AND epoch = ? AND owner_token = ?
+               AND heartbeat_at_ms = ?`
+          )
+          .run(
+            heartbeatAtMs,
+            this.#writerEpoch,
+            this.#writer.token,
+            priorHeartbeatAtMs
+          );
+        if (heartbeat.changes !== 1)
+          throw new Error('Distributed state store writer fence was lost');
+        this.#verifyFilesystem();
+        return { value };
+      })();
+    } catch (error) {
+      operationError = error;
+    }
+    try {
+      this.#verifyFilesystem();
+    } catch (error) {
+      throw new Error(
+        'Distributed state store admission changed during database access',
+        { cause: error }
+      );
+    }
+    if (operationError) throw operationError;
     return committed.value;
   }
 
@@ -1358,17 +1665,18 @@ class DistributedStateStore {
   }
 
   readStateHead(streamKind, streamId) {
-    this.#requireOpen();
     if (!['queue', 'broker', 'worker-attempt'].includes(streamKind))
       throw new Error('Distributed state stream kind is unsupported');
     identifier(streamId, 'state stream ID');
-    return stateHeadFromRow(
-      this.#database
-        .prepare(
-          `SELECT * FROM distributed_state_head
-           WHERE stream_kind = ? AND stream_id = ?`
-        )
-        .get(streamKind, streamId)
+    return this.#read(() =>
+      stateHeadFromRow(
+        this.#database
+          .prepare(
+            `SELECT * FROM distributed_state_head
+             WHERE stream_kind = ? AND stream_id = ?`
+          )
+          .get(streamKind, streamId)
+      )
     );
   }
 
@@ -1425,7 +1733,6 @@ class DistributedStateStore {
   }
 
   getSealedDocument(input) {
-    this.#requireOpen();
     exactKeys(
       input,
       ['contractSha256', 'documentKind'],
@@ -1434,28 +1741,30 @@ class DistributedStateStore {
     const { documentKind, contractSha256 } = input;
     const kind = identifier(documentKind, 'sealed document kind');
     const contract = digest(contractSha256, 'sealed document contract hash');
-    const row = this.#database
-      .prepare(
-        `SELECT * FROM distributed_sealed_document
-         WHERE document_kind = ? AND contract_sha256 = ?`
-      )
-      .get(kind, contract);
-    if (!row) throw new Error('Sealed document is missing');
-    const stored = parseStoredJson(
-      row.document_json,
-      row.document_bytes,
-      row.content_sha256,
-      'Persisted sealed document',
-      DISTRIBUTED_STATE_STORE_MAX_DOCUMENT_BYTES
-    );
-    const { verified } = verifyDocumentWithRegistry(this.#documentVerifiers, {
-      documentKind: kind,
-      contractSha256: contract,
-      value: stored,
-      expectedSchema: row.document_schema,
-      expectedJson: row.document_json,
+    return this.#read(() => {
+      const row = this.#database
+        .prepare(
+          `SELECT * FROM distributed_sealed_document
+           WHERE document_kind = ? AND contract_sha256 = ?`
+        )
+        .get(kind, contract);
+      if (!row) throw new Error('Sealed document is missing');
+      const stored = parseStoredJson(
+        row.document_json,
+        row.document_bytes,
+        row.content_sha256,
+        'Persisted sealed document',
+        DISTRIBUTED_STATE_STORE_MAX_DOCUMENT_BYTES
+      );
+      const { verified } = verifyDocumentWithRegistry(this.#documentVerifiers, {
+        documentKind: kind,
+        contractSha256: contract,
+        value: stored,
+        expectedSchema: row.document_schema,
+        expectedJson: row.document_json,
+      });
+      return deepFreeze(structuredClone(verified));
     });
-    return deepFreeze(structuredClone(verified));
   }
 
   #persistSnapshot({
@@ -1785,6 +2094,7 @@ class DistributedStateStore {
     const snapshot = snapshotDistributedWorkerAttemptState(state);
     if (
       this.#metadata.owner.role !== 'worker' ||
+      snapshot.binding.controllerId !== this.#metadata.owner.controllerId ||
       snapshot.task.assignment.workerId !== this.#metadata.owner.workerId ||
       snapshot.lease.workerId !== this.#metadata.owner.workerId ||
       snapshot.lease.machineIdentitySha256 !==
@@ -1833,25 +2143,26 @@ class DistributedStateStore {
   }
 
   #loadSnapshot(streamKind, streamId) {
-    this.#requireOpen();
     const id = identifier(streamId, 'state stream ID');
-    const row = this.#database
-      .prepare(
-        `SELECT * FROM distributed_state_head
-         WHERE stream_kind = ? AND stream_id = ?`
-      )
-      .get(streamKind, id);
-    if (!row) throw new Error('Distributed state snapshot is missing');
-    const value = parseStoredJson(
-      row.snapshot_json,
-      row.snapshot_bytes,
-      row.snapshot_content_sha256,
-      'Persisted distributed state snapshot',
-      maximumSnapshotBytes(streamKind)
-    );
-    if (value.schema !== row.snapshot_schema)
-      throw new Error('Persisted snapshot schema does not match its head');
-    return { head: stateHeadFromRow(row), value };
+    return this.#read(() => {
+      const row = this.#database
+        .prepare(
+          `SELECT * FROM distributed_state_head
+           WHERE stream_kind = ? AND stream_id = ?`
+        )
+        .get(streamKind, id);
+      if (!row) throw new Error('Distributed state snapshot is missing');
+      const value = parseStoredJson(
+        row.snapshot_json,
+        row.snapshot_bytes,
+        row.snapshot_content_sha256,
+        'Persisted distributed state snapshot',
+        maximumSnapshotBytes(streamKind)
+      );
+      if (value.schema !== row.snapshot_schema)
+        throw new Error('Persisted snapshot schema does not match its head');
+      return { head: stateHeadFromRow(row), value };
+    });
   }
 
   rehydrateQueueSnapshot(options = {}) {
@@ -1935,6 +2246,10 @@ class DistributedStateStore {
       expectedAttemptIdentitySha256: id,
       expectedStateSha256: head.snapshotContractSha256,
     });
+    if (state.binding.controllerId !== this.#metadata.owner.controllerId)
+      throw new Error(
+        'Worker attempt does not belong to this controller state root'
+      );
     if (state.revision !== head.revision)
       throw new Error(
         'Worker attempt revision does not match persistence history'
@@ -1954,6 +2269,7 @@ class DistributedStateStore {
       throw new Error('Writer fence release flag must be boolean');
     let failure = null;
     try {
+      this.#verifyFilesystem();
       if (releaseFence) {
         createTransaction(this.#database, () => {
           const fence = this.#database
@@ -1984,6 +2300,7 @@ class DistributedStateStore {
             .run(this.#writerEpoch, this.#writer.token, heartbeatAtMs);
           if (result.changes !== 1)
             throw new Error('Distributed state store writer fence was lost');
+          this.#verifyFilesystem();
         })();
       }
     } catch (error) {
@@ -1995,12 +2312,26 @@ class DistributedStateStore {
       } catch (error) {
         failure ??= error;
       }
+      try {
+        this.#verifyFilesystem();
+      } catch (error) {
+        failure ??= new Error(
+          'Distributed state store admission changed while closing',
+          { cause: error }
+        );
+      }
     }
     if (failure) throw failure;
   }
 }
 
-function initializeSchema(database, metadata, writer, nowMs) {
+function initializeSchema(
+  database,
+  metadata,
+  writer,
+  nowMs,
+  verifyFilesystem
+) {
   const initialize = createTransaction(database, () => {
     requirePristineDatabase(database);
     setAndRequirePragma(
@@ -2019,11 +2350,13 @@ function initializeSchema(database, metadata, writer, nowMs) {
     database
       .prepare(
         `INSERT INTO distributed_store_metadata (
-           singleton, schema_version, schema_manifest_sha256, store_id,
-           owner_role, owner_id, controller_id, worker_id,
-           machine_identity_sha256, engine_version, canonical_hash_schema,
-           created_at_ms
-         ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            singleton, schema_version, schema_manifest_sha256, store_id,
+            owner_role, owner_id, controller_id, worker_id,
+            machine_identity_sha256, root_identity_sha256,
+            root_config_sha256, root_marker_sha256,
+            root_object_fingerprint_sha256, recovery_policy_sha256,
+            engine_version, canonical_hash_schema, created_at_ms
+          ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         DISTRIBUTED_STATE_STORE_SCHEMA_VERSION,
@@ -2034,6 +2367,11 @@ function initializeSchema(database, metadata, writer, nowMs) {
         metadata.owner.controllerId,
         metadata.owner.workerId,
         metadata.owner.machineIdentitySha256,
+        metadata.rootBinding.rootIdentitySha256,
+        metadata.rootBinding.rootConfigSha256,
+        metadata.rootBinding.rootMarkerSha256,
+        metadata.rootBinding.rootObjectFingerprintSha256,
+        metadata.rootBinding.recoveryPolicySha256,
         metadata.engineVersion,
         'seerrng-canonical-json-sha256/v1',
         nowMs
@@ -2064,6 +2402,7 @@ function initializeSchema(database, metadata, writer, nowMs) {
         acquiredAtMs,
         acquiredAtMs
       );
+    verifyFilesystem();
   });
   initialize();
 }
@@ -2072,27 +2411,33 @@ export function initializeDistributedStateStore(options) {
   rejectUnknownKeys(
     options,
     [
-      'databasePath',
+      'config',
       'documentVerifiers',
       'engineVersion',
+      'expectations',
       'initializedAtMs',
-      'owner',
+      'marker',
       'storeId',
       'writer',
     ],
     'distributed state store initialization'
   );
   const {
-    databasePath,
-    owner,
+    config,
+    marker,
+    expectations,
     engineVersion,
     writer,
     initializedAtMs,
     documentVerifiers,
     storeId = randomUUID(),
   } = options;
-  const path = normalizeAbsolutePath(databasePath);
-  const normalizedOwner = normalizeOwner(owner);
+  const rootContext = createStateRootContext({
+    config,
+    marker,
+    expectations,
+  });
+  const path = rootContext.paths.databasePath;
   const normalizedWriter = normalizeWriter(writer);
   const normalizedDocumentVerifiers =
     normalizeDocumentVerifierRegistry(documentVerifiers);
@@ -2102,57 +2447,88 @@ export function initializeDistributedStateStore(options) {
   if (existsSync(path))
     throw new Error('Distributed state store already exists');
   verifyDatabaseFilesystem(path, {
+    expectedDeviceId: rootContext.config.rootObjectFingerprint.deviceId,
     fileMustExist: false,
     sidecarsMustBeAbsent: true,
   });
-  mkdirSync(dirname(path), { recursive: true });
-  verifyDatabaseFilesystem(path, {
-    fileMustExist: false,
+  mkdirSync(rootContext.paths.stateDirectory, {
+    recursive: true,
+    mode: 0o700,
+  });
+  const initialFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+    databaseMustExist: false,
+    sidecarsMustBeAbsent: true,
+  });
+  reserveNewDatabaseFile(path);
+  const reservedFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+    databaseMustExist: true,
+    expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
     sidecarsMustBeAbsent: true,
   });
   const database = openWithAdapter(
     createBetterSqlite3StateStoreAdapter(),
     path,
-    false
+    true
   );
   try {
-    verifyDatabaseFilesystem(path, {
-      fileMustExist: true,
+    const openedFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: reservedFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
       sidecarsMustBeAbsent: true,
     });
     requirePristineDatabase(database);
     configureNewDatabase(database);
-    verifyDatabaseFilesystem(path, { fileMustExist: true });
+    verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: openedFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+    });
     initializeSchema(
       database,
       {
         storeId: normalizedStoreId,
-        owner: normalizedOwner,
+        owner: rootContext.owner,
+        rootBinding: rootContext.rootBinding,
         engineVersion: normalizedVersion,
       },
       normalizedWriter,
-      initializedAtMs
+      initializedAtMs,
+      () =>
+        verifyBoundStateStoreFilesystem(rootContext, {
+          databaseMustExist: true,
+          expectedDatabaseIdentity: openedFilesystem.databaseIdentity,
+          expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+        })
     );
     requireStoreHeader(database);
     verifySchemaObjects(database);
     verifySqliteIntegrity(database);
+    const verifiedMetadata = verifyMetadata(
+      database,
+      rootContext.owner,
+      rootContext.rootBinding
+    );
     verifySealedDocuments(database, normalizedDocumentVerifiers);
+    verifyStateChains(database, verifiedMetadata.storeId);
+    const finalFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: openedFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+    });
     return new DistributedStateStore(STATE_STORE_CONSTRUCTION_TOKEN, {
       database,
+      databaseIdentity: finalFilesystem.databaseIdentity,
       databasePath: path,
       documentVerifiers: normalizedDocumentVerifiers,
-      metadata: {
-        storeId: normalizedStoreId,
-        owner: normalizedOwner,
-        engineVersion: normalizedVersion,
-        createdAtMs: initializedAtMs,
-      },
+      metadata: verifiedMetadata,
+      rootContext,
+      stateDirectoryIdentity: finalFilesystem.directoryIdentity,
       writer: normalizedWriter,
       writerEpoch: 1,
     });
   } catch (error) {
-    database.close();
-    throw error;
+    closeDatabaseAfterFailure(database, error);
   }
 }
 
@@ -2160,73 +2536,108 @@ export function openDistributedStateStore(options) {
   rejectUnknownKeys(
     options,
     [
-      'allowStaleWriterTakeover',
-      'databasePath',
+      'config',
       'documentVerifiers',
-      'owner',
-      'staleWriterAfterMs',
+      'expectations',
+      'marker',
       'writer',
     ],
     'distributed state store open'
   );
   const {
-    databasePath,
-    owner,
+    config,
+    marker,
+    expectations,
     writer,
     documentVerifiers,
-    staleWriterAfterMs = 30_000,
-    allowStaleWriterTakeover = false,
   } = options;
-  const path = normalizeAbsolutePath(databasePath);
-  const normalizedOwner = normalizeOwner(owner);
+  const rootContext = createStateRootContext({
+    config,
+    marker,
+    expectations,
+  });
+  const path = rootContext.paths.databasePath;
   const normalizedWriter = normalizeWriter(writer);
   const normalizedDocumentVerifiers =
     normalizeDocumentVerifierRegistry(documentVerifiers);
-  verifyDatabaseFilesystem(path, { fileMustExist: true });
+  const initialFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+    databaseMustExist: true,
+  });
   const database = openWithAdapter(
     createBetterSqlite3StateStoreAdapter(),
     path,
     true
   );
   try {
+    verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: initialFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+    });
     requireStoreHeader(database);
     configureRuntimePragmas(database);
-    verifyDatabaseFilesystem(path, { fileMustExist: true });
+    verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: initialFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+    });
     const verifyStoreLocked = () => {
       requireStoreHeader(database);
       verifySqliteIntegrity(database);
       verifySchemaObjects(database);
-      const metadata = verifyMetadata(database, normalizedOwner);
+      const metadata = verifyMetadata(
+        database,
+        rootContext.owner,
+        rootContext.rootBinding
+      );
       verifySealedDocuments(database, normalizedDocumentVerifiers);
       verifyStateChains(database, metadata.storeId);
       return metadata;
     };
     const { metadata, writerEpoch } = createTransaction(database, () => {
+      verifyBoundStateStoreFilesystem(rootContext, {
+        databaseMustExist: true,
+        expectedDatabaseIdentity: initialFilesystem.databaseIdentity,
+        expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+      });
       verifyStoreLocked();
       const acquiredEpoch = acquireWriterFenceLocked(
         database,
         normalizedWriter,
         {
-          allowStaleTakeover: allowStaleWriterTakeover,
-          staleAfterMs: staleWriterAfterMs,
+          allowStaleTakeover:
+            rootContext.recoveryPolicy.allowStaleWriterTakeover,
+          staleAfterMs: rootContext.recoveryPolicy.staleWriterAfterMs,
         }
       );
       const verifiedMetadata = verifyStoreLocked();
+      verifyBoundStateStoreFilesystem(rootContext, {
+        databaseMustExist: true,
+        expectedDatabaseIdentity: initialFilesystem.databaseIdentity,
+        expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+      });
       return {
         metadata: verifiedMetadata,
         writerEpoch: acquiredEpoch,
       };
     })();
+    const finalFilesystem = verifyBoundStateStoreFilesystem(rootContext, {
+      databaseMustExist: true,
+      expectedDatabaseIdentity: initialFilesystem.databaseIdentity,
+      expectedStateDirectoryIdentity: initialFilesystem.directoryIdentity,
+    });
     return new DistributedStateStore(STATE_STORE_CONSTRUCTION_TOKEN, {
       database,
+      databaseIdentity: finalFilesystem.databaseIdentity,
       databasePath: path,
       documentVerifiers: normalizedDocumentVerifiers,
       metadata,
+      rootContext,
+      stateDirectoryIdentity: finalFilesystem.directoryIdentity,
       writer: normalizedWriter,
       writerEpoch,
     });
   } catch (error) {
-    database.close();
-    throw error;
+    closeDatabaseAfterFailure(database, error);
   }
 }
