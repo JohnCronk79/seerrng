@@ -50,28 +50,49 @@ not manual replacements for the local commands.
 
 Mode 3 uses this same `validate:development` entry point for discovery,
 controller, and worker modes; there is no second runner. Read-only distributed
-discovery derives the complete local task catalog from the tests-only plan. A
-worker may locally allow a nonempty bounded subset of those task IDs. Each
-controller invocation still probes one configured worker and asks it to execute
-one selected task that both machines independently derive from local source.
+discovery derives the complete platform-specific native task catalog from the
+tests-only plan. The catalog contains one task for each selected Vitest,
+TypeScript `node:test`, and JavaScript `node:test` file, plus one task for the
+complete registered tooling lane.
 
-Each participating machine must already have the same clean committed source,
-tracked lockfile, supported Node and pnpm versions, and installed lockfile-bound
-dependencies. Every discovered task file must be an ordinary blob tracked by
-`HEAD`, and its working bytes must match that blob; ignored or hidden local test
-content fails discovery. Mode 3 does not copy source or install dependencies. A
-task is identified by `distributedNativeTaskId()` from its application ID,
-native adapter ID, and canonical repository-relative file list. Workers accept
-only IDs named locally with `--allow-task`; a controller cannot transmit a
-command, arguments, working directory, environment, or executable path.
+This is a complete **native tests-only** catalog, not the complete pre-PR gate.
+It does not include repository and supplemental checks, CodeQL, production
+builds, Cypress, hosted-job checks, or pull-request metadata. A successful Mode
+3 schedule therefore cannot be reported as a successful full
+`pnpm validate:development` run.
 
-Use the following read-only form to print the sealed local catalog and its task
-IDs. It launches no native task and writes no report or repository file:
+Every participating worker must run the same immutable image built from the
+same clean committed source, tracked lockfile, supported Node and pnpm versions,
+and installed lockfile-bound dependencies. Every discovered task file must be
+an ordinary blob tracked by `HEAD`, and its working bytes must match that blob;
+ignored or hidden local test content fails discovery. The image build described
+below imports the sealed source snapshot and installs dependencies once; the
+Mode 3 controller protocol itself neither transfers source nor installs
+dependencies. A task is identified by `distributedNativeTaskId()` from its
+application ID, native adapter ID, and canonical repository-relative file list.
+Workers accept only IDs named locally with `--allow-task`; a controller cannot
+transmit a command, arguments, working directory, environment, or executable
+path.
+
+Use either discovery form below to print the sealed local catalog and its task
+IDs. Discovery launches no native task. The second form also exclusively
+creates a compact sealed task manifest at an unused absolute path outside the
+source checkout:
 
 ```text
 pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng
 pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng --json
+pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng --task-file ABSOLUTE_FILE
 ```
+
+The manifest binds the application, platform, candidate, full catalog and
+inventory hashes, task count, canonical unique task IDs, and its own SHA-256
+seal. Schedule and worker admission independently rediscover the complete local
+catalog and require every bound value to match. A schedule accepts exactly one
+selection form: at least two repeated `--task` values for an explicit partial
+smoke, or one `--task-file` for a complete catalog. A worker likewise accepts
+exactly one local allowlist form: repeated `--allow-task` values for a partial
+smoke, or one `--allow-task-file` for the complete bound catalog.
 
 Remote workers require a configured HTTPS origin, a pinned certificate SHA-256
 fingerprint, the shared fleet secret in
@@ -81,30 +102,60 @@ it does not belong in the worker config, command line, logs, repository, or
 native test environment. Authenticated messages tolerate at most five seconds
 of clock skew, so participating machines must keep their clocks synchronized.
 
-Use `--help` for the exact bounded command forms. This slice accepts exactly one
-`--app`; a worker accepts one or more repeated, locally supplied `--allow-task`
-IDs. The worker listens on the port in its configured HTTPS address. A remote
-worker remains active until interrupted. A controller still selects exactly one
-`--task` and writes one exclusive JSON report outside the source checkout for a
-verified pass, a verified native failure, or a controlled pre-response failure.
-When `--worker-id` names the configured controller-local worker, the controller
-uses the same worker handler in-process without opening an HTTPS connection;
-set `controllerWorkerId` to `null` when proving the real HTTPS path.
+Use `--help` for the exact bounded command forms. Mode 3 accepts exactly one
+`--app`. The worker listens on the port in its configured HTTPS address and
+remains active until interrupted. The secret-free worker configuration records
+each worker's enabled state, HTTPS identity, and either an explicit capacity or
+automatic capacity detection.
 
-The initial SeerrNG acceptance regression task is the read-only Node test
-`src/styles/summaryTitleAlignment.test.mjs`, with task ID
-`328af7e5fe09aef94d14edba85a9fe72e76e232ed847286185112111faffc7a9`
-for application `seerrng` and adapter `node-js`. It reads only committed CSS and
-does not start the application, write files, use the network, or launch child
-processes.
+`--distributed-controller` retains the one-worker, one-task acceptance path.
+When `--worker-id` names the configured controller-local worker, it uses the
+same worker handler in-process without opening an HTTPS connection; set
+`controllerWorkerId` to `null` when proving the real HTTPS path.
 
-The implemented slices prove source identity, local task discovery and
-allowlisting, authenticated transport, cancellation, one-at-a-time native
-execution, result evidence, and local/remote worker parity. They do not yet
-claim whole-suite scheduling, performance weighting, timing-history reuse,
-multi-application queues, source distribution, disconnect retry, or
-controller-crash recovery. Those capabilities remain subsequent Mode 3 work
-and must not be inferred from successful selected-task runs.
+`--distributed-schedule` uses every enabled configured worker and requires at
+least two workers and two selected tasks. Before starting any native task, the
+controller probes every worker and requires authenticated, idle,
+candidate-matched capability and capacity evidence. It then assigns the
+canonical task list deterministically across interleaved worker-capacity slots
+and never exceeds each worker's admitted capacity. A verified native failure
+does not suppress independent tasks. An unknown transport outcome makes that
+worker unavailable; its task is not retried or reassigned because doing so could
+execute it twice. The schedule passes only when every selected task passes and
+writes one sealed, size-bounded aggregate JSON report outside the checkout. A
+manifest-backed report records the admitted manifest seal; repeated-ID smoke
+reports record `null`. Controller or fleet-admission errors also write bounded,
+sealed failure evidence without copying arbitrary exception text into the log.
+
+Catalogs are platform-specific. A complete Linux catalog must use a Linux
+controller and Linux-only workers built from the same candidate and worker
+image. Do not mix a native Windows worker into that schedule: platform
+exclusions and the tooling task can differ even when some per-file task IDs are
+the same. Windows validation remains a separate native run and cannot be
+counted as part of the Linux schedule. Cross-platform aggregate reconciliation
+is not implemented.
+
+The Linux worker image is defined by
+`tools/validation-engine/container/Dockerfile.worker`. Its `source.bundle` must
+be generated from an exact clean depth-1 candidate snapshot rather than full
+repository history and supplied with `SOURCE_COMMIT` and
+`SOURCE_BUNDLE_SHA256`. The build verifies the bundle and commit, imports it
+into a one-commit shallow Git checkout with no remote, installs frozen
+lockfile-bound dependencies without the Cypress binary, and verifies clean Git
+metadata. It runs the existing engine entry point as a non-root user. Runtime
+orchestration must make the container read-only, provide bounded temporary
+storage, drop all capabilities, enable `no-new-privileges`, and mount TLS,
+manifest, and evidence paths with only their required access. Full Linux
+catalog workers must use the identical built image rather than independently
+rebuilt variants.
+
+The implemented slice covers source and task identity, sealed task-manifest
+handoff, all-worker admission, deterministic capacity-aware scheduling,
+authenticated local and remote execution, cancellation, native result
+evidence, and aggregate reconciliation. It does not yet provide task-duration
+weighting, timing-history reuse, multi-application queues, source distribution,
+disconnect retry, controller-crash recovery, or cross-platform aggregation.
+Those capabilities must not be inferred from a successful Mode 3 run.
 
 ## Test discovery and ownership
 

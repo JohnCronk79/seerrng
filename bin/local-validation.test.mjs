@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -40,10 +41,17 @@ import {
   createDistributedControllerFailureReport,
   createDistributedTaskFailureEvidence,
   verifyDistributedControllerFailure,
+  verifyDistributedScheduleFailureReport,
   verifyDistributedTaskFailureEvidence,
 } from '../tools/validation-engine/runtime/distributed-runtime.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
+import {
+  createDistributedTaskManifest,
+  DISTRIBUTED_TASK_MANIFEST_SCHEMA,
+  readDistributedTaskManifest,
+} from '../tools/validation-engine/runtime/distributed-task-manifest.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ts = loadTypeScript(root);
@@ -104,6 +112,134 @@ const fixture = () => {
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   };
 };
+
+function fakeDistributedTypeScript() {
+  const identifier = (text) => ({ type: 'identifier', text, children: [] });
+  const string = (text) => ({ type: 'string', text, children: [] });
+  const text = (value) => ({
+    type: 'text',
+    children: [],
+    getText: () => value,
+  });
+  const variable = (name, initializer) => ({
+    type: 'variable',
+    name: identifier(name),
+    initializer,
+    children: [],
+  });
+  const array = (entries) => ({
+    type: 'array',
+    elements: entries.map(string),
+    children: [],
+  });
+  return {
+    ScriptTarget: { Latest: 99 },
+    SyntaxKind: { ImportKeyword: 1 },
+    createSourceFile(file, source) {
+      if (file === 'run-tooling-tests.mjs') {
+        return {
+          type: 'root',
+          children: [
+            variable('portableTests', array(['scripts/portable.test.mjs'])),
+            variable('posixOnlyTests', array(['deploy/posix.test.mjs'])),
+            variable(
+              'tests',
+              text(
+                "process.platform === 'win32' ? portableTests : [...portableTests, ...posixOnlyTests]"
+              )
+            ),
+            {
+              type: 'call',
+              expression: identifier('spawnSync'),
+              arguments: [
+                text('process.execPath'),
+                text("['--test', `--test-concurrency=${workers}`, ...tests]"),
+              ],
+              children: [],
+            },
+          ],
+        };
+      }
+      const imports = [
+        ...source.matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g),
+      ].map((match) => ({
+        type: 'import',
+        moduleSpecifier: string(match[1]),
+        children: [],
+      }));
+      return { type: 'root', children: imports };
+    },
+    forEachChild(node, visitor) {
+      for (const child of node.children || []) visitor(child);
+    },
+    isArrayLiteralExpression: (node) => node?.type === 'array',
+    isCallExpression: (node) => node?.type === 'call',
+    isExportDeclaration: () => false,
+    isIdentifier: (node) => node?.type === 'identifier',
+    isImportDeclaration: (node) => node?.type === 'import',
+    isStringLiteral: (node) => node?.type === 'string',
+    isVariableDeclaration: (node) => node?.type === 'variable',
+  };
+}
+
+function distributedDiscoveryFixture() {
+  const result = fixture();
+  result.write('.gitignore', 'node_modules/\n');
+  result.write(
+    'package.json',
+    JSON.stringify({
+      name: 'distributed-discovery-fixture',
+      private: true,
+      type: 'module',
+      engines: { node: '>=18', pnpm: '>=9' },
+      devDependencies: {
+        '@swc/core': '*',
+        semver: '*',
+        'ts-node': '*',
+        'tsconfig-paths': '*',
+        typescript: '*',
+        vitest: '*',
+      },
+    })
+  );
+  result.write('pnpm-lock.yaml', 'lockfileVersion: 9\n');
+  for (const name of [
+    'semver',
+    'typescript',
+    'vitest',
+    'ts-node',
+    'tsconfig-paths',
+    '@swc/core',
+  ])
+    result.write(
+      `node_modules/${name}/package.json`,
+      JSON.stringify({ name, version: '1.0.0', main: 'index.js' })
+    );
+  result.write('node_modules/semver/index.js', 'exports.satisfies=()=>true;\n');
+  result.write(
+    'node_modules/typescript/index.js',
+    `module.exports=(${fakeDistributedTypeScript.toString()})();\n`
+  );
+  result.write(
+    'bin/run-tooling-tests.mjs',
+    "import {spawnSync} from 'node:child_process';\nconst workers=1;\nconst portableTests=['scripts/portable.test.mjs'];\nconst posixOnlyTests=['deploy/posix.test.mjs'];\nconst tests=process.platform==='win32'?portableTests:[...portableTests,...posixOnlyTests];\nconst result=spawnSync(process.execPath,['--test',`--test-concurrency=${workers}`,...tests],{stdio:'inherit'});\nprocess.exitCode=result.status??1;\n"
+  );
+  for (const args of [
+    ['init', '--quiet'],
+    ['config', 'user.name', 'Distributed Fixture'],
+    ['config', 'user.email', 'fixture@example.invalid'],
+    ['add', '--all'],
+    ['commit', '--quiet', '-m', 'fixture'],
+  ]) {
+    const git = spawnSync('git', args, {
+      cwd: result.directory,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    assert.equal(git.status, 0, git.stderr || git.error?.message);
+  }
+  return result;
+}
 
 test('AST classification ignores comments and text, accepts actual imports and rejects ambiguous suites', () => {
   assert.equal(
@@ -996,12 +1132,20 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       message: /Choose exactly one distributed mode/,
     },
     {
+      args: ['--distributed-controller', '--distributed-schedule'],
+      message: /Choose exactly one distributed mode/,
+    },
+    {
       args: ['--github-plan', '--distributed-controller'],
       message: /Hosted GitHub and distributed modes cannot be combined/,
     },
     {
       args: ['--distributed-controller'],
       message: /Distributed controller mode requires --distributed-config/,
+    },
+    {
+      args: ['--distributed-schedule'],
+      message: /Distributed schedule mode requires --distributed-config/,
     },
     {
       args: ['--distributed-discover'],
@@ -1014,6 +1158,10 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
     ...[
       ['--distributed-config', 'workers.json'],
       ['--task', 'e'.repeat(64)],
+      [
+        '--allow-task-file',
+        resolve(tmpdir(), 'distributed-allowed-tasks.json'),
+      ],
       ['--tls-cert', 'worker.pem'],
       ['--report-file', resolve(tmpdir(), 'distributed-discovery.json')],
     ].map(([option, optionValue]) => ({
@@ -1078,6 +1226,24 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
     },
     {
       args: [
+        '--distributed-controller',
+        '--distributed-config',
+        'workers.json',
+        '--worker-id',
+        'worker-one',
+        '--application',
+        'seerrng',
+        '--task-file',
+        resolve(tmpdir(), 'distributed-tasks.json'),
+        '--report-file',
+        resolve(tmpdir(), 'distributed-controller.json'),
+        '--app',
+        `seerrng=${root}`,
+      ],
+      message: /Distributed controller mode does not accept --task-file/,
+    },
+    {
+      args: [
         '--distributed-worker',
         '--distributed-config',
         'workers.json',
@@ -1093,6 +1259,27 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
         '127.0.0.1',
       ],
       message: /Distributed worker mode requires --allow-controller/,
+    },
+    {
+      args: [
+        '--distributed-worker',
+        '--distributed-config',
+        'workers.json',
+        '--worker-id',
+        'worker-one',
+        '--app',
+        `seerrng=${root}`,
+        '--tls-cert',
+        'worker.pem',
+        '--tls-key',
+        'worker.key',
+        '--listen-host',
+        '127.0.0.1',
+        '--allow-controller',
+        '127.0.0.1',
+      ],
+      message:
+        /Distributed worker mode requires exactly one of --allow-task or --allow-task-file/,
     },
   ];
 
@@ -1111,6 +1298,220 @@ test('CLI modes reject mixed, foreign, repeated, and incomplete options before p
       /Hosted GitHub mode requires GitHub Actions|Missing hosted GitHub plan|ENOENT/,
       JSON.stringify(args)
     );
+  }
+});
+
+test('distributed discovery optionally writes one sealed task manifest outside source', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-discovery-manifest-'));
+  const application = distributedDiscoveryFixture();
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const manifestFile = join(directory, 'tasks.json');
+  const existingFile = join(directory, 'existing.json');
+  const sourceFile = join(
+    root,
+    `.seerrng-discovery-manifest-${process.pid}-${Date.now()}.json`
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        cli,
+        '--distributed-discover',
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--task-file',
+        manifestFile,
+        '--json',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    const catalog = JSON.parse(result.stdout);
+    const manifest = readDistributedTaskManifest(manifestFile);
+    assert.equal(manifest.applicationId, catalog.applicationId);
+    assert.equal(manifest.platform, catalog.platform);
+    assert.equal(manifest.candidateSha256, catalog.candidate.candidateSha256);
+    assert.equal(manifest.catalogSha256, catalog.catalogSha256);
+    assert.equal(manifest.inventorySha256, catalog.inventorySha256);
+    assert.equal(manifest.taskCount, catalog.tasks.length);
+    assert.deepEqual(
+      manifest.taskIds,
+      catalog.tasks.map(({ taskId }) => taskId).toSorted()
+    );
+    assert.equal(
+      readFileSync(manifestFile, 'utf8'),
+      `${JSON.stringify(manifest)}\n`
+    );
+    if (process.platform !== 'win32')
+      assert.equal(statSync(manifestFile).mode & 0o777, 0o600);
+
+    writeFileSync(existingFile, 'preserve');
+    assert.equal(existsSync(sourceFile), false);
+    for (const [taskFile, message] of [
+      [existingFile, /task manifest file must not already exist/i],
+      [sourceFile, /task manifest file must be absolute and outside/i],
+    ]) {
+      const rejected = spawnSync(
+        process.execPath,
+        [
+          cli,
+          '--distributed-discover',
+          '--app',
+          `fixture-app=${application.directory}`,
+          '--application',
+          'fixture-app',
+          '--task-file',
+          taskFile,
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, NODE_OPTIONS: '' },
+          windowsHide: true,
+        }
+      );
+      assert.ifError(rejected.error);
+      assert.equal(rejected.status, 1);
+      assert.match(rejected.stderr, message);
+    }
+    assert.equal(readFileSync(existingFile, 'utf8'), 'preserve');
+    assert.equal(existsSync(sourceFile), false);
+  } finally {
+    application.cleanup();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('distributed schedule and worker reject a sealed manifest after local catalog drift', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-stale-manifest-'));
+  const application = distributedDiscoveryFixture();
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const manifestFile = join(directory, 'tasks.json');
+  const configFile = join(directory, 'workers.json');
+  try {
+    const discovery = spawnSync(
+      process.execPath,
+      [
+        cli,
+        '--distributed-discover',
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--task-file',
+        manifestFile,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(discovery.error);
+    assert.equal(discovery.status, 0, discovery.stderr);
+
+    application.write(
+      'src/after-manifest.test.mjs',
+      'import test from "node:test"; test("after", () => {});\n'
+    );
+    for (const args of [
+      ['add', '--all'],
+      ['commit', '--quiet', '-m', 'catalog drift'],
+    ]) {
+      const git = spawnSync('git', args, {
+        cwd: application.directory,
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+      assert.equal(git.status, 0, git.stderr || git.error?.message);
+    }
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+          {
+            id: 'worker-two',
+            address: 'https://127.0.0.1:2',
+            enabled: true,
+            identitySha256: 'c'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+
+    const common = [
+      '--distributed-config',
+      configFile,
+      '--app',
+      `fixture-app=${application.directory}`,
+    ];
+    const cases = [
+      [
+        '--distributed-schedule',
+        ...common,
+        '--application',
+        'fixture-app',
+        '--task-file',
+        manifestFile,
+        '--report-file',
+        join(directory, 'report.json'),
+      ],
+      [
+        '--distributed-worker',
+        ...common,
+        '--worker-id',
+        'worker-one',
+        '--allow-task-file',
+        manifestFile,
+        '--tls-cert',
+        'missing.pem',
+        '--tls-key',
+        'missing.key',
+        '--listen-host',
+        '127.0.0.1',
+        '--allow-controller',
+        '127.0.0.1',
+      ],
+    ];
+    for (const args of cases) {
+      const rejected = spawnSync(process.execPath, [cli, ...args], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      });
+      assert.ifError(rejected.error);
+      assert.equal(rejected.status, 1, JSON.stringify(args));
+      assert.match(rejected.stderr, /does not match the full local catalog/);
+      assert.doesNotMatch(
+        rejected.stderr,
+        /fleet secret|ENOENT|missing\.pem|missing\.key/
+      );
+    }
+  } finally {
+    application.cleanup();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -1186,6 +1587,48 @@ test('CLI distributed modes accept only their complete bounded option sets', () 
       '--allow-controller',
       '127.0.0.1',
     ],
+    [
+      '--distributed-schedule',
+      '--distributed-config',
+      'missing-workers.json',
+      '--app',
+      `seerrng=${root}`,
+      '--application',
+      'seerrng',
+      '--task',
+      taskId,
+      '--task',
+      'f'.repeat(64),
+      '--report-file',
+      resolve(tmpdir(), 'distributed-schedule-result.json'),
+    ],
+    [
+      '--distributed-schedule',
+      '--distributed-config',
+      'missing-workers.json',
+      '--app',
+      `seerrng=${root}`,
+      '--application',
+      'seerrng',
+      '--task-file',
+      resolve(tmpdir(), 'distributed-schedule-tasks.json'),
+      '--report-file',
+      resolve(tmpdir(), 'distributed-schedule-file-result.json'),
+    ],
+    [
+      '--distributed-worker',
+      ...common,
+      '--tls-cert',
+      'worker.pem',
+      '--tls-key',
+      'worker.key',
+      '--listen-host',
+      '127.0.0.1',
+      '--allow-task-file',
+      resolve(tmpdir(), 'distributed-worker-tasks.json'),
+      '--allow-controller',
+      '127.0.0.1',
+    ],
   ];
   for (const args of modes) {
     const result = spawnSync(process.execPath, [cli, ...args], {
@@ -1198,6 +1641,313 @@ test('CLI distributed modes accept only their complete bounded option sets', () 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /ENOENT/);
     assert.doesNotMatch(result.stderr, /does not accept|requires --/);
+  }
+});
+
+test('distributed schedule parsing preserves singleton controller tasks and rejects foreign options', () => {
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const firstTask = 'e'.repeat(64);
+  const secondTask = 'f'.repeat(64);
+  const schedule = [
+    '--distributed-schedule',
+    '--distributed-config',
+    'missing-workers.json',
+    '--app',
+    `seerrng=${root}`,
+    '--application',
+    'seerrng',
+    '--task',
+    firstTask,
+    '--task',
+    secondTask,
+    '--report-file',
+    resolve(tmpdir(), 'distributed-schedule-contract.json'),
+  ];
+  const taskFile = resolve(tmpdir(), 'distributed-schedule-tasks.json');
+  const worker = [
+    '--distributed-worker',
+    '--distributed-config',
+    'missing-workers.json',
+    '--worker-id',
+    'worker-one',
+    '--app',
+    `seerrng=${root}`,
+    '--tls-cert',
+    'worker.pem',
+    '--tls-key',
+    'worker.key',
+    '--listen-host',
+    '127.0.0.1',
+    '--allow-controller',
+    '127.0.0.1',
+  ];
+  const cases = [
+    {
+      args: schedule.filter(
+        (entry, index) =>
+          !(entry === '--task' && schedule[index + 1] === secondTask) &&
+          entry !== secondTask
+      ),
+      message: /requires at least two --task values/,
+    },
+    {
+      args: [
+        '--distributed-controller',
+        '--distributed-config',
+        'missing-workers.json',
+        '--worker-id',
+        'worker-one',
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'seerrng',
+        '--task',
+        firstTask,
+        '--task',
+        secondTask,
+        '--report-file',
+        resolve(tmpdir(), 'distributed-controller-contract.json'),
+      ],
+      message: /requires exactly one --task/,
+    },
+    {
+      args: [...schedule, '--task', firstTask],
+      message: /Duplicate value for --task/,
+    },
+    {
+      args: [...schedule, '--task-file', taskFile],
+      message: /requires exactly one of --task or --task-file/,
+    },
+    {
+      args: schedule.filter(
+        (entry) =>
+          entry !== '--task' && entry !== firstTask && entry !== secondTask
+      ),
+      message: /requires exactly one of --task or --task-file/,
+    },
+    {
+      args: [
+        ...worker,
+        '--allow-task',
+        firstTask,
+        '--allow-task-file',
+        taskFile,
+      ],
+      message: /requires exactly one of --allow-task or --allow-task-file/,
+    },
+    {
+      args: [...worker, '--task-file', taskFile],
+      message: /Distributed worker mode does not accept --task-file/,
+    },
+    ...[
+      ['--worker-id', 'worker-one'],
+      ['--allow-task', firstTask],
+      ['--allow-task-file', taskFile],
+      ['--tls-cert', 'worker.pem'],
+      ['--tls-key', 'worker.key'],
+      ['--listen-host', '127.0.0.1'],
+      ['--allow-controller', '127.0.0.1'],
+    ].map(([option, optionValue]) => ({
+      args: [...schedule, option, optionValue],
+      message: new RegExp(
+        `Distributed schedule mode does not accept ${option}`
+      ),
+    })),
+  ];
+
+  for (const { args, message } of cases) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      windowsHide: true,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, JSON.stringify(args));
+    assert.match(result.stderr, message, JSON.stringify(args));
+    assert.doesNotMatch(result.stderr, /ENOENT/, JSON.stringify(args));
+  }
+});
+
+test('distributed task files enforce schedule and worker cardinality before dispatch', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-task-file-cli-'));
+  const application = distributedDiscoveryFixture();
+  try {
+    const configFile = join(directory, 'workers.json');
+    const oneTaskFile = join(directory, 'one-task.json');
+    const twoTaskFile = join(directory, 'two-task.json');
+    const emptyTaskFile = join(directory, 'empty-task.json');
+    const reportFile = join(directory, 'existing-report.json');
+    const firstTask = 'e'.repeat(64);
+    const emptyCore = {
+      schema: DISTRIBUTED_TASK_MANIFEST_SCHEMA,
+      applicationId: 'fixture-app',
+      platform: process.platform,
+      candidateSha256: 'a'.repeat(64),
+      catalogSha256: 'b'.repeat(64),
+      inventorySha256: 'c'.repeat(64),
+      taskCount: 0,
+      taskIds: [],
+    };
+    const oneTaskCatalog = {
+      applicationId: 'fixture-app',
+      platform: process.platform,
+      candidate: { candidateSha256: 'a'.repeat(64) },
+      catalogSha256: 'b'.repeat(64),
+      inventorySha256: 'c'.repeat(64),
+      tasks: [{ taskId: firstTask }],
+    };
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+          {
+            id: 'worker-two',
+            address: 'https://127.0.0.1:2',
+            enabled: true,
+            identitySha256: 'c'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    writeFileSync(
+      oneTaskFile,
+      JSON.stringify(createDistributedTaskManifest(oneTaskCatalog))
+    );
+    writeFileSync(
+      emptyTaskFile,
+      JSON.stringify({
+        ...emptyCore,
+        manifestSha256: canonicalJsonSha256(emptyCore),
+      })
+    );
+    writeFileSync(reportFile, 'preserve');
+    const discovery = spawnSync(
+      process.execPath,
+      [
+        join(root, 'bin/run-local-validation.mjs'),
+        '--distributed-discover',
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--task-file',
+        twoTaskFile,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(discovery.error);
+    assert.equal(discovery.status, 0, discovery.stderr);
+
+    const cases = [
+      {
+        args: [
+          '--distributed-schedule',
+          '--distributed-config',
+          configFile,
+          '--app',
+          `fixture-app=${application.directory}`,
+          '--application',
+          'fixture-app',
+          '--task-file',
+          oneTaskFile,
+          '--report-file',
+          reportFile,
+        ],
+        message: /invalid task count/,
+      },
+      {
+        args: [
+          '--distributed-worker',
+          '--distributed-config',
+          configFile,
+          '--worker-id',
+          'worker-one',
+          '--app',
+          `fixture-app=${application.directory}`,
+          '--allow-task-file',
+          emptyTaskFile,
+          '--tls-cert',
+          'worker.pem',
+          '--tls-key',
+          'worker.key',
+          '--listen-host',
+          '127.0.0.1',
+          '--allow-controller',
+          '127.0.0.1',
+        ],
+        message: /invalid task count/,
+      },
+    ];
+
+    for (const { args, message } of cases) {
+      const result = spawnSync(
+        process.execPath,
+        [join(root, 'bin/run-local-validation.mjs'), ...args],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, NODE_OPTIONS: '' },
+          windowsHide: true,
+        }
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, JSON.stringify(args));
+      assert.match(result.stderr, message, JSON.stringify(args));
+      assert.doesNotMatch(
+        result.stderr,
+        /fleet secret|must not already exist|ENOENT/,
+        JSON.stringify(args)
+      );
+    }
+    const accepted = spawnSync(
+      process.execPath,
+      [
+        join(root, 'bin/run-local-validation.mjs'),
+        '--distributed-schedule',
+        '--distributed-config',
+        configFile,
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--task-file',
+        twoTaskFile,
+        '--report-file',
+        reportFile,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(accepted.error);
+    assert.equal(accepted.status, 1);
+    assert.match(accepted.stderr, /must not already exist/);
+    assert.doesNotMatch(accepted.stderr, /task manifest|fleet secret|ENOENT/);
+    assert.equal(readFileSync(reportFile, 'utf8'), 'preserve');
+  } finally {
+    application.cleanup();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -1253,6 +2003,193 @@ test('distributed reports must be outside the exact source checkout', () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /outside the source checkout/);
     assert.equal(existsSync(reportFile), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('distributed schedule requires at least two enabled configured workers', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-schedule-pool-'));
+  try {
+    const configFile = join(directory, 'workers.json');
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+          {
+            id: 'worker-disabled',
+            address: 'https://127.0.0.1:2',
+            enabled: false,
+            identitySha256: 'c'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, 'bin/run-local-validation.mjs'),
+        '--distributed-schedule',
+        '--distributed-config',
+        configFile,
+        '--app',
+        `seerrng=${root}`,
+        '--application',
+        'seerrng',
+        '--task',
+        'e'.repeat(64),
+        '--task',
+        'f'.repeat(64),
+        '--report-file',
+        join(directory, 'result.json'),
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /at least two enabled configured workers/);
+    assert.doesNotMatch(result.stderr, /fleet secret|ENOENT/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('distributed controller and schedule reports require a real unused path outside source', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-report-path-'));
+  try {
+    const configFile = join(directory, 'workers.json');
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+          {
+            id: 'worker-two',
+            address: 'https://127.0.0.1:2',
+            enabled: true,
+            identitySha256: 'c'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    const existingController = join(directory, 'existing-controller.json');
+    const existingSchedule = join(directory, 'existing-schedule.json');
+    writeFileSync(existingController, 'preserve');
+    writeFileSync(existingSchedule, 'preserve');
+    const sourceLink = join(directory, 'source-link');
+    symlinkSync(
+      root,
+      sourceLink,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
+    const finalLink = join(directory, 'final-link.json');
+    const finalLinkTarget = join(directory, 'final-link-target');
+    mkdirSync(finalLinkTarget);
+    symlinkSync(
+      finalLinkTarget,
+      finalLink,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
+
+    const controllerArgs = (reportFile) => [
+      '--distributed-controller',
+      '--distributed-config',
+      configFile,
+      '--worker-id',
+      'worker-one',
+      '--app',
+      `seerrng=${root}`,
+      '--application',
+      'seerrng',
+      '--task',
+      'e'.repeat(64),
+      '--report-file',
+      reportFile,
+    ];
+    const scheduleArgs = (reportFile) => [
+      '--distributed-schedule',
+      '--distributed-config',
+      configFile,
+      '--app',
+      `seerrng=${root}`,
+      '--application',
+      'seerrng',
+      '--task',
+      'e'.repeat(64),
+      '--task',
+      'f'.repeat(64),
+      '--report-file',
+      reportFile,
+    ];
+    const cases = [
+      {
+        args: controllerArgs(existingController),
+        message: /must not already exist/,
+      },
+      {
+        args: scheduleArgs(existingSchedule),
+        message: /must not already exist/,
+      },
+      {
+        args: scheduleArgs(join(sourceLink, 'result.json')),
+        message: /outside the source checkout/,
+      },
+      {
+        args: controllerArgs(finalLink),
+        message: /existing symlink or reparse point/,
+      },
+      {
+        args: scheduleArgs(join(directory, 'missing', 'result.json')),
+        message: /requires an existing parent directory/,
+      },
+    ];
+
+    for (const { args, message } of cases) {
+      const result = spawnSync(
+        process.execPath,
+        [join(root, 'bin/run-local-validation.mjs'), ...args],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, NODE_OPTIONS: '' },
+          windowsHide: true,
+        }
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 1, JSON.stringify(args));
+      assert.match(result.stderr, message, JSON.stringify(args));
+      assert.doesNotMatch(result.stderr, /fleet secret/, JSON.stringify(args));
+    }
+    assert.equal(readFileSync(existingController, 'utf8'), 'preserve');
+    assert.equal(readFileSync(existingSchedule, 'utf8'), 'preserve');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1329,6 +2266,112 @@ test('distributed controller CLI writes controlled local failure evidence before
       evidence.controllerFailure
     );
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('distributed schedule CLI writes sealed failure evidence when fleet admission cannot complete', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'seerrng-schedule-failure-'));
+  const application = distributedDiscoveryFixture();
+  try {
+    const cli = join(root, 'bin/run-local-validation.mjs');
+    const configFile = join(directory, 'workers.json');
+    const reportFile = join(directory, 'result.json');
+    const discovery = spawnSync(
+      process.execPath,
+      [
+        cli,
+        '--distributed-discover',
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--json',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NODE_OPTIONS: '' },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(discovery.error);
+    assert.equal(discovery.status, 0, discovery.stderr);
+    const taskIds = JSON.parse(discovery.stdout)
+      .tasks.slice(0, 2)
+      .map(({ taskId }) => taskId);
+    assert.equal(taskIds.length, 2);
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        schema: 'seerrng-distributed-worker-config/v1',
+        revision: 1,
+        controllerId: 'controller-one',
+        controllerWorkerId: null,
+        workers: [
+          {
+            id: 'worker-one',
+            address: 'https://127.0.0.1:1',
+            enabled: true,
+            identitySha256: 'd'.repeat(64),
+            n: 1,
+          },
+          {
+            id: 'worker-two',
+            address: 'https://127.0.0.1:2',
+            enabled: true,
+            identitySha256: 'c'.repeat(64),
+            n: 1,
+          },
+        ],
+      })
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        cli,
+        '--distributed-schedule',
+        '--distributed-config',
+        configFile,
+        '--app',
+        `fixture-app=${application.directory}`,
+        '--application',
+        'fixture-app',
+        '--task',
+        taskIds[0],
+        '--task',
+        taskIds[1],
+        '--report-file',
+        reportFile,
+        '--timeout-ms',
+        '250',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_OPTIONS: '',
+          SEERRNG_DISTRIBUTED_SHARED_SECRET: Buffer.alloc(32, 7).toString(
+            'base64'
+          ),
+        },
+        windowsHide: true,
+      }
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /task execution outcome is unknown/);
+    const evidence = JSON.parse(readFileSync(reportFile, 'utf8'));
+    assert.equal(evidence.status, 'failed');
+    assert.equal(evidence.taskExecutionOutcome, 'unknown');
+    assert.equal(evidence.selectionManifestSha256, null);
+    assert.deepEqual(
+      verifyDistributedScheduleFailureReport(evidence),
+      evidence
+    );
+  } finally {
+    application.cleanup();
     rmSync(directory, { recursive: true, force: true });
   }
 });

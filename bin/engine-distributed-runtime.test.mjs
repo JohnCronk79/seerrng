@@ -6,12 +6,23 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import {
+  createDistributedControllerFailureReport,
+  createDistributedScheduleFailureReport,
+  createDistributedTaskFailureEvidence,
   createDistributedWorkerRuntime,
   DISTRIBUTED_PROBE_KIND,
+  DISTRIBUTED_SCHEDULE_FAILURE_REPORT_SCHEMA,
+  DISTRIBUTED_SCHEDULE_REPORT_SCHEMA,
   DISTRIBUTED_TASK_KIND,
+  DISTRIBUTED_WORKER_REPORT_SCHEMA,
+  encodeBoundedDistributedReport,
+  MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES,
   parseDistributedApplicationBindings,
+  runDistributedControllerSchedule,
   runDistributedControllerTask,
   startDistributedWorkerServer,
+  verifyDistributedScheduleFailureReport,
+  verifyDistributedScheduleOutcome,
 } from '../tools/validation-engine/runtime/distributed-runtime.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import {
@@ -57,9 +68,25 @@ const secondTaskId = distributedNativeTaskId({
   adapterId: secondAdapterId,
   files: secondFiles,
 });
+const thirdAdapterId = 'node-tap';
+const thirdFiles = ['bin/engine-controller-ordering.test.mjs'];
+const thirdTaskId = distributedNativeTaskId({
+  applicationId,
+  adapterId: thirdAdapterId,
+  files: thirdFiles,
+});
+const fourthAdapterId = 'node-extra';
+const fourthFiles = ['bin/engine-cpu-capacity.test.mjs'];
+const fourthTaskId = distributedNativeTaskId({
+  applicationId,
+  adapterId: fourthAdapterId,
+  files: fourthFiles,
+});
 const taskDefinitions = new Map([
   [taskId, { adapterId, files }],
   [secondTaskId, { adapterId: secondAdapterId, files: secondFiles }],
+  [thirdTaskId, { adapterId: thirdAdapterId, files: thirdFiles }],
+  [fourthTaskId, { adapterId: fourthAdapterId, files: fourthFiles }],
 ]);
 
 const config = ({
@@ -265,6 +292,223 @@ const abortReason = (signal) => {
   });
 };
 
+test('bounded report encoder emits one counted trailing newline', () => {
+  assert.equal(
+    encodeBoundedDistributedReport({ status: 'passed' }),
+    '{"status":"passed"}\n'
+  );
+  const exactlyBounded = 'x'.repeat(MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES - 3);
+  assert.equal(
+    Buffer.byteLength(encodeBoundedDistributedReport(exactlyBounded), 'utf8'),
+    MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES
+  );
+  assert.throws(
+    () =>
+      encodeBoundedDistributedReport(
+        'x'.repeat(MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES - 2)
+      ),
+    /exceeds its 32 MiB limit/
+  );
+});
+
+test('schedule failure report seals bounded controlled evidence without raw error text', () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [secondTaskId, taskId];
+  const rawMessage = 'arbitrary secret-bearing transport failure detail';
+  const report = createDistributedScheduleFailureReport({
+    configSha256: configValue.configSha256,
+    controllerId: configValue.controllerId,
+    enabledWorkerIds: ['worker-b', 'worker-a'],
+    runId: 'schedule-admission-failure',
+    applicationId,
+    taskIds: selectedTaskIds,
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 12.5,
+    error: Object.assign(new Error(rawMessage), { code: 'ECONNRESET' }),
+  });
+
+  assert.equal(report.schema, DISTRIBUTED_SCHEDULE_FAILURE_REPORT_SCHEMA);
+  assert.deepEqual(Object.keys(report).toSorted(), [
+    'applicationId',
+    'configSha256',
+    'controllerId',
+    'enabledWorkerIds',
+    'errorCode',
+    'reportSha256',
+    'runId',
+    'schema',
+    'selectedTaskCount',
+    'selectedTaskIdsSha256',
+    'selectionManifestSha256',
+    'startedAt',
+    'status',
+    'taskExecutionOutcome',
+    'wallMs',
+  ]);
+  assert.deepEqual(report.enabledWorkerIds, ['worker-a', 'worker-b']);
+  assert.equal(report.selectedTaskCount, 2);
+  assert.equal(
+    report.selectedTaskIdsSha256,
+    canonicalJsonSha256([...selectedTaskIds].toSorted())
+  );
+  assert.equal(report.selectionManifestSha256, null);
+  assert.equal(report.status, 'failed');
+  assert.equal(report.errorCode, 'transport-unavailable');
+  assert.equal(report.taskExecutionOutcome, 'unknown');
+  assert.equal(JSON.stringify(report).includes(rawMessage), false);
+  const { reportSha256, ...core } = report;
+  assert.equal(reportSha256, canonicalJsonSha256(core));
+  assert.equal(Object.isFrozen(report), true);
+  assert.equal(Object.isFrozen(report.enabledWorkerIds), true);
+  assert.doesNotThrow(() => encodeBoundedDistributedReport(report));
+});
+
+test('schedule failure report can prove admission stopped before task execution', () => {
+  const configValue = scheduleConfig();
+  const manifestSha256 = sha256('sealed selection manifest');
+  const report = createDistributedScheduleFailureReport({
+    configSha256: configValue.configSha256,
+    controllerId: configValue.controllerId,
+    enabledWorkerIds: ['worker-a', 'worker-b'],
+    runId: 'schedule-admission-pin-failure',
+    applicationId,
+    taskIds: [taskId, secondTaskId],
+    selectionManifestSha256: manifestSha256,
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 4,
+    error: Object.assign(new Error('unrecorded pin detail'), {
+      code: 'ERR_DISTRIBUTED_TRANSPORT_PIN',
+    }),
+    taskExecutionOutcome: 'not-started',
+  });
+
+  assert.equal(report.errorCode, 'transport-identity-rejected');
+  assert.equal(report.selectionManifestSha256, manifestSha256);
+  assert.equal(report.taskExecutionOutcome, 'not-started');
+  assert.deepEqual(verifyDistributedScheduleFailureReport(report), report);
+});
+
+test('schedule failure report verifier rejects unsealed or overstated evidence', () => {
+  const configValue = scheduleConfig();
+  const report = createDistributedScheduleFailureReport({
+    configSha256: configValue.configSha256,
+    controllerId: configValue.controllerId,
+    enabledWorkerIds: ['worker-a', 'worker-b'],
+    runId: 'schedule-failure-validation',
+    applicationId,
+    taskIds: [taskId, secondTaskId],
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 1,
+    error: new Error('classified without exposing this text'),
+  });
+
+  assert.throws(
+    () =>
+      verifyDistributedScheduleFailureReport({
+        ...report,
+        taskExecutionOutcome: 'passed',
+      }),
+    /task execution outcome is invalid/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedScheduleFailureReport({
+        ...report,
+        rawError: 'must never be accepted',
+      }),
+    /exact field set/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedScheduleFailureReport({
+        ...report,
+        reportSha256: '0'.repeat(64),
+      }),
+    /hash is invalid/
+  );
+});
+
+const scheduleConfig = ({ workerACapacity = 1, workerBCapacity = 1 } = {}) =>
+  createDistributedWorkerConfig({
+    schema: 'seerrng-distributed-worker-config/v1',
+    revision: 1,
+    controllerId: 'controller',
+    controllerWorkerId: null,
+    workers: [
+      {
+        id: 'worker-a',
+        address: 'https://worker-a.test:7443',
+        enabled: true,
+        identitySha256: 'a'.repeat(64),
+        n: workerACapacity,
+      },
+      {
+        id: 'worker-b',
+        address: 'https://worker-b.test:7443',
+        enabled: true,
+        identitySha256: 'b'.repeat(64),
+        n: workerBCapacity,
+      },
+    ],
+  });
+
+const scheduleWorkerReport = ({
+  configValue,
+  workerId,
+  selectedTaskIds,
+  capacity,
+  activeTasks = 0,
+}) => {
+  const selectedCatalog = createCatalog(applicationId, selectedTaskIds);
+  return {
+    schema: DISTRIBUTED_WORKER_REPORT_SCHEMA,
+    workerId,
+    instanceId: `${workerId}-session`,
+    configSha256: configValue.configSha256,
+    environment: `${process.platform}-fixture`,
+    capacity: {
+      effectiveLogicalCpus: 8,
+      configuredWorkers: capacity,
+      policy: 'fixture-explicit',
+    },
+    activeTasks,
+    applications: [
+      {
+        applicationId,
+        candidateSha256,
+        catalogSha256: selectedCatalog.catalogSha256,
+        inventorySha256: selectedCatalog.inventorySha256,
+        taskCount: selectedTaskIds.length,
+        taskIds: [...selectedTaskIds].toSorted(),
+      },
+    ],
+  };
+};
+
+const passedScheduleTaskResult = ({ workerId, selectedTaskId, runId }) => ({
+  workerId,
+  instanceId: `${workerId}-session`,
+  runId,
+  applicationId,
+  taskId: selectedTaskId,
+  status: 'passed',
+  startedAt: '2026-10-06T00:00:00.000Z',
+  wallMs: 2,
+  result: { resultSha256: sha256(`passed:${workerId}:${selectedTaskId}`) },
+});
+
+const failedScheduleTaskResult = ({ workerId, selectedTaskId, runId }) => ({
+  workerId,
+  instanceId: `${workerId}-session`,
+  runId,
+  applicationId,
+  taskId: selectedTaskId,
+  status: 'failed',
+  startedAt: '2026-10-06T00:00:00.000Z',
+  wallMs: 2,
+  failure: createDistributedTaskFailureEvidence(createTaskFailureError()),
+});
+
 // Test-only self-signed identity for a loopback worker. It protects no real
 // system and is embedded so the runtime acceptance test needs no external tool.
 const privateKey = `-----BEGIN PRIVATE KEY-----
@@ -436,6 +680,7 @@ test('worker probe reports only locally derived application and capacity data', 
       catalogSha256: createCatalog().catalogSha256,
       inventorySha256,
       taskCount: 1,
+      taskIds: [taskId],
     },
   ]);
   await assert.rejects(
@@ -508,6 +753,626 @@ test('worker rejects controller source drift before task execution', async () =>
   assert.equal(calls, 0);
 });
 
+test('controller schedule uses canonical capacity slots after every worker probe', async () => {
+  const configValue = scheduleConfig({
+    workerACapacity: 2,
+    workerBCapacity: 1,
+  });
+  const selectedTaskIds = [fourthTaskId, taskId, thirdTaskId, secondTaskId];
+  const canonicalTasks = [...selectedTaskIds].toSorted();
+  const probed = new Set();
+  const active = new Map([
+    ['worker-a', 0],
+    ['worker-b', 0],
+  ]);
+  const peak = new Map(active);
+  const linkedSignals = new Set();
+  const report = await runDistributedControllerSchedule({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerIds: ['worker-b', 'worker-a'],
+    applicationId,
+    taskIds: selectedTaskIds,
+    selectionManifestSha256: '7'.repeat(64),
+    runId: 'schedule-success',
+    catalogFactory: (_applicationRoot, options) => {
+      assert.deepEqual(options.allowedTaskIds, canonicalTasks);
+      return createCatalog(options.applicationId, options.allowedTaskIds);
+    },
+    sessionFactory: ({ workerId, signal }) => ({
+      workerId,
+      async probe() {
+        linkedSignals.add(signal);
+        assert.equal(signal instanceof AbortSignal, true);
+        assert.equal(signal.aborted, false);
+        probed.add(workerId);
+        return scheduleWorkerReport({
+          configValue,
+          workerId,
+          selectedTaskIds: canonicalTasks,
+          capacity: workerId === 'worker-a' ? 2 : 1,
+        });
+      },
+      async execute(selectedTaskId, runId) {
+        assert.equal(probed.size, 2, 'dispatch began before fleet admission');
+        assert.equal(signal.aborted, false);
+        const next = active.get(workerId) + 1;
+        active.set(workerId, next);
+        peak.set(workerId, Math.max(peak.get(workerId), next));
+        await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+        active.set(workerId, active.get(workerId) - 1);
+        return passedScheduleTaskResult({
+          workerId,
+          selectedTaskId,
+          runId,
+        });
+      },
+    }),
+  });
+  assert.equal(linkedSignals.size, 1);
+  assert.equal(report.schema, DISTRIBUTED_SCHEDULE_REPORT_SCHEMA);
+  assert.equal(report.status, 'passed');
+  assert.deepEqual(Object.keys(report).toSorted(), [
+    'applicationId',
+    'candidateSha256',
+    'catalogSha256',
+    'configSha256',
+    'outcomes',
+    'reportSha256',
+    'runId',
+    'schema',
+    'selectionManifestSha256',
+    'status',
+    'workerReports',
+  ]);
+  assert.equal(report.selectionManifestSha256, '7'.repeat(64));
+  assert.equal(
+    report.outcomes.every(
+      (outcome) =>
+        JSON.stringify(Object.keys(outcome).toSorted()) ===
+        JSON.stringify([
+          'controllerFailure',
+          'evidenceSha256',
+          'failure',
+          'instanceId',
+          'reason',
+          'status',
+          'taskId',
+          'wallMs',
+          'workerId',
+        ])
+    ),
+    true
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(report), 'utf8') <=
+      MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES
+  );
+  assert.deepEqual(
+    report.outcomes.map(({ taskId: selectedTaskId, workerId }) => ({
+      taskId: selectedTaskId,
+      workerId,
+    })),
+    [
+      { taskId: canonicalTasks[0], workerId: 'worker-a' },
+      { taskId: canonicalTasks[1], workerId: 'worker-b' },
+      { taskId: canonicalTasks[2], workerId: 'worker-a' },
+      { taskId: canonicalTasks[3], workerId: 'worker-a' },
+    ]
+  );
+  assert.ok(peak.get('worker-a') <= 2);
+  assert.ok(peak.get('worker-b') <= 1);
+  assert.deepEqual(
+    report.workerReports.map(({ workerId }) => workerId),
+    ['worker-a', 'worker-b']
+  );
+  const { reportSha256, ...core } = report;
+  assert.equal(reportSha256, canonicalJsonSha256(core));
+  assert.equal(Object.isFrozen(report), true);
+});
+
+test('controller schedule does not let one busy worker hide another free slot', async () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [
+    taskId,
+    secondTaskId,
+    thirdTaskId,
+    fourthTaskId,
+  ].toSorted();
+  const workerAGate = deferred();
+  const firstWorkerBFinished = deferred();
+  let workerAReleased = false;
+  let workerBCalls = 0;
+  let secondWorkerBStartedBeforeWorkerAReleased = false;
+  const scheduled = runDistributedControllerSchedule({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerIds: ['worker-a', 'worker-b'],
+    applicationId,
+    taskIds: selectedTaskIds,
+    runId: 'schedule-no-head-of-line-blocking',
+    catalogFactory: (_applicationRoot, options) =>
+      createCatalog(options.applicationId, options.allowedTaskIds),
+    sessionFactory: ({ workerId }) => ({
+      workerId,
+      async probe() {
+        return scheduleWorkerReport({
+          configValue,
+          workerId,
+          selectedTaskIds,
+          capacity: 1,
+        });
+      },
+      async execute(selectedTaskId, runId) {
+        if (workerId === 'worker-a') await workerAGate.promise;
+        else {
+          workerBCalls += 1;
+          if (workerBCalls === 1) firstWorkerBFinished.resolve();
+          if (workerBCalls === 2)
+            secondWorkerBStartedBeforeWorkerAReleased = !workerAReleased;
+        }
+        return passedScheduleTaskResult({
+          workerId,
+          selectedTaskId,
+          runId,
+        });
+      },
+    }),
+  });
+
+  await firstWorkerBFinished.promise;
+  for (let attempt = 0; attempt < 10 && workerBCalls < 2; attempt += 1)
+    await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+  workerAReleased = true;
+  workerAGate.resolve();
+  const report = await scheduled;
+
+  assert.equal(report.status, 'passed');
+  assert.equal(workerBCalls, 2);
+  assert.equal(secondWorkerBStartedBeforeWorkerAReleased, true);
+});
+
+test('controller schedule admission failure dispatches no task', async (t) => {
+  const selectedTaskIds = [taskId, secondTaskId].toSorted();
+  for (const scenario of [
+    { name: 'missing capability', activeWorker: null, pattern: /advertises/ },
+    { name: 'busy worker', activeWorker: 'worker-b', pattern: /idle workers/ },
+  ])
+    await t.test(scenario.name, async () => {
+      const configValue = scheduleConfig();
+      let probes = 0;
+      let executions = 0;
+      await assert.rejects(
+        runDistributedControllerSchedule({
+          config: configValue,
+          applications: [{ id: applicationId, root }],
+          workerIds: ['worker-a', 'worker-b'],
+          applicationId,
+          taskIds: selectedTaskIds,
+          runId: `schedule-admission-${scenario.name.replace(' ', '-')}`,
+          catalogFactory: (_applicationRoot, options) =>
+            createCatalog(options.applicationId, options.allowedTaskIds),
+          sessionFactory: ({ workerId }) => ({
+            workerId,
+            async probe() {
+              probes += 1;
+              const report = scheduleWorkerReport({
+                configValue,
+                workerId,
+                selectedTaskIds,
+                capacity: 1,
+                activeTasks: scenario.activeWorker === workerId ? 1 : 0,
+              });
+              if (scenario.name === 'missing capability') {
+                report.applications[0].taskIds = [selectedTaskIds[0]];
+                report.applications[0].taskCount = 1;
+              }
+              return report;
+            },
+            async execute() {
+              executions += 1;
+              throw new Error('must not dispatch');
+            },
+          }),
+        }),
+        scenario.pattern
+      );
+      assert.equal(probes, 2);
+      assert.equal(executions, 0);
+    });
+});
+
+test('controller schedule rejects same-candidate catalog drift before dispatch', async (t) => {
+  const selectedTaskIds = [taskId, secondTaskId].toSorted();
+  for (const scenario of [
+    {
+      name: 'different catalog',
+      mutate(application) {
+        application.catalogSha256 = sha256('different-catalog');
+      },
+      pattern: /worker catalog does not match controller/,
+    },
+    {
+      name: 'different inventory',
+      mutate(application) {
+        application.inventorySha256 = sha256('different-inventory');
+      },
+      pattern: /worker inventory does not match controller/,
+    },
+  ])
+    await t.test(scenario.name, async () => {
+      const configValue = scheduleConfig();
+      let probes = 0;
+      let executions = 0;
+      await assert.rejects(
+        runDistributedControllerSchedule({
+          config: configValue,
+          applications: [{ id: applicationId, root }],
+          workerIds: ['worker-a', 'worker-b'],
+          applicationId,
+          taskIds: selectedTaskIds,
+          runId: `schedule-${scenario.name.replace(' ', '-')}`,
+          catalogFactory: (_applicationRoot, options) =>
+            createCatalog(options.applicationId, options.allowedTaskIds),
+          sessionFactory: ({ workerId }) => ({
+            workerId,
+            async probe() {
+              probes += 1;
+              const report = scheduleWorkerReport({
+                configValue,
+                workerId,
+                selectedTaskIds,
+                capacity: 1,
+              });
+              assert.equal(
+                report.applications[0].candidateSha256,
+                candidateSha256
+              );
+              if (workerId === 'worker-b')
+                scenario.mutate(report.applications[0]);
+              return report;
+            },
+            async execute() {
+              executions += 1;
+              throw new Error('must not dispatch');
+            },
+          }),
+        }),
+        scenario.pattern
+      );
+      assert.equal(probes, 2);
+      assert.equal(executions, 0);
+    });
+});
+
+test('controller schedule aborts and settles peer probes before rejecting admission', async () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [taskId, secondTaskId].toSorted();
+  const firstError = new Error('first probe rejection');
+  let peerObservedAbort = false;
+  let peerSettled = false;
+  let executions = 0;
+  await assert.rejects(
+    runDistributedControllerSchedule({
+      config: configValue,
+      applications: [{ id: applicationId, root }],
+      workerIds: ['worker-a', 'worker-b'],
+      applicationId,
+      taskIds: selectedTaskIds,
+      runId: 'schedule-probe-rejection',
+      catalogFactory: (_applicationRoot, options) =>
+        createCatalog(options.applicationId, options.allowedTaskIds),
+      sessionFactory: ({ workerId, signal }) => ({
+        workerId,
+        async probe() {
+          if (workerId === 'worker-a') throw firstError;
+          await abortReason(signal);
+          peerObservedAbort = true;
+          await new Promise((resolveImmediate) =>
+            setImmediate(resolveImmediate)
+          );
+          peerSettled = true;
+          return scheduleWorkerReport({
+            configValue,
+            workerId,
+            selectedTaskIds,
+            capacity: 1,
+          });
+        },
+        async execute() {
+          executions += 1;
+          throw new Error('must not dispatch');
+        },
+      }),
+    }),
+    (error) => error === firstError
+  );
+  assert.equal(peerObservedAbort, true);
+  assert.equal(peerSettled, true);
+  assert.equal(executions, 0);
+});
+
+test('controller schedule records native failure and continues without retry', async () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [taskId, secondTaskId, thirdTaskId].toSorted();
+  const failedTaskId = selectedTaskIds[0];
+  const calls = new Map(
+    selectedTaskIds.map((selectedTaskId) => [selectedTaskId, 0])
+  );
+  const report = await runDistributedControllerSchedule({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerIds: ['worker-a', 'worker-b'],
+    applicationId,
+    taskIds: selectedTaskIds,
+    runId: 'schedule-native-failure',
+    catalogFactory: (_applicationRoot, options) =>
+      createCatalog(options.applicationId, options.allowedTaskIds),
+    sessionFactory: ({ workerId }) => ({
+      workerId,
+      async probe() {
+        return scheduleWorkerReport({
+          configValue,
+          workerId,
+          selectedTaskIds,
+          capacity: 1,
+        });
+      },
+      async execute(selectedTaskId, runId) {
+        calls.set(selectedTaskId, calls.get(selectedTaskId) + 1);
+        return selectedTaskId === failedTaskId
+          ? failedScheduleTaskResult({ workerId, selectedTaskId, runId })
+          : passedScheduleTaskResult({ workerId, selectedTaskId, runId });
+      },
+    }),
+  });
+  assert.equal(report.status, 'failed');
+  assert.deepEqual([...calls.values()], [1, 1, 1]);
+  assert.equal(
+    report.outcomes.find(
+      ({ taskId: selectedTaskId }) => selectedTaskId === failedTaskId
+    ).status,
+    'failed'
+  );
+  assert.deepEqual(
+    report.outcomes.find(
+      ({ taskId: selectedTaskId }) => selectedTaskId === failedTaskId
+    ).failure,
+    createDistributedTaskFailureEvidence(createTaskFailureError())
+  );
+  assert.equal(
+    report.outcomes
+      .filter(({ taskId: selectedTaskId }) => selectedTaskId !== failedTaskId)
+      .every(
+        ({ failure, controllerFailure }) =>
+          failure === null && controllerFailure === null
+      ),
+    true
+  );
+  assert.equal(
+    report.outcomes.find(
+      ({ taskId: selectedTaskId }) => selectedTaskId === failedTaskId
+    ).controllerFailure,
+    null
+  );
+  assert.equal(
+    report.outcomes.filter(({ status }) => status === 'passed').length,
+    2
+  );
+});
+
+test('controller schedule never reassigns after an unknown worker outcome', async () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [
+    taskId,
+    secondTaskId,
+    thirdTaskId,
+    fourthTaskId,
+  ].toSorted();
+  const calls = new Map([
+    ['worker-a', []],
+    ['worker-b', []],
+  ]);
+  const report = await runDistributedControllerSchedule({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerIds: ['worker-a', 'worker-b'],
+    applicationId,
+    taskIds: selectedTaskIds,
+    runId: 'schedule-unknown',
+    catalogFactory: (_applicationRoot, options) =>
+      createCatalog(options.applicationId, options.allowedTaskIds),
+    sessionFactory: ({ workerId }) => ({
+      workerId,
+      async probe() {
+        return scheduleWorkerReport({
+          configValue,
+          workerId,
+          selectedTaskIds,
+          capacity: 1,
+        });
+      },
+      async execute(selectedTaskId, runId) {
+        calls.get(workerId).push(selectedTaskId);
+        if (workerId === 'worker-a')
+          throw Object.assign(new Error('hidden transport detail'), {
+            code: 'ECONNRESET',
+          });
+        return passedScheduleTaskResult({
+          workerId,
+          selectedTaskId,
+          runId,
+        });
+      },
+    }),
+  });
+  assert.equal(report.status, 'failed');
+  assert.deepEqual(calls.get('worker-a'), [selectedTaskIds[0]]);
+  assert.deepEqual(calls.get('worker-b'), [
+    selectedTaskIds[1],
+    selectedTaskIds[3],
+  ]);
+  assert.deepEqual(
+    report.outcomes.map(({ workerId, status, reason }) => ({
+      workerId,
+      status,
+      reason,
+    })),
+    [
+      {
+        workerId: 'worker-a',
+        status: 'unknown',
+        reason: 'transport-unavailable',
+      },
+      { workerId: 'worker-b', status: 'passed', reason: null },
+      {
+        workerId: 'worker-a',
+        status: 'not-run',
+        reason: 'worker-unavailable',
+      },
+      { workerId: 'worker-b', status: 'passed', reason: null },
+    ]
+  );
+  assert.equal(
+    JSON.stringify(report).includes('hidden transport detail'),
+    false
+  );
+  const unknownOutcome = report.outcomes[0];
+  const outcomeContext = {
+    controllerId: configValue.controllerId,
+    configSha256: configValue.configSha256,
+    runId: report.runId,
+    applicationId: report.applicationId,
+  };
+  assert.equal(unknownOutcome.failure, null);
+  assert.equal(
+    unknownOutcome.controllerFailure.failureSha256,
+    unknownOutcome.evidenceSha256
+  );
+  assert.deepEqual(
+    {
+      applicationId: unknownOutcome.controllerFailure.applicationId,
+      configSha256: unknownOutcome.controllerFailure.configSha256,
+      controllerId: unknownOutcome.controllerFailure.controllerId,
+      errorCode: unknownOutcome.controllerFailure.errorCode,
+      runId: unknownOutcome.controllerFailure.runId,
+      taskId: unknownOutcome.controllerFailure.taskId,
+      workerId: unknownOutcome.controllerFailure.workerId,
+    },
+    {
+      applicationId,
+      configSha256: configValue.configSha256,
+      controllerId: configValue.controllerId,
+      errorCode: 'transport-unavailable',
+      runId: report.runId,
+      taskId: unknownOutcome.taskId,
+      workerId: unknownOutcome.workerId,
+    }
+  );
+  assert.deepEqual(
+    verifyDistributedScheduleOutcome(unknownOutcome, outcomeContext),
+    unknownOutcome
+  );
+  assert.throws(
+    () =>
+      verifyDistributedScheduleOutcome(
+        { ...unknownOutcome, evidenceSha256: '0'.repeat(64) },
+        outcomeContext
+      ),
+    /contradicts its controller failure evidence/
+  );
+  assert.throws(
+    () =>
+      verifyDistributedScheduleOutcome(
+        {
+          ...unknownOutcome,
+          failure: createDistributedTaskFailureEvidence(
+            createTaskFailureError()
+          ),
+        },
+        outcomeContext
+      ),
+    /mutually exclusive/
+  );
+  const wrongTaskFailure = createDistributedControllerFailureReport({
+    configSha256: configValue.configSha256,
+    controllerId: configValue.controllerId,
+    workerId: unknownOutcome.workerId,
+    runId: report.runId,
+    applicationId,
+    taskId: selectedTaskIds[1],
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 1,
+    error: Object.assign(new Error('unrecorded mismatch'), {
+      code: 'ECONNRESET',
+    }),
+  }).controllerFailure;
+  assert.throws(
+    () =>
+      verifyDistributedScheduleOutcome(
+        {
+          ...unknownOutcome,
+          reason: wrongTaskFailure.errorCode,
+          wallMs: wrongTaskFailure.wallMs,
+          evidenceSha256: wrongTaskFailure.failureSha256,
+          controllerFailure: wrongTaskFailure,
+        },
+        outcomeContext
+      ),
+    /identity does not match/
+  );
+});
+
+test('controller schedule cancellation cannot report a pass', async () => {
+  const configValue = scheduleConfig();
+  const selectedTaskIds = [taskId, secondTaskId].toSorted();
+  const controller = new AbortController();
+  const bothStarted = deferred();
+  let started = 0;
+  const scheduled = runDistributedControllerSchedule({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerIds: ['worker-a', 'worker-b'],
+    applicationId,
+    taskIds: selectedTaskIds,
+    runId: 'schedule-cancelled',
+    signal: controller.signal,
+    catalogFactory: (_applicationRoot, options) =>
+      createCatalog(options.applicationId, options.allowedTaskIds),
+    sessionFactory: ({ workerId, signal }) => ({
+      workerId,
+      async probe() {
+        return scheduleWorkerReport({
+          configValue,
+          workerId,
+          selectedTaskIds,
+          capacity: 1,
+        });
+      },
+      async execute() {
+        started += 1;
+        if (started === 2) bothStarted.resolve();
+        await abortReason(signal);
+        throw Object.assign(new Error('cancelled'), {
+          code: 'ERR_DISTRIBUTED_TRANSPORT_ABORTED',
+        });
+      },
+    }),
+  });
+  await bothStarted.promise;
+  controller.abort();
+  const report = await scheduled;
+  assert.equal(report.status, 'failed');
+  assert.equal(
+    report.outcomes.every(({ status }) => status !== 'passed'),
+    true
+  );
+  assert.equal(
+    report.outcomes.every(({ reason }) => reason === 'controller-aborted'),
+    true
+  );
+});
+
 test('controller task path proves worker identity and uses the same local worker handler', async () => {
   const worker = runtime();
   const result = await runDistributedControllerTask({
@@ -528,41 +1393,40 @@ test('controller task path proves worker identity and uses the same local worker
   assert.deepEqual(result.result.result, createNativeResult());
 });
 
-test('controller accepts a bounded multi-task worker report while dispatching one task', async () => {
+test('controller rejects a broader worker catalog before one-task dispatch', async () => {
   const allowedTaskIds = [taskId, secondTaskId];
-  const workerCatalog = createCatalog(applicationId, allowedTaskIds);
+  let executions = 0;
   const worker = runtime({
     allowedTaskIds,
     catalogFactory: (_applicationRoot, { applicationId: selectedId }) =>
       createCatalog(selectedId, allowedTaskIds),
-    taskExecutor: async () =>
-      createNativeResult({
-        selectedCatalog: workerCatalog,
-        selectedTaskId: secondTaskId,
-      }),
-  });
-  const result = await runDistributedControllerTask({
-    config: config(),
-    applications: [{ id: applicationId, root }],
-    workerId: 'worker-one',
-    applicationId,
-    taskId: secondTaskId,
-    runId: 'run-controller-multi-worker-catalog',
-    localRuntime: worker,
-    catalogFactory(applicationRoot, options) {
-      assert.equal(applicationRoot, root);
-      assert.deepEqual(options, {
-        applicationId,
-        allowedTaskIds: [secondTaskId],
-      });
-      return createCatalog(applicationId, [secondTaskId]);
+    taskExecutor: async () => {
+      executions += 1;
+      throw new Error('must not dispatch');
     },
-    requestFactory: request,
   });
-  assert.equal(result.report.applications[0].taskCount, 2);
-  assert.equal(result.result.taskId, secondTaskId);
-  assert.deepEqual(result.result.result.files, secondFiles);
-  assert.equal(result.result.status, 'passed');
+  await assert.rejects(
+    runDistributedControllerTask({
+      config: config(),
+      applications: [{ id: applicationId, root }],
+      workerId: 'worker-one',
+      applicationId,
+      taskId: secondTaskId,
+      runId: 'run-controller-multi-worker-catalog',
+      localRuntime: worker,
+      catalogFactory(applicationRoot, options) {
+        assert.equal(applicationRoot, root);
+        assert.deepEqual(options, {
+          applicationId,
+          allowedTaskIds: [secondTaskId],
+        });
+        return createCatalog(applicationId, [secondTaskId]);
+      },
+      requestFactory: request,
+    }),
+    /worker catalog does not match controller/
+  );
+  assert.equal(executions, 0);
 });
 
 test('controller rejects malformed or tampered nested native results', async (t) => {
@@ -635,6 +1499,31 @@ test('controller validates worker report evidence before dispatch', async (t) =>
         report.applications[0].taskCount = MAX_DISTRIBUTED_NATIVE_TASKS + 1;
       },
       pattern: /outside its supported range/,
+    },
+    {
+      name: 'duplicate task IDs',
+      mutate(report) {
+        report.applications[0].taskIds = [taskId, taskId];
+        report.applications[0].taskCount = 2;
+      },
+      pattern: /unique task IDs/,
+    },
+    {
+      name: 'noncanonical task ID order',
+      mutate(report) {
+        report.applications[0].taskIds = [taskId, secondTaskId]
+          .toSorted()
+          .toReversed();
+        report.applications[0].taskCount = 2;
+      },
+      pattern: /canonical order/,
+    },
+    {
+      name: 'task count mismatch',
+      mutate(report) {
+        report.applications[0].taskIds = [taskId, secondTaskId].toSorted();
+      },
+      pattern: /task count does not match/,
     },
   ];
   for (const scenario of cases) {

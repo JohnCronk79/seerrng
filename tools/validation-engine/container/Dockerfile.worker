@@ -1,0 +1,98 @@
+FROM mirror.gcr.io/library/node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
+
+ARG SOURCE_COMMIT
+ARG SOURCE_BUNDLE_SHA256
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=/pnpm:$PATH
+ENV npm_config_nodedir=/usr/local
+
+RUN apk add --no-cache \
+      bash \
+      coreutils \
+      findutils \
+      g++ \
+      gcc \
+      git \
+      helm \
+      jq \
+      libc6-compat \
+      make \
+      py3-setuptools \
+      python3 \
+      sqlite \
+      tar \
+      unzip \
+      zip \
+    && npm install --global node-gyp@13.0.2 pnpm@10.24.0 \
+    && test "$(pnpm --version)" = "10.24.0" \
+    && for required_command in helm jq sqlite3 zip unzip find tar python; do \
+      command -v "$required_command" >/dev/null || exit 1; \
+    done \
+    && find --version | grep -F 'GNU findutils' >/dev/null \
+    && tar --version | grep -F 'GNU tar' >/dev/null \
+    && tar --help | grep -F -- '--transform' >/dev/null \
+    && sha256sum --version | grep -F 'GNU coreutils' >/dev/null \
+    && realpath --version | grep -F 'GNU coreutils' >/dev/null \
+    && timeout --version | grep -F 'GNU coreutils' >/dev/null \
+    && python --version >/dev/null
+
+COPY source.bundle /tmp/source.bundle
+
+RUN case "$SOURCE_COMMIT" in \
+      ''|*[!0-9a-f]*) exit 64 ;; \
+    esac \
+    && test "${#SOURCE_COMMIT}" -eq 40 \
+    && case "$SOURCE_BUNDLE_SHA256" in \
+      ''|*[!0-9a-f]*) exit 64 ;; \
+    esac \
+    && test "${#SOURCE_BUNDLE_SHA256}" -eq 64 \
+    && printf '%s  %s\n' "$SOURCE_BUNDLE_SHA256" /tmp/source.bundle \
+      | sha256sum -c - \
+    && mkdir /workspace \
+    && git -C /workspace init --quiet --object-format=sha1 \
+    && git -C /workspace bundle verify /tmp/source.bundle \
+    && test "$(git -C /workspace bundle list-heads /tmp/source.bundle)" \
+      = "$SOURCE_COMMIT HEAD" \
+    && git -C /workspace bundle unbundle /tmp/source.bundle >/dev/null \
+    && git -C /workspace cat-file -e "$SOURCE_COMMIT^{commit}" \
+    && printf '%s\n' "$SOURCE_COMMIT" > /workspace/.git/shallow \
+    && git -C /workspace update-ref refs/heads/candidate "$SOURCE_COMMIT" \
+    && git -C /workspace checkout --detach "$SOURCE_COMMIT" \
+    && test "$(git -C /workspace rev-parse --verify 'HEAD^{commit}')" \
+      = "$SOURCE_COMMIT" \
+    && test "$(git -C /workspace rev-list --count HEAD)" = 1 \
+    && test -z "$(git -C /workspace remote)" \
+    && unreachable_objects="$(git -C /workspace fsck --full \
+      --unreachable --no-reflogs 2>/dev/null)" \
+    && test -z "$unreachable_objects" \
+    && test -d /workspace/.git \
+    && test -z "$(git -C /workspace status --porcelain=v1 \
+      --untracked-files=all --ignore-submodules=none)" \
+    && rm -f /tmp/source.bundle
+
+WORKDIR /workspace
+
+RUN CYPRESS_INSTALL_BINARY=0 CI=true \
+      pnpm --config.engine-strict=true install --frozen-lockfile \
+    && test -z "$(git status --porcelain=v1 \
+      --untracked-files=all --ignore-submodules=none)" \
+    && chown -R node:node /workspace \
+    && rm -rf /root/.npm
+
+# Runtime orchestration must supply --read-only, a bounded --tmpfs /tmp,
+# --cap-drop=ALL, and --security-opt=no-new-privileges. TLS material and the
+# canonical task manifest are mounted read-only; evidence is mounted separately.
+ENV HOME=/tmp/home
+ENV XDG_CACHE_HOME=/tmp/cache
+ENV TMPDIR=/tmp
+ENV GIT_OPTIONAL_LOCKS=0
+
+USER node
+
+RUN test -d .git \
+    && test "$(git rev-parse --verify 'HEAD^{commit}')" = "$SOURCE_COMMIT" \
+    && test -z "$(git status --porcelain=v1 \
+      --untracked-files=all --ignore-submodules=none)"
+
+ENTRYPOINT ["node", "bin/run-local-validation.mjs"]

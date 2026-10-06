@@ -1,8 +1,22 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import {
+  appendFileSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { createNativeStageContext } from '../tools/validation-engine/runtime/native-stage-context.mjs';
@@ -35,8 +49,11 @@ import {
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import {
   createDistributedControllerFailureReport,
+  createDistributedScheduleFailureReport,
   createDistributedWorkerRuntime,
+  encodeBoundedDistributedReport,
   parseDistributedApplicationBindings,
+  runDistributedControllerSchedule,
   runDistributedControllerTask,
   startDistributedWorkerServer,
 } from '../tools/validation-engine/runtime/distributed-runtime.mjs';
@@ -45,6 +62,12 @@ import {
   configuredDistributedWorker,
   parseDistributedWorkerConfig,
 } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import {
+  createDistributedTaskManifest,
+  readDistributedTaskManifest,
+  verifyDistributedTaskManifestCatalog,
+} from '../tools/validation-engine/runtime/distributed-task-manifest.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { discoverDistributedNativeCatalog } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
 
@@ -259,10 +282,12 @@ const flagOptions = new Set([
   '--github-reconcile',
   '--distributed-discover',
   '--distributed-controller',
+  '--distributed-schedule',
   '--distributed-worker',
 ]);
 const valueOptions = new Set([
   '--application',
+  '--allow-task-file',
   '--case',
   '--distributed-config',
   '--expected-plan-sha256',
@@ -273,7 +298,7 @@ const valueOptions = new Set([
   '--plan-file',
   '--receipt-dir',
   '--report-file',
-  '--task',
+  '--task-file',
   '--timeout-ms',
   '--tls-cert',
   '--tls-key',
@@ -285,6 +310,7 @@ const repeatedValueOptions = new Set([
   '--allow-task',
   '--app',
   '--evidence',
+  '--task',
 ]);
 
 const optionContracts = {
@@ -418,9 +444,23 @@ const optionContracts = {
       '--distributed-config',
       '--worker-id',
       '--application',
-      '--task',
       '--report-file',
     ],
+    requiredRepeated: ['--app', '--task'],
+  },
+  'distributed-schedule': {
+    label: 'Distributed schedule mode',
+    allowed: new Set([
+      '--distributed-schedule',
+      '--distributed-config',
+      '--application',
+      '--task',
+      '--task-file',
+      '--timeout-ms',
+      '--app',
+      '--report-file',
+    ]),
+    requiredValues: ['--distributed-config', '--application', '--report-file'],
     requiredRepeated: ['--app'],
   },
   'distributed-discover': {
@@ -429,6 +469,7 @@ const optionContracts = {
       '--distributed-discover',
       '--application',
       '--app',
+      '--task-file',
       '--json',
     ]),
     requiredValues: ['--application'],
@@ -446,6 +487,7 @@ const optionContracts = {
       '--listen-host',
       '--allow-controller',
       '--allow-task',
+      '--allow-task-file',
     ]),
     requiredValues: [
       '--distributed-config',
@@ -454,7 +496,7 @@ const optionContracts = {
       '--tls-key',
       '--listen-host',
     ],
-    requiredRepeated: ['--app', '--allow-controller', '--allow-task'],
+    requiredRepeated: ['--app', '--allow-controller'],
   },
 };
 
@@ -521,6 +563,7 @@ function validateOptions(options) {
   const distributedModes = [
     '--distributed-discover',
     '--distributed-controller',
+    '--distributed-schedule',
     '--distributed-worker',
   ].filter((option) => options.flags.has(option));
   if (distributedModes.length > 1)
@@ -549,6 +592,28 @@ function validateOptions(options) {
   for (const option of contract.requiredRepeated ?? [])
     if (!options.repeated.has(option))
       throw new Error(`${contract.label} requires ${option}`);
+  const taskIds = options.repeated.get('--task') ?? [];
+  if (name === 'distributed-controller' && taskIds.length !== 1)
+    throw new Error('Distributed controller mode requires exactly one --task');
+  if (name === 'distributed-schedule') {
+    const hasTaskFile = options.values.has('--task-file');
+    if (hasTaskFile === taskIds.length > 0)
+      throw new Error(
+        'Distributed schedule mode requires exactly one of --task or --task-file'
+      );
+    if (!hasTaskFile && taskIds.length < 2)
+      throw new Error(
+        'Distributed schedule mode requires at least two --task values'
+      );
+  }
+  if (name === 'distributed-worker') {
+    const allowedTaskIds = options.repeated.get('--allow-task') ?? [];
+    const hasTaskFile = options.values.has('--allow-task-file');
+    if (hasTaskFile === allowedTaskIds.length > 0)
+      throw new Error(
+        'Distributed worker mode requires exactly one of --allow-task or --allow-task-file'
+      );
+  }
   return { name, hostedOption, distributedOption };
 }
 
@@ -600,6 +665,101 @@ function positiveMilliseconds(option, fallback) {
   return Number(raw);
 }
 
+function taskSelection(
+  option,
+  fileOption,
+  minimum,
+  { applications, applicationId = null } = {}
+) {
+  const manifestFile = value(fileOption);
+  if (!manifestFile)
+    return { taskIds: repeated(option), selectionManifestSha256: null };
+  const manifest = readDistributedTaskManifest(manifestFile, { minimum });
+  if (applicationId && manifest.applicationId !== applicationId)
+    throw new Error(
+      'Distributed task manifest does not match the selected application'
+    );
+  const application = applications?.find(
+    ({ id }) => id === manifest.applicationId
+  );
+  if (!application)
+    throw new Error(
+      'Distributed task manifest application is not registered locally'
+    );
+  const catalog = discoverDistributedNativeCatalog(application.root, {
+    applicationId: manifest.applicationId,
+  });
+  verifyDistributedTaskManifestCatalog(manifest, catalog, { minimum });
+  return {
+    taskIds: manifest.taskIds,
+    selectionManifestSha256: manifest.manifestSha256,
+  };
+}
+
+const MAX_DISTRIBUTED_REPORT_BYTES = 32 * 1024 * 1024;
+
+function distributedOutputFile(sourceRoot, outputFile, kind = 'report') {
+  const label = `Distributed ${kind} file`;
+  if (!isAbsolute(outputFile))
+    throw new Error(
+      `${label} must be absolute and outside the source checkout`
+    );
+  const realSourceRoot = realpathSync(sourceRoot);
+  const lexicalRelation = relative(realSourceRoot, resolve(outputFile));
+  const lexicallyOutsideSource =
+    isAbsolute(lexicalRelation) ||
+    lexicalRelation === '..' ||
+    lexicalRelation.startsWith(`..${sep}`);
+  if (!lexicallyOutsideSource)
+    throw new Error(
+      `${label} must be absolute and outside the source checkout`
+    );
+  let realParent;
+  try {
+    realParent = realpathSync(dirname(outputFile));
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+      throw new Error(`${label} requires an existing parent directory`, {
+        cause: error,
+      });
+    throw error;
+  }
+  const relation = relative(realSourceRoot, realParent);
+  const outsideSource =
+    isAbsolute(relation) ||
+    relation === '..' ||
+    relation.startsWith(`..${sep}`);
+  if (!outsideSource)
+    throw new Error(
+      `${label} must be absolute and outside the source checkout`
+    );
+  const admitted = join(realParent, basename(outputFile));
+  try {
+    const existing = lstatSync(admitted);
+    throw new Error(
+      existing.isSymbolicLink()
+        ? `${label} must not be an existing symlink or reparse point`
+        : `${label} must not already exist`
+    );
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return admitted;
+}
+
+function writeDistributedReport(reportFile, encoded) {
+  if (typeof encoded !== 'string')
+    throw new Error('Distributed report encoding must be text');
+  if (Buffer.byteLength(encoded) > MAX_DISTRIBUTED_REPORT_BYTES)
+    throw new Error('Distributed report exceeds the bounded output size');
+  writeFileSync(reportFile, encoded, { flag: 'wx', mode: 0o600 });
+}
+
+function writeDistributedControllerReport(reportFile, report) {
+  const encoded = `${JSON.stringify(report, null, 2)}\n`;
+  writeDistributedReport(reportFile, encoded);
+}
+
 if (!options) {
   // The parse error above is the complete fail-closed result.
 } else if (selectedMode.name === 'help') {
@@ -611,9 +771,10 @@ if (!options) {
        node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
        node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
        node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
-       node bin/run-local-validation.mjs --distributed-discover --app ID=ABSOLUTE_ROOT --application ID [--json]
+       node bin/run-local-validation.mjs --distributed-discover --app ID=ABSOLUTE_ROOT --application ID [--task-file ABSOLUTE_FILE] [--json]
        node bin/run-local-validation.mjs --distributed-controller --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --application ID --task ID --report-file ABSOLUTE_FILE [--timeout-ms MS]
-       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --allow-task ID [--allow-task ID ...] --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
+       node bin/run-local-validation.mjs --distributed-schedule --distributed-config FILE --app ID=ABSOLUTE_ROOT --application ID (--task ID --task ID [--task ID ...] | --task-file ABSOLUTE_FILE) --report-file ABSOLUTE_FILE [--timeout-ms MS]
+       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT (--allow-task ID [--allow-task ID ...] | --allow-task-file ABSOLUTE_FILE) --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
 
 Runs the existing engine's staged native PR-parity gate: repository checks,
 CodeQL, production builds, browser tests and applicable supplemental checks.
@@ -635,10 +796,16 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
               Read the clean local tests-only plan and list its native task IDs.
 --distributed-controller
               Probe one configured trusted worker and run one locally derived task.
+--distributed-schedule
+              Run explicit locally derived tasks across every enabled configured worker.
 --distributed-worker
               Serve locally derived native tasks for an authenticated controller.
 --app         Register the one distributed application as ID=ABSOLUTE_ROOT.
 --allow-task  Locally allow a discovered task on a distributed worker; repeatable.
+--allow-task-file
+              Read the worker task allowlist from one sealed absolute manifest.
+--task        Select a discovered task; once for a controller, repeat for a schedule.
+--task-file   Write discovery IDs to, or read a schedule selection from, one sealed absolute manifest.
 --json        Machine-readable local plan, distributed catalog, hosted plan, or hosted result.
 --help        Show help without reading the project or creating files.
 
@@ -667,9 +834,20 @@ failures, partial output closure and zero active tests fail closed.\n`);
         throw new Error(
           `Distributed discovery does not register application: ${applicationId}`
         );
+      const taskFile = value('--task-file')
+        ? distributedOutputFile(
+            root,
+            requiredValue('--task-file'),
+            'task manifest'
+          )
+        : null;
       const catalog = discoverDistributedNativeCatalog(application.root, {
         applicationId,
       });
+      if (taskFile) {
+        const manifest = createDistributedTaskManifest(catalog);
+        writeDistributedReport(taskFile, `${JSON.stringify(manifest)}\n`);
+      }
       if (has('--json'))
         process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
       else {
@@ -687,13 +865,19 @@ failures, partial output closure and zero active tests fail closed.\n`);
       const config = parseDistributedWorkerConfig(
         readFileSync(resolve(requiredValue('--distributed-config')), 'utf8')
       );
-      const workerId = requiredValue('--worker-id');
       const applications = parseDistributedApplicationBindings(
         repeated('--app')
       );
-      const worker = configuredDistributedWorker(config, workerId);
       if (distributedMode === '--distributed-worker') {
+        const workerId = requiredValue('--worker-id');
+        const worker = configuredDistributedWorker(config, workerId);
         const address = new URL(worker.address);
+        const { taskIds: allowedTaskIds } = taskSelection(
+          '--allow-task',
+          '--allow-task-file',
+          1,
+          { applications }
+        );
         const secret = distributedFleetSecret();
         let service;
         try {
@@ -701,7 +885,7 @@ failures, partial output closure and zero active tests fail closed.\n`);
             config,
             workerId,
             applications,
-            allowedTaskIds: repeated('--allow-task'),
+            allowedTaskIds,
             key: readFileSync(resolve(requiredValue('--tls-key'))),
             certificate: readFileSync(resolve(requiredValue('--tls-cert'))),
             secret,
@@ -726,28 +910,24 @@ failures, partial output closure and zero active tests fail closed.\n`);
           secret.fill(0);
           await service?.close();
         }
-      } else {
-        const reportFile = requiredValue('--report-file');
-        const relation = relative(root, reportFile);
-        const outsideSource =
-          isAbsolute(relation) ||
-          relation === '..' ||
-          relation.startsWith(`..${sep}`);
-        if (!isAbsolute(reportFile) || relation === '' || !outsideSource)
-          throw new Error(
-            'Distributed report file must be absolute and outside the source checkout'
-          );
+      } else if (distributedMode === '--distributed-controller') {
+        const workerId = requiredValue('--worker-id');
+        const worker = configuredDistributedWorker(config, workerId);
+        const reportFile = distributedOutputFile(
+          root,
+          requiredValue('--report-file')
+        );
+        const taskId = repeated('--task')[0];
         const localRuntime =
           config.controllerWorkerId === worker.id
             ? createDistributedWorkerRuntime({
                 config,
                 workerId,
                 applications,
-                allowedTaskIds: [requiredValue('--task')],
+                allowedTaskIds: [taskId],
               })
             : null;
         const applicationId = requiredValue('--application');
-        const taskId = requiredValue('--task');
         const runId = randomUUID();
         const startedAt = new Date().toISOString();
         const started = performance.now();
@@ -790,10 +970,7 @@ failures, partial output closure and zero active tests fail closed.\n`);
             error: controllerError,
             controllerAborted: controller.signal.aborted,
           });
-        writeFileSync(reportFile, `${JSON.stringify(result, null, 2)}\n`, {
-          flag: 'wx',
-          mode: 0o600,
-        });
+        writeDistributedControllerReport(reportFile, result);
         if (result.controllerFailure) {
           process.stderr.write(
             `Distributed controller failed closed (${result.controllerFailure.errorCode}); remote outcome is unknown. Evidence: ${reportFile}\n`
@@ -808,6 +985,112 @@ failures, partial output closure and zero active tests fail closed.\n`);
           process.stdout.write(
             `Distributed task ${result.result.taskId} passed on ${result.result.workerId} in ${Math.round(result.result.wallMs)} ms. Evidence: ${reportFile}\n`
           );
+      } else {
+        const workers = config.workers.filter(({ enabled }) => enabled);
+        if (workers.length < 2)
+          throw new Error(
+            'Distributed schedule mode requires at least two enabled configured workers'
+          );
+        const workerIds = workers.map(({ id }) => id);
+        const applicationId = requiredValue('--application');
+        const { taskIds: selectedTaskIds, selectionManifestSha256 } =
+          taskSelection('--task', '--task-file', 2, {
+            applications,
+            applicationId,
+          });
+        const reportFile = distributedOutputFile(
+          root,
+          requiredValue('--report-file')
+        );
+        const localRuntimes = new Map();
+        const remote = workerIds.some(
+          (workerId) => workerId !== config.controllerWorkerId
+        );
+        let secret;
+        let result;
+        let scheduleError;
+        const scheduleRunId = randomUUID();
+        const scheduleStartedAt = new Date().toISOString();
+        const scheduleStarted = performance.now();
+        try {
+          secret = remote ? distributedFleetSecret() : undefined;
+          if (
+            config.controllerWorkerId &&
+            workerIds.includes(config.controllerWorkerId)
+          )
+            localRuntimes.set(
+              config.controllerWorkerId,
+              createDistributedWorkerRuntime({
+                config,
+                workerId: config.controllerWorkerId,
+                applications,
+                allowedTaskIds: selectedTaskIds,
+              })
+            );
+          result = await runDistributedControllerSchedule({
+            config,
+            applications,
+            workerIds,
+            applicationId,
+            taskIds: selectedTaskIds,
+            selectionManifestSha256,
+            runId: scheduleRunId,
+            secret,
+            timeoutMs: positiveMilliseconds('--timeout-ms', 30 * 60 * 1000),
+            localRuntimes,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          scheduleError = error;
+        } finally {
+          secret?.fill(0);
+          for (const runtime of localRuntimes.values())
+            try {
+              await runtime.drain();
+            } catch (error) {
+              scheduleError ??= error;
+            }
+        }
+        if (scheduleError) {
+          const failureReport = createDistributedScheduleFailureReport({
+            configSha256: config.configSha256,
+            controllerId: config.controllerId,
+            enabledWorkerIds: workerIds,
+            runId: scheduleRunId,
+            applicationId,
+            taskIds: selectedTaskIds,
+            selectionManifestSha256,
+            startedAt: scheduleStartedAt,
+            wallMs: performance.now() - scheduleStarted,
+            error: scheduleError,
+            controllerAborted: controller.signal.aborted,
+          });
+          writeDistributedReport(
+            reportFile,
+            encodeBoundedDistributedReport(failureReport)
+          );
+          process.stderr.write(
+            `Distributed schedule failed before a complete result (${failureReport.errorCode}); task execution outcome is ${failureReport.taskExecutionOutcome}. Evidence: ${reportFile}\n`
+          );
+          process.exitCode = controller.signal.aborted ? 130 : 1;
+        } else {
+          writeDistributedReport(
+            reportFile,
+            encodeBoundedDistributedReport(result)
+          );
+          const passed = result.outcomes.filter(
+            ({ status }) => status === 'passed'
+          ).length;
+          if (result.status !== 'passed') {
+            process.stderr.write(
+              `Distributed schedule failed (${passed}/${result.outcomes.length} tasks passed). Evidence: ${reportFile}\n`
+            );
+            process.exitCode = controller.signal.aborted ? 130 : 1;
+          } else
+            process.stdout.write(
+              `Distributed schedule passed ${result.outcomes.length} tasks across ${result.workerReports.length} workers. Evidence: ${reportFile}\n`
+            );
+        }
       }
     } else if (hostedMode) {
       if (hostedMode === '--github-plan') {

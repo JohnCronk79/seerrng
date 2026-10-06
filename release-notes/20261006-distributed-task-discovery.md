@@ -6,4 +6,4 @@ action: none
 breaking: false
 ---
 
-Distributed validation workers can now list locally discovered native tasks and allow several task IDs while controllers continue to dispatch and verify one selected task at a time.
+Distributed validation can now seal a native tests-only task manifest, admit every enabled configured worker, schedule each selected task once within reported capacity, and reconcile a bounded result. Full Linux catalogs use Linux workers; Windows validation runs separately.

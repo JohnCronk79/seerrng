@@ -1,0 +1,308 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
+import { createWorkerSourceBundle } from '../tools/validation-engine/container/create-worker-source-bundle.mjs';
+
+const producerPath = fileURLToPath(
+  new URL(
+    '../tools/validation-engine/container/create-worker-source-bundle.mjs',
+    import.meta.url
+  )
+);
+
+function gitEnvironment(extra = {}) {
+  return {
+    ...process.env,
+    GCM_INTERACTIVE: 'Never',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    ...extra,
+  };
+}
+
+function git(cwd, args, { allowFailure = false } = {}) {
+  const result = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: gitEnvironment(),
+    shell: false,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (!allowFailure && result.status !== 0)
+    throw new Error(
+      `git ${args.join(' ')} failed: ${(result.stderr ?? '').trim()}`
+    );
+  return result;
+}
+
+function createFixture({ objectFormat = 'sha1' } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'seerrng-worker-bundle-test-'));
+  const source = join(root, 'source');
+  const output = join(root, 'output');
+  mkdirSync(source, { mode: 0o700 });
+  mkdirSync(output, { mode: 0o700 });
+  git(source, [
+    'init',
+    '--quiet',
+    '--template=',
+    `--object-format=${objectFormat}`,
+  ]);
+  git(source, ['config', 'user.name', 'Worker Bundle Test']);
+  git(source, ['config', 'user.email', 'worker-bundle@example.invalid']);
+  writeFileSync(join(source, 'candidate.txt'), 'first\n');
+  git(source, ['add', '--', 'candidate.txt']);
+  git(source, ['commit', '--quiet', '-m', 'first']);
+  const firstCommit = git(source, [
+    'rev-parse',
+    '--verify',
+    'HEAD^{commit}',
+  ]).stdout.trim();
+  writeFileSync(join(source, 'candidate.txt'), 'second\n');
+  writeFileSync(join(source, 'second.txt'), 'tip only\n');
+  git(source, ['add', '--', 'candidate.txt', 'second.txt']);
+  git(source, ['commit', '--quiet', '-m', 'second']);
+  const sourceCommit = git(source, [
+    'rev-parse',
+    '--verify',
+    'HEAD^{commit}',
+  ]).stdout.trim();
+  const sourceTree = git(source, [
+    'rev-parse',
+    '--verify',
+    'HEAD^{tree}',
+  ]).stdout.trim();
+  return {
+    root,
+    source,
+    output,
+    firstCommit,
+    sourceCommit,
+    sourceTree,
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+function inspectBundle({
+  bundle,
+  root,
+  sourceCommit,
+  sourceTree,
+  firstCommit,
+}) {
+  const inspect = join(root, 'inspect');
+  mkdirSync(inspect, { mode: 0o700 });
+  git(inspect, ['init', '--quiet', '--template=']);
+  assert.equal(
+    git(inspect, ['bundle', 'list-heads', bundle]).stdout.trim(),
+    `${sourceCommit} HEAD`
+  );
+  git(inspect, ['bundle', 'verify', bundle]);
+  git(inspect, ['bundle', 'unbundle', bundle]);
+  writeFileSync(join(inspect, '.git', 'shallow'), `${sourceCommit}\n`, {
+    flag: 'wx',
+  });
+  git(inspect, ['update-ref', 'refs/heads/candidate', sourceCommit]);
+  git(inspect, ['checkout', '--quiet', '--detach', sourceCommit]);
+  assert.equal(
+    git(inspect, ['rev-parse', '--verify', 'HEAD^{commit}']).stdout.trim(),
+    sourceCommit
+  );
+  assert.equal(
+    git(inspect, ['rev-parse', '--verify', 'HEAD^{tree}']).stdout.trim(),
+    sourceTree
+  );
+  assert.equal(
+    git(inspect, ['rev-list', '--count', 'HEAD']).stdout.trim(),
+    '1'
+  );
+  assert.notEqual(
+    git(inspect, ['cat-file', '-e', `${firstCommit}^{commit}`], {
+      allowFailure: true,
+    }).status,
+    0
+  );
+  assert.equal(
+    git(inspect, [
+      'status',
+      '--porcelain=v1',
+      '--untracked-files=all',
+      '--ignore-submodules=none',
+    ]).stdout.trim(),
+    ''
+  );
+  const fsck = git(inspect, [
+    'fsck',
+    '--full',
+    '--unreachable',
+    '--no-reflogs',
+  ]);
+  assert.equal(fsck.stdout.trim(), '');
+}
+
+test('producer emits a deterministic one-head bundle with no parent history', () => {
+  const fixture = createFixture();
+  try {
+    const firstBundle = join(fixture.output, 'first.bundle');
+    const command = spawnSync(
+      process.execPath,
+      [producerPath, '--source-root', fixture.source, '--output', firstBundle],
+      {
+        encoding: 'utf8',
+        env: gitEnvironment({
+          GIT_DIR: join(fixture.root, 'hostile-git-dir'),
+          GIT_WORK_TREE: join(fixture.root, 'hostile-work-tree'),
+        }),
+        shell: false,
+        windowsHide: true,
+      }
+    );
+    assert.equal(command.status, 0, command.stderr);
+    assert.equal(command.stderr, '');
+    const provenance = JSON.parse(command.stdout);
+    assert.deepEqual(Object.keys(provenance), [
+      'schema',
+      'sourceCommit',
+      'sourceTree',
+      'bundleSha256',
+      'bundleBytes',
+      'outputPath',
+    ]);
+    assert.equal(provenance.schema, 'seerrng-worker-source-bundle/v1');
+    assert.equal(provenance.sourceCommit, fixture.sourceCommit);
+    assert.equal(provenance.sourceTree, fixture.sourceTree);
+    assert.match(provenance.bundleSha256, /^[a-f0-9]{64}$/);
+    assert.equal(provenance.bundleBytes, statSync(firstBundle).size);
+    assert.equal(provenance.outputPath, firstBundle);
+    assert.equal(provenance.bundleBytes > 0, true);
+    if (process.platform !== 'win32')
+      assert.equal(statSync(firstBundle).mode & 0o777, 0o600);
+
+    const secondBundle = join(fixture.output, 'second.bundle');
+    const repeated = createWorkerSourceBundle({
+      sourceRoot: fixture.source,
+      outputPath: secondBundle,
+    });
+    assert.equal(repeated.bundleSha256, provenance.bundleSha256);
+    assert.equal(repeated.bundleBytes, provenance.bundleBytes);
+    inspectBundle({ bundle: firstBundle, ...fixture });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('producer rejects a dirty source worktree', () => {
+  const fixture = createFixture();
+  try {
+    writeFileSync(join(fixture.source, 'untracked.txt'), 'not admitted\n');
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: join(fixture.output, 'dirty.bundle'),
+        }),
+      /requires a clean source worktree/
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('producer rejects an existing output without changing it', () => {
+  const fixture = createFixture();
+  try {
+    const existing = join(fixture.output, 'existing.bundle');
+    writeFileSync(existing, 'preserve me\n');
+    chmodSync(existing, 0o644);
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: existing,
+        }),
+      /must not already exist/
+    );
+    assert.equal(readFileSync(existing, 'utf8'), 'preserve me\n');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('producer rejects a source using a non-SHA-1 object format', () => {
+  const fixture = createFixture({ objectFormat: 'sha256' });
+  try {
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: join(fixture.output, 'sha256.bundle'),
+        }),
+      /requires the Git SHA-1 object format/
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('producer rejects relative, non-top-level, missing-parent, and in-source paths', () => {
+  const fixture = createFixture();
+  try {
+    const nested = join(fixture.source, 'nested');
+    mkdirSync(nested);
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: relative(process.cwd(), fixture.source),
+          outputPath: join(fixture.output, 'relative-source.bundle'),
+        }),
+      /source root must be absolute/
+    );
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: 'relative.bundle',
+        }),
+      /output path must be absolute/
+    );
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: nested,
+          outputPath: join(fixture.output, 'nested-root.bundle'),
+        }),
+      /exact Git top level/
+    );
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: join(fixture.source, 'inside.bundle'),
+        }),
+      /outside the source worktree/
+    );
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: join(fixture.output, 'missing-parent', 'source.bundle'),
+        }),
+      /output parent must already exist/
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
