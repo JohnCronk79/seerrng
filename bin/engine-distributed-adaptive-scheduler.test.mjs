@@ -3,16 +3,19 @@ import test from 'node:test';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
 import {
   assessDistributedWorkerCapacity,
+  createAdaptiveTimingObservation,
   createAdaptiveTimingProfile,
   createDistributedAdaptiveSchedule,
+  distributedAdaptivePolicySha256,
   estimateAdaptiveTestWork,
+  MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES,
+  MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS,
   updateAdaptiveTimingProfile,
+  verifyAdaptiveTimingObservation,
   verifyDistributedAdaptiveSchedule,
 } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
-import {
-  canonicalJsonSha256,
-} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const repositoryIdentitySha256 = '9'.repeat(64);
 const alternateRepositoryIdentitySha256 = '8'.repeat(64);
@@ -70,30 +73,70 @@ const resultEntry = (id, durationMs, fingerprint = `${id}-v1`) => ({
 });
 
 const observation = ({
+  profile,
   selectedScope,
   runId,
   performanceScorePermille,
   results,
-  candidateSha256 = 'a'.repeat(64),
-  revision = 'candidate-revision-1',
-}) => ({
-  scope: selectedScope,
-  runId,
-  candidateSha256,
-  revision,
-  valid: true,
-  complete: true,
-  status: 'passed',
-  benchmark: {
-    valid: true,
-    performanceScorePermille,
-  },
-  inventory: results.map((result) => ({
+  inventory = results.map((result) => ({
     id: result.testId,
     fingerprint: result.fingerprint,
   })),
-  results,
+  candidateSha256 = 'a'.repeat(64),
+  revision = 'candidate-revision-1',
+  valid = true,
+  complete = true,
+  status = 'passed',
+  benchmarkValid = true,
+  runAttempt = 1,
+  policy = {},
+  source = {},
+}) =>
+  createAdaptiveTimingObservation({
+    schema: 'seerrng-distributed-adaptive-observation/v1',
+    source: {
+      applicationIsolationKeySha256: 'b'.repeat(64),
+      brokerReconciliationInputSha256: 'c'.repeat(64),
+      candidateSha256,
+      executionBridgeSha256: 'd'.repeat(64),
+      executionId: runId,
+      policySha256: distributedAdaptivePolicySha256(policy),
+      profileSha256: canonicalJsonSha256(profile),
+      revision,
+      runAttempt,
+      scheduleTestInventorySha256: '2'.repeat(64),
+      scheduleSha256: 'e'.repeat(64),
+      submissionSha256: 'f'.repeat(64),
+      terminalReconciliationSha256: '1'.repeat(64),
+      ...source,
+    },
+    scope: selectedScope,
+    valid,
+    complete,
+    status,
+    benchmark: {
+      valid: benchmarkValid,
+      performanceScorePermille: benchmarkValid
+        ? performanceScorePermille
+        : null,
+    },
+    inventory,
+    results,
+  });
+
+const observationExpectations = (sealedObservation) => ({
+  expectedObservationSha256: sealedObservation.observationSha256,
 });
+
+const applyObservation = (profile, options, policy = {}) => {
+  const sealedObservation = observation({ ...options, profile, policy });
+  return updateAdaptiveTimingProfile(
+    profile,
+    sealedObservation,
+    observationExpectations(sealedObservation),
+    policy
+  );
+};
 
 const worker = ({
   id,
@@ -145,6 +188,14 @@ const rehashSchedule = (schedule, mutate) => {
   return changed;
 };
 
+const rehashObservation = (sealedObservation, mutate) => {
+  const changed = structuredClone(sealedObservation);
+  mutate(changed);
+  const { observationSha256: _observationSha256, ...unsigned } = changed;
+  changed.observationSha256 = canonicalJsonSha256(unsigned);
+  return changed;
+};
+
 const refreshScheduleInventoryHash = (schedule) => {
   schedule.testInventorySha256 = canonicalJsonSha256(
     schedule.slots
@@ -174,15 +225,12 @@ const continuousDependencyFixture = () => {
     resultEntry('unit/followup.test.ts', 10),
     resultEntry('unit/final.test.ts', 10),
   ];
-  const profile = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope,
-      runId: 'continuous-green',
-      performanceScorePermille: 100,
-      results,
-    })
-  ).profile;
+  const profile = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope,
+    runId: 'continuous-green',
+    performanceScorePermille: 100,
+    results,
+  }).profile;
   const tests = [
     testEntry('unit/final.test.ts', 'unit/final.test.ts-v1', {
       dependencies: ['unit/followup.test.ts'],
@@ -209,6 +257,209 @@ const continuousDependencyFixture = () => {
     schedule: createDistributedAdaptiveSchedule({ tests, workers, profile }),
   };
 };
+
+test('timing observations are canonical, sealed, bounded, and deeply frozen', () => {
+  const profile = createAdaptiveTimingProfile();
+  const selectedScope = scope('linux-x64', 'worker-standard');
+  const results = [
+    resultEntry('unit/b.test.ts', 20),
+    resultEntry('unit/a.test.ts', 10),
+  ];
+  const sealed = observation({
+    profile,
+    selectedScope,
+    runId: 'execution-1',
+    performanceScorePermille: 100,
+    results,
+    inventory: [...results].reverse().map((result) => ({
+      id: result.testId,
+      fingerprint: result.fingerprint,
+    })),
+  });
+  const reordered = observation({
+    profile,
+    selectedScope,
+    runId: 'execution-1',
+    performanceScorePermille: 100,
+    results: [...results].reverse(),
+  });
+  assert.deepEqual(reordered, sealed);
+  assert.deepEqual(
+    sealed.inventory.map((entry) => entry.id),
+    ['unit/a.test.ts', 'unit/b.test.ts']
+  );
+  assert.deepEqual(
+    sealed.results.map((entry) => entry.testId),
+    ['unit/a.test.ts', 'unit/b.test.ts']
+  );
+  assert.deepEqual(
+    verifyAdaptiveTimingObservation(sealed, observationExpectations(sealed)),
+    sealed
+  );
+  assert.equal(Object.isFrozen(sealed), true);
+  assert.equal(Object.isFrozen(sealed.source), true);
+  assert.equal(Object.isFrozen(sealed.scope), true);
+  assert.equal(Object.isFrozen(sealed.inventory), true);
+  assert.equal(Object.isFrozen(sealed.inventory[0]), true);
+  assert.equal(Object.isFrozen(sealed.results), true);
+  assert.equal(Object.isFrozen(sealed.results[0]), true);
+  assert.deepEqual(Object.keys(sealed.source).toSorted(), [
+    'applicationIsolationKeySha256',
+    'brokerReconciliationInputSha256',
+    'candidateSha256',
+    'executionBridgeSha256',
+    'executionId',
+    'policySha256',
+    'profileSha256',
+    'revision',
+    'runAttempt',
+    'scheduleSha256',
+    'scheduleTestInventorySha256',
+    'submissionSha256',
+    'terminalReconciliationSha256',
+  ]);
+  assert.equal(
+    sealed.observedInventorySha256,
+    canonicalJsonSha256({
+      schema: 'seerrng-distributed-adaptive-observed-inventory/v1',
+      scope: sealed.scope,
+      inventory: sealed.inventory,
+    })
+  );
+  assert.notEqual(
+    sealed.source.scheduleTestInventorySha256,
+    sealed.observedInventorySha256
+  );
+
+  const {
+    observationSha256: _observationSha256,
+    observedInventorySha256: _observedInventorySha256,
+    ...observationInput
+  } = structuredClone(sealed);
+  assert.throws(
+    () =>
+      createAdaptiveTimingObservation({
+        ...observationInput,
+        unexpected: true,
+      }),
+    /fields are not canonical/
+  );
+  assert.throws(
+    () =>
+      observation({
+        profile,
+        selectedScope,
+        runId: 'too-many-tests',
+        performanceScorePermille: 100,
+        inventory: Array.from(
+          { length: MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS + 1 },
+          () => timingTestEntry('unit/too-many.test.ts')
+        ),
+        results: [],
+      }),
+    /inventory limit/
+  );
+  assert.throws(
+    () =>
+      observation({
+        profile,
+        selectedScope,
+        runId: 'too-many-bytes',
+        performanceScorePermille: 100,
+        results: [
+          resultEntry(
+            'unit/large.test.ts',
+            1,
+            'x'.repeat(MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES)
+          ),
+        ],
+      }),
+    /byte limit/
+  );
+});
+
+test('timing observation updates reject hostile rehashes and source-profile drift', () => {
+  const profile = createAdaptiveTimingProfile();
+  const selectedScope = scope('linux-x64', 'worker-standard');
+  const sealed = observation({
+    profile,
+    selectedScope,
+    runId: 'execution-trusted',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 100)],
+  });
+  const changedDuration = rehashObservation(sealed, (changed) => {
+    changed.results[0].durationMs = 1;
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        changedDuration,
+        observationExpectations(sealed)
+      ),
+    /trusted hash/
+  );
+  const changedBridge = rehashObservation(sealed, (changed) => {
+    changed.source.executionBridgeSha256 = '3'.repeat(64);
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        changedBridge,
+        observationExpectations(sealed)
+      ),
+    /trusted hash/
+  );
+  const changedScheduleInventory = rehashObservation(sealed, (changed) => {
+    changed.source.scheduleTestInventorySha256 = '6'.repeat(64);
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        changedScheduleInventory,
+        observationExpectations(sealed)
+      ),
+    /trusted hash/
+  );
+  const changedObservedInventory = rehashObservation(sealed, (changed) => {
+    changed.observedInventorySha256 = '5'.repeat(64);
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        changedObservedInventory,
+        observationExpectations(changedObservedInventory)
+      ),
+    /trusted hash/
+  );
+  const changedProfile = rehashObservation(sealed, (changed) => {
+    changed.source.profileSha256 = '4'.repeat(64);
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        changedProfile,
+        observationExpectations(changedProfile)
+      ),
+    /another source profile/
+  );
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        sealed,
+        observationExpectations(sealed),
+        { rollingQuantilePermille: 900 }
+      ),
+    /another update policy/
+  );
+  assert.deepEqual(profile, createAdaptiveTimingProfile());
+});
 
 test('worker admission applies explicit N, load, memory, and local reserve without using clock speed', () => {
   const candidate = {
@@ -377,24 +628,18 @@ test('an unmeasured worker receives a conservative benchmark weight', () => {
 test('timing calibration is isolated by environment and worker class', () => {
   const windowsScope = scope('windows-x64', 'desktop-fast');
   const linuxScope = scope('linux-x64', 'github-standard');
-  const first = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope: windowsScope,
-      runId: 'windows-1',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 40)],
-    })
-  );
-  const second = updateAdaptiveTimingProfile(
-    first.profile,
-    observation({
-      selectedScope: linuxScope,
-      runId: 'linux-1',
-      performanceScorePermille: 200,
-      results: [resultEntry('unit/a.test.ts', 30)],
-    })
-  );
+  const first = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope: windowsScope,
+    runId: 'windows-1',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 40)],
+  });
+  const second = applyObservation(first.profile, {
+    selectedScope: linuxScope,
+    runId: 'linux-1',
+    performanceScorePermille: 200,
+    results: [resultEntry('unit/a.test.ts', 30)],
+  });
   assert.equal(second.profile.scopes.length, 2);
   assert.deepEqual(
     second.profile.scopes.map((entry) => [
@@ -424,47 +669,74 @@ test('timing scopes isolate repository, application, lane, adapter, environment,
   ];
   let profile = createAdaptiveTimingProfile();
   for (const [index, selectedScope] of scopes.entries())
-    profile = updateAdaptiveTimingProfile(
-      profile,
-      observation({
-        selectedScope,
-        runId: `scope-${index}`,
-        performanceScorePermille: 100,
-        results: [resultEntry('unit/a.test.ts', 10 + index)],
-      })
-    ).profile;
+    profile = applyObservation(profile, {
+      selectedScope,
+      runId: `scope-${index}`,
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/a.test.ts', 10 + index)],
+    }).profile;
   assert.equal(profile.scopes.length, scopes.length);
   assert.deepEqual(
-    scopes.map((selectedScope) =>
-      estimateAdaptiveTestWork(profile, {
-        scope: selectedScope,
-        test: timingTestEntry('unit/a.test.ts'),
-      }).workUnits
+    scopes.map(
+      (selectedScope) =>
+        estimateAdaptiveTestWork(profile, {
+          scope: selectedScope,
+          test: timingTestEntry('unit/a.test.ts'),
+        }).workUnits
     ),
     scopes.map((_, index) => (10 + index) * 100)
   );
 });
 
-test('durable observation identity prevents replay after rolling run history', () => {
+test('rolled observation provenance remains replay-safe through its source-profile binding', () => {
   const selectedScope = scope('linux-x64', 'worker-standard');
   const policy = {
     acceptedRunWindow: 2,
     maximumSamplesPerTest: 2,
   };
   let profile = createAdaptiveTimingProfile();
-  for (const runId of ['run-1', 'run-2', 'run-3'])
+  const sealedObservations = [];
+  for (const runId of ['run-1', 'run-2', 'run-3']) {
+    const sealedObservation = observation({
+      profile,
+      policy,
+      selectedScope,
+      runId,
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/a.test.ts', 100)],
+    });
+    sealedObservations.push(sealedObservation);
     profile = updateAdaptiveTimingProfile(
       profile,
-      observation({
-        selectedScope,
-        runId,
-        performanceScorePermille: 100,
-        results: [resultEntry('unit/a.test.ts', 100)],
-      }),
+      sealedObservation,
+      observationExpectations(sealedObservation),
       policy
     ).profile;
+  }
+  const [firstObservation, secondObservation] = sealedObservations;
   assert.deepEqual(profile.scopes[0].acceptedRunIds, ['run-2', 'run-3']);
-  assert.equal(profile.scopes[0].acceptedObservations.length, 3);
+  assert.equal(profile.schema, 'seerrng-distributed-adaptive-profile/v2');
+  assert.equal(profile.scopes[0].acceptedObservations.length, 2);
+  assert.deepEqual(profile.scopes[0].acceptedObservations[0], {
+    observationId: canonicalJsonSha256({
+      schema: 'seerrng-distributed-adaptive-observation-identity/v2',
+      scope: selectedScope,
+      runId: 'run-2',
+      candidateSha256: 'a'.repeat(64),
+      revision: 'candidate-revision-1',
+      runAttempt: 1,
+      scheduleSha256: 'e'.repeat(64),
+      submissionSha256: 'f'.repeat(64),
+      observationSha256: secondObservation.observationSha256,
+    }),
+    observationSha256: secondObservation.observationSha256,
+    runId: 'run-2',
+    candidateSha256: 'a'.repeat(64),
+    revision: 'candidate-revision-1',
+    runAttempt: 1,
+    scheduleSha256: 'e'.repeat(64),
+    submissionSha256: 'f'.repeat(64),
+  });
   assert.deepEqual(
     profile.scopes[0].acceptedObservations.map(
       ({ runId, candidateSha256, revision }) => ({
@@ -473,64 +745,74 @@ test('durable observation identity prevents replay after rolling run history', (
         revision,
       })
     ),
-    ['run-1', 'run-2', 'run-3'].map((runId) => ({
+    ['run-2', 'run-3'].map((runId) => ({
       runId,
       candidateSha256: 'a'.repeat(64),
       revision: 'candidate-revision-1',
     }))
   );
-  const replay = updateAdaptiveTimingProfile(
-    profile,
-    observation({
-      selectedScope,
-      runId: 'run-1',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 1)],
-    }),
-    policy
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfile(
+        profile,
+        firstObservation,
+        observationExpectations(firstObservation),
+        policy
+      ),
+    /another source profile/
   );
-  assert.equal(replay.accepted, false);
-  assert.equal(replay.reason, 'duplicate-observation');
-  assert.deepEqual(replay.profile, profile);
+  assert.deepEqual(profile.scopes[0].acceptedRunIds, ['run-2', 'run-3']);
+  assert.equal(profile.scopes[0].acceptedObservations.length, 2);
 });
 
 test('only complete valid successful runs update timing history', () => {
   const selectedScope = scope('linux-x64', 'worker-standard');
+  const empty = createAdaptiveTimingProfile();
   const passing = observation({
+    profile: empty,
     selectedScope,
     runId: 'run-1',
     performanceScorePermille: 100,
     results: [resultEntry('unit/a.test.ts', 100)],
   });
-  const empty = createAdaptiveTimingProfile();
   for (const patch of [
     { valid: false },
     { complete: false },
     { status: 'failed' },
   ]) {
-    const ignored = updateAdaptiveTimingProfile(empty, {
-      ...passing,
+    const ignored = applyObservation(empty, {
+      selectedScope,
+      runId: `ignored-${Object.keys(patch)[0]}`,
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/a.test.ts', 100)],
       ...patch,
     });
     assert.equal(ignored.accepted, false);
     assert.deepEqual(ignored.profile, empty);
   }
-  const failedTest = updateAdaptiveTimingProfile(empty, {
-    ...passing,
-    results: [{ ...passing.results[0], status: 'failed', durationMs: 1 }],
+  const failedTest = applyObservation(empty, {
+    selectedScope,
+    runId: 'failed-test',
+    performanceScorePermille: 100,
+    results: [{ ...resultEntry('unit/a.test.ts', 1), status: 'failed' }],
   });
   assert.equal(failedTest.accepted, false);
   assert.equal(failedTest.reason, 'unsuccessful-test');
   assert.deepEqual(failedTest.profile, empty);
 
-  const accepted = updateAdaptiveTimingProfile(empty, passing);
+  const accepted = updateAdaptiveTimingProfile(
+    empty,
+    passing,
+    observationExpectations(passing)
+  );
   assert.equal(accepted.accepted, true);
   assert.equal(accepted.updatedTests, 1);
-  assert.equal(
-    accepted.profile.scopes[0].tests[0].estimateWorkUnits,
-    10_000
+  assert.equal(accepted.profile.scopes[0].tests[0].estimateWorkUnits, 10_000);
+  const duplicate = updateAdaptiveTimingProfile(
+    accepted.profile,
+    passing,
+    observationExpectations(passing)
   );
-  const duplicate = updateAdaptiveTimingProfile(accepted.profile, passing);
   assert.equal(duplicate.accepted, false);
   assert.equal(duplicate.reason, 'duplicate-observation');
   assert.deepEqual(duplicate.profile, accepted.profile);
@@ -538,31 +820,24 @@ test('only complete valid successful runs update timing history', () => {
 
 test('failed and partial observations cannot make a test appear artificially fast', () => {
   const selectedScope = scope('linux-x64', 'worker-standard');
-  const initial = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope,
-      runId: 'green-1',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 100)],
-    })
-  ).profile;
-  const failed = updateAdaptiveTimingProfile(initial, {
-    ...observation({
-      selectedScope,
-      runId: 'failed-2',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 1)],
-    }),
+  const initial = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope,
+    runId: 'green-1',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 100)],
+  }).profile;
+  const failed = applyObservation(initial, {
+    selectedScope,
+    runId: 'failed-2',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 1)],
     status: 'failed',
   });
-  const partial = updateAdaptiveTimingProfile(initial, {
-    ...observation({
-      selectedScope,
-      runId: 'partial-2',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 1)],
-    }),
+  const partial = applyObservation(initial, {
+    selectedScope,
+    runId: 'partial-2',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 1)],
     complete: false,
   });
   assert.deepEqual(failed.profile, initial);
@@ -578,15 +853,12 @@ test('failed and partial observations cannot make a test appear artificially fas
 
 test('new and changed tests receive conservative fallback estimates', () => {
   const selectedScope = scope('linux-x64', 'worker-standard');
-  const profile = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope,
-      runId: 'green-1',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 100)],
-    })
-  ).profile;
+  const profile = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope,
+    runId: 'green-1',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 100)],
+  }).profile;
   const policy = {
     coldStartDurationMs: 100,
     coldStartPerformanceScorePermille: 10,
@@ -631,14 +903,14 @@ test('rolling calibration is bounded and robust against a single extreme sample'
   let profile = createAdaptiveTimingProfile();
   const durations = [100, 101, 99, 100, 10_000, 102, 98, 100, 101, 99];
   for (const [index, durationMs] of durations.entries()) {
-    profile = updateAdaptiveTimingProfile(
+    profile = applyObservation(
       profile,
-      observation({
+      {
         selectedScope,
         runId: `green-${index}`,
         performanceScorePermille: 100,
         results: [resultEntry('unit/a.test.ts', durationMs)],
-      }),
+      },
       { maximumSamplesPerTest: 9 }
     ).profile;
   }
@@ -659,28 +931,22 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
     resultEntry('unit/b.test.ts', 50),
     resultEntry('unit/c.test.ts', 50),
   ];
-  const twoSlotProfile = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope: twoSlotScope,
-      runId: 'green-n2',
-      performanceScorePermille: 100,
-      results,
-    })
-  ).profile;
-  const profile = updateAdaptiveTimingProfile(
-    twoSlotProfile,
-    observation({
-      selectedScope,
-      runId: 'green-n1',
-      performanceScorePermille: 200,
-      results: [
-        resultEntry('unit/a.test.ts', 50),
-        resultEntry('unit/b.test.ts', 25),
-        resultEntry('unit/c.test.ts', 25),
-      ],
-    })
-  ).profile;
+  const twoSlotProfile = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope: twoSlotScope,
+    runId: 'green-n2',
+    performanceScorePermille: 100,
+    results,
+  }).profile;
+  const profile = applyObservation(twoSlotProfile, {
+    selectedScope,
+    runId: 'green-n1',
+    performanceScorePermille: 200,
+    results: [
+      resultEntry('unit/a.test.ts', 50),
+      resultEntry('unit/b.test.ts', 25),
+      resultEntry('unit/c.test.ts', 25),
+    ],
+  }).profile;
   const workers = [
     worker({
       id: 'worker-a',
@@ -758,15 +1024,12 @@ test('one test occupies one slot and cannot claim divisible N speedup', () => {
   const selectedScope = scope('linux-x64', 'worker-standard', {
     selectedN: 4,
   });
-  const profile = updateAdaptiveTimingProfile(
-    createAdaptiveTimingProfile(),
-    observation({
-      selectedScope,
-      runId: 'green-n4',
-      performanceScorePermille: 100,
-      results: [resultEntry('unit/a.test.ts', 100)],
-    })
-  ).profile;
+  const profile = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope,
+    runId: 'green-n4',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 100)],
+  }).profile;
   const schedule = createDistributedAdaptiveSchedule({
     tests: [testEntry('unit/a.test.ts')],
     workers: [
@@ -925,11 +1188,7 @@ test('dependencies release continuously without a global stage barrier', () => {
     schedule.slots.map((slot) => slot.tests.map((entry) => entry.id)),
     [
       ['unit/long.test.ts'],
-      [
-        'unit/short.test.ts',
-        'unit/followup.test.ts',
-        'unit/final.test.ts',
-      ],
+      ['unit/short.test.ts', 'unit/followup.test.ts', 'unit/final.test.ts'],
     ]
   );
   assert.equal(schedule.predictedWallMs, 100);

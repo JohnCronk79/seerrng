@@ -3,11 +3,15 @@
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA =
-  'seerrng-distributed-adaptive-profile/v1';
+  'seerrng-distributed-adaptive-profile/v2';
+export const DISTRIBUTED_ADAPTIVE_OBSERVATION_SCHEMA =
+  'seerrng-distributed-adaptive-observation/v1';
 export const DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA =
   'seerrng-distributed-adaptive-schedule/v2';
 export const DISTRIBUTED_WORKER_CAPACITY_SCHEMA =
   'seerrng-distributed-worker-capacity/v2';
+export const MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS = 65_536;
+export const MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES = 16 * 1024 * 1024;
 
 const DISTRIBUTED_ADAPTIVE_SCHEDULE_ALGORITHM =
   'deterministic-heterogeneous-dependency-list/v1';
@@ -77,6 +81,60 @@ const VERIFY_SCHEDULE_EXPECTATION_KEYS = [
   'expectedScheduleSha256',
   'expectedTestInventorySha256',
 ];
+const ADAPTIVE_OBSERVATION_INPUT_KEYS = [
+  'benchmark',
+  'complete',
+  'inventory',
+  'results',
+  'schema',
+  'scope',
+  'source',
+  'status',
+  'valid',
+];
+const ADAPTIVE_OBSERVATION_KEYS = [
+  ...ADAPTIVE_OBSERVATION_INPUT_KEYS,
+  'observationSha256',
+  'observedInventorySha256',
+];
+const ADAPTIVE_OBSERVATION_SCOPE_KEYS = [
+  'adapterId',
+  'applicationId',
+  'environment',
+  'laneId',
+  'repositoryIdentitySha256',
+  'selectedN',
+  'workerClass',
+];
+const ADAPTIVE_OBSERVATION_SOURCE_KEYS = [
+  'applicationIsolationKeySha256',
+  'brokerReconciliationInputSha256',
+  'candidateSha256',
+  'executionBridgeSha256',
+  'executionId',
+  'policySha256',
+  'profileSha256',
+  'revision',
+  'runAttempt',
+  'scheduleTestInventorySha256',
+  'scheduleSha256',
+  'submissionSha256',
+  'terminalReconciliationSha256',
+];
+const ADAPTIVE_OBSERVATION_BENCHMARK_KEYS = [
+  'performanceScorePermille',
+  'valid',
+];
+const ADAPTIVE_OBSERVATION_INVENTORY_KEYS = ['fingerprint', 'id'];
+const ADAPTIVE_OBSERVATION_RESULT_KEYS = [
+  'durationMs',
+  'fingerprint',
+  'status',
+  'testId',
+];
+const VERIFY_ADAPTIVE_OBSERVATION_EXPECTATION_KEYS = [
+  'expectedObservationSha256',
+];
 
 const DEFAULT_POLICY = Object.freeze({
   acceptedRunWindow: 32,
@@ -92,8 +150,7 @@ const DEFAULT_POLICY = Object.freeze({
 
 const HASH64 = /^[a-f0-9]{64}$/;
 
-const compareText = (left, right) =>
-  left < right ? -1 : left > right ? 1 : 0;
+const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 const compareNumberDescending = (left, right) =>
   left === right ? 0 : left > right ? -1 : 1;
 
@@ -132,11 +189,7 @@ function exactKeys(value, expected, label) {
 }
 
 function nonemptyText(value, label) {
-  if (
-    typeof value !== 'string' ||
-    value.trim() !== value ||
-    value.length === 0
-  )
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0)
     throw new Error(`${label} must be nonempty trimmed text`);
   return value;
 }
@@ -203,26 +256,14 @@ function normalizePolicy(policy = {}) {
     normalized.coldStartPerformanceScorePermille,
     'cold-start performance score'
   );
-  nonnegativeInteger(
-    normalized.controllerReserveThreads,
-    'controller reserve'
-  );
-  permille(
-    normalized.fallbackQuantilePermille,
-    'fallback estimate quantile'
-  );
+  nonnegativeInteger(normalized.controllerReserveThreads, 'controller reserve');
+  permille(normalized.fallbackQuantilePermille, 'fallback estimate quantile');
   if (normalized.fallbackQuantilePermille < 500)
     throw new Error('Fallback estimate quantile cannot be below median');
-  positiveInteger(
-    normalized.maximumSamplesPerTest,
-    'maximum samples per test'
-  );
+  positiveInteger(normalized.maximumSamplesPerTest, 'maximum samples per test');
   if (normalized.acceptedRunWindow < normalized.maximumSamplesPerTest)
     throw new Error('Accepted-run window cannot be shorter than sample window');
-  permille(
-    normalized.rollingQuantilePermille,
-    'rolling estimate quantile'
-  );
+  permille(normalized.rollingQuantilePermille, 'rolling estimate quantile');
   if (normalized.rollingQuantilePermille < 500)
     throw new Error('Rolling estimate quantile cannot be below median');
   positiveInteger(
@@ -236,6 +277,10 @@ function normalizePolicy(policy = {}) {
     'unmeasured performance fraction'
   );
   return normalized;
+}
+
+export function distributedAdaptivePolicySha256(policy = {}) {
+  return canonicalJsonSha256(normalizePolicy(policy));
 }
 
 function quantile(values, quantilePermille) {
@@ -281,10 +326,7 @@ function workerScopeIdentity(value, label = 'distributed worker scope') {
 function scopeIdentity(value, label = 'adaptive timing scope') {
   plainObject(value, label);
   return {
-    applicationId: nonemptyText(
-      value.applicationId,
-      `${label} application ID`
-    ),
+    applicationId: nonemptyText(value.applicationId, `${label} application ID`),
     laneId: nonemptyText(value.laneId, `${label} lane ID`),
     adapterId: nonemptyText(value.adapterId, `${label} adapter ID`),
     repositoryIdentitySha256: sha256Digest(
@@ -332,6 +374,219 @@ function normalizeTimingTest(value, label = 'adaptive timing test') {
   };
 }
 
+function normalizeAdaptiveTimingObservationInput(value) {
+  exactKeys(
+    value,
+    ADAPTIVE_OBSERVATION_INPUT_KEYS,
+    'adaptive timing observation input'
+  );
+  if (value.schema !== DISTRIBUTED_ADAPTIVE_OBSERVATION_SCHEMA)
+    throw new Error('Unsupported distributed adaptive observation schema');
+  exactKeys(
+    value.scope,
+    ADAPTIVE_OBSERVATION_SCOPE_KEYS,
+    'adaptive timing observation scope'
+  );
+  const scope = scopeIdentity(value.scope, 'adaptive timing observation scope');
+  exactKeys(
+    value.source,
+    ADAPTIVE_OBSERVATION_SOURCE_KEYS,
+    'adaptive timing observation source'
+  );
+  const source = {
+    applicationIsolationKeySha256: sha256Digest(
+      value.source.applicationIsolationKeySha256,
+      'adaptive timing application isolation key'
+    ),
+    brokerReconciliationInputSha256: sha256Digest(
+      value.source.brokerReconciliationInputSha256,
+      'adaptive timing broker reconciliation input'
+    ),
+    candidateSha256: sha256Digest(
+      value.source.candidateSha256,
+      'adaptive timing candidate'
+    ),
+    executionBridgeSha256: sha256Digest(
+      value.source.executionBridgeSha256,
+      'adaptive timing execution bridge'
+    ),
+    executionId: nonemptyText(
+      value.source.executionId,
+      'adaptive timing execution ID'
+    ),
+    policySha256: sha256Digest(
+      value.source.policySha256,
+      'adaptive timing update policy'
+    ),
+    profileSha256: sha256Digest(
+      value.source.profileSha256,
+      'adaptive timing source profile'
+    ),
+    revision: nonemptyText(value.source.revision, 'adaptive timing revision'),
+    runAttempt: positiveInteger(
+      value.source.runAttempt,
+      'adaptive timing run attempt'
+    ),
+    scheduleTestInventorySha256: sha256Digest(
+      value.source.scheduleTestInventorySha256,
+      'adaptive timing full schedule test inventory'
+    ),
+    scheduleSha256: sha256Digest(
+      value.source.scheduleSha256,
+      'adaptive timing schedule'
+    ),
+    submissionSha256: sha256Digest(
+      value.source.submissionSha256,
+      'adaptive timing submission'
+    ),
+    terminalReconciliationSha256: sha256Digest(
+      value.source.terminalReconciliationSha256,
+      'adaptive timing terminal reconciliation'
+    ),
+  };
+  if (typeof value.valid !== 'boolean')
+    throw new Error('Adaptive timing observation validity must be boolean');
+  if (typeof value.complete !== 'boolean')
+    throw new Error('Adaptive timing observation completeness must be boolean');
+  if (!['passed', 'failed', 'cancelled'].includes(value.status))
+    throw new Error('Adaptive timing observation status is invalid');
+  exactKeys(
+    value.benchmark,
+    ADAPTIVE_OBSERVATION_BENCHMARK_KEYS,
+    'adaptive timing observation benchmark'
+  );
+  if (typeof value.benchmark.valid !== 'boolean')
+    throw new Error('Adaptive timing benchmark validity must be boolean');
+  const performanceScorePermille = value.benchmark.valid
+    ? positiveInteger(
+        value.benchmark.performanceScorePermille,
+        'adaptive timing benchmark performance score'
+      )
+    : value.benchmark.performanceScorePermille;
+  if (!value.benchmark.valid && performanceScorePermille !== null)
+    throw new Error(
+      'An invalid adaptive timing benchmark cannot claim a performance score'
+    );
+  if (!Array.isArray(value.inventory))
+    throw new Error('Adaptive timing observation inventory must be an array');
+  if (value.inventory.length > MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS)
+    throw new Error('Adaptive timing observation exceeds its inventory limit');
+  if (!Array.isArray(value.results))
+    throw new Error('Adaptive timing observation results must be an array');
+  if (value.results.length > MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS)
+    throw new Error('Adaptive timing observation exceeds its result limit');
+  const inventory = value.inventory
+    .map((test, index) => {
+      exactKeys(
+        test,
+        ADAPTIVE_OBSERVATION_INVENTORY_KEYS,
+        `adaptive timing observation inventory entry ${index}`
+      );
+      return normalizeTimingTest(
+        test,
+        `adaptive timing observation inventory entry ${index}`
+      );
+    })
+    .toSorted((left, right) => compareText(left.id, right.id));
+  if (new Set(inventory.map((test) => test.id)).size !== inventory.length)
+    throw new Error(
+      'Adaptive timing observation inventory contains duplicates'
+    );
+  const results = value.results
+    .map((result, index) => {
+      const label = `adaptive timing observation result ${index}`;
+      exactKeys(result, ADAPTIVE_OBSERVATION_RESULT_KEYS, label);
+      if (!['passed', 'failed', 'cancelled'].includes(result.status))
+        throw new Error(`${label} status is invalid`);
+      return {
+        testId: nonemptyText(result.testId, `${label} test ID`),
+        fingerprint: nonemptyText(result.fingerprint, `${label} fingerprint`),
+        durationMs: positiveInteger(result.durationMs, `${label} duration`),
+        status: result.status,
+      };
+    })
+    .toSorted((left, right) => compareText(left.testId, right.testId));
+  if (new Set(results.map((result) => result.testId)).size !== results.length)
+    throw new Error('Adaptive timing observation results contain duplicates');
+  return {
+    schema: DISTRIBUTED_ADAPTIVE_OBSERVATION_SCHEMA,
+    source,
+    scope,
+    valid: value.valid,
+    complete: value.complete,
+    status: value.status,
+    benchmark: {
+      valid: value.benchmark.valid,
+      performanceScorePermille,
+    },
+    inventory,
+    results,
+  };
+}
+
+function sealAdaptiveTimingObservation(value) {
+  const normalized = normalizeAdaptiveTimingObservationInput(value);
+  const unsigned = {
+    ...normalized,
+    // This digest covers only the scope-specific inventory represented by this
+    // observation. source.scheduleTestInventorySha256 separately binds the
+    // full schedule inventory that the controller reconciled externally.
+    observedInventorySha256: canonicalJsonSha256({
+      schema: 'seerrng-distributed-adaptive-observed-inventory/v1',
+      scope: normalized.scope,
+      inventory: normalized.inventory,
+    }),
+  };
+  const sealed = {
+    ...unsigned,
+    observationSha256: canonicalJsonSha256(unsigned),
+  };
+  if (
+    Buffer.byteLength(JSON.stringify(sealed), 'utf8') >
+    MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES
+  )
+    throw new Error('Adaptive timing observation exceeds its byte limit');
+  return deepFreeze(sealed);
+}
+
+export function createAdaptiveTimingObservation(value) {
+  return sealAdaptiveTimingObservation(value);
+}
+
+export function verifyAdaptiveTimingObservation(value, expectations) {
+  exactKeys(
+    value,
+    ADAPTIVE_OBSERVATION_KEYS,
+    'sealed adaptive timing observation'
+  );
+  exactKeys(
+    expectations,
+    VERIFY_ADAPTIVE_OBSERVATION_EXPECTATION_KEYS,
+    'adaptive timing observation expectations'
+  );
+  const input = Object.fromEntries(
+    ADAPTIVE_OBSERVATION_INPUT_KEYS.map((key) => [key, value[key]])
+  );
+  const sealed = sealAdaptiveTimingObservation(input);
+  const expectedObservationSha256 = sha256Digest(
+    expectations.expectedObservationSha256,
+    'expected adaptive timing observation hash'
+  );
+  const observedInventorySha256 = sha256Digest(
+    value.observedInventorySha256,
+    'adaptive timing observed inventory hash'
+  );
+  if (
+    observedInventorySha256 !== sealed.observedInventorySha256 ||
+    value.observationSha256 !== sealed.observationSha256 ||
+    sealed.observationSha256 !== expectedObservationSha256
+  )
+    throw new Error(
+      'Adaptive timing observation does not match its trusted hash'
+    );
+  return sealed;
+}
+
 function normalizeAdapterIds(value, label) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
@@ -360,10 +615,7 @@ function normalizeScheduleTest(value, label = 'distributed test') {
   return {
     id: nonemptyText(value.id, `${label} id`),
     fingerprint: nonemptyText(value.fingerprint, `${label} fingerprint`),
-    applicationId: nonemptyText(
-      value.applicationId,
-      `${label} application ID`
-    ),
+    applicationId: nonemptyText(value.applicationId, `${label} application ID`),
     laneId: nonemptyText(value.laneId, `${label} lane ID`),
     adapterId: nonemptyText(value.adapterId, `${label} adapter ID`),
     repositoryIdentitySha256: sha256Digest(
@@ -428,7 +680,16 @@ export function assertAdaptiveTimingProfile(value) {
     const observationIds = scope.acceptedObservations.map((observation) => {
       exactKeys(
         observation,
-        ['candidateSha256', 'observationId', 'revision', 'runId'],
+        [
+          'candidateSha256',
+          'observationId',
+          'observationSha256',
+          'revision',
+          'runAttempt',
+          'runId',
+          'scheduleSha256',
+          'submissionSha256',
+        ],
         'accepted adaptive observation provenance'
       );
       const provenance = {
@@ -441,6 +702,22 @@ export function assertAdaptiveTimingProfile(value) {
           observation.revision,
           'accepted observation revision'
         ),
+        runAttempt: positiveInteger(
+          observation.runAttempt,
+          'accepted observation run attempt'
+        ),
+        scheduleSha256: sha256Digest(
+          observation.scheduleSha256,
+          'accepted observation schedule'
+        ),
+        submissionSha256: sha256Digest(
+          observation.submissionSha256,
+          'accepted observation submission'
+        ),
+        observationSha256: sha256Digest(
+          observation.observationSha256,
+          'accepted observation hash'
+        ),
       };
       observationRunIds.push(provenance.runId);
       const observationId = sha256Digest(
@@ -448,7 +725,7 @@ export function assertAdaptiveTimingProfile(value) {
         'accepted observation ID'
       );
       const expectedObservationId = canonicalJsonSha256({
-        schema: 'seerrng-distributed-adaptive-observation-identity/v1',
+        schema: 'seerrng-distributed-adaptive-observation-identity/v2',
         scope: normalizedScope,
         ...provenance,
       });
@@ -461,7 +738,9 @@ export function assertAdaptiveTimingProfile(value) {
     if (new Set(observationIds).size !== observationIds.length)
       throw new Error('Distributed adaptive profile repeats an observation');
     if (new Set(observationRunIds).size !== observationRunIds.length)
-      throw new Error('Distributed adaptive profile repeats an observation run');
+      throw new Error(
+        'Distributed adaptive profile repeats an observation run'
+      );
     const runIds = scope.acceptedRunIds.map((runId) =>
       nonemptyText(runId, 'accepted run id')
     );
@@ -471,12 +750,7 @@ export function assertAdaptiveTimingProfile(value) {
     for (const entry of scope.tests) {
       exactKeys(
         entry,
-        [
-          'estimateWorkUnits',
-          'fingerprint',
-          'samplesWorkUnits',
-          'testId',
-        ],
+        ['estimateWorkUnits', 'fingerprint', 'samplesWorkUnits', 'testId'],
         'distributed adaptive test timing'
       );
       nonemptyText(entry.testId, 'adaptive timing test id');
@@ -588,15 +862,14 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     throw new Error('Controller-host placement must be boolean');
   const requestedInteractiveReserve =
     worker.localInteractiveReserveThreads ??
-    (runsOnControllerHost
-      ? normalizedPolicy.controllerReserveThreads
-      : 0);
+    (runsOnControllerHost ? normalizedPolicy.controllerReserveThreads : 0);
   nonnegativeInteger(
     requestedInteractiveReserve,
     'local interactive thread reserve'
   );
-  const interactiveReservedThreads =
-    runsOnControllerHost ? requestedInteractiveReserve : 0;
+  const interactiveReservedThreads = runsOnControllerHost
+    ? requestedInteractiveReserve
+    : 0;
   const loadReservedThreads = Math.ceil(
     checkedMultiply(
       effectiveLogicalThreads,
@@ -606,9 +879,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
   );
   const cpuAvailableThreads = Math.max(
     0,
-    effectiveLogicalThreads -
-      loadReservedThreads -
-      interactiveReservedThreads
+    effectiveLogicalThreads - loadReservedThreads - interactiveReservedThreads
   );
   let memoryLimitedThreads = effectiveLogicalThreads;
   if (worker.memory !== undefined && worker.memory !== null) {
@@ -643,10 +914,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
       ? configuredThreadBudget
       : Math.min(configuredThreadBudget, availableThreads);
   const { performanceScorePermille, performanceScoreSource } =
-    benchmarkPerformanceScore(
-      worker,
-      normalizedPolicy
-    );
+    benchmarkPerformanceScore(worker, normalizedPolicy);
   const capacityWeight = checkedMultiply(
     admittedThreads,
     performanceScorePermille,
@@ -720,10 +988,7 @@ export function estimateAdaptiveTestWork(
       .map((entry) => entry.estimateWorkUnits) ?? [];
   const distributionFallback = otherEstimates.length
     ? multiplyPermille(
-        quantile(
-          otherEstimates,
-          normalizedPolicy.fallbackQuantilePermille
-        ),
+        quantile(otherEstimates, normalizedPolicy.fallbackQuantilePermille),
         normalizedPolicy.unknownEstimateMultiplierPermille,
         'unknown-test fallback estimate'
       )
@@ -753,39 +1018,51 @@ function ignoredUpdate(profile, reason) {
 
 export function updateAdaptiveTimingProfile(
   profile,
-  observation,
+  observationValue,
+  expectations,
   policy = {}
 ) {
   assertAdaptiveTimingProfile(profile);
-  plainObject(observation, 'adaptive timing observation');
+  const observation = verifyAdaptiveTimingObservation(
+    observationValue,
+    expectations
+  );
   const normalizedPolicy = normalizePolicy(policy);
   const scope = scopeIdentity(observation.scope);
-  const runId = nonemptyText(observation.runId, 'adaptive timing run id');
-  const candidateSha256 = sha256Digest(
-    observation.candidateSha256,
-    'adaptive timing candidate'
-  );
-  const revision = nonemptyText(
-    observation.revision,
-    'adaptive timing revision'
-  );
+  const runId = observation.source.executionId;
+  const candidateSha256 = observation.source.candidateSha256;
+  const revision = observation.source.revision;
+  const runAttempt = observation.source.runAttempt;
+  const scheduleSha256 = observation.source.scheduleSha256;
+  const submissionSha256 = observation.source.submissionSha256;
+  const observationSha256 = observation.observationSha256;
   const observationId = canonicalJsonSha256({
-    schema: 'seerrng-distributed-adaptive-observation-identity/v1',
+    schema: 'seerrng-distributed-adaptive-observation-identity/v2',
     scope,
     runId,
     candidateSha256,
     revision,
+    runAttempt,
+    scheduleSha256,
+    submissionSha256,
+    observationSha256,
   });
   const existingScope = profileScope(profile, scope);
   if (
     existingScope?.acceptedObservations.some(
-      (entry) =>
-        entry.observationId === observationId || entry.runId === runId
+      (entry) => entry.observationId === observationId || entry.runId === runId
     )
   )
     return ignoredUpdate(profile, 'duplicate-observation');
-  if (observation.valid !== true)
-    return ignoredUpdate(profile, 'invalid-run');
+  if (observation.source.profileSha256 !== canonicalJsonSha256(profile))
+    throw new Error(
+      'Adaptive timing observation belongs to another source profile'
+    );
+  if (observation.source.policySha256 !== canonicalJsonSha256(normalizedPolicy))
+    throw new Error(
+      'Adaptive timing observation belongs to another update policy'
+    );
+  if (observation.valid !== true) return ignoredUpdate(profile, 'invalid-run');
   if (observation.complete !== true)
     return ignoredUpdate(profile, 'incomplete-run');
   if (observation.status !== 'passed')
@@ -801,32 +1078,8 @@ export function updateAdaptiveTimingProfile(
     throw new Error('Adaptive timing inventory must be a nonempty array');
   if (!Array.isArray(observation.results) || !observation.results.length)
     throw new Error('Adaptive timing results must be a nonempty array');
-  const inventory = observation.inventory.map((test, index) =>
-    normalizeTimingTest(test, `adaptive timing inventory entry ${index}`)
-  );
-  uniqueSorted(
-    inventory.map((test) => test.id),
-    'adaptive timing inventory'
-  );
-  const results = observation.results.map((result, index) => {
-    plainObject(result, `adaptive timing result ${index}`);
-    return {
-      testId: nonemptyText(result.testId, 'adaptive timing result test id'),
-      fingerprint: nonemptyText(
-        result.fingerprint,
-        'adaptive timing result fingerprint'
-      ),
-      durationMs: positiveInteger(
-        result.durationMs,
-        'adaptive timing result duration'
-      ),
-      status: nonemptyText(result.status, 'adaptive timing result status'),
-    };
-  });
-  uniqueSorted(
-    results.map((result) => result.testId),
-    'adaptive timing results'
-  );
+  const inventory = observation.inventory;
+  const results = observation.results;
   if (results.some((result) => result.status !== 'passed'))
     return ignoredUpdate(profile, 'unsuccessful-test');
   const inventoryById = new Map(inventory.map((test) => [test.id, test]));
@@ -851,16 +1104,22 @@ export function updateAdaptiveTimingProfile(
     next.scopes.push(selectedScope);
     next.scopes.sort(compareScope);
   }
-  selectedScope.acceptedRunIds = [
-    ...selectedScope.acceptedRunIds,
-    runId,
-  ].slice(-normalizedPolicy.acceptedRunWindow);
-  // This identity ledger is intentionally durable; only the display-oriented
-  // run-ID history rolls, so an older observation cannot become eligible again.
+  selectedScope.acceptedRunIds = [...selectedScope.acceptedRunIds, runId].slice(
+    -normalizedPolicy.acceptedRunWindow
+  );
   selectedScope.acceptedObservations = [
     ...selectedScope.acceptedObservations,
-    { observationId, runId, candidateSha256, revision },
-  ];
+    {
+      observationId,
+      observationSha256,
+      runId,
+      candidateSha256,
+      revision,
+      runAttempt,
+      scheduleSha256,
+      submissionSha256,
+    },
+  ].slice(-normalizedPolicy.acceptedRunWindow);
   const entries = new Map(
     selectedScope.tests.map((entry) => [entry.testId, entry])
   );
@@ -920,8 +1179,7 @@ function conservativeColdPerformanceScore(workers, policy) {
         slowestMeasured,
         policy.unmeasuredPerformanceFractionPermille,
         'unmeasured performance estimate'
-      ) /
-        1_000
+      ) / 1_000
     )
   );
   return Math.min(policy.coldStartPerformanceScorePermille, fraction);
@@ -1049,10 +1307,7 @@ function prepareSchedulingCandidates({
       .get(testId)
       .reduce(
         (maximum, successorId) =>
-          Math.max(
-            maximum,
-            candidates.get(successorId).criticalPathWorkUnits
-          ),
+          Math.max(maximum, candidates.get(successorId).criticalPathWorkUnits),
         0
       );
     candidate.criticalPathWorkUnits = checkedAdd(
@@ -1212,8 +1467,7 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
   return {
     slots,
     predictedWallMs: slots.reduce(
-      (maximum, slot) =>
-        Math.max(maximum, slot.predictedFinishOffsetMs),
+      (maximum, slot) => Math.max(maximum, slot.predictedFinishOffsetMs),
       0
     ),
   };
@@ -1242,8 +1496,7 @@ function normalizeScheduleCapacity(value, index) {
   );
   if (!equalArray(adapterIds, value.adapterIds))
     throw new Error(`${label} adapter IDs are not canonical`);
-  if (value.role !== 'worker')
-    throw new Error(`${label} role is invalid`);
+  if (value.role !== 'worker') throw new Error(`${label} role is invalid`);
   if (typeof value.runsOnControllerHost !== 'boolean')
     throw new Error(`${label} controller-host placement is invalid`);
   if (!['auto', 'explicit'].includes(value.concurrencyPolicy))
@@ -1258,10 +1511,9 @@ function normalizeScheduleCapacity(value, index) {
     throw new Error(`${label} performance score source is invalid`);
   if (
     value.admissionReason !== null &&
-    ![
-      'explicit-thread-budget-unavailable',
-      'no-current-capacity',
-    ].includes(value.admissionReason)
+    !['explicit-thread-budget-unavailable', 'no-current-capacity'].includes(
+      value.admissionReason
+    )
   )
     throw new Error(`${label} admission reason is invalid`);
   const capacity = {
@@ -1544,9 +1796,7 @@ function normalizeAndValidateSchedule(value) {
   for (const test of scheduledTests)
     for (const dependencyId of test.dependencies) {
       const dependency = testById.get(dependencyId);
-      if (
-        dependency.predictedFinishOffsetMs > test.predictedStartOffsetMs
-      )
+      if (dependency.predictedFinishOffsetMs > test.predictedStartOffsetMs)
         throw new Error(
           'Distributed schedule starts a test before its dependency'
         );
@@ -1585,8 +1835,7 @@ function normalizeAndValidateSchedule(value) {
   if (
     predictedWallMs !==
     slots.reduce(
-      (maximum, slot) =>
-        Math.max(maximum, slot.predictedFinishOffsetMs),
+      (maximum, slot) => Math.max(maximum, slot.predictedFinishOffsetMs),
       0
     )
   )
@@ -1650,9 +1899,7 @@ export function verifyDistributedAdaptiveSchedule(value, expectations) {
     throw new Error(
       'Distributed adaptive schedule belongs to another application'
     );
-  if (
-    schedule.repositoryIdentitySha256 !== expectedRepositoryIdentitySha256
-  )
+  if (schedule.repositoryIdentitySha256 !== expectedRepositoryIdentitySha256)
     throw new Error(
       'Distributed adaptive schedule belongs to another repository'
     );
