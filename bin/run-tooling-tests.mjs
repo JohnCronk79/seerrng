@@ -40,6 +40,7 @@ const portableTests = [
   'bin/engine-broker-lease-state.test.mjs',
   'bin/engine-broker-protocol.test.mjs',
   'bin/engine-distributed-adaptive-scheduler.test.mjs',
+  'bin/engine-distributed-control-protocol.test.mjs',
   'bin/engine-distributed-controller-queue.test.mjs',
   'bin/engine-distributed-execution-bridge.test.mjs',
   'bin/engine-distributed-worker-config.test.mjs',
