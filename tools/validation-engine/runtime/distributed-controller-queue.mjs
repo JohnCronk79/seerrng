@@ -3,9 +3,9 @@
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_CONTROLLER_QUEUE_SCHEMA =
-  'seerrng-distributed-controller-queue/v1';
+  'seerrng-distributed-controller-queue/v2';
 export const DISTRIBUTED_APP_SUBMISSION_SCHEMA =
-  'seerrng-distributed-app-submission/v1';
+  'seerrng-distributed-app-submission/v2';
 export const DISTRIBUTED_TERMINAL_RECONCILIATION_SCHEMA =
   'seerrng-distributed-terminal-reconciliation/v1';
 export const DISTRIBUTED_CLEANUP_PROOF_SCHEMA =
@@ -26,8 +26,7 @@ const LIVE_STATUSES = new Set([
 const FINAL_STATUSES = new Set(['passed', 'failed']);
 
 const SUBMISSION_INPUT_KEYS = [
-  'adapterId',
-  'adapterIdentitySha256',
+  'adapters',
   'applicationId',
   'cacheIdentitySha256',
   'controllerId',
@@ -41,8 +40,10 @@ const SUBMISSION_INPUT_KEYS = [
   'revisionIdentitySha256',
   'schema',
   'submissionId',
+  'taskCatalogIdentitySha256',
   'testSuiteId',
 ];
+const ADAPTER_KEYS = ['adapterId', 'adapterIdentitySha256'];
 const SUBMISSION_KEYS = [
   ...SUBMISSION_INPUT_KEYS,
   'submissionSha256',
@@ -100,6 +101,7 @@ const RECORD_KEYS = [
   'cleanupProof',
   'executionId',
   'finalizedAtMs',
+  'runAttempt',
   'sequence',
   'startedAtMs',
   'status',
@@ -235,11 +237,11 @@ function normalizeSubmissionInput(value) {
       value.inventoryIdentitySha256,
       'test inventory identity hash'
     ),
-    adapterId: identifier(value.adapterId, 'adapter ID'),
-    adapterIdentitySha256: digest(
-      value.adapterIdentitySha256,
-      'adapter identity hash'
+    taskCatalogIdentitySha256: digest(
+      value.taskCatalogIdentitySha256,
+      'task catalog identity hash'
     ),
+    adapters: normalizeSubmissionAdapters(value.adapters),
     profileIdentitySha256: digest(
       value.profileIdentitySha256,
       'profile identity hash'
@@ -268,6 +270,33 @@ function normalizeSubmissionInput(value) {
       'Cache, evidence, results, and failure namespaces must be distinct'
     );
   return submission;
+}
+
+function normalizeSubmissionAdapters(value) {
+  if (!Array.isArray(value) || value.length === 0)
+    throw new Error('Distributed app submission requires at least one adapter');
+  const adapters = value.map((entry) => {
+    exactObject(entry, 'distributed app submission adapter', ADAPTER_KEYS);
+    return {
+      adapterId: identifier(entry.adapterId, 'adapter ID'),
+      adapterIdentitySha256: digest(
+        entry.adapterIdentitySha256,
+        'adapter identity hash'
+      ),
+    };
+  });
+  if (new Set(adapters.map((entry) => entry.adapterId)).size !== adapters.length)
+    throw new Error('Distributed app submission adapter IDs must be unique');
+  if (
+    new Set(adapters.map((entry) => entry.adapterIdentitySha256)).size !==
+    adapters.length
+  )
+    throw new Error(
+      'Distributed app submission adapter identity hashes must be unique'
+    );
+  return adapters.toSorted((left, right) =>
+    compareText(left.adapterId, right.adapterId)
+  );
 }
 
 function submissionWorkKey(value) {
@@ -538,6 +567,7 @@ function validateRecord(value, controllerId, verifyAuthentication) {
     applicationIsolationKeySha256: isolationKey,
     status,
     executionId: nullableIdentifier(value.executionId, 'execution ID'),
+    runAttempt: nullableInteger(value.runAttempt, 'Run attempt'),
     startedAtMs: nullableInteger(value.startedAtMs, 'Execution start time'),
     terminalReconciliation: exactNullable(
       value.terminalReconciliation,
@@ -555,6 +585,7 @@ function validateRecord(value, controllerId, verifyAuthentication) {
   if (status === 'queued') {
     if (
       record.executionId !== null ||
+      record.runAttempt !== null ||
       record.startedAtMs !== null ||
       terminal !== null ||
       cleanup !== null ||
@@ -563,8 +594,14 @@ function validateRecord(value, controllerId, verifyAuthentication) {
       throw new Error('Queued submission contains execution state');
     return record;
   }
-  if (record.executionId === null || record.startedAtMs === null)
-    throw new Error('Started submission requires an execution identity and time');
+  if (
+    record.executionId === null ||
+    record.runAttempt !== 1 ||
+    record.startedAtMs === null
+  )
+    throw new Error(
+      'Started submission requires an execution identity, first run attempt, and time'
+    );
   if (status === 'running') {
     if (terminal !== null || cleanup !== null || record.finalizedAtMs !== null)
       throw new Error('Running submission contains terminal state');
@@ -780,6 +817,7 @@ export function enqueueDistributedApp(queueValue, submissionValue) {
       distributedApplicationIsolationKeySha256(submission),
     status: 'queued',
     executionId: null,
+    runAttempt: null,
     startedAtMs: null,
     terminalReconciliation: null,
     cleanupProof: null,
@@ -821,6 +859,7 @@ export function startNextDistributedApp(
         ...entry,
         status: 'running',
         executionId: normalizedExecutionId,
+        runAttempt: 1,
         startedAtMs: normalizedStartedAtMs,
       })
     ),

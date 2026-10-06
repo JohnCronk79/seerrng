@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
+  canonicalJsonSha256,
+} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import {
   DISTRIBUTED_APP_SUBMISSION_SCHEMA,
   DISTRIBUTED_CLEANUP_PROOF_SCHEMA,
   DISTRIBUTED_TERMINAL_RECONCILIATION_SCHEMA,
@@ -39,8 +42,17 @@ function submissionInput(name) {
     repositoryIdentitySha256: sha256(`repository-${name}`),
     revisionIdentitySha256: sha256(`revision-${name}`),
     inventoryIdentitySha256: sha256(`inventory-${name}`),
-    adapterId: 'node-native',
-    adapterIdentitySha256: sha256(`adapter-${name}`),
+    taskCatalogIdentitySha256: sha256(`task-catalog-${name}`),
+    adapters: [
+      {
+        adapterId: 'vitest',
+        adapterIdentitySha256: sha256(`adapter-vitest-${name}`),
+      },
+      {
+        adapterId: 'node-native',
+        adapterIdentitySha256: sha256(`adapter-node-native-${name}`),
+      },
+    ],
     profileIdentitySha256: sha256(`profile-${name}`),
     cacheIdentitySha256: sha256(`cache-${name}`),
     evidenceIdentitySha256: sha256(`evidence-${name}`),
@@ -133,10 +145,17 @@ test('submission identities are exact, deterministic, sealed, and isolated', () 
   const input = submissionInput('alpha');
   const first = sealDistributedAppSubmission(input);
   const reordered = sealDistributedAppSubmission(
-    Object.fromEntries(Object.entries(input).reverse())
+    {
+      ...Object.fromEntries(Object.entries(input).reverse()),
+      adapters: [...input.adapters].reverse(),
+    }
   );
 
   assert.deepEqual(first, reordered);
+  assert.deepEqual(
+    first.adapters.map((entry) => entry.adapterId),
+    ['node-native', 'vitest']
+  );
   assert.deepEqual(verifyDistributedAppSubmission(first), first);
   assert.match(first.workKeySha256, /^[a-f0-9]{64}$/);
   assert.match(first.submissionSha256, /^[a-f0-9]{64}$/);
@@ -153,15 +172,72 @@ test('submission identities are exact, deterministic, sealed, and isolated', () 
     () =>
       sealDistributedAppSubmission({
         ...input,
+        schema: 'seerrng-distributed-app-submission/v1',
+      }),
+    /Unsupported distributed app submission schema/
+  );
+  assert.throws(
+    () => sealDistributedAppSubmission({ ...input, adapters: [] }),
+    /at least one adapter/
+  );
+  assert.throws(
+    () =>
+      sealDistributedAppSubmission({
+        ...input,
+        adapters: [{ ...input.adapters[0], unexpected: true }],
+      }),
+    /exact field set/
+  );
+  assert.throws(
+    () =>
+      sealDistributedAppSubmission({
+        ...input,
+        adapters: [
+          input.adapters[0],
+          { ...input.adapters[1], adapterId: 'vitest' },
+        ],
+      }),
+    /adapter IDs must be unique/
+  );
+  assert.throws(
+    () =>
+      sealDistributedAppSubmission({
+        ...input,
+        adapters: [
+          input.adapters[0],
+          {
+            ...input.adapters[1],
+            adapterIdentitySha256: input.adapters[0].adapterIdentitySha256,
+          },
+        ],
+      }),
+    /adapter identity hashes must be unique/
+  );
+  const missingTaskCatalog = { ...input };
+  delete missingTaskCatalog.taskCatalogIdentitySha256;
+  assert.throws(
+    () => sealDistributedAppSubmission(missingTaskCatalog),
+    /exact field set/
+  );
+  assert.throws(
+    () =>
+      sealDistributedAppSubmission({
+        ...input,
         failureIdentitySha256: input.resultsIdentitySha256,
       }),
     /namespaces must be distinct/
   );
 
   const tampered = structuredClone(first);
-  tampered.planSha256 = sha256('different-plan');
+  tampered.adapters[0].adapterIdentitySha256 = sha256('different-adapter');
   assert.throws(
     () => verifyDistributedAppSubmission(tampered),
+    /work identity|seal/
+  );
+  const tamperedCatalog = structuredClone(first);
+  tamperedCatalog.taskCatalogIdentitySha256 = sha256('different-task-catalog');
+  assert.throws(
+    () => verifyDistributedAppSubmission(tamperedCatalog),
     /work identity|seal/
   );
 });
@@ -226,6 +302,8 @@ test('queue is bounded, rejects semantic duplicates, and starts one app only', (
   );
 
   queue = enqueueDistributedApp(queue, beta);
+  assert.equal(queue.submissions[0].runAttempt, null);
+  assert.equal(queue.submissions[1].runAttempt, null);
   assert.throws(
     () =>
       enqueueDistributedApp(
@@ -241,6 +319,7 @@ test('queue is bounded, rejects semantic duplicates, and starts one app only', (
   });
   assert.equal(queue.activeSubmissionId, alpha.submissionId);
   assert.equal(queue.submissions[0].status, 'running');
+  assert.equal(queue.submissions[0].runAttempt, 1);
   assert.equal(queue.submissions[1].status, 'queued');
   assert.throws(
     () =>
@@ -275,6 +354,7 @@ test('queue advances serially only after authenticated terminal and cleanup proo
     verifyAuthentication: acceptAuthentication,
   });
   assert.equal(activeRecord(queue).status, 'awaiting-cleanup');
+  assert.equal(activeRecord(queue).runAttempt, 1);
   assert.throws(
     () => advanceDistributedControllerQueue(queue, { finalizedAtMs: 30 }),
     /before terminal reconciliation and cleanup proof/
@@ -284,9 +364,11 @@ test('queue advances serially only after authenticated terminal and cleanup proo
     verifyAuthentication: acceptAuthentication,
   });
   assert.equal(activeRecord(queue).status, 'ready-to-advance');
+  assert.equal(activeRecord(queue).runAttempt, 1);
   queue = advanceDistributedControllerQueue(queue, { finalizedAtMs: 40 });
   assert.equal(queue.activeSubmissionId, null);
   assert.equal(queue.submissions[0].status, 'passed');
+  assert.equal(queue.submissions[0].runAttempt, 1);
   assert.ok(queue.submissions[0].terminalReconciliation);
   assert.ok(queue.submissions[0].cleanupProof);
 
@@ -412,6 +494,35 @@ test('sealed snapshot supports verified rehydration but performs no persistence'
 
   assert.deepEqual(restored, queue);
   assert.notEqual(restored, snapshot);
+  assert.equal(restored.submissions[0].runAttempt, 1);
+
+  const invalidRunAttempt = structuredClone(snapshot);
+  invalidRunAttempt.submissions[0].runAttempt = 2;
+  delete invalidRunAttempt.queueSha256;
+  invalidRunAttempt.queueSha256 = canonicalJsonSha256(invalidRunAttempt);
+  assert.throws(
+    () =>
+      rehydrateDistributedControllerQueue(invalidRunAttempt, {
+        expectedControllerId: controllerId,
+        expectedQueueSha256: invalidRunAttempt.queueSha256,
+        verifyAuthentication: acceptAuthentication,
+      }),
+    /first run attempt/
+  );
+
+  const obsoleteQueueSchema = structuredClone(snapshot);
+  obsoleteQueueSchema.schema = 'seerrng-distributed-controller-queue/v1';
+  delete obsoleteQueueSchema.queueSha256;
+  obsoleteQueueSchema.queueSha256 = canonicalJsonSha256(obsoleteQueueSchema);
+  assert.throws(
+    () =>
+      rehydrateDistributedControllerQueue(obsoleteQueueSchema, {
+        expectedControllerId: controllerId,
+        expectedQueueSha256: obsoleteQueueSchema.queueSha256,
+        verifyAuthentication: acceptAuthentication,
+      }),
+    /Unsupported distributed controller queue schema/
+  );
 
   const tampered = structuredClone(snapshot);
   tampered.submissions[0].finalizedAtMs += 1;
