@@ -26,7 +26,7 @@ const h = (character) => character.repeat(64);
 const rawConfig = (workers, { controllerWorkerId = null } = {}) => ({
   schema: 'seerrng-distributed-worker-config/v1',
   revision: 1,
-  controllerId: 'developer-master',
+  controllerId: 'developer-controller',
   controllerWorkerId,
   workers,
 });
@@ -73,7 +73,7 @@ test('example is strict, deterministic, secret-free, and has distinct N', () => 
   assert.equal(Object.isFrozen(first.workers), true);
 });
 
-test('master config maps to broker and adaptive scheduler contracts', () => {
+test('controller config maps to broker and adaptive scheduler contracts', () => {
   const config = createDistributedWorkerConfig(
     rawConfig([
       worker({ n: 6 }),
@@ -171,7 +171,7 @@ test('controller identity must be distinct from every worker identity', () => {
   assert.throws(
     () =>
       createDistributedWorkerConfig({
-        ...rawConfig([worker({ id: 'developer-master' })]),
+        ...rawConfig([worker({ id: 'developer-controller' })]),
       }),
     /controller ID must be distinct/
   );
@@ -189,7 +189,7 @@ test('controller-local worker binding is explicit, enabled, and keeps a distinct
   const config = createDistributedWorkerConfig(
     rawConfig(workers, { controllerWorkerId: 'worker-east' })
   );
-  assert.equal(config.controllerId, 'developer-master');
+  assert.equal(config.controllerId, 'developer-controller');
   assert.equal(config.controllerWorkerId, 'worker-east');
   assert.equal(distributedWorkerRole(config, 'worker-east'), 'controller');
   assert.equal(distributedWorkerRole(config, 'worker-west'), 'worker');
@@ -276,7 +276,7 @@ test('unknown fields and duplicate JSON keys cannot override policy', () => {
     () =>
       parseDistributedWorkerConfig(
         '{"schema":"seerrng-distributed-worker-config/v1",' +
-          '"schema":"wrong","revision":1,"controllerId":"master",' +
+          '"schema":"wrong","revision":1,"controllerId":"controller",' +
           '"workers":[]}'
       ),
     /repeats JSON key: schema/
@@ -285,7 +285,7 @@ test('unknown fields and duplicate JSON keys cannot override policy', () => {
     () =>
       parseDistributedWorkerConfig(
         '{"schema":"seerrng-distributed-worker-config/v1",' +
-          '"revision":1,"controllerId":"master","workers":[{' +
+          '"revision":1,"controllerId":"controller","workers":[{' +
           '"id":"worker","address":"https://worker.lan:7443",' +
           '"enabled":true,"identitySha256":"' +
           h('1') +

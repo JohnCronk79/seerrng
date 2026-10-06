@@ -1,7 +1,7 @@
 {
   "schema": "seerrng-distributed-worker-config/v1",
   "revision": 1,
-  "controllerId": "developer-master",
+  "controllerId": "developer-controller",
   "controllerWorkerId": "developer-main",
   "workers": [
     {

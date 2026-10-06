@@ -166,6 +166,43 @@ test('submission identities are exact, deterministic, sealed, and isolated', () 
   );
 });
 
+test('queue rejects same-type and cross-type output namespace reuse', () => {
+  const alpha = sealDistributedAppSubmission(submissionInput('alpha'));
+  let queue = createDistributedControllerQueue({
+    controllerId,
+    maxSubmissions: 4,
+  });
+  queue = enqueueDistributedApp(queue, alpha);
+  const queueBeforeRejectedSubmissions = structuredClone(queue);
+
+  const sameTypeInput = submissionInput('beta-same-type');
+  const sameType = sealDistributedAppSubmission({
+    ...sameTypeInput,
+    cacheIdentitySha256: alpha.cacheIdentitySha256,
+  });
+  assert.throws(
+    () => enqueueDistributedApp(queue, sameType),
+    /output namespace is already retained/
+  );
+
+  const crossTypeInput = submissionInput('beta-cross-type');
+  const crossType = sealDistributedAppSubmission({
+    ...crossTypeInput,
+    failureIdentitySha256: alpha.evidenceIdentitySha256,
+  });
+  assert.throws(
+    () => enqueueDistributedApp(queue, crossType),
+    /output namespace is already retained/
+  );
+  assert.equal(queue.queueSha256, queueBeforeRejectedSubmissions.queueSha256);
+  assert.deepEqual(queue, queueBeforeRejectedSubmissions);
+
+  const beta = sealDistributedAppSubmission(submissionInput('beta-distinct'));
+  queue = enqueueDistributedApp(queue, beta);
+  assert.equal(queue.submissions.length, 2);
+  assert.equal(queue.submissions[1].submission.submissionId, beta.submissionId);
+});
+
 test('queue is bounded, rejects semantic duplicates, and starts one app only', () => {
   const alpha = sealDistributedAppSubmission(submissionInput('alpha'));
   const beta = sealDistributedAppSubmission(submissionInput('beta'));

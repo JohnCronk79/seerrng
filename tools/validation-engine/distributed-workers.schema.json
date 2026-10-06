@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://seerrng.dev/schemas/distributed-workers-v1.json",
   "title": "SeerrNG distributed validation workers",
-  "description": "Secret-free master inventory for authenticated distributed validation workers.",
+  "description": "Secret-free controller inventory for authenticated distributed validation workers.",
   "$comment": "Runtime validation additionally enforces a 131072-byte normalized UTF-8 document limit, canonical NFC text, distinct worker IDs/addresses/identity fingerprints, a controllerId distinct from every worker ID, and a non-null controllerWorkerId that references an enabled worker; those document-level, cross-item, and canonical-text constraints are not expressible here without non-standard extensions.",
   "type": "object",
   "additionalProperties": false,

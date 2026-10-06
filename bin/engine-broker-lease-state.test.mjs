@@ -684,6 +684,74 @@ test('expired attempts require accepted cleanup before retry and completed work 
   );
 });
 
+test('retry ceiling rejects a cleaned next attempt without changing history', () => {
+  const plannedTask = task('task-1', { maxAttempts: 1 });
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask, { maxAttempts: 1 }),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = cancelBrokerLease(
+    state,
+    authenticated(
+      'lease.cancel',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-task-1-1',
+        taskId: 'task-1',
+        attempt: 1,
+        requestedAtMs: 4_000,
+        mode: 'abort-attempt',
+        reasonCode: 'worker-drain',
+      },
+      'controller-dev',
+      4_100
+    )
+  );
+  state = acknowledgeBrokerCancellation(
+    state,
+    authenticated(
+      'worker.cancelled',
+      cancellationAcknowledgement(plannedTask),
+      'worker-east',
+      4_300
+    ),
+    cleanupAcceptance()
+  );
+  assert.equal(state.leases[0].state, 'cancelled');
+  assert.equal(state.leases[0].cleanupAcceptedAtMs, 4_400);
+
+  const stateBeforeRejectedGrant = structuredClone(state);
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        state,
+        authenticated(
+          'lease.grant',
+          grantBody(plannedTask, {
+            leaseId: 'lease-task-1-2',
+            attempt: 2,
+            maxAttempts: 1,
+            expiresAtMs: 14_000,
+          }),
+          'controller-dev',
+          5_000
+        )
+      ),
+    /Task attempt cannot exceed maximum attempts/
+  );
+  assert.equal(state.stateSha256, stateBeforeRejectedGrant.stateSha256);
+  assert.deepEqual(state.leases, stateBeforeRejectedGrant.leases);
+  assert.deepEqual(state.results, stateBeforeRejectedGrant.results);
+});
+
 test('result submission is idempotent and conflicting reuse fails closed', () => {
   const plannedTask = task();
   let state = admittedState([plannedTask]);

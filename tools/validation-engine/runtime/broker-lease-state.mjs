@@ -669,6 +669,8 @@ export function grantBrokerLease(stateValue, messageValue) {
     throw new Error('Lease task crossed an application isolation boundary');
   if (grant.maxAttempts !== task.maxAttempts)
     throw new Error('Lease retry limit does not match the immutable task');
+  if (grant.attempt > grant.maxAttempts)
+    throw new Error('Task attempt cannot exceed maximum attempts');
   if (state.leases.some((entry) => entry.leaseId === grant.leaseId))
     throw new Error('Lease ID has already been used');
   if (state.results.some((entry) => entry.submission.taskId === task.taskId))

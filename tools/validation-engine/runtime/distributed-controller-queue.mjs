@@ -48,6 +48,12 @@ const SUBMISSION_KEYS = [
   'submissionSha256',
   'workKeySha256',
 ];
+const OUTPUT_NAMESPACE_KEYS = [
+  'cacheIdentitySha256',
+  'evidenceIdentitySha256',
+  'resultsIdentitySha256',
+  'failureIdentitySha256',
+];
 const AUTH_KEYS = [
   'algorithm',
   'expiresAtMs',
@@ -256,12 +262,7 @@ function normalizeSubmissionInput(value) {
     ),
     planSha256: digest(value.planSha256, 'execution plan hash'),
   };
-  const outputNamespaces = [
-    submission.cacheIdentitySha256,
-    submission.evidenceIdentitySha256,
-    submission.resultsIdentitySha256,
-    submission.failureIdentitySha256,
-  ];
+  const outputNamespaces = OUTPUT_NAMESPACE_KEYS.map((key) => submission[key]);
   if (new Set(outputNamespaces).size !== outputNamespaces.length)
     throw new Error(
       'Cache, evidence, results, and failure namespaces must be distinct'
@@ -759,6 +760,19 @@ export function enqueueDistributedApp(queueValue, submissionValue) {
     )
   )
     throw new Error('Duplicate distributed app submission is not allowed');
+  const retainedOutputNamespaces = new Set(
+    queue.submissions.flatMap((entry) =>
+      OUTPUT_NAMESPACE_KEYS.map((key) => entry.submission[key])
+    )
+  );
+  if (
+    OUTPUT_NAMESPACE_KEYS.some((key) =>
+      retainedOutputNamespaces.has(submission[key])
+    )
+  )
+    throw new Error(
+      'Distributed app output namespace is already retained by another submission'
+    );
   const record = {
     sequence: queue.nextSequence,
     submission,
