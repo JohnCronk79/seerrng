@@ -477,6 +477,9 @@ jobs:
       SEERRNG_ENGINE_EXECUTION_SHA: ${{ needs.engine-plan.outputs.executionSha }}
       SEERRNG_ENGINE_UNIT_ID: ci-unit-test
     steps:
+      - name: Install Git for complete checkout
+        run: apk add --no-cache git
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
