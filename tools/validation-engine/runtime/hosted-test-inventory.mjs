@@ -339,12 +339,12 @@ function discoveredFiles(root) {
     )) {
       const absolute = path.join(directory, entry.name);
       const file = slash(path.relative(root, absolute));
+      if (['node_modules', '.git', 'dist', '.next'].includes(entry.name))
+        continue;
       if (entry.isSymbolicLink())
         throw new Error(`Symlink in hosted test discovery scope: ${file}`);
-      if (entry.isDirectory()) {
-        if (!['node_modules', '.git', 'dist', '.next'].includes(entry.name))
-          visit(absolute);
-      } else if (entry.isFile() && TEST_FILE.test(entry.name)) files.push(file);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile() && TEST_FILE.test(entry.name)) files.push(file);
     }
   };
   for (const directory of TEST_ROOTS) {

@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -245,6 +246,40 @@ test('inventory and native lane assignment are deterministic', () => {
         command: { program: 'cypress', args: ['run'] },
       },
     ]
+  );
+});
+
+test('inventory ignores dependency links but rejects source links', () => {
+  const root = fixture();
+  const expected = createHostedTestInventory(root);
+  const dependencies = mkdtempSync(
+    path.join(tmpdir(), 'hosted-test-inventory-dependencies-')
+  );
+  temporary.add(dependencies);
+  writeFileSync(path.join(dependencies, 'marker.txt'), 'dependency input\n');
+  symlinkSync(
+    dependencies,
+    path.join(root, 'gen-docs/node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
+  assert.deepEqual(createHostedTestInventory(root), expected);
+
+  const linkedSource = mkdtempSync(
+    path.join(tmpdir(), 'hosted-test-inventory-linked-source-')
+  );
+  temporary.add(linkedSource);
+  writeFileSync(
+    path.join(linkedSource, 'linked.test.mjs'),
+    "import test from 'node:test';\n"
+  );
+  symlinkSync(
+    linkedSource,
+    path.join(root, 'gen-docs/linked-source'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  );
+  assert.throws(
+    () => createHostedTestInventory(root),
+    /Symlink in hosted test discovery scope: gen-docs\/linked-source/
   );
 });
 
