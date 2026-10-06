@@ -39,6 +39,7 @@ test('worker image pins the approved Node base and exact native tool set', () =>
     'python3',
     'sqlite',
     'tar',
+    'tini=0.19.0-r3',
     'unzip',
     'zip',
   ]);
@@ -47,9 +48,14 @@ test('worker image pins the approved Node base and exact native tool set', () =>
     /npm install --global node-gyp@13\.0\.2 pnpm@10\.24\.0/
   );
   assert.match(logicalDockerfile, /test "\$\(pnpm --version\)" = "10\.24\.0"/);
+  assert.match(logicalDockerfile, /apk info -e tini=0\.19\.0-r3 >\/dev\/null/);
   assert.match(
     logicalDockerfile,
-    /for required_command in helm jq sqlite3 zip unzip find tar python; do\s+command -v "\$required_command" >\/dev\/null \|\| exit 1;\s+done/
+    /test "\$\(tini --version 2>&1\)" = "tini version 0\.19\.0"/
+  );
+  assert.match(
+    logicalDockerfile,
+    /for required_command in helm jq sqlite3 zip unzip find tar python tini; do\s+command -v "\$required_command" >\/dev\/null \|\| exit 1;\s+done/
   );
   assert.match(
     logicalDockerfile,
@@ -151,10 +157,22 @@ test('worker source is installed frozen, clean, and owned by its runtime user', 
   assert.equal(
     dockerfile
       .trimEnd()
-      .endsWith('ENTRYPOINT ["node", "bin/run-local-validation.mjs"]'),
+      .endsWith(
+        'ENTRYPOINT ["/sbin/tini", "-g", "--", "node", "bin/run-local-validation.mjs"]'
+      ),
     true
   );
   assert.doesNotMatch(dockerfile, /^CMD\b/m);
+});
+
+test('worker image runs a pinned init as non-root PID 1', () => {
+  assert.match(logicalDockerfile, /apk add --no-cache\s+[^&]*tini=0\.19\.0-r3/);
+  assert.match(dockerfile, /^USER node$/m);
+  assert.match(
+    dockerfile,
+    /^ENTRYPOINT \["\/sbin\/tini", "-g", "--", "node", "bin\/run-local-validation\.mjs"\]$/m
+  );
+  assert.doesNotMatch(dockerfile, /^ENTRYPOINT \["node"/m);
 });
 
 test('worker image contains no secret or repository bootstrap channel', () => {

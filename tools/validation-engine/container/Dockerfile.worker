@@ -22,11 +22,14 @@ RUN apk add --no-cache \
       python3 \
       sqlite \
       tar \
+      tini=0.19.0-r3 \
       unzip \
       zip \
     && npm install --global node-gyp@13.0.2 pnpm@10.24.0 \
     && test "$(pnpm --version)" = "10.24.0" \
-    && for required_command in helm jq sqlite3 zip unzip find tar python; do \
+    && apk info -e tini=0.19.0-r3 >/dev/null \
+    && test "$(tini --version 2>&1)" = "tini version 0.19.0" \
+    && for required_command in helm jq sqlite3 zip unzip find tar python tini; do \
       command -v "$required_command" >/dev/null || exit 1; \
     done \
     && find --version | grep -F 'GNU findutils' >/dev/null \
@@ -95,4 +98,4 @@ RUN test -d .git \
     && test -z "$(git status --porcelain=v1 \
       --untracked-files=all --ignore-submodules=none)"
 
-ENTRYPOINT ["node", "bin/run-local-validation.mjs"]
+ENTRYPOINT ["/sbin/tini", "-g", "--", "node", "bin/run-local-validation.mjs"]
