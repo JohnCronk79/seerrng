@@ -1480,12 +1480,8 @@ test('unit receipt preserves a successful intentionally skipped Vitest case', as
     environment,
     receiptDir,
   });
-  const skippedFile = caseLane(
-    plan,
-    'ci-unit-test',
-    UNIT_CASE_ID,
-    'vitest'
-  ).files[0];
+  const skippedFile = caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest')
+    .files[0];
   writeVitestJunit(root, plan, { partialSkippedFile: skippedFile });
   const { receipt } = sealHostedGithubUnitReceipt({
     root,
@@ -1550,12 +1546,8 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'zero-test Vitest suite',
       mutate({ root, plan }) {
-        const file = caseLane(
-          plan,
-          'ci-unit-test',
-          UNIT_CASE_ID,
-          'vitest'
-        ).files[0];
+        const file = caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest')
+          .files[0];
         writeVitestJunit(root, plan, { zeroFile: file });
       },
       message: /not a complete success/,
@@ -1570,12 +1562,8 @@ test('unit success rejects incomplete or tampered native evidence', async () => 
     {
       name: 'failed Vitest suite',
       mutate({ root, plan }) {
-        const file = caseLane(
-          plan,
-          'ci-unit-test',
-          UNIT_CASE_ID,
-          'vitest'
-        ).files[0];
+        const file = caseLane(plan, 'ci-unit-test', UNIT_CASE_ID, 'vitest')
+          .files[0];
         writeVitestJunit(root, plan, { failureFile: file });
       },
       message: /failed or errored tests/,

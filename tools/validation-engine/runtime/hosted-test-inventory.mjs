@@ -2,8 +2,12 @@
 // Deterministic test ownership for the existing GitHub-native command jobs.
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -98,12 +102,59 @@ function inside(root, candidate) {
 
 function checkedFile(root, file) {
   const absolute = path.resolve(root, file);
-  if (!inside(root, absolute) || !existsSync(absolute))
+  if (!inside(root, absolute))
     throw new Error(`Missing hosted inventory input: ${file}`);
-  const stat = lstatSync(absolute);
-  if (stat.isSymbolicLink() || !stat.isFile())
-    throw new Error(`Unsafe hosted inventory input: ${file}`);
-  return { absolute, bytes: readFileSync(absolute) };
+  let descriptor;
+  try {
+    descriptor = openSync(
+      absolute,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0)
+    );
+  } catch (error) {
+    throw new Error(`Unsafe hosted inventory input: ${file}`, {
+      cause: error,
+    });
+  }
+  try {
+    const before = fstatSync(descriptor);
+    const sameFile = (left, right) =>
+      left.isFile() &&
+      right.isFile() &&
+      ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
+        (key) => left[key] === right[key]
+      );
+    let checked;
+    try {
+      checked = lstatSync(absolute);
+    } catch (error) {
+      throw new Error(`Hosted inventory input changed before read: ${file}`, {
+        cause: error,
+      });
+    }
+    if (checked.isSymbolicLink() || !sameFile(checked, before))
+      throw new Error(`Hosted inventory input changed before read: ${file}`);
+    const bytes = readFileSync(descriptor);
+    let afterPath;
+    try {
+      afterPath = lstatSync(absolute);
+    } catch (error) {
+      throw new Error(`Hosted inventory input changed during read: ${file}`, {
+        cause: error,
+      });
+    }
+    if (
+      !sameFile(fstatSync(descriptor), before) ||
+      afterPath.isSymbolicLink() ||
+      !sameFile(afterPath, before) ||
+      bytes.length !== before.size
+    )
+      throw new Error(`Hosted inventory input changed during read: ${file}`);
+    return { absolute, bytes };
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function moduleSpecifiers(source) {

@@ -3,10 +3,14 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   writeFileSync,
@@ -129,6 +133,59 @@ function regularFile(file, label) {
   if (stat.isSymbolicLink() || !stat.isFile() || stat.size < 1)
     throw new Error(`Unsafe or empty ${label}: ${file}`);
   return stat;
+}
+
+function readCheckedRegularFile(file, label, { allowMissing = false } = {}) {
+  let descriptor;
+  try {
+    descriptor = openSync(
+      file,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0)
+    );
+  } catch (error) {
+    if (allowMissing && error?.code === 'ENOENT') return null;
+    throw new Error(`Unsafe ${label}: ${file}`, { cause: error });
+  }
+  try {
+    const before = fstatSync(descriptor);
+    const sameFile = (left, right) =>
+      left.isFile() &&
+      right.isFile() &&
+      ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
+        (key) => left[key] === right[key]
+      );
+    let checked;
+    try {
+      checked = lstatSync(file);
+    } catch (error) {
+      throw new Error(`${label} changed before its descriptor read`, {
+        cause: error,
+      });
+    }
+    if (checked.isSymbolicLink() || !sameFile(checked, before))
+      throw new Error(`${label} changed before its descriptor read`);
+    const bytes = readFileSync(descriptor);
+    let afterPath;
+    try {
+      afterPath = lstatSync(file);
+    } catch (error) {
+      throw new Error(`${label} changed during its descriptor read`, {
+        cause: error,
+      });
+    }
+    if (
+      !sameFile(fstatSync(descriptor), before) ||
+      afterPath.isSymbolicLink() ||
+      !sameFile(afterPath, before) ||
+      bytes.length !== before.size
+    )
+      throw new Error(`${label} changed during its descriptor read`);
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function writeNewJson(file, value) {
@@ -401,9 +458,7 @@ function hostedBehaviorState(root, plan, unit, caseId, environment) {
     if (
       assigned.files.some(
         (file) =>
-          file.includes(',') ||
-          file.includes('\r') ||
-          file.includes('\n')
+          file.includes(',') || file.includes('\r') || file.includes('\n')
       )
     )
       throw new Error('Hosted Cypress spec paths are unsafe for transport');
@@ -458,14 +513,16 @@ function dependencyStateSha256(root, plan, unit) {
       ? 'gen-docs/node_modules/.pnpm/lock.yaml'
       : 'node_modules/.pnpm/lock.yaml';
   const installed = path.resolve(root, relative);
+  const installedLock = readCheckedRegularFile(
+    installed,
+    'installed dependency lock',
+    { allowMissing: true }
+  );
   return jsonSha256({
     sourceLockSha256: plan.candidate.lockSha256,
     installedLock: {
       path: relative,
-      sha256:
-        existsSync(installed) && !lstatSync(installed).isSymbolicLink()
-          ? sha256(readFileSync(installed))
-          : null,
+      sha256: installedLock === null ? null : sha256(installedLock),
     },
   });
 }
@@ -727,15 +784,27 @@ export function admitHostedGithubUnit({
     environment,
   });
   const paths = receiptPaths(receiptDir, unitId, resolved.caseId);
-  let ledger;
-  if (existsSync(paths.ledger))
-    ledger = parseRunScopedLedger(readFileSync(paths.ledger, 'utf8'));
-  else {
-    ledger = createRunScopedLedger(planScope(plan));
-    writeFileSync(paths.ledger, serializeRunScopedLedger(ledger), {
-      flag: 'wx',
-      mode: 0o600,
-    });
+  let ledger = createRunScopedLedger(planScope(plan));
+  let ledgerDescriptor;
+  try {
+    ledgerDescriptor = openSync(
+      paths.ledger,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600
+    );
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+  if (ledgerDescriptor === undefined) {
+    ledger = parseRunScopedLedger(
+      readCheckedRegularFile(paths.ledger, 'hosted run ledger').toString('utf8')
+    );
+  } else {
+    try {
+      writeFileSync(ledgerDescriptor, serializeRunScopedLedger(ledger));
+    } finally {
+      closeSync(ledgerDescriptor);
+    }
   }
   const unsigned = {
     schema: HOSTED_ADMISSION_SCHEMA,
@@ -1152,14 +1221,7 @@ function verifyNativeNodeLaneReport({
   };
 }
 
-function verifyHostedCypressReport({
-  file,
-  plan,
-  unit,
-  caseId,
-  lane,
-  root,
-}) {
+function verifyHostedCypressReport({ file, plan, unit, caseId, lane, root }) {
   const stat = regularFile(file, 'hosted Cypress result');
   if (stat.size > HOSTED_RESULT_MAX_BYTES)
     throw new Error('Hosted Cypress result exceeds its safe size limit');
@@ -1401,10 +1463,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
             actual.durationMs < 0)) ||
         actual.active !== actual.passed + actual.failures ||
         actual.tests !==
-          actual.passed +
-            actual.failures +
-            actual.pending +
-            actual.skipped ||
+          actual.passed + actual.failures + actual.pending + actual.skipped ||
         actual.failures !== 0 ||
         !HASH64.test(actual.reportSha256 ?? '') ||
         actual.reportSha256 !==
@@ -1426,8 +1485,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
     throw new Error('Unit-test evidence set failed reconciliation');
   if (
     unit.id === 'cypress-run' &&
-    (evidenceByName.size !== 1 ||
-      !evidenceByName.has(CYPRESS_TEST_EVIDENCE))
+    (evidenceByName.size !== 1 || !evidenceByName.has(CYPRESS_TEST_EVIDENCE))
   )
     throw new Error('Cypress evidence set failed reconciliation');
   if (
@@ -1895,11 +1953,10 @@ export function materializeHostedVitestLane({
   const paths = receiptPaths(receiptDir, unitId, resolved.caseId);
   regularFile(paths.admission, 'hosted admission');
   regularFile(paths.ledger, 'hosted run ledger');
-  verifyAdmission(
-    JSON.parse(readFileSync(paths.admission, 'utf8')),
-    identity,
-    { unitId, caseId: resolved.caseId }
-  );
+  verifyAdmission(JSON.parse(readFileSync(paths.admission, 'utf8')), identity, {
+    unitId,
+    caseId: resolved.caseId,
+  });
   const ledger = parseRunScopedLedger(readFileSync(paths.ledger, 'utf8'));
   if (ledger.entries.length !== 0 || existsSync(paths.receipt))
     throw new Error(

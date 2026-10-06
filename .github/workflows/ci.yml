@@ -431,8 +431,15 @@ jobs:
         run: pnpm lint
 
       - name: Formatting
+        id: formatting
         if: steps.engine-admission.outputs.execute == 'true'
         run: pnpm format:check
+
+      - name: Report exact formatter correction
+        if: failure() && steps.formatting.outcome == 'failure'
+        run: |
+          pnpm format
+          git diff --no-ext-diff -- .
 
       - name: Build
         if: steps.engine-admission.outputs.execute == 'true'

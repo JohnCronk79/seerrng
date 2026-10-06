@@ -17,13 +17,13 @@ const quiet = { write() {} };
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const tapEscape = (input) =>
   String(input)
+    .replaceAll('\\', '\\\\')
     .replaceAll('\b', '\\b')
     .replaceAll('\f', '\\f')
     .replaceAll('\t', '\\t')
     .replaceAll('\n', '\\n')
     .replaceAll('\r', '\\r')
     .replaceAll('\v', '\\v')
-    .replaceAll('\\', '\\\\')
     .replaceAll('#', '\\#');
 const inspected = (input) =>
   inspect(input, { colors: false, breakLength: Infinity });
@@ -392,6 +392,7 @@ test('source binding reproduces Node TAP escaping independent of host platform',
   assert.equal(ledger.complete, true);
   assert.deepEqual(ledger.issues, []);
   assert.equal(ledger.cases[0].leafName, tapEscape(absoluteFile));
+  assert.equal(tapEscape('line\n\t#\\path'), 'line\\n\\t\\#\\\\path');
 });
 test('missing/malformed/off-source/duplicate/unclosed/zero-active native reports abort independent owners', async (t) => {
   for (const mode of [

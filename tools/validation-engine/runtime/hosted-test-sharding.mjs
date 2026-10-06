@@ -156,8 +156,7 @@ function timingProfile(value) {
   const expectedMethods = {
     cypressUnknownMethod: 'maximum-observed-spec-wall-duration',
     nativeNodeMethod: 'source-bytes-proportional-to-full-wall-time',
-    vitestOverheadMethod:
-      'aggregate-non-test-duration-divided-by-file-count',
+    vitestOverheadMethod: 'aggregate-non-test-duration-divided-by-file-count',
     vitestUnknownMethod: 'p95-observed-file-duration',
   };
   for (const [name, expected] of Object.entries(expectedMethods))
