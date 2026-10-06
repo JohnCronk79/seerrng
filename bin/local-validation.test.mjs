@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -573,7 +574,7 @@ test('agent routes require the current engine while the normal hook stays bounde
     );
 });
 
-test('runtime preflight rejects unsupported engines, dependency drift, and incomplete archive governance without installing anything', () => {
+test('runtime preflight rejects unsupported engines, dependency drift, and incomplete validation governance without installing anything', () => {
   const f = fixture();
   try {
     rmSync(join(f.directory, 'node_modules'), { recursive: true, force: true });
@@ -783,6 +784,153 @@ test('CLI help succeeds without discovery and malformed options fail before runn
       runCommand({ ...command, args: [command.args[0], ...args] }, options),
       (error) => error.exitCode === 1
     );
+});
+
+test('CLI modes reject mixed, foreign, repeated, and incomplete options before project access', () => {
+  const cli = join(root, 'bin/run-local-validation.mjs');
+  const invalid = [
+    {
+      args: ['--help', '--plan'],
+      message: /Help mode cannot be combined with other options/,
+    },
+    {
+      args: ['-h', '--help'],
+      message: /Duplicate option: --help/,
+    },
+    {
+      args: ['--plan', '--plan'],
+      message: /Duplicate option: --plan/,
+    },
+    {
+      args: ['--json'],
+      message: /Local full mode does not accept --json/,
+    },
+    {
+      args: ['--tests-only', '--json'],
+      message: /Local tests-only mode does not accept --json/,
+    },
+    {
+      args: ['--tests-only', '--plan-file', 'missing-plan.json'],
+      message: /Local tests-only mode does not accept --plan-file/,
+    },
+    {
+      args: ['--plan', '--unit', 'ci'],
+      message: /Local plan mode does not accept --unit/,
+    },
+    {
+      args: ['--github-plan', '--github-admit'],
+      message: /Choose exactly one hosted GitHub mode/,
+    },
+    {
+      args: ['--github-plan'],
+      message: /GitHub plan mode requires --plan-file/,
+    },
+    {
+      args: [
+        '--github-plan',
+        '--plan-file',
+        'missing-plan.json',
+        '--unit',
+        'ci',
+      ],
+      message: /GitHub plan mode does not accept --unit/,
+    },
+    {
+      args: [
+        '--github-plan',
+        '--plan-file',
+        'one.json',
+        '--plan-file',
+        'two.json',
+      ],
+      message: /Duplicate option: --plan-file/,
+    },
+    {
+      args: ['--github-admit', '--plan-file', 'missing-plan.json'],
+      message: /GitHub admission mode requires --unit/,
+    },
+    {
+      args: ['--github-admit', '--unit', '-h'],
+      message: /Missing value for --unit/,
+    },
+    {
+      args: [
+        '--github-admit',
+        '--unit',
+        'ci',
+        '--plan-file',
+        'missing-plan.json',
+        '--expected-plan-sha256',
+        'sha',
+        '--receipt-dir',
+        'receipts',
+        '--evidence',
+        'evidence.json',
+      ],
+      message: /GitHub admission mode does not accept --evidence/,
+    },
+    {
+      args: ['--github-run-test-lane', '--plan-file', 'missing-plan.json'],
+      message: /GitHub test-lane mode requires --unit/,
+    },
+    {
+      args: ['--github-receipt', '--plan-file', 'missing-plan.json'],
+      message: /GitHub receipt mode requires --unit/,
+    },
+    {
+      args: [
+        '--github-receipt',
+        '--unit',
+        'ci',
+        '--plan-file',
+        'missing-plan.json',
+        '--expected-plan-sha256',
+        'sha',
+        '--receipt-dir',
+        'receipts',
+        '--job-status',
+        'success',
+        '--evidence',
+        'evidence.json',
+        '--evidence',
+        'evidence.json',
+      ],
+      message: /Duplicate value for --evidence: evidence\.json/,
+    },
+    {
+      args: ['--github-reconcile', '--plan-file', 'missing-plan.json'],
+      message: /GitHub reconciliation mode requires --receipt-dir/,
+    },
+    {
+      args: [
+        '--github-reconcile',
+        '--plan-file',
+        'missing-plan.json',
+        '--receipt-dir',
+        'receipts',
+        '--case',
+        'actions',
+      ],
+      message: /GitHub reconciliation mode does not accept --case/,
+    },
+  ];
+
+  for (const { args, message } of invalid) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_OPTIONS: '' },
+      windowsHide: true,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, JSON.stringify(args));
+    assert.match(result.stderr, message, JSON.stringify(args));
+    assert.doesNotMatch(
+      result.stderr,
+      /Hosted GitHub mode requires GitHub Actions|Missing hosted GitHub plan|ENOENT/,
+      JSON.stringify(args)
+    );
+  }
 });
 
 test('interruption cancels the owned child process tree and prevents later steps', async () => {

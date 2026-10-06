@@ -1,156 +1,241 @@
-# Saved SeerrNG validation engine
+# SeerrNG validation engine
 
-The archive below preserves the reviewed engine and historical evidence.
-Its CPU-capacity module is now also bound into the application's native Vitest
-configuration under `runtime/`. Normal `test`, `test:vitest`, and `test:ci`
-commands stay unchanged; no separate engine or user launch command is added.
-The existing development gate preserves its dynamically discovered ownership
-when generating a native Vitest subset configuration.
+This is the authoritative operating guide for the validation engine bound into
+this repository. Use the existing `validate:development` entry point. Do not
+create another launcher, runner, frozen inventory, or copied test bundle.
 
-Independent files use the selected capacity in isolated forks with a fresh
-temporary configuration per file and the original setup/network/database guards.
-The five existing quiet owners run serially after the independent batch, not
-alongside it. Native tooling regression tests are registered in Seerr's existing
-tooling-test command, which the GitHub CI security check already invokes.
+The engine owns discovery, stage order, worker selection, candidate binding, and
+result accounting. Existing native test runners, commands, action pins, runner
+environments, assertions, and fixtures remain authoritative within that plan.
 
-Native stage adapters and the existing reviewed coordinator are now bound under
-`runtime/`: repository checks/tests, CodeQL, production build, then Cypress.
-Each stage reserves the selected worker budget exclusively; these reservations
-are not a measurement of operating-system threads. CodeQL preserves both Actions
-and JavaScript scans, default plus security-and-quality queries, the workflow's
-model pack, and actual findings. Cypress preserves the native spec inventory,
-case attempts and conditional skips, reusing only this run's successful build.
-It remains one native browser process until isolated sharding is demonstrated.
+## Developer commands
 
-Supplemental descriptors include council boundary checks, documentation security
-and builds, the .NET 9 Jellyfin plugin and disposable smoke, release contracts,
-conditional charts, and advisory links. Missing prerequisites remain blocked;
-trusted-base GitHub metadata checks remain separately pending. No local report
-may silently represent those as executed passes. The existing process runner
-provides stream hashes, persistent owned logs and managed server cleanup rather
-than introducing another runner. Its historical string-returning API remains.
+Run from the repository root:
 
-The existing `validate:development` entry now selects these stages automatically;
-`--help` and `--plan` remain read-only, and `--tests-only` retains the original
-native test-only behavior. Preparation creates owned source copies and binds
-native receipts, full output logs, actual case ledgers, tool versions, dependency
-locks and read-only references. Completed and failed execution evidence is kept.
+```text
+pnpm validate:development --help
+pnpm validate:development --plan
+pnpm validate:development --plan --json
+pnpm validate:development --tests-only
+pnpm validate:development
+```
 
-The full gate requires a verified repository network boundary, private Docker
-fixtures, browser provider isolation and complete Git history/tags. Reviewed
-internal host contexts can supply those proofs through the existing engine APIs;
-the public entry does not yet acquire a complete context on an ordinary checkout
-and reports incomplete when the required proofs are absent. Development provisioning is not part of
-this engine, and no separate end-user runner or command is introduced.
-Pull-request and main-branch CI now place the existing native jobs behind a
-current-run hosted engine plan and reconcile their exact results afterward. The
-five jobs already in `ci.yml` and five existing reusable workflows remain native
-and run in parallel after planning; the engine does not replace their commands,
-actions, runner images or environment split. Reconciliation fails closed on a
-missing, extra, stale, failed, cancelled or unexpectedly skipped result, and it
-does not reuse a prior run. Dedicated scheduled and manual workflow launches
-remain native standalone runs rather than being reported as a full hosted-engine
-pass. Trusted pull-request title, template and mergeability checks also remain
-separate external metadata.
-Because each hosted plan is bound to one run attempt and result reuse is disabled,
-retry the complete workflow rather than using GitHub's failed-jobs-only rerun. A
-failed-jobs-only attempt deliberately cannot combine earlier successful jobs with
-new results to produce an aggregate pass.
-An expanded continuous baseline must be identified by its own frozen candidate,
-complete native receipts and measured lifecycle, not the archived result below.
-Focused adapter tests are not evidence of a successful full scan, build, browser
-suite, or performance improvement. The archive's immutable-consumer/source-repair guarantees are
-unchanged. A native Vitest run does not by itself establish a full frozen source
-manifest, lifecycle proof, complete case ledger, or retained-green cache closure.
+- `--help` prints the exact supported modes without reading the project or
+  creating files.
+- `--plan` is read-only. It reports current discovery, native ownership,
+  commands, exclusions, and staged coverage.
+- `--tests-only` executes the local repository-test plan through its native
+  runners. It does not claim CodeQL, production-build, Cypress, hosted-job, or
+  pull-request metadata coverage.
+- With no mode flag, the engine admits the complete local staged gate. It runs
+  only when the required source, dependency, toolchain, fixture, network, and
+  browser-isolation boundaries can be proved. Otherwise it stops incomplete and
+  preserves preparation evidence.
 
-`validation-engine-v1.1.0.tar.gz` contains the hash-verified reusable
-controller, reviewed repair/retest components and AI setup instructions, plus
-the exact frozen recipes and inventory from the latest successful V7 run.
-The original RC1 status remains historical; `LATEST-RESULT.txt` records the
-later V7 result separately. The inventory identifies every saved file.
+A reviewed host may supply containment and proof callbacks to the bound engine
+APIs. It may provide mounts, disposable fixtures, network boundaries, and
+durable evidence storage. It must not rediscover tests, choose substitute
+commands, reorder stages, reinterpret results, or decide that an incomplete run
+passed.
 
-The archived reference run tested SeerrNG 3.48.1 at commit
-`897adeefa77371abed217e7d454d29cf0985b58b`, not the currently selected candidate.
-It passed 3,983 cases across 553 test files, with zero failures and four
-existing PostgreSQL conditional skips, in 5m36.205s including host lifecycle.
-No application repair was needed in that run. Browser/Cypress, CodeQL,
-compilation and release/deployment checks are not acceptance implied by it.
+There is no public worker-count option. Internal host overrides exist only for
+reviewed engine integration and tests; ordinary baselines must use automatic
+capacity selection.
 
-Worker capacity is selected inside the engine from effective logical CPUs after
-visible-CPU and cgroup limits. The universal default is `max(1, N - 1)` workers.
-GitHub Actions uses `N` workers regardless of actor identity. Locally, when the
-public GitHub login `JohnCronk79` is detected through ordinary Git identity,
-the same engine automatically uses `2N`. This follows the
-operator across development machines without using a machine name, OS account,
-Docker volume, credential lookup or separate runner. An explicit bounded worker
-override remains available to maintainers. The historical V7 result still records
-its original 24-slot configuration; it is not evidence for this updated policy.
+The `--github-*` modes shown by `--help` are internal GitHub Actions bindings,
+not manual replacements for the local commands.
 
-## Runtime safeguards and developer judgment
+## Test discovery and ownership
 
-The engine orchestrates execution; the repository's independently maintained
-tests define correctness. Developers update tests and fixtures alongside bug
-fixes, features, behavior and visual changes without adopting an engine-specific
-test format. Shared visual checks belong in that coverage: accepted semantic
-class ownership and the no-new-Tailwind rules apply to affected consumers,
-regardless of which developer changed them. During development, use affected
-checks rather than repeated whole-suite or all-platform builds. Before a commit
-or PR, run the complete applicable PR-check coverage and required compilation
-against the exact candidate. Discovery must follow its current tests, not a
-frozen reference inventory; report genuinely unavailable hosted/platform checks
-as unverified, never passing.
+Tests remain in their repository-owned locations and native formats. Hosted
+discovery assigns every supported test file exactly once to one of these lanes:
 
-These safeguards belong to the existing engine, not a per-change agent checklist:
+- Vitest through `pnpm test:ci`;
+- registered tooling through the existing `pnpm security:council` command and
+  its exact one-time `pnpm test:tooling` call;
+- native unregistered `node:test` MJS files through the engine-owned Node lane;
+- documentation security through `gen-docs` and `pnpm test:security`;
+- Cypress specifications through the existing pinned Cypress action.
 
-- `bin/local-validation.mjs` discovers the current repository's native test files
-  and retains selected ownership. Native result readers check actual case counts,
-  identities, duplicates and output closure; discovery is not proof that an
-  intended behavioral assertion was written or preserved.
-- `runtime/native-stage-context.mjs` pins actual candidate bytes, modes and
-  source/dependency/tool identities and checks freshness at execution boundaries.
-  Fixture configuration and process ownership remain run-local, with existing
-  network/provider guards. Missing context prerequisites block execution.
-- `runtime/cpu-capacity.mjs`, `controller.mjs` and `staged-validation.mjs` enforce
-  detected capacity, exclusive stage budgets, ordered barriers and declared
-  dependencies. `vitest-binding.mjs` handles independent files and quiet owners.
-  This is not a claim of archived per-file impact/cost scheduling in every runner.
-- Native adapters retain original commands/assertions, case outcomes, skips,
-  timings and process/log receipts. Failed required checks and missing coverage
-  cannot become an overall pass; GitHub-native metadata remains separately pending.
-- Browser execution requires this run's successful build for the same candidate.
-  Ordered independent stages may still collect evidence after a prior failure;
-  that does not turn the candidate into a passing result.
+The plan records each file and its source digest. Added or removed tests change
+the inventory. Duplicate ownership, missing registered files, unsupported test
+formats, unclassified files, empty required lanes, or native command drift fail
+closed. Use the current JSON plan for live counts; do not preserve a frozen
+inventory in the repository.
 
-The bound staged engine explicitly sets `resultReuse: false`. It does not accept
-previous green test results, compute automatic transitive repair selections or
-edit source. Archived repair/retest modules are reference implementations, not
-features imported by the normal staged entry. Compiled-build reuse currently
-validates successful receipts, candidate/root identity and required output
-existence, not a full compiled-artifact byte/mode seal. Do not claim guarantees
-the bound implementation does not enforce.
+Normal `test`, `test:vitest`, `test:ci`, and `test:tooling` commands remain
+native. Their engine bindings are configuration, not additional engine launches.
 
-Developer judgment remains limited to maintaining meaningful behavior tests with
-the implementation, deciding whether a genuinely superseded assertion needs an
-equally meaningful replacement, and diagnosing/repairing real failures under the
-applicable authorization. Do not weaken tests to obtain a pass. Verify a repair
-with affected checks; the engine reports the observed outcomes, not code-review
-approval or unperformed human/provider review.
+## Local staged execution
 
-## Archived reference reuse
+The local full gate has four ordered stages:
 
-1. Extract into a separate development workspace, outside automatic test globs.
-2. Read `engine/AI-INSTRUCTIONS.txt`, the target repo's AGENTS and Fix-it rules.
-3. Choose the actual source to test; preserve its dirty working bytes. Do not
-   replace it with the 3.48.1 reference or reuse reference pass counts/pins.
-4. Regenerate and review the inventory, case ledger, source/dependency/runtime
-   hashes and invocation packets for that chosen source. Old Windows paths,
-   Docker volumes and receipts are reference evidence, not live instructions.
-5. Run with disposable config/database fixtures and provider/network guards.
-   Compilation is separate. The engine queues failures; an authorized coding
-   agent supplies reviewed repairs, followed by failed and affected retests.
+1. repository checks, native tests, and applicable supplemental checks;
+2. CodeQL Actions and JavaScript analysis;
+3. the guarded production build;
+4. Cypress/browser validation using that run's successful build.
 
-All tests already present in the preview remain in their original locations.
-The saved recipe archive is deliberately not unpacked into those locations:
-that would create duplicate test discovery or overwrite a different revision.
-Only reviewed runtime modules are bound into the normal native test setup.
-The archived reference recipes remain outside automatic test discovery.
+Stage ordering is an evidence barrier, not automatic suppression after every
+earlier failure. Independent later stages may continue collecting diagnostics
+after an earlier failure. A true data dependency still applies: browser
+validation cannot run without its own successful same-run build. Any required
+failure keeps the overall result failed.
+
+Independent test files use isolated forks and fresh temporary configuration.
+The known quiet Vitest owners run serially after the independent Vitest group.
+Cypress remains one native browser process until safe isolated sharding is
+proved.
+
+Applicable supplemental checks include workflow and security contracts,
+documentation, release contracts, the Jellyfin plugin and disposable smoke,
+conditional Helm validation, and link checks. Missing required prerequisites
+make the result incomplete or failed; discovery is never reported as execution.
+
+Local staged execution does not reuse prior successful test results. Local build
+reuse is limited to the successful build produced earlier in the same bound run
+for the same candidate.
+
+## Worker policy
+
+Let `N` be the effective logical CPU capacity: the minimum of available logical
+CPUs, visible logical CPUs, and any applicable cgroup quota.
+
+- ordinary local execution uses `max(1, N - 1)`;
+- approved local `JohnCronk79` Git identity uses `2N`;
+- GitHub Actions uses exactly `N`, regardless of actor identity.
+
+Worker values are capacity reservations, not claims about physical cores or the
+number of operating-system threads visible during every command.
+
+## GitHub Actions orchestration
+
+For pull requests and pushes to `main`, the central CI workflow creates one
+immutable plan bound to the repository, event, run ID, run attempt, execution
+commit, tree, lockfile, changed files, workflow definitions, and complete test
+inventory.
+
+The engine owns this fixed ordered graph:
+
+1. Repository units run in parallel: release notes, i18n/tooling, unit tests, and
+   applicable documentation links.
+2. CodeQL runs after repository units finish, with separate Actions and
+   JavaScript cases.
+3. Build units run in parallel after CodeQL finishes: Jellyfin plugin and smoke,
+   the existing Alpine lint/production build, documentation build/security, and
+   Helm validation.
+4. Cypress runs after the build units finish.
+
+These are ordering barriers. Later stages use diagnostic continuation after an
+earlier failure unless the workflow is cancelled. Final reconciliation still
+rejects every required failure, cancellation, missing result, or unexpected
+skip.
+
+After a job completes the native setup required to establish its dependency and
+runner identity, each applicable unit or matrix case:
+
+1. downloads the immutable plan;
+2. verifies the current candidate, workflows, and test inventory;
+3. admits its exact planned unit and case;
+4. either executes its existing native work or accepts an exact reusable success;
+5. preserves its sealed result, evidence manifest, and attempt-scoped ledger;
+6. uploads those artifacts for reconciliation.
+
+A successful execution creates the ledger's single success entry. Failed,
+cancelled, or incomplete work leaves the ledger blank and cannot be reused.
+If native runner setup fails before engine admission, the GitHub job fails and
+the missing required receipt makes final reconciliation fail closed; the native
+job log remains the failure evidence. No pre-admission failure can be reported as
+an engine success.
+
+The unit-test job preserves `pnpm test:ci` and also runs the dynamically
+discovered native Node lane with exactly `N` effective workers. A successful
+receipt requires the JUnit report to contain every planned Vitest file exactly
+once with active tests and no failures or errors. The engine-owned Node result
+must match the same admission, worker capacity, inventory, and lane. Each
+planned native Node file runs in its own isolated process through an `N`-wide
+engine pool and must produce a nonempty complete TAP hierarchy; the sealed
+per-file reports, files, case counts, and aggregate result must all reconcile.
+
+The existing Alpine production-build job remains intact. Cypress separately
+performs one Ubuntu `pnpm cypress:build` inside the Cypress job, then the pinned
+Cypress action reuses that same-job build instead of building again. No compiled
+build is transferred between different runner environments.
+
+Final reconciliation downloads the immutable plan and the complete current-
+attempt admission, receipt, and ledger artifacts. It requires exactly one
+successful sealed artifact set for every applicable unit case. It verifies the
+planned artifact set and the candidate, workflow, command, test-inventory,
+admission, result, and ledger bindings. GitHub's native job logs remain the
+evidence for action-managed tool setup that is not itself safely reusable.
+
+Path- or event-inapplicable jobs must be skipped exactly as planned. Pull-request
+title, template, and merge-conflict checks remain external GitHub metadata and
+are not represented as engine-executed native work. Standalone scheduled or
+manual reusable-workflow launches are native runs, not aggregate hosted-engine
+passes.
+
+## Result reuse and caches
+
+Hosted result reuse is deliberately narrow:
+
+- every run attempt starts with an empty result ledger;
+- only the unit-test job is currently eligible, because it has both a bound
+  installed dependency lock and semantic native-result closure;
+- even that job may reuse only an exact duplicate of completed successful work
+  within the same run attempt;
+- the candidate, plan, unit, case, command, dependencies, tools, runner, setup,
+  workflow, admission, receipt, and ledger must all match;
+- CodeQL, builds, documentation, Helm, links, release, i18n/tooling, and Cypress
+  results are default-deny until their complete execution-defining setup can be
+  proved;
+- failed, cancelled, partial, missing, duplicated, or tampered work is never
+  reusable;
+- successes never cross run attempts, commits, candidates, or pull-request
+  updates.
+
+The normal hosted graph currently schedules every unit/case once and does not
+preload another job's receipt directory. Ordinary GitHub runs therefore execute
+each applicable unit once and receive no baseline speedup from result reuse. The
+eligible unit-test reuse path becomes active only if a deliberate same-attempt
+duplicate consumer is wired later with the matching sealed artifacts.
+
+A source repair therefore requires a new commit and new run; GitHub does not fix
+source code, and an earlier green result cannot be carried into the repaired
+candidate. A failed-jobs-only rerun creates a new run attempt and cannot combine
+old successes with new results into an aggregate engine pass.
+
+Existing lock-bound dependency download caches may persist. They are not test-
+result caches. Same-job build reuse is allowed only where explicitly described
+above.
+
+## Candidate binding and evidence
+
+The engine fails closed when required work fails, no active tests execute,
+output is partial or truncated, expected results are missing or duplicated,
+source changes after planning, isolation is unproved, or evidence does not close
+the plan.
+
+Local execution retains native receipts, logs, case outcomes, skips, timings,
+and process ownership/cleanup evidence. Hosted execution retains GitHub's native
+job logs and, for work that reaches engine admission, sealed admissions,
+evidence manifests, parsed unit-test closure summaries, success receipts, and
+attempt-scoped ledgers.
+
+The engine does not install development dependencies, provision missing tools,
+apply live migrations, mutate provider accounts, repair source code, approve
+code review, or substitute for required human or provider verification.
+
+## Maintenance boundaries
+
+Maintain meaningful tests and fixtures with behavior changes. Run affected
+focused checks during development, then run the complete applicable gate against
+the exact final candidate before publication.
+
+Do not weaken or delete a valid assertion to obtain a pass. When accepted
+behavior genuinely supersedes an assertion, replace it with equally meaningful
+current coverage and record the reason.
+
+The bound implementation lives under `tools/validation-engine/runtime/`. Its
+single repository entry point is `bin/run-local-validation.mjs`; native Vitest
+and GitHub integration remain in their existing configuration and workflow
+files.

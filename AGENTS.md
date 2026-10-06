@@ -33,7 +33,8 @@ Before implementation or merge conflict resolution, read these complete files:
    evidence procedure. This complements the standard; it does not replace it.
 3. For forward integration, `docs/maintainers/ui-forward-merge-guide.md`.
 
-Test-engine behavior and developer guidance: `tools/validation-engine/README.md`.
+Authoritative test-engine usage and behavior:
+`tools/validation-engine/README.md`.
 
 Read applicable existing task/security/contribution instructions too. These
 instructions supplement existing functional, security, migration, and release
@@ -64,7 +65,7 @@ do not choose a new design merely to make a check pass.
 Work in approved page/asset batches. During editing, run affected focused checks
 and record a preview as an iteration, not a release candidate. Test discovery,
 scheduling, input freshness, isolation and result accounting belong to the
-existing engine implementation, not a separate agent execution procedure.
+repository's bound validation engine, not a separate agent execution procedure.
 Follow the fix-it audit too: prose instructions are not executable tests.
 Inspect the plan/inventory for connected native/source/DOM/style suites; report
 actual execution, counts, skips and exclusions separately from discovery.
@@ -97,9 +98,8 @@ lockfile. Run affected integration/e2e checks in disposable environments where
 available. Never aim tests at live configuration, accounts, queues, playlists,
 collections, watchlists, or databases. A mocked provider pass is not a live
 round-trip pass. Perform desktop/narrow and interaction review of changed roles.
-Record human review separately from automated checks; applicable human review
-may be performed by the maintainer or an authorized reviewer and does not require
-John's personal visual approval.
+Record human review separately from automated checks. The maintainer or an
+authorized reviewer supplies applicable human-review evidence.
 
 ## Safe collaboration and records
 

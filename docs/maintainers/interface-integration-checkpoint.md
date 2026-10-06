@@ -1,8 +1,10 @@
 # Interface Integration Checkpoint
 
 This is the living evidence appendix for the forward-merge guide, not a release
-approval or a complete site-audit claim. Read `AGENTS.md`, UI Style Standard and
-UI Fix-It first. Preserve earlier accepted work while reviewing small batches.
+approval, current operating procedure or complete site-audit claim. The evidence
+sections below preserve historical facts; they do not replace current maintainer
+authority or the validation-engine README. Read `AGENTS.md`, UI Style Standard
+and UI Fix-It first. Preserve earlier accepted work while reviewing small batches.
 Never infer human acceptance from test success or a journal's implementation note.
 
 ## Preservation and coverage map
@@ -39,17 +41,19 @@ successor changes must not be resurrected because an older log mentions them.
 - Previous focused passes do not establish a full cumulative suite/build pass.
   Human visual acceptance and physical drag/touch review remain pending.
 
-## Current bounded batch
+## Historical bounded batch evidence
 
-Approved: improve portable instructions, regression checks and merge evidence;
-repair only clear existing visual-rule violations in the Series/shared controls.
-Not approved: broad backend/security repair, new design presets, NAS deployment,
-GitHub push/PR or production-account tests as part of a visual audit.
+At this checkpoint, the approved scope was to improve portable instructions,
+regression checks and merge evidence and repair only clear existing visual-rule
+violations in the Series/shared controls. It did not approve broad
+backend/security repair, new design presets, NAS deployment, GitHub publication,
+or production-account tests as part of a visual audit.
 
-The original public `dev`, `build`, validation and hook bindings remain intact.
-Focused checks support iterative previews; finalization requires one complete
-gate on the exact candidate. `pnpm build` runs validation then compilation, so
-do not run another identical full validation immediately beforehand.
+The public `dev`, `build`, validation and hook bindings at that checkpoint
+remained intact. Focused checks supported iterative previews; finalization
+required one complete gate on the exact candidate. At that checkpoint,
+`pnpm build` ran validation and then compilation. This is historical command
+evidence, not current usage guidance.
 
 Known remaining visual debt: legacy Series/shared `@apply` and competing card
 padding owners require a later bounded consumer audit. A long action-menu list
@@ -108,17 +112,17 @@ or full-gate claim. Internal-only test hardening adds no user-facing feature.
 ## Subsequent isolated verification and input blockers
 
 The repaired cumulative retry passed the preliminary validators, formatting,
-lint, server/client types and all85 Vitest files/395 tests. AvailabilitySync
+lint, server/client types and all 85 Vitest files/395 tests. AvailabilitySync
 passed within the native TS lane. A different required after-hook then failed
 following the Plex scanner suites: the guard caught an attempted request to a
 fake Plex test host. That scanner source and guard are unchanged from the
 preserved baseline. This is isolation evidence, not a production bug diagnosis.
-The long run was stopped there; exit137 records the stop, separately from the
+The long run was stopped there; exit 137 records the stop, separately from the
 hook failure. Native TS remains partial; no production compilation was reached.
 No scanner/guard repair or failure waiver was made.
 
 The previously unrun native JavaScript lane was executed separately on the same
-frozen candidate: all46 selected files ran,391 tests,357 passed,34 failed, zero
+frozen candidate: all 46 selected files ran, 391 tests, 357 passed, 34 failed, zero
 skips/todos/cancellations. This is a failing partial receipt, not a complete gate.
 Failures include superseded source/utility assertions and unresolved contracts;
 replace only clearly superseded assertions with equivalent role/behavior tests
@@ -138,15 +142,15 @@ exclusions convert these blockers into a pass.
 ## Bounded visual-contract follow-up
 
 One established implementation violation was repaired: the single-option
-Request icon's local16px utility is removed only after its real branch is
-attached to the existing shared14px content-size owner. No new geometry or
+Request icon's local 16px utility is removed only after its real branch is
+attached to the existing shared 14px content-size owner. No new geometry or
 palette was designed, and production backend code is unchanged.
 
 Seven visual test files now follow the current Requests consumer, accepted
 semantic table/gap owners and Series saved-order/controlled-disclosure behavior.
 Superseded source/utility assertions were replaced with property/role/callback
 coverage and diagnostic-specific negative fixtures. The affected nine-suite
-execution (including shared button/icon checks) ran157 tests:153 passed, four
+execution (including shared button/icon checks) ran 157 tests: 153 passed, four
 failed, no skips/todos/cancellations. Three failures were in the new icon checker:
 it initially audited unrelated root palette aliases and mishandled PostCSS's
 separate important flag. After correcting that checker, only its changed six
@@ -296,9 +300,10 @@ Fill these fields with observed facts; unknown means pending, never assumed.
 8. Recoverable refs/archive identity and checksums, final source readback, and
    applicable publication authority. Local preview publication is not PR approval.
 
-The contributor and Keith's AI must use the same checked-in instructions and
-gate, adapted to the newer target without discarding its valid security/backend
-fixes. If the target advances, pin the new head and repeat invalidated checks.
+Contributor and maintainer-side automation must use the same checked-in
+instructions and gate, adapted to the newer target without discarding its valid
+security/backend fixes. If the target advances, pin the new head and repeat
+invalidated checks.
 
 ## Preview merge and validation — October 4, 2026
 
@@ -308,9 +313,8 @@ the accepted preview and authorized integration with Keith's current main,
 scoped Fix-it repairs, source-specific engine validation, separate guarded
 compilation, and a laptop preview on port 5071 with an independent copy of the
 5070 configuration/database. The final preview is shown only after those checks
-complete. Visual-review evidence is separate from automated verification;
-applicable human review may be performed by the maintainer or an authorized
-reviewer and does not require John's personal visual approval.
+complete. Record visual-review evidence separately from automated verification;
+the maintainer or an authorized reviewer supplies applicable review evidence.
 
 The pinned upstream base is `a96fafa07c77a2d6d95badeb9f60c32a6b4a47c9`
 (3.48.3). The exact accepted working-byte checkpoint is
@@ -322,11 +326,11 @@ MediaSlider retains its newer TMDB stale/error retry notice and poster fallback.
 Testing instructions are reconciled to the reviewed engine, while actual public
 package commands and hooks preserve their existing bindings.
 
-The reviewed combined engine uses this integrated candidate's existing tests and
-supplemental checks with fresh inventory, case ledger and source/environment
-pins. The archived comprehensive runner is not an additional mandatory test run.
-`pnpm build` runs translation/shared-visual guards and compilation separately.
-The saved 3.48.1 engine receipt remains historical and cannot certify this source.
+At that checkpoint, the reviewed validation setup used the integrated candidate's
+existing tests and supplemental checks with a fresh inventory, case ledger and
+source/environment pins. Compilation remained a separate guarded action. This is
+historical evidence; current engine operation is defined only by
+`tools/validation-engine/README.md`.
 All iterative source, dependencies, evidence, caches, test and compile work remain
 in Docker-managed Linux storage. The original accepted preview remains preserved.
 
@@ -361,25 +365,3 @@ John explicitly waived another compile and requested tests only for the amended
 source. A fresh source-bound engine run and static checks must establish that
 amendment's actual result before publication. No production deployment or merge
 of Keith's PR is authorized by this overnight finalization request.
-
-## Personal visual-approval requirement removed — October 5, 2026
-
-John directed removal of the requirement for his personal visual approval from
-our instructions. Neither test execution/completion nor otherwise authorized
-contribution or release work depends on John's personal visual sign-off.
-This correction supersedes any older named approval gate in this checkpoint;
-historical review receipts remain historical, not current requirements.
-Automated checks, applicable maintainer authorization, and truthful reporting of
-visual evidence remain unchanged. The test-engine maintenance section in
-`AGENTS.md` is retained pending John's review; no relocation or removal of that
-section is authorized by this correction.
-
-## Engine procedure removed from agent instructions — October 5, 2026
-
-John subsequently authorized removing the engine-maintenance procedure from
-`AGENTS.md`. That file retains a short engine documentation route, not the
-47-line execution checklist. Existing automatic safeguards remain in the bound
-runtime; engine documentation distinguishes implemented behavior from archived
-reference features and limited developer judgment. This supersedes the earlier
-instruction to retain the section pending review. No different source base,
-application changes, new runner or framework is authorized by this correction.

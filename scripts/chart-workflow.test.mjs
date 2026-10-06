@@ -32,10 +32,13 @@ test('chart validation uses version-aware comparison for pull requests', () => {
     (step) => step.name === 'Run chart-testing (pull request)'
   );
 
-  assert.equal(listChanged.if, "github.event_name == 'pull_request'");
+  assert.equal(
+    listChanged.if,
+    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request'"
+  );
   assert.equal(
     pullRequestLint.if,
-    "github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
+    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
   );
   assert.match(pullRequestLint.run, /ct lint --target-branch/iu);
 });
@@ -45,7 +48,10 @@ test('centrally selected chart validation retains push-wide lint behavior', () =
     (step) => step.name === 'Run chart-testing (push)'
   );
 
-  assert.equal(pushLint.if, "github.event_name == 'push'");
+  assert.equal(
+    pushLint.if,
+    "steps.engine-admission.outputs.execute == 'true' && github.event_name == 'push'"
+  );
   assert.match(pushLint.run, /ct lint --all --validate-maintainers=false/iu);
   assert.ok(Object.hasOwn(workflow.on, 'workflow_call'));
   assert.deepEqual(ciWorkflow.on.push.branches, ['main']);
@@ -53,8 +59,14 @@ test('centrally selected chart validation retains push-wide lint behavior', () =
     ciWorkflow.jobs.helm.uses,
     './.github/workflows/lint-helm-charts.yml'
   );
-  assert.equal(
+  assert.match(ciWorkflow.jobs.helm.if, /always\(\)/u);
+  assert.match(ciWorkflow.jobs.helm.if, /!cancelled\(\)/u);
+  assert.match(
     ciWorkflow.jobs.helm.if,
-    "needs.engine-plan.outputs.helm == 'true'"
+    /needs\.engine-plan\.result == 'success'/u
+  );
+  assert.match(
+    ciWorkflow.jobs.helm.if,
+    /needs\.engine-plan\.outputs\.helm == 'true'/u
   );
 });

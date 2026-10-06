@@ -98,7 +98,20 @@ Use a suitable disposable toolchain and record its versions. Plan discovery
 does not certify these external prerequisites. Missing inputs block finalization,
 not permission to skip suites, change CI or install tools into the live preview.
 
-1. Read `tools/validation-engine/README.md` and the extracted engine setup instructions. Regenerate and review the selected source's test inventory, expected cases, ownership, dependency closure, source/dependency/runtime hashes and invocation packets. During repairs, run affected focused checks and label preview evidence as iterative. Run the reviewed combined engine against existing repository tests and source-specific supplemental checks on the exact final candidate and the integrated tree after conflicts. Keep mutable config/database fixtures in disposable scratch storage; preserve provider/network guards and global-state barriers. Queue failures for reviewed diagnosis and repair, then rerun failed checks and their affected dependency closure. The saved 3.48.1 receipt is historical evidence, not acceptance of this candidate. Compile after passing tests with required translation/shared-visual build guards. Public package commands and hooks remain unchanged; the archived comprehensive runner is not a redundant second mandatory run. Browser/Cypress and CI remain separate gates. Retain discovery and executed results separately, including counts/skips/platform exclusions; Linux is required for full POSIX tooling parity.
+1. Read `tools/validation-engine/README.md` and use only the repository's bound
+   validation-engine entry point. Review the selected source's current plan,
+   inventory, expected cases, ownership, dependency closure and candidate/runtime
+   bindings. During repairs, run affected focused checks and label preview evidence
+   as iterative. Run the full staged engine in an approved context against the
+   exact final candidate and again after integration conflicts change it. Keep
+   mutable config/database fixtures in disposable scratch storage; preserve
+   provider/network guards and global-state barriers. Diagnose failures under the
+   applicable authority and verify repairs with affected checks before repeating
+   the required full gate. Do not invoke a second runner or reuse evidence from a
+   different source. Retain planned and executed results separately, including
+   counts, skips and platform exclusions; Linux is required for full POSIX tooling
+   parity. GitHub-native metadata remains separate until an actual pull request
+   exists.
 2. Run focused source/AST checks, effective CSS checks and behavioral tests for changed owners and affected consumers. Reuse existing focused tests instead of building a second verifier architecture or performing an unrelated whole-site audit.
 3. Assertions target roles, relationships and actual behavior. Parse CSS correctly across grouped/nested rules; do not use stale utility-name assertions, naive first-brace extraction, or exact text examples as proof of styling.
 4. Run proportional lint/type checking and compilation for changed source types/style owners. Check service health only after authorized publication. Compile/type/HTTP success is not human visual acceptance or a successful provider round trip.

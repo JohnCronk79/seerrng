@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
 import {
   createHostedGithubPlan,
@@ -9,12 +10,16 @@ import {
   reconcileHostedGithubNeeds,
 } from '../tools/validation-engine/runtime/hosted-github-plan.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
+import { createHostedTestInventory } from '../tools/validation-engine/runtime/hosted-test-inventory.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tests cannot resolve application TS aliases.
 import {
   createStagedValidation,
   executeStagedValidation,
 } from '../tools/validation-engine/runtime/staged-validation.mjs';
 
 const sha = 'a'.repeat(64);
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
+const hostedTestInventory = createHostedTestInventory(repositoryRoot);
 const candidate = {
   repository: 'JohnCronk79/seerrng',
   commit: 'b'.repeat(40),
@@ -48,6 +53,7 @@ const hostedInput = (overrides = {}) => ({
   event: githubEvent(),
   changedFiles: ['tools/validation-engine/runtime/staged-validation.mjs'],
   workflowHashes,
+  testInventory: hostedTestInventory,
   ...overrides,
 });
 const githubNeeds = (plan) =>
@@ -436,7 +442,7 @@ test('unsupported, duplicate and unproved applicability is rejected', () => {
   }
 });
 
-test('hosted GitHub plan is deterministic and preserves native job parallelism', () => {
+test('hosted GitHub plan is deterministic and binds the staged native DAG', () => {
   const first = createHostedGithubPlan(
     hostedInput({
       changedFiles: [
@@ -458,18 +464,97 @@ test('hosted GitHub plan is deterministic and preserves native job parallelism',
     })
   );
 
-  assert.equal(first.schema, 'seerrng-hosted-github-plan/v1');
+  assert.equal(first.schema, 'seerrng-hosted-github-plan/v2');
   assert.equal(first.planSha256, second.planSha256);
   assert.deepEqual(first, second);
-  assert.equal(first.resultReuse, false);
+  assert.deepEqual(first.resultReuse, {
+    scope: 'current-run-attempt-only',
+    initialState: 'empty',
+    eligible: 'exact-duplicate-success-only',
+    eligibleUnits: ['ci-unit-test'],
+    failuresReusable: false,
+    crossAttempt: false,
+    crossCandidate: false,
+  });
   assert.equal(first.units.length, 10);
-  assert.ok(
-    first.units.every(
-      (unit) =>
-        unit.required &&
-        unit.dependsOn.length === 1 &&
-        unit.dependsOn[0] === 'engine-plan'
-    )
+  assert.deepEqual(
+    first.units.map(({ id, stage, dependsOn }) => ({ id, stage, dependsOn })),
+    [
+      {
+        id: 'ci-release-notes',
+        stage: 'repository',
+        dependsOn: ['engine-plan'],
+      },
+      {
+        id: 'ci-i18n',
+        stage: 'repository',
+        dependsOn: ['engine-plan'],
+      },
+      {
+        id: 'ci-unit-test',
+        stage: 'repository',
+        dependsOn: ['engine-plan'],
+      },
+      {
+        id: 'docs-links',
+        stage: 'repository',
+        dependsOn: ['engine-plan'],
+      },
+      {
+        id: 'codeql-analyze',
+        stage: 'codeql',
+        dependsOn: [
+          'ci-release-notes',
+          'ci-i18n',
+          'ci-unit-test',
+          'docs-links',
+        ],
+      },
+      {
+        id: 'ci-jellyfin-plugin',
+        stage: 'build',
+        dependsOn: ['codeql-analyze'],
+      },
+      {
+        id: 'ci-test',
+        stage: 'build',
+        dependsOn: ['codeql-analyze'],
+      },
+      {
+        id: 'test-docs-build',
+        stage: 'build',
+        dependsOn: ['codeql-analyze'],
+      },
+      {
+        id: 'helm-lint-test',
+        stage: 'build',
+        dependsOn: ['codeql-analyze'],
+      },
+      {
+        id: 'cypress-run',
+        stage: 'browser',
+        dependsOn: [
+          'ci-jellyfin-plugin',
+          'ci-test',
+          'test-docs-build',
+          'helm-lint-test',
+        ],
+      },
+    ]
+  );
+  assert.deepEqual(
+    first.units
+      .filter(({ testLanes }) => testLanes.length)
+      .map(({ id, testLanes }) => ({ id, testLanes })),
+    [
+      { id: 'ci-i18n', testLanes: ['tooling'] },
+      {
+        id: 'ci-unit-test',
+        testLanes: ['vitest', 'node-test-mjs'],
+      },
+      { id: 'test-docs-build', testLanes: ['docs-security'] },
+      { id: 'cypress-run', testLanes: ['cypress'] },
+    ]
   );
   assert.deepEqual(
     first.units.filter((unit) => !unit.applicable).map((unit) => unit.id),
@@ -493,12 +578,12 @@ test('hosted GitHub applicability matches native event, branch and path filters'
     changedFiles: ['docs/maintainers/example.md'],
   });
   assert.deepEqual(applicableIds(botDocs), [
-    'ci-jellyfin-plugin',
     'ci-i18n',
-    'ci-test',
     'ci-unit-test',
-    'test-docs-build',
     'docs-links',
+    'ci-jellyfin-plugin',
+    'ci-test',
+    'test-docs-build',
   ]);
 
   const engineMarkdown = hostedInput({
@@ -506,24 +591,24 @@ test('hosted GitHub applicability matches native event, branch and path filters'
     changedFiles: ['tools/validation-engine/README.md'],
   });
   assert.deepEqual(applicableIds(engineMarkdown), [
-    'ci-jellyfin-plugin',
     'ci-i18n',
-    'ci-test',
     'ci-unit-test',
-    'codeql-analyze',
-    'cypress-run',
-    'test-docs-build',
     'docs-links',
+    'codeql-analyze',
+    'ci-jellyfin-plugin',
+    'ci-test',
+    'test-docs-build',
+    'cypress-run',
   ]);
 
   const charts = hostedInput({ changedFiles: ['charts/seerrng/values.yaml'] });
   assert.deepEqual(applicableIds(charts), [
-    'ci-jellyfin-plugin',
     'ci-release-notes',
     'ci-i18n',
-    'ci-test',
     'ci-unit-test',
     'codeql-analyze',
+    'ci-jellyfin-plugin',
+    'ci-test',
     'helm-lint-test',
   ]);
 
@@ -531,16 +616,16 @@ test('hosted GitHub applicability matches native event, branch and path filters'
     changedFiles: ['.github/workflows/ci.yml'],
   });
   assert.deepEqual(applicableIds(centralCaller), [
-    'ci-jellyfin-plugin',
     'ci-release-notes',
     'ci-i18n',
-    'ci-test',
     'ci-unit-test',
-    'codeql-analyze',
-    'cypress-run',
-    'test-docs-build',
     'docs-links',
+    'codeql-analyze',
+    'ci-jellyfin-plugin',
+    'ci-test',
+    'test-docs-build',
     'helm-lint-test',
+    'cypress-run',
   ]);
 
   for (const [pathFilterMode, baseSha] of [
@@ -562,16 +647,16 @@ test('hosted GitHub applicability matches native event, branch and path filters'
     assert.deepEqual(
       applicableIds(fallbackPush),
       [
-        'ci-jellyfin-plugin',
         'ci-release-notes',
         'ci-i18n',
-        'ci-test',
         'ci-unit-test',
-        'codeql-analyze',
-        'cypress-run',
-        'test-docs-build',
         'docs-links',
+        'codeql-analyze',
+        'ci-jellyfin-plugin',
+        'ci-test',
+        'test-docs-build',
         'helm-lint-test',
+        'cypress-run',
       ],
       pathFilterMode
     );
@@ -581,16 +666,16 @@ test('hosted GitHub applicability matches native event, branch and path filters'
     changedFiles: [],
   });
   assert.deepEqual(applicableIds(largePullRequest), [
-    'ci-jellyfin-plugin',
     'ci-release-notes',
     'ci-i18n',
-    'ci-test',
     'ci-unit-test',
-    'codeql-analyze',
-    'cypress-run',
-    'test-docs-build',
     'docs-links',
+    'codeql-analyze',
+    'ci-jellyfin-plugin',
+    'ci-test',
+    'test-docs-build',
     'helm-lint-test',
+    'cypress-run',
   ]);
   assert.throws(
     () =>
@@ -726,7 +811,15 @@ test('hosted GitHub reconciliation accepts only exact current-run needs', () => 
       },
     ]
   );
-  assert.equal(report.resultReuse, false);
+  assert.deepEqual(report.resultReuse, {
+    scope: 'current-run-attempt-only',
+    initialState: 'empty',
+    eligible: 'exact-duplicate-success-only',
+    eligibleUnits: ['ci-unit-test'],
+    failuresReusable: false,
+    crossAttempt: false,
+    crossCandidate: false,
+  });
   assert.equal(Object.isFrozen(report), true);
 
   const pushPlan = createHostedGithubPlan(

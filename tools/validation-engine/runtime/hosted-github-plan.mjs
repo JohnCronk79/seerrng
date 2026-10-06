@@ -1,8 +1,10 @@
 // Copyright (c) snapetech and SeerrNG contributors.
-// Pure GitHub plan/reconciliation data. Native jobs remain owned by workflows.
+// Pure GitHub plan/reconciliation data. The engine owns the logical DAG while
+// the bound workflows preserve each native executor and runner environment.
 import { createHash } from 'node:crypto';
+import { assertHostedTestInventory } from './hosted-test-inventory.mjs';
 
-const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v1';
+const PLAN_SCHEMA = 'seerrng-hosted-github-plan/v2';
 const RECONCILIATION_SCHEMA = 'seerrng-hosted-github-reconciliation/v1';
 const HASH40 = /^[a-f0-9]{40}$/;
 const HASH64 = /^[a-f0-9]{64}$/;
@@ -14,6 +16,7 @@ const PATH_FILTER_MODES = new Set([
   'run-all-new-branch',
 ]);
 const STAGES = ['repository', 'codeql', 'build', 'browser'];
+const STAGE_INDEX = new Map(STAGES.map((stage, index) => [stage, index]));
 const WORKFLOW_KEYS = [
   'ci',
   'codeql',
@@ -30,6 +33,7 @@ const PLAN_KEYS = [
   'planSha256',
   'resultReuse',
   'schema',
+  'testInventory',
   'units',
   'workflowHashes',
 ];
@@ -49,6 +53,27 @@ const EXTERNAL_PR_METADATA = [
     authority: 'GitHub live mergeability metadata',
     status: 'external-not-reconciled',
   },
+];
+const RESULT_REUSE_POLICY = Object.freeze({
+  scope: 'current-run-attempt-only',
+  initialState: 'empty',
+  eligible: 'exact-duplicate-success-only',
+  eligibleUnits: ['ci-unit-test'],
+  failuresReusable: false,
+  crossAttempt: false,
+  crossCandidate: false,
+});
+const REPOSITORY_UNITS = [
+  'ci-release-notes',
+  'ci-i18n',
+  'ci-unit-test',
+  'docs-links',
+];
+const BUILD_UNITS = [
+  'ci-jellyfin-plugin',
+  'ci-test',
+  'test-docs-build',
+  'helm-lint-test',
 ];
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -324,41 +349,49 @@ function applicability(event, changedFiles) {
   };
 }
 
-function unit({ id, needsKey, workflow, job, stage, applicable, reason }) {
+function unit({
+  id,
+  needsKey,
+  workflow,
+  workflowSha256,
+  job,
+  stage,
+  cases = ['default'],
+  testLanes = [],
+  dependsOn,
+  applicable,
+  reason,
+}) {
   return {
     id,
     needsKey,
     workflow,
+    workflowSha256,
     job,
     stage,
+    cases,
+    testLanes,
     required: true,
     applicable,
     applicability: {
       expectedResult: applicable ? 'success' : 'skipped',
       reason,
     },
-    dependsOn: ['engine-plan'],
+    dependsOn,
   };
 }
 
-function validationUnits(event, changedFiles) {
+function validationUnits(event, changedFiles, workflowHashes) {
   const applies = applicability(event, changedFiles);
   return [
-    unit({
-      id: 'ci-jellyfin-plugin',
-      needsKey: 'jellyfin-plugin',
-      workflow: 'ci',
-      job: 'jellyfin-plugin',
-      stage: 'build',
-      applicable: applies.ci,
-      reason: 'CI job: pull request or push to main',
-    }),
     unit({
       id: 'ci-release-notes',
       needsKey: 'release-notes',
       workflow: 'ci',
+      workflowSha256: workflowHashes.ci,
       job: 'release-notes',
       stage: 'repository',
+      dependsOn: ['engine-plan'],
       applicable: applies.releaseNotes,
       reason: 'CI job: push, or non-Bot pull request',
     }),
@@ -366,17 +399,11 @@ function validationUnits(event, changedFiles) {
       id: 'ci-i18n',
       needsKey: 'i18n',
       workflow: 'ci',
+      workflowSha256: workflowHashes.ci,
       job: 'i18n',
       stage: 'repository',
-      applicable: applies.ci,
-      reason: 'CI job: pull request or push to main',
-    }),
-    unit({
-      id: 'ci-test',
-      needsKey: 'test',
-      workflow: 'ci',
-      job: 'test',
-      stage: 'build',
+      testLanes: ['tooling'],
+      dependsOn: ['engine-plan'],
       applicable: applies.ci,
       reason: 'CI job: pull request or push to main',
     }),
@@ -384,55 +411,93 @@ function validationUnits(event, changedFiles) {
       id: 'ci-unit-test',
       needsKey: 'unit-test',
       workflow: 'ci',
+      workflowSha256: workflowHashes.ci,
       job: 'unit-test',
       stage: 'repository',
+      testLanes: ['vitest', 'node-test-mjs'],
+      dependsOn: ['engine-plan'],
       applicable: applies.ci,
       reason: 'CI job: pull request or push to main',
-    }),
-    unit({
-      id: 'codeql-analyze',
-      needsKey: 'codeql',
-      workflow: 'codeql',
-      job: 'analyze',
-      stage: 'codeql',
-      applicable: applies.codeql,
-      reason: 'CodeQL event, branch and ordered path filters',
-    }),
-    unit({
-      id: 'cypress-run',
-      needsKey: 'cypress',
-      workflow: 'cypress',
-      job: 'cypress-run',
-      stage: 'browser',
-      applicable: applies.cypress,
-      reason: 'Cypress event, branch and path filters',
-    }),
-    unit({
-      id: 'test-docs-build',
-      needsKey: 'test-docs',
-      workflow: 'testDocs',
-      job: 'test-build',
-      stage: 'build',
-      applicable: applies.testDocs,
-      reason: 'Test Docs main-branch and path filters',
     }),
     unit({
       id: 'docs-links',
       needsKey: 'docs-links',
       workflow: 'docsLinks',
+      workflowSha256: workflowHashes.docsLinks,
       job: 'link-check',
       stage: 'repository',
+      dependsOn: ['engine-plan'],
       applicable: applies.docsLinks,
       reason: 'Docs links event, branch and path filters',
+    }),
+    unit({
+      id: 'codeql-analyze',
+      needsKey: 'codeql',
+      workflow: 'codeql',
+      workflowSha256: workflowHashes.codeql,
+      job: 'analyze',
+      stage: 'codeql',
+      cases: ['actions', 'javascript'],
+      dependsOn: [...REPOSITORY_UNITS],
+      applicable: applies.codeql,
+      reason: 'CodeQL event, branch and ordered path filters',
+    }),
+    unit({
+      id: 'ci-jellyfin-plugin',
+      needsKey: 'jellyfin-plugin',
+      workflow: 'ci',
+      workflowSha256: workflowHashes.ci,
+      job: 'jellyfin-plugin',
+      stage: 'build',
+      dependsOn: ['codeql-analyze'],
+      applicable: applies.ci,
+      reason: 'CI job: pull request or push to main',
+    }),
+    unit({
+      id: 'ci-test',
+      needsKey: 'test',
+      workflow: 'ci',
+      workflowSha256: workflowHashes.ci,
+      job: 'test',
+      stage: 'build',
+      dependsOn: ['codeql-analyze'],
+      applicable: applies.ci,
+      reason: 'CI job: pull request or push to main',
+    }),
+    unit({
+      id: 'test-docs-build',
+      needsKey: 'test-docs',
+      workflow: 'testDocs',
+      workflowSha256: workflowHashes.testDocs,
+      job: 'test-build',
+      stage: 'build',
+      testLanes: ['docs-security'],
+      dependsOn: ['codeql-analyze'],
+      applicable: applies.testDocs,
+      reason: 'Test Docs main-branch and path filters',
     }),
     unit({
       id: 'helm-lint-test',
       needsKey: 'helm',
       workflow: 'helm',
+      workflowSha256: workflowHashes.helm,
       job: 'lint-test',
       stage: 'build',
+      dependsOn: ['codeql-analyze'],
       applicable: applies.helm,
       reason: 'Helm lint main-branch and chart path filters',
+    }),
+    unit({
+      id: 'cypress-run',
+      needsKey: 'cypress',
+      workflow: 'cypress',
+      workflowSha256: workflowHashes.cypress,
+      job: 'cypress-run',
+      stage: 'browser',
+      testLanes: ['cypress'],
+      dependsOn: [...BUILD_UNITS],
+      applicable: applies.cypress,
+      reason: 'Cypress event, branch and path filters',
     }),
   ];
 }
@@ -462,9 +527,26 @@ function assertPlan(plan) {
     if (
       !STAGES.includes(entry.stage) ||
       entry.required !== true ||
+      !HASH64.test(entry.workflowSha256 ?? '') ||
+      !Array.isArray(entry.cases) ||
+      entry.cases.length < 1 ||
+      entry.cases.some(
+        (value) =>
+          typeof value !== 'string' ||
+          !value ||
+          value.trim() !== value ||
+          !/^[a-z0-9][a-z0-9-]*$/.test(value)
+      ) ||
+      new Set(entry.cases).size !== entry.cases.length ||
+      !Array.isArray(entry.testLanes) ||
+      new Set(entry.testLanes).size !== entry.testLanes.length ||
+      entry.testLanes.some(
+        (value) =>
+          typeof value !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(value)
+      ) ||
       !Array.isArray(entry.dependsOn) ||
-      entry.dependsOn.length !== 1 ||
-      entry.dependsOn[0] !== 'engine-plan' ||
+      entry.dependsOn.length < 1 ||
+      new Set(entry.dependsOn).size !== entry.dependsOn.length ||
       entry.applicability?.expectedResult !==
         (entry.applicable ? 'success' : 'skipped')
     )
@@ -474,7 +556,31 @@ function assertPlan(plan) {
   const event = eventIdentity(plan.event, candidate);
   const changedFiles = changedFileList(plan.changedFiles);
   const workflows = workflowIdentity(plan.workflowHashes);
-  const expectedUnits = validationUnits(event, changedFiles);
+  const testInventory = assertHostedTestInventory(plan.testInventory);
+  const expectedUnits = validationUnits(event, changedFiles, workflows);
+  const assignedTestLanes = plan.units.flatMap((entry) => entry.testLanes);
+  const expectedTestLanes = testInventory.lanes.map((lane) => lane.id);
+  if (
+    assignedTestLanes.length !== expectedTestLanes.length ||
+    new Set(assignedTestLanes).size !== expectedTestLanes.length ||
+    expectedTestLanes.some((lane) => !assignedTestLanes.includes(lane))
+  )
+    throw new Error('Hosted units do not close the complete test inventory');
+  for (const entry of plan.units) {
+    for (const dependency of entry.dependsOn) {
+      if (dependency === 'engine-plan') {
+        if (entry.stage !== 'repository')
+          throw new Error('Only repository units may depend on engine-plan');
+        continue;
+      }
+      const owner = plan.units.find((unit) => unit.id === dependency);
+      if (
+        !owner ||
+        STAGE_INDEX.get(owner.stage) >= STAGE_INDEX.get(entry.stage)
+      )
+        throw new Error('Hosted unit dependency must be in an earlier stage');
+    }
+  }
   const expectedMetadata =
     event.name === 'pull_request' ? EXTERNAL_PR_METADATA : [];
   if (
@@ -482,12 +588,17 @@ function assertPlan(plan) {
     canonicalJson(event) !== canonicalJson(plan.event) ||
     canonicalJson(changedFiles) !== canonicalJson(plan.changedFiles) ||
     canonicalJson(workflows) !== canonicalJson(plan.workflowHashes) ||
+    canonicalJson(testInventory) !== canonicalJson(plan.testInventory) ||
     canonicalJson(expectedUnits) !== canonicalJson(plan.units) ||
     canonicalJson(expectedMetadata) !== canonicalJson(plan.externalMetadata) ||
-    plan.resultReuse !== false
+    canonicalJson(plan.resultReuse) !== canonicalJson(RESULT_REUSE_POLICY)
   )
     throw new Error('Hosted GitHub plan does not match native workflow policy');
   return plan;
+}
+
+export function assertHostedGithubPlan(plan) {
+  return assertPlan(plan);
 }
 
 export function createHostedGithubPlan({
@@ -495,22 +606,26 @@ export function createHostedGithubPlan({
   event,
   changedFiles,
   workflowHashes,
+  testInventory,
 }) {
   const boundCandidate = candidateIdentity(candidate);
   const boundEvent = eventIdentity(event, boundCandidate);
   const boundChangedFiles = changedFileList(changedFiles);
+  const boundWorkflowHashes = workflowIdentity(workflowHashes);
+  const boundTestInventory = assertHostedTestInventory(testInventory);
   const unsigned = {
     schema: PLAN_SCHEMA,
     candidate: boundCandidate,
     event: boundEvent,
     changedFiles: boundChangedFiles,
-    workflowHashes: workflowIdentity(workflowHashes),
-    units: validationUnits(boundEvent, boundChangedFiles),
+    workflowHashes: boundWorkflowHashes,
+    testInventory: structuredClone(boundTestInventory),
+    units: validationUnits(boundEvent, boundChangedFiles, boundWorkflowHashes),
     externalMetadata:
       boundEvent.name === 'pull_request'
         ? structuredClone(EXTERNAL_PR_METADATA)
         : [],
-    resultReuse: false,
+    resultReuse: structuredClone(RESULT_REUSE_POLICY),
   };
   const plan = { ...unsigned, planSha256: planHash(unsigned) };
   assertPlan(plan);
@@ -612,6 +727,6 @@ export function reconcileHostedGithubNeeds(plan, needs) {
       plan.externalMetadata.length === 0
         ? 'not-applicable'
         : 'external-not-reconciled',
-    resultReuse: false,
+    resultReuse: structuredClone(RESULT_REUSE_POLICY),
   });
 }

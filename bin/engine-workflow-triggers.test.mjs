@@ -14,6 +14,9 @@ const readWorkflow = (name) => {
   ).replaceAll('\r\n', '\n');
   return { text, workflow: yaml.load(text) };
 };
+const stepNamed = (job, name) => job.steps.find((step) => step.name === name);
+const needs = (job) =>
+  new Set(Array.isArray(job.needs) ? job.needs : [job.needs]);
 
 const ci = readWorkflow('ci');
 const nativeJobs = [
@@ -33,31 +36,43 @@ const reusableJobs = {
 
 test('the existing CI workflow invokes the engine plan and reconciler around native jobs', () => {
   const jobs = ci.workflow.jobs;
-  assert.equal(
-    jobs['engine-plan'].steps.at(-1).run,
-    'node bin/run-local-validation.mjs --github-plan --json'
+  assert.match(
+    stepNamed(jobs['engine-plan'], 'Create current-run hosted validation plan')
+      .run,
+    /--github-plan[\s\S]*--plan-file/
   );
-  assert.equal(
-    jobs['engine-reconcile'].steps.at(-1).run,
-    'node bin/run-local-validation.mjs --github-reconcile --json'
+  const reconcile = stepNamed(
+    jobs['engine-reconcile'],
+    'Reconcile current-run hosted validation results'
   );
+  assert.match(reconcile.run, /--github-reconcile/);
+  assert.match(reconcile.run, /--plan-file/);
+  assert.match(reconcile.run, /--receipt-dir/);
   assert.deepEqual(
     new Set(jobs['engine-reconcile'].needs),
     new Set(['engine-plan', ...nativeJobs, ...Object.keys(reusableJobs)])
   );
   assert.match(jobs['engine-reconcile'].if, /always\(\)/);
   assert.equal(
-    jobs['engine-reconcile'].steps.at(-1).env
-      .SEERRNG_ENGINE_EXPECTED_PLAN_SHA256,
+    reconcile.env.SEERRNG_ENGINE_EXPECTED_PLAN_SHA256,
     '${{ needs.engine-plan.outputs.planSha256 }}'
   );
 });
 
-test('GitHub keeps independent runners parallel after the engine plan', () => {
+test('GitHub preserves within-stage parallelism behind engine stage barriers', () => {
   const jobs = ci.workflow.jobs;
-  for (const id of [...nativeJobs, ...Object.keys(reusableJobs)]) {
-    assert.equal(jobs[id].needs, 'engine-plan', id);
-  }
+  for (const id of ['release-notes', 'i18n', 'unit-test', 'docs-links'])
+    assert.deepEqual(needs(jobs[id]), new Set(['engine-plan']), id);
+  assert.deepEqual(
+    needs(jobs.codeql),
+    new Set(['engine-plan', 'release-notes', 'i18n', 'unit-test', 'docs-links'])
+  );
+  for (const id of ['jellyfin-plugin', 'test', 'test-docs', 'helm'])
+    assert.deepEqual(needs(jobs[id]), new Set(['engine-plan', 'codeql']), id);
+  assert.deepEqual(
+    needs(jobs.cypress),
+    new Set(['engine-plan', 'jellyfin-plugin', 'test', 'test-docs', 'helm'])
+  );
   for (const [id, file] of Object.entries(reusableJobs)) {
     assert.equal(jobs[id].uses, `./.github/workflows/${file}`, id);
     assert.match(jobs[id].if, /needs\.engine-plan\.outputs\./, id);
@@ -97,7 +112,7 @@ test('hosted orchestration retains the original pinned native actions and comman
     ],
     cypress: [
       'cypress-io/github-action@789d836053c5ca389c2905fc0c9f2909da778c46',
-      'build: pnpm cypress:build',
+      'pnpm cypress:build',
       'start: env E2E_TESTS=true pnpm start',
     ],
     'test-docs': ['pnpm test:security', 'pnpm gen-api-docs && pnpm build'],

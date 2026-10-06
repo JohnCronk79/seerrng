@@ -1,5 +1,4 @@
 // Existing reviewed validation-engine controller, bound into the application.
-// Archive v1.1.0 is retained as its immutable historical reference.
 import { performance } from 'node:perf_hooks';
 import {
   orderReadyUnits,
