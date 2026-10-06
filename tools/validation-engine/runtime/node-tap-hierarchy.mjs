@@ -3,13 +3,13 @@ import { inspect } from 'node:util';
 
 const tapEscape = (input) =>
   String(input)
+    .replaceAll('\\', '\\\\')
     .replaceAll('\b', '\\b')
     .replaceAll('\f', '\\f')
     .replaceAll('\t', '\\t')
     .replaceAll('\n', '\\n')
     .replaceAll('\r', '\\r')
     .replaceAll('\v', '\\v')
-    .replaceAll('\\', '\\\\')
     .replaceAll('#', '\\#');
 const inspected = (input) =>
   inspect(input, { colors: false, breakLength: Infinity });

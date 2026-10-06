@@ -3,10 +3,14 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   writeFileSync,
@@ -129,6 +133,45 @@ function regularFile(file, label) {
   if (stat.isSymbolicLink() || !stat.isFile() || stat.size < 1)
     throw new Error(`Unsafe or empty ${label}: ${file}`);
   return stat;
+}
+
+function readCheckedRegularFile(file, label, { allowMissing = false } = {}) {
+  let checked;
+  try {
+    checked = lstatSync(file);
+  } catch (error) {
+    if (allowMissing && error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (checked.isSymbolicLink() || !checked.isFile())
+    throw new Error(`Unsafe ${label}: ${file}`);
+  let descriptor;
+  try {
+    descriptor = openSync(
+      file,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0)
+    );
+  } catch (error) {
+    throw new Error(`Unsafe ${label}: ${file}`, { cause: error });
+  }
+  try {
+    const before = fstatSync(descriptor);
+    const unchanged = (stat) =>
+      stat.isFile() &&
+      ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
+        (key) => stat[key] === checked[key]
+      );
+    if (!unchanged(before))
+      throw new Error(`${label} changed before its descriptor read`);
+    const bytes = readFileSync(descriptor);
+    if (!unchanged(fstatSync(descriptor)) || bytes.length !== before.size)
+      throw new Error(`${label} changed during its descriptor read`);
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function writeNewJson(file, value) {
@@ -456,14 +499,16 @@ function dependencyStateSha256(root, plan, unit) {
       ? 'gen-docs/node_modules/.pnpm/lock.yaml'
       : 'node_modules/.pnpm/lock.yaml';
   const installed = path.resolve(root, relative);
+  const installedLock = readCheckedRegularFile(
+    installed,
+    'installed dependency lock',
+    { allowMissing: true }
+  );
   return jsonSha256({
     sourceLockSha256: plan.candidate.lockSha256,
     installedLock: {
       path: relative,
-      sha256:
-        existsSync(installed) && !lstatSync(installed).isSymbolicLink()
-          ? sha256(readFileSync(installed))
-          : null,
+      sha256: installedLock === null ? null : sha256(installedLock),
     },
   });
 }
@@ -725,15 +770,27 @@ export function admitHostedGithubUnit({
     environment,
   });
   const paths = receiptPaths(receiptDir, unitId, resolved.caseId);
-  let ledger;
-  if (existsSync(paths.ledger))
-    ledger = parseRunScopedLedger(readFileSync(paths.ledger, 'utf8'));
-  else {
-    ledger = createRunScopedLedger(planScope(plan));
-    writeFileSync(paths.ledger, serializeRunScopedLedger(ledger), {
-      flag: 'wx',
-      mode: 0o600,
-    });
+  let ledger = createRunScopedLedger(planScope(plan));
+  let ledgerDescriptor;
+  try {
+    ledgerDescriptor = openSync(
+      paths.ledger,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600
+    );
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+  }
+  if (ledgerDescriptor === undefined) {
+    ledger = parseRunScopedLedger(
+      readCheckedRegularFile(paths.ledger, 'hosted run ledger').toString('utf8')
+    );
+  } else {
+    try {
+      writeFileSync(ledgerDescriptor, serializeRunScopedLedger(ledger));
+    } finally {
+      closeSync(ledgerDescriptor);
+    }
   }
   const unsigned = {
     schema: HOSTED_ADMISSION_SCHEMA,

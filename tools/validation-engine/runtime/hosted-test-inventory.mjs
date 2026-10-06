@@ -2,8 +2,12 @@
 // Deterministic test ownership for the existing GitHub-native command jobs.
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -98,12 +102,49 @@ function inside(root, candidate) {
 
 function checkedFile(root, file) {
   const absolute = path.resolve(root, file);
-  if (!inside(root, absolute) || !existsSync(absolute))
+  if (!inside(root, absolute))
     throw new Error(`Missing hosted inventory input: ${file}`);
-  const stat = lstatSync(absolute);
-  if (stat.isSymbolicLink() || !stat.isFile())
+  let checked;
+  try {
+    checked = lstatSync(absolute);
+  } catch (error) {
+    if (error?.code === 'ENOENT')
+      throw new Error(`Missing hosted inventory input: ${file}`, {
+        cause: error,
+      });
+    throw error;
+  }
+  if (checked.isSymbolicLink() || !checked.isFile())
     throw new Error(`Unsafe hosted inventory input: ${file}`);
-  return { absolute, bytes: readFileSync(absolute) };
+  let descriptor;
+  try {
+    descriptor = openSync(
+      absolute,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0)
+    );
+  } catch (error) {
+    throw new Error(`Unsafe hosted inventory input: ${file}`, {
+      cause: error,
+    });
+  }
+  try {
+    const before = fstatSync(descriptor);
+    const unchanged = (stat) =>
+      stat.isFile() &&
+      ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'].every(
+        (key) => stat[key] === checked[key]
+      );
+    if (!unchanged(before))
+      throw new Error(`Hosted inventory input changed before read: ${file}`);
+    const bytes = readFileSync(descriptor);
+    if (!unchanged(fstatSync(descriptor)) || bytes.length !== before.size)
+      throw new Error(`Hosted inventory input changed during read: ${file}`);
+    return { absolute, bytes };
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function moduleSpecifiers(source) {
