@@ -78,7 +78,8 @@ test('blocked poster visibility follows management permission on filtering and r
     discover,
     (node) =>
       ts.isIfStatement(node) &&
-      node.expression.getText() === 'hideBlocklisted && !canManageBlocklist'
+      node.expression.getText().replace(/\s+/g, '') ===
+        'hideBlocklisted&&(!canManageBlocklist||settings.currentSettings.hideBlocklisted)'
   )[0];
   assert.ok(discoverGate);
   const renderGate = nodes(
@@ -90,23 +91,33 @@ test('blocked poster visibility follows management permission on filtering and r
   )[0];
   assert.ok(renderGate);
   for (const canManageBlocklist of [false, true]) {
-    const filter = evaluate(listFilter, {
-      canManageBlocklist,
-      MediaStatus: statuses,
-    });
-    assert.equal(
-      filter({ mediaInfo: { status: statuses.BLOCKLISTED } }),
-      canManageBlocklist
-    );
-    assert.equal(filter({ mediaInfo: { status: statuses.AVAILABLE } }), true);
-    assert.equal(filter({}), true);
-    assert.equal(
-      evaluate(discoverGate.expression, {
-        hideBlocklisted: true,
+    for (const hideBlocklistedSetting of [false, true]) {
+      const filter = evaluate(listFilter, {
         canManageBlocklist,
-      }),
-      !canManageBlocklist
-    );
+        currentSettings: { hideBlocklisted: hideBlocklistedSetting },
+        MediaStatus: statuses,
+      });
+      assert.equal(
+        filter({ mediaInfo: { status: statuses.BLOCKLISTED } }),
+        canManageBlocklist && !hideBlocklistedSetting
+      );
+      assert.equal(filter({ mediaInfo: { status: statuses.AVAILABLE } }), true);
+      assert.equal(filter({}), true);
+    }
+    for (const hideBlocklisted of [false, true]) {
+      for (const hideBlocklistedSetting of [false, true]) {
+        assert.equal(
+          evaluate(discoverGate.expression, {
+            hideBlocklisted,
+            canManageBlocklist,
+            settings: {
+              currentSettings: { hideBlocklisted: hideBlocklistedSetting },
+            },
+          }),
+          hideBlocklisted && (!canManageBlocklist || hideBlocklistedSetting)
+        );
+      }
+    }
     assert.equal(
       evaluate(renderGate.expression, {
         currentStatus: statuses.BLOCKLISTED,
@@ -142,6 +153,17 @@ test('blocked poster visibility follows management permission on filtering and r
       dependencyArrays.some((array) =>
         array.elements.some(
           (element) => element.getText() === 'canManageBlocklist'
+        )
+      )
+    );
+    const settingDependency =
+      source === list
+        ? 'currentSettings.hideBlocklisted'
+        : 'settings.currentSettings.hideBlocklisted';
+    assert.ok(
+      dependencyArrays.some((array) =>
+        array.elements.some(
+          (element) => element.getText() === settingDependency
         )
       )
     );

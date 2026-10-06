@@ -10,12 +10,10 @@ the contributor's accepted visual/interaction contract.
    authenticated Git. Resolve both to full commit IDs. Verify remotes, branch
    ownership, a clean integration checkout, and the actual common ancestor.
    Record the IDs before editing. Do not infer provenance from `package.json`.
-2. The current approved laptop source reports version 3.46.1, based on upstream
-   main `e7305281797cd7527c3b1c0a83ff144218ad506a`. The earlier `v3.44.1` tag resolves
-   to `5b0859a8ba30380661033ea4c7d06c77be970032`; use this as a cross-check,
-   not a substitute for the PR's real ancestry. During earlier preparation main was
-   observed at `da85baa8461c183d785d4ca5df264ad0ba79f24c`. Fetch and pin the
-   current target when integrating; that observation is not a permanent target.
+2. Resolve the approved contributor source and maintainer target from current
+   authorized records. Version and commit observations from earlier integrations
+   belong in the checkpoint as historical evidence, not in this procedure as a
+   reusable target. Fetch and pin the actual current target when integrating.
 3. Save recoverable refs/source and produce a three-way changed-file inventory.
    Do not overwrite a dirty checkout, discard contributor commits, or include
    live config/databases/secrets. Work in an isolated integration branch/worktree.
@@ -66,18 +64,15 @@ workflows or waive required checks. Retain the source manifest and tool versions
 1. Follow the fix-it audit against changed assets and their affected consumers,
    including effective CSS cascade, structural ownership, dynamic/secondary class
    props, hit areas, fixed headers versus scrollers, state, and narrow layouts.
-   Read `tools/validation-engine/README.md` and the extracted setup instructions.
-   Regenerate and review the source-specific inventory and invocation plan, then
-   run the combined engine on the exact integrated candidate. Preserve an
-   unchanged-source receipt, then run one guarded `pnpm build`. The current build
-   runs translation/shared-visual guards and compilation; it does not run the
-   engine. Do not repeat the archived comprehensive gate after engine acceptance.
-   Any failed required check blocks finalization; do not bypass a hook or redefine
-   success.
+   Read `tools/validation-engine/README.md`, review the source-specific plan and
+   run only the repository's bound staged engine on the exact integrated
+   candidate. Its local gate owns repository checks, CodeQL, guarded build and
+   browser validation. Preserve the unchanged-source receipt. Do not invoke a
+   second runner or repeat a redundant gate or build as acceptance. Any failed
+   required check blocks finalization; do not bypass a hook or redefine success.
 2. Retain validation and compilation results with the target's pinned
-   runtime/dependencies. If validation and compilation are separate phases,
-   retain an exact unchanged-source receipt before using `build:compile`;
-   that internal command does not prove validation by itself.
+   runtime/dependencies. A standalone `pnpm build` or internal `build:compile`
+   result does not prove that the staged validation engine ran.
    Preserve existing CI workflows/checks. Run applicable
    browser/integration tests in disposable config; record prerequisites that are
    unavailable. Never report a skipped suite as a pass or a mock as real-service

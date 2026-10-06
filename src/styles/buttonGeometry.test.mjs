@@ -622,6 +622,27 @@ test('page titles have one global typography and purple-gradient owner', () => {
   assert.equal(headerAudit.utilities.length, 0);
 });
 
+test('login backdrop titles wrap within the viewport boundary', () => {
+  const sharedTitle = rule('.page-title');
+  const backdropTitle = rule('.auth-backdrop-title');
+  const imageFader = component('Common/ImageFader/index.tsx');
+
+  assert.match(
+    imageFader,
+    /className="auth-backdrop-title page-title"/,
+    'the login backdrop title must consume both the shared title and auth layout roles'
+  );
+  assert.match(sharedTitle, /white-space: nowrap/);
+  assert.match(backdropTitle, /right: 1rem/);
+  assert.match(backdropTitle, /max-width: min\(32rem, calc\(100vw - 2rem\)\)/);
+  assert.match(backdropTitle, /overflow-wrap: anywhere/);
+  assert.match(backdropTitle, /white-space: normal/);
+  assert.ok(
+    css.indexOf('\n  .auth-backdrop-title {') > css.indexOf('\n  .page-title,'),
+    'the auth layout role must override the shared title no-wrap declaration'
+  );
+});
+
 test('page and card layouts own spacing independently of asset appearance', () => {
   assert.match(component('Layout/index.tsx'), /className="page-layout"/);
   assert.match(
