@@ -401,9 +401,7 @@ function hostedBehaviorState(root, plan, unit, caseId, environment) {
     if (
       assigned.files.some(
         (file) =>
-          file.includes(',') ||
-          file.includes('\r') ||
-          file.includes('\n')
+          file.includes(',') || file.includes('\r') || file.includes('\n')
       )
     )
       throw new Error('Hosted Cypress spec paths are unsafe for transport');
@@ -1152,14 +1150,7 @@ function verifyNativeNodeLaneReport({
   };
 }
 
-function verifyHostedCypressReport({
-  file,
-  plan,
-  unit,
-  caseId,
-  lane,
-  root,
-}) {
+function verifyHostedCypressReport({ file, plan, unit, caseId, lane, root }) {
   const stat = regularFile(file, 'hosted Cypress result');
   if (stat.size > HOSTED_RESULT_MAX_BYTES)
     throw new Error('Hosted Cypress result exceeds its safe size limit');
@@ -1401,10 +1392,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
             actual.durationMs < 0)) ||
         actual.active !== actual.passed + actual.failures ||
         actual.tests !==
-          actual.passed +
-            actual.failures +
-            actual.pending +
-            actual.skipped ||
+          actual.passed + actual.failures + actual.pending + actual.skipped ||
         actual.failures !== 0 ||
         !HASH64.test(actual.reportSha256 ?? '') ||
         actual.reportSha256 !==
@@ -1426,8 +1414,7 @@ function verifyHostedCaseResults(plan, unit, caseId, value, evidence) {
     throw new Error('Unit-test evidence set failed reconciliation');
   if (
     unit.id === 'cypress-run' &&
-    (evidenceByName.size !== 1 ||
-      !evidenceByName.has(CYPRESS_TEST_EVIDENCE))
+    (evidenceByName.size !== 1 || !evidenceByName.has(CYPRESS_TEST_EVIDENCE))
   )
     throw new Error('Cypress evidence set failed reconciliation');
   if (
@@ -1895,11 +1882,10 @@ export function materializeHostedVitestLane({
   const paths = receiptPaths(receiptDir, unitId, resolved.caseId);
   regularFile(paths.admission, 'hosted admission');
   regularFile(paths.ledger, 'hosted run ledger');
-  verifyAdmission(
-    JSON.parse(readFileSync(paths.admission, 'utf8')),
-    identity,
-    { unitId, caseId: resolved.caseId }
-  );
+  verifyAdmission(JSON.parse(readFileSync(paths.admission, 'utf8')), identity, {
+    unitId,
+    caseId: resolved.caseId,
+  });
   const ledger = parseRunScopedLedger(readFileSync(paths.ledger, 'utf8'));
   if (ledger.entries.length !== 0 || existsSync(paths.receipt))
     throw new Error(

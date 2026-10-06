@@ -185,9 +185,7 @@ function writeHostedPlanOutputs(plan, planFile) {
         !lane.files.length ||
         lane.files.some(
           (file) =>
-            file.includes(',') ||
-            file.includes('\r') ||
-            file.includes('\n')
+            file.includes(',') || file.includes('\r') || file.includes('\n')
         )
       )
         throw new Error('Hosted Cypress matrix contains unsafe specs');
