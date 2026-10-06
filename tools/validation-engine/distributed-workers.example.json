@@ -2,11 +2,11 @@
   "schema": "seerrng-distributed-worker-config/v1",
   "revision": 1,
   "controllerId": "developer-controller",
-  "controllerWorkerId": "developer-main",
+  "controllerWorkerId": "controller-host-worker",
   "workers": [
     {
-      "id": "developer-main",
-      "address": "https://developer-main.lan:7443",
+      "id": "controller-host-worker",
+      "address": "https://controller-host-worker.lan:7443",
       "enabled": true,
       "identitySha256": "1111111111111111111111111111111111111111111111111111111111111111",
       "n": "auto"

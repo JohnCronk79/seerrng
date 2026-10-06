@@ -13,6 +13,7 @@ import {
   distributedBrokerWorkerHandoff,
   distributedWorkerConcurrency,
   distributedWorkerRole,
+  distributedWorkerRunsOnControllerHost,
   MAX_DISTRIBUTED_WORKER_CONFIG_BYTES,
   MAX_DISTRIBUTED_WORKER_THREADS,
   MAX_DISTRIBUTED_WORKERS,
@@ -59,11 +60,11 @@ test('example is strict, deterministic, secret-free, and has distinct N', () => 
     )
   );
   assert.equal(first.configSha256, second.configSha256);
-  assert.equal(first.controllerWorkerId, 'developer-main');
+  assert.equal(first.controllerWorkerId, 'controller-host-worker');
   assert.deepEqual(
     first.workers.map(({ id, n, enabled }) => ({ id, n, enabled })),
     [
-      { id: 'developer-main', n: 'auto', enabled: true },
+      { id: 'controller-host-worker', n: 'auto', enabled: true },
       { id: 'worker-east', n: 16, enabled: true },
       { id: 'worker-west', n: 8, enabled: false },
     ]
@@ -117,12 +118,21 @@ test('controller config maps to broker and adaptive scheduler contracts', () => 
   });
   assert.equal(distributedWorkerRole(config, 'worker-east'), 'worker');
   assert.equal(distributedWorkerRole(config, 'worker-west'), 'worker');
+  assert.equal(
+    distributedWorkerRunsOnControllerHost(config, 'worker-east'),
+    false
+  );
+  assert.equal(
+    distributedWorkerRunsOnControllerHost(config, 'worker-west'),
+    false
+  );
   const workerHandoff = distributedBrokerWorkerHandoff(
     config,
     'worker-east'
   );
   assert.equal(workerHandoff.workerAddress, 'https://worker-east.lan:7443');
   assert.equal(workerHandoff.role, 'worker');
+  assert.equal(workerHandoff.runsOnControllerHost, false);
   assert.equal(workerHandoff.sourceConfigRevision, 1);
   assert.equal(workerHandoff.sourceConfigSha256, config.configSha256);
   assert.equal(
@@ -177,7 +187,7 @@ test('controller identity must be distinct from every worker identity', () => {
   );
 });
 
-test('controller-local worker binding is explicit, enabled, and keeps a distinct worker identity', () => {
+test('controller-host worker placement is explicit and keeps normal worker role and identity', () => {
   const workers = [
     worker(),
     worker({
@@ -189,13 +199,39 @@ test('controller-local worker binding is explicit, enabled, and keeps a distinct
   const config = createDistributedWorkerConfig(
     rawConfig(workers, { controllerWorkerId: 'worker-east' })
   );
+  const remoteOnlyConfig = createDistributedWorkerConfig(rawConfig(workers));
+  const colocatedBrokerHandoff = createDistributedBrokerHandoff(config);
+  const remoteOnlyBrokerHandoff = createDistributedBrokerHandoff(
+    remoteOnlyConfig
+  );
   assert.equal(config.controllerId, 'developer-controller');
   assert.equal(config.controllerWorkerId, 'worker-east');
-  assert.equal(distributedWorkerRole(config, 'worker-east'), 'controller');
+  assert.deepEqual(
+    colocatedBrokerHandoff.brokerWorkerConfig,
+    remoteOnlyBrokerHandoff.brokerWorkerConfig
+  );
+  assert.equal(
+    colocatedBrokerHandoff.brokerWorkerPolicySha256,
+    remoteOnlyBrokerHandoff.brokerWorkerPolicySha256
+  );
+  assert.equal(distributedWorkerRole(config, 'worker-east'), 'worker');
   assert.equal(distributedWorkerRole(config, 'worker-west'), 'worker');
   assert.equal(
-    distributedBrokerWorkerHandoff(config, 'worker-east').role,
-    'controller'
+    distributedWorkerRunsOnControllerHost(config, 'worker-east'),
+    true
+  );
+  assert.equal(
+    distributedWorkerRunsOnControllerHost(config, 'worker-west'),
+    false
+  );
+  const localWorkerHandoff = distributedBrokerWorkerHandoff(
+    config,
+    'worker-east'
+  );
+  assert.equal(localWorkerHandoff.role, 'worker');
+  assert.equal(
+    localWorkerHandoff.runsOnControllerHost,
+    true
   );
 
   assert.throws(

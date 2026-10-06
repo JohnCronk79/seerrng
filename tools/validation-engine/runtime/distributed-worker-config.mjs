@@ -378,8 +378,14 @@ export function distributedWorkerConcurrency(configValue, workerId) {
 
 export function distributedWorkerRole(configValue, workerId) {
   const config = verifyDistributedWorkerConfig(configValue);
+  configuredDistributedWorker(config, workerId);
+  return 'worker';
+}
+
+export function distributedWorkerRunsOnControllerHost(configValue, workerId) {
+  const config = verifyDistributedWorkerConfig(configValue);
   const worker = configuredDistributedWorker(config, workerId);
-  return config.controllerWorkerId === worker.id ? 'controller' : 'worker';
+  return config.controllerWorkerId === worker.id;
 }
 
 function createBrokerWorkerPolicy(config) {
@@ -445,6 +451,10 @@ export function distributedBrokerWorkerHandoff(configValue, workerId) {
     machineIdentitySha256: worker.identitySha256,
     configuredN: worker.n,
     role: distributedWorkerRole(config, worker.id),
+    runsOnControllerHost: distributedWorkerRunsOnControllerHost(
+      config,
+      worker.id
+    ),
     sourceConfigRevision: config.revision,
     sourceConfigSha256: config.configSha256,
     brokerWorkerConfig: handoff.brokerWorkerConfig,
