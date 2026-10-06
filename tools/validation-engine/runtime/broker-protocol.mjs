@@ -7,7 +7,7 @@ export const BROKER_MESSAGE_SCHEMA = 'seerrng-validation-broker-message/v1';
 export const BROKER_BINDING_SCHEMA = 'seerrng-validation-broker-binding/v1';
 export const BROKER_APPLICATION_ISOLATION_SCHEMA =
   'seerrng-validation-broker-application-isolation/v1';
-export const BROKER_TASK_SCHEMA = 'seerrng-validation-broker-task/v1';
+export const BROKER_TASK_SCHEMA = 'seerrng-validation-broker-task/v2';
 export const BROKER_CLEANUP_EVIDENCE_SCHEMA =
   'seerrng-validation-broker-cleanup-evidence/v1';
 export const BROKER_WORKER_CONFIG_SCHEMA =
@@ -53,7 +53,9 @@ const AUTH_KEYS = [
 const TASK_KEYS = [
   'adapterId',
   'applicationIsolationKeySha256',
+  'assignment',
   'caseId',
+  'dependencyTaskIds',
   'expectedEvidence',
   'maxAttempts',
   'payload',
@@ -67,13 +69,21 @@ const TASK_KEYS = [
 const TASK_INPUT_KEYS = [
   'adapterId',
   'applicationIsolationKeySha256',
+  'assignment',
   'caseId',
+  'dependencyTaskIds',
   'expectedEvidence',
   'maxAttempts',
   'payload',
   'taskId',
   'timeoutMs',
   'unitId',
+];
+const TASK_ASSIGNMENT_KEYS = [
+  'slotId',
+  'slotIndex',
+  'slotPosition',
+  'workerId',
 ];
 const EXPECTED_EVIDENCE_KEYS = [
   'evidenceId',
@@ -300,6 +310,27 @@ function normalizeExpectedEvidence(value) {
   };
 }
 
+function normalizeTaskAssignment(value) {
+  exactObject(value, 'broker task assignment', TASK_ASSIGNMENT_KEYS);
+  const workerId = identifier(value.workerId, 'assigned worker ID');
+  const slotIndex = safeInteger(value.slotIndex, 'Assigned slot index', {
+    minimum: 1,
+  });
+  const slotId = identifier(value.slotId, 'assigned slot ID');
+  if (slotId !== `${workerId}.slot-${slotIndex}`)
+    throw new Error('Broker task assignment requires its canonical slot ID');
+  return {
+    workerId,
+    slotId,
+    slotIndex,
+    slotPosition: safeInteger(
+      value.slotPosition,
+      'Assigned slot position',
+      { minimum: 1 }
+    ),
+  };
+}
+
 function normalizeTaskWithoutSeal(value) {
   exactObject(value, 'broker task input', TASK_INPUT_KEYS);
   if (!Array.isArray(value.expectedEvidence))
@@ -314,6 +345,13 @@ function normalizeTaskWithoutSeal(value) {
   const evidenceIds = expectedEvidence.map((entry) => entry.evidenceId);
   if (new Set(evidenceIds).size !== evidenceIds.length)
     throw new Error('Expected evidence IDs must be unique');
+  const taskId = identifier(value.taskId, 'task ID');
+  const dependencyTaskIds = uniqueIdentifiers(
+    value.dependencyTaskIds,
+    'dependency task IDs'
+  );
+  if (dependencyTaskIds.includes(taskId))
+    throw new Error('Broker task cannot depend on itself');
   const payloadSha256 = canonicalJsonSha256(value.payload);
   return {
     schema: BROKER_TASK_SCHEMA,
@@ -321,10 +359,12 @@ function normalizeTaskWithoutSeal(value) {
       value.applicationIsolationKeySha256,
       'application isolation key hash'
     ),
-    taskId: identifier(value.taskId, 'task ID'),
+    taskId,
     unitId: identifier(value.unitId, 'unit ID'),
     caseId: identifier(value.caseId, 'case ID'),
     adapterId: identifier(value.adapterId, 'native adapter ID'),
+    assignment: normalizeTaskAssignment(value.assignment),
+    dependencyTaskIds,
     timeoutMs: safeInteger(value.timeoutMs, 'Task timeout', { minimum: 1 }),
     maxAttempts: safeInteger(value.maxAttempts, 'Maximum task attempts', {
       minimum: 1,
@@ -358,6 +398,8 @@ export function verifyBrokerTask(value) {
     unitId: value.unitId,
     caseId: value.caseId,
     adapterId: value.adapterId,
+    assignment: value.assignment,
+    dependencyTaskIds: value.dependencyTaskIds,
     timeoutMs: value.timeoutMs,
     maxAttempts: value.maxAttempts,
     payload: value.payload,
@@ -540,8 +582,16 @@ function normalizeLeaseGrant(value) {
   });
   if (attempt > maxAttempts)
     throw new Error('Task attempt cannot exceed maximum attempts');
+  const workerId = identifier(value.workerId, 'worker ID');
+  const task = verifyBrokerTask(value.task);
+  if (workerId !== task.assignment.workerId)
+    throw new Error(
+      'Lease grant worker does not match the sealed task assignment'
+    );
+  if (maxAttempts !== task.maxAttempts)
+    throw new Error('Lease retry limit does not match the sealed task');
   return {
-    workerId: identifier(value.workerId, 'worker ID'),
+    workerId,
     instanceId: identifier(value.instanceId, 'worker instance ID'),
     workerSessionId: identifier(
       value.workerSessionId,
@@ -551,7 +601,7 @@ function normalizeLeaseGrant(value) {
     attempt,
     maxAttempts,
     expiresAtMs: safeInteger(value.expiresAtMs, 'Lease expiry time'),
-    task: verifyBrokerTask(value.task),
+    task,
   };
 }
 

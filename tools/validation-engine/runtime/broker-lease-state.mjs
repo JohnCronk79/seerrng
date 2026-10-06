@@ -14,9 +14,9 @@ import {
 } from './broker-protocol.mjs';
 
 export const BROKER_LEASE_STATE_SCHEMA =
-  'seerrng-validation-broker-lease-state/v1';
+  'seerrng-validation-broker-lease-state/v2';
 export const BROKER_RECONCILIATION_INPUT_SCHEMA =
-  'seerrng-validation-broker-reconciliation-input/v1';
+  'seerrng-validation-broker-reconciliation-input/v2';
 export const BROKER_WORKER_FRESHNESS_MS = 30_000;
 
 const STATE_KEYS = [
@@ -133,6 +133,180 @@ function uniqueField(entries, field, label) {
     throw new Error(`${label} contains duplicate ${field} values`);
 }
 
+function taskSlotKey(task) {
+  return `${task.assignment.workerId}\u0000${task.assignment.slotId}`;
+}
+
+function validateExpectedTaskCatalog(expectedTasks, workerConfig) {
+  const taskIds = expectedTasks.map((task) => task.taskId);
+  if (new Set(taskIds).size !== taskIds.length)
+    throw new Error('Broker state contains a duplicate expected task ID');
+  const taskById = new Map(expectedTasks.map((task) => [task.taskId, task]));
+  const configuredById = new Map(
+    workerConfig.workers.map((worker) => [worker.workerId, worker])
+  );
+  const slotIdByWorkerIndex = new Map();
+  const tasksBySlot = new Map();
+
+  for (const task of expectedTasks) {
+    const { workerId, slotId, slotIndex } = task.assignment;
+    const configured = configuredById.get(workerId);
+    if (!configured?.enabled)
+      throw new Error(
+        `Broker task assignment references an unavailable worker: ${workerId}`
+      );
+    const workerSlotKey = `${workerId}\u0000${slotIndex}`;
+    const existingSlotId = slotIdByWorkerIndex.get(workerSlotKey);
+    if (existingSlotId !== undefined && existingSlotId !== slotId)
+      throw new Error('Broker task catalog aliases one logical worker slot');
+    slotIdByWorkerIndex.set(workerSlotKey, slotId);
+    const slotKey = taskSlotKey(task);
+    const slotTasks = tasksBySlot.get(slotKey) ?? [];
+    slotTasks.push(task);
+    tasksBySlot.set(slotKey, slotTasks);
+
+    for (const dependencyTaskId of task.dependencyTaskIds) {
+      if (!taskById.has(dependencyTaskId))
+        throw new Error(
+          `Broker task ${task.taskId} has unknown dependency: ${dependencyTaskId}`
+        );
+    }
+  }
+
+  for (const slotTasks of tasksBySlot.values()) {
+    const ordered = slotTasks.toSorted(
+      (left, right) =>
+        left.assignment.slotPosition - right.assignment.slotPosition
+    );
+    for (const [index, task] of ordered.entries())
+      if (task.assignment.slotPosition !== index + 1)
+        throw new Error(
+          'Broker task catalog slot positions must be unique and contiguous'
+        );
+  }
+
+  const prerequisites = new Map(
+    expectedTasks.map((task) => {
+      const taskPrerequisites = new Set(task.dependencyTaskIds);
+      const prior = priorSlotTask(expectedTasks, task);
+      if (prior) taskPrerequisites.add(prior.taskId);
+      return [task.taskId, taskPrerequisites];
+    })
+  );
+  const remainingDependencies = new Map(
+    [...prerequisites].map(([taskId, taskPrerequisites]) => [
+      taskId,
+      taskPrerequisites.size,
+    ])
+  );
+  const successors = new Map(
+    expectedTasks.map((task) => [task.taskId, []])
+  );
+  for (const [taskId, taskPrerequisites] of prerequisites)
+    for (const prerequisiteTaskId of taskPrerequisites)
+      successors.get(prerequisiteTaskId).push(taskId);
+  const ready = expectedTasks
+    .filter((task) => prerequisites.get(task.taskId).size === 0)
+    .map((task) => task.taskId)
+    .toSorted(compareText);
+  let visited = 0;
+  while (ready.length) {
+    const taskId = ready.shift();
+    visited += 1;
+    for (const successorId of successors.get(taskId).toSorted(compareText)) {
+      const remaining = remainingDependencies.get(successorId) - 1;
+      remainingDependencies.set(successorId, remaining);
+      if (remaining === 0) {
+        ready.push(successorId);
+        ready.sort(compareText);
+      }
+    }
+  }
+  if (visited !== expectedTasks.length)
+    throw new Error(
+      'Broker task dependencies contain a cycle with slot ordering'
+    );
+
+  return { taskById };
+}
+
+function priorSlotTask(expectedTasks, task) {
+  if (task.assignment.slotPosition === 1) return null;
+  const priorPosition = task.assignment.slotPosition - 1;
+  const prior = expectedTasks.find(
+    (entry) =>
+      taskSlotKey(entry) === taskSlotKey(task) &&
+      entry.assignment.slotPosition === priorPosition
+  );
+  if (!prior)
+    throw new Error('Broker task catalog is missing its prior slot task');
+  return prior;
+}
+
+function acceptedTaskResult(results, taskId, noLaterThanMs = Infinity) {
+  return results.find(
+    (entry) =>
+      entry.submission.taskId === taskId &&
+      entry.acceptedAtMs <= noLaterThanMs
+  );
+}
+
+function validatePersistedAssignmentHistory(state, taskById) {
+  const leasesBySlot = new Map();
+  for (const lease of state.leases) {
+    const task = taskById.get(lease.taskId);
+    for (const dependencyTaskId of task.dependencyTaskIds) {
+      const result = acceptedTaskResult(
+        state.results,
+        dependencyTaskId,
+        lease.grantedAtMs
+      );
+      if (!result || result.submission.outcome?.status !== 'passed')
+        throw new Error(
+          'Persisted lease began before an accepted passing dependency result'
+        );
+    }
+    const prior = priorSlotTask(state.expectedTasks, task);
+    if (
+      prior &&
+      !acceptedTaskResult(state.results, prior.taskId, lease.grantedAtMs)
+    )
+      throw new Error(
+        'Persisted lease began before its prior slot result was accepted'
+      );
+    const slotKey = taskSlotKey(task);
+    const slotLeases = leasesBySlot.get(slotKey) ?? [];
+    slotLeases.push(lease);
+    leasesBySlot.set(slotKey, slotLeases);
+  }
+
+  for (const slotLeases of leasesBySlot.values()) {
+    const ordered = slotLeases.toSorted(
+      (left, right) =>
+        left.grantedAtMs - right.grantedAtMs ||
+        compareText(left.leaseId, right.leaseId)
+    );
+    let priorReleaseAtMs = null;
+    for (const lease of ordered) {
+      if (
+        priorReleaseAtMs === Infinity ||
+        (priorReleaseAtMs !== null && lease.grantedAtMs < priorReleaseAtMs)
+      )
+        throw new Error('Persisted leases overlap one logical worker slot');
+      if (lease.state === 'completed') {
+        const result = state.results.find(
+          (entry) => entry.submission.leaseId === lease.leaseId
+        );
+        priorReleaseAtMs = result?.acceptedAtMs ?? Infinity;
+      } else if (lease.state === 'cancelled') {
+        priorReleaseAtMs = lease.cleanupAcceptedAtMs;
+      } else {
+        priorReleaseAtMs = Infinity;
+      }
+    }
+  }
+}
+
 function sealState(value) {
   const state = {
     schema: BROKER_LEASE_STATE_SCHEMA,
@@ -205,9 +379,9 @@ export function verifyBrokerLeaseState(
     )
   )
     throw new Error('Persisted task crossed an application isolation boundary');
-  uniqueField(expectedTasks, 'taskId', 'Persisted expected tasks');
-  const taskById = new Map(
-    expectedTasks.map((task) => [task.taskId, task])
+  const { taskById } = validateExpectedTaskCatalog(
+    expectedTasks,
+    workerConfig
   );
 
   if (!Array.isArray(value.workers))
@@ -268,6 +442,8 @@ export function verifyBrokerLeaseState(
     const worker = workerById.get(lease.workerId);
     if (!task || lease.taskSha256 !== task.taskSha256)
       throw new Error('Persisted lease task binding is inconsistent');
+    if (lease.workerId !== task.assignment.workerId)
+      throw new Error('Persisted lease violates its sealed worker assignment');
     if (
       lease.applicationIsolationKeySha256 !==
         value.applicationIsolationKeySha256 ||
@@ -411,6 +587,7 @@ export function verifyBrokerLeaseState(
     )
       throw new Error('Persisted lease/result closure is inconsistent');
   });
+  validatePersistedAssignmentHistory(value, taskById);
 
   const restored = deepFreeze(structuredClone(value));
   trustedStates.add(restored);
@@ -508,9 +685,7 @@ export function createBrokerLeaseState({
     throw new Error(
       'Broker tasks must match their application submission isolation key'
     );
-  const taskIds = expectedTasks.map((entry) => entry.taskId);
-  if (new Set(taskIds).size !== taskIds.length)
-    throw new Error('Broker state contains a duplicate expected task ID');
+  validateExpectedTaskCatalog(expectedTasks, workerConfig);
   return sealState({
     binding,
     workerConfig,
@@ -650,6 +825,102 @@ function expectedTask(state, taskId) {
   return task;
 }
 
+function terminalTaskSets(state) {
+  const permanentlyCancelled = new Set(
+    state.leases
+      .filter(
+        (entry) =>
+          entry.state === 'cancelled' &&
+          entry.cancellationMode === 'cancel-task'
+      )
+      .map((entry) => entry.taskId)
+  );
+  const exhausted = new Set(
+    state.leases
+      .filter(
+        (entry) =>
+          entry.state === 'cancelled' && entry.attempt >= entry.maxAttempts
+      )
+      .map((entry) => entry.taskId)
+  );
+  return { permanentlyCancelled, exhausted };
+}
+
+function blockedTaskIds(state) {
+  const resultByTask = new Map(
+    state.results.map((entry) => [entry.submission.taskId, entry])
+  );
+  const failed = new Set(
+    state.results
+      .filter((entry) => entry.submission.outcome.status === 'failed')
+      .map((entry) => entry.submission.taskId)
+  );
+  const { permanentlyCancelled, exhausted } = terminalTaskSets(state);
+  const terminalWithoutResult = new Set([
+    ...permanentlyCancelled,
+    ...exhausted,
+  ]);
+  const blocked = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const task of state.expectedTasks) {
+      if (
+        resultByTask.has(task.taskId) ||
+        terminalWithoutResult.has(task.taskId) ||
+        blocked.has(task.taskId)
+      )
+        continue;
+      const dependencyBlocked = task.dependencyTaskIds.some(
+        (taskId) =>
+          failed.has(taskId) ||
+          terminalWithoutResult.has(taskId) ||
+          blocked.has(taskId)
+      );
+      const prior = priorSlotTask(state.expectedTasks, task);
+      const priorBlocked =
+        prior !== null &&
+        (terminalWithoutResult.has(prior.taskId) || blocked.has(prior.taskId));
+      if (dependencyBlocked || priorBlocked) {
+        blocked.add(task.taskId);
+        changed = true;
+      }
+    }
+  }
+  return blocked;
+}
+
+function assertTaskDispatchReady(state, task, decisionAtMs) {
+  if (blockedTaskIds(state).has(task.taskId))
+    throw new Error('Task is blocked by a terminal prerequisite');
+  for (const dependencyTaskId of task.dependencyTaskIds) {
+    const result = acceptedTaskResult(
+      state.results,
+      dependencyTaskId,
+      decisionAtMs
+    );
+    if (!result)
+      throw new Error('Task requires an accepted dependency result');
+    if (result.submission.outcome.status !== 'passed')
+      throw new Error('Task is blocked by a failed dependency');
+  }
+  const prior = priorSlotTask(state.expectedTasks, task);
+  if (
+    prior &&
+    !acceptedTaskResult(state.results, prior.taskId, decisionAtMs)
+  )
+    throw new Error('Task requires its prior slot result to be accepted');
+}
+
+function liveSlotLeases(state, task) {
+  const slotKey = taskSlotKey(task);
+  return state.leases.filter(
+    (lease) =>
+      ['active', 'cancelling', 'cleanup-required'].includes(lease.state) &&
+      taskSlotKey(expectedTask(state, lease.taskId)) === slotKey
+  );
+}
+
 function priorTaskLeases(state, taskId) {
   return state.leases
     .filter((entry) => entry.taskId === taskId)
@@ -708,10 +979,13 @@ export function grantBrokerLease(stateValue, messageValue) {
     throw new Error('Lease retry limit does not match the immutable task');
   if (grant.attempt > grant.maxAttempts)
     throw new Error('Task attempt cannot exceed maximum attempts');
+  if (grant.workerId !== task.assignment.workerId)
+    throw new Error('Lease worker does not match the sealed task assignment');
   if (state.leases.some((entry) => entry.leaseId === grant.leaseId))
     throw new Error('Lease ID has already been used');
   if (state.results.some((entry) => entry.submission.taskId === task.taskId))
     throw new Error('Completed task cannot receive another lease');
+  assertTaskDispatchReady(state, task, message.sentAtMs);
   const worker = assertFreshWorkerProof(
     state,
     grant,
@@ -720,6 +994,8 @@ export function grantBrokerLease(stateValue, messageValue) {
   );
   if (!worker.registration.capabilities.adapterIds.includes(task.adapterId))
     throw new Error('Worker does not advertise the task native adapter');
+  if (task.assignment.slotIndex > worker.admission.selectedN)
+    throw new Error('Assigned logical slot exceeds the admitted worker N');
   if (
     activeWorkerLeases(state, grant.workerId).length >=
     worker.admission.selectedN
@@ -742,6 +1018,8 @@ export function grantBrokerLease(stateValue, messageValue) {
         'Only an aborted attempt with accepted cleanup evidence can be retried'
       );
   }
+  if (liveSlotLeases(state, task).length > 0)
+    throw new Error('Assigned logical slot already has a live lease');
   if (grant.expiresAtMs <= message.sentAtMs)
     throw new Error('Lease must expire after it is granted');
   if (grant.expiresAtMs > message.sentAtMs + task.timeoutMs)
@@ -790,6 +1068,12 @@ export function renewBrokerLease(stateValue, messageValue) {
     message.sentAtMs,
     'Lease renewal'
   );
+  const task = expectedTask(state, lease.taskId);
+  if (
+    task.assignment.workerId !== renewal.workerId ||
+    task.assignment.slotIndex > worker.admission.selectedN
+  )
+    throw new Error('Lease renewal exceeds its assigned live worker slot');
   if (
     !exactArray(
       worker.heartbeat.activeLeases,
@@ -810,7 +1094,6 @@ export function renewBrokerLease(stateValue, messageValue) {
     renewal.expiresAtMs <= lease.expiresAtMs
   )
     throw new Error('Lease renewal must extend an unexpired lease');
-  const task = expectedTask(state, lease.taskId);
   if (renewal.expiresAtMs > lease.grantedAtMs + task.timeoutMs)
     throw new Error('Lease renewal cannot exceed the immutable task timeout');
   const updated = { ...lease, expiresAtMs: renewal.expiresAtMs };
@@ -1120,23 +1403,8 @@ export function createBrokerReconciliationInput(stateValue, nowMs) {
   const resultByTask = new Map(
     state.results.map((entry) => [entry.submission.taskId, entry])
   );
-  const permanentlyCancelled = new Set(
-    state.leases
-      .filter(
-        (entry) =>
-          entry.cancellationMode === 'cancel-task'
-      )
-      .map((entry) => entry.taskId)
-  );
-  const exhausted = new Set(
-    state.leases
-      .filter(
-        (entry) =>
-          entry.state === 'cancelled' &&
-          entry.attempt >= entry.maxAttempts
-      )
-      .map((entry) => entry.taskId)
-  );
+  const { permanentlyCancelled, exhausted } = terminalTaskSets(state);
+  const blocked = blockedTaskIds(state);
   const activeLeaseIds = state.leases
     .filter((entry) =>
       ['active', 'cancelling', 'cleanup-required'].includes(entry.state)
@@ -1147,11 +1415,15 @@ export function createBrokerReconciliationInput(stateValue, nowMs) {
     .filter((task) => !resultByTask.has(task.taskId))
     .map((task) => task.taskId)
     .toSorted(compareText);
+  const terminalTaskIds = new Set([
+    ...resultByTask.keys(),
+    ...permanentlyCancelled,
+    ...exhausted,
+    ...blocked,
+  ]);
   const ready =
     activeLeaseIds.length === 0 &&
-    unresolvedTaskIds.length === 0 &&
-    permanentlyCancelled.size === 0 &&
-    exhausted.size === 0;
+    state.expectedTasks.every((task) => terminalTaskIds.has(task.taskId));
   const successEligible =
     ready &&
     state.results.length === state.expectedTasks.length &&
@@ -1183,6 +1455,7 @@ export function createBrokerReconciliationInput(stateValue, nowMs) {
       compareText
     ),
     exhaustedTaskIds: [...exhausted].toSorted(compareText),
+    blockedTaskIds: [...blocked].toSorted(compareText),
     ready,
     successEligible,
   };

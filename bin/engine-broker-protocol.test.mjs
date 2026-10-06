@@ -42,6 +42,13 @@ function taskInput(overrides = {}) {
     unitId: 'unit-tests',
     caseId: 'unit-shard-1',
     adapterId: 'native-generic',
+    assignment: {
+      workerId: 'worker-east',
+      slotId: 'worker-east.slot-1',
+      slotIndex: 1,
+      slotPosition: 1,
+    },
+    dependencyTaskIds: [],
     timeoutMs: 60_000,
     maxAttempts: 2,
     payload: {
@@ -146,12 +153,18 @@ function message(kind, body, principalId, overrides = {}) {
 
 test('runner-neutral tasks are canonically sealed against payload drift', () => {
   const sealed = sealBrokerTask(taskInput());
-  assert.equal(sealed.schema, 'seerrng-validation-broker-task/v1');
+  assert.equal(sealed.schema, 'seerrng-validation-broker-task/v2');
   assert.equal(
     sealed.applicationIsolationKeySha256,
     brokerApplicationIsolationKeySha256(binding())
   );
   assert.equal(sealed.adapterId, 'native-generic');
+  assert.deepEqual(sealed.assignment, {
+    workerId: 'worker-east',
+    slotId: 'worker-east.slot-1',
+    slotIndex: 1,
+    slotPosition: 1,
+  });
   assert.deepEqual(verifyBrokerTask(sealed), sealed);
   assert.equal(Object.isFrozen(sealed.payload), true);
 
@@ -166,6 +179,64 @@ test('runner-neutral tasks are canonically sealed against payload drift', () => 
   const changed = structuredClone(sealed);
   changed.payload.selection.files.push('src/other.test.ts');
   assert.throws(() => verifyBrokerTask(changed), /payload hash/);
+});
+
+test('task v2 seals canonical worker slots and dependency identities', () => {
+  const sealed = sealBrokerTask(
+    taskInput({ dependencyTaskIds: ['task-z', 'task-a'] })
+  );
+  assert.deepEqual(sealed.dependencyTaskIds, ['task-a', 'task-z']);
+
+  assert.throws(
+    () =>
+      sealBrokerTask(
+        taskInput({
+          assignment: {
+            workerId: 'worker-east',
+            slotId: 'worker-east.slot-2',
+            slotIndex: 1,
+            slotPosition: 1,
+          },
+        })
+      ),
+    /canonical slot ID/
+  );
+  assert.throws(
+    () =>
+      sealBrokerTask(
+        taskInput({ dependencyTaskIds: ['task-a', 'task-a'] })
+      ),
+    /duplicates/
+  );
+  assert.throws(
+    () => sealBrokerTask(taskInput({ dependencyTaskIds: ['unit-task-1'] })),
+    /depend on itself/
+  );
+
+  const tampered = structuredClone(sealed);
+  tampered.assignment.slotPosition = 2;
+  assert.throws(() => verifyBrokerTask(tampered), /seal/);
+
+  assert.throws(
+    () =>
+      createBrokerMessage(
+        message(
+          'lease.grant',
+          {
+            workerId: 'worker-west',
+            instanceId: 'worker-west-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-1',
+            attempt: 1,
+            maxAttempts: sealed.maxAttempts,
+            expiresAtMs: 10_000,
+            task: sealed,
+          },
+          'controller-dev'
+        )
+      ),
+    /worker does not match the sealed task assignment/
+  );
 });
 
 test('worker config is versioned, exact, secret-free, and supports different N values', () => {

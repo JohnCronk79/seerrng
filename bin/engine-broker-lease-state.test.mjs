@@ -25,6 +25,9 @@ import {
   sealBrokerCleanupEvidence,
   sealBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
+import {
+  canonicalJsonSha256,
+} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const h = (character) => character.repeat(64);
 
@@ -45,6 +48,7 @@ function binding(overrides = {}) {
 }
 
 function task(taskId = 'task-1', overrides = {}) {
+  const slotIndex = Number(taskId.match(/(\d+)$/)?.[1] ?? 1);
   return sealBrokerTask({
     applicationIsolationKeySha256:
       brokerApplicationIsolationKeySha256(binding()),
@@ -52,6 +56,13 @@ function task(taskId = 'task-1', overrides = {}) {
     unitId: 'unit-tests',
     caseId: taskId.replace('task', 'case'),
     adapterId: 'native-generic',
+    assignment: {
+      workerId: 'worker-east',
+      slotId: `worker-east.slot-${slotIndex}`,
+      slotIndex,
+      slotPosition: 1,
+    },
+    dependencyTaskIds: [],
     timeoutMs: 10_000,
     maxAttempts: 2,
     payload: { selection: [taskId] },
@@ -670,7 +681,7 @@ test('leases require exact tasks, supported adapters, and admitted worker slots'
           3_200
         )
       ),
-    /exceed the admitted worker N/
+    /exceeds? the admitted worker N/
   );
 
   const changed = structuredClone(tasks[2]);
@@ -1653,5 +1664,513 @@ test('rehydrated cleanup-required work stays blocked until its original session 
   assert.deepEqual(
     createBrokerReconciliationInput(closed, 8_600).activeLeaseIds,
     []
+  );
+});
+
+test('task catalog rejects unknown, cyclic, unavailable, or discontinuous assignments', () => {
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1', { dependencyTaskIds: ['missing-task'] }),
+      ]),
+    /unknown dependency/
+  );
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1', { dependencyTaskIds: ['task-2'] }),
+        task('task-2', { dependencyTaskIds: ['task-1'] }),
+      ]),
+    /dependencies contain a cycle/
+  );
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1', { dependencyTaskIds: ['task-2'] }),
+        task('task-2', {
+          assignment: {
+            workerId: 'worker-east',
+            slotId: 'worker-east.slot-1',
+            slotIndex: 1,
+            slotPosition: 2,
+          },
+        }),
+      ]),
+    /cycle with slot ordering/
+  );
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1', {
+          assignment: {
+            workerId: 'worker-east',
+            slotId: 'worker-east.slot-1',
+            slotIndex: 1,
+            slotPosition: 2,
+          },
+        }),
+      ]),
+    /positions must be unique and contiguous/
+  );
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1'),
+        task('task-2', {
+          assignment: {
+            workerId: 'worker-east',
+            slotId: 'worker-east.slot-1',
+            slotIndex: 1,
+            slotPosition: 1,
+          },
+        }),
+      ]),
+    /positions must be unique and contiguous/
+  );
+  assert.throws(
+    () =>
+      initialState([
+        task('task-1', {
+          assignment: {
+            workerId: 'worker-west',
+            slotId: 'worker-west.slot-1',
+            slotIndex: 1,
+            slotPosition: 1,
+          },
+        }),
+      ]),
+    /unavailable worker/
+  );
+});
+
+test('logical slots permit parallel slots but enforce each prior slot result', () => {
+  const first = task('task-1');
+  const next = task('task-2', {
+    assignment: {
+      workerId: 'worker-east',
+      slotId: 'worker-east.slot-1',
+      slotIndex: 1,
+      slotPosition: 2,
+    },
+  });
+  const parallel = task('task-3', {
+    assignment: {
+      workerId: 'worker-east',
+      slotId: 'worker-east.slot-2',
+      slotIndex: 2,
+      slotPosition: 1,
+    },
+  });
+  let state = admittedState([first, next, parallel]);
+  assert.equal(state.schema, 'seerrng-validation-broker-lease-state/v2');
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(first),
+      'controller-dev',
+      3_000
+    )
+  );
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        state,
+        authenticated(
+          'lease.grant',
+          grantBody(next, { leaseId: 'lease-task-2-1' }),
+          'controller-dev',
+          3_100
+        )
+      ),
+    /prior slot result/
+  );
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(parallel, { leaseId: 'lease-task-3-1' }),
+      'controller-dev',
+      3_100
+    )
+  );
+  assert.deepEqual(
+    state.leases.map((lease) => lease.taskId).toSorted(),
+    ['task-1', 'task-3']
+  );
+
+  const reassigned = task('task-1', {
+    assignment: {
+      workerId: 'worker-east',
+      slotId: 'worker-east.slot-2',
+      slotIndex: 2,
+      slotPosition: 1,
+    },
+  });
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        admittedState([first]),
+        authenticated(
+          'lease.grant',
+          grantBody(reassigned, { leaseId: 'reassigned-task' }),
+          'controller-dev',
+          3_000
+        )
+      ),
+    /immutable expected task/
+  );
+});
+
+test('dependencies require accepted passing results while failed slot predecessors do not', () => {
+  const prerequisite = task('task-1');
+  const dependent = task('task-2', { dependencyTaskIds: ['task-1'] });
+  let state = admittedState([prerequisite, dependent]);
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        state,
+        authenticated(
+          'lease.grant',
+          grantBody(dependent, { leaseId: 'lease-task-2-1' }),
+          'controller-dev',
+          3_000
+        )
+      ),
+    /accepted dependency result/
+  );
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(prerequisite),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = acceptBrokerResult(
+    state,
+    authenticated(
+      'worker.result',
+      resultBody(prerequisite),
+      'worker-east',
+      5_100
+    ),
+    resultAcceptance(5_200)
+  ).state;
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(dependent, { leaseId: 'lease-task-2-1' }),
+      'controller-dev',
+      5_300
+    )
+  );
+  assert.equal(state.leases.at(-1).taskId, dependent.taskId);
+
+  let failed = admittedState([prerequisite, dependent]);
+  failed = grantBrokerLease(
+    failed,
+    authenticated(
+      'lease.grant',
+      grantBody(prerequisite),
+      'controller-dev',
+      3_000
+    )
+  );
+  const failedResult = resultBody(prerequisite);
+  failedResult.outcome = {
+    ...failedResult.outcome,
+    status: 'failed',
+    exitCode: 1,
+    resultSha256: h('1'),
+  };
+  failed = acceptBrokerResult(
+    failed,
+    authenticated('worker.result', failedResult, 'worker-east', 5_100),
+    resultAcceptance(5_200)
+  ).state;
+  assert.throws(
+    () =>
+      grantBrokerLease(
+        failed,
+        authenticated(
+          'lease.grant',
+          grantBody(dependent, { leaseId: 'lease-task-2-1' }),
+          'controller-dev',
+          5_300
+        )
+      ),
+    /terminal prerequisite|failed dependency/
+  );
+  const failedInput = createBrokerReconciliationInput(failed, 6_000);
+  assert.equal(
+    failedInput.schema,
+    'seerrng-validation-broker-reconciliation-input/v2'
+  );
+  assert.deepEqual(failedInput.blockedTaskIds, ['task-2']);
+  assert.deepEqual(failedInput.unresolvedTaskIds, ['task-2']);
+  assert.equal(failedInput.ready, true);
+  assert.equal(failedInput.successEligible, false);
+
+  const first = task('task-1');
+  const independentNext = task('task-2', {
+    assignment: {
+      workerId: 'worker-east',
+      slotId: 'worker-east.slot-1',
+      slotIndex: 1,
+      slotPosition: 2,
+    },
+  });
+  let diagnostic = admittedState([first, independentNext]);
+  diagnostic = grantBrokerLease(
+    diagnostic,
+    authenticated(
+      'lease.grant',
+      grantBody(first),
+      'controller-dev',
+      3_000
+    )
+  );
+  const diagnosticFailure = resultBody(first);
+  diagnosticFailure.outcome = {
+    ...diagnosticFailure.outcome,
+    status: 'failed',
+    exitCode: 1,
+    resultSha256: h('2'),
+  };
+  diagnostic = acceptBrokerResult(
+    diagnostic,
+    authenticated(
+      'worker.result',
+      diagnosticFailure,
+      'worker-east',
+      5_100
+    ),
+    resultAcceptance(5_200)
+  ).state;
+  diagnostic = grantBrokerLease(
+    diagnostic,
+    authenticated(
+      'lease.grant',
+      grantBody(independentNext, { leaseId: 'lease-task-2-1' }),
+      'controller-dev',
+      5_300
+    )
+  );
+  assert.equal(diagnostic.leases.at(-1).taskId, independentNext.taskId);
+});
+
+test('renewal rejects a slot outside newly admitted live capacity', () => {
+  const plannedTask = task('task-2');
+  let state = createBrokerLeaseState({
+    binding: binding(),
+    expectedTasks: [plannedTask],
+    workerConfig: workerConfig('auto'),
+  });
+  state = registerBrokerWorker(
+    state,
+    authenticated('worker.register', registration(), 'worker-east', 1_500)
+  );
+  state = recordBrokerCapacity(
+    state,
+    authenticated('worker.capacity', capacity(), 'worker-east')
+  );
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 2_200,
+        capacitySequence: 1,
+        activeLeases: [],
+      },
+      'worker-east',
+      2_300
+    )
+  );
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask, { leaseId: 'lease-task-2-1' }),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = recordBrokerCapacity(
+    state,
+    authenticated(
+      'worker.capacity',
+      capacity(['lease-task-2-1'], {
+        reportSequence: 2,
+        observedAtMs: 4_000,
+        safeAvailableN: 1,
+      }),
+      'worker-east',
+      4_100
+    )
+  );
+  state = recordBrokerHeartbeat(
+    state,
+    authenticated(
+      'worker.heartbeat',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        observedAtMs: 4_200,
+        capacitySequence: 2,
+        activeLeases: [
+          { leaseId: 'lease-task-2-1', taskId: 'task-2', attempt: 1 },
+        ],
+      },
+      'worker-east',
+      4_300
+    )
+  );
+  assert.throws(
+    () =>
+      renewBrokerLease(
+        state,
+        authenticated(
+          'lease.renew',
+          {
+            workerId: 'worker-east',
+            instanceId: 'worker-east-boot-1',
+            workerSessionId: 'session-1',
+            leaseId: 'lease-task-2-1',
+            taskId: 'task-2',
+            attempt: 1,
+            expiresAtMs: 9_000,
+          },
+          'controller-dev',
+          4_500
+        )
+      ),
+    /assigned live worker slot/
+  );
+});
+
+test('rehydration rejects rehashed history that violates dependency admission', () => {
+  const prerequisite = task('task-1');
+  const dependent = task('task-2', { dependencyTaskIds: ['task-1'] });
+  let state = admittedState([prerequisite, dependent]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(prerequisite),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = acceptBrokerResult(
+    state,
+    authenticated(
+      'worker.result',
+      resultBody(prerequisite),
+      'worker-east',
+      5_100
+    ),
+    resultAcceptance(5_200)
+  ).state;
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(dependent, { leaseId: 'lease-task-2-1' }),
+      'controller-dev',
+      5_300
+    )
+  );
+
+  const tampered = structuredClone(state);
+  const dependentLease = tampered.leases.find(
+    (lease) => lease.taskId === dependent.taskId
+  );
+  dependentLease.grantedAtMs = 5_100;
+  delete tampered.stateSha256;
+  tampered.stateSha256 = canonicalJsonSha256(tampered);
+  assert.throws(
+    () =>
+      rehydrateBrokerLeaseState(tampered, {
+        expectedBinding: binding(),
+        expectedStateSha256: tampered.stateSha256,
+      }),
+    /accepted passing dependency result/
+  );
+});
+
+test('rehydration rejects a rehashed retry that overlaps cleanup on its slot', () => {
+  const plannedTask = task();
+  let state = admittedState([plannedTask]);
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask),
+      'controller-dev',
+      3_000
+    )
+  );
+  state = cancelBrokerLease(
+    state,
+    authenticated(
+      'lease.cancel',
+      {
+        workerId: 'worker-east',
+        instanceId: 'worker-east-boot-1',
+        workerSessionId: 'session-1',
+        leaseId: 'lease-task-1-1',
+        taskId: 'task-1',
+        attempt: 1,
+        requestedAtMs: 4_000,
+        mode: 'abort-attempt',
+        reasonCode: 'worker-drain',
+      },
+      'controller-dev',
+      4_100
+    )
+  );
+  state = acknowledgeBrokerCancellation(
+    state,
+    authenticated(
+      'worker.cancelled',
+      cancellationAcknowledgement(plannedTask),
+      'worker-east',
+      4_300
+    ),
+    cleanupAcceptance(4_400)
+  );
+  state = grantBrokerLease(
+    state,
+    authenticated(
+      'lease.grant',
+      grantBody(plannedTask, {
+        leaseId: 'lease-task-1-2',
+        attempt: 2,
+        expiresAtMs: 14_000,
+      }),
+      'controller-dev',
+      5_000
+    )
+  );
+
+  const tampered = structuredClone(state);
+  tampered.leases.find((lease) => lease.attempt === 2).grantedAtMs = 4_300;
+  delete tampered.stateSha256;
+  tampered.stateSha256 = canonicalJsonSha256(tampered);
+  assert.throws(
+    () =>
+      rehydrateBrokerLeaseState(tampered, {
+        expectedBinding: binding(),
+        expectedStateSha256: tampered.stateSha256,
+      }),
+    /overlap one logical worker slot/
   );
 });
