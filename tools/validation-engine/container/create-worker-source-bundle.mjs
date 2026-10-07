@@ -459,6 +459,8 @@ function createAndVerifyBundle({
   );
   runGit({
     args: [
+      '-c',
+      'pack.threads=1',
       'bundle',
       'create',
       bundle,

@@ -23,6 +23,13 @@ const producerPath = fileURLToPath(
   )
 );
 
+test('producer pins Git pack creation to one deterministic thread', () => {
+  assert.match(
+    readFileSync(producerPath, 'utf8'),
+    /args: \[\s+'-c',\s+'pack\.threads=1',\s+'bundle',\s+'create'/u
+  );
+});
+
 function gitEnvironment(extra = {}) {
   return {
     ...process.env,
