@@ -377,17 +377,17 @@ round trip or human visual acceptance has been run.
 |---|---|---|---|
 | 1 | Consolidate book backends | Declined by maintainer; both forks kept | n/a |
 | 2 | Audit Goodreads list import | Audit recorded; no code change | 8.1 |
-| 3 | Usenet adapter for live progress | Not started; needs keyed-ID generalization | 8.2 |
-| 4 | Metron comic metadata source | Not started; API verified | 8.3 |
+| 3 | Usenet adapter for live progress | Done: SABnzbd adapter, generalized download keys, tests, docs | `884ae47c` |
+| 4 | Metron comic metadata source | Done: search fallback, token setting, tests, docs | `7a00f591` |
 | 5 | BackIssue as preferred comic target | Done (docs) | `4cecbf9f` |
-| 6 | Finish ROMarrNG RomM status feedback | Not started; fork repositories not checked out | 8.4 |
+| 6 | Finish ROMarrNG RomM status feedback | Blocked on a maintainer decision (see 8.4) | 8.4 |
 | 7 | Keep QuestarrNG Playnite and RomM routing | No change required | 8.4 |
 | 8 | Keep slskdN to stable surfaces | Verified: no experimental networking code in SeerrNG | 8.5 |
 | 9 | Keep TorrentNG as adapter; add rTorrent | Done: adapter, settings, tests, docs | `048be698`, `4cecbf9f` |
 | 10 | Do not build a reader; verify BookOrbit | Reader not built; BookOrbit features not externally verified | 8.6 |
-| 11 | Generic tuner-provider interface | Deferred; recommendation gated on Phase 2 live round trip | 8.7 |
-| 12 | Navidrome availability source | Not started; API identified | 8.8 |
-| 13 | Jellystat watch statistics | Not started; API identified | 8.9 |
+| 11 | Generic tuner-provider interface | Done: `LiveTvProvider` with Tunerr as the sole implementation; Channels DVR not built | `7e944c3f` |
+| 12 | Navidrome availability source | Done: scanner, settings, route, Services section, docs | `2408f86f` |
+| 13 | Jellystat watch statistics | Done: client, settings, route, summary component, docs | `48e8b29d` |
 | 14 | Apprise notification agent | Done: agent, settings, routes, UI, tests; UI not visually accepted | `b37321cb` |
 | 15 | Verify Plex price claim | No repository reference; nothing to correct | 8.10 |
 | 16 | No gap in request layer | No action | n/a |
@@ -402,23 +402,27 @@ maintained option. Confidence: moderate.
 
 ### 8.2 Usenet live progress
 
-Live progress keys torrents by info hash end to end (`liveDownloads.ts`,
-`liveDownloadTokens.ts`, `downloadtracker.ts`, and the browser store). SABnzbd
-`nzo_id` values do not fit that key space, so the key must be generalized
-first. Not built.
+Done. Download keys are now a torrent info hash or a SABnzbd queue ID
+(`SABnzbd_nzo_…`, format confirmed in SABnzbd's `nzbqueue.py`). The poller sends
+each client only the keys of its kind. SABnzbd reports one aggregate speed, which
+is attributed to the first downloading item. Confidence: high for the mapping
+and routing; unverified against a live SABnzbd.
 
 ### 8.3 Metron
 
-From `Metron-Project/metron` `api/README.md`: base `https://metron.cloud/api/`,
-`Authorization: Bearer <token>`, `?name=`, `?cv_id=`, and `?gcd_id=` filters,
-with burst and sustained rate limits reported in response headers. Comic
-discovery depends on ComicVine identity (`comicCatalogIndex.ts`,
-`comicMediaMatcher.ts`), so Metron needs its own identity mapping. Not built.
+Done as a search fallback only. Series without a ComicVine ID are dropped,
+because requests are keyed by ComicVine IDs. Detail pages still need ComicVine.
+Confidence: moderate; the series response shape comes from Metron's serializer,
+not a live call.
 
 ### 8.4 ROMarrNG and QuestarrNG
 
-Recommendations 6 and 7 are fork-side. Those repositories are not checked out
-here, so their contracts were not read. Not built.
+Recommendation 7 needs no change. Recommendation 6 is blocked on a decision.
+ROMarrNG knows where it files a finished download (`romarr/library.py`) but
+does not track whether RomM has indexed it. "RomM status feedback" could mean
+"placed on disk" or "RomM has indexed it". These differ in what users see, so
+the maintainer must choose before a contract field is added. Nothing in the
+fork or SeerrNG was changed for this item.
 
 ### 8.5 slskdN
 
@@ -433,22 +437,25 @@ verified externally. Confidence: unknown.
 
 ### 8.7 Tuner provider interface
 
-Deferred. The recommendation itself waits for the Phase 2 live round trip,
-which is still pending.
+Done as an interface only. `LiveTvProvider` covers the calls the Live TV code
+uses, and `createLiveTvProvider` returns Tunerr. Behavior is unchanged. The
+recommendation's gate (Phase 2 live round trip) is still open, so this does
+not mean a second backend is supported.
 
 ### 8.8 Navidrome
 
-Subsonic API with token authentication (`u`, `s`, `t`). Music availability
-today is driven by Lidarr album status in `server/lib/musicAvailability.ts`, so
-Navidrome needs a new availability source. Not built.
+Done. Subsonic token authentication, `getAlbumList2` paging, MusicBrainz matching
+through the existing `processMusic` path. `albumList2`, `musicBrainzId`, and the
+`subsonic-response` envelope were confirmed in Navidrome's `responses.go`.
+Known gap: albums marked available are not cleared when Navidrome is disconnected.
 
 ### 8.9 Jellystat
 
-`CyferShepard/Jellystat` backend: its `authenticate` middleware accepts an
-`x-api-token` header or an `apiKey` query parameter. Stats routes include
-`/stats/getPlaybackActivity` and `/stats/getGlobalUserStats`. Tautulli is wired
-through Plex settings, media responses, user routes, and the media UI, so
-Jellystat needs the same cross-cutting work. Not built.
+Done for per-title totals. The client sends `x-api-token`, and reads
+`/stats/getGlobalItemStats` with a ten-year window. `PlaybackDuration` is stored
+in seconds (confirmed in Jellystat's `ActivityMonitor.js`). Shown only to
+administrators, on titles with a Jellyfin ID. Jellystat's user-level and
+history features are not used.
 
 ### 8.10 Plex price
 
