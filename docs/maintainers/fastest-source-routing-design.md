@@ -42,7 +42,7 @@ so SeerrNG should not silently pick one:
 
 1. On approval of a movie or TV request, if a matching airing exists within
    the window, the request still goes to the *arr service as today.
-2. The requester sees a **Record the airing on {channel} at {time} too?**
+2. The requester sees a **Record the airing on `{channel}` at `{time}` too?**
    prompt on Request Status (and in the approval notification). Accepting
    creates a linked recording request (`RecordingRequest.mediaRequestId`).
 3. Whichever finishes first marks the media request **Available (recording)**
