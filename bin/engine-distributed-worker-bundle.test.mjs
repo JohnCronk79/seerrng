@@ -110,7 +110,17 @@ function createFixture({ objectFormat = 'sha1', withReleaseTags = true } = {}) {
   }
   writeFileSync(join(source, 'candidate.txt'), 'candidate\n');
   writeFileSync(join(source, 'candidate-only.txt'), 'tip only\n');
-  git(source, ['add', '--', 'candidate.txt', 'candidate-only.txt']);
+  writeFileSync(
+    join(source, 'compression-fixture.txt'),
+    'deterministic bundle compression fixture\n'.repeat(4096)
+  );
+  git(source, [
+    'add',
+    '--',
+    'candidate.txt',
+    'candidate-only.txt',
+    'compression-fixture.txt',
+  ]);
   git(source, ['commit', '--quiet', '-m', 'candidate']);
   const sourceCommit = git(source, [
     'rev-parse',
@@ -255,6 +265,22 @@ function inspectBundle({
 test('producer emits a deterministic shallow candidate with exact release tags', () => {
   const fixture = createFixture();
   try {
+    const hostileHomeOne = join(fixture.root, 'hostile-home-one');
+    const hostileHomeTwo = join(fixture.root, 'hostile-home-two');
+    const emptyXdgOne = join(fixture.root, 'empty-xdg-one');
+    const emptyXdgTwo = join(fixture.root, 'empty-xdg-two');
+    mkdirSync(hostileHomeOne, { mode: 0o700 });
+    mkdirSync(hostileHomeTwo, { mode: 0o700 });
+    mkdirSync(emptyXdgOne, { mode: 0o700 });
+    mkdirSync(emptyXdgTwo, { mode: 0o700 });
+    writeFileSync(
+      join(hostileHomeOne, '.gitconfig'),
+      '[pack]\n\tcompression = 1\n\tthreads = 8\n'
+    );
+    writeFileSync(
+      join(hostileHomeTwo, '.gitconfig'),
+      '[pack]\n\tcompression = 9\n\tthreads = 2\n'
+    );
     const firstBundle = join(fixture.output, 'first.bundle');
     const command = spawnSync(
       process.execPath,
@@ -264,6 +290,9 @@ test('producer emits a deterministic shallow candidate with exact release tags',
         env: gitEnvironment({
           GIT_DIR: join(fixture.root, 'hostile-git-dir'),
           GIT_WORK_TREE: join(fixture.root, 'hostile-work-tree'),
+          HOME: hostileHomeOne,
+          USERPROFILE: hostileHomeOne,
+          XDG_CONFIG_HOME: emptyXdgOne,
         }),
         shell: false,
         windowsHide: true,
@@ -298,6 +327,11 @@ test('producer emits a deterministic shallow candidate with exact release tags',
     const repeated = createWorkerSourceBundle({
       sourceRoot: fixture.source,
       outputPath: secondBundle,
+      environment: gitEnvironment({
+        HOME: hostileHomeTwo,
+        USERPROFILE: hostileHomeTwo,
+        XDG_CONFIG_HOME: emptyXdgTwo,
+      }),
     });
     assert.equal(repeated.bundleSha256, provenance.bundleSha256);
     assert.equal(repeated.bundleBytes, provenance.bundleBytes);
