@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import dns from 'node:dns/promises';
+import { join } from 'node:path';
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 
 import JellyfinAPI from '@server/api/jellyfin';
@@ -1290,6 +1291,40 @@ describe('User route input validation', () => {
         }),
         false
       );
+    } finally {
+      sendMock.mock.restore();
+    }
+  });
+
+  it('creates a local user and renders its password setup email before reload', async () => {
+    const settings = getSettings();
+    settings.notifications.agents.email.enabled = true;
+    settings.main.applicationUrl = 'https://seerr.example';
+    const email = new PreparedEmail(settings.notifications.agents.email);
+    let renderedHtml = '';
+    const sendMock = mock.method(
+      PreparedEmail.prototype,
+      'send',
+      async (options: Parameters<PreparedEmail['send']>[0]) => {
+        if (!options?.template) {
+          throw new Error('Password setup template was not provided');
+        }
+        renderedHtml = await email.render(
+          join(options.template, 'html'),
+          options.locals
+        );
+      }
+    );
+
+    try {
+      const agent = await loginAs('admin@seerr.dev', 'test1234');
+      const response = await agent.post('/user').send({
+        username: 'setup-link-user',
+        email: 'setup-link-user@seerr.dev',
+      });
+
+      assert.strictEqual(response.status, 201);
+      assert.match(renderedHtml, /Hi, setup-link-user!/);
     } finally {
       sendMock.mock.restore();
     }

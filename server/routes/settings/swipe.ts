@@ -80,7 +80,9 @@ export const parseSwipeSettings = (
     if (
       !['http:', 'https:'].includes(parsedUrl.protocol) ||
       parsedUrl.username ||
-      parsedUrl.password
+      parsedUrl.password ||
+      parsedUrl.search ||
+      parsedUrl.hash
     ) {
       throw new Error();
     }

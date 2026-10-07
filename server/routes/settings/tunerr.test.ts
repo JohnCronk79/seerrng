@@ -42,6 +42,8 @@ describe('parseTunerrSettings', () => {
       { deckPort: 0 },
       { tunerPort: 70_000 },
       { guideUrl: 'ftp://guide' },
+      { guideUrl: 'http://user:pass@guide/guide.xml' },
+      { guideUrl: 'http://guide/guide.xml#fragment' },
       { guideHours: 2 },
       { username: 'a:b' },
       { hostname: 'http://tunerr' },

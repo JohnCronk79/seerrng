@@ -32,7 +32,10 @@ not override their verification or UI rules.
 
 ## Progress log
 
-Branch: `feat/ng-ecosystem-integration`. Status values: `done` (code and
+Current handoff branch: `integration/ng-phase2-main-20261007`, rebased onto
+`origin/main` at `1ba2da2033a8c26f5001c7e5a0d6ee58f670a7c1` (release `v3.53.0`).
+It carries the Phase 7 work from `feat/ng-phase2-tunerr`. Status values:
+`done` (code and
 automated checks written and run), `built` (code written, not yet run against a
 real service), `pending`, `blocked`. Targeted local checks and cumulative-gate
 results are recorded in the progress table. A failed required gate blocks
@@ -54,13 +57,13 @@ yet.
 | 1 Stall signal for Download Recovery | pending | |
 | 1 Pre-approval free-space check | pending | Needs TorrentNG `/api/v1/storage`; other clients do not expose per-root free space the same way. |
 | 1 Per-category tags / ratio groups | pending | Would be the first write to a client; needs a maintainer decision. |
-| 2 Worktree | done | Phase 2 is on branch `feat/ng-phase2-tunerr` in worktree `~/Code/seerrng-phase2` because another editor is changing Phase 1 in `~/Code/seerrng`. Merge back to main when both are done. |
+| 2 Worktree | done | Phase 2 is on `integration/ng-phase2-main-20261007`, rebased onto the current `origin/main`. The branch is pushed for the assigned build and remaining gate handoff; merging into main is still pending. |
 | 2 Tunerr auth | done (no fork change) | The deck accepts HTTP Basic auth and proxies `/api/*` to the tuner from localhost. Requires `IPTV_TUNERR_WEBUI_ALLOW_LAN=1`. Resolves open question 1. |
 | 2 Guide index | done | Streaming XMLTV parser + title index over the tuner's `/guide.xml` (`server/lib/liveTv/`). The capsules API caps at 250 rows, so it is not used. 13 unit tests. |
 | 2 RecordingRequest entity + migrations | done | SQLite and Postgres migrations `1791040000000`; SQLite migration test. Postgres migration not run locally. |
 | 2 Live TV API + sync job | done | `/api/v1/live-tv/*`, `/api/v1/settings/tunerr`, `live-tv-sync` job. Integration test against a fake deck and guide (4 tests), OpenAPI validator test (5), settings parser (5). |
 | 2 UI | built | On Live TV button + dialog on movie/series pages, `/recordings` page, Settings → Services section. Component test (4). Needs human visual review. No sidebar entry yet (sidebar links cannot be conditional on settings today). |
-| 2 Tunerr fork: rule-driven recorder | done (local branch) | `~/Code/iptvtunerr` branch `feat/seerrng-recording-rules` (commit `0440d64`, not pushed): `title_equals`, `start_after`/`start_before`, response-only `features`, `catchup-daemon -rules-only`. 6 new Go tests; `go test ./...` passed. Tunerr `scripts/verify` not run (local Go 1.27 `gofmt` flags vendored files). Operators must run the recorder with `-rules-only`. |
+| 2 Tunerr fork: rule-driven recorder | done (pushed) | Branch `feat/seerrng-recording-rules` is at `f8340e5` (implementation `751ae6b`): `title_equals`, `start_after`/`start_before`, response-only `features`, `catchup-daemon -rules-only`. A clean isolated `./scripts/verify` passed, including Go tests, build, council, and binary smoke; GitHub Local Identity run `37630122249` passed. No real IPTV provider was available. Operators must run the recorder with `-rules-only`. |
 | 2 Live check: deck proxy + Basic auth from another host | pending | Verified from Tunerr source only; needs a local Tunerr run. |
 | 3 slskdN client + settings | done | `server/api/slskdn.ts` (X-API-Key), per-feature probes (wishlist, library health, SongID); `/api/v1/settings/slskdn`. Endpoints read from `~/slskdn-current` source. |
 | 3 Track requests | done | `TrackRequest` entity + migrations `1791050000000`, wishlist-backed search with approval, `soulseek-sync` job, `/api/v1/soulseek/track-requests*`. Integration test against a fake slskdN. |
@@ -71,7 +74,7 @@ yet.
 | 3 slskdN download progress in live progress | pending | slskdN transfers are not torrents; needs a separate adapter. |
 | 4 Goodreads lists in External Request List Sync | already present | SeerrNG already supports Goodreads lists (`ExternalRequestListProvider = 'imdb' \| 'goodreads'`). Hardcover want-to-read is not supported (needs a per-user Hardcover token). |
 | 4 ChaptarrNG direct download shown | done | Generalized: admins see the *arr queue's download client name (and protocol is carried) for every download. Non-admin projection drops it (test). |
-| 4 ROMarrNG DAT verification | done | ROMarrNG local branch `feat/seerrng-dat-verification` (commit `06a6a67`, not pushed): `datVerified` per asset + `assetDatVerification` capability; 2 new pytest tests; ROMarrNG suite 2206 passed, 1 pre-existing failure (`test_json_request_bodies_are_bounded_before_parsing`, also fails on clean HEAD here). SeerrNG shows a DAT Verified badge on available ROM requests. |
+| 4 ROMarrNG DAT verification | done (pushed) | Branch `feat/seerrng-dat-verification` is at `c9034b2`, rebased onto `origin/main` `064b2dbc`. It returns `datVerified` per asset and advertises `assetDatVerification`; SeerrNG shows the DAT status on available ROM requests. Focused DAT, placement, and HTTP contract tests passed 128/128 with loopback access. No live ROMarrNG service was used. |
 | 4 ROMarrNG collections / 1G1R full-set requests | pending | Needs new ROMarrNG contract endpoints for collections; not started. |
 | 4 BookshelfNG series-pack search, M4B option | pending | Needs BookshelfNG contract exposure; not started. |
 | 4 QuestarrNG RomM/Playnite state into My Games | pending | Needs QuestarrNG contract exposure; not started. |
@@ -412,20 +415,41 @@ independently. Design differences: SeerrNG decks come from its own catalogs
 (so cards are always requestable), AI is optional and only reorders, and the
 feature covers movies, series, and books.
 
-## Phase 7: remaining ReadMeABook features (next)
+## Phase 7: ReadMeABook and per-user book integration
 
-Status: researched, not built. Approach per feature:
+Status: implemented on `feat/ng-phase2-tunerr` and carried on
+`integration/ng-phase2-main-20261007`, rebased onto `origin/main` at
+`1ba2da2033a8c26f5001c7e5a0d6ee58f670a7c1`. A passing cumulative gate and build
+are still required before finalization. SeerrNG remains the request layer. ReadMeABook owns the
+download and processing pipeline; SeerrNG uses its token-authenticated API and
+does not duplicate its indexer search/ranking, download clients, organization,
+M4B chapter merging, release blocklist, import, or ebook sidecar.
 
-| ReadMeABook feature | SeerrNG approach |
-| --- | --- |
-| Acquisition pipeline (Prowlarr search + ranking, qBittorrent/Transmission/SABnzbd/NZBGet, organization, M4B chapter merging, release blocklist, bulk/manual import, ebook sidecar) | **ReadMeABook backend**: new audiobook service type. Token API (`Authorization: Bearer rmab_…`, allowlisted): `POST /api/requests` with `{audiobook:{asin,title,author,narrator?,description?,coverArtUrl?}}` → `201 {request}` or named errors (`AlreadyAvailable`, `BeingProcessed`, `DuplicateRequest`, …); `GET /api/requests/:id` (status + `downloadHistory` + jobs); `GET /api/requests`. Request statuses: pending, searching, downloading, processing, downloaded, available, failed, cancelled, awaiting_search, awaiting_import, awaiting_release, warn, awaiting_approval, denied. The RMAB token owner should have auto-approve on, since SeerrNG approves first. |
-| Audible-backed search | Proxy `GET /api/audiobooks/search` from the RMAB backend into SeerrNG audiobook search (do not scrape Audible ourselves). |
-| Admin dashboard | Proxy `GET /api/admin/metrics`, `/api/admin/downloads/active`, `/api/admin/requests/recent` (admin token) into a SeerrNG admin panel. |
-| BookDate library scopes (full / rated / pick favourites ≤25) | Extend Swipe seeds: favourites picker from the user's library and requests; "rated only" from media-server ratings. |
-| Hardcover shelf sync | Add `hardcover` provider to External Request List Sync (per-user Hardcover token, GraphQL). Goodreads already supported. |
-| Per-user home sections | Per-user configurable book/audiobook discover sections (popular, new, subject categories), reorder/hide. |
-| Admin-generated per-user login links | Expiring, single-use, hashed tokens; revoke; admin-only. Security review required. |
-| Notifications, approval, OIDC, setup wizard, request deletion, thumbnail cache | Already present in SeerrNG. |
-| Credential recovery | Not applicable (SeerrNG has no CONFIG_ENCRYPTION_KEY). |
+| Feature | Implementation | Automated evidence |
+| --- | --- | --- |
+| ReadMeABook audiobook search and requests | Admin-configured backend URL and token; authenticated search, request creation, request status/history, and admin request/download metrics. User ownership and admin access are enforced in SeerrNG. | Route tests use mocked backend responses; no real ReadMeABook service was contacted. |
+| Hardcover want-to-read sync | `hardcover` provider for per-user External Request List Sync using a user-owned GraphQL token; Goodreads remains supported. | Sync and credential-redaction tests. |
+| Book and audiobook home sections | Per-user ordered, hideable popular, new, and subject rows on Discover. | User-settings route and component tests. |
+| Swipe seed scopes | Full library, rated items, or a user-selected set of up to 25 favorites; media-server library ratings seed the rated scope. | Server and client route/component tests. |
+| Admin-generated sign-in links | Admin-only creation/list/revoke; random single-use token is stored only as a hash, expires after 30 minutes, and is consumed atomically. | Security-focused route tests cover expiry, revocation, reuse, and unauthorized access. |
+| Acquisition pipeline, notifications, approval, OIDC, setup wizard, request deletion, thumbnail cache | Existing SeerrNG notifications, approval, OIDC, setup, deletion, and thumbnail behavior remain in place. The acquisition pipeline stays in ReadMeABook. | No new SeerrNG implementation required for these items. |
 
-Done in Phase 6/7 so far: Swipe (BookDate equivalent) with Claude and OpenAI-compatible (OpenAI, Ollama, LM Studio) ordering.
+SQLite and PostgreSQL migrations are included: `1791090000000` through
+`1791120000000`; these follow main's theme-adoption migration at `1791080000000`.
+A collision check covers both migration histories, and the SQLite migration
+suite passes; PostgreSQL migrations were not run locally. The exact new feature
+tests pass in focused reruns. The latest focused post-rebase run passed 23 tests
+across six Phase 7 and PostgreSQL metadata suites. A fresh cumulative run on the
+pushed head passed Vitest (471 tests), native TypeScript (3,099 passed, four
+PostgreSQL-only skips), and native JavaScript (493 tests). Its platform-aware
+tooling lane failed 31 of 237 checks on macOS ARM64 due to Linux/GNU command and
+architecture assumptions; the full validator exited 1. The detailed result is
+in `interface-integration-checkpoint.md`. A complete passing validation/build
+gate is still pending. No live ReadMeABook or Hardcover round-trip,
+desktop/narrow visual review, or physical Swipe interaction review has been
+performed; see the current evidence entry in
+`interface-integration-checkpoint.md`.
+
+ReadMeABook (`kikootwo/ReadMeABook`) is AGPL-3.0 and SeerrNG is MIT. The
+integration uses its documented HTTP contract only; no ReadMeABook source,
+CSS, copy, or assets were copied into SeerrNG.

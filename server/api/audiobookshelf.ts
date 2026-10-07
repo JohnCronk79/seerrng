@@ -1,4 +1,13 @@
 import type { AudiobookshelfSettings } from '@server/lib/settings';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
+import {
+  buildServiceUrl,
+  trimSurroundingSlashes,
+  trimTrailingSlashes,
+} from '@server/utils/serviceUrl';
 import axios from 'axios';
 
 export interface AudiobookshelfLibrary {
@@ -34,18 +43,30 @@ export default class AudiobookshelfAPI {
   private readonly root: string;
 
   constructor(private readonly settings: AudiobookshelfSettings) {
-    const protocol = settings.useSsl ? 'https' : 'http';
-    const baseUrl = (settings.baseUrl ?? '').replace(/^\/+|\/+$/g, '');
-    this.root = `${protocol}://${settings.hostname}:${settings.port}${baseUrl ? `/${baseUrl}` : ''}/api`;
+    this.root = buildServiceUrl({
+      useSsl: settings.useSsl,
+      hostname: settings.hostname,
+      port: settings.port,
+      urlBase: settings.baseUrl,
+      path: '/api',
+    });
   }
 
   private async get<T>(path: string, params?: Record<string, number>) {
-    const response = await axios.get<T>(`${this.root}${path}`, {
+    const safeUrl = await createSafeHttpUrl(`${this.root}${path}`, {
+      allowPrivateAddresses: true,
+    });
+    if (!safeUrl) {
+      throw new Error('Audiobookshelf service URL is invalid.');
+    }
+
+    const response = await axios.get<T>(stringifySafeHttpUrl(safeUrl), {
       headers: { Authorization: `Bearer ${this.settings.apiKey}` },
       params,
       timeout: 15_000,
       maxContentLength: 32 * 1024 * 1024,
       maxBodyLength: 32 * 1024 * 1024,
+      maxRedirects: 0,
     });
 
     return response.data;
@@ -100,7 +121,7 @@ export default class AudiobookshelfAPI {
     itemId: string
   ): string {
     const protocol = settings.useSsl ? 'https' : 'http';
-    const baseUrl = (settings.baseUrl ?? '').replace(/^\/+|\/+$/g, '');
+    const baseUrl = trimSurroundingSlashes(settings.baseUrl ?? '');
     const serviceUrl = new URL(
       settings.externalUrl ||
         `${protocol}://${settings.hostname}:${settings.port}`
@@ -110,7 +131,7 @@ export default class AudiobookshelfAPI {
     serviceUrl.search = '';
     serviceUrl.hash = '';
 
-    const externalPath = serviceUrl.pathname.replace(/\/+$/, '');
+    const externalPath = trimTrailingSlashes(serviceUrl.pathname);
     const normalizedBaseUrl = baseUrl.toLowerCase();
     const externalPathAlreadyIncludesBaseUrl =
       normalizedBaseUrl &&

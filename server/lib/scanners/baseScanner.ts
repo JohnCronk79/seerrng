@@ -1643,10 +1643,12 @@ class BaseScanner<T> {
       start = 0,
       end = this.bundleSize,
       sessionId,
+      updateRate = this.updateRate,
     }: {
       start?: number;
       end?: number;
       sessionId?: string;
+      updateRate?: number;
     } = {}
   ): Promise<void> {
     const slicedItems = this.items.slice(start, end);
@@ -1669,10 +1671,11 @@ class BaseScanner<T> {
             start: start + this.bundleSize,
             end: end + this.bundleSize,
             sessionId,
+            updateRate,
           })
             .then(() => resolve())
             .catch((e) => reject(new Error(e.message)));
-        }, this.updateRate)
+        }, updateRate)
       );
     }
   }

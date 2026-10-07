@@ -53,6 +53,8 @@ describe('parseSwipeSettings', () => {
       { aiEffort: 'max' },
       { aiBaseUrl: 'ftp://server' },
       { aiBaseUrl: 'http://user:pass@server' },
+      { aiBaseUrl: 'http://server/v1?redirect=example' },
+      { aiBaseUrl: 'http://server/v1#fragment' },
       { aiModel: 'bad model' },
     ]) {
       assert.ok(

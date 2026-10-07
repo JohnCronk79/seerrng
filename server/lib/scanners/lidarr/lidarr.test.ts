@@ -13,10 +13,28 @@ import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 
 let getAlbumsImpl: () => Promise<LidarrAlbum[]> = async () => [];
+let getArtistIdsImpl: () => Promise<number[]> = async () => [1];
+let getAlbumsByArtistImpl: (
+  artistId: number
+) => Promise<LidarrAlbum[]> = async () => getAlbumsImpl();
 Object.defineProperty(LidarrAPI.prototype, 'getAlbums', {
   set() {},
   get() {
     return async () => getAlbumsImpl();
+  },
+  configurable: true,
+});
+Object.defineProperty(LidarrAPI.prototype, 'getArtistIds', {
+  set() {},
+  get() {
+    return async () => getArtistIdsImpl();
+  },
+  configurable: true,
+});
+Object.defineProperty(LidarrAPI.prototype, 'getAlbumsByArtist', {
+  set() {},
+  get() {
+    return async (artistId: number) => getAlbumsByArtistImpl(artistId);
   },
   configurable: true,
 });
@@ -73,6 +91,102 @@ function fakeLidarrAlbum(overrides: Partial<LidarrAlbum> = {}): LidarrAlbum {
 describe('Lidarr Scanner', () => {
   beforeEach(() => {
     getAlbumsImpl = async () => [];
+    getArtistIdsImpl = async () => [1];
+    getAlbumsByArtistImpl = async () => getAlbumsImpl();
+  });
+
+  it('scans large libraries through artist batches after the full response exceeds 64 MiB', async () => {
+    const mediaRepository = getRepository(Media);
+    const artistIds = [11, 22, 33];
+    const albumsByArtist = new Map<number, LidarrAlbum[]>(
+      artistIds.map((artistId, index) => [
+        artistId,
+        [
+          fakeLidarrAlbum({
+            id: 900 + index,
+            artistId,
+            title: `Large Library Album ${index}`,
+            foreignAlbumId: `large-library-album-${index}`,
+          }),
+        ],
+      ])
+    );
+    let fullLibraryRequests = 0;
+    const artistRequests: number[] = [];
+
+    configureLidarr([{ syncEnabled: true }]);
+    getArtistIdsImpl = async () => artistIds;
+    getAlbumsImpl = async () => {
+      fullLibraryRequests += 1;
+      throw new Error(
+        '[Lidarr] Failed to retrieve albums: maxContentLength size of 67108864 exceeded'
+      );
+    };
+    getAlbumsByArtistImpl = async (artistId) => {
+      artistRequests.push(artistId);
+      return albumsByArtist.get(artistId) ?? [];
+    };
+
+    await lidarrScanner.run();
+
+    assert.equal(fullLibraryRequests, 0);
+    assert.deepEqual(artistRequests, artistIds);
+    assert.equal(
+      await mediaRepository.countBy({ mediaType: MediaType.MUSIC }),
+      artistIds.length
+    );
+    for (let index = 0; index < artistIds.length; index++) {
+      assert.ok(
+        await mediaRepository.existsBy({
+          mbId: `large-library-album-${index}`,
+          mediaType: MediaType.MUSIC,
+        })
+      );
+    }
+  });
+
+  it('skips orphan cleanup when an artist batch fails partway through', async () => {
+    const mediaRepository = getRepository(Media);
+    await mediaRepository.save(
+      new Media({
+        tmdbId: 0,
+        mbId: 'partial-lidarr-scan-orphan',
+        mediaType: MediaType.MUSIC,
+        status: MediaStatus.PROCESSING,
+        status4k: MediaStatus.UNKNOWN,
+      })
+    );
+
+    configureLidarr([{ syncEnabled: true }]);
+    getArtistIdsImpl = async () => [101, 102];
+    getAlbumsByArtistImpl = async (artistId) => {
+      if (artistId === 102) {
+        throw new Error(
+          '[Lidarr] Failed to retrieve artist albums: maxContentLength size of 67108864 exceeded'
+        );
+      }
+      return [
+        fakeLidarrAlbum({
+          id: 1_102,
+          artistId,
+          foreignAlbumId: 'partial-lidarr-scan-imported',
+        }),
+      ];
+    };
+
+    await lidarrScanner.run();
+
+    assert.ok(
+      await mediaRepository.existsBy({
+        mbId: 'partial-lidarr-scan-imported',
+        mediaType: MediaType.MUSIC,
+      })
+    );
+    const untouched = await mediaRepository.findOneByOrFail({
+      mbId: 'partial-lidarr-scan-orphan',
+      mediaType: MediaType.MUSIC,
+    });
+    assert.strictEqual(untouched.status, MediaStatus.PROCESSING);
   });
 
   it('distinguishes waiting, partial, and complete Lidarr albums', () => {

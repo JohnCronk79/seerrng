@@ -204,6 +204,49 @@ describe('callOpenAiRanking', () => {
     }
   });
 
+  it('does not follow redirects from an OpenAI-compatible provider', async () => {
+    let redirectTargetRequested = false;
+    const target = createServer((_req, res) => {
+      redirectTargetRequested = true;
+      res.end('{}');
+    });
+    target.listen(0, '127.0.0.1');
+    await once(target, 'listening');
+    const targetPort = (target.address() as { port: number }).port;
+
+    const redirect = createServer((_req, res) => {
+      res.writeHead(302, {
+        Location: `http://127.0.0.1:${targetPort}/capture`,
+      });
+      res.end();
+    });
+    redirect.listen(0, '127.0.0.1');
+    await once(redirect, 'listening');
+    const redirectPort = (redirect.address() as { port: number }).port;
+
+    try {
+      await assert.rejects(
+        callOpenAiRanking(
+          {
+            ...defaultSwipeSettings(),
+            aiProvider: 'openai',
+            aiBaseUrl: `http://127.0.0.1:${redirectPort}/v1`,
+            aiModel: 'local-model',
+            aiApiKey: 'provider-secret',
+          },
+          'prompt'
+        )
+      );
+      assert.equal(redirectTargetRequested, false);
+    } finally {
+      redirect.closeAllConnections();
+      target.closeAllConnections();
+      redirect.close();
+      target.close();
+      await Promise.all([once(redirect, 'close'), once(target, 'close')]);
+    }
+  });
+
   it('falls back to JSON mode and accepts fenced JSON', async () => {
     const fake = await startServer((body) =>
       (body.response_format as Record<string, unknown>).type === 'json_schema'

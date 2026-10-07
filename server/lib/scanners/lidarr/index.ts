@@ -37,6 +37,9 @@ class LidarrScanner
   private scannedMbIds: Set<string> = new Set();
   private scannedServiceAlbums: Set<string> = new Set();
   private scannedAvailableServiceMbIds: Set<string> = new Set();
+  private processedAlbumCount = 0;
+  private totalAlbumCount = 0;
+  private processedAlbumsSincePause = 0;
   private didScan = false;
 
   constructor() {
@@ -46,8 +49,8 @@ class LidarrScanner
   public status(): SyncStatus {
     return {
       running: this.running,
-      progress: this.progress,
-      total: this.items.length,
+      progress: this.processedAlbumCount,
+      total: this.totalAlbumCount,
       currentServer: this.currentServer,
       servers: this.servers,
     };
@@ -62,6 +65,9 @@ class LidarrScanner
     this.scannedMbIds.clear();
     this.scannedServiceAlbums.clear();
     this.scannedAvailableServiceMbIds.clear();
+    this.processedAlbumCount = 0;
+    this.totalAlbumCount = 0;
+    this.processedAlbumsSincePause = 0;
     this.didScan = false;
 
     try {
@@ -81,7 +87,7 @@ class LidarrScanner
             'info'
           );
 
-          this.items = await runWithServarrServiceSnapshot(
+          const artistIds = await runWithServarrServiceSnapshot(
             'lidarr',
             server,
             async (current) => {
@@ -89,11 +95,34 @@ class LidarrScanner
                 apiKey: current.apiKey,
                 url: LidarrAPI.buildUrl(current, '/api/v1'),
               });
-              return this.lidarrApi.getAlbums();
+              return this.lidarrApi.getArtistIds();
             }
           );
+
+          for (const [artistIndex, artistId] of artistIds.entries()) {
+            if (!this.running || this.sessionId !== sessionId) {
+              throw new Error('Sync was aborted.');
+            }
+
+            const albums = await runWithServarrServiceSnapshot(
+              'lidarr',
+              server,
+              async (current) => {
+                this.lidarrApi = new LidarrAPI({
+                  apiKey: current.apiKey,
+                  url: LidarrAPI.buildUrl(current, '/api/v1'),
+                });
+                return this.lidarrApi.getAlbumsByArtist(artistId);
+              }
+            );
+            this.totalAlbumCount += albums.length;
+            await this.processArtistAlbums(
+              albums,
+              sessionId,
+              artistIndex < artistIds.length - 1
+            );
+          }
           this.didScan = true;
-          await this.loop(this.processLidarrAlbum.bind(this), { sessionId });
         } else {
           this.log(`Sync not enabled. Skipping Lidarr server: ${server.name}`);
         }
@@ -112,6 +141,37 @@ class LidarrScanner
       });
     } finally {
       this.endRun(sessionId);
+    }
+  }
+
+  private async processArtistAlbums(
+    albums: LidarrAlbum[],
+    sessionId: string,
+    hasMoreArtists: boolean
+  ): Promise<void> {
+    for (
+      let offset = 0;
+      offset < albums.length;
+      offset += this.protectedBundleSize
+    ) {
+      const batch = albums.slice(offset, offset + this.protectedBundleSize);
+      this.items = batch;
+      await this.loop(this.processLidarrAlbum.bind(this), {
+        sessionId,
+        updateRate: 0,
+      });
+      this.items = [];
+
+      const hasMoreAlbums = offset + batch.length < albums.length;
+      if (
+        (hasMoreAlbums || hasMoreArtists) &&
+        this.processedAlbumsSincePause >= this.protectedBundleSize
+      ) {
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, this.protectedUpdateRate)
+        );
+        this.processedAlbumsSincePause -= this.protectedBundleSize;
+      }
     }
   }
 
@@ -190,6 +250,9 @@ class LidarrScanner
         errorMessage: e.message,
         title: lidarrAlbum.title,
       });
+    } finally {
+      this.processedAlbumCount += 1;
+      this.processedAlbumsSincePause += 1;
     }
   }
 

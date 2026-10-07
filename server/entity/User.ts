@@ -272,6 +272,9 @@ export class User {
 
   constructor(init?: Partial<User>) {
     Object.assign(this, init);
+    if (!this.displayName) {
+      this.setDisplayName();
+    }
   }
 
   public filter(showFiltered?: boolean): Partial<User> {
@@ -458,7 +461,7 @@ export class User {
             resetPasswordLink,
             applicationUrl,
             applicationTitle,
-            recipientName: this.displayName,
+            recipientName: this.displayName || this.username || this.email,
             recipientEmail: this.email,
           },
         });
@@ -512,7 +515,11 @@ export class User {
   @AfterLoad()
   public setDisplayName(): void {
     this.displayName =
-      this.username || this.plexUsername || this.jellyfinUsername || this.email;
+      this.username ||
+      this.plexUsername ||
+      this.jellyfinUsername ||
+      this.email ||
+      '';
   }
 
   public async getQuota(): Promise<QuotaResponse> {

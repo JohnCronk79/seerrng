@@ -20,8 +20,8 @@ unknown. Distinguish implemented code, automated verification, human visual
 acceptance, and live integration verification. Give numbered review items.
 Do not claim a build or source assertion proves the rendered interface works.
 Read and follow `CONTRIBUTING.md`; preserve attribution and disclose AI assistance.
-Human review remains required. Never publish, merge, or deploy without the
-maintainer's applicable authorization.
+Never publish, merge, or deploy without the maintainer's applicable
+authorization.
 
 ## Required development reading
 
@@ -103,8 +103,9 @@ lockfile. Run affected integration/e2e checks in disposable environments where
 available. Never aim tests at live configuration, accounts, queues, playlists,
 collections, watchlists, or databases. A mocked provider pass is not a live
 round-trip pass. Perform desktop/narrow and interaction review of changed
-roles. Record human review evidence separately from automated checks;
-acceptance may be provided by the project owner or an authorized reviewer.
+roles. Record visual acceptance separately from automated checks. The project
+owner may confirm acceptance directly; do not require a separate external
+reviewer after the owner has confirmed it.
 
 ## Test-engine maintenance for contributors and maintainers
 

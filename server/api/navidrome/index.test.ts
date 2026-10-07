@@ -211,6 +211,21 @@ describe('Navidrome settings parsing', () => {
           syncEnabled: 'yes',
         })
     );
+    for (const url of [
+      'http://navidrome:4533/?redirect=example',
+      'http://navidrome:4533/#fragment',
+    ]) {
+      assert.ok(
+        'error' in
+          parseNavidromeSettings({
+            url,
+            username: 'u',
+            password: 'p',
+            syncEnabled: true,
+          }),
+        url
+      );
+    }
   });
 
   it('keeps the saved password when the redacted placeholder is sent', () => {

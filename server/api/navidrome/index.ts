@@ -1,6 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { NavidromeSettings } from '@server/lib/settings';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
+import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import axios from 'axios';
 
 /** Subsonic API version this client speaks; Navidrome accepts 1.16.1 and newer. */
@@ -68,7 +73,17 @@ export default class NavidromeAPI {
   private readonly root: string;
 
   constructor(private readonly settings: NavidromeSettings) {
-    this.root = `${settings.url.replace(/\/+$/, '')}/rest`;
+    this.root = `${trimTrailingSlashes(settings.url)}/rest`;
+  }
+
+  private async requestUrl(method: string): Promise<string> {
+    const safeUrl = await createSafeHttpUrl(`${this.root}/${method}.view`, {
+      allowPrivateAddresses: true,
+    });
+    if (!safeUrl) {
+      throw new Error('Navidrome service URL is invalid.');
+    }
+    return stringifySafeHttpUrl(safeUrl);
   }
 
   /** Calls one Subsonic method and returns the decoded `subsonic-response`. */
@@ -77,7 +92,7 @@ export default class NavidromeAPI {
     params: Record<string, string | number> = {}
   ): Promise<Record<string, unknown>> {
     const response = await axios.get<SubsonicEnvelope>(
-      `${this.root}/${method}.view`,
+      await this.requestUrl(method),
       {
         params: {
           ...subsonicAuthParams(this.settings.username, this.settings.password),

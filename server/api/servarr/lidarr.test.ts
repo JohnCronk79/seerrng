@@ -7,7 +7,10 @@ import LidarrAPI from './lidarr';
 type MockableLidarr = {
   get: (
     endpoint: string,
-    config?: { maxContentLength?: number },
+    config?: {
+      maxContentLength?: number;
+      params?: Record<string, number>;
+    },
     ttl?: number
   ) => Promise<unknown>;
   request: () => Promise<{ data: unknown }>;
@@ -30,6 +33,61 @@ describe('Lidarr response normalization', () => {
     );
 
     assert.deepEqual(await api.getAlbums(), []);
+    assert.equal(
+      get.mock.calls[0].arguments[1]?.maxContentLength,
+      MAX_SERVARR_LIBRARY_RESPONSE_BYTES
+    );
+  });
+
+  it('retrieves a bounded artist ID list for incremental library scans', async () => {
+    const api = new LidarrAPI({
+      url: 'http://localhost:8686/api/v1',
+      apiKey: 'key',
+    });
+    const get = mock.method(
+      LidarrAPI.prototype as unknown as MockableLidarr,
+      'get',
+      async () => [{ id: 10 }, { id: 20 }]
+    );
+
+    assert.deepEqual(await api.getArtistIds(), [10, 20]);
+    assert.equal(get.mock.calls[0].arguments[0], '/artist');
+    assert.equal(
+      get.mock.calls[0].arguments[1]?.maxContentLength,
+      MAX_SERVARR_LIBRARY_RESPONSE_BYTES
+    );
+  });
+
+  it('rejects incomplete artist inventories instead of returning a partial scan', async () => {
+    const api = new LidarrAPI({
+      url: 'http://localhost:8686/api/v1',
+      apiKey: 'key',
+    });
+    mock.method(
+      LidarrAPI.prototype as unknown as MockableLidarr,
+      'get',
+      async () => [{ id: 10 }, { id: 'invalid' }]
+    );
+
+    await assert.rejects(api.getArtistIds(), /invalid artist record/i);
+  });
+
+  it('caps album responses fetched for a single artist', async () => {
+    const api = new LidarrAPI({
+      url: 'http://localhost:8686/api/v1',
+      apiKey: 'key',
+    });
+    const get = mock.method(
+      LidarrAPI.prototype as unknown as MockableLidarr,
+      'get',
+      async () => []
+    );
+
+    assert.deepEqual(await api.getAlbumsByArtist(42), []);
+    assert.equal(get.mock.calls[0].arguments[0], '/album');
+    assert.deepEqual(get.mock.calls[0].arguments[1]?.params, {
+      artistId: 42,
+    });
     assert.equal(
       get.mock.calls[0].arguments[1]?.maxContentLength,
       MAX_SERVARR_LIBRARY_RESPONSE_BYTES
