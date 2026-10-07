@@ -502,6 +502,13 @@ test('generated manifest is accepted by the real containment planner', (t) => {
   });
   assert.equal(plan.manifest.inputs.candidate.target, '/app');
   assert.equal(plan.manifest.inputs.dependencies.target, '/app/node_modules');
+  assert.equal(plan.manifest.paths.daemonDataRoot, '/var/lib/docker');
+  assert.ok(plan.daemonCommand.includes('--data-root=/var/lib/docker'));
+  assert.ok(
+    plan.daemon.includes(
+      `type=volume,src=${plan.names.daemonData},dst=/var/lib/docker`
+    )
+  );
   assert.equal(
     plan.manifest.inner.environment.PATH.split(':')[0],
     DISTRIBUTED_LINUX_CONTAINED_ENGINE_BIN

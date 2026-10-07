@@ -163,7 +163,7 @@ function manifestFixture() {
     paths: {
       stateRoot: '/run-state',
       logRoot: '/run-logs',
-      daemonDataRoot: '/dind-data',
+      daemonDataRoot: '/var/lib/docker',
       dockerSocket: '/run-state/docker/docker.sock',
       daemonExecRoot: '/run-state/docker/exec',
       daemonPidFile: '/run-state/docker/docker.pid',
@@ -677,6 +677,12 @@ test('plan binds a fresh owner, exact mounts, corrected helper capabilities, and
     plan.daemonCommand.some((entry) => entry.startsWith('--host=unix://'))
   );
   assert.ok(!plan.daemonCommand.some((entry) => entry.includes('tcp://')));
+  assert.ok(plan.daemonCommand.includes('--data-root=/var/lib/docker'));
+  assert.ok(
+    plan.daemon.includes(
+      `type=volume,src=${plan.names.daemonData},dst=/var/lib/docker`
+    )
+  );
   const cleanup = plan.manifest.proofParentConfig.cleanup;
   const boundedOperations = [
     'engineTerminateSeconds',

@@ -908,7 +908,10 @@ export function createDistributedLinuxHostLifecycleManifest({
   const paths = {
     stateRoot: CONTAINER.stateRoot,
     logRoot: CONTAINER.logRoot,
-    daemonDataRoot: '/dind-data',
+    // The pinned Docker-in-Docker image declares /var/lib/docker as a volume.
+    // Mount the owned daemon-data volume at that exact target so Docker does
+    // not materialize an unplanned anonymous third volume at container create.
+    daemonDataRoot: '/var/lib/docker',
     dockerSocket: `${CONTAINER.stateRoot}/docker/docker.sock`,
     daemonExecRoot: `${CONTAINER.stateRoot}/docker/exec`,
     daemonPidFile: `${CONTAINER.stateRoot}/docker/docker.pid`,
