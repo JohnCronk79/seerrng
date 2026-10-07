@@ -8,6 +8,7 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import OverrideRuleTiles from '@app/components/Settings/OverrideRule/OverrideRuleTiles';
+import ReaderDeliverySettings from '@app/components/Settings/ReaderDeliverySettings';
 import { useSettingsPageAction } from '@app/components/Settings/SettingsLayout';
 import SettingsProwlarr from '@app/components/Settings/SettingsProwlarr';
 import SettingsSoftwareAcquisition from '@app/components/Settings/SettingsSoftwareAcquisition';
@@ -17,6 +18,7 @@ import { getSafeHref } from '@app/utils/safeUrl';
 import { Transition } from '@headlessui/react';
 import {
   BookOpenIcon,
+  MusicalNoteIcon,
   NewspaperIcon,
   PencilIcon,
   PlusIcon,
@@ -26,6 +28,7 @@ import {
 import type OverrideRule from '@server/entity/OverrideRule';
 import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrideRuleInterfaces';
 import type {
+  AudiobookshelfSettings,
   BackIssueSettings,
   KapowarrSettings,
   LazyLibrarianSettings,
@@ -46,6 +49,9 @@ const KapowarrModal = dynamic(
 );
 const BackIssueModal = dynamic(
   () => import('@app/components/Settings/BackIssueModal')
+);
+const AudiobookshelfModal = dynamic(
+  () => import('@app/components/Settings/AudiobookshelfModal')
 );
 const LazyLibrarianModal = dynamic(
   () => import('@app/components/Settings/LazyLibrarianModal')
@@ -73,6 +79,10 @@ const messages = defineMessages('components.Settings', {
   sonarrsettings: 'Sonarr Settings',
   lidarrsettings: 'Lidarr Settings',
   readarrsettings: 'Bookshelf Settings',
+  audiobookshelfsettings: 'Audiobookshelf Availability',
+  audiobookshelfDescription:
+    'Optionally sync an Audiobookshelf book library so SeerrNG can recognize matching audiobooks that are already available. This connection is read-only and does not send acquisition requests.',
+  addAudiobookshelf: 'Connect Audiobookshelf library',
   videoServiceSettingsDescription:
     'Configure your {serverType} server(s) below. You can connect multiple {serverType} servers, but only two of them can be marked as defaults (one non-4K and one 4K). Administrators are able to override the server used to process new requests prior to approval.',
   musicServiceSettingsDescription:
@@ -147,6 +157,7 @@ interface ServerInstanceProps {
   isSonarr?: boolean;
   isLidarr?: boolean;
   isReadarr?: boolean;
+  isAudiobookshelf?: boolean;
   isComics?: boolean;
   isMagazines?: boolean;
   serviceFormat?: 'ebook' | 'audiobook';
@@ -192,6 +203,7 @@ const ServerInstance = ({
   isSonarr = false,
   isLidarr = false,
   isReadarr = false,
+  isAudiobookshelf = false,
   isComics = false,
   isMagazines = false,
   serviceFormat,
@@ -221,6 +233,8 @@ const ServerInstance = ({
             <LidarrLogo className="h-10 w-10 flex-shrink-0" />
           ) : isReadarr ? (
             <BookOpenIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
+          ) : isAudiobookshelf ? (
+            <MusicalNoteIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
           ) : isComics ? (
             <Square3Stack3DIcon className="h-10 w-10 flex-shrink-0 text-gray-300" />
           ) : isMagazines ? (
@@ -263,6 +277,11 @@ const ServerInstance = ({
                     ? messages.audiobook
                     : messages.ebook
                 )}
+              </Badge>
+            )}
+            {isAudiobookshelf && (
+              <Badge badgeType="warning">
+                {intl.formatMessage(messages.audiobook)}
               </Badge>
             )}
             {isSSL && (
@@ -337,6 +356,8 @@ const SettingsServices = () => {
     error: readarrError,
     mutate: revalidateReadarr,
   } = useSWR<ReadarrSettings[]>('/api/v1/settings/readarr');
+  const { data: audiobookshelfData, mutate: revalidateAudiobookshelf } =
+    useSWR<AudiobookshelfSettings | null>('/api/v1/settings/audiobookshelf');
   const {
     data: mylarData,
     error: mylarError,
@@ -389,6 +410,7 @@ const SettingsServices = () => {
     open: false,
     readarr: null,
   });
+  const [editAudiobookshelfModal, setEditAudiobookshelfModal] = useState(false);
   const [editMylarModal, setEditMylarModal] = useState<{
     open: boolean;
     mylar: MylarSettings | null;
@@ -421,6 +443,7 @@ const SettingsServices = () => {
       | 'sonarr'
       | 'lidarr'
       | 'readarr'
+      | 'audiobookshelf'
       | 'mylar'
       | 'kapowarr'
       | 'backissue'
@@ -492,9 +515,13 @@ const SettingsServices = () => {
   );
 
   const deleteServer = async () => {
-    await axios.delete(
-      `/api/v1/settings/${deleteServerModal.type}/${deleteServerModal.serverId}`
-    );
+    if (deleteServerModal.type === 'audiobookshelf') {
+      await axios.delete('/api/v1/settings/audiobookshelf');
+    } else {
+      await axios.delete(
+        `/api/v1/settings/${deleteServerModal.type}/${deleteServerModal.serverId}`
+      );
+    }
     setDeleteServerModal({ open: false, serverId: null, type: 'radarr' });
     revalidateRadarr();
     revalidateSonarr();
@@ -504,6 +531,7 @@ const SettingsServices = () => {
     revalidateKapowarr();
     revalidateBackIssue();
     revalidateLazyLibrarian();
+    revalidateAudiobookshelf();
     mutate('/api/v1/settings/public');
   };
 
@@ -574,6 +602,17 @@ const SettingsServices = () => {
             revalidateReadarr();
             mutate('/api/v1/settings/public');
             setEditReadarrModal({ open: false, readarr: null });
+          }}
+        />
+      )}
+      {editAudiobookshelfModal && (
+        <AudiobookshelfModal
+          settings={audiobookshelfData ?? null}
+          onClose={() => setEditAudiobookshelfModal(false)}
+          onSave={() => {
+            revalidateAudiobookshelf();
+            mutate('/api/v1/settings/public');
+            setEditAudiobookshelfModal(false);
           }}
         />
       )}
@@ -654,7 +693,9 @@ const SettingsServices = () => {
                     ? 'Lidarr'
                     : deleteServerModal.type === 'backissue'
                       ? 'BackIssue'
-                      : 'Bookshelf',
+                      : deleteServerModal.type === 'audiobookshelf'
+                        ? 'Audiobookshelf'
+                        : 'Bookshelf',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -1030,6 +1071,50 @@ const SettingsServices = () => {
                 </div>
               </li>
             </ul>
+            <div className="mt-8 mb-4">
+              <h4 className="text-lg font-semibold">
+                {intl.formatMessage(messages.audiobookshelfsettings)}
+              </h4>
+              <p className="description">
+                {intl.formatMessage(messages.audiobookshelfDescription)}
+              </p>
+            </div>
+            <ul className="settings-service-grid">
+              {audiobookshelfData && (
+                <ServerInstance
+                  name={`${audiobookshelfData.name} · ${audiobookshelfData.libraryName}`}
+                  hostname={audiobookshelfData.hostname}
+                  port={audiobookshelfData.port}
+                  isSSL={audiobookshelfData.useSsl}
+                  isAudiobookshelf
+                  externalUrl={audiobookshelfData.externalUrl}
+                  onEdit={() => setEditAudiobookshelfModal(true)}
+                  onDelete={() =>
+                    setDeleteServerModal({
+                      open: true,
+                      serverId: audiobookshelfData.id,
+                      type: 'audiobookshelf',
+                    })
+                  }
+                />
+              )}
+              {!audiobookshelfData && (
+                <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+                  <div className="flex h-full w-full items-center justify-center">
+                    <Button
+                      buttonType="success"
+                      buttonSize="standard"
+                      onClick={() => setEditAudiobookshelfModal(true)}
+                    >
+                      <PlusIcon />
+                      <span>
+                        {intl.formatMessage(messages.addAudiobookshelf)}
+                      </span>
+                    </Button>
+                  </div>
+                </li>
+              )}
+            </ul>
           </>
         )}
       </div>
@@ -1274,6 +1359,7 @@ const SettingsServices = () => {
           </>
         )}
       </div>
+      <ReaderDeliverySettings />
       <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.overrideRules)}
