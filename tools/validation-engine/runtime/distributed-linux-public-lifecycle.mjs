@@ -67,6 +67,8 @@ import {
   createOwnedSourceSnapshot,
   disposeSourceSnapshot,
   findNativeExecutable,
+  prepareMode3DependencyMountpoint,
+  verifyMode3DependencyMountpoint,
   verifySourceSnapshot,
 } from './native-stage-context.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
@@ -877,6 +879,7 @@ function manifestArtifacts() {
 export function createDistributedLinuxHostLifecycleManifest({
   candidate,
   configDirectory,
+  dependencyMountpoint,
   dependencyVolume,
   gitDirectory,
   gitEvidenceSha256,
@@ -973,6 +976,7 @@ export function createDistributedLinuxHostLifecycleManifest({
     ownershipLabelKey: 'org.seerrng.validation-owner',
     outerDaemonId: daemonId,
     candidate,
+    dependencyMountpoint: structuredClone(dependencyMountpoint),
     images: {
       helper: structuredClone(profile.images.helper),
       daemon: structuredClone(profile.images.daemon),
@@ -1063,9 +1067,11 @@ function publicDependencies(overrides) {
     disposeSnapshot: disposeSourceSnapshot,
     fetchGitState: fetchAuthenticatedGitState,
     persistTimingProfile: persistAdaptiveTimingProfileFile,
+    prepareDependencyMountpoint: prepareMode3DependencyMountpoint,
     readTimingProfile: readAdaptiveTimingProfileFile,
     resolveActiveConfig: resolveActiveLinuxConfig,
     verifyCleanSource: verifyCleanSourceCheckout,
+    verifyDependencyMountpoint: verifyMode3DependencyMountpoint,
     verifySnapshot: verifySourceSnapshot,
     ...value,
   };
@@ -1194,6 +1200,7 @@ export async function executeDistributedLinuxPublicLifecycle(
       lockSha256: snapshot.candidate.lockSha256,
       sourceSha256: snapshot.candidate.sourceSha256,
     });
+    const dependencyMountpoint = deps.prepareDependencyMountpoint(snapshot);
     const active = await deps.resolveActiveConfig(
       request.activeConfigMarkerPath,
       { expectedRole: 'controller' }
@@ -1264,6 +1271,7 @@ export async function executeDistributedLinuxPublicLifecycle(
     const lifecycle = createDistributedLinuxHostLifecycleManifest({
       candidate,
       configDirectory: preparation,
+      dependencyMountpoint,
       dependencyVolume: hostProfile.volumes.dependencies,
       gitDirectory: resolve(snapshot.root, '.git'),
       gitEvidenceSha256: gitEvidenceReceipt.sha256,
@@ -1350,6 +1358,7 @@ export async function executeDistributedLinuxPublicLifecycle(
       resolve(preparation, basename(CONTAINER.containedRequest)),
       containedRequest
     );
+    deps.verifyDependencyMountpoint(snapshot, dependencyMountpoint);
     const containment = deps.createContainment(lifecycle.manifest, {
       outer: adapters,
       preparationRequest: {
@@ -1363,6 +1372,7 @@ export async function executeDistributedLinuxPublicLifecycle(
     });
     if (hostResult?.status !== 'passed' || hostResult.runId !== request.runId)
       throw new Error('Outer host containment did not return exact success');
+    deps.verifyDependencyMountpoint(snapshot, dependencyMountpoint);
     const retainedProfilePath = resolve(
       outerEvidenceDirectory,
       'adaptive-timing-profile.json'

@@ -13,20 +13,21 @@ import {
 } from './distributed-linux-host-preparation.mjs';
 
 export const DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA =
-  'seerrng-distributed-linux-host-containment/v1';
+  'seerrng-distributed-linux-host-containment/v2';
 export const DISTRIBUTED_LINUX_HOST_PLAN_SCHEMA =
-  'seerrng-distributed-linux-host-plan/v2';
+  'seerrng-distributed-linux-host-plan/v3';
 export const DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA =
-  'seerrng-distributed-linux-host-result/v2';
+  'seerrng-distributed-linux-host-result/v3';
 export const DISTRIBUTED_LINUX_PROOF_PARENT_SCHEMA =
   'seerrng-distributed-linux-proof-parent/v1';
 export const DISTRIBUTED_LINUX_HOST_FINAL_MARKER =
   'launch-result-verification.json';
 export const DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA =
-  'seerrng-distributed-linux-outer-evidence/v1';
+  'seerrng-distributed-linux-outer-evidence/v2';
 export const DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES = Object.freeze(
   [
     ['host-plan.json', 'hostPlanSha256'],
+    ['mountpoint-preflight.json', 'mountpointPreflightSha256'],
     ['volume-admission.json', 'volumeAdmissionSha256'],
     ['host-admission.json', 'hostAdmissionSha256'],
     ['terminal-inspection.json', 'terminalInspectionSha256'],
@@ -82,6 +83,22 @@ const PROOF_PARENT_TERMINAL_BUDGET_SECONDS = Object.values(
 ).reduce((total, value) => total + value, 0);
 const HELPER_STOP_GRACE_SECONDS = PROOF_PARENT_TERMINAL_BUDGET_SECONDS + 10;
 const HOST_CLEANUP_COMMAND_TIMEOUT_MS = (HELPER_STOP_GRACE_SECONDS + 10) * 1000;
+const DEPENDENCY_MOUNTPOINT_SCHEMA = 'seerrng-mode3-dependency-mountpoint/v1';
+const MOUNTPOINT_PREFLIGHT_SCHEMA =
+  'seerrng-distributed-linux-mountpoint-preflight/v1';
+const LOCKED_INPUT_SCAN_SCHEMA =
+  'seerrng-distributed-linux-locked-input-scan/v1';
+const VOLUME_ADMISSION_SCHEMA = 'seerrng-distributed-linux-volume-admission/v2';
+const MOUNTPOINT_PREFLIGHT_OUTPUT = 'mountpoint-preflight-ok';
+const MOUNTPOINT_PREFLIGHT_RECONCILE_ATTEMPTS = 9;
+const MOUNTPOINT_PREFLIGHT_RECONCILE_DELAY_MS = 250;
+const MOUNTPOINT_PREFLIGHT_SCRIPT = [
+  'test -f "$1/package.json"',
+  'test -f "$1/pnpm-lock.yaml"',
+  'test -f "$2/HEAD"',
+  'test -f "$3/.modules.yaml"',
+  'printf "%s\\n" "$4"',
+].join(' && ');
 
 /**
  * Create the fixed Unix-socket proof adapter used by the capability-free
@@ -317,6 +334,109 @@ function normalizeCandidate(value) {
     lockSha256: sha(value.lockSha256, 'candidate lock hash'),
     sourceSha256: sha(value.sourceSha256, 'candidate source hash'),
   });
+}
+
+function normalizeDependencyMountpoint(value, candidate, inputs) {
+  exactKeys(
+    value,
+    [
+      'candidateCommit',
+      'candidateSourceSha256',
+      'candidateTree',
+      'gitTreeVerified',
+      'inheritedFileCount',
+      'inheritedPathCount',
+      'inheritedTopologySha256',
+      'mountpointEmptyBeforeMount',
+      'mountpointPath',
+      'mountpointType',
+      'onlyAddedPath',
+      'relativePath',
+      'schema',
+      'sourceDirectory',
+      'sourceManifestSha256',
+    ],
+    'dependency mountpoint proof'
+  );
+  const normalized = {
+    schema: text(value.schema, 'dependency mountpoint schema'),
+    sourceDirectory: hostPath(
+      value.sourceDirectory,
+      'dependency mountpoint source directory'
+    ),
+    mountpointPath: hostPath(
+      value.mountpointPath,
+      'dependency mountpoint path'
+    ),
+    relativePath: text(
+      value.relativePath,
+      'dependency mountpoint relative path'
+    ),
+    candidateCommit: sha(
+      value.candidateCommit,
+      'dependency mountpoint candidate commit',
+      HASH40
+    ),
+    candidateTree: sha(
+      value.candidateTree,
+      'dependency mountpoint candidate tree',
+      HASH40
+    ),
+    candidateSourceSha256: sha(
+      value.candidateSourceSha256,
+      'dependency mountpoint candidate source hash'
+    ),
+    sourceManifestSha256: sha(
+      value.sourceManifestSha256,
+      'dependency mountpoint source manifest hash'
+    ),
+    inheritedPathCount: positiveInteger(
+      value.inheritedPathCount,
+      'dependency mountpoint inherited path count'
+    ),
+    inheritedFileCount: positiveInteger(
+      value.inheritedFileCount,
+      'dependency mountpoint inherited file count'
+    ),
+    inheritedTopologySha256: sha(
+      value.inheritedTopologySha256,
+      'dependency mountpoint inherited topology hash'
+    ),
+    onlyAddedPath: text(
+      value.onlyAddedPath,
+      'dependency mountpoint only added path'
+    ),
+    mountpointType: text(value.mountpointType, 'dependency mountpoint type'),
+    mountpointEmptyBeforeMount: value.mountpointEmptyBeforeMount,
+    gitTreeVerified: value.gitTreeVerified,
+  };
+  if (
+    normalized.schema !== DEPENDENCY_MOUNTPOINT_SCHEMA ||
+    inputs.candidate.type !== 'bind' ||
+    inputs.git.type !== 'bind' ||
+    inputs.dependencies.type !== 'volume' ||
+    normalized.sourceDirectory !== inputs.candidate.source ||
+    normalized.relativePath !== 'node_modules' ||
+    normalized.onlyAddedPath !== 'node_modules' ||
+    normalized.mountpointPath !==
+      resolve(normalized.sourceDirectory, normalized.relativePath) ||
+    inputs.git.source !== resolve(normalized.sourceDirectory, '.git') ||
+    inputs.git.target !== `${inputs.candidate.target}/.git` ||
+    inputs.dependencies.target !==
+      `${inputs.candidate.target}/${normalized.relativePath}` ||
+    normalized.candidateCommit !== candidate.commit ||
+    normalized.candidateTree !== candidate.tree ||
+    normalized.candidateSourceSha256 !== candidate.sourceSha256 ||
+    normalized.sourceManifestSha256 !== candidate.sourceSha256 ||
+    normalized.inheritedFileCount > normalized.inheritedPathCount ||
+    normalized.mountpointType !== 'directory' ||
+    normalized.mountpointEmptyBeforeMount !== true ||
+    normalized.gitTreeVerified !== true
+  )
+    throw new Error(
+      'Dependency mountpoint proof differs from candidate topology'
+    );
+  return deepFreeze(normalized);
 }
 
 function normalizeImage(value, label, daemon = false) {
@@ -1042,6 +1162,7 @@ function normalizeManifest(value) {
     value,
     [
       'candidate',
+      'dependencyMountpoint',
       'dockerFixture',
       'evidence',
       'gitHistory',
@@ -1066,6 +1187,12 @@ function normalizeManifest(value) {
   exactKeys(value.images, ['daemon', 'helper'], 'containment images');
   exactKeys(value.resources, ['daemon', 'helper'], 'containment resources');
   const inputs = normalizeInputs(value.inputs);
+  const candidate = normalizeCandidate(value.candidate);
+  const dependencyMountpoint = normalizeDependencyMountpoint(
+    value.dependencyMountpoint,
+    candidate,
+    inputs
+  );
   const paths = normalizePaths(value.paths);
   const immutableImageRoots = ['/bin', '/lib', '/lib64', '/sbin', '/usr'];
   for (const { target } of Object.values(inputs))
@@ -1107,7 +1234,8 @@ function normalizeManifest(value) {
       128
     ),
     outerDaemonId: text(value.outerDaemonId, 'outer Docker daemon ID'),
-    candidate: normalizeCandidate(value.candidate),
+    candidate,
+    dependencyMountpoint,
     images: {
       helper: normalizeImage(value.images.helper, 'helper image'),
       daemon: normalizeImage(value.images.daemon, 'daemon image', true),
@@ -1174,6 +1302,7 @@ function generatedNames(manifest, uniqueToken) {
   if (stem.length > 100)
     throw new Error('Containment name stem is too long for fresh Docker names');
   return Object.freeze({
+    mountpointPreflight: `${stem}-mountpoint-preflight`,
     helper: `${stem}-helper`,
     daemon: `${stem}-dind`,
     state: `${stem}-state`,
@@ -1322,6 +1451,40 @@ export function createDistributedLinuxHostContainmentPlan(
     value: `${manifest.runId}.${uniqueToken}`,
   });
   const label = `${ownership.key}=${ownership.value}`;
+  const mountpointPreflight = Object.freeze([
+    'create',
+    '--name',
+    names.mountpointPreflight,
+    '--label',
+    label,
+    '--user',
+    '0:0',
+    '--restart',
+    'no',
+    '--network',
+    'none',
+    '--read-only',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges',
+    '--workdir',
+    '/',
+    ...configuredMount(manifest.inputs.candidate),
+    ...configuredMount(manifest.inputs.git),
+    ...configuredMount(manifest.inputs.dependencies),
+    '--entrypoint',
+    '/bin/sh',
+    manifest.images.helper.reference,
+    '-eu',
+    '-c',
+    MOUNTPOINT_PREFLIGHT_SCRIPT,
+    'mountpoint-preflight',
+    manifest.inputs.candidate.target,
+    manifest.inputs.git.target,
+    manifest.inputs.dependencies.target,
+    MOUNTPOINT_PREFLIGHT_OUTPUT,
+  ]);
   const volumes = Object.freeze(
     ['state', 'logs', 'daemonData'].map((role) =>
       Object.freeze({
@@ -1442,6 +1605,14 @@ export function createDistributedLinuxHostContainmentPlan(
     names,
     ownership,
     volumes,
+    mountpointPreflight,
+    startMountpointPreflight: ['start', '--attach', names.mountpointPreflight],
+    forceRemoveMountpointPreflight: [
+      'rm',
+      '--force',
+      names.mountpointPreflight,
+    ],
+    mountpointPreflightOutput: MOUNTPOINT_PREFLIGHT_OUTPUT,
     helper,
     daemon,
     daemonCommand,
@@ -1576,6 +1747,37 @@ function sameConfiguredBindSource(actual, expected) {
   return dockerDesktopSource !== null && actual === dockerDesktopSource;
 }
 
+function pathContains(pathApi, ancestor, descendant) {
+  if (
+    typeof ancestor !== 'string' ||
+    typeof descendant !== 'string' ||
+    !pathApi.isAbsolute(ancestor) ||
+    !pathApi.isAbsolute(descendant)
+  )
+    return false;
+  const relative = pathApi.relative(ancestor, descendant);
+  return (
+    relative === '' ||
+    (relative !== '..' &&
+      !relative.startsWith(`..${pathApi.sep}`) &&
+      !pathApi.isAbsolute(relative))
+  );
+}
+
+function configuredBindOverlaps(actual, expected) {
+  if (
+    pathContains(win32, actual, expected) ||
+    pathContains(win32, expected, actual)
+  )
+    return true;
+  const dockerDesktopSource = dockerDesktopWindowsBindSource(expected);
+  return (
+    dockerDesktopSource !== null &&
+    (pathContains(path, actual, dockerDesktopSource) ||
+      pathContains(path, dockerDesktopSource, actual))
+  );
+}
+
 function verifyConfiguredReadOnlyMount(actual, expected) {
   if (
     actual?.Type !== expected.type ||
@@ -1585,6 +1787,74 @@ function verifyConfiguredReadOnlyMount(actual, expected) {
       : !sameConfiguredBindSource(actual.Source, expected.source))
   )
     throw new Error(`Read-only input mount differs: ${expected.target}`);
+}
+
+function verifyMountpointPreflightInspect(inspect, plan) {
+  const { manifest, ownership } = plan;
+  const mounts = dockerMounts(inspect);
+  const expectedInputs = [
+    manifest.inputs.candidate,
+    manifest.inputs.git,
+    manifest.inputs.dependencies,
+  ];
+  const expectedTargets = expectedInputs
+    .map(({ target }) => target)
+    .toSorted(compareText);
+  const command = [
+    '-eu',
+    '-c',
+    MOUNTPOINT_PREFLIGHT_SCRIPT,
+    'mountpoint-preflight',
+    manifest.inputs.candidate.target,
+    manifest.inputs.git.target,
+    manifest.inputs.dependencies.target,
+    plan.mountpointPreflightOutput,
+  ];
+  if (
+    !HASH64.test(inspect?.Id) ||
+    inspect.Image !== manifest.images.helper.id ||
+    inspect.Config?.Image !== manifest.images.helper.reference ||
+    inspect.Config?.Labels?.[ownership.key] !== ownership.value ||
+    inspect.Config?.User !== '0:0' ||
+    inspect.Config?.WorkingDir !== '/' ||
+    !sameArray(inspect.Config?.Entrypoint, ['/bin/sh']) ||
+    !sameArray(inspect.Config?.Cmd, command) ||
+    inspect.Path !== '/bin/sh' ||
+    !sameArray(inspect.Args, command) ||
+    inspect.HostConfig?.ReadonlyRootfs !== true ||
+    inspect.HostConfig?.Privileged === true ||
+    !sameArray(inspect.HostConfig?.CapDrop, ['ALL']) ||
+    !sameArray(inspect.HostConfig?.SecurityOpt, ['no-new-privileges']) ||
+    inspect.HostConfig?.NetworkMode !== 'none' ||
+    inspect.HostConfig?.RestartPolicy?.Name !== 'no' ||
+    !sameArray(Object.keys(mounts).toSorted(compareText), expectedTargets)
+  )
+    throw new Error('Dependency mountpoint preflight topology differs');
+  for (const expected of expectedInputs)
+    verifyConfiguredReadOnlyMount(mounts[expected.target], expected);
+  return inspect;
+}
+
+function bindContainerRemovalToId(args, expectedName, containerId) {
+  if (
+    !Array.isArray(args) ||
+    args.length < 2 ||
+    args.at(-1) !== expectedName ||
+    !HASH64.test(containerId)
+  )
+    throw new Error('Dependency mountpoint preflight removal cannot be bound');
+  return Object.freeze([...args.slice(0, -1), containerId]);
+}
+
+function bindContainerStartToId(args, expectedName, containerId) {
+  if (
+    !Array.isArray(args) ||
+    args.length < 2 ||
+    args.at(-1) !== expectedName ||
+    !HASH64.test(containerId)
+  )
+    throw new Error('Dependency mountpoint preflight start cannot be bound');
+  return Object.freeze([...args.slice(0, -1), containerId]);
 }
 
 function verifyHelperInspect(inspect, plan) {
@@ -1711,6 +1981,150 @@ function verifyTerminalContainer(inspect, label) {
   )
     throw new Error(`${label} terminal state is not clean`);
   return inspect;
+}
+
+function mountpointPreflightEvidence(plan, inspect, observedAtMs) {
+  const proof = plan.manifest.dependencyMountpoint;
+  const mounts = dockerMounts(inspect);
+  return deepFreeze({
+    schema: MOUNTPOINT_PREFLIGHT_SCHEMA,
+    status: 'passed',
+    runId: plan.manifest.runId,
+    observedAtMs,
+    candidateCommit: proof.candidateCommit,
+    candidateTree: proof.candidateTree,
+    candidateSourceSha256: proof.candidateSourceSha256,
+    dependencyLockSha256: plan.manifest.candidate.lockSha256,
+    sourceManifestSha256: proof.sourceManifestSha256,
+    inheritedPathCount: proof.inheritedPathCount,
+    inheritedFileCount: proof.inheritedFileCount,
+    inheritedTopologySha256: proof.inheritedTopologySha256,
+    sourceDirectory: proof.sourceDirectory,
+    mountpointPath: proof.mountpointPath,
+    onlyAddedPath: proof.onlyAddedPath,
+    mountpointType: proof.mountpointType,
+    mountpointEmptyBeforeMount: proof.mountpointEmptyBeforeMount,
+    gitTreeVerified: proof.gitTreeVerified,
+    containerName: plan.names.mountpointPreflight,
+    containerId: inspect.Id,
+    imageReference: plan.manifest.images.helper.reference,
+    imageId: plan.manifest.images.helper.id,
+    output: plan.mountpointPreflightOutput,
+    exitCode: inspect.State.ExitCode,
+    oomKilled: inspect.State.OOMKilled,
+    restartCount: inspect.RestartCount,
+    readonlyRootfs: inspect.HostConfig.ReadonlyRootfs,
+    networkMode: inspect.HostConfig.NetworkMode,
+    capDrop: inspect.HostConfig.CapDrop,
+    securityOpt: inspect.HostConfig.SecurityOpt,
+    mounts: [
+      plan.manifest.inputs.candidate,
+      plan.manifest.inputs.git,
+      plan.manifest.inputs.dependencies,
+    ].map((input) => ({
+      type: input.type,
+      source: input.source,
+      destination: input.target,
+      readOnly: mounts[input.target].RW === false,
+    })),
+    disposableContainerRemovedAfterInspection: true,
+    distributedNodesContacted: false,
+    resultReuse: false,
+  });
+}
+
+function verifyMountpointPreflightEvidence(value, plan) {
+  exactKeys(
+    value,
+    [
+      'candidateCommit',
+      'candidateSourceSha256',
+      'candidateTree',
+      'capDrop',
+      'containerId',
+      'containerName',
+      'dependencyLockSha256',
+      'disposableContainerRemovedAfterInspection',
+      'distributedNodesContacted',
+      'exitCode',
+      'gitTreeVerified',
+      'imageId',
+      'imageReference',
+      'inheritedFileCount',
+      'inheritedPathCount',
+      'inheritedTopologySha256',
+      'mountpointEmptyBeforeMount',
+      'mountpointPath',
+      'mountpointType',
+      'mounts',
+      'networkMode',
+      'observedAtMs',
+      'onlyAddedPath',
+      'oomKilled',
+      'output',
+      'readonlyRootfs',
+      'restartCount',
+      'resultReuse',
+      'runId',
+      'schema',
+      'securityOpt',
+      'sourceDirectory',
+      'sourceManifestSha256',
+      'status',
+    ],
+    'dependency mountpoint preflight evidence'
+  );
+  const proof = plan.manifest.dependencyMountpoint;
+  const expectedMounts = [
+    plan.manifest.inputs.candidate,
+    plan.manifest.inputs.git,
+    plan.manifest.inputs.dependencies,
+  ].map((input) => ({
+    type: input.type,
+    source: input.source,
+    destination: input.target,
+    readOnly: true,
+  }));
+  if (
+    value.schema !== MOUNTPOINT_PREFLIGHT_SCHEMA ||
+    value.status !== 'passed' ||
+    value.runId !== plan.manifest.runId ||
+    !Number.isSafeInteger(value.observedAtMs) ||
+    value.observedAtMs < 0 ||
+    value.candidateCommit !== proof.candidateCommit ||
+    value.candidateTree !== proof.candidateTree ||
+    value.candidateSourceSha256 !== proof.candidateSourceSha256 ||
+    value.dependencyLockSha256 !== plan.manifest.candidate.lockSha256 ||
+    value.sourceManifestSha256 !== proof.sourceManifestSha256 ||
+    value.inheritedPathCount !== proof.inheritedPathCount ||
+    value.inheritedFileCount !== proof.inheritedFileCount ||
+    value.inheritedTopologySha256 !== proof.inheritedTopologySha256 ||
+    value.sourceDirectory !== proof.sourceDirectory ||
+    value.mountpointPath !== proof.mountpointPath ||
+    value.onlyAddedPath !== 'node_modules' ||
+    value.mountpointType !== 'directory' ||
+    value.mountpointEmptyBeforeMount !== true ||
+    value.gitTreeVerified !== true ||
+    value.containerName !== plan.names.mountpointPreflight ||
+    typeof value.containerId !== 'string' ||
+    value.containerId.length < 1 ||
+    value.imageReference !== plan.manifest.images.helper.reference ||
+    value.imageId !== plan.manifest.images.helper.id ||
+    value.output !== plan.mountpointPreflightOutput ||
+    value.exitCode !== 0 ||
+    value.oomKilled !== false ||
+    value.restartCount !== 0 ||
+    value.readonlyRootfs !== true ||
+    value.networkMode !== 'none' ||
+    !sameArray(value.capDrop, ['ALL']) ||
+    !sameArray(value.securityOpt, ['no-new-privileges']) ||
+    !sameJson(value.mounts, expectedMounts) ||
+    value.disposableContainerRemovedAfterInspection !== true ||
+    value.distributedNodesContacted !== false ||
+    value.resultReuse !== false
+  )
+    throw new Error('Retained dependency mountpoint preflight differs');
+  return value;
 }
 
 function normalizeAdapters(value, callbacks = false) {
@@ -2347,7 +2761,15 @@ async function readOuterJsonEvidence(adapters, manifest, fileName) {
 async function reconcileOuterEvidence(
   adapters,
   plan,
-  { admissionFiles, commands, daemonRuntime, helperReady, startAdmissionFiles }
+  {
+    admissionFiles,
+    commands,
+    daemonRuntime,
+    helperReady,
+    lockedInputScan,
+    mountpointPreflight,
+    startAdmissionFiles,
+  }
 ) {
   const records = new Map();
   for (const { fileName } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES)
@@ -2360,11 +2782,19 @@ async function reconcileOuterEvidence(
   if (!sameJson(hostPlan, plan))
     throw new Error('Retained outer host plan differs from the executed plan');
 
+  const retainedMountpointPreflight = records.get(
+    'mountpoint-preflight.json'
+  ).value;
+  verifyMountpointPreflightEvidence(retainedMountpointPreflight, plan);
+  if (!sameJson(retainedMountpointPreflight, mountpointPreflight))
+    throw new Error('Retained dependency mountpoint preflight differs');
+
   const volumeAdmission = records.get('volume-admission.json').value;
   const expectedVolumeAdmission = {
-    schema: 'seerrng-distributed-linux-volume-admission/v1',
+    schema: VOLUME_ADMISSION_SCHEMA,
     ownership: plan.ownership,
     names: plan.volumes.map(({ role, name }) => ({ role, name })),
+    lockedInputScan,
     status: 'passed',
   };
   if (!sameJson(volumeAdmission, expectedVolumeAdmission))
@@ -2501,6 +2931,135 @@ async function runDocker(
     `Docker command ${id}`
   );
   return receipt;
+}
+
+function parseRunningContainerIds(receipt, label) {
+  const lines = receipt.stdout.split(/\r?\n/u);
+  if (lines.at(-1) === '') lines.pop();
+  if (
+    lines.some(
+      (entry) => entry !== entry.trim() || !/^[a-f0-9]{64}$/u.test(entry)
+    )
+  )
+    throw new Error(`${label} returned a malformed container ID`);
+  if (new Set(lines).size !== lines.length)
+    throw new Error(`${label} returned duplicate container IDs`);
+  return lines.toSorted(compareText);
+}
+
+function lockedInputDescriptors(manifest) {
+  return ['candidate', 'git', 'dependencies', 'tool'].map((role) => ({
+    role,
+    ...manifest.inputs[role],
+  }));
+}
+
+function matchingLockedInputs(mount, inputs) {
+  if (!mount || typeof mount !== 'object' || Array.isArray(mount))
+    throw new Error('Running container mount entry is malformed');
+  if (!['bind', 'volume'].includes(mount.Type)) return [];
+  if (typeof mount.RW !== 'boolean')
+    throw new Error('Running container mount access mode is malformed');
+  return inputs.filter((input) =>
+    input.type === 'volume'
+      ? mount.Type === 'volume' && mount.Name === input.source
+      : mount.Type === 'bind' &&
+        configuredBindOverlaps(mount.Source, input.source)
+  );
+}
+
+async function scanRunningLockedInputMounts({ adapters, plan, run, signal }) {
+  const initialReceipt = await run(
+    ['ps', '--quiet', '--no-trunc'],
+    'running-container-list-initial'
+  );
+  const initialIds = parseRunningContainerIds(
+    initialReceipt,
+    'Initial running-container list'
+  );
+  const lockedInputs = lockedInputDescriptors(plan.manifest);
+  const containers = [];
+  for (const id of initialIds) {
+    signal?.throwIfAborted();
+    const inspect = await adapters.docker.inspectContainer(id);
+    if (
+      inspect?.Id !== id ||
+      inspect.State?.Running !== true ||
+      typeof inspect.Name !== 'string' ||
+      !inspect.Name ||
+      !Array.isArray(inspect.Mounts)
+    )
+      throw new Error(
+        `Running container changed during locked-input scan: ${id}`
+      );
+    const runtimeName = inspect.Name.slice(1);
+    const staleOwnership =
+      inspect.Config?.Labels?.[plan.manifest.ownershipLabelKey];
+    const mode3RuntimeName =
+      runtimeName.startsWith('mode3-') ||
+      runtimeName.startsWith(`${plan.manifest.namePrefix}-`);
+    const staleRuntimeName =
+      mode3RuntimeName && !runtimeName.endsWith('-postgres');
+    if (staleOwnership !== undefined || staleRuntimeName)
+      throw new Error(`Stale Mode 3 runtime is still running: ${inspect.Name}`);
+    const lockedMounts = [];
+    for (const mount of inspect.Mounts) {
+      const matches = matchingLockedInputs(mount, lockedInputs);
+      for (const input of matches) {
+        if (mount.RW !== false)
+          throw new Error(
+            `Running container ${inspect.Name} writes immutable input ${input.role}`
+          );
+        lockedMounts.push({
+          role: input.role,
+          type: input.type,
+          source: input.source,
+          destination: containerPath(
+            mount.Destination,
+            `running container ${id} locked mount destination`
+          ),
+          readOnly: true,
+        });
+      }
+    }
+    containers.push({
+      id,
+      name: inspect.Name,
+      lockedMounts: lockedMounts.toSorted((left, right) =>
+        compareText(
+          `${left.role}\0${left.destination}`,
+          `${right.role}\0${right.destination}`
+        )
+      ),
+    });
+  }
+  signal?.throwIfAborted();
+  const finalReceipt = await run(
+    ['ps', '--quiet', '--no-trunc'],
+    'running-container-list-final'
+  );
+  const finalIds = parseRunningContainerIds(
+    finalReceipt,
+    'Final running-container list'
+  );
+  if (!sameArray(finalIds, initialIds))
+    throw new Error('Running container list changed during locked-input scan');
+  return deepFreeze({
+    schema: LOCKED_INPUT_SCAN_SCHEMA,
+    status: 'passed',
+    lockedInputs: lockedInputs.map(({ role, source, type }) => ({
+      role,
+      source,
+      type,
+    })),
+    runningContainerIds: initialIds,
+    containers,
+    initialListReceipt: receiptEvidence(initialReceipt),
+    finalListReceipt: receiptEvidence(finalReceipt),
+    nonPostgresMode3RuntimeNamesExcluded: true,
+    runningLockedInputWritersExcluded: true,
+    stableListVerified: true,
+  });
 }
 
 async function waitForDockerCheck({
@@ -2853,6 +3412,149 @@ async function copyRetainedArtifacts(adapters, plan, signal) {
   });
 }
 
+async function executeMountpointPreflight({ adapters, cleanupRun, plan, run }) {
+  let inspect;
+  let verifiedContainerId;
+  let primaryError;
+  const cleanupErrors = [];
+  try {
+    await run(plan.mountpointPreflight, 'create-mountpoint-preflight');
+    const createdInspect = verifyMountpointPreflightInspect(
+      await adapters.docker.inspectContainer(plan.names.mountpointPreflight),
+      plan
+    );
+    verifiedContainerId = createdInspect.Id;
+    const startReceipt = await run(
+      bindContainerStartToId(
+        plan.startMountpointPreflight,
+        plan.names.mountpointPreflight,
+        verifiedContainerId
+      ),
+      'start-mountpoint-preflight'
+    );
+    if (startReceipt.stdout.trim() !== plan.mountpointPreflightOutput)
+      throw new Error('Dependency mountpoint preflight output differs');
+    const terminalInspect = verifyMountpointPreflightInspect(
+      await adapters.docker.inspectContainer(plan.names.mountpointPreflight),
+      plan
+    );
+    if (terminalInspect.Id !== verifiedContainerId)
+      throw new Error('Dependency mountpoint preflight identity changed');
+    inspect = verifyTerminalContainer(
+      terminalInspect,
+      'Dependency mountpoint preflight'
+    );
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    let observedContainer;
+    let reconcileError;
+    for (
+      let attempt = 0;
+      attempt < MOUNTPOINT_PREFLIGHT_RECONCILE_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        observedContainer = await adapters.docker.inspectContainer(
+          plan.names.mountpointPreflight
+        );
+        reconcileError = undefined;
+      } catch (error) {
+        reconcileError = error;
+      }
+      if (observedContainer) break;
+      if (attempt + 1 < MOUNTPOINT_PREFLIGHT_RECONCILE_ATTEMPTS) {
+        try {
+          await adapters.process.delay(MOUNTPOINT_PREFLIGHT_RECONCILE_DELAY_MS);
+        } catch (error) {
+          cleanupErrors.push(error);
+          break;
+        }
+      }
+    }
+    if (observedContainer) {
+      try {
+        const observedContainerId = verifyMountpointPreflightInspect(
+          observedContainer,
+          plan
+        ).Id;
+        if (
+          verifiedContainerId !== undefined &&
+          observedContainerId !== verifiedContainerId
+        )
+          cleanupErrors.push(
+            new Error('Dependency mountpoint preflight identity changed')
+          );
+        else verifiedContainerId = observedContainerId;
+      } catch (error) {
+        cleanupErrors.push(
+          new Error(
+            'Dependency mountpoint preflight ownership topology is unproven',
+            { cause: error }
+          )
+        );
+      }
+    } else {
+      if (reconcileError) cleanupErrors.push(reconcileError);
+      if (!primaryError || verifiedContainerId !== undefined)
+        cleanupErrors.push(
+          new Error(
+            'Dependency mountpoint preflight disappeared before planned removal'
+          )
+        );
+    }
+    if (verifiedContainerId !== undefined) {
+      try {
+        await cleanupRun(
+          bindContainerRemovalToId(
+            plan.forceRemoveMountpointPreflight,
+            plan.names.mountpointPreflight,
+            verifiedContainerId
+          ),
+          'force-remove-mountpoint-preflight'
+        );
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        const remainingContainer =
+          await adapters.docker.inspectContainer(verifiedContainerId);
+        if (remainingContainer !== null)
+          cleanupErrors.push(
+            new Error(
+              'Disposable dependency mountpoint preflight was not removed'
+            )
+          );
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+  }
+  if (primaryError || cleanupErrors.length) {
+    if (primaryError && !cleanupErrors.length) throw primaryError;
+    throw new AggregateError(
+      [...(primaryError ? [primaryError] : []), ...cleanupErrors],
+      primaryError
+        ? 'Dependency mountpoint preflight and cleanup failed'
+        : 'Dependency mountpoint preflight cleanup failed'
+    );
+  }
+  if (!inspect)
+    throw new Error('Dependency mountpoint preflight has no terminal inspect');
+  const evidence = mountpointPreflightEvidence(
+    plan,
+    inspect,
+    adapters.process.now()
+  );
+  await writeOuterEvidence(
+    adapters,
+    plan.manifest,
+    'mountpoint-preflight.json',
+    evidence
+  );
+  return evidence;
+}
+
 /**
  * Execute the fresh Windows/Docker outer lifecycle. Stopped labeled assets are
  * retained for review. The final marker is deliberately the final write.
@@ -2878,6 +3580,8 @@ export async function executeDistributedLinuxHostContainment(
   let helperInspect;
   let daemonInspect;
   let helperReady;
+  let lockedInputScan;
+  let mountpointPreflight;
   let admissionFiles;
   let startAdmissionFiles;
   let outerEvidence;
@@ -2898,6 +3602,7 @@ export async function executeDistributedLinuxHostContainment(
   try {
     admissionFiles = await verifyAdmissionFiles(adapters.fs, plan);
     for (const [kind, name] of [
+      ['container', plan.names.mountpointPreflight],
       ['container', plan.names.helper],
       ['container', plan.names.daemon],
       ['volume', plan.names.state],
@@ -2936,6 +3641,18 @@ export async function executeDistributedLinuxHostContainment(
     }
     if (outerDaemonId !== manifest.outerDaemonId)
       throw new Error('Outer Docker daemon identity differs');
+    lockedInputScan = await scanRunningLockedInputMounts({
+      adapters,
+      plan,
+      run,
+      signal,
+    });
+    mountpointPreflight = await executeMountpointPreflight({
+      adapters,
+      cleanupRun,
+      plan,
+      run,
+    });
     for (const volume of plan.volumes) {
       await run(volume.create, `create-${volume.role}-volume`);
       verifyVolume(
@@ -2945,9 +3662,10 @@ export async function executeDistributedLinuxHostContainment(
       );
     }
     await writeOuterEvidence(adapters, manifest, 'volume-admission.json', {
-      schema: 'seerrng-distributed-linux-volume-admission/v1',
+      schema: VOLUME_ADMISSION_SCHEMA,
       ownership: plan.ownership,
       names: plan.volumes.map(({ role, name }) => ({ role, name })),
+      lockedInputScan,
       status: 'passed',
     });
 
@@ -3141,6 +3859,8 @@ export async function executeDistributedLinuxHostContainment(
         commands,
         daemonRuntime,
         helperReady,
+        lockedInputScan,
+        mountpointPreflight,
         startAdmissionFiles,
       });
     } catch (error) {
@@ -3179,6 +3899,7 @@ export async function executeDistributedLinuxHostContainment(
     callbackLedger: collected.callbackLedger,
     proofParentLedger: collected.proofParentLedger,
     terminalCleanup: collected.cleanup,
+    mountpointPreflight,
     outerEvidence,
     terminal: {
       helperExitCode: helperInspect.State.ExitCode,

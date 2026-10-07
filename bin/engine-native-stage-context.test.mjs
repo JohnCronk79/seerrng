@@ -20,6 +20,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
+  MODE3_DEPENDENCY_MOUNTPOINT_SCHEMA,
   createNativeRepositoryCheckExecutor,
   createNativeStageContext,
   createOwnedDocsLinkSnapshot,
@@ -32,11 +33,13 @@ import {
   nativeInputFileIdentity,
   nativeNetworkBoundary,
   prepareJellyfinTemporaryDirectory,
+  prepareMode3DependencyMountpoint,
   readNativeStageArtifact,
   readonlyMountProof,
   repositoryIsolationReadiness,
   repositoryNativeCases,
   validateNativeBoundaryProof,
+  verifyMode3DependencyMountpoint,
   verifyNativeInputFreshness,
   verifySourceSnapshot,
 } from '../tools/validation-engine/runtime/native-stage-context.mjs';
@@ -430,6 +433,104 @@ test('snapshot seals actual working bytes/modes, includes unignored files and om
   assert.equal(verifySourceSnapshot(snapshot), true);
   disposeSourceSnapshot(snapshot);
   assert.equal(existsSync(snapshot.scratchRoot), false);
+});
+
+test('outer Mode 3 adds only one empty real dependency mountpoint without changing source identity', (t) => {
+  const { root, parent } = fixture(t);
+  const first = createOwnedSourceSnapshot(root, { scratchParent: parent });
+  const originalCandidate = structuredClone(first.candidate);
+  const originalManifest = readFileSync(
+    path.join(first.scratchRoot, 'source-manifest.json')
+  );
+  assert.equal(existsSync(path.join(first.root, 'node_modules')), false);
+
+  const proof = prepareMode3DependencyMountpoint(first);
+  assert.equal(proof.schema, MODE3_DEPENDENCY_MOUNTPOINT_SCHEMA);
+  assert.equal(proof.sourceDirectory, first.root);
+  assert.equal(proof.mountpointPath, path.join(first.root, 'node_modules'));
+  assert.equal(proof.onlyAddedPath, 'node_modules');
+  assert.equal(proof.mountpointType, 'directory');
+  assert.equal(proof.mountpointEmptyBeforeMount, true);
+  assert.equal(proof.candidateCommit, originalCandidate.commit);
+  assert.equal(proof.candidateTree, originalCandidate.tree);
+  assert.equal(proof.candidateSourceSha256, originalCandidate.sourceSha256);
+  assert.equal(proof.sourceManifestSha256, originalCandidate.sourceSha256);
+  assert.equal(proof.inheritedFileCount, first.manifest.fileCount);
+  assert.match(proof.inheritedTopologySha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(readdirSync(proof.mountpointPath), []);
+  assert.equal(verifyMode3DependencyMountpoint(first, proof), true);
+  assert.deepEqual(first.candidate, originalCandidate);
+  assert.deepEqual(
+    readFileSync(path.join(first.scratchRoot, 'source-manifest.json')),
+    originalManifest
+  );
+  assert.equal(git(first.root, 'write-tree'), originalCandidate.tree);
+
+  const second = createOwnedSourceSnapshot(root, { scratchParent: parent });
+  assert.equal(existsSync(path.join(second.root, 'node_modules')), false);
+  const secondProof = prepareMode3DependencyMountpoint(second);
+  assert.equal(
+    secondProof.inheritedTopologySha256,
+    proof.inheritedTopologySha256,
+    'Topology identity must not depend on the disposable snapshot path'
+  );
+});
+
+test('outer Mode 3 rejects a pre-existing dependency file, link, or nonempty directory', async (t) => {
+  for (const kind of ['file', 'link', 'nonempty-directory'])
+    await t.test(kind, (t) => {
+      const { root, parent } = fixture(t);
+      const snapshot = createOwnedSourceSnapshot(root, {
+        scratchParent: parent,
+      });
+      const mountpoint = path.join(snapshot.root, 'node_modules');
+      if (kind === 'file') writeFileSync(mountpoint, 'not a directory');
+      else if (kind === 'nonempty-directory') {
+        mkdirSync(mountpoint);
+        writeFileSync(path.join(mountpoint, 'payload'), 'not empty');
+      } else {
+        const outside = path.join(parent, 'outside-dependencies');
+        mkdirSync(outside);
+        symlinkSync(
+          outside,
+          mountpoint,
+          process.platform === 'win32' ? 'junction' : 'dir'
+        );
+      }
+      assert.throws(
+        () => prepareMode3DependencyMountpoint(snapshot),
+        /must not exist before preparation/u
+      );
+    });
+});
+
+test('outer Mode 3 dependency mountpoint verification fails closed on post-preparation tampering', (t) => {
+  const { root, parent } = fixture(t);
+  const snapshot = createOwnedSourceSnapshot(root, { scratchParent: parent });
+  const proof = prepareMode3DependencyMountpoint(snapshot);
+
+  writeFileSync(path.join(proof.mountpointPath, 'payload'), 'unexpected');
+  assert.throws(
+    () => verifyMode3DependencyMountpoint(snapshot, proof),
+    /mountpoint is not empty/u
+  );
+  rmSync(path.join(proof.mountpointPath, 'payload'));
+
+  writeFileSync(path.join(snapshot.root, 'unexpected.txt'), 'unexpected');
+  assert.throws(
+    () => verifyMode3DependencyMountpoint(snapshot, proof),
+    /not the only added snapshot path/u
+  );
+  rmSync(path.join(snapshot.root, 'unexpected.txt'));
+
+  assert.throws(
+    () =>
+      verifyMode3DependencyMountpoint(snapshot, {
+        ...proof,
+        inheritedTopologySha256: '0'.repeat(64),
+      }),
+    /proof differs: inheritedTopologySha256/u
+  );
 });
 
 test(

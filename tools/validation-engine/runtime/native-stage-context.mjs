@@ -51,6 +51,27 @@ import {
 import { createStagedValidation } from './staged-validation.mjs';
 
 const prefix = 'seerrng-native-validation-';
+export const MODE3_DEPENDENCY_MOUNTPOINT_SCHEMA =
+  'seerrng-mode3-dependency-mountpoint/v1';
+const MODE3_DEPENDENCY_MOUNTPOINT_KEYS = Object.freeze(
+  [
+    'candidateCommit',
+    'candidateSourceSha256',
+    'candidateTree',
+    'gitTreeVerified',
+    'inheritedFileCount',
+    'inheritedPathCount',
+    'inheritedTopologySha256',
+    'mountpointEmptyBeforeMount',
+    'mountpointPath',
+    'mountpointType',
+    'onlyAddedPath',
+    'relativePath',
+    'schema',
+    'sourceDirectory',
+    'sourceManifestSha256',
+  ].sort()
+);
 const MACHINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
@@ -439,6 +460,176 @@ export function verifySourceSnapshot(
       )
         throw new Error(`Frozen source changed: ${file.path}`);
     }
+  return true;
+}
+
+function snapshotPayloadTopology(root) {
+  const entries = [];
+  const scan = (directory, prefix = '') => {
+    for (const name of readdirSync(directory).sort()) {
+      if (!prefix && name === '.git') continue;
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const absolute = path.join(directory, name);
+      const stat = lstatSync(absolute);
+      if (stat.isSymbolicLink())
+        throw new Error(
+          `Mode 3 snapshot payload contains a symbolic link: ${relativePath}`
+        );
+      if (stat.isDirectory()) {
+        entries.push({ path: relativePath, type: 'directory' });
+        scan(absolute, relativePath);
+      } else if (stat.isFile())
+        entries.push({ path: relativePath, type: 'file' });
+      else
+        throw new Error(
+          `Mode 3 snapshot payload contains a special entry: ${relativePath}`
+        );
+    }
+  };
+  scan(root);
+  entries.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  );
+  return entries;
+}
+
+function expectedSnapshotPayloadTopology(snapshot) {
+  const directories = new Set();
+  const files = new Set();
+  for (const entry of snapshot.manifest.files) {
+    files.add(entry.path);
+    const components = entry.path.split('/');
+    for (let length = 1; length < components.length; length += 1)
+      directories.add(components.slice(0, length).join('/'));
+  }
+  return [
+    ...[...directories].map((entryPath) => ({
+      path: entryPath,
+      type: 'directory',
+    })),
+    ...[...files].map((entryPath) => ({ path: entryPath, type: 'file' })),
+  ].sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  );
+}
+
+function topologySha256(entries) {
+  return hash(json(entries));
+}
+
+function assertMode3DependencyMountpointProof(snapshot, proof) {
+  if (
+    !proof ||
+    typeof proof !== 'object' ||
+    Array.isArray(proof) ||
+    JSON.stringify(Object.keys(proof).sort()) !==
+      JSON.stringify(MODE3_DEPENDENCY_MOUNTPOINT_KEYS)
+  )
+    throw new Error('Mode 3 dependency mountpoint proof shape differs');
+  const sourceDirectory = realpathSync(snapshot.root);
+  const mountpointPath = path.join(sourceDirectory, 'node_modules');
+  const sourceManifestSha256 = hash(json(snapshot.manifest));
+  const expectedTopology = expectedSnapshotPayloadTopology(snapshot);
+  const expectedTopologySha256 = topologySha256(expectedTopology);
+  const expected = {
+    schema: MODE3_DEPENDENCY_MOUNTPOINT_SCHEMA,
+    sourceDirectory,
+    mountpointPath,
+    relativePath: 'node_modules',
+    candidateCommit: snapshot.candidate.commit,
+    candidateTree: snapshot.candidate.tree,
+    candidateSourceSha256: snapshot.candidate.sourceSha256,
+    sourceManifestSha256,
+    inheritedPathCount: expectedTopology.length,
+    inheritedFileCount: snapshot.manifest.fileCount,
+    inheritedTopologySha256: expectedTopologySha256,
+    onlyAddedPath: 'node_modules',
+    mountpointType: 'directory',
+    mountpointEmptyBeforeMount: true,
+    gitTreeVerified: true,
+  };
+  for (const [key, value] of Object.entries(expected))
+    if (proof[key] !== value)
+      throw new Error(`Mode 3 dependency mountpoint proof differs: ${key}`);
+  return { expectedTopology, mountpointPath };
+}
+
+/**
+ * Add the one real, empty nested-volume target required by the outer Mode 3
+ * helper. Ordinary native snapshots remain byte-for-byte unchanged.
+ */
+export function prepareMode3DependencyMountpoint(snapshot) {
+  verifySourceSnapshot(snapshot);
+  const sourceDirectory = realpathSync(snapshot.root);
+  const mountpointPath = path.join(sourceDirectory, 'node_modules');
+  if (existsSync(mountpointPath))
+    throw new Error(
+      'Mode 3 dependency mountpoint must not exist before preparation'
+    );
+  const expectedTopology = expectedSnapshotPayloadTopology(snapshot);
+  const inheritedTopology = snapshotPayloadTopology(sourceDirectory);
+  if (JSON.stringify(inheritedTopology) !== JSON.stringify(expectedTopology))
+    throw new Error(
+      'Mode 3 snapshot payload differs before dependency mountpoint preparation'
+    );
+  mkdirSync(mountpointPath, { mode: 0o755 });
+  const proof = Object.freeze({
+    schema: MODE3_DEPENDENCY_MOUNTPOINT_SCHEMA,
+    sourceDirectory,
+    mountpointPath,
+    relativePath: 'node_modules',
+    candidateCommit: snapshot.candidate.commit,
+    candidateTree: snapshot.candidate.tree,
+    candidateSourceSha256: snapshot.candidate.sourceSha256,
+    sourceManifestSha256: hash(json(snapshot.manifest)),
+    inheritedPathCount: inheritedTopology.length,
+    inheritedFileCount: snapshot.manifest.fileCount,
+    inheritedTopologySha256: topologySha256(inheritedTopology),
+    onlyAddedPath: 'node_modules',
+    mountpointType: 'directory',
+    mountpointEmptyBeforeMount: true,
+    gitTreeVerified: true,
+  });
+  verifyMode3DependencyMountpoint(snapshot, proof);
+  return proof;
+}
+
+/** Verify the prepared target and all inherited source identity again. */
+export function verifyMode3DependencyMountpoint(snapshot, proof) {
+  verifySourceSnapshot(snapshot);
+  const { expectedTopology, mountpointPath } =
+    assertMode3DependencyMountpointProof(snapshot, proof);
+  const stat = lstatSync(mountpointPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory())
+    throw new Error(
+      'Mode 3 dependency mountpoint is not an ordinary directory'
+    );
+  if (readdirSync(mountpointPath).length !== 0)
+    throw new Error('Mode 3 dependency mountpoint is not empty');
+  const currentTopology = snapshotPayloadTopology(proof.sourceDirectory);
+  const mountpointEntries = currentTopology.filter(
+    ({ path: entryPath }) => entryPath === proof.onlyAddedPath
+  );
+  const inheritedTopology = currentTopology.filter(
+    ({ path: entryPath }) => entryPath !== proof.onlyAddedPath
+  );
+  if (
+    mountpointEntries.length !== 1 ||
+    mountpointEntries[0].type !== 'directory' ||
+    JSON.stringify(inheritedTopology) !== JSON.stringify(expectedTopology)
+  )
+    throw new Error(
+      'Mode 3 dependency mountpoint is not the only added snapshot path'
+    );
+  if (
+    inheritedTopology.length !== proof.inheritedPathCount ||
+    inheritedTopology.filter(({ type }) => type === 'file').length !==
+      proof.inheritedFileCount ||
+    topologySha256(inheritedTopology) !== proof.inheritedTopologySha256
+  )
+    throw new Error('Mode 3 inherited snapshot topology changed');
+  if (git(snapshot.root, ['write-tree']).trim() !== proof.candidateTree)
+    throw new Error('Mode 3 snapshot Git tree changed');
   return true;
 }
 

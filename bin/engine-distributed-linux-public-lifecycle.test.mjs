@@ -69,6 +69,10 @@ function writeFocusedOuterSuccess(directory, runId, profile) {
       schema: 'focused-host-admission/v1',
       status: 'passed',
     },
+    'mountpoint-preflight.json': {
+      schema: 'focused-mountpoint-preflight/v1',
+      status: 'passed',
+    },
     'terminal-inspection.json': {
       schema: 'focused-terminal-inspection/v1',
       successful: true,
@@ -183,6 +187,26 @@ function candidate() {
   };
 }
 
+function dependencyMountpoint(sourceDirectory, candidateValue) {
+  return {
+    schema: 'seerrng-mode3-dependency-mountpoint/v1',
+    sourceDirectory,
+    mountpointPath: join(sourceDirectory, 'node_modules'),
+    relativePath: 'node_modules',
+    candidateCommit: candidateValue.commit,
+    candidateTree: candidateValue.tree,
+    candidateSourceSha256: candidateValue.sourceSha256,
+    sourceManifestSha256: candidateValue.sourceSha256,
+    inheritedPathCount: 10,
+    inheritedFileCount: 5,
+    inheritedTopologySha256: digest('f'),
+    onlyAddedPath: 'node_modules',
+    mountpointType: 'directory',
+    mountpointEmptyBeforeMount: true,
+    gitTreeVerified: true,
+  };
+}
+
 function lifecycleFixture(root) {
   const configDirectory = join(root, 'config');
   const sourceDirectory = join(root, 'source');
@@ -195,10 +219,13 @@ function lifecycleFixture(root) {
     evidenceDirectory,
   ])
     mkdirSync(directory);
+  mkdirSync(join(sourceDirectory, 'node_modules'));
   const parentBytes = readFileSync(PROOF_PARENT);
+  const candidateValue = candidate();
   return createDistributedLinuxHostLifecycleManifest({
-    candidate: candidate(),
+    candidate: candidateValue,
     configDirectory,
+    dependencyMountpoint: dependencyMountpoint(sourceDirectory, candidateValue),
     dependencyVolume: 'focused-dependencies',
     gitDirectory,
     gitEvidenceSha256: digest('5'),
@@ -831,6 +858,10 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
         },
       };
     },
+    prepareDependencyMountpoint: (snapshot) => {
+      events.push('prepare-dependency-mountpoint');
+      return dependencyMountpoint(snapshot.root, snapshot.candidate);
+    },
     detectOperatorGithubLogin: () => 'JohnCronk79',
     resolveActiveConfig: async () => ({ config, configPath: activeMarker }),
     readTimingProfile: () => profile,
@@ -842,6 +873,11 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
       events.push('verify-clean-source');
       return true;
     },
+    verifyDependencyMountpoint: (_snapshot, proof) => {
+      events.push('verify-dependency-mountpoint');
+      assert.equal(proof.onlyAddedPath, 'node_modules');
+      return true;
+    },
     verifySnapshot: () => events.push('verify-snapshot'),
     disposeSnapshot: () => events.push('dispose-snapshot'),
     createContainment: (manifest, options) => {
@@ -850,6 +886,7 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
       capturedPreparationRequest = options.preparationRequest;
       return {
         executeHostLifecycle: async () => {
+          events.push('execute-host-lifecycle');
           mkdirSync(manifest.evidence.outerDirectory);
           writeFileSync(
             join(
@@ -895,6 +932,14 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
   for (const { hashField } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES)
     assert.match(result.outerEvidence[hashField], /^[a-f0-9]{64}$/u);
   assert.equal(capturedManifest.candidate.sourceSha256, sourceSha256);
+  assert.deepEqual(
+    capturedManifest.dependencyMountpoint,
+    dependencyMountpoint(ROOT, {
+      commit: currentCommit,
+      tree: currentTree,
+      sourceSha256,
+    })
+  );
   const containedRequest = JSON.parse(
     readFileSync(
       join(scratchRoot, 'host-preparation', 'contained-request.json'),
@@ -971,7 +1016,11 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
   assert.deepEqual(events, [
     'create-snapshot',
     'verify-clean-source',
+    'prepare-dependency-mountpoint',
+    'verify-dependency-mountpoint',
     'create-containment',
+    'execute-host-lifecycle',
+    'verify-dependency-mountpoint',
     'persist-profile',
     'verify-snapshot',
     'dispose-snapshot',

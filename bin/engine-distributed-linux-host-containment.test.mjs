@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -99,6 +99,23 @@ function manifestFixture() {
     ownershipLabelKey: 'org.example.validation-owner',
     outerDaemonId: 'outer-daemon-generic',
     candidate,
+    dependencyMountpoint: {
+      schema: 'seerrng-mode3-dependency-mountpoint/v1',
+      sourceDirectory: 'C:\\mode3-inputs\\candidate',
+      mountpointPath: 'C:\\mode3-inputs\\candidate\\node_modules',
+      relativePath: 'node_modules',
+      candidateCommit: candidate.commit,
+      candidateTree: candidate.tree,
+      candidateSourceSha256: candidate.sourceSha256,
+      sourceManifestSha256: candidate.sourceSha256,
+      inheritedPathCount: 12,
+      inheritedFileCount: 10,
+      inheritedTopologySha256: digest('5'),
+      onlyAddedPath: 'node_modules',
+      mountpointType: 'directory',
+      mountpointEmptyBeforeMount: true,
+      gitTreeVerified: true,
+    },
     images: {
       helper: {
         reference: `helper.invalid/runtime@sha256:${digest('6')}`,
@@ -119,8 +136,8 @@ function manifestFixture() {
       },
       git: {
         type: 'bind',
-        source: 'C:\\mode3-inputs\\git',
-        target: '/candidate-git',
+        source: 'C:\\mode3-inputs\\candidate\\.git',
+        target: '/candidate/.git',
       },
       config: {
         type: 'bind',
@@ -130,7 +147,7 @@ function manifestFixture() {
       dependencies: {
         type: 'volume',
         source: 'mode3-linux-dependencies',
-        target: '/dependencies',
+        target: '/candidate/node_modules',
       },
       tool: {
         type: 'volume',
@@ -619,6 +636,11 @@ test('plan binds a fresh owner, exact mounts, corrected helper capabilities, and
     uniqueToken: 'fresh-token-1',
   });
   assert.match(plan.names.helper, /fresh-token-1/u);
+  assert.match(plan.names.mountpointPreflight, /fresh-token-1/u);
+  assert.equal(plan.mountpointPreflightOutput, 'mountpoint-preflight-ok');
+  assert.ok(plan.mountpointPreflight.includes('--read-only'));
+  assert.ok(plan.mountpointPreflight.includes('none'));
+  assert.ok(!plan.mountpointPreflight.includes('NET_ADMIN'));
   assert.equal(plan.volumes.length, 3);
   assert.equal(plan.proofParentConfig.sha256, fixture.proofParentConfig.sha256);
   assert.equal(plan.proofParentConfig.json, fixture.proofParentConfig.json);
@@ -742,6 +764,16 @@ test('manifest mutations fail closed before Docker execution', () => {
         uniqueToken: 'mutation-5',
       }),
     /Git evidence must stay under read-only config/u
+  );
+  const mountpointMutation = structuredClone(fixture.manifest);
+  mountpointMutation.dependencyMountpoint.mountpointEmptyBeforeMount = false;
+  assert.throws(
+    () =>
+      createDistributedLinuxHostContainmentPlan(mountpointMutation, {
+        preparationRequest: fixture.preparationRequest,
+        uniqueToken: 'mutation-6',
+      }),
+    /mountpoint proof differs/u
   );
 });
 
@@ -941,6 +973,23 @@ function outerHarness(
     mutateTimingProfileArtifact = false,
     mutateVolume = false,
     mountSourceOverrides = {},
+    failMountpointCreateReceipt = false,
+    failMountpointCleanupInspect = false,
+    failMountpointPreflight = false,
+    foreignMountpointOwner = false,
+    disappearMountpointBeforeRemoval = false,
+    lateMountpointCreateAfterInspects = null,
+    replaceMountpointBeforeStart = false,
+    replaceMountpointBeforeRemoval = false,
+    runningLockedInputMode = null,
+    runningLockedInputRole = 'dependencies',
+    runningLockedInputSource = null,
+    runningStaleMode3 = null,
+    malformedRunningList = false,
+    duplicateRunningList = false,
+    changeRunningList = false,
+    retainMountpointPreflight = false,
+    mutateMountpointPreflight = false,
   } = {}
 ) {
   const files = new Map(
@@ -955,6 +1004,7 @@ function outerHarness(
   const admissionReads = new Map();
   const outerEvidenceReads = new Map();
   const containers = new Map();
+  let mountpointInspectCount = 0;
   const volumes = new Map();
   for (const input of Object.values(fixture.manifest.inputs))
     if (input.type === 'volume')
@@ -976,12 +1026,84 @@ function outerHarness(
     Destination: input.target,
     RW: false,
   });
+  const runningContainerId = digest('d');
+  if (runningLockedInputMode || runningStaleMode3) {
+    const input = runningLockedInputMode
+      ? fixture.manifest.inputs[runningLockedInputRole]
+      : null;
+    const staleNames = {
+      controller: `/mode3-old-run-full-controller`,
+      helper: `/mode3-old-run-helper`,
+      laptop: `/mode3-old-run-a-laptop-1`,
+      node: `/mode3-old-run-node-01`,
+      postgres: `/mode3-old-run-postgres`,
+    };
+    containers.set(runningContainerId, {
+      Id: runningContainerId,
+      Name: staleNames[runningStaleMode3] ?? '/existing-preview',
+      Config:
+        runningStaleMode3 === 'label'
+          ? {
+              Labels: {
+                [fixture.manifest.ownershipLabelKey]: 'old-mode3-run',
+              },
+            }
+          : { Labels: {} },
+      State: { Running: true },
+      Mounts: runningLockedInputMode
+        ? [
+            {
+              ...mountFor(input),
+              ...(runningLockedInputSource
+                ? { Source: runningLockedInputSource }
+                : {}),
+              RW: runningLockedInputMode === 'rw',
+            },
+          ]
+        : [],
+    });
+  }
   const outputMount = (name, destination) => ({
     Type: 'volume',
     Source: `/volumes/${name}/_data`,
     Name: name,
     Destination: destination,
     RW: true,
+  });
+  const mountpointPreflightId = digest('e');
+  const foreignReplacementId = digest('f');
+  const mountpointPreflightInspect = () => ({
+    Id: mountpointPreflightId,
+    Image: fixture.manifest.images.helper.id,
+    Path: '/bin/sh',
+    Args: plan.mountpointPreflight.slice(
+      plan.mountpointPreflight.indexOf('-eu')
+    ),
+    Config: {
+      Image: fixture.manifest.images.helper.reference,
+      Labels: { [plan.ownership.key]: plan.ownership.value },
+      User: '0:0',
+      WorkingDir: '/',
+      Entrypoint: ['/bin/sh'],
+      Cmd: plan.mountpointPreflight.slice(
+        plan.mountpointPreflight.indexOf('-eu')
+      ),
+    },
+    HostConfig: {
+      ReadonlyRootfs: true,
+      Privileged: false,
+      CapDrop: ['ALL'],
+      SecurityOpt: ['no-new-privileges'],
+      NetworkMode: mutateMountpointPreflight ? 'bridge' : 'none',
+      RestartPolicy: { Name: 'no' },
+    },
+    Mounts: [
+      fixture.manifest.inputs.candidate,
+      fixture.manifest.inputs.git,
+      fixture.manifest.inputs.dependencies,
+    ].map(mountFor),
+    State: { Running: false, OOMKilled: false, ExitCode: 0 },
+    RestartCount: 0,
   });
   const helperInspect = () => ({
     Id: 'helper-id',
@@ -1149,7 +1271,26 @@ function outerHarness(
   };
   const docker = {
     async inspectContainer(name) {
-      return containers.get(name) ?? null;
+      if (name === plan.names.mountpointPreflight) {
+        mountpointInspectCount += 1;
+        if (
+          lateMountpointCreateAfterInspects !== null &&
+          !containers.has(name) &&
+          mountpointInspectCount >= lateMountpointCreateAfterInspects
+        )
+          containers.set(name, mountpointPreflightInspect());
+        if (failMountpointCleanupInspect && mountpointInspectCount >= 4)
+          throw new Error('Injected mountpoint cleanup inspection failure');
+        if (disappearMountpointBeforeRemoval && mountpointInspectCount === 4) {
+          containers.delete(name);
+          return null;
+        }
+      }
+      return (
+        containers.get(name) ??
+        [...containers.values()].find(({ Id }) => Id === name) ??
+        null
+      );
     },
     async inspectVolume(name) {
       return volumes.get(name) ?? null;
@@ -1169,6 +1310,23 @@ function outerHarness(
           `${JSON.stringify(fixture.manifest.outerDaemonId)}\n`,
           id
         );
+      if (
+        id === 'running-container-list-initial' ||
+        id === 'running-container-list-final'
+      ) {
+        if (malformedRunningList)
+          return passingReceipt('not-a-container-id\n', id);
+        const listed = containers.has(runningContainerId)
+          ? [runningContainerId]
+          : [];
+        if (id === 'running-container-list-final' && changeRunningList)
+          listed.length = 0;
+        if (duplicateRunningList && listed.length) listed.push(listed[0]);
+        return passingReceipt(
+          listed.length ? `${listed.join('\n')}\n` : '',
+          id
+        );
+      }
       if (id.startsWith('create-') && id.endsWith('-volume')) {
         const name = args.at(-1);
         const role = id.slice('create-'.length, -'-volume'.length);
@@ -1185,6 +1343,47 @@ function outerHarness(
           },
           Mountpoint: `/var/lib/docker/volumes/${name}/_data`,
         });
+      } else if (id === 'create-mountpoint-preflight') {
+        const preflight = mountpointPreflightInspect();
+        if (foreignMountpointOwner)
+          preflight.Config.Labels[plan.ownership.key] = 'foreign';
+        if (lateMountpointCreateAfterInspects === null)
+          containers.set(plan.names.mountpointPreflight, preflight);
+        if (failMountpointCreateReceipt)
+          throw new Error('Injected mountpoint create receipt failure');
+      } else if (id === 'start-mountpoint-preflight') {
+        const targetId = args.at(-1);
+        assert.equal(targetId, mountpointPreflightId);
+        if (replaceMountpointBeforeStart) {
+          const foreign = mountpointPreflightInspect();
+          foreign.Id = foreignReplacementId;
+          foreign.Config.Labels[plan.ownership.key] = 'foreign';
+          containers.set(plan.names.mountpointPreflight, foreign);
+        }
+        const target = [...containers.values()].find(
+          (container) => container.Id === targetId
+        );
+        if (!target) throw new Error('No such container');
+        if (failMountpointPreflight)
+          throw new Error('Injected dependency mountpoint preflight failure');
+        return passingReceipt(`${plan.mountpointPreflightOutput}\n`, id);
+      } else if (id === 'force-remove-mountpoint-preflight') {
+        assert.equal(options.signal, undefined);
+        assert.equal(options.cleanup, true);
+        const targetId = args.at(-1);
+        assert.equal(targetId, mountpointPreflightId);
+        assert.ok(args.includes('--force'));
+        if (replaceMountpointBeforeRemoval) {
+          const foreign = mountpointPreflightInspect();
+          foreign.Id = foreignReplacementId;
+          foreign.Config.Labels[plan.ownership.key] = 'foreign';
+          containers.set(plan.names.mountpointPreflight, foreign);
+        }
+        const target = [...containers.entries()].find(
+          ([, container]) => container.Id === targetId
+        );
+        if (!target) throw new Error('No such container');
+        if (!retainMountpointPreflight) containers.delete(target[0]);
       } else if (id === 'create-helper') {
         containers.set(plan.names.helper, helperInspect());
       } else if (id === 'start-helper') {
@@ -1323,6 +1522,8 @@ function outerHarness(
     writes,
     stopCalls,
     dockerCalls,
+    containers,
+    files,
   };
 }
 
@@ -1339,6 +1540,33 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   assert.equal(result.status, 'passed');
   assert.equal(result.retainedAssets, true);
   assert.equal(result.terminalCleanup.cleanupVerified, true);
+  assert.equal(result.mountpointPreflight.status, 'passed');
+  assert.equal(result.mountpointPreflight.output, 'mountpoint-preflight-ok');
+  assert.equal(
+    result.mountpointPreflight.dependencyLockSha256,
+    fixture.manifest.candidate.lockSha256
+  );
+  assert.equal(result.mountpointPreflight.distributedNodesContacted, false);
+  assert.equal(
+    result.mountpointPreflight.disposableContainerRemovedAfterInspection,
+    true
+  );
+  const createPreflightIndex = harness.dockerCalls.indexOf(
+    'create-mountpoint-preflight'
+  );
+  const createStateVolumeIndex = harness.dockerCalls.indexOf(
+    'create-state-volume'
+  );
+  assert.ok(createPreflightIndex >= 0);
+  assert.ok(createStateVolumeIndex >= 0);
+  assert.ok(createPreflightIndex < createStateVolumeIndex);
+  const forceRemoveIndex = harness.dockerCalls.indexOf(
+    'force-remove-mountpoint-preflight'
+  );
+  const createHelperIndex = harness.dockerCalls.indexOf('create-helper');
+  assert.ok(forceRemoveIndex >= 0);
+  assert.ok(createHelperIndex >= 0);
+  assert.ok(forceRemoveIndex < createHelperIndex);
   assert.equal(
     result.outerEvidence.schema,
     DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA
@@ -1353,6 +1581,198 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   assert.ok(
     harness.writes.at(-1).endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
   );
+});
+
+test('locked-input scan accepts read-only use and binds the complete stable scan', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'locked-input-readonly',
+  });
+  const harness = outerHarness(fixture, plan, {
+    runningLockedInputMode: 'ro',
+  });
+  const result = await executeDistributedLinuxHostContainment(
+    plan,
+    harness.adapters
+  );
+  assert.equal(result.status, 'passed');
+  const entry = [...harness.files.entries()].find(([path]) =>
+    path.endsWith('volume-admission.json')
+  );
+  assert.ok(entry);
+  const admission = JSON.parse(entry[1].toString('utf8'));
+  assert.equal(
+    admission.schema,
+    'seerrng-distributed-linux-volume-admission/v2'
+  );
+  assert.equal(admission.lockedInputScan.status, 'passed');
+  assert.equal(
+    admission.lockedInputScan.nonPostgresMode3RuntimeNamesExcluded,
+    true
+  );
+  assert.equal(
+    admission.lockedInputScan.runningLockedInputWritersExcluded,
+    true
+  );
+  assert.equal(admission.lockedInputScan.stableListVerified, true);
+  assert.deepEqual(admission.lockedInputScan.runningContainerIds, [
+    digest('d'),
+  ]);
+  assert.deepEqual(admission.lockedInputScan.containers[0].lockedMounts, [
+    {
+      destination: fixture.manifest.inputs.dependencies.target,
+      readOnly: true,
+      role: 'dependencies',
+      source: fixture.manifest.inputs.dependencies.source,
+      type: 'volume',
+    },
+  ]);
+  const finalListIndex = harness.dockerCalls.indexOf(
+    'running-container-list-final'
+  );
+  const preflightIndex = harness.dockerCalls.indexOf(
+    'create-mountpoint-preflight'
+  );
+  assert.ok(finalListIndex >= 0);
+  assert.ok(preflightIndex >= 0);
+  assert.ok(finalListIndex < preflightIndex);
+});
+
+test('locked-input scan rejects running read-write bind and volume consumers', async () => {
+  for (const runningLockedInputRole of [
+    'candidate',
+    'git',
+    'dependencies',
+    'tool',
+  ]) {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: `locked-input-rw-${runningLockedInputRole}`,
+    });
+    const harness = outerHarness(fixture, plan, {
+      runningLockedInputMode: 'rw',
+      runningLockedInputRole,
+    });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      new RegExp(
+        `writes immutable input ${
+          runningLockedInputRole === 'git'
+            ? 'candidate'
+            : runningLockedInputRole
+        }`,
+        'u'
+      )
+    );
+    assert.ok(!harness.dockerCalls.includes('create-mountpoint-preflight'));
+    assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+    assert.ok(!harness.dockerCalls.includes('create-helper'));
+  }
+});
+
+test('locked-input scan rejects stale Mode 3 ownership and runtime roles', async () => {
+  for (const runningStaleMode3 of [
+    'label',
+    'controller',
+    'helper',
+    'laptop',
+    'node',
+  ]) {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: `stale-runtime-${runningStaleMode3}`,
+    });
+    const harness = outerHarness(fixture, plan, { runningStaleMode3 });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      /Stale Mode 3 runtime is still running/u
+    );
+    assert.ok(!harness.dockerCalls.includes('create-mountpoint-preflight'));
+  }
+});
+
+test('locked-input scan permits the separate preserved Mode 3 database role', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'preserved-mode3-postgres',
+  });
+  const harness = outerHarness(fixture, plan, {
+    runningStaleMode3: 'postgres',
+  });
+  const result = await executeDistributedLinuxHostContainment(
+    plan,
+    harness.adapters
+  );
+  assert.equal(result.status, 'passed');
+});
+
+test('locked-input scan rejects a writable ancestor of each source bind', async () => {
+  for (const runningLockedInputRole of ['candidate', 'git']) {
+    const fixture = manifestFixture();
+    const input = fixture.manifest.inputs[runningLockedInputRole];
+    const plan = createPlan(fixture, {
+      uniqueToken: `locked-parent-${runningLockedInputRole}`,
+    });
+    const harness = outerHarness(fixture, plan, {
+      runningLockedInputMode: 'rw',
+      runningLockedInputRole,
+      runningLockedInputSource: win32.dirname(input.source),
+    });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      /writes immutable input candidate/u
+    );
+    assert.ok(!harness.dockerCalls.includes('create-mountpoint-preflight'));
+  }
+});
+
+test('locked-input scan rejects a writable descendant of each source bind', async () => {
+  for (const runningLockedInputRole of ['candidate', 'git']) {
+    const fixture = manifestFixture();
+    const input = fixture.manifest.inputs[runningLockedInputRole];
+    const plan = createPlan(fixture, {
+      uniqueToken: `locked-child-${runningLockedInputRole}`,
+    });
+    const harness = outerHarness(fixture, plan, {
+      runningLockedInputMode: 'rw',
+      runningLockedInputRole,
+      runningLockedInputSource: win32.join(input.source, 'mutable-child'),
+    });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      /writes immutable input candidate/u
+    );
+    assert.ok(!harness.dockerCalls.includes('create-mountpoint-preflight'));
+  }
+});
+
+test('locked-input scan rejects malformed, duplicate, and changing running-container lists', async () => {
+  for (const [name, mutation, error] of [
+    ['malformed', { malformedRunningList: true }, /malformed container ID/u],
+    [
+      'duplicate',
+      { duplicateRunningList: true, runningLockedInputMode: 'ro' },
+      /duplicate container IDs/u,
+    ],
+    [
+      'changed',
+      { changeRunningList: true, runningLockedInputMode: 'ro' },
+      /list changed during locked-input scan/u,
+    ],
+  ]) {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: `locked-input-list-${name}`,
+    });
+    const harness = outerHarness(fixture, plan, mutation);
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      error
+    );
+    assert.ok(!harness.dockerCalls.includes('create-mountpoint-preflight'));
+    assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+    assert.ok(!harness.dockerCalls.includes('create-helper'));
+  }
 });
 
 test(
@@ -1401,7 +1821,7 @@ test('outer lifecycle rejects inexact Docker Desktop bind-source substitutions',
     });
     await assert.rejects(
       executeDistributedLinuxHostContainment(plan, harness.adapters),
-      /Read-only input mount differs/u
+      /Read-only input mount differs|preflight and cleanup failed/u
     );
     assert.ok(
       !harness.writes.some((entry) =>
@@ -1433,7 +1853,7 @@ test('outer lifecycle rejects missing, tampered, and coherently resealed outer e
         });
         await assert.rejects(
           executeDistributedLinuxHostContainment(plan, harness.adapters),
-          /outer|fake file/iu
+          /outer|fake file|preflight evidence/iu
         );
         assert.ok(
           !harness.writes.some((entry) =>
@@ -1442,6 +1862,182 @@ test('outer lifecycle rejects missing, tampered, and coherently resealed outer e
         );
       }
     );
+});
+
+test('mountpoint preflight fails closed and preserves an unproven wrong topology', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-topology-rejected',
+  });
+  const harness = outerHarness(fixture, plan, {
+    mutateMountpointPreflight: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight and cleanup failed/u
+  );
+  assert.ok(!harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+  assert.ok(
+    !harness.writes.some((entry) =>
+      entry.endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
+    )
+  );
+});
+
+test('mountpoint preflight force-removes after failure and rejects failed removal', async () => {
+  for (const retainMountpointPreflight of [false, true]) {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: retainMountpointPreflight
+        ? 'mountpoint-removal-rejected'
+        : 'mountpoint-failure-cleaned',
+    });
+    const harness = outerHarness(fixture, plan, {
+      failMountpointPreflight: true,
+      retainMountpointPreflight,
+    });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      retainMountpointPreflight
+        ? /preflight and cleanup failed/u
+        : /Injected dependency mountpoint preflight failure/u
+    );
+    assert.ok(
+      harness.dockerCalls.includes('force-remove-mountpoint-preflight')
+    );
+    assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+    assert.ok(!harness.dockerCalls.includes('create-helper'));
+  }
+});
+
+test('mountpoint preflight discovers and removes an owned container after a create receipt failure', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-create-receipt-failed',
+  });
+  const harness = outerHarness(fixture, plan, {
+    failMountpointCreateReceipt: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /Injected mountpoint create receipt failure/u
+  );
+  assert.ok(harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('start-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight reconciles delayed daemon creation after a failed receipt', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-create-late',
+  });
+  const harness = outerHarness(fixture, plan, {
+    failMountpointCreateReceipt: true,
+    lateMountpointCreateAfterInspects: 3,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /Injected mountpoint create receipt failure/u
+  );
+  assert.ok(harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.equal(harness.containers.has(plan.names.mountpointPreflight), false);
+  assert.ok(!harness.dockerCalls.includes('start-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight retains its first verified ID when cleanup inspection fails', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mount-cleanup-inspect',
+  });
+  const harness = outerHarness(fixture, plan, {
+    failMountpointCleanupInspect: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight cleanup failed/u
+  );
+  assert.ok(harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.equal(harness.containers.has(plan.names.mountpointPreflight), false);
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight never removes a raced foreign container', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-foreign-owner',
+  });
+  const harness = outerHarness(fixture, plan, {
+    foreignMountpointOwner: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight and cleanup failed/u
+  );
+  assert.ok(!harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight never starts a replacement raced after identity proof', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-start-race',
+  });
+  const harness = outerHarness(fixture, plan, {
+    replaceMountpointBeforeStart: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight and cleanup failed/u
+  );
+  assert.ok(harness.dockerCalls.includes('start-mountpoint-preflight'));
+  const replacement = harness.containers.get(plan.names.mountpointPreflight);
+  assert.equal(replacement?.Config?.Labels?.[plan.ownership.key], 'foreign');
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight removal is bound to the inspected immutable ID', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-id-race',
+  });
+  const harness = outerHarness(fixture, plan, {
+    replaceMountpointBeforeRemoval: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight cleanup failed/u
+  );
+  assert.ok(harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  const replacement = harness.containers.get(plan.names.mountpointPreflight);
+  assert.equal(replacement?.Config?.Labels?.[plan.ownership.key], 'foreign');
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
+});
+
+test('mountpoint preflight rejects an unexplained disappearance before planned removal', async () => {
+  const fixture = manifestFixture();
+  const plan = createPlan(fixture, {
+    uniqueToken: 'mountpoint-disappeared',
+  });
+  const harness = outerHarness(fixture, plan, {
+    disappearMountpointBeforeRemoval: true,
+  });
+  await assert.rejects(
+    executeDistributedLinuxHostContainment(plan, harness.adapters),
+    /preflight cleanup failed/u
+  );
+  assert.ok(harness.dockerCalls.includes('force-remove-mountpoint-preflight'));
+  assert.ok(!harness.dockerCalls.includes('create-state-volume'));
+  assert.ok(!harness.dockerCalls.includes('create-helper'));
 });
 
 test('outer lifecycle rechecks every sealed preparation input before helper start', async () => {
