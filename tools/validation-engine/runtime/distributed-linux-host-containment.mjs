@@ -17,11 +17,21 @@ export const DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA =
 export const DISTRIBUTED_LINUX_HOST_PLAN_SCHEMA =
   'seerrng-distributed-linux-host-plan/v2';
 export const DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA =
-  'seerrng-distributed-linux-host-result/v1';
+  'seerrng-distributed-linux-host-result/v2';
 export const DISTRIBUTED_LINUX_PROOF_PARENT_SCHEMA =
   'seerrng-distributed-linux-proof-parent/v1';
 export const DISTRIBUTED_LINUX_HOST_FINAL_MARKER =
   'launch-result-verification.json';
+export const DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA =
+  'seerrng-distributed-linux-outer-evidence/v1';
+export const DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES = Object.freeze(
+  [
+    ['host-plan.json', 'hostPlanSha256'],
+    ['volume-admission.json', 'volumeAdmissionSha256'],
+    ['host-admission.json', 'hostAdmissionSha256'],
+    ['terminal-inspection.json', 'terminalInspectionSha256'],
+  ].map(([fileName, hashField]) => Object.freeze({ fileName, hashField }))
+);
 
 const HASH40 = /^[a-f0-9]{40}$/u;
 const HASH64 = /^[a-f0-9]{64}$/u;
@@ -1956,6 +1966,7 @@ function verifyAuthenticatedGitEvidence(raw, manifest, localTagRefsSha256) {
       'authenticatedCloneVerified',
       'beforeAfterRemoteRefsVerified',
       'branch',
+      'cleanSourceVerified',
       'commit',
       'fetchedUsing',
       'lockSha256',
@@ -1983,6 +1994,7 @@ function verifyAuthenticatedGitEvidence(raw, manifest, localTagRefsSha256) {
     value.beforeAfterRemoteRefsVerified !== true ||
     value.publishedBranchVerified !== true ||
     value.authenticatedCloneVerified !== true ||
+    value.cleanSourceVerified !== true ||
     !Number.isFinite(Date.parse(value.observedAt)) ||
     !Array.isArray(value.tagRefs) ||
     value.tagRefs.length < 1 ||
@@ -2290,6 +2302,147 @@ async function writeOuterEvidence(adapters, manifest, name, value) {
   if (!sameJson(readback, value))
     throw new Error(`Outer evidence readback differs: ${name}`);
   return target;
+}
+
+async function readOuterJsonEvidence(adapters, manifest, fileName) {
+  const target = resolve(manifest.evidence.outerDirectory, fileName);
+  const bytes = Buffer.from(await adapters.fs.readFile(target));
+  if (!bytes.length || bytes.length > 16 * 1_048_576)
+    throw new Error(`Outer evidence is empty or oversized: ${fileName}`);
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`Outer evidence is not valid JSON: ${fileName}`, {
+      cause: error,
+    });
+  }
+  return Object.freeze({ bytes, value: plainObject(value, fileName) });
+}
+
+async function reconcileOuterEvidence(
+  adapters,
+  plan,
+  { admissionFiles, commands, daemonRuntime, helperReady, startAdmissionFiles }
+) {
+  const records = new Map();
+  for (const { fileName } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES)
+    records.set(
+      fileName,
+      await readOuterJsonEvidence(adapters, plan.manifest, fileName)
+    );
+
+  const hostPlan = records.get('host-plan.json').value;
+  if (!sameJson(hostPlan, plan))
+    throw new Error('Retained outer host plan differs from the executed plan');
+
+  const volumeAdmission = records.get('volume-admission.json').value;
+  const expectedVolumeAdmission = {
+    schema: 'seerrng-distributed-linux-volume-admission/v1',
+    ownership: plan.ownership,
+    names: plan.volumes.map(({ role, name }) => ({ role, name })),
+    status: 'passed',
+  };
+  if (!sameJson(volumeAdmission, expectedVolumeAdmission))
+    throw new Error('Retained outer volume admission differs');
+
+  const hostAdmission = records.get('host-admission.json').value;
+  exactKeys(
+    hostAdmission,
+    [
+      'admissionFiles',
+      'daemon',
+      'daemonRuntime',
+      'helper',
+      'helperReady',
+      'preparationAdmission',
+      'schema',
+      'status',
+    ],
+    'outer host admission evidence'
+  );
+  exactKeys(
+    hostAdmission.preparationAdmission,
+    ['beforeHelperStart', 'initial', 'schema', 'verifiedTwice'],
+    'outer host preparation admission evidence'
+  );
+  if (
+    hostAdmission.schema !== 'seerrng-distributed-linux-host-admission/v1' ||
+    hostAdmission.status !== 'passed' ||
+    hostAdmission.preparationAdmission.schema !==
+      'seerrng-distributed-linux-host-preparation-admission/v1' ||
+    hostAdmission.preparationAdmission.verifiedTwice !== true ||
+    !sameJson(hostAdmission.admissionFiles, admissionFiles) ||
+    !sameJson(hostAdmission.preparationAdmission.initial, admissionFiles) ||
+    !sameJson(
+      hostAdmission.preparationAdmission.beforeHelperStart,
+      startAdmissionFiles
+    ) ||
+    !sameJson(hostAdmission.helperReady, helperReady) ||
+    !sameJson(hostAdmission.daemonRuntime, daemonRuntime)
+  )
+    throw new Error('Retained outer host admission differs');
+  verifyRunningContainer(
+    verifyHelperInspect(hostAdmission.helper, plan),
+    'Retained containment helper admission'
+  );
+  verifyRunningContainer(
+    verifyDaemonInspect(hostAdmission.daemon, plan, hostAdmission.helper.Id),
+    'Retained private daemon admission'
+  );
+
+  const terminalInspection = records.get('terminal-inspection.json').value;
+  exactKeys(
+    terminalInspection,
+    [
+      'cleanupVerified',
+      'commands',
+      'daemon',
+      'helper',
+      'observedAtMs',
+      'ownership',
+      'retainedAssets',
+      'schema',
+      'successful',
+    ],
+    'outer terminal inspection evidence'
+  );
+  if (
+    terminalInspection.schema !==
+      'seerrng-distributed-linux-terminal-inspection/v1' ||
+    !Number.isSafeInteger(terminalInspection.observedAtMs) ||
+    terminalInspection.observedAtMs < 0 ||
+    terminalInspection.cleanupVerified !== true ||
+    terminalInspection.retainedAssets !== true ||
+    terminalInspection.successful !== true ||
+    !sameJson(terminalInspection.ownership, plan.ownership) ||
+    !sameJson(terminalInspection.commands, commands)
+  )
+    throw new Error('Retained outer terminal inspection differs');
+  verifyTerminalContainer(
+    verifyHelperInspect(terminalInspection.helper, plan),
+    'Retained terminal containment helper'
+  );
+  verifyTerminalContainer(
+    verifyDaemonInspect(
+      terminalInspection.daemon,
+      plan,
+      terminalInspection.helper.Id
+    ),
+    'Retained terminal private daemon'
+  );
+
+  const hashes = Object.fromEntries(
+    DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES.map(({ fileName, hashField }) => [
+      hashField,
+      digest(records.get(fileName).bytes),
+    ])
+  );
+  return deepFreeze({
+    schema: DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA,
+    ...hashes,
+    verified: true,
+  });
 }
 
 async function verifyAdmissionFiles(fsAdapter, plan) {
@@ -2703,6 +2856,7 @@ export async function executeDistributedLinuxHostContainment(
   let helperReady;
   let admissionFiles;
   let startAdmissionFiles;
+  let outerEvidence;
   const commands = [];
   const run = async (args, id) => {
     const receipt = await runDocker(adapters, args, id, signal);
@@ -2954,6 +3108,21 @@ export async function executeDistributedLinuxHostContainment(
         : terminalError;
     }
   }
+  if (!primaryError) {
+    try {
+      if (!collected?.cleanup?.cleanupVerified)
+        throw new Error('Contained run has no terminal cleanup proof');
+      outerEvidence = await reconcileOuterEvidence(adapters, plan, {
+        admissionFiles,
+        commands,
+        daemonRuntime,
+        helperReady,
+        startAdmissionFiles,
+      });
+    } catch (error) {
+      primaryError = error;
+    }
+  }
   if (primaryError) {
     try {
       await writeOuterEvidence(adapters, manifest, 'failure.json', {
@@ -2972,8 +3141,6 @@ export async function executeDistributedLinuxHostContainment(
     }
     throw primaryError;
   }
-  if (!collected?.cleanup?.cleanupVerified)
-    throw new Error('Contained run has no terminal cleanup proof');
   const result = deepFreeze({
     schema: DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA,
     runId: manifest.runId,
@@ -2988,6 +3155,7 @@ export async function executeDistributedLinuxHostContainment(
     callbackLedger: collected.callbackLedger,
     proofParentLedger: collected.proofParentLedger,
     terminalCleanup: collected.cleanup,
+    outerEvidence,
     terminal: {
       helperExitCode: helperInspect.State.ExitCode,
       daemonExitCode: daemonInspect.State.ExitCode,

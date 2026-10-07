@@ -129,7 +129,12 @@ function createCatalog(applicationId, candidate, taskCount = 1) {
   };
 }
 
-function createSchedule(catalog, candidate, profile, { fleet = false } = {}) {
+function createSchedule(
+  catalog,
+  candidate,
+  profile,
+  { fleet = false, nodes = null } = {}
+) {
   return createDistributedAdaptiveSchedule({
     tests: catalog.tasks.map((task) => ({
       id: task.taskId,
@@ -140,71 +145,73 @@ function createSchedule(catalog, candidate, profile, { fleet = false } = {}) {
       repositoryIdentitySha256: candidate.sourceSha256,
       dependencies: [],
     })),
-    nodes: fleet
-      ? [
-          {
-            id: 'controller',
-            scope: {
-              applicationId: catalog.applicationId,
-              laneId: 'repository-native',
-              adapterId: 'vitest',
-              repositoryIdentitySha256: candidate.sourceSha256,
-              environment: 'linux-x64',
-              nodeId: 'controller',
-              selectedN: 24,
+    nodes:
+      nodes ??
+      (fleet
+        ? [
+            {
+              id: 'controller',
+              scope: {
+                applicationId: catalog.applicationId,
+                laneId: 'repository-native',
+                adapterId: 'vitest',
+                repositoryIdentitySha256: candidate.sourceSha256,
+                environment: 'linux-x64',
+                nodeId: 'controller',
+                selectedN: 24,
+              },
+              adapterIds: ['vitest'],
+              effectiveLogicalThreads: 12,
+              concurrency: { mode: 'explicit', threads: 24 },
+              currentLoadPermille: 0,
+              memory: null,
+              localInteractiveReserveThreads: 0,
+              runsOnControllerHost: true,
+              benchmark: { valid: true, performanceScorePermille: 100 },
             },
-            adapterIds: ['vitest'],
-            effectiveLogicalThreads: 12,
-            concurrency: { mode: 'explicit', threads: 24 },
-            currentLoadPermille: 0,
-            memory: null,
-            localInteractiveReserveThreads: 0,
-            runsOnControllerHost: true,
-            benchmark: { valid: true, performanceScorePermille: 100 },
-          },
-          {
-            id: 'node-01',
-            scope: {
-              applicationId: catalog.applicationId,
-              laneId: 'repository-native',
-              adapterId: 'vitest',
-              repositoryIdentitySha256: candidate.sourceSha256,
-              environment: 'linux-x64',
-              nodeId: 'node-01',
-              selectedN: 6,
+            {
+              id: 'node-01',
+              scope: {
+                applicationId: catalog.applicationId,
+                laneId: 'repository-native',
+                adapterId: 'vitest',
+                repositoryIdentitySha256: candidate.sourceSha256,
+                environment: 'linux-x64',
+                nodeId: 'node-01',
+                selectedN: 6,
+              },
+              adapterIds: ['vitest'],
+              effectiveLogicalThreads: 8,
+              concurrency: { mode: 'explicit', threads: 6 },
+              currentLoadPermille: 0,
+              memory: null,
+              localInteractiveReserveThreads: 0,
+              runsOnControllerHost: false,
+              benchmark: { valid: true, performanceScorePermille: 100 },
             },
-            adapterIds: ['vitest'],
-            effectiveLogicalThreads: 8,
-            concurrency: { mode: 'explicit', threads: 6 },
-            currentLoadPermille: 0,
-            memory: null,
-            localInteractiveReserveThreads: 0,
-            runsOnControllerHost: false,
-            benchmark: { valid: true, performanceScorePermille: 100 },
-          },
-        ]
-      : [
-          {
-            id: 'controller',
-            scope: {
-              applicationId: catalog.applicationId,
-              laneId: 'repository-native',
-              adapterId: 'vitest',
-              repositoryIdentitySha256: candidate.sourceSha256,
-              environment: 'linux-x64',
-              nodeId: 'controller',
-              selectedN: 1,
+          ]
+        : [
+            {
+              id: 'controller',
+              scope: {
+                applicationId: catalog.applicationId,
+                laneId: 'repository-native',
+                adapterId: 'vitest',
+                repositoryIdentitySha256: candidate.sourceSha256,
+                environment: 'linux-x64',
+                nodeId: 'controller',
+                selectedN: 1,
+              },
+              adapterIds: ['vitest'],
+              effectiveLogicalThreads: 2,
+              concurrency: { mode: 'explicit', threads: 1 },
+              currentLoadPermille: 0,
+              memory: null,
+              localInteractiveReserveThreads: 0,
+              runsOnControllerHost: true,
+              benchmark: { valid: true, performanceScorePermille: 100 },
             },
-            adapterIds: ['vitest'],
-            effectiveLogicalThreads: 2,
-            concurrency: { mode: 'explicit', threads: 1 },
-            currentLoadPermille: 0,
-            memory: null,
-            localInteractiveReserveThreads: 0,
-            runsOnControllerHost: true,
-            benchmark: { valid: true, performanceScorePermille: 100 },
-          },
-        ],
+          ]),
     profile,
   });
 }
@@ -346,15 +353,15 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
     browser: { passed: 1, failed: 0, skipped: 0 },
   };
   const definitions = [
-    { id: 'native-repository', lane: 'repository', wallMs: 1, start: 0 },
-    { id: 'native-codeql', lane: 'codeql', wallMs: 2, start: 2 },
-    { id: 'native-build', lane: 'build', wallMs: 3, start: 4 },
-    { id: 'native-browser', lane: 'browser', wallMs: 4, start: 7 },
+    { id: 'native-repository', lane: 'repository', wallMs: 5, start: 0 },
+    { id: 'native-codeql', lane: 'codeql', wallMs: 2, start: 6 },
+    { id: 'native-build', lane: 'build', wallMs: 3, start: 8 },
+    { id: 'native-browser', lane: 'browser', wallMs: 4, start: 11 },
     {
       id: 'pr-release-note-contract',
       lane: 'repository',
       wallMs: 1,
-      start: 1,
+      start: 5,
     },
   ];
   const results = definitions.map(({ id, lane, wallMs, start }) => {
@@ -434,7 +441,7 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
       executedFileCount: 2,
       osThreads: null,
       childCpuMs: null,
-      wallMs: 11,
+      wallMs: 15,
     },
     lanes,
     results,
@@ -627,7 +634,7 @@ function createProcessStreams(ledgerBytes) {
   };
 }
 
-function fixture(t, { fleet = false } = {}) {
+function fixture(t, { fleet = false, nodes = null, taskCount } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-run-reconciliation-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const evidenceDirectory = join(root, 'production-run-1');
@@ -641,8 +648,15 @@ function fixture(t, { fleet = false } = {}) {
     sourceSha256: digest('d'),
   };
   const profile = createAdaptiveTimingProfile();
-  const catalog = createCatalog('seerrng', candidate, fleet ? 30 : 1);
-  const schedule = createSchedule(catalog, candidate, profile, { fleet });
+  const catalog = createCatalog(
+    'seerrng',
+    candidate,
+    taskCount ?? (fleet ? 30 : 1)
+  );
+  const schedule = createSchedule(catalog, candidate, profile, {
+    fleet,
+    nodes,
+  });
   const report = createRunReport(schedule, catalog, runId);
   const repositoryEvidence = createRepositoryEvidence({
     catalog,
@@ -775,6 +789,49 @@ function resealRepositoryEvidence(result) {
   unit.evidenceSha256 = hash(Buffer.from(JSON.stringify(evidence), 'utf8'));
 }
 
+function moveColdShard(result, { fromNodeId, toNodeId }) {
+  const repository =
+    result.nativeEvidence['native-repository'].repositoryEvidence;
+  const sourceSlot = repository.schedule.threadSlots.find(
+    (slot) => slot.nodeId === fromNodeId && slot.tests.length > 0
+  );
+  const targetSlot = repository.schedule.threadSlots.find(
+    (slot) => slot.nodeId === toNodeId && slot.tests.length === 0
+  );
+  assert.ok(sourceSlot);
+  assert.ok(targetSlot);
+  const [moved] = sourceSlot.tests.splice(0, 1);
+  targetSlot.tests.push(moved);
+  for (const slot of [sourceSlot, targetSlot]) {
+    slot.predictedBusyMs = slot.tests.reduce(
+      (total, testEntry) => total + testEntry.predictedDurationMs,
+      0
+    );
+    slot.predictedFinishOffsetMs = slot.tests.reduce(
+      (maximum, testEntry) =>
+        Math.max(maximum, testEntry.predictedFinishOffsetMs),
+      0
+    );
+  }
+  repository.schedule.predictedWallMs = repository.schedule.threadSlots.reduce(
+    (maximum, slot) => Math.max(maximum, slot.predictedFinishOffsetMs),
+    0
+  );
+  const scheduleCore = { ...repository.schedule };
+  delete scheduleCore.scheduleSha256;
+  repository.schedule.scheduleSha256 = canonicalJsonSha256(scheduleCore);
+
+  const outcome = repository.report.outcomes.find(
+    ({ shardId }) => shardId === moved.id
+  );
+  assert.ok(outcome);
+  outcome.nodeId = targetSlot.nodeId;
+  outcome.threadSlotId = targetSlot.threadSlotId;
+  repository.report.scheduleSha256 = repository.schedule.scheduleSha256;
+  repository.shards = clone(repository.report.outcomes);
+  resealRepositoryEvidence(result);
+}
+
 function rewriteLedger(selected, mutate) {
   const lines = readFileSync(selected.paths.processLedger, 'utf8')
     .trimEnd()
@@ -815,6 +872,61 @@ test('independently reconciles all durable pre-success evidence', (t) => {
   assert.equal(result.timing.stageCount, 4);
 });
 
+test('permits a generic empty-profile heterogeneous fleet without a required proof', (t) => {
+  const selected = fixture(t, {
+    taskCount: 4,
+    nodes: [
+      {
+        id: 'controller',
+        scope: {
+          environment: 'linux-x64',
+          nodeId: 'controller',
+        },
+        adapterIds: ['vitest'],
+        effectiveLogicalThreads: 2,
+        concurrency: { mode: 'explicit', threads: 1 },
+        currentLoadPermille: 0,
+        memory: null,
+        localInteractiveReserveThreads: 0,
+        runsOnControllerHost: true,
+        benchmark: { valid: true, performanceScorePermille: 100 },
+      },
+      {
+        id: 'node-heterogeneous',
+        scope: {
+          environment: 'linux-arm64',
+          nodeId: 'node-heterogeneous',
+        },
+        adapterIds: ['node-test', 'vitest'],
+        effectiveLogicalThreads: 8,
+        concurrency: { mode: 'explicit', threads: 3 },
+        currentLoadPermille: 0,
+        memory: null,
+        localInteractiveReserveThreads: 0,
+        runsOnControllerHost: false,
+        benchmark: { valid: true, performanceScorePermille: 250 },
+      },
+    ],
+  });
+
+  const result = reconcileDistributedLinuxRunEvidence(selected.input);
+  const scheduleNodes = result.repositoryEvidence.schedule.nodes;
+
+  assert.equal(result.requiredFleetProof, null);
+  assert.deepEqual(
+    scheduleNodes.map(({ nodeId, admittedThreads }) => ({
+      nodeId,
+      admittedThreads,
+    })),
+    [
+      { nodeId: 'controller', admittedThreads: 1 },
+      { nodeId: 'node-heterogeneous', admittedThreads: 3 },
+    ]
+  );
+  assert.notDeepEqual(scheduleNodes[0].adapterIds, scheduleNodes[1].adapterIds);
+  assert.equal(result.status, 'passed');
+});
+
 test('independently proves the configured controller and Node 01 both executed shards', (t) => {
   const selected = fixture(t, { fleet: true });
   const result = reconcileDistributedLinuxRunEvidence(selected.input);
@@ -834,6 +946,92 @@ test('independently proves the configured controller and Node 01 both executed s
     result.repositoryEvidence.shards.map(({ nodeId }) => nodeId)
   );
   assert.deepEqual([...usedNodes].toSorted(), ['controller', 'node-01']);
+});
+
+test('rejects a coherently resealed 9:1 cold schedule for 24:6 capacity', (t) => {
+  const selected = fixture(t, { fleet: true, taskCount: 10 });
+  const original = readJson(selected.paths.result);
+  const originalShards =
+    original.nativeEvidence['native-repository'].repositoryEvidence.shards;
+  assert.deepEqual(
+    Object.fromEntries(
+      ['controller', 'node-01'].map((nodeId) => [
+        nodeId,
+        originalShards.filter((shard) => shard.nodeId === nodeId).length,
+      ])
+    ),
+    { controller: 8, 'node-01': 2 }
+  );
+
+  const result = rewriteResult(selected, (value) => {
+    moveColdShard(value, {
+      fromNodeId: 'node-01',
+      toNodeId: 'controller',
+    });
+  });
+  const repository =
+    result.nativeEvidence['native-repository'].repositoryEvidence;
+  writeJson(
+    selected.paths.timings,
+    createTimingEvidence(result, repository, result.runId)
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      ['controller', 'node-01'].map((nodeId) => [
+        nodeId,
+        repository.shards.filter((shard) => shard.nodeId === nodeId).length,
+      ])
+    ),
+    { controller: 9, 'node-01': 1 }
+  );
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /Cold schedule allocation differs from deterministic capacity-proportional placement/u
+  );
+});
+
+test('rejects a coherently resealed within-one-shard cold misallocation', (t) => {
+  const selected = fixture(t, { fleet: true, taskCount: 11 });
+  const original = readJson(selected.paths.result);
+  const originalShards =
+    original.nativeEvidence['native-repository'].repositoryEvidence.shards;
+  assert.deepEqual(
+    Object.fromEntries(
+      ['controller', 'node-01'].map((nodeId) => [
+        nodeId,
+        originalShards.filter((shard) => shard.nodeId === nodeId).length,
+      ])
+    ),
+    { controller: 9, 'node-01': 2 }
+  );
+
+  const result = rewriteResult(selected, (value) => {
+    moveColdShard(value, {
+      fromNodeId: 'controller',
+      toNodeId: 'node-01',
+    });
+  });
+  const repository =
+    result.nativeEvidence['native-repository'].repositoryEvidence;
+  writeJson(
+    selected.paths.timings,
+    createTimingEvidence(result, repository, result.runId)
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      ['controller', 'node-01'].map((nodeId) => [
+        nodeId,
+        repository.shards.filter((shard) => shard.nodeId === nodeId).length,
+      ])
+    ),
+    { controller: 8, 'node-01': 3 }
+  );
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /Cold schedule allocation differs from deterministic capacity-proportional placement/u
+  );
 });
 
 test('rejects a staged result changed after its durable write', (t) => {
@@ -1200,6 +1398,53 @@ test('rejects incomplete durable timing evidence', (t) => {
   assert.throws(
     () => reconcileDistributedLinuxRunEvidence(selected.input),
     /Durable timing evidence differs/u
+  );
+});
+
+test('rejects coherently resealed distributed timing outside the four-stage wall time', (t) => {
+  const selected = fixture(t);
+  const result = rewriteResult(selected, (value) => {
+    const repository =
+      value.nativeEvidence['native-repository'].repositoryEvidence;
+    repository.report.wallMs = value.stats.wallMs + 1;
+    resealRepositoryEvidence(value);
+  });
+  const repository =
+    result.nativeEvidence['native-repository'].repositoryEvidence;
+  writeJson(
+    selected.paths.timings,
+    createTimingEvidence(result, repository, result.runId)
+  );
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /Distributed report wall time exceeds the containing four-stage run/u
+  );
+});
+
+test('rejects coherently resealed distributed timing outside the native repository unit', (t) => {
+  const selected = fixture(t);
+  const result = rewriteResult(selected, (value) => {
+    const repositoryUnit = value.results.find(
+      ({ id }) => id === 'native-repository'
+    );
+    assert.ok(repositoryUnit);
+    const repository =
+      value.nativeEvidence['native-repository'].repositoryEvidence;
+    repository.report.wallMs = repositoryUnit.wallMs + 1;
+    assert.ok(repository.report.wallMs <= value.stats.wallMs);
+    resealRepositoryEvidence(value);
+  });
+  const repository =
+    result.nativeEvidence['native-repository'].repositoryEvidence;
+  writeJson(
+    selected.paths.timings,
+    createTimingEvidence(result, repository, result.runId)
+  );
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /Distributed report wall time exceeds the containing native repository unit/u
   );
 });
 

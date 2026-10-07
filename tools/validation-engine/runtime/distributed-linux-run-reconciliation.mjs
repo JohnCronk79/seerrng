@@ -9,7 +9,10 @@ import {
   normalizeRequiredWorkerCapacityProof,
   verifyRequiredWorkerCapacityProof,
 } from './cpu-capacity.mjs';
-import { verifyDistributedAdaptiveSchedule } from './distributed-adaptive-scheduler.mjs';
+import {
+  DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA,
+  verifyDistributedAdaptiveSchedule,
+} from './distributed-adaptive-scheduler.mjs';
 import { evaluateThreadExpression } from './distributed-linux-config.mjs';
 import {
   createDistributedNativeTaskRequest,
@@ -47,6 +50,10 @@ const MAX_TOTAL_EVIDENCE_BYTES = 768 * 1024 * 1024;
 const STALE_TIMESTAMP_TOLERANCE_MS = 2_000;
 const INVENTORY_IDENTITY_SCHEMA =
   'seerrng-distributed-native-inventory-identity/v1';
+const EMPTY_ADAPTIVE_PROFILE_SHA256 = canonicalJsonSha256({
+  schema: DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA,
+  scopes: [],
+});
 
 function fail(message) {
   throw new Error(
@@ -1157,9 +1164,100 @@ function scheduleAssignments(schedule) {
         fingerprint: test.fingerprint,
         laneId: test.laneId,
         dependencies: test.dependencies,
+        estimateSource: test.estimateSource,
+        estimatedWorkUnits: test.estimatedWorkUnits,
       }))
     )
     .toSorted((left, right) => left.sequence - right.sequence);
+}
+
+function verifyColdScheduleAllocation(
+  schedule,
+  assignments,
+  requiredFleetProof
+) {
+  if (
+    requiredFleetProof === null ||
+    schedule.profileSha256 !== EMPTY_ADAPTIVE_PROFILE_SHA256
+  )
+    return;
+
+  const nodes = schedule.nodes.filter(
+    ({ admittedThreads }) => admittedThreads > 0
+  );
+  const adapterIds = nodes[0].adapterIds;
+  const performanceScorePermille = nodes[0].performanceScorePermille;
+  assert(
+    nodes.every(
+      (node) =>
+        isDeepStrictEqual(node.adapterIds, adapterIds) &&
+        node.performanceScorePermille === performanceScorePermille
+    ),
+    'Cold schedule nodes do not have equivalent capabilities and neutral timing scale'
+  );
+  const estimatedWorkUnits = assignments[0].estimatedWorkUnits;
+  assert(
+    assignments.every(
+      (assignment) =>
+        assignment.estimateSource === 'cold-start' &&
+        assignment.estimatedWorkUnits === estimatedWorkUnits
+    ),
+    'Empty-profile schedule does not use equal cold-start estimates'
+  );
+
+  const admittedThreads = nodes.reduce(
+    (total, node) => total + node.admittedThreads,
+    0
+  );
+  assert(
+    Number.isSafeInteger(admittedThreads) && admittedThreads > 0,
+    'Cold schedule admitted capacity is invalid'
+  );
+  const shardCounts = new Map(nodes.map(({ nodeId }) => [nodeId, 0]));
+  for (const assignment of assignments)
+    shardCounts.set(
+      assignment.nodeId,
+      safeInteger(
+        (shardCounts.get(assignment.nodeId) ?? 0) + 1,
+        `Cold schedule ${assignment.nodeId} shard count`
+      )
+    );
+
+  // Empty history, equal work, equivalent adapters, neutral timing, and the
+  // dependency-free repository catalog reduce node choice to the scheduler's
+  // assigned-shards/admitted-threads comparison plus canonical node-ID ties.
+  const expectedShardCounts = new Map(nodes.map(({ nodeId }) => [nodeId, 0]));
+  for (let index = 0; index < assignments.length; index += 1) {
+    const selected = [...nodes].toSorted((left, right) => {
+      const leftNumerator =
+        expectedShardCounts.get(left.nodeId) * right.admittedThreads;
+      const rightNumerator =
+        expectedShardCounts.get(right.nodeId) * left.admittedThreads;
+      assert(
+        Number.isSafeInteger(leftNumerator) &&
+          Number.isSafeInteger(rightNumerator),
+        'Cold schedule deterministic allocation overflowed'
+      );
+      const difference = leftNumerator - rightNumerator;
+      assert(
+        Number.isSafeInteger(difference),
+        'Cold schedule deterministic comparison overflowed'
+      );
+      return difference || compareText(left.nodeId, right.nodeId);
+    })[0];
+    expectedShardCounts.set(
+      selected.nodeId,
+      safeInteger(
+        expectedShardCounts.get(selected.nodeId) + 1,
+        `Expected cold schedule ${selected.nodeId} shard count`
+      )
+    );
+  }
+  for (const node of nodes)
+    assert(
+      shardCounts.get(node.nodeId) === expectedShardCounts.get(node.nodeId),
+      `Cold schedule allocation differs from deterministic capacity-proportional placement: ${node.nodeId}`
+    );
 }
 
 function verifyNodeClosure(evidence, schedule, catalog, requiredFleetProof) {
@@ -1504,6 +1602,7 @@ function verifyRepositoryEvidence(
     [...tasks.keys()].toSorted(compareText),
     'Catalog/schedule shard closure'
   );
+  verifyColdScheduleAllocation(schedule, assignments, requiredFleetProof);
 
   const reportValue = plainObject(evidence.report, 'distributed shard report');
   const report = verifyDistributedShardRun(reportValue, {
@@ -1636,6 +1735,22 @@ function verifyTimingEvidence(value, result, repositoryEvidence, expected) {
     duration(node.shardWallMs, `${node.nodeId} shard wall time`);
   }
   duration(value.distributed.reportWallMs, 'distributed report wall time');
+  assert(
+    value.distributed.reportWallMs <= value.totalWallMs,
+    'Distributed report wall time exceeds the containing four-stage run'
+  );
+  const repositoryUnit = value.units.find(
+    ({ id }) => id === 'native-repository'
+  );
+  assert(repositoryUnit, 'Native repository timing evidence is missing');
+  assert(
+    repositoryUnit.wallMs <= value.totalWallMs,
+    'Native repository unit wall time exceeds the containing four-stage run'
+  );
+  assert(
+    value.distributed.reportWallMs <= repositoryUnit.wallMs,
+    'Distributed report wall time exceeds the containing native repository unit'
+  );
   return {
     totalWallMs: value.totalWallMs,
     stageCount: value.stages.length,

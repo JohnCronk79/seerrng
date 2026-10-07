@@ -11,6 +11,8 @@ import { createAdaptiveTimingProfile } from '../tools/validation-engine/runtime/
 import {
   DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA,
   DISTRIBUTED_LINUX_HOST_FINAL_MARKER,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA,
   createDistributedLinuxHostContainment,
   createDistributedLinuxHostContainmentCallbacks,
   createDistributedLinuxHostContainmentPlan,
@@ -66,6 +68,7 @@ function gitEvidence(candidate) {
     beforeAfterRemoteRefsVerified: true,
     publishedBranchVerified: true,
     authenticatedCloneVerified: true,
+    cleanSourceVerified: true,
     observedAt: '2026-10-07T12:00:00.000Z',
     tagCount: 1,
     tagRefs: [`refs/tags/v1 ${tagOid}`],
@@ -796,6 +799,26 @@ test('callbacks prove boundaries and restore leases with operation-once semantic
   );
 });
 
+test('authenticated Git evidence rejects a coherently resealed missing clean-source proof', async () => {
+  const fixture = manifestFixture();
+  const evidence = gitEvidence(fixture.manifest.candidate);
+  evidence.cleanSourceVerified = false;
+  fixture.gitBytes = canonicalBytes(evidence);
+  fixture.manifest.gitHistory.evidenceSha256 = sha256(fixture.gitBytes);
+  const harness = proofHarness(fixture);
+  const callbacks = createDistributedLinuxHostContainmentCallbacks(
+    fixture.manifest,
+    harness.adapters
+  );
+  await assert.rejects(
+    callbacks.verifyGitHistory({
+      candidate: fixture.manifest.candidate,
+      localTagRefsSha256: sha256(Buffer.from(`refs/tags/v1 ${hash40('5')}\n`)),
+    }),
+    /Complete authenticated current Git closure is required/u
+  );
+});
+
 test('callback admission failure ends an acquired lease before rejecting', async () => {
   const fixture = manifestFixture();
   const harness = proofHarness(fixture, { badRepositoryProbe: true });
@@ -913,6 +936,7 @@ function outerHarness(
     mutateCleanup = false,
     mutateHelper = false,
     mutateHelperUser = false,
+    mutateOuterEvidence = null,
     mutateProductionArtifact = false,
     mutateTimingProfileArtifact = false,
     mutateVolume = false,
@@ -928,6 +952,7 @@ function outerHarness(
   const stopCalls = [];
   const dockerCalls = [];
   const admissionReads = new Map();
+  const outerEvidenceReads = new Map();
   const containers = new Map();
   const volumes = new Map();
   for (const input of Object.values(fixture.manifest.inputs))
@@ -1240,6 +1265,30 @@ function outerHarness(
         },
         async readFile(path) {
           if (!files.has(path)) throw new Error(`Unknown fake file ${path}`);
+          const outerEvidenceFile =
+            DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES.find(({ fileName }) =>
+              path.endsWith(fileName)
+            )?.fileName ?? null;
+          if (outerEvidenceFile) {
+            const reads = (outerEvidenceReads.get(outerEvidenceFile) ?? 0) + 1;
+            outerEvidenceReads.set(outerEvidenceFile, reads);
+            if (
+              reads > 1 &&
+              mutateOuterEvidence?.fileName === outerEvidenceFile
+            ) {
+              if (mutateOuterEvidence.mode === 'missing')
+                throw new Error(
+                  `Unknown fake file after write ${outerEvidenceFile}`
+                );
+              if (mutateOuterEvidence.mode === 'tamper')
+                return Buffer.from('not-json\n');
+              if (mutateOuterEvidence.mode === 'coherent-reseal') {
+                const value = JSON.parse(files.get(path).toString('utf8'));
+                value.coherentlyResealed = true;
+                return canonicalBytes(value);
+              }
+            }
+          }
           const admission = plan.admissionFiles.find(
             ({ hostPath }) => hostPath === path
           );
@@ -1287,6 +1336,13 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   assert.equal(result.status, 'passed');
   assert.equal(result.retainedAssets, true);
   assert.equal(result.terminalCleanup.cleanupVerified, true);
+  assert.equal(
+    result.outerEvidence.schema,
+    DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA
+  );
+  assert.equal(result.outerEvidence.verified, true);
+  for (const { hashField } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES)
+    assert.match(result.outerEvidence[hashField], /^[a-f0-9]{64}$/u);
   assert.notEqual(
     result.containedRun.updatedProfileSha256,
     result.containedRun.timingProfileFileSha256
@@ -1294,6 +1350,39 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   assert.ok(
     harness.writes.at(-1).endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
   );
+});
+
+test('outer lifecycle rejects missing, tampered, and coherently resealed outer evidence', async (t) => {
+  const mutations = [
+    { fileName: 'host-plan.json', mode: 'missing' },
+    { fileName: 'volume-admission.json', mode: 'tamper' },
+    ...DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES.map(({ fileName }) => ({
+      fileName,
+      mode: 'coherent-reseal',
+    })),
+  ];
+  for (const [index, mutateOuterEvidence] of mutations.entries())
+    await t.test(
+      `${mutateOuterEvidence.mode}: ${mutateOuterEvidence.fileName}`,
+      async () => {
+        const fixture = manifestFixture();
+        const plan = createPlan(fixture, {
+          uniqueToken: `outer-evidence-mutation-${index}`,
+        });
+        const harness = outerHarness(fixture, plan, {
+          mutateOuterEvidence,
+        });
+        await assert.rejects(
+          executeDistributedLinuxHostContainment(plan, harness.adapters),
+          /outer|fake file/iu
+        );
+        assert.ok(
+          !harness.writes.some((entry) =>
+            entry.endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
+          )
+        );
+      }
+    );
 });
 
 test('outer lifecycle rechecks every sealed preparation input before helper start', async () => {

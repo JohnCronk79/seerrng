@@ -50,6 +50,9 @@ import {
   createDistributedLinuxProofSocketAdapter,
   DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA,
   DISTRIBUTED_LINUX_HOST_FINAL_MARKER,
+  DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA,
 } from './distributed-linux-host-containment.mjs';
 import {
   completeDistributedLinuxHostPreparation,
@@ -173,6 +176,10 @@ function canonicalBytes(value) {
   return Buffer.from(`${JSON.stringify(canonical(value))}\n`, 'utf8');
 }
 
+function sameJson(left, right) {
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
 function plainObject(value, label) {
   if (
     !value ||
@@ -284,6 +291,74 @@ function readStableFile(path, label) {
   )
     throw new Error(`${label} changed while it was read`);
   return bytes;
+}
+
+export function verifyDistributedLinuxOuterSuccessEvidence({
+  hostResult: hostResultValue,
+  markerBytes: markerBytesValue,
+  outerEvidenceDirectory: outerEvidenceDirectoryValue,
+  runId: runIdValue,
+}) {
+  const hostResult = plainObject(hostResultValue, 'outer host result');
+  const markerBytes = Buffer.from(markerBytesValue);
+  if (!markerBytes.length || markerBytes.length > 16 * 1_048_576)
+    throw new Error('Containment success marker is empty or oversized');
+  const marker = plainObject(
+    parseJsonBytes(markerBytes, 'Containment success marker'),
+    'containment success marker'
+  );
+  const runId = token(runIdValue, 'public run ID');
+  if (
+    hostResult.schema !== DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA ||
+    hostResult.runId !== runId ||
+    hostResult.status !== 'passed' ||
+    hostResult.resultReuse !== false ||
+    !sameJson(marker, hostResult)
+  )
+    throw new Error(
+      'Containment success marker differs from the returned outer host result'
+    );
+  const outerEvidence = exactKeys(
+    hostResult.outerEvidence,
+    [
+      ...DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES.map(
+        ({ hashField }) => hashField
+      ),
+      'schema',
+      'verified',
+    ],
+    'outer evidence hash proof'
+  );
+  if (
+    outerEvidence.schema !== DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA ||
+    outerEvidence.verified !== true
+  )
+    throw new Error('Outer evidence hash proof is incomplete');
+  const outerEvidenceDirectory = existingDirectory(
+    outerEvidenceDirectoryValue,
+    'Outer containment evidence directory'
+  );
+  for (const {
+    fileName,
+    hashField,
+  } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES) {
+    const expected = requireDigest(
+      outerEvidence[hashField],
+      `Outer evidence ${fileName} hash`
+    );
+    const observed = sha256(
+      readStableFile(
+        resolve(outerEvidenceDirectory, fileName),
+        `Outer evidence ${fileName}`
+      )
+    );
+    if (observed !== expected)
+      throw new Error(`Outer evidence hash differs: ${fileName}`);
+  }
+  return Object.freeze({
+    containmentMarkerSha256: sha256(markerBytes),
+    outerEvidence: Object.freeze({ ...outerEvidence }),
+  });
 }
 
 function syncDirectory(path) {
@@ -498,6 +573,21 @@ function gitCommand(root, args, encoding = 'utf8') {
   });
 }
 
+function verifyCleanSourceCheckout(sourceRoot, { git = gitCommand } = {}) {
+  requiredFunction(git, 'Git command adapter');
+  const sourceStatus = git(sourceRoot, [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+    '--ignore-submodules=none',
+  ]);
+  if (sourceStatus.length !== 0)
+    throw new Error(
+      'Public Mode 3 requires a clean source checkout with no staged, unstaged, or untracked changes'
+    );
+  return true;
+}
+
 function parseRemoteRefs(textValue) {
   const refs = textValue
     .split(/\r?\n/u)
@@ -591,10 +681,18 @@ export function fetchAuthenticatedGitState(
     throw new Error(
       'Fetched local tags do not contain every authenticated origin tag at its exact object ID'
     );
-  return Object.freeze({ branch, commit, remoteRefs, repository, tagRefs });
+  verifyCleanSourceCheckout(sourceRoot, { git });
+  return Object.freeze({
+    branch,
+    cleanSourceVerified: true,
+    commit,
+    remoteRefs,
+    repository,
+    tagRefs,
+  });
 }
 
-function authenticatedGitEvidence(gitState, candidate) {
+function authenticatedGitEvidence(gitState, candidate, cleanSourceVerified) {
   return Object.freeze({
     schema: 1,
     repository: candidate.repository,
@@ -607,6 +705,7 @@ function authenticatedGitEvidence(gitState, candidate) {
     beforeAfterRemoteRefsVerified: true,
     publishedBranchVerified: true,
     authenticatedCloneVerified: true,
+    cleanSourceVerified,
     observedAt: new Date().toISOString(),
     tagCount: gitState.tagRefs.length,
     tagRefs: gitState.tagRefs,
@@ -966,6 +1065,7 @@ function publicDependencies(overrides) {
     persistTimingProfile: persistAdaptiveTimingProfileFile,
     readTimingProfile: readAdaptiveTimingProfileFile,
     resolveActiveConfig: resolveActiveLinuxConfig,
+    verifyCleanSource: verifyCleanSourceCheckout,
     verifySnapshot: verifySourceSnapshot,
     ...value,
   };
@@ -1053,6 +1153,11 @@ export async function executeDistributedLinuxPublicLifecycle(
       snapshot.candidate.repository !== gitState.repository
     )
       throw new Error('Frozen candidate differs from authenticated Git state');
+    if (
+      gitState.cleanSourceVerified !== true ||
+      deps.verifyCleanSource(request.sourceRoot) !== true
+    )
+      throw new Error('Public Mode 3 clean source verification is incomplete');
     const candidate = Object.freeze({
       repository: snapshot.candidate.repository,
       branch: gitState.branch,
@@ -1102,7 +1207,7 @@ export async function executeDistributedLinuxPublicLifecycle(
     const preparation = createDirectoryExclusive(
       resolve(snapshot.scratchRoot, 'host-preparation')
     );
-    const gitEvidence = authenticatedGitEvidence(gitState, candidate);
+    const gitEvidence = authenticatedGitEvidence(gitState, candidate, true);
     const gitEvidenceReceipt = writeExclusive(
       resolve(preparation, basename(CONTAINER.gitEvidence)),
       canonicalBytes(gitEvidence)
@@ -1238,26 +1343,33 @@ export async function executeDistributedLinuxPublicLifecycle(
     const updatedProfileSha256 = canonicalJsonSha256(updatedProfile);
     if (updatedProfileSha256 !== hostResult.containedRun.updatedProfileSha256)
       throw new Error('Retained timing profile differs from contained success');
+    const containmentMarker = readStableFile(
+      resolve(outerEvidenceDirectory, DISTRIBUTED_LINUX_HOST_FINAL_MARKER),
+      'Containment success marker'
+    );
+    const outerSuccess = verifyDistributedLinuxOuterSuccessEvidence({
+      hostResult,
+      markerBytes: containmentMarker,
+      outerEvidenceDirectory,
+      runId: request.runId,
+    });
     await deps.persistTimingProfile(timingProfilePath, updatedProfile);
     if (
       canonicalJsonSha256(deps.readTimingProfile(timingProfilePath)) !==
       updatedProfileSha256
     )
       throw new Error('Host timing profile persistence failed readback');
-    const containmentMarker = readStableFile(
-      resolve(outerEvidenceDirectory, DISTRIBUTED_LINUX_HOST_FINAL_MARKER),
-      'Containment success marker'
-    );
     deps.verifySnapshot(snapshot);
     deps.disposeSnapshot(snapshot);
     snapshot = null;
     const result = Object.freeze({
-      schema: 'seerrng-distributed-linux-public-success/v1',
+      schema: 'seerrng-distributed-linux-public-success/v2',
       runId: request.runId,
       status: 'passed',
       applicationEntryId: application.entryId,
       runtimeApplicationKey: request.runtimeApplicationKey,
-      containmentMarkerSha256: sha256(containmentMarker),
+      containmentMarkerSha256: outerSuccess.containmentMarkerSha256,
+      outerEvidence: outerSuccess.outerEvidence,
       updatedProfileSha256,
       hostPreparationCleanupVerified: true,
       resultReuse: false,

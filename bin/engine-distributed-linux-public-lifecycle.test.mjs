@@ -19,6 +19,9 @@ import { createAdaptiveTimingProfile } from '../tools/validation-engine/runtime/
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import {
   DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA,
+  DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES,
+  DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA,
   createDistributedLinuxHostContainmentPlan,
 } from '../tools/validation-engine/runtime/distributed-linux-host-containment.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
@@ -34,6 +37,7 @@ import {
   fetchAuthenticatedGitState,
   normalizeDistributedLinuxHostProfile,
   runDistributedLinuxProofClientCommand,
+  verifyDistributedLinuxOuterSuccessEvidence,
 } from '../tools/validation-engine/runtime/distributed-linux-public-lifecycle.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import { findNativeExecutable } from '../tools/validation-engine/runtime/native-stage-context.mjs';
@@ -53,6 +57,56 @@ const PROOF_PARENT = resolve(
 const digest = (character) => character.repeat(64);
 const hash40 = (character) => character.repeat(40);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
+function writeFocusedOuterSuccess(directory, runId, profile) {
+  const values = {
+    'host-plan.json': { schema: 'focused-host-plan/v1', runId },
+    'volume-admission.json': {
+      schema: 'focused-volume-admission/v1',
+      status: 'passed',
+    },
+    'host-admission.json': {
+      schema: 'focused-host-admission/v1',
+      status: 'passed',
+    },
+    'terminal-inspection.json': {
+      schema: 'focused-terminal-inspection/v1',
+      successful: true,
+    },
+  };
+  const bytes = new Map();
+  for (const [fileName, value] of Object.entries(values)) {
+    const artifactBytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+    writeFileSync(join(directory, fileName), artifactBytes);
+    bytes.set(fileName, artifactBytes);
+  }
+  const outerEvidence = {
+    schema: DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA,
+    ...Object.fromEntries(
+      DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES.map(({ fileName, hashField }) => [
+        hashField,
+        sha256(bytes.get(fileName)),
+      ])
+    ),
+    verified: true,
+  };
+  const hostResult = {
+    schema: DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA,
+    runId,
+    status: 'passed',
+    resultReuse: false,
+    outerEvidence,
+    containedRun: {
+      updatedProfileSha256: canonicalJsonSha256(profile),
+    },
+  };
+  const markerBytes = Buffer.from(`${JSON.stringify(hostResult, null, 2)}\n`);
+  writeFileSync(
+    join(directory, 'launch-result-verification.json'),
+    markerBytes
+  );
+  return { bytes, hostResult, markerBytes, values };
+}
 
 function hostProfile() {
   return {
@@ -252,7 +306,13 @@ test('proof client runner delivers the exact canonical request on standard input
   assert.equal(receipt.lifecycle.cleanupVerified, true);
 });
 
-function focusedGitClosureAdapter({ branch, commit, remote, localTags }) {
+function focusedGitClosureAdapter({
+  branch,
+  commit,
+  remote,
+  localTags,
+  sourceStatus = '',
+}) {
   const calls = [];
   return {
     calls,
@@ -267,6 +327,11 @@ function focusedGitClosureAdapter({ branch, commit, remote, localTags }) {
       if (command === 'rev-parse HEAD') return `${commit}\n`;
       if (command === 'rev-parse --is-shallow-repository') return 'false\n';
       if (command === 'show-ref --tags') return localTags;
+      if (
+        command ===
+        'status --porcelain=v1 --untracked-files=all --ignore-submodules=none'
+      )
+        return sourceStatus;
       throw new Error(`Unexpected focused Git command: ${command}`);
     },
   };
@@ -298,6 +363,7 @@ test('authenticated Git closure binds origin tags while accepting unrelated loca
     git,
   });
   assert.equal(state.branch, branch);
+  assert.equal(state.cleanSourceVerified, true);
   assert.equal(state.commit, commit);
   assert.deepEqual(state.tagRefs, [`refs/tags/v1 ${tagObject}`]);
   const query = [
@@ -312,6 +378,43 @@ test('authenticated Git closure binds origin tags while accepting unrelated loca
     [query, ['fetch', '--prune', '--tags', 'origin'], query],
     'Remote refs must be observed before and after the authenticated fetch'
   );
+  assert.deepEqual(calls.at(-1), [
+    'status',
+    '--porcelain=v1',
+    '--untracked-files=all',
+    '--ignore-submodules=none',
+  ]);
+});
+
+test('authenticated Git closure rejects every dirty source class', async (t) => {
+  const branch = 'feature/focused';
+  const commit = hash40('1');
+  const tagObject = hash40('3');
+  const remote = [
+    `${hash40('2')}\tHEAD`,
+    `${commit}\trefs/heads/${branch}`,
+    `${tagObject}\trefs/tags/v1`,
+    '',
+  ].join('\n');
+  for (const [name, sourceStatus] of [
+    ['staged', 'M  staged.mjs\n'],
+    ['unstaged', ' M unstaged.mjs\n'],
+    ['staged and unstaged tracked', 'MM tracked.mjs\n'],
+    ['untracked', '?? untracked.mjs\n'],
+  ])
+    await t.test(name, () => {
+      const { git } = focusedGitClosureAdapter({
+        branch,
+        commit,
+        remote,
+        localTags: `${tagObject} refs/tags/v1\n`,
+        sourceStatus,
+      });
+      assert.throws(
+        () => fetchAuthenticatedGitState('ignored-by-focused-adapter', { git }),
+        /requires a clean source checkout/u
+      );
+    });
 });
 
 test('authenticated Git closure rejects a missing origin tag after fetch', () => {
@@ -439,6 +542,93 @@ test('contained YAML wrappers have exact bytes, private executable mode, exclusi
   );
 });
 
+test('public success rejects missing, tampered, and coherently resealed outer evidence', async (t) => {
+  const createFixture = () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mode3-outer-proof-'));
+    const profile = createAdaptiveTimingProfile();
+    const success = writeFocusedOuterSuccess(
+      directory,
+      'focused-outer-proof',
+      profile
+    );
+    return { directory, ...success };
+  };
+
+  await t.test('accepts the exact returned result and retained bytes', () => {
+    const fixture = createFixture();
+    t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));
+    const proof = verifyDistributedLinuxOuterSuccessEvidence({
+      hostResult: fixture.hostResult,
+      markerBytes: fixture.markerBytes,
+      outerEvidenceDirectory: fixture.directory,
+      runId: 'focused-outer-proof',
+    });
+    assert.equal(proof.outerEvidence.verified, true);
+    assert.equal(proof.containmentMarkerSha256, sha256(fixture.markerBytes));
+  });
+
+  await t.test('rejects a missing bound artifact', () => {
+    const fixture = createFixture();
+    t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));
+    rmSync(join(fixture.directory, 'host-admission.json'));
+    assert.throws(() =>
+      verifyDistributedLinuxOuterSuccessEvidence({
+        hostResult: fixture.hostResult,
+        markerBytes: fixture.markerBytes,
+        outerEvidenceDirectory: fixture.directory,
+        runId: 'focused-outer-proof',
+      })
+    );
+  });
+
+  await t.test('rejects artifact tampering after outer success', () => {
+    const fixture = createFixture();
+    t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));
+    writeFileSync(
+      join(fixture.directory, 'terminal-inspection.json'),
+      '{"successful":false}\n'
+    );
+    assert.throws(
+      () =>
+        verifyDistributedLinuxOuterSuccessEvidence({
+          hostResult: fixture.hostResult,
+          markerBytes: fixture.markerBytes,
+          outerEvidenceDirectory: fixture.directory,
+          runId: 'focused-outer-proof',
+        }),
+      /Outer evidence hash differs/u
+    );
+  });
+
+  await t.test('rejects a coherently resealed artifact and marker', () => {
+    const fixture = createFixture();
+    t.after(() => rmSync(fixture.directory, { recursive: true, force: true }));
+    const changedArtifact = Buffer.from(
+      `${JSON.stringify({ schema: 'focused-host-plan/v1', runId: 'other-run' })}\n`
+    );
+    writeFileSync(join(fixture.directory, 'host-plan.json'), changedArtifact);
+    const resealedMarker = structuredClone(fixture.hostResult);
+    resealedMarker.outerEvidence.hostPlanSha256 = sha256(changedArtifact);
+    const resealedMarkerBytes = Buffer.from(
+      `${JSON.stringify(resealedMarker, null, 2)}\n`
+    );
+    writeFileSync(
+      join(fixture.directory, 'launch-result-verification.json'),
+      resealedMarkerBytes
+    );
+    assert.throws(
+      () =>
+        verifyDistributedLinuxOuterSuccessEvidence({
+          hostResult: fixture.hostResult,
+          markerBytes: resealedMarkerBytes,
+          outerEvidenceDirectory: fixture.directory,
+          runId: 'focused-outer-proof',
+        }),
+      /differs from the returned outer host result/u
+    );
+  });
+});
+
 test('public lifecycle persists the returned profile, cleans preparation, and writes success last', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'mode3-public-lifecycle-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -531,6 +721,7 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
     }),
     fetchGitState: () => ({
       branch: 'feature/focused',
+      cleanSourceVerified: true,
       commit: currentCommit,
       repository: 'https://github.com/JohnCronk79/seerrng.git',
       tagRefs: [`refs/tags/v1 ${hash40('9')}`],
@@ -540,17 +731,20 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
         { oid: hash40('9'), ref: 'refs/tags/v1' },
       ],
     }),
-    createSnapshot: () => ({
-      root: ROOT,
-      scratchRoot,
-      candidate: {
-        repository: 'https://github.com/JohnCronk79/seerrng.git',
-        commit: currentCommit,
-        tree: currentTree,
-        lockSha256: digest('a'),
-        sourceSha256,
-      },
-    }),
+    createSnapshot: () => {
+      events.push('create-snapshot');
+      return {
+        root: ROOT,
+        scratchRoot,
+        candidate: {
+          repository: 'https://github.com/JohnCronk79/seerrng.git',
+          commit: currentCommit,
+          tree: currentTree,
+          lockSha256: digest('a'),
+          sourceSha256,
+        },
+      };
+    },
     detectOperatorGithubLogin: () => 'JohnCronk79',
     resolveActiveConfig: async () => ({ config, configPath: activeMarker }),
     readTimingProfile: () => profile,
@@ -558,9 +752,14 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
       events.push('persist-profile');
       assert.deepEqual(value, profile);
     },
+    verifyCleanSource: () => {
+      events.push('verify-clean-source');
+      return true;
+    },
     verifySnapshot: () => events.push('verify-snapshot'),
     disposeSnapshot: () => events.push('dispose-snapshot'),
     createContainment: (manifest, options) => {
+      events.push('create-containment');
       capturedManifest = manifest;
       capturedPreparationRequest = options.preparationRequest;
       return {
@@ -573,20 +772,11 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
             ),
             `${JSON.stringify(profile, null, 2)}\n`
           );
-          writeFileSync(
-            join(
-              manifest.evidence.outerDirectory,
-              'launch-result-verification.json'
-            ),
-            '{"status":"passed"}\n'
-          );
-          return {
-            runId: manifest.runId,
-            status: 'passed',
-            containedRun: {
-              updatedProfileSha256: canonicalJsonSha256(profile),
-            },
-          };
+          return writeFocusedOuterSuccess(
+            manifest.evidence.outerDirectory,
+            manifest.runId,
+            profile
+          ).hostResult;
         },
       };
     },
@@ -598,11 +788,26 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
     ),
     /operator differs from the authenticated checkout operator/u
   );
+  await assert.rejects(
+    executeDistributedLinuxPublicLifecycle(
+      { ...request, runId: 'mode3-post-snapshot-dirty-run' },
+      { ...dependencies, verifyCleanSource: () => false }
+    ),
+    /clean source verification is incomplete/u
+  );
+  events.length = 0;
   const result = await executeDistributedLinuxPublicLifecycle(
     request,
     dependencies
   );
   assert.equal(result.status, 'passed');
+  assert.equal(result.schema, 'seerrng-distributed-linux-public-success/v2');
+  assert.equal(
+    result.outerEvidence.schema,
+    DISTRIBUTED_LINUX_OUTER_EVIDENCE_SCHEMA
+  );
+  for (const { hashField } of DISTRIBUTED_LINUX_OUTER_EVIDENCE_FILES)
+    assert.match(result.outerEvidence[hashField], /^[a-f0-9]{64}$/u);
   assert.equal(capturedManifest.candidate.sourceSha256, sourceSha256);
   const containedRequest = JSON.parse(
     readFileSync(
@@ -611,6 +816,15 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
     )
   );
   const preparationDirectory = join(scratchRoot, 'host-preparation');
+  assert.equal(
+    JSON.parse(
+      readFileSync(
+        join(preparationDirectory, 'authenticated-git-closure.json'),
+        'utf8'
+      )
+    ).cleanSourceVerified,
+    true
+  );
   assert.equal(
     containedRequest.schema,
     DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA
@@ -669,6 +883,9 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
     )
   );
   assert.deepEqual(events, [
+    'create-snapshot',
+    'verify-clean-source',
+    'create-containment',
     'persist-profile',
     'verify-snapshot',
     'dispose-snapshot',
