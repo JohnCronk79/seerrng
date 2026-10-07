@@ -1,4 +1,4 @@
-import { normalizeInfoHash } from '@server/api/downloadClients/types';
+import { normalizeDownloadKey } from '@server/api/downloadClients/types';
 import liveDownloadMonitor, {
   LIVE_DOWNLOAD_MAX_HASHES_PER_SUBSCRIPTION,
   type LiveDownloadUpdate,
@@ -40,7 +40,7 @@ export const parseLiveDownloadIds = (
   for (const part of value.split(',')) {
     const tokenHash = resolveLiveDownloadToken(part, userId);
     const hash =
-      tokenHash ?? (allowRawHashes ? normalizeInfoHash(part) : undefined);
+      tokenHash ?? (allowRawHashes ? normalizeDownloadKey(part) : undefined);
     if (hash) {
       ids.set(tokenHash ? part : hash, hash);
       if (ids.size >= LIVE_DOWNLOAD_MAX_HASHES_PER_SUBSCRIPTION) break;

@@ -59,6 +59,13 @@ export const baseRequestConfig: AxiosRequestConfig = {
 
 const INFO_HASH_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
+/** SABnzbd queue IDs; SABnzbd builds them as `SABnzbd_nzo_{id}`. */
+export const SABNZBD_NZO_PATTERN = /^SABnzbd_nzo_[A-Za-z0-9]{1,64}$/;
+
+/** True for a SABnzbd queue ID. These are Usenet jobs, never torrents. */
+export const isUsenetDownloadKey = (key: string): boolean =>
+  SABNZBD_NZO_PATTERN.test(key);
+
 /** Returns a lowercase info hash, or undefined for non-torrent download IDs. */
 export const normalizeInfoHash = (value: unknown): string | undefined => {
   if (typeof value !== 'string') {
@@ -67,6 +74,27 @@ export const normalizeInfoHash = (value: unknown): string | undefined => {
   const hash = value.trim().toLowerCase();
   return INFO_HASH_PATTERN.test(hash) ? hash : undefined;
 };
+
+/**
+ * Returns the key used for live progress: a lowercase torrent info hash or a
+ * SABnzbd queue ID. Anything else is not a live-progress download.
+ */
+export const normalizeDownloadKey = (value: unknown): string | undefined => {
+  const hash = normalizeInfoHash(value);
+  if (hash) return hash;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return SABNZBD_NZO_PATTERN.test(trimmed) ? trimmed : undefined;
+};
+
+/** Keys a client can answer for: SABnzbd takes queue IDs, the rest take hashes. */
+export const keysForClientType = (
+  type: string,
+  keys: readonly string[]
+): string[] =>
+  keys.filter((key) =>
+    type === 'sabnzbd' ? isUsenetDownloadKey(key) : !isUsenetDownloadKey(key)
+  );
 
 export const clientUrl = (
   settings: Pick<

@@ -24,6 +24,7 @@ torrents; your *arr services keep full control of downloads.
 | Deluge | Web UI address and Web UI password. Default port `8112`. SeerrNG connects the Web UI to its first configured daemon if it is not already connected. |
 | rTorrent | XML-RPC endpoint address, usually a ruTorrent `/RPC2` path, and the username and password if the endpoint uses basic authentication. Default port `80`. Leave **URL Base** empty to use `/RPC2`. |
 | TorrentNG | TorrentNG address and an API token from `auth.api_tokens`. Default port `8080`. |
+| SABnzbd | SABnzbd address and its API key from **Config → General**. Default port `8080`. SABnzbd reports one overall speed, so SeerrNG shows that speed on the first downloading item. |
 
 TorrentNG is a pre-1.0 front end. It can manage an existing qBittorrent,
 rTorrent, Transmission, or Deluge installation or run its own engine. When it

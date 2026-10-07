@@ -3220,6 +3220,7 @@
   "components.Settings.SettingsDownloadClients.pollIntervalDescription": "How often SeerrNG asks the clients for progress while someone is viewing a download. Clients are not contacted when nobody is viewing one.",
   "components.Settings.SettingsDownloadClients.port": "Port",
   "components.Settings.SettingsDownloadClients.removeClient": "Remove",
+  "components.Settings.SettingsDownloadClients.sabnzbdApiKey": "API Key",
   "components.Settings.SettingsDownloadClients.save": "Save Changes",
   "components.Settings.SettingsDownloadClients.saveError": "Download client settings could not be saved.",
   "components.Settings.SettingsDownloadClients.saveSuccess": "Download client settings saved.",

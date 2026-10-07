@@ -2,6 +2,7 @@ import { createDownloadClient } from '@server/api/downloadClients';
 import {
   type DownloadClientAdapter,
   DownloadClientError,
+  keysForClientType,
   type LiveTorrentStatus,
 } from '@server/api/downloadClients/types';
 import type { DownloadClientSettings } from '@server/lib/settings';
@@ -145,7 +146,11 @@ export class LiveDownloadMonitor {
     const results = await Promise.all(
       clients.map(async (client) => {
         try {
-          const torrents = await this.adapterFor(client).getTorrents(hashes);
+          // Each client only receives keys it can answer for; SABnzbd queue IDs
+          // never go to torrent clients, and the reverse.
+          const keys = keysForClientType(client.type, hashes);
+          if (keys.length === 0) return [];
+          const torrents = await this.adapterFor(client).getTorrents(keys);
           this.health.set(client.id, {
             clientId: client.id,
             ok: true,

@@ -1,6 +1,7 @@
 import DelugeClient from '@server/api/downloadClients/deluge';
 import QBittorrentClient from '@server/api/downloadClients/qbittorrent';
 import RTorrentClient from '@server/api/downloadClients/rtorrent';
+import SabnzbdClient from '@server/api/downloadClients/sabnzbd';
 import TorrentNGClient from '@server/api/downloadClients/torrentng';
 import TransmissionClient from '@server/api/downloadClients/transmission';
 import type { DownloadClientAdapter } from '@server/api/downloadClients/types';
@@ -20,5 +21,7 @@ export const createDownloadClient = (
       return new TorrentNGClient(settings);
     case 'rtorrent':
       return new RTorrentClient(settings);
+    case 'sabnzbd':
+      return new SabnzbdClient(settings);
   }
 };

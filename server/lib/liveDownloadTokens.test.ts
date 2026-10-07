@@ -21,7 +21,9 @@ describe('LiveDownloadTokenRegistry', () => {
   it('rejects invalid hashes, users, and token forms', () => {
     const registry = new LiveDownloadTokenRegistry();
 
-    assert.equal(registry.issue('SABnzbd_nzo_1', 7), undefined);
+    // Valid SABnzbd queue IDs are accepted; malformed ones are not.
+    assert.equal(registry.issue('SABnzbd_nzo_bad-id', 7), undefined);
+    assert.equal(registry.issue('nzo_1', 7), undefined);
     assert.equal(registry.issue(HASH, -1), undefined);
     assert.equal(registry.issue(HASH, Number.NaN), undefined);
     assert.equal(registry.resolve(HASH, 7), undefined);

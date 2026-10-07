@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-const INFO_HASH_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+import { normalizeDownloadKey } from '@server/api/downloadClients/types';
 const TOKEN_PATTERN = /^ld1_[A-Za-z0-9_-]{32}$/;
 const DEFAULT_TOKEN_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_TOKENS = 10_000;
@@ -97,9 +97,7 @@ export class LiveDownloadTokenRegistry {
   }
 
   private normalizeHash(value: unknown): string | undefined {
-    if (typeof value !== 'string') return undefined;
-    const hash = value.trim().toLowerCase();
-    return INFO_HASH_PATTERN.test(hash) ? hash : undefined;
+    return normalizeDownloadKey(value);
   }
 
   private ownerKey(userId: number, hash: string): string {

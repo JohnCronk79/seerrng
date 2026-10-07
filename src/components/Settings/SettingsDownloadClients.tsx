@@ -41,6 +41,7 @@ const messages = defineMessages('components.Settings.SettingsDownloadClients', {
   password: 'Password',
   delugePassword: 'Web UI Password',
   torrentngToken: 'API Token',
+  sabnzbdApiKey: 'API Key',
   savedSecret: 'Saved — leave empty to keep it',
   clearSecret: 'Remove the saved password or token',
   enabled: 'Read Live Progress from This Client',
@@ -67,6 +68,7 @@ const CLIENT_LABELS: Record<DownloadClientType, string> = {
   deluge: 'Deluge',
   torrentng: 'TorrentNG',
   rtorrent: 'rTorrent',
+  sabnzbd: 'SABnzbd',
 };
 
 const DEFAULT_PORTS: Record<DownloadClientType, number> = {
@@ -75,6 +77,7 @@ const DEFAULT_PORTS: Record<DownloadClientType, number> = {
   deluge: 8112,
   torrentng: 8080,
   rtorrent: 80,
+  sabnzbd: 8080,
 };
 
 const usesUsername = (type: DownloadClientType) =>
@@ -284,9 +287,11 @@ const SettingsDownloadClients = () => {
     intl.formatMessage(
       type === 'torrentng'
         ? messages.torrentngToken
-        : type === 'deluge'
-          ? messages.delugePassword
-          : messages.password
+        : type === 'sabnzbd'
+          ? messages.sabnzbdApiKey
+          : type === 'deluge'
+            ? messages.delugePassword
+            : messages.password
     );
 
   const renderClient = (client: DraftClient) => {
