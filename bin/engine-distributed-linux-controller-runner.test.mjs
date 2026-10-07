@@ -46,6 +46,10 @@ import {
 } from '../tools/validation-engine/runtime/distributed-node-transport.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import {
+  createNativeCaseLedgerFixture,
+  createNativeCaseReportFixture,
+} from './distributed-native-case-ledger-test-fixture.mjs';
 
 const SHARED_KEY = 'a'.repeat(64);
 const APPLICATION_ID = 'seerrng';
@@ -123,7 +127,7 @@ function catalog(taskCount = 4) {
   const tasks = Array.from({ length: taskCount }, (_, index) =>
     nativeTask(
       APPLICATION_ID,
-      'node-test-mjs',
+      'node-js',
       `bin/focused-${String(index + 1).padStart(2, '0')}.test.mjs`
     )
   ).toSorted((left, right) => left.taskId.localeCompare(right.taskId));
@@ -144,7 +148,8 @@ function catalog(taskCount = 4) {
 function passingResult(catalogValue, taskId) {
   const task = catalogValue.tasks.find((entry) => entry.taskId === taskId);
   assert.ok(task);
-  const stdout = 'ok\n';
+  const counts = { total: 1, active: 1 };
+  const stdout = createNativeCaseReportFixture(task, counts);
   const stderr = '';
   const receipt = {
     status: 'passed',
@@ -178,7 +183,8 @@ function passingResult(catalogValue, taskId) {
     files: [...task.files],
     status: 'passed',
     wallMs: 3,
-    totals: { [task.adapterId]: { total: 1, active: 1 } },
+    totals: { [task.adapterId]: counts },
+    caseLedger: createNativeCaseLedgerFixture(task, counts),
     receipt,
   };
   return Object.freeze({

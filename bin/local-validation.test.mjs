@@ -86,7 +86,7 @@ const fixture = () => {
   );
   write(
     'bin/run-tooling-tests.mjs',
-    'const portableTests = ["scripts/portable.test.mjs"]; const posixOnlyTests = ["deploy/posix.test.mjs"]; const tests = process.platform === "win32" ? portableTests : [...portableTests, ...posixOnlyTests]; spawnSync(process.execPath, ["--test", ...tests], {});'
+    'const portableTests = ["scripts/portable.test.mjs"]; const posixOnlyTests = ["deploy/posix.test.mjs"]; const tests = process.platform === "win32" ? portableTests : [...portableTests, ...posixOnlyTests]; const workers=1; spawnSync(process.execPath, ["--test", "--test-reporter=tap", `--test-concurrency=${workers}`, ...tests], {});'
   );
   return {
     directory,
@@ -211,9 +211,14 @@ test('tooling concurrency recognition preserves exact platform inventory and rej
   const legacy = 'spawnSync(process.execPath, ["--test", ...tests], {});';
   const bounded =
     'spawnSync(process.execPath, ["--test", `--test-concurrency=${workers}`, ...tests], {});';
+  const reported =
+    'spawnSync(process.execPath, ["--test", "--test-reporter=tap", `--test-concurrency=${workers}`, ...tests], {});';
   assert.deepEqual(
-    toolingOwnership(declarations + bounded, ts),
-    toolingOwnership(declarations + legacy, ts)
+    toolingOwnership(declarations + reported, ts),
+    new Map([
+      ['portableTests', ['a']],
+      ['posixOnlyTests', ['b']],
+    ])
   );
   assert.deepEqual(
     toolingOwnership(
@@ -223,12 +228,14 @@ test('tooling concurrency recognition preserves exact platform inventory and rej
     9
   );
   for (const changed of [
-    bounded.replace('...tests', '...tests.filter(Boolean)'),
-    bounded.replace('...tests', '...tests.slice(1)'),
-    bounded.replace('...tests', '"--test-name-pattern=green", ...tests'),
-    bounded.replace('...tests', '"--test-shard=1/2", ...tests'),
-    bounded.replace('process.execPath', '"node"'),
-    bounded + legacy,
+    legacy,
+    bounded,
+    reported.replace('...tests', '...tests.filter(Boolean)'),
+    reported.replace('...tests', '...tests.slice(1)'),
+    reported.replace('...tests', '"--test-name-pattern=green", ...tests'),
+    reported.replace('...tests', '"--test-shard=1/2", ...tests'),
+    reported.replace('process.execPath', '"node"'),
+    reported + legacy,
   ])
     assert.throws(
       () => toolingOwnership(declarations + changed, ts),
@@ -240,7 +247,7 @@ test('tooling concurrency recognition preserves exact platform inventory and rej
         declarations.replace(
           '[...portableTests, ...posixOnlyTests]',
           'portableTests'
-        ) + bounded,
+        ) + reported,
         ts
       ),
     /Unsupported tooling execution selection/
@@ -750,6 +757,83 @@ test('execution enforces positive active summaries and removes only its owned te
   } finally {
     rmSync(unsafe, { recursive: true, force: true });
   }
+});
+
+test('zero-active execution requires complete explicit skipped case evidence', async () => {
+  const plan = {
+    root,
+    steps: [
+      {
+        name: 'explicit skip fixture',
+        command: process.execPath,
+        args: [],
+        kind: 'node-js',
+        files: ['scripts/portable.test.mjs'],
+      },
+    ],
+  };
+  const completeSkipTap = [
+    'TAP version 13',
+    '# Subtest: explicit skip fixture',
+    'ok 1 - explicit skip fixture # SKIP prerequisite unavailable',
+    '  ---',
+    '  duration_ms: 1',
+    "  type: 'test'",
+    '  ...',
+    '1..1',
+    '# tests 1',
+    '# suites 0',
+    '# pass 0',
+    '# fail 0',
+    '# cancelled 0',
+    '# skipped 1',
+    '# todo 0',
+    '',
+  ].join('\n');
+
+  await assert.rejects(
+    executePlan(plan, {
+      executor: async () => completeSkipTap,
+      stdout: sink,
+      stderr: sink,
+    }),
+    /zero active/
+  );
+
+  const ledgers = [];
+  const totals = await executePlan(plan, {
+    executor: async () => completeSkipTap,
+    stdout: sink,
+    stderr: sink,
+    caseLedgerObserver: (ledger) => ledgers.push(ledger),
+  });
+  assert.deepEqual(totals.get('node-js'), { active: 0, total: 1 });
+  assert.equal(ledgers.length, 1);
+  assert.deepEqual(ledgers[0].counts, {
+    active: 0,
+    failed: 0,
+    passed: 0,
+    skipped: 1,
+    total: 1,
+  });
+  assert.deepEqual(
+    ledgers[0].cases.map(({ status }) => status),
+    ['skipped']
+  );
+
+  for (const output of [
+    '# tests 1\n# pass 0\n# fail 0\n',
+    'TAP version 13\n1..0\n# tests 1\n# suites 0\n# pass 0\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0\n',
+  ])
+    await assert.rejects(
+      executePlan(plan, {
+        executor: async () => output,
+        stdout: sink,
+        stderr: sink,
+        caseLedgerObserver: () => {},
+      }),
+      /TAP case ledger is absent|TAP case closure failed/
+    );
 });
 
 test('native subprocess failures propagate their actual exit status and zero-summary output cannot pass', async () => {

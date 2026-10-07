@@ -1520,6 +1520,7 @@ function verifyRepositoryEvidence(
       report.resultReuse === false,
     'Distributed report did not pass for the expected run'
   );
+  const aggregateCases = { active: 0, total: 0 };
   for (const [index, outcome] of report.outcomes.entries()) {
     const assignment = assignments[index];
     assert(
@@ -1531,12 +1532,22 @@ function verifyRepositoryEvidence(
         outcome.threadSlotId === assignment.threadSlotId,
       `Distributed report changed assignment: ${assignment.shardId}`
     );
-    verifyDistributedNativeTaskResult(outcome.result, {
+    const taskResult = verifyDistributedNativeTaskResult(outcome.result, {
       catalog,
       expectedCatalogSha256: catalog.catalogSha256,
       taskId: assignment.shardId,
     });
+    const counts = taskResult.totals[taskResult.adapterId];
+    aggregateCases.active += counts.active;
+    aggregateCases.total += counts.total;
   }
+  assert(
+    Number.isSafeInteger(aggregateCases.active) &&
+      Number.isSafeInteger(aggregateCases.total) &&
+      aggregateCases.active >= 1 &&
+      aggregateCases.active <= aggregateCases.total,
+    'Distributed repository result has invalid aggregate case totals'
+  );
   requireDeepEqual(
     evidence.shards,
     report.outcomes,

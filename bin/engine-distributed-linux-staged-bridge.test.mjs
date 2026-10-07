@@ -22,6 +22,10 @@ import {
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases.
 import { createStagedValidation } from '../tools/validation-engine/runtime/staged-validation.mjs';
+import {
+  createNativeCaseLedgerFixture,
+  createNativeCaseReportFixture,
+} from './distributed-native-case-ledger-test-fixture.mjs';
 
 const RUNTIME_APPLICATION_KEY = 'seerrng';
 const CONFIGURED_APPLICATION_ID = 'SeerrNG 3.17.0';
@@ -63,10 +67,10 @@ function catalog(selectedCandidate) {
     schema: DISTRIBUTED_NATIVE_TASK_SCHEMA,
     taskId: distributedNativeTaskId({
       applicationId: RUNTIME_APPLICATION_KEY,
-      adapterId: 'node-test-mjs',
+      adapterId: 'node-js',
       files,
     }),
-    adapterId: 'node-test-mjs',
+    adapterId: 'node-js',
     files,
   };
   const core = {
@@ -83,7 +87,8 @@ function catalog(selectedCandidate) {
 function passingTaskResult(catalogValue, taskId) {
   const task = catalogValue.tasks.find((entry) => entry.taskId === taskId);
   assert.ok(task);
-  const stdout = 'ok\n';
+  const counts = { active: 1, total: 1 };
+  const stdout = createNativeCaseReportFixture(task, counts);
   const stderr = '';
   const receipt = {
     status: 'passed',
@@ -117,7 +122,8 @@ function passingTaskResult(catalogValue, taskId) {
     files: [...task.files],
     status: 'passed',
     wallMs: 1,
-    totals: { [task.adapterId]: { active: 1, total: 1 } },
+    totals: { [task.adapterId]: counts },
+    caseLedger: createNativeCaseLedgerFixture(task, counts),
     receipt,
   };
   return { ...core, resultSha256: canonicalJsonSha256(core) };
@@ -131,7 +137,7 @@ function stagedBinding(selectedCandidate) {
       { name: 'Formatting', kind: 'check', command: 'node', args: [] },
       {
         name: 'Node JavaScript 1/1',
-        kind: 'node-test-mjs',
+        kind: 'node-js',
         command: 'node',
         args: [],
       },

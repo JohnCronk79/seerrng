@@ -13,6 +13,12 @@ import {
 } from '../../../bin/local-validation.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { withGitBashOnPath } from '../../../bin/platform-tools.mjs';
+import {
+  createDistributedNativeTapCaseLedger,
+  createDistributedNativeVitestCaseLedger,
+  isExplicitlySkippedDistributedNativeCaseLedger,
+  verifyDistributedNativeCaseLedger,
+} from './distributed-native-case-ledger.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_NATIVE_CANDIDATE_SCHEMA =
@@ -24,7 +30,7 @@ export const DISTRIBUTED_NATIVE_TASK_SCHEMA =
 export const DISTRIBUTED_NATIVE_TASK_REQUEST_SCHEMA =
   'seerrng-distributed-native-task-request/v1';
 export const DISTRIBUTED_NATIVE_TASK_RESULT_SCHEMA =
-  'seerrng-distributed-native-task-result/v1';
+  'seerrng-distributed-native-task-result/v2';
 export const DEFAULT_DISTRIBUTED_NATIVE_TASK_TIMEOUT_MS = 15 * 60 * 1000;
 export const MAX_DISTRIBUTED_NATIVE_TASK_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_DISTRIBUTED_NATIVE_TASKS = 65_536;
@@ -82,6 +88,7 @@ const TASK_RESULT_CORE_KEYS = [
   'adapterId',
   'applicationId',
   'candidateSha256',
+  'caseLedger',
   'catalogSha256',
   'files',
   'receipt',
@@ -713,6 +720,16 @@ function verifyNativeResultReceipt(value) {
     throw new Error(
       'Distributed native result receipt truncation flags must be boolean'
     );
+  for (const stream of ['stdout', 'stderr'])
+    if (
+      value[`${stream}Truncated`] === false &&
+      (value[`${stream}Bytes`] !== Buffer.byteLength(value[stream]) ||
+        value[`${stream}Sha256`] !==
+          createHash('sha256').update(value[stream]).digest('hex'))
+    )
+      throw new Error(
+        `Distributed native result requires hash-bound ${stream} evidence`
+      );
   exactKeys(
     value.lifecycle,
     NATIVE_RECEIPT_LIFECYCLE_KEYS,
@@ -766,7 +783,46 @@ function verifyNativeResultReceipt(value) {
   };
 }
 
-function verifyNativeResultTotals(value, adapterId) {
+function tapEvidenceStream(receipt) {
+  const containsTap = (value) => {
+    const bytes = Buffer.from(value);
+    const marker = bytes.indexOf(Buffer.from('TAP version 13'));
+    return marker >= 0 && (marker === 0 || bytes[marker - 1] === 10);
+  };
+  const candidates = ['stdout', 'stderr'].filter((stream) =>
+    containsTap(receipt[stream])
+  );
+  if (candidates.length !== 1)
+    throw new Error(
+      'Distributed native task requires exactly one TAP evidence stream'
+    );
+  const [stream] = candidates;
+  if (receipt[`${stream}Truncated`])
+    throw new Error(
+      'Distributed native task TAP evidence stream was truncated'
+    );
+  return { stream, text: receipt[stream] };
+}
+
+function verifyNativeCaseReportBinding(adapterId, caseLedger, receipt) {
+  const replayed =
+    adapterId === 'vitest'
+      ? createDistributedNativeVitestCaseLedger({
+          files: caseLedger.files,
+          reportBase64: caseLedger.reportBase64,
+        })
+      : createDistributedNativeTapCaseLedger({
+          adapterId,
+          files: caseLedger.files,
+          report: tapEvidenceStream(receipt).text,
+        });
+  if (caseLedger.ledgerSha256 !== replayed.ledgerSha256)
+    throw new Error(
+      'Distributed native case ledger differs from retained execution report'
+    );
+}
+
+function verifyNativeResultTotals(value, adapterId, caseLedger) {
   exactKeys(value, [adapterId], 'distributed native result totals');
   const counts = value[adapterId];
   exactKeys(
@@ -782,7 +838,13 @@ function verifyNativeResultTotals(value, adapterId) {
     counts.active,
     'Distributed native result active count'
   );
-  if (total < 1 || active < 1 || active > total)
+  if (
+    total < 1 ||
+    active > total ||
+    total !== caseLedger.counts.total ||
+    active !== caseLedger.counts.active ||
+    (active < 1 && !isExplicitlySkippedDistributedNativeCaseLedger(caseLedger))
+  )
     throw new Error('Distributed native result requires active test coverage');
   return { [adapterId]: { total, active } };
 }
@@ -853,8 +915,13 @@ export function verifyDistributedNativeTaskResult(value, options = {}) {
     value.wallMs,
     'Distributed native task result wall time'
   );
-  const totals = verifyNativeResultTotals(value.totals, adapterId);
+  const caseLedger = verifyDistributedNativeCaseLedger(value.caseLedger, {
+    adapterId,
+    files,
+  });
+  const totals = verifyNativeResultTotals(value.totals, adapterId, caseLedger);
   const receipt = verifyNativeResultReceipt(value.receipt);
+  verifyNativeCaseReportBinding(adapterId, caseLedger, receipt);
   if (wallMs < receipt.wallMs)
     throw new Error(
       'Distributed native task result wall time is shorter than its receipt'
@@ -867,6 +934,7 @@ export function verifyDistributedNativeTaskResult(value, options = {}) {
     taskId: actualTaskId,
     adapterId,
     files,
+    caseLedger,
     status: value.status,
     wallMs,
     totals,
@@ -954,6 +1022,7 @@ export async function executeDistributedNativeTask({
   const started = performance.now();
   const taskTimeoutMs = nativeTaskTimeout(timeoutMs);
   let totals;
+  let caseLedger;
   let nativeReceipt;
   let executionError;
   try {
@@ -963,15 +1032,24 @@ export async function executeDistributedNativeTask({
       signal,
       inherited: nativeInheritedEnvironment(task.adapterId),
       workers: 1,
+      caseLedgerObserver: (ledger) => {
+        if (caseLedger)
+          throw new Error(
+            'Distributed native task produced duplicate case ledgers'
+          );
+        caseLedger = ledger;
+      },
       executor: async (step, options) => {
         try {
           nativeReceipt = await runCommand(step, {
             ...options,
-            maxCaptureBytes: 256 * 1024,
+            maxCaptureBytes: 2_000_000,
             receipt: true,
             timeoutMs: taskTimeoutMs,
           });
-          return nativeReceipt.output;
+          return step.kind === 'vitest'
+            ? nativeReceipt.stdout
+            : tapEvidenceStream(nativeReceipt).text;
         } catch (error) {
           nativeReceipt = error.receipt;
           throw error;
@@ -994,6 +1072,8 @@ export async function executeDistributedNativeTask({
     );
   if (driftError) throw driftError;
   if (executionError) throw executionError;
+  if (!caseLedger)
+    throw new Error('Distributed native task produced no case ledger');
   const receipt = normalizeNativeReceipt(nativeReceipt);
 
   const core = {
@@ -1004,6 +1084,7 @@ export async function executeDistributedNativeTask({
     taskId: task.taskId,
     adapterId: task.adapterId,
     files: [...task.files],
+    caseLedger,
     status: 'passed',
     wallMs: performance.now() - started,
     totals: totalsObject(totals),

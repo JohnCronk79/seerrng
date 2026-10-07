@@ -25,6 +25,10 @@ import {
 import { executeDistributedShardSchedule } from '../tools/validation-engine/runtime/distributed-shard-executor.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import {
+  createNativeCaseLedgerFixture,
+  createNativeCaseReportFixture,
+} from './distributed-native-case-ledger-test-fixture.mjs';
 
 const APPLICATION_ID = 'seerrng';
 
@@ -130,8 +134,8 @@ function task(adapterId, files) {
 
 function catalog(candidate) {
   const tasks = [
-    task('node-test-mjs', ['bin/focused-a.test.mjs']),
-    task('node-test-mjs', ['bin/focused-b.test.mjs']),
+    task('node-js', ['bin/focused-a.test.mjs']),
+    task('node-js', ['bin/focused-b.test.mjs']),
     task('tooling', [
       'bin/focused-tool-a.test.mjs',
       'bin/focused-tool-b.test.mjs',
@@ -174,7 +178,7 @@ function schedule(catalogValue, candidate) {
           nodeId: 'controller',
           selectedN: 2,
         },
-        adapterIds: ['node-test-mjs', 'tooling'],
+        adapterIds: ['node-js', 'tooling'],
         effectiveLogicalThreads: 2,
         concurrency: { mode: 'explicit', threads: 2 },
         runsOnControllerHost: true,
@@ -185,8 +189,7 @@ function schedule(catalogValue, candidate) {
   });
 }
 
-function nativeReceipt() {
-  const stdout = 'ok\n';
+function nativeReceipt(stdout = 'ok\n') {
   const stderr = '';
   return {
     status: 'passed',
@@ -221,6 +224,8 @@ function nativeResult(catalogValue, taskId, overrides = {}) {
       : selected.files[0].includes('-a.')
         ? { active: 2, total: 3 }
         : { active: 1, total: 1 };
+  const effectiveCounts =
+    overrides.totals?.[selected.adapterId] ?? defaultCounts;
   const core = {
     schema: DISTRIBUTED_NATIVE_TASK_RESULT_SCHEMA,
     applicationId: APPLICATION_ID,
@@ -232,7 +237,10 @@ function nativeResult(catalogValue, taskId, overrides = {}) {
     status: 'passed',
     wallMs: 3,
     totals: { [selected.adapterId]: defaultCounts },
-    receipt: nativeReceipt(),
+    caseLedger: createNativeCaseLedgerFixture(selected, effectiveCounts),
+    receipt: nativeReceipt(
+      createNativeCaseReportFixture(selected, effectiveCounts)
+    ),
     ...overrides,
   };
   return { ...core, resultSha256: canonicalJsonSha256(core) };
@@ -287,7 +295,7 @@ function repositoryPlan() {
       { name: 'Formatting', kind: 'check', command: 'node', args: [] },
       {
         name: 'Node JavaScript 1/1',
-        kind: 'node-test-mjs',
+        kind: 'node-js',
         command: 'node',
         args: [],
       },
@@ -367,7 +375,7 @@ test('runs local checks in order before reconciling one closed distributed run',
   assert.equal(result.status, 'passed');
   assert.deepEqual(result.cases, { passed: 6, failed: 0, skipped: 2 });
   assert.deepEqual(result.totals, {
-    'node-test-mjs': { active: 3, total: 4 },
+    'node-js': { active: 3, total: 4 },
     tooling: { active: 3, total: 4 },
   });
   assert.equal(result.commands.length, 3);
@@ -660,5 +668,83 @@ test('every passing shard result is reverified before any totals are admitted', 
       assert.equal(error.repositoryEvidence.shards.length >= 1, true);
       return true;
     }
+  );
+});
+
+test('complete repository evidence still requires active coverage when every task is explicitly skipped', async () => {
+  const candidate = stageCandidate();
+  const distributed = await distributedFixture(candidate, {
+    resultFactory: (catalogValue, taskId) => {
+      const selected = catalogValue.tasks.find(
+        (entry) => entry.taskId === taskId
+      );
+      assert.ok(selected);
+      const original = nativeResult(catalogValue, taskId);
+      const total = original.totals[selected.adapterId].total;
+      return nativeResult(catalogValue, taskId, {
+        totals: { [selected.adapterId]: { active: 0, total } },
+        caseLedger: createNativeCaseLedgerFixture(selected, {
+          active: 0,
+          total,
+        }),
+      });
+    },
+  });
+
+  await assert.rejects(
+    executeDistributedRepositoryStage(
+      repositoryPlan(),
+      options(candidate, distributed)
+    ),
+    (error) => {
+      assert.match(error.message, /invalid case totals/);
+      assert.equal(error.repositoryEvidence.completed, false);
+      assert.equal(error.repositoryEvidence.report.status, 'passed');
+      assert.equal(
+        error.repositoryEvidence.shards.every(
+          ({ result }) => result.caseLedger.counts.active === 0
+        ),
+        true
+      );
+      return true;
+    }
+  );
+});
+
+test('repository evidence accepts one explicit-skip task when the complete run retains active coverage', async () => {
+  const candidate = stageCandidate();
+  let skippedTaskId;
+  const distributed = await distributedFixture(candidate, {
+    resultFactory: (catalogValue, taskId) => {
+      skippedTaskId ??= taskId;
+      if (taskId !== skippedTaskId) return nativeResult(catalogValue, taskId);
+      const selected = catalogValue.tasks.find(
+        (entry) => entry.taskId === taskId
+      );
+      assert.ok(selected);
+      const original = nativeResult(catalogValue, taskId);
+      const total = original.totals[selected.adapterId].total;
+      return nativeResult(catalogValue, taskId, {
+        totals: { [selected.adapterId]: { active: 0, total } },
+        caseLedger: createNativeCaseLedgerFixture(selected, {
+          active: 0,
+          total,
+        }),
+      });
+    },
+  });
+
+  const result = await executeDistributedRepositoryStage(
+    repositoryPlan(),
+    options(candidate, distributed)
+  );
+  assert.equal(result.status, 'passed');
+  assert.equal(result.cases.passed > 0, true);
+  assert.equal(result.cases.skipped > 0, true);
+  assert.equal(
+    result.repositoryEvidence.shards.some(
+      ({ result: taskResult }) => taskResult.caseLedger.counts.active === 0
+    ),
+    true
   );
 });

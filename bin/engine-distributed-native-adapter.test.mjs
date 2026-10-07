@@ -78,7 +78,9 @@ function fakeTypeScript() {
               expression: identifier('spawnSync'),
               arguments: [
                 text('process.execPath'),
-                text("['--test', `--test-concurrency=${workers}`, ...tests]"),
+                text(
+                  "['--test', '--test-reporter=tap', `--test-concurrency=${workers}`, ...tests]"
+                ),
               ],
               children: [],
             },
@@ -107,7 +109,10 @@ function fakeTypeScript() {
   };
 }
 
-function createFixture(t) {
+function createFixture(
+  t,
+  { includeSkippedNative = false, vitestStatus = 'passed' } = {}
+) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-native-adapter-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const directory of [
@@ -168,10 +173,14 @@ const output = process.argv.find((argument) => argument.startsWith('--outputFile
 if (!output) throw new Error('missing fixture Vitest report path');
 writeFileSync(output, JSON.stringify({
   numTotalTests: 1,
-  numPassedTests: 1,
+  numPassedTests: ${vitestStatus === 'passed' ? 1 : 0},
   numFailedTests: 0,
+  numPendingTests: ${vitestStatus === 'passed' ? 0 : 1},
   success: true,
-  testResults: [{ name: resolve('server/native-typescript.test.ts'), assertionResults: [] }],
+  testResults: [{
+    name: resolve('server/native-typescript.test.ts'),
+    assertionResults: [{ fullName: 'canonical TypeScript fixture', status: ${JSON.stringify(vitestStatus)} }],
+  }],
 }));
 `
   );
@@ -208,6 +217,12 @@ export default { resolve: { alias: { 'node:test': resolve(projectRoot, 'server/t
     'scripts/tiny-native.test.mjs',
     "import assert from 'node:assert/strict';\nimport test from 'node:test';\ntest('tiny native task',()=>{assert.equal(2+2,4);assert.equal(process.env.SEERRNG_DISTRIBUTED_SHARED_SECRET,undefined);});\n"
   );
+  if (includeSkippedNative)
+    write(
+      root,
+      'scripts/skipped-native.test.mjs',
+      "import test from 'node:test';\ntest('explicitly skipped native task',{skip:'fixture prerequisite unavailable'},()=>{});\n"
+    );
   write(
     root,
     'scripts/hanging-native.test.mjs',
@@ -226,7 +241,7 @@ export default { resolve: { alias: { 'node:test': resolve(projectRoot, 'server/t
   write(
     root,
     'bin/run-tooling-tests.mjs',
-    "import {spawnSync} from 'node:child_process';\nconst workers=1;\nconst portableTests=['bin/tooling.test.mjs'];\nconst posixOnlyTests=['deploy/posix.test.mjs'];\nconst tests=process.platform==='win32'?portableTests:[...portableTests,...posixOnlyTests];\nconst result=spawnSync(process.execPath,['--test',`--test-concurrency=${workers}`,...tests],{stdio:'inherit'});\nprocess.exitCode=result.status??1;\n"
+    "import {spawnSync} from 'node:child_process';\nconst workers=1;\nconst portableTests=['bin/tooling.test.mjs'];\nconst posixOnlyTests=['deploy/posix.test.mjs'];\nconst tests=process.platform==='win32'?portableTests:[...portableTests,...posixOnlyTests];\nconst result=spawnSync(process.execPath,['--test','--test-reporter=tap',`--test-concurrency=${workers}`,...tests],{stdio:'inherit'});\nprocess.exitCode=result.status??1;\n"
   );
 
   command(root, ['init', '--quiet']);
@@ -255,6 +270,15 @@ function resealNativeResult(value, change) {
   delete core.resultSha256;
   change(core);
   return { ...core, resultSha256: canonicalJsonSha256(core) };
+}
+
+function resealCaseLedger(value, change) {
+  return resealNativeResult(value, (result) => {
+    const ledger = result.caseLedger;
+    delete ledger.ledgerSha256;
+    change(ledger);
+    ledger.ledgerSha256 = canonicalJsonSha256(ledger);
+  });
 }
 
 test('native discovery seals every locally owned task before allowlist selection', (t) => {
@@ -572,6 +596,16 @@ test('native adapter derives, binds, and executes only one exact local task', as
   assert.equal(Object.isFrozen(verified.files), true);
   assert.equal(Object.isFrozen(verified.totals), true);
   assert.equal(Object.isFrozen(verified.totals['node-js']), true);
+  assert.equal(Object.isFrozen(verified.caseLedger), true);
+  assert.equal(Object.isFrozen(verified.caseLedger.cases), true);
+  assert.equal(Object.isFrozen(verified.caseLedger.counts), true);
+  assert.deepEqual(verified.caseLedger.counts, {
+    active: 1,
+    failed: 0,
+    passed: 1,
+    skipped: 0,
+    total: 1,
+  });
   assert.equal(Object.isFrozen(verified.receipt), true);
   assert.equal(Object.isFrozen(verified.receipt.lifecycle), true);
 
@@ -604,6 +638,31 @@ test('native adapter derives, binds, and executes only one exact local task', as
     total: 1,
     active: 1,
   });
+  const forgedVitestSkip = resealNativeResult(
+    canonicalTypeScriptResult,
+    (value) => {
+      const ledger = value.caseLedger;
+      delete ledger.ledgerSha256;
+      ledger.cases[0].status = 'skipped';
+      ledger.counts = {
+        active: 0,
+        failed: 0,
+        passed: 0,
+        skipped: 1,
+        total: 1,
+      };
+      ledger.ledgerSha256 = canonicalJsonSha256(ledger);
+      value.totals.vitest = { active: 0, total: 1 };
+    }
+  );
+  assert.throws(
+    () =>
+      verifyDistributedNativeTaskResult(forgedVitestSkip, {
+        catalog: canonicalTypeScriptCatalog,
+        taskId: canonicalTypeScriptTaskId,
+      }),
+    /case ledger differs from retained execution report/
+  );
 
   const bindingAttacks = [
     (value) => {
@@ -690,6 +749,18 @@ test('native adapter derives, binds, and executes only one exact local task', as
       },
       /exact field set/,
     ],
+    [
+      (value) => {
+        value.receipt.stdout = 'changed evidence\n';
+      },
+      /hash-bound stdout evidence/,
+    ],
+    [
+      (value) => {
+        value.receipt.stdoutTruncated = true;
+      },
+      /TAP evidence stream was truncated/,
+    ],
   ];
   for (const [attack, message] of evidenceAttacks)
     assert.throws(
@@ -700,6 +771,28 @@ test('native adapter derives, binds, and executes only one exact local task', as
         }),
       message
     );
+  const forgedSkipResult = resealNativeResult(result, (value) => {
+    const ledger = value.caseLedger;
+    delete ledger.ledgerSha256;
+    ledger.cases[0].status = 'skipped';
+    ledger.counts = {
+      active: 0,
+      failed: 0,
+      passed: 0,
+      skipped: 1,
+      total: 1,
+    };
+    ledger.ledgerSha256 = canonicalJsonSha256(ledger);
+    value.totals['node-js'] = { active: 0, total: 1 };
+  });
+  assert.throws(
+    () =>
+      verifyDistributedNativeTaskResult(forgedSkipResult, {
+        catalog: first,
+        taskId: selected.taskId,
+      }),
+    /case ledger differs from retained execution report/
+  );
   assert.throws(
     () =>
       verifyDistributedNativeTaskResult(
@@ -819,5 +912,148 @@ test('native adapter derives, binds, and executes only one exact local task', as
         lockfileSha256: '0'.repeat(64),
       }),
     /candidate identity is invalid/
+  );
+});
+
+test('native adapter accepts only a nonempty, sealed, fully explicit skipped case closure', async (t) => {
+  const root = createFixture(t, { vitestStatus: 'skipped' });
+  const taskId = distributedNativeTaskId({
+    applicationId: 'fixture-app',
+    adapterId: 'vitest',
+    files: ['server/native-typescript.test.ts'],
+  });
+  const catalog = createDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+    allowedTaskIds: [taskId],
+  });
+  const result = await executeDistributedNativeTask({
+    root,
+    applicationId: 'fixture-app',
+    allowedTaskIds: [taskId],
+    expectedCandidate: catalog.candidate,
+    request: createDistributedNativeTaskRequest(catalog, taskId),
+    stdout: sink().stream,
+    stderr: sink().stream,
+  });
+
+  assert.equal(result.status, 'passed');
+  assert.deepEqual(result.totals.vitest, { active: 0, total: 1 });
+  assert.deepEqual(result.caseLedger.counts, {
+    active: 0,
+    failed: 0,
+    passed: 0,
+    skipped: 1,
+    total: 1,
+  });
+  assert.deepEqual(
+    result.caseLedger.cases.map(({ source, status }) => ({ source, status })),
+    [
+      {
+        source: 'server/native-typescript.test.ts',
+        status: 'skipped',
+      },
+    ]
+  );
+  assert.deepEqual(
+    verifyDistributedNativeTaskResult(result, { catalog, taskId }),
+    result
+  );
+
+  const attacks = [
+    [
+      resealNativeResult(result, (value) => {
+        delete value.caseLedger;
+      }),
+      /exact field set/,
+    ],
+    [
+      resealCaseLedger(result, (ledger) => {
+        ledger.cases = [];
+        ledger.counts = {
+          active: 0,
+          failed: 0,
+          passed: 0,
+          skipped: 0,
+          total: 0,
+        };
+      }),
+      /must contain cases/,
+    ],
+    [
+      resealCaseLedger(result, (ledger) => {
+        ledger.cases[0].status = 'unknown';
+      }),
+      /unknown status/,
+    ],
+    [
+      resealCaseLedger(result, (ledger) => {
+        ledger.files = ['src/vitest.test.ts'];
+      }),
+      /another file set/,
+    ],
+    [
+      resealNativeResult(result, (value) => {
+        value.caseLedger.ledgerSha256 = '0'.repeat(64);
+      }),
+      /case-ledger hash is invalid/,
+    ],
+    [
+      resealCaseLedger(result, (ledger) => {
+        ledger.reportBase64 = 'A'.repeat(
+          4 * Math.ceil((8 * 1024 * 1024) / 3) + 4
+        );
+      }),
+      /retained report evidence/,
+    ],
+    [
+      resealCaseLedger(result, (ledger) => {
+        ledger.cases[0].status = 'passed';
+      }),
+      /counts do not close/,
+    ],
+  ];
+  for (const [value, message] of attacks)
+    assert.throws(
+      () => verifyDistributedNativeTaskResult(value, { catalog, taskId }),
+      message
+    );
+});
+
+test('native adapter accepts a nonempty explicit Node TAP skip ledger', async (t) => {
+  const root = createFixture(t, { includeSkippedNative: true });
+  const taskId = distributedNativeTaskId({
+    applicationId: 'fixture-app',
+    adapterId: 'node-js',
+    files: ['scripts/skipped-native.test.mjs'],
+  });
+  const catalog = createDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+    allowedTaskIds: [taskId],
+  });
+  const result = await executeDistributedNativeTask({
+    root,
+    applicationId: 'fixture-app',
+    allowedTaskIds: [taskId],
+    expectedCandidate: catalog.candidate,
+    request: createDistributedNativeTaskRequest(catalog, taskId),
+    stdout: sink().stream,
+    stderr: sink().stream,
+  });
+
+  assert.deepEqual(result.totals['node-js'], { active: 0, total: 1 });
+  assert.deepEqual(result.caseLedger.counts, {
+    active: 0,
+    failed: 0,
+    passed: 0,
+    skipped: 1,
+    total: 1,
+  });
+  assert.deepEqual(
+    result.caseLedger.cases.map(({ status }) => status),
+    ['skipped']
+  );
+  assert.deepEqual(
+    verifyDistributedNativeTaskResult(result, { catalog, taskId }),
+    result
   );
 });

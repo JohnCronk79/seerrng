@@ -139,7 +139,12 @@ if (
 
   const result = spawnSync(
     process.execPath,
-    ['--test', `--test-concurrency=${workers}`, ...tests],
+    [
+      '--test',
+      '--test-reporter=tap',
+      `--test-concurrency=${workers}`,
+      ...tests,
+    ],
     {
       env: withGitBashOnPath(),
       stdio: 'inherit',

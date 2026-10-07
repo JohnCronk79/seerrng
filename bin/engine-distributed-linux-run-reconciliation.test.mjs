@@ -32,6 +32,10 @@ import { reconcileDistributedLinuxRunEvidence } from '../tools/validation-engine
 import { DISTRIBUTED_SHARD_RUN_SCHEMA } from '../tools/validation-engine/runtime/distributed-shard-executor.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import {
+  createNativeCaseLedgerFixture,
+  createNativeCaseReportFixture,
+} from './distributed-native-case-ledger-test-fixture.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const digest = (character) => character.repeat(64);
@@ -49,7 +53,7 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-function passingReceipt(wallMs = 1) {
+function passingReceipt(wallMs = 1, stdout = 'ok\n') {
   return {
     status: 'passed',
     exitCode: 0,
@@ -58,13 +62,13 @@ function passingReceipt(wallMs = 1) {
     timedOut: false,
     spawnError: null,
     wallMs,
-    stdout: 'ok\n',
+    stdout,
     stderr: '',
-    stdoutBytes: 3,
+    stdoutBytes: Buffer.byteLength(stdout),
     stderrBytes: 0,
     stdoutTruncated: false,
     stderrTruncated: false,
-    stdoutSha256: hash(Buffer.from('ok\n')),
+    stdoutSha256: hash(Buffer.from(stdout)),
     stderrSha256: hash(Buffer.alloc(0)),
     lifecycle: {
       spawned: true,
@@ -206,7 +210,11 @@ function createSchedule(catalog, candidate, profile, { fleet = false } = {}) {
 }
 
 function createNativeTaskResult(catalog, task) {
-  const receipt = passingReceipt(3);
+  const counts = { active: 1, total: 1 };
+  const receipt = passingReceipt(
+    3,
+    createNativeCaseReportFixture(task, counts)
+  );
   delete receipt.spawnError;
   const core = {
     schema: DISTRIBUTED_NATIVE_TASK_RESULT_SCHEMA,
@@ -217,7 +225,8 @@ function createNativeTaskResult(catalog, task) {
     adapterId: task.adapterId,
     files: task.files,
     status: 'passed',
-    totals: { [task.adapterId]: { active: 1, total: 1 } },
+    totals: { [task.adapterId]: counts },
+    caseLedger: createNativeCaseLedgerFixture(task, counts),
     receipt,
     wallMs: receipt.wallMs,
   };
@@ -1041,6 +1050,107 @@ test('rejects a shard outcome moved off its sealed node assignment', (t) => {
   assert.throws(
     () => reconcileDistributedLinuxRunEvidence(selected.input),
     /sealed assignment|changed assignment/u
+  );
+});
+
+test('rejects a fully resealed distributed report with zero aggregate active cases', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    const repository =
+      result.nativeEvidence['native-repository'].repositoryEvidence;
+    for (const outcome of repository.report.outcomes) {
+      const task = repository.catalog.tasks.find(
+        ({ taskId }) => taskId === outcome.shardId
+      );
+      assert.ok(task);
+      const total = outcome.result.totals[task.adapterId].total;
+      outcome.result.totals = {
+        [task.adapterId]: { active: 0, total },
+      };
+      outcome.result.caseLedger = createNativeCaseLedgerFixture(task, {
+        active: 0,
+        total,
+      });
+      const resultCore = { ...outcome.result };
+      delete resultCore.resultSha256;
+      outcome.result.resultSha256 = canonicalJsonSha256(resultCore);
+    }
+    repository.shards = clone(repository.report.outcomes);
+    resealRepositoryEvidence(result);
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /invalid aggregate case totals/u
+  );
+});
+
+test('accepts one fully resealed explicit-skip task when durable aggregate coverage remains active', (t) => {
+  const selected = fixture(t, { fleet: true });
+  rewriteResult(selected, (result) => {
+    const repository =
+      result.nativeEvidence['native-repository'].repositoryEvidence;
+    const outcome = repository.report.outcomes[0];
+    const task = repository.catalog.tasks.find(
+      ({ taskId }) => taskId === outcome.shardId
+    );
+    assert.ok(task);
+    const total = outcome.result.totals[task.adapterId].total;
+    outcome.result.totals = {
+      [task.adapterId]: { active: 0, total },
+    };
+    outcome.result.caseLedger = createNativeCaseLedgerFixture(task, {
+      active: 0,
+      total,
+    });
+    const resultCore = { ...outcome.result };
+    delete resultCore.resultSha256;
+    outcome.result.resultSha256 = canonicalJsonSha256(resultCore);
+    repository.shards = clone(repository.report.outcomes);
+    resealRepositoryEvidence(result);
+  });
+
+  const reconciliation = reconcileDistributedLinuxRunEvidence(selected.input);
+  assert.equal(reconciliation.status, 'passed');
+  assert.equal(
+    reconciliation.repositoryEvidence.shards.filter(
+      ({ result }) => result.caseLedger.counts.active === 0
+    ).length,
+    1
+  );
+});
+
+test('rejects a fully resealed distributed report with an empty case ledger', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    const repository =
+      result.nativeEvidence['native-repository'].repositoryEvidence;
+    const outcome = repository.report.outcomes[0];
+    const ledger = outcome.result.caseLedger;
+    ledger.cases = [];
+    ledger.counts = {
+      active: 0,
+      failed: 0,
+      passed: 0,
+      skipped: 0,
+      total: 0,
+    };
+    const ledgerCore = { ...ledger };
+    delete ledgerCore.ledgerSha256;
+    ledger.ledgerSha256 = canonicalJsonSha256(ledgerCore);
+    outcome.result.totals = {
+      [outcome.result.adapterId]: { active: 0, total: 0 },
+    };
+    const resultCore = { ...outcome.result };
+    delete resultCore.resultSha256;
+    outcome.result.resultSha256 = canonicalJsonSha256(resultCore);
+    repository.shards = clone(repository.report.outcomes);
+    resealRepositoryEvidence(result);
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /must contain cases/u
   );
 });
 

@@ -28,6 +28,11 @@ import { pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { detectWorkerCapacity } from '../tools/validation-engine/runtime/cpu-capacity.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import {
+  createDistributedNativeCaseLedger,
+  isExplicitlySkippedDistributedNativeCaseLedger,
+} from '../tools/validation-engine/runtime/distributed-native-case-ledger.mjs';
 
 const roots = ['server', 'src', 'bin', 'scripts', 'deploy', 'packaging'];
 const candidate = /\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/;
@@ -270,10 +275,10 @@ export function toolingOwnership(source, ts) {
         );
       invocation =
         argumentsText[0] === 'process.execPath' &&
-        [
-          "['--test',...tests]",
-          "['--test',`--test-concurrency=${workers}`,...tests]",
-        ].includes(argumentsText[1]);
+        new Set([
+          "['--test','--test-reporter=tap',`--test-concurrency=${workers}`,...tests]",
+          "['--test','--test-reporter=tap',`--test-concurrency=${workers}`,...tests,]",
+        ]).has(argumentsText[1]);
     }
     if (
       ts.isVariableDeclaration(node) &&
@@ -1027,10 +1032,16 @@ export async function executePlan(
     signal,
     workers,
     collectFailures = false,
+    caseLedgerObserver,
   } = {}
 ) {
   if (typeof collectFailures !== 'boolean')
     throw new Error('Internal failure collection must be explicit');
+  if (
+    caseLedgerObserver !== undefined &&
+    typeof caseLedgerObserver !== 'function'
+  )
+    throw new Error('Native case-ledger observer must be a function');
   if (
     workers !== undefined &&
     (!Number.isSafeInteger(workers) || workers < 1 || workers > 256)
@@ -1040,6 +1051,7 @@ export async function executePlan(
   const env = isolatedEnvironment(directory, inherited);
   const totals = new Map();
   const failures = [];
+  const caseCoverage = new Map();
   let preserveTemporary = false;
   try {
     for (const original of plan.steps) {
@@ -1116,8 +1128,12 @@ export async function executePlan(
       }
       if (step.kind !== 'check') {
         let count;
+        let vitestReport;
+        let vitestReportBytes;
         if (step.kind === 'vitest') {
-          const result = JSON.parse(readFileSync(report, 'utf8'));
+          vitestReportBytes = readFileSync(report);
+          const result = JSON.parse(vitestReportBytes.toString('utf8'));
+          vitestReport = result;
           count = {
             total: result.numTotalTests,
             active: result.numPassedTests + result.numFailedTests,
@@ -1159,6 +1175,32 @@ export async function executePlan(
               'Vitest excluded or added files outside its discovered ownership; refusing partial success'
             );
         } else count = testCount(output);
+        if (caseLedgerObserver) {
+          const ledger = createDistributedNativeCaseLedger({
+            adapterId: step.kind,
+            files: [...step.files].toSorted(),
+            root: plan.root,
+            stdout: output,
+            vitestReport,
+            vitestReportBytes,
+          });
+          if (
+            ledger.counts.total !== count.total ||
+            ledger.counts.active !== count.active
+          )
+            throw new Error(
+              'Distributed native case ledger differs from execution totals'
+            );
+          caseLedgerObserver(ledger);
+          const coverage = caseCoverage.get(step.kind) ?? {
+            steps: 0,
+            explicitlySkippedSteps: 0,
+          };
+          coverage.steps += 1;
+          if (isExplicitlySkippedDistributedNativeCaseLedger(ledger))
+            coverage.explicitlySkippedSteps += 1;
+          caseCoverage.set(step.kind, coverage);
+        }
         if (
           collectFailures &&
           (count.total !== nativeCount.total ||
@@ -1173,7 +1215,11 @@ export async function executePlan(
       }
     }
     for (const [kind, count] of totals) {
-      if (count.total <= 0 || count.active <= 0)
+      const coverage = caseCoverage.get(kind);
+      const allStepsExplicitlySkipped =
+        coverage?.steps > 0 &&
+        coverage.steps === coverage.explicitlySkippedSteps;
+      if (count.total <= 0 || (count.active <= 0 && !allStepsExplicitlySkipped))
         throw new Error(`Unexpected zero active tests: ${kind}`);
     }
     if (!totals.size) throw new Error('No test lanes executed');
