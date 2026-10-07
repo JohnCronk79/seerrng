@@ -27,6 +27,7 @@ import {
 } from '@server/lib/scanners/jellyfin';
 import { lidarrScanner } from '@server/lib/scanners/lidarr';
 import { lazyLibrarianScanner } from '@server/lib/scanners/magazines/lazylibrarian';
+import { navidromeScanner } from '@server/lib/scanners/navidrome';
 import { plexFullScanner, plexRecentScanner } from '@server/lib/scanners/plex';
 import { radarrScanner } from '@server/lib/scanners/radarr';
 import { readarrScanner } from '@server/lib/scanners/readarr';
@@ -413,6 +414,24 @@ export const startJobs = (): void => {
     cancelFn: () => {
       readarrScanner.cancel();
       audiobookshelfScanner.cancel();
+    },
+  });
+
+  scheduledJobs.push({
+    id: 'navidrome-scan',
+    name: 'Navidrome Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['navidrome-scan'].schedule,
+    job: schedule.scheduleJob(jobs['navidrome-scan'].schedule, () => {
+      logger.info('Starting scheduled job: Navidrome Scan', { label: 'Jobs' });
+      return runTrackedJob('Navidrome Scan', async () => {
+        await navidromeScanner.run();
+      });
+    }),
+    running: () => navidromeScanner.status().running,
+    cancelFn: () => {
+      navidromeScanner.cancel();
     },
   });
 

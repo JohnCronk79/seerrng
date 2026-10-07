@@ -312,6 +312,14 @@ export interface ReadarrSettings extends DVRSettings {
   serviceType?: 'ebook' | 'audiobook';
 }
 
+/** A Navidrome server used only to mark music as available. */
+export interface NavidromeSettings {
+  url: string;
+  username: string;
+  password: string;
+  syncEnabled: boolean;
+}
+
 export interface AudiobookshelfSettings {
   id: number;
   name: string;
@@ -675,6 +683,7 @@ export type JobId =
   | 'sonarr-scan'
   | 'lidarr-scan'
   | 'readarr-scan'
+  | 'navidrome-scan'
   | 'readarr-request-retry'
   | 'mylar-scan'
   | 'kapowarr-scan'
@@ -747,6 +756,7 @@ export interface AllSettings {
   lidarr: LidarrSettings[];
   readarr: ReadarrSettings[];
   audiobookshelf?: AudiobookshelfSettings | null;
+  navidrome?: NavidromeSettings | null;
   mylar: MylarSettings[];
   kapowarr: KapowarrSettings[];
   backissue: BackIssueSettings[];
@@ -869,6 +879,7 @@ class Settings {
       lidarr: [],
       readarr: [],
       audiobookshelf: null,
+      navidrome: null,
       mylar: [],
       kapowarr: [],
       backissue: [],
@@ -1055,6 +1066,9 @@ class Settings {
         },
         'readarr-scan': {
           schedule: '0 45 4 * * *',
+        },
+        'navidrome-scan': {
+          schedule: '0 15 5 * * *',
         },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
@@ -1373,6 +1387,14 @@ class Settings {
 
   get audiobookshelf(): AudiobookshelfSettings | null {
     return this.data.audiobookshelf ?? null;
+  }
+
+  get navidrome(): NavidromeSettings | null {
+    return this.data.navidrome ?? null;
+  }
+
+  set navidrome(data: NavidromeSettings | null) {
+    this.data.navidrome = data;
   }
 
   set audiobookshelf(data: AudiobookshelfSettings | null) {
@@ -1813,6 +1835,7 @@ class Settings {
       lidarr: [],
       readarr: [],
       audiobookshelf: null,
+      navidrome: null,
       mylar: [],
       kapowarr: [],
       backissue: [],
@@ -1998,6 +2021,9 @@ class Settings {
         },
         'readarr-scan': {
           schedule: '0 45 4 * * *',
+        },
+        'navidrome-scan': {
+          schedule: '0 15 5 * * *',
         },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',

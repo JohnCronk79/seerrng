@@ -38,6 +38,7 @@ import type {
   LazyLibrarianSettings,
   LidarrSettings,
   MylarSettings,
+  NavidromeSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -56,6 +57,9 @@ const BackIssueModal = dynamic(
 );
 const AudiobookshelfModal = dynamic(
   () => import('@app/components/Settings/AudiobookshelfModal')
+);
+const NavidromeModal = dynamic(
+  () => import('@app/components/Settings/NavidromeModal')
 );
 const LazyLibrarianModal = dynamic(
   () => import('@app/components/Settings/LazyLibrarianModal')
@@ -87,6 +91,10 @@ const messages = defineMessages('components.Settings', {
   audiobookshelfDescription:
     'Optionally sync an Audiobookshelf book library so SeerrNG can recognize matching audiobooks that are already available. This connection is read-only and does not send acquisition requests.',
   addAudiobookshelf: 'Connect Audiobookshelf library',
+  navidromesettings: 'Navidrome Availability',
+  navidromeDescription:
+    'Optionally read a Navidrome music library so SeerrNG can recognize albums you already have. Albums are matched by MusicBrainz ID. This connection is read-only.',
+  addNavidrome: 'Connect Navidrome Server',
   videoServiceSettingsDescription:
     'Configure your {serverType} server(s) below. You can connect multiple {serverType} servers, but only two of them can be marked as defaults (one non-4K and one 4K). Administrators are able to override the server used to process new requests prior to approval.',
   musicServiceSettingsDescription:
@@ -362,6 +370,8 @@ const SettingsServices = () => {
   } = useSWR<ReadarrSettings[]>('/api/v1/settings/readarr');
   const { data: audiobookshelfData, mutate: revalidateAudiobookshelf } =
     useSWR<AudiobookshelfSettings | null>('/api/v1/settings/audiobookshelf');
+  const { data: navidromeData, mutate: revalidateNavidrome } =
+    useSWR<NavidromeSettings | null>('/api/v1/settings/navidrome');
   const {
     data: mylarData,
     error: mylarError,
@@ -415,6 +425,7 @@ const SettingsServices = () => {
     readarr: null,
   });
   const [editAudiobookshelfModal, setEditAudiobookshelfModal] = useState(false);
+  const [editNavidromeModal, setEditNavidromeModal] = useState(false);
   const [editMylarModal, setEditMylarModal] = useState<{
     open: boolean;
     mylar: MylarSettings | null;
@@ -448,6 +459,7 @@ const SettingsServices = () => {
       | 'lidarr'
       | 'readarr'
       | 'audiobookshelf'
+      | 'navidrome'
       | 'mylar'
       | 'kapowarr'
       | 'backissue'
@@ -521,6 +533,8 @@ const SettingsServices = () => {
   const deleteServer = async () => {
     if (deleteServerModal.type === 'audiobookshelf') {
       await axios.delete('/api/v1/settings/audiobookshelf');
+    } else if (deleteServerModal.type === 'navidrome') {
+      await axios.delete('/api/v1/settings/navidrome');
     } else {
       await axios.delete(
         `/api/v1/settings/${deleteServerModal.type}/${deleteServerModal.serverId}`
@@ -536,6 +550,7 @@ const SettingsServices = () => {
     revalidateBackIssue();
     revalidateLazyLibrarian();
     revalidateAudiobookshelf();
+    revalidateNavidrome();
     mutate('/api/v1/settings/public');
   };
 
@@ -606,6 +621,16 @@ const SettingsServices = () => {
             revalidateReadarr();
             mutate('/api/v1/settings/public');
             setEditReadarrModal({ open: false, readarr: null });
+          }}
+        />
+      )}
+      {editNavidromeModal && (
+        <NavidromeModal
+          settings={navidromeData ?? null}
+          onClose={() => setEditNavidromeModal(false)}
+          onSave={() => {
+            revalidateNavidrome();
+            setEditNavidromeModal(false);
           }}
         />
       )}
@@ -699,7 +724,9 @@ const SettingsServices = () => {
                       ? 'BackIssue'
                       : deleteServerModal.type === 'audiobookshelf'
                         ? 'Audiobookshelf'
-                        : 'Bookshelf',
+                        : deleteServerModal.type === 'navidrome'
+                          ? 'Navidrome'
+                          : 'Bookshelf',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -1122,6 +1149,56 @@ const SettingsServices = () => {
           </>
         )}
       </div>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.navidromesettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.navidromeDescription)}
+        </p>
+      </div>
+      <ul className="settings-service-grid">
+        {navidromeData &&
+          (() => {
+            const url = new URL(navidromeData.url);
+            return (
+              <ServerInstance
+                name={`${navidromeData.username} · Navidrome`}
+                hostname={url.hostname}
+                port={
+                  url.port
+                    ? Number(url.port)
+                    : url.protocol === 'https:'
+                      ? 443
+                      : 80
+                }
+                isSSL={url.protocol === 'https:'}
+                onEdit={() => setEditNavidromeModal(true)}
+                onDelete={() =>
+                  setDeleteServerModal({
+                    open: true,
+                    serverId: null,
+                    type: 'navidrome',
+                  })
+                }
+              />
+            );
+          })()}
+        {!navidromeData && (
+          <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+            <div className="flex h-full w-full items-center justify-center">
+              <Button
+                buttonType="success"
+                buttonSize="standard"
+                onClick={() => setEditNavidromeModal(true)}
+              >
+                <PlusIcon />
+                <span>{intl.formatMessage(messages.addNavidrome)}</span>
+              </Button>
+            </div>
+          </li>
+        )}
+      </ul>
       <div className="mt-10 mb-6">
         <h3 className="heading">
           {intl.formatMessage(messages.mylarsettings)}

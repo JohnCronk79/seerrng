@@ -2,6 +2,7 @@ import { parseDownloadPathMappings } from '@server/lib/downloadPathMappings';
 import type {
   AllSettings,
   AudiobookshelfSettings,
+  NavidromeSettings,
   NotificationAgentKey,
 } from '@server/lib/settings';
 import fs from 'node:fs';
@@ -28,6 +29,7 @@ export type ExternalRuntimeConfig = Pick<
   | 'lidarr'
   | 'readarr'
   | 'audiobookshelf'
+  | 'navidrome'
   | 'mylar'
   | 'kapowarr'
   | 'backissue'
@@ -84,6 +86,20 @@ const normalizeServarrServices = (
       is4k: settings.is4k === true,
     };
   });
+};
+
+const normalizeNavidrome = (value: unknown): NavidromeSettings | null => {
+  if (value === undefined || value === null) return null;
+  const settings = assertRecord(value, 'navidrome');
+  if (
+    typeof settings.url !== 'string' ||
+    typeof settings.username !== 'string' ||
+    typeof settings.password !== 'string' ||
+    typeof settings.syncEnabled !== 'boolean'
+  ) {
+    throw new Error('SEERR_EXTERNAL_CONFIG.navidrome is invalid');
+  }
+  return settings as unknown as NavidromeSettings;
 };
 
 const normalizeAudiobookshelf = (
@@ -146,6 +162,7 @@ const validate = (value: unknown): ExternalRuntimeConfig => {
     lidarr: normalizeServarrServices(root.lidarr, 'lidarr'),
     readarr: normalizeServarrServices(root.readarr, 'readarr'),
     audiobookshelf: normalizeAudiobookshelf(root.audiobookshelf),
+    navidrome: normalizeNavidrome(root.navidrome),
     // Lenient for optional comics and magazine services: SEERR_EXTERNAL_CONFIG
     // is hand-maintained or may predate an integration, so missing keys mean
     // no configured instances.
@@ -197,6 +214,7 @@ const loadFromSettingsFile = (): ExternalRuntimeConfig | undefined => {
       lidarr: settings.lidarr ?? [],
       readarr: settings.readarr ?? [],
       audiobookshelf: settings.audiobookshelf ?? null,
+      navidrome: settings.navidrome ?? null,
       mylar: settings.mylar ?? [],
       kapowarr: settings.kapowarr ?? [],
       backissue: settings.backissue ?? [],
