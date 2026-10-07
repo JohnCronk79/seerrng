@@ -8,6 +8,7 @@ import {
   isValidHttpUrl,
   redactSecrets,
 } from '@server/utils/security';
+import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import {
   parseBoundedString,
   parseOptionalBoundedString,
@@ -33,6 +34,10 @@ export const parseNavidromeSettings = (
   if ('error' in url) return url;
   if (!isValidHttpUrl(url.value)) {
     return { error: 'Navidrome URL must be a valid HTTP or HTTPS address.' };
+  }
+  const parsedUrl = new URL(url.value);
+  if (parsedUrl.search || parsedUrl.hash) {
+    return { error: 'Navidrome URL must not include a query or fragment.' };
   }
 
   const username = parseBoundedString(record.username, {
@@ -60,7 +65,7 @@ export const parseNavidromeSettings = (
 
   return {
     value: {
-      url: url.value.replace(/\/+$/, ''),
+      url: trimTrailingSlashes(url.value),
       username: username.value,
       password,
       syncEnabled: record.syncEnabled,

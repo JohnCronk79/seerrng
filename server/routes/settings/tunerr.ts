@@ -80,7 +80,15 @@ export const parseTunerrSettings = (
   if (guideUrl.trim()) {
     try {
       const parsed = new URL(guideUrl.trim());
-      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
+      if (
+        !['http:', 'https:'].includes(parsed.protocol) ||
+        !parsed.hostname ||
+        parsed.username ||
+        parsed.password ||
+        parsed.hash
+      ) {
+        throw new Error();
+      }
     } catch {
       return { error: 'Guide URL must be an http or https address.' };
     }

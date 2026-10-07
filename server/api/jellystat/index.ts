@@ -1,4 +1,9 @@
 import type { JellystatSettings } from '@server/lib/settings';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
+import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import axios from 'axios';
 
 /**
@@ -38,7 +43,17 @@ export default class JellystatAPI {
   private readonly root: string;
 
   constructor(private readonly settings: JellystatSettings) {
-    this.root = settings.url.replace(/\/+$/, '');
+    this.root = trimTrailingSlashes(settings.url);
+  }
+
+  private async requestUrl(path: string): Promise<string> {
+    const safeUrl = await createSafeHttpUrl(`${this.root}${path}`, {
+      allowPrivateAddresses: true,
+    });
+    if (!safeUrl) {
+      throw new Error('Jellystat service URL is invalid.');
+    }
+    return stringifySafeHttpUrl(safeUrl);
   }
 
   private headers(): Record<string, string> {
@@ -56,13 +71,16 @@ export default class JellystatAPI {
 
   /** Confirms the server is reachable and the API key is accepted. */
   public async ping(): Promise<void> {
-    const response = await axios.get(`${this.root}/stats/getLibraryOverview`, {
-      headers: this.headers(),
-      timeout: 15_000,
-      maxRedirects: 0,
-      maxContentLength: 4 * 1024 * 1024,
-      validateStatus: () => true,
-    });
+    const response = await axios.get(
+      await this.requestUrl('/stats/getLibraryOverview'),
+      {
+        headers: this.headers(),
+        timeout: 15_000,
+        maxRedirects: 0,
+        maxContentLength: 4 * 1024 * 1024,
+        validateStatus: () => true,
+      }
+    );
     await this.assertOk(response.status);
     if (!Array.isArray(response.data)) {
       throw new Error('Jellystat returned an invalid library overview.');
@@ -74,7 +92,7 @@ export default class JellystatAPI {
     jellyfinItemId: string
   ): Promise<JellystatItemPlayback> {
     const response = await axios.post(
-      `${this.root}/stats/getGlobalItemStats`,
+      await this.requestUrl('/stats/getGlobalItemStats'),
       { hours: JELLYSTAT_LIFETIME_HOURS, itemid: jellyfinItemId },
       {
         headers: this.headers(),

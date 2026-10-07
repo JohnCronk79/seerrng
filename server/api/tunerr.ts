@@ -1,4 +1,8 @@
 import type { TunerrSettings } from '@server/lib/settings';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
 import type { AxiosRequestConfig } from 'axios';
 import axios from 'axios';
@@ -121,6 +125,16 @@ export default class TunerrAPI {
     );
   }
 
+  private async safeUrl(value: string, what: string): Promise<string> {
+    const safeUrl = await createSafeHttpUrl(value, {
+      allowPrivateAddresses: true,
+    });
+    if (!safeUrl) {
+      throw new TunerrError(`Tunerr ${what} URL is invalid.`, 'connection');
+    }
+    return stringifySafeHttpUrl(safeUrl);
+  }
+
   private auth() {
     return this.settings.username || this.settings.password
       ? { username: this.settings.username, password: this.settings.password }
@@ -156,11 +170,14 @@ export default class TunerrAPI {
   }
 
   private async get<T>(path: string, what: string): Promise<T> {
-    const response = await axios.get<T>(this.deckUrl(path), {
-      ...REQUEST_CONFIG,
-      auth: this.auth(),
-      headers: { Accept: 'application/json' },
-    });
+    const response = await axios.get<T>(
+      await this.safeUrl(this.deckUrl(path), 'deck'),
+      {
+        ...REQUEST_CONFIG,
+        auth: this.auth(),
+        headers: { Accept: 'application/json' },
+      }
+    );
     return this.check(response.status, response.data, what);
   }
 
@@ -187,7 +204,7 @@ export default class TunerrAPI {
 
   private async postRules(body: Record<string, unknown>) {
     const response = await axios.post<TunerrRecordingRuleset>(
-      this.deckUrl('/recordings/rules.json'),
+      await this.safeUrl(this.deckUrl('/recordings/rules.json'), 'deck'),
       body,
       {
         ...REQUEST_CONFIG,
@@ -237,13 +254,16 @@ export default class TunerrAPI {
 
   /** Streams the XMLTV guide. The caller must consume or destroy it. */
   public async openGuide(): Promise<Readable> {
-    const response = await axios.get<Readable>(this.guideUrl(), {
-      ...REQUEST_CONFIG,
-      timeout: 120_000,
-      maxContentLength: MAX_GUIDE_BYTES,
-      responseType: 'stream',
-      decompress: true,
-    });
+    const response = await axios.get<Readable>(
+      await this.safeUrl(this.guideUrl(), 'guide'),
+      {
+        ...REQUEST_CONFIG,
+        timeout: 120_000,
+        maxContentLength: MAX_GUIDE_BYTES,
+        responseType: 'stream',
+        decompress: true,
+      }
+    );
     if (response.status !== 200) {
       response.data.destroy();
       throw new TunerrError(

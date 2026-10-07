@@ -1,4 +1,8 @@
 import type { SlskdnSettings } from '@server/lib/settings';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
 import { buildServiceUrl } from '@server/utils/serviceUrl';
 import type { AxiosRequestConfig } from 'axios';
 import axios from 'axios';
@@ -115,6 +119,16 @@ export default class SlskdnAPI {
     });
   }
 
+  private async safeUrl(path: string): Promise<string> {
+    const safeUrl = await createSafeHttpUrl(this.url(path), {
+      allowPrivateAddresses: true,
+    });
+    if (!safeUrl) {
+      throw new SlskdnError('slskdN service URL is invalid.', 'connection');
+    }
+    return stringifySafeHttpUrl(safeUrl);
+  }
+
   private async request<T>(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
@@ -126,7 +140,7 @@ export default class SlskdnAPI {
       response = await axios.request<T>({
         ...REQUEST_CONFIG,
         method,
-        url: this.url(path),
+        url: await this.safeUrl(path),
         data: options.data,
         params: options.params,
         paramsSerializer: { indexes: null },

@@ -298,7 +298,10 @@ describe('Deluge client', () => {
 
         if (method === 'auth.login') {
           assert.deepEqual(params, ['secret']);
-          response.setHeader('Set-Cookie', '_session_id=abc; Path=/');
+          response.setHeader(
+            'Set-Cookie',
+            '_session_id=abc; Path=/; HttpOnly; Secure; SameSite=Strict'
+          );
           return reply(true);
         }
         assert.equal(request.headers.cookie, '_session_id=abc');

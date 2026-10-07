@@ -4,6 +4,11 @@ import type { SwipeMediaType } from '@server/entity/SwipeDecision';
 import type { SwipeSettings } from '@server/lib/settings';
 import type { SwipeCard, TasteSignals } from '@server/lib/swipe/candidates';
 import logger from '@server/logger';
+import {
+  createSafeHttpUrl,
+  stringifySafeHttpUrl,
+} from '@server/utils/security';
+import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import axios from 'axios';
 import { z } from 'zod';
 
@@ -161,7 +166,7 @@ export class AiProviderError extends Error {
 
 /** Joins the base URL and path without doubling slashes. */
 export const openAiUrl = (baseUrl: string, path: string) =>
-  `${baseUrl.trim().replace(/\/+$/, '')}${path}`;
+  `${trimTrailingSlashes(baseUrl.trim())}${path}`;
 
 /**
  * Calls an OpenAI-compatible Chat Completions endpoint (OpenAI, Ollama,
@@ -170,9 +175,18 @@ export const openAiUrl = (baseUrl: string, path: string) =>
  * validated against RankingSchema.
  */
 export const callOpenAiRanking: RankingCall = async (settings, prompt) => {
+  const endpoint = await createSafeHttpUrl(
+    openAiUrl(settings.aiBaseUrl, '/chat/completions'),
+    { allowPrivateAddresses: true }
+  );
+  if (!endpoint) {
+    throw new AiProviderError('The AI provider URL is invalid.');
+  }
+  const requestUrl = stringifySafeHttpUrl(endpoint);
+
   const send = (responseFormat: Record<string, unknown>) =>
     axios.post(
-      openAiUrl(settings.aiBaseUrl, '/chat/completions'),
+      requestUrl,
       {
         model: settings.aiModel,
         messages: [
@@ -187,6 +201,8 @@ export const callOpenAiRanking: RankingCall = async (settings, prompt) => {
       {
         timeout: 120_000,
         maxContentLength: 2 * 1024 * 1024,
+        maxBodyLength: 2 * 1024 * 1024,
+        maxRedirects: 0,
         validateStatus: () => true,
         headers: settings.aiApiKey
           ? { Authorization: `Bearer ${settings.aiApiKey}` }

@@ -4,6 +4,7 @@ import {
   buildServiceUrl,
   normalizeServiceHostname,
   normalizeUrlBase,
+  trimSurroundingSlashes,
   trimTrailingSlashes,
 } from './serviceUrl';
 
@@ -11,6 +12,14 @@ describe('trimTrailingSlashes', () => {
   it('removes only trailing slashes', () => {
     assert.equal(trimTrailingSlashes('/sonarr///'), '/sonarr');
     assert.equal(trimTrailingSlashes('/sonarr/api'), '/sonarr/api');
+  });
+});
+
+describe('trimSurroundingSlashes', () => {
+  it('removes leading and trailing slashes without changing inner path slashes', () => {
+    assert.equal(trimSurroundingSlashes('///audio//books///'), 'audio//books');
+    assert.equal(trimSurroundingSlashes('audio/books'), 'audio/books');
+    assert.equal(trimSurroundingSlashes('////'), '');
   });
 });
 

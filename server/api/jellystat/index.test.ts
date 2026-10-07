@@ -151,5 +151,19 @@ describe('Jellystat settings parsing', () => {
     assert.ok(
       'error' in parseJellystatSettings({ url: 'http://j', apiKey: '' })
     );
+    assert.ok(
+      'error' in
+        parseJellystatSettings({
+          url: 'http://jellystat?redirect=example',
+          apiKey: 'k',
+        })
+    );
+    assert.ok(
+      'error' in
+        parseJellystatSettings({
+          url: 'http://jellystat/#fragment',
+          apiKey: 'k',
+        })
+    );
   });
 });

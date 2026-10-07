@@ -8,6 +8,7 @@ import {
   isValidHttpUrl,
   redactSecrets,
 } from '@server/utils/security';
+import { trimTrailingSlashes } from '@server/utils/serviceUrl';
 import { parseBoundedString } from '@server/utils/validation';
 import { Router } from 'express';
 
@@ -31,6 +32,10 @@ export const parseJellystatSettings = (
   if (!isValidHttpUrl(url.value)) {
     return { error: 'Jellystat URL must be a valid HTTP or HTTPS address.' };
   }
+  const parsedUrl = new URL(url.value);
+  if (parsedUrl.search || parsedUrl.hash) {
+    return { error: 'Jellystat URL must not include a query or fragment.' };
+  }
 
   const keyInput = parseBoundedString(record.apiKey, {
     fieldName: 'apiKey',
@@ -45,7 +50,7 @@ export const parseJellystatSettings = (
     return { error: 'Jellystat API key is required.' };
   }
 
-  return { value: { url: url.value.replace(/\/+$/, ''), apiKey } };
+  return { value: { url: trimTrailingSlashes(url.value), apiKey } };
 };
 
 routes.get('/', (_req, res) => {

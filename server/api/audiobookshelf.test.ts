@@ -86,6 +86,53 @@ it('uses the Audiobookshelf user token and paginates a selected library', async 
   }
 });
 
+it('does not follow redirects with the Audiobookshelf bearer token', async () => {
+  let redirectTargetRequested = false;
+  const target = createServer((_request, response) => {
+    redirectTargetRequested = true;
+    response.end('{}');
+  });
+  target.listen(0, '127.0.0.1');
+  await once(target, 'listening');
+  const targetAddress = target.address();
+  assert.ok(targetAddress && typeof targetAddress !== 'string');
+
+  const redirect = createServer((_request, response) => {
+    response.writeHead(302, {
+      Location: `http://127.0.0.1:${targetAddress.port}/capture`,
+    });
+    response.end();
+  });
+  redirect.listen(0, '127.0.0.1');
+  await once(redirect, 'listening');
+  const redirectAddress = redirect.address();
+  assert.ok(redirectAddress && typeof redirectAddress !== 'string');
+
+  const settings: AudiobookshelfSettings = {
+    id: 1,
+    name: 'Test Audiobookshelf',
+    hostname: '127.0.0.1',
+    port: redirectAddress.port,
+    apiKey: 'abs-user-token',
+    useSsl: false,
+    baseUrl: '',
+    libraryId: 'books',
+    libraryName: 'Books',
+    syncEnabled: true,
+  };
+
+  try {
+    await assert.rejects(new AudiobookshelfAPI(settings).getLibraries());
+    assert.equal(redirectTargetRequested, false);
+  } finally {
+    redirect.closeAllConnections();
+    target.closeAllConnections();
+    redirect.close();
+    target.close();
+    await Promise.all([once(redirect, 'close'), once(target, 'close')]);
+  }
+});
+
 it('builds an Audiobookshelf item link without exposing the API token', () => {
   const url = AudiobookshelfAPI.buildItemUrl(
     {
