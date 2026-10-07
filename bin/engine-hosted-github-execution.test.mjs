@@ -206,11 +206,16 @@ function fixture({ zeroCaseNativeFile = false } = {}) {
        ? portableTests
        : [...portableTests, ...posixOnlyTests];
      const workers = 2;
-     spawnSync(
-       process.execPath,
-       ['--test', \`--test-concurrency=\${workers}\`, ...tests],
-       { stdio: 'inherit' }
-     );
+      spawnSync(
+        process.execPath,
+        [
+          '--test',
+          '--test-reporter=tap',
+          \`--test-concurrency=\${workers}\`,
+          ...tests,
+        ],
+        { stdio: 'inherit' }
+      );
     `
   );
   write(root, 'server/native.test.ts', "import test from 'node:test';\n");

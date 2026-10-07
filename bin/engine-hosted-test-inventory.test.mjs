@@ -140,7 +140,7 @@ function fixture() {
      const workers = 2;
      spawnSync(
        process.execPath,
-       ['--test', \`--test-concurrency=\${workers}\`, ...tests],
+       ['--test', '--test-reporter=tap', \`--test-concurrency=\${workers}\`, ...tests],
        { stdio: 'inherit' }
      );
     `
@@ -498,6 +498,21 @@ test('tooling arrays must both reach the existing Node test runner', () => {
   );
   assert.throws(
     () => createHostedTestInventory(root),
+    /Hosted tooling execution binding drift/
+  );
+  const reporterDrift = fixture();
+  const reporterRunnerFile = path.join(
+    reporterDrift,
+    'bin/run-tooling-tests.mjs'
+  );
+  const reporterRunner = readFileSync(reporterRunnerFile, 'utf8');
+  write(
+    reporterDrift,
+    'bin/run-tooling-tests.mjs',
+    reporterRunner.replace("'--test-reporter=tap', ", '')
+  );
+  assert.throws(
+    () => createHostedTestInventory(reporterDrift),
     /Hosted tooling execution binding drift/
   );
 });

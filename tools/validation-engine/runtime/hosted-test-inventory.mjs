@@ -299,7 +299,7 @@ function toolingRegistry(root) {
       compact
     );
   const invocation =
-    /spawnSync\(process\.execPath,\[["']--test["'],`--test-concurrency=\$\{workers\}`,\.\.\.tests\],\{/.test(
+    /spawnSync\(process\.execPath,\[["']--test["'],["']--test-reporter=tap["'],`--test-concurrency=\$\{workers\}`,\.\.\.tests,?\],\{/.test(
       compact
     );
   if (
