@@ -595,6 +595,23 @@ export interface NotificationAgentGotify extends NotificationAgentConfig {
   };
 }
 
+/**
+ * Apprise API (https://github.com/caronc/apprise-api). The destination URLs
+ * stay in the Apprise configuration saved under `configKey`; SeerrNG only
+ * stores the API base URL and that key.
+ */
+export interface NotificationAgentApprise extends NotificationAgentConfig {
+  options: {
+    url: string;
+    configKey: string;
+    tag?: string;
+    authMethodUsernamePassword?: boolean;
+    username?: string;
+    password?: string;
+    locale: AvailableLocale;
+  };
+}
+
 export interface NotificationAgentNtfy extends NotificationAgentConfig {
   options: {
     url: string;
@@ -611,6 +628,7 @@ export interface NotificationAgentNtfy extends NotificationAgentConfig {
 }
 
 export enum NotificationAgentKey {
+  APPRISE = 'apprise',
   DISCORD = 'discord',
   EMAIL = 'email',
   GOTIFY = 'gotify',
@@ -624,6 +642,7 @@ export enum NotificationAgentKey {
 }
 
 interface NotificationAgents {
+  apprise: NotificationAgentApprise;
   discord: NotificationAgentDiscord;
   email: NotificationAgentEmail;
   gotify: NotificationAgentGotify;
@@ -978,6 +997,17 @@ class Settings {
               url: '',
               token: '',
               priority: 0,
+              locale: 'en',
+            },
+          },
+          apprise: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              configKey: '',
+              tag: '',
               locale: 'en',
             },
           },
@@ -1911,6 +1941,17 @@ class Settings {
               url: '',
               token: '',
               priority: 0,
+              locale: 'en',
+            },
+          },
+          apprise: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              configKey: '',
+              tag: '',
               locale: 'en',
             },
           },

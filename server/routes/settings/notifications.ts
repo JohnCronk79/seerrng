@@ -3,6 +3,7 @@ import { defineMessages, getIntl } from '@server/i18n';
 import { getExternalRuntimeConfig } from '@server/lib/externalRuntimeConfig';
 import { Notification } from '@server/lib/notifications';
 import type { NotificationAgent } from '@server/lib/notifications/agents/agent';
+import AppriseAgent from '@server/lib/notifications/agents/apprise';
 import DiscordAgent from '@server/lib/notifications/agents/discord';
 import EmailAgent from '@server/lib/notifications/agents/email';
 import GotifyAgent from '@server/lib/notifications/agents/gotify';
@@ -19,6 +20,7 @@ import WebPushAgent from '@server/lib/notifications/agents/webpush';
 import { Permission } from '@server/lib/permissions';
 import {
   getSettings,
+  type NotificationAgentApprise,
   type NotificationAgentConfig,
   type NotificationAgentDiscord,
   type NotificationAgentEmail,
@@ -102,6 +104,10 @@ const SLACK_NOTIFICATION_SCHEMA = {
 const GOTIFY_NOTIFICATION_SCHEMA = {
   stringOptions: ['token', 'locale'],
   priority: true,
+} as const satisfies UrlNotificationSchema;
+const APPRISE_NOTIFICATION_SCHEMA = {
+  stringOptions: ['configKey', 'tag', 'locale', 'username', 'password'],
+  booleanOptions: ['authMethodUsernamePassword'],
 } as const satisfies UrlNotificationSchema;
 const NTFY_NOTIFICATION_SCHEMA = {
   stringOptions: ['topic', 'locale', 'username', 'password', 'token'],
@@ -1585,6 +1591,104 @@ adminPost('/ntfy/test', async (req, res, next) => {
     return next({
       status: 500,
       message: 'Failed to send ntfy notification.',
+    });
+  }
+});
+
+/** Apprise config keys are simple identifiers; anything else is a path injection risk. */
+const APPRISE_CONFIG_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+const validateAppriseConfigKey = (
+  configKey: unknown
+): { status: number; message: string } | undefined =>
+  typeof configKey === 'string' && APPRISE_CONFIG_KEY_PATTERN.test(configKey)
+    ? undefined
+    : {
+        status: 400,
+        message:
+          'Apprise configuration key must be 1 to 64 letters, numbers, hyphens, or underscores.',
+      };
+
+notificationRoutes.get('/apprise', (_req, res) => {
+  const settings = getSettings();
+
+  res.status(200).json(redactSecrets(settings.notifications.agents.apprise));
+});
+
+adminPost('/apprise', async (req, res) => {
+  const parsedBody = parseUrlNotificationBody(
+    req.body,
+    'apprise',
+    APPRISE_NOTIFICATION_SCHEMA
+  );
+  if ('error' in parsedBody) {
+    return res.status(parsedBody.error.status).json(parsedBody.error);
+  }
+  const body = parsedBody.value;
+  const keyError = body.enabled
+    ? validateAppriseConfigKey(body.options.configKey)
+    : undefined;
+  if (keyError) {
+    return res.status(keyError.status).json(keyError);
+  }
+  const validationError = body.enabled
+    ? await validateNotificationUrl(body.options.url, 'Apprise URL')
+    : undefined;
+
+  if (validationError) {
+    return res.status(validationError.status).json(validationError);
+  }
+
+  const apprise = await persistNotificationAgent(
+    'apprise',
+    body as NotificationAgentApprise
+  );
+
+  res.status(200).json(redactSecrets(apprise));
+});
+
+adminPost('/apprise/test', async (req, res, next) => {
+  if (!req.user) {
+    return next({
+      status: 500,
+      message: 'User information is missing from the request.',
+    });
+  }
+
+  const parsedBody = parseUrlNotificationBody(
+    req.body,
+    'apprise',
+    APPRISE_NOTIFICATION_SCHEMA
+  );
+  if ('error' in parsedBody) {
+    return next(parsedBody.error);
+  }
+  const body = preserveRedactedSecrets(
+    parsedBody.value as NotificationAgentApprise,
+    getExternalRuntimeConfig().notifications.agents.apprise
+  );
+
+  const keyError = validateAppriseConfigKey(body.options.configKey);
+  if (keyError) {
+    return next(keyError);
+  }
+
+  const validationError = await validateNotificationUrl(
+    body.options.url,
+    'Apprise URL'
+  );
+
+  if (validationError) {
+    return next(validationError);
+  }
+
+  const appriseAgent = new AppriseAgent(body as NotificationAgentApprise);
+  if (await sendTestNotification(appriseAgent, req.user)) {
+    return res.status(204).send();
+  } else {
+    return next({
+      status: 500,
+      message: 'Failed to send Apprise notification.',
     });
   }
 });

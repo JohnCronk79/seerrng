@@ -54,6 +54,12 @@ const SettingsNotifications = ({ children }: SettingsNotificationsProps) => {
       regex: /^\/settings\/notifications\/webpush/,
     },
     {
+      text: 'Apprise',
+      content: 'Apprise',
+      route: '/settings/notifications/apprise',
+      regex: /^\/settings\/notifications\/apprise/,
+    },
+    {
       text: 'Discord',
       content: (
         <span className="flex items-center">
