@@ -930,3 +930,42 @@ Per the maintainer's instruction, no build was run; another agent will handle
 it. The integration branch is being committed and pushed for that handoff.
 Merging into `main` remains deferred until the build and required checks are
 handled.
+
+## Current-main handoff — October 7, 2026
+
+The current handoff branch is `integration/ng-phase2-main-20261007`. Its latest
+target is `origin/main` at `1ba2da2033a8c26f5001c7e5a0d6ee58f670a7c1` (release
+`v3.53.0`); the common ancestor before the latest rebase was
+`cee6572ff86c9765d9ad89dfaaa5ea12626885a2`. The rebased source candidate before
+this checkpoint update is `bb8d853ee163fb735d8a08ebad85f12abb646946`.
+`git diff origin/main..HEAD` contains 59 files, 4,853 insertions, and 60
+deletions. No target-main file is deleted by the candidate.
+
+The latest-main updates are retained: the patched `sharp`, `proxy-addr`, and
+`source-map-js` pins and their release note; the Prowlarr Cypress request wait
+and explicit response bodies; and the PostgreSQL date-metadata regression plus
+issue 164 evidence. The first rebase onto `cee6572` revealed that an older
+phase branch would remove those updates. They were restored from main. When
+main advanced to `1ba2da20`, the restoration commit became empty against the new
+target and was skipped; the final tree retains the newer release and test
+changes.
+
+After the latest rebase, the focused command covering ReadMeABook routes,
+generated login links, user book settings, Swipe, Phase 7 SQLite migrations,
+and PostgreSQL date metadata passed **23 tests in six files**. The dependency
+lock check (`pnpm install --lockfile-only --frozen-lockfile --offline`) passed.
+Formatting passed with `pnpm format:check`. The release-note preview against
+the current `origin/main` contains the Bookshelf entry only.
+
+The cumulative `pnpm validate:development` attempt used Node 24.19.0 and pnpm
+10.24.0 before the last main advance. Its sandboxed attempt could not bind
+Supertest loopback listeners; the retry with loopback access passed all 104
+Vitest files (470 tests). Preliminary translation, current-batch (594 files),
+shared-style (421 components), formatting, lint, and server/client type checks
+also completed. The native TypeScript lane selected 417 files and was stopped
+after roughly an hour while still progressing; its TAP output had reached ID
+629, with no final count. Native JavaScript and tooling lanes did not run. This
+is partial evidence, not a passing cumulative gate. No build was run, as the
+maintainer assigned that to another agent. No live ReadMeABook/Hardcover
+round-trip or new visual/physical Swipe review was done. Do not merge into
+`main` until the remaining gate, build, and review are complete.

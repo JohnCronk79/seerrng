@@ -32,8 +32,9 @@ not override their verification or UI rules.
 
 ## Progress log
 
-Branch: `integration/ng-phase2-main-20261006`, rebased from
-`feat/ng-phase2-tunerr` onto `origin/main` at `116e3a447364`. Status values:
+Current handoff branch: `integration/ng-phase2-main-20261007`, rebased onto
+`origin/main` at `1ba2da2033a8c26f5001c7e5a0d6ee58f670a7c1` (release `v3.53.0`).
+It carries the Phase 7 work from `feat/ng-phase2-tunerr`. Status values:
 `done` (code and
 automated checks written and run), `built` (code written, not yet run against a
 real service), `pending`, `blocked`. Targeted local checks and cumulative-gate
@@ -56,13 +57,13 @@ yet.
 | 1 Stall signal for Download Recovery | pending | |
 | 1 Pre-approval free-space check | pending | Needs TorrentNG `/api/v1/storage`; other clients do not expose per-root free space the same way. |
 | 1 Per-category tags / ratio groups | pending | Would be the first write to a client; needs a maintainer decision. |
-| 2 Worktree | done | Phase 2 is on branch `feat/ng-phase2-tunerr` in worktree `~/Code/seerrng-phase2` because another editor is changing Phase 1 in `~/Code/seerrng`. Merge back to main when both are done. |
+| 2 Worktree | done | Phase 2 is on `integration/ng-phase2-main-20261007`, rebased onto the current `origin/main`. The branch is pushed for the assigned build and remaining gate handoff; merging into main is still pending. |
 | 2 Tunerr auth | done (no fork change) | The deck accepts HTTP Basic auth and proxies `/api/*` to the tuner from localhost. Requires `IPTV_TUNERR_WEBUI_ALLOW_LAN=1`. Resolves open question 1. |
 | 2 Guide index | done | Streaming XMLTV parser + title index over the tuner's `/guide.xml` (`server/lib/liveTv/`). The capsules API caps at 250 rows, so it is not used. 13 unit tests. |
 | 2 RecordingRequest entity + migrations | done | SQLite and Postgres migrations `1791040000000`; SQLite migration test. Postgres migration not run locally. |
 | 2 Live TV API + sync job | done | `/api/v1/live-tv/*`, `/api/v1/settings/tunerr`, `live-tv-sync` job. Integration test against a fake deck and guide (4 tests), OpenAPI validator test (5), settings parser (5). |
 | 2 UI | built | On Live TV button + dialog on movie/series pages, `/recordings` page, Settings → Services section. Component test (4). Needs human visual review. No sidebar entry yet (sidebar links cannot be conditional on settings today). |
-| 2 Tunerr fork: rule-driven recorder | done (local branch) | `~/Code/iptvtunerr` branch `feat/seerrng-recording-rules` (commit `0440d64`, not pushed): `title_equals`, `start_after`/`start_before`, response-only `features`, `catchup-daemon -rules-only`. 6 new Go tests; `go test ./...` passed. Tunerr `scripts/verify` not run (local Go 1.27 `gofmt` flags vendored files). Operators must run the recorder with `-rules-only`. |
+| 2 Tunerr fork: rule-driven recorder | done (pushed) | Branch `feat/seerrng-recording-rules` is at `f8340e5` (implementation `751ae6b`): `title_equals`, `start_after`/`start_before`, response-only `features`, `catchup-daemon -rules-only`. A clean isolated `./scripts/verify` passed, including Go tests, build, council, and binary smoke; GitHub Local Identity run `37630122249` passed. No real IPTV provider was available. Operators must run the recorder with `-rules-only`. |
 | 2 Live check: deck proxy + Basic auth from another host | pending | Verified from Tunerr source only; needs a local Tunerr run. |
 | 3 slskdN client + settings | done | `server/api/slskdn.ts` (X-API-Key), per-feature probes (wishlist, library health, SongID); `/api/v1/settings/slskdn`. Endpoints read from `~/slskdn-current` source. |
 | 3 Track requests | done | `TrackRequest` entity + migrations `1791050000000`, wishlist-backed search with approval, `soulseek-sync` job, `/api/v1/soulseek/track-requests*`. Integration test against a fake slskdN. |
@@ -73,7 +74,7 @@ yet.
 | 3 slskdN download progress in live progress | pending | slskdN transfers are not torrents; needs a separate adapter. |
 | 4 Goodreads lists in External Request List Sync | already present | SeerrNG already supports Goodreads lists (`ExternalRequestListProvider = 'imdb' \| 'goodreads'`). Hardcover want-to-read is not supported (needs a per-user Hardcover token). |
 | 4 ChaptarrNG direct download shown | done | Generalized: admins see the *arr queue's download client name (and protocol is carried) for every download. Non-admin projection drops it (test). |
-| 4 ROMarrNG DAT verification | done | ROMarrNG local branch `feat/seerrng-dat-verification` (commit `06a6a67`, not pushed): `datVerified` per asset + `assetDatVerification` capability; 2 new pytest tests; ROMarrNG suite 2206 passed, 1 pre-existing failure (`test_json_request_bodies_are_bounded_before_parsing`, also fails on clean HEAD here). SeerrNG shows a DAT Verified badge on available ROM requests. |
+| 4 ROMarrNG DAT verification | done (pushed) | Branch `feat/seerrng-dat-verification` is at `c9034b2`, rebased onto `origin/main` `064b2dbc`. It returns `datVerified` per asset and advertises `assetDatVerification`; SeerrNG shows the DAT status on available ROM requests. Focused DAT, placement, and HTTP contract tests passed 128/128 with loopback access. No live ROMarrNG service was used. |
 | 4 ROMarrNG collections / 1G1R full-set requests | pending | Needs new ROMarrNG contract endpoints for collections; not started. |
 | 4 BookshelfNG series-pack search, M4B option | pending | Needs BookshelfNG contract exposure; not started. |
 | 4 QuestarrNG RomM/Playnite state into My Games | pending | Needs QuestarrNG contract exposure; not started. |
@@ -416,9 +417,10 @@ feature covers movies, series, and books.
 
 ## Phase 7: ReadMeABook and per-user book integration
 
-Status: implemented on `feat/ng-phase2-tunerr` and rebased on current `main` in
-`integration/ng-phase2-main-20261006`; a passing cumulative gate is still
-required before finalization. SeerrNG remains the request layer. ReadMeABook owns the
+Status: implemented on `feat/ng-phase2-tunerr` and carried on
+`integration/ng-phase2-main-20261007`, rebased onto `origin/main` at
+`1ba2da2033a8c26f5001c7e5a0d6ee58f670a7c1`. A passing cumulative gate and build
+are still required before finalization. SeerrNG remains the request layer. ReadMeABook owns the
 download and processing pipeline; SeerrNG uses its token-authenticated API and
 does not duplicate its indexer search/ranking, download clients, organization,
 M4B chapter merging, release blocklist, import, or ebook sidecar.
@@ -436,11 +438,12 @@ SQLite and PostgreSQL migrations are included: `1791090000000` through
 `1791120000000`; these follow main's theme-adoption migration at `1791080000000`.
 A collision check covers both migration histories, and the SQLite migration
 suite passes; PostgreSQL migrations were not run locally. The exact new feature
-tests pass in focused reruns. The full
-native TypeScript lane currently has intermittent login-helper failures in
-unrelated discovery/request/user tests; those cases pass alone and the affected
-discovery/request slice passed 315/315 on a subsequent run. A complete required
-validation/build pass is still pending. No live ReadMeABook or Hardcover
+tests pass in focused reruns. The latest focused post-rebase run passed 23 tests
+across six Phase 7 and PostgreSQL metadata suites. The most recent cumulative
+validation attempt passed its 104-file Vitest lane (470 tests), then was
+interrupted during the native TypeScript lane; native JavaScript and tooling
+lanes were not reached. A complete required validation/build pass is still
+pending. No live ReadMeABook or Hardcover
 round-trip, desktop/narrow visual review, or physical Swipe interaction review
 has been performed; see the current evidence entry in
 `interface-integration-checkpoint.md`.
