@@ -82,6 +82,13 @@ const writeNodeArchitectureShim = (fixture) =>
     { mode: 0o755 }
   );
 
+const writeUnameShim = (fixture, system, machine) =>
+  fs.writeFile(
+    path.join(fixture.executableDirectory, 'uname'),
+    `#!/bin/sh\nif [ "$1" = "-s" ]; then printf '%s\\n' '${system}'; else printf '%s\\n' '${machine}'; fi\n`,
+    { mode: 0o755 }
+  );
+
 const run = (fixture, arguments_, environment = {}) =>
   new Promise((resolve) => {
     const child = spawn(fixture.script, arguments_, {
@@ -103,6 +110,35 @@ const run = (fixture, arguments_, environment = {}) =>
     });
     child.on('close', (code) => resolve({ code, output }));
   });
+
+const runForPlatformAndNodeArchitecture = async (
+  fixture,
+  arguments_,
+  system,
+  machine,
+  architecture,
+  environment = {}
+) => {
+  await Promise.all([
+    writeNodeArchitectureShim(fixture),
+    writeUnameShim(fixture, system, machine),
+  ]);
+  return run(fixture, arguments_, {
+    ...environment,
+    TEST_NODE_ARCH: architecture,
+    TEST_NODE_BINARY: process.execPath,
+  });
+};
+
+const runAsLinuxX64 = (fixture, arguments_, environment = {}) =>
+  runForPlatformAndNodeArchitecture(
+    fixture,
+    arguments_,
+    'Linux',
+    'x86_64',
+    'x64',
+    environment
+  );
 
 const extractArchive = (archive, destination) =>
   new Promise((resolve, reject) => {
@@ -133,7 +169,7 @@ describe('release asset construction', () => {
     await fs.writeFile(sentinel, 'unchanged');
     await fs.symlink(sentinel, archive);
 
-    const result = await run(fixture, ['v1.2.3', distribution]);
+    const result = await runAsLinuxX64(fixture, ['v1.2.3', distribution]);
 
     assert.equal(result.code, 0, result.output);
     assert.match(
@@ -222,7 +258,7 @@ describe('release asset construction', () => {
       path.join(fixture.root, 'public', 'escape')
     );
 
-    const result = await run(fixture, ['v1.2.3', distribution]);
+    const result = await runAsLinuxX64(fixture, ['v1.2.3', distribution]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.output, /Refusing absolute archive symlink/);
@@ -238,7 +274,7 @@ describe('release asset construction', () => {
     const asset = 'seerrng-v1.2.3-linux-x64';
     const archive = path.join(distribution, `${asset}.tar.gz`);
     await fs.mkdir(distribution);
-    const result = await run(fixture, ['v1.2.3', distribution]);
+    const result = await runAsLinuxX64(fixture, ['v1.2.3', distribution]);
 
     assert.equal(result.code, 0, result.output);
     const extracted = path.join(fixture.root, 'extracted');
@@ -256,19 +292,19 @@ describe('release asset construction', () => {
     const archiverLog = path.join(fixture.root, 'archiver.log');
     await fs.mkdir(distribution);
     await fs.writeFile(
-      path.join(fixture.executableDirectory, 'uname'),
-      '#!/bin/sh\nif [ "$1" = "-s" ]; then echo MINGW64_NT; else echo x86_64; fi\n',
-      { mode: 0o755 }
-    );
-    await fs.writeFile(
       path.join(fixture.executableDirectory, '7z'),
       '#!/bin/sh\nprintf \'%s\\n\' "$*" >"$ARCHIVER_LOG"\nprevious_argument=\'\'\nfor argument in "$@"; do\n  archive_path="$previous_argument"\n  stage_path="$argument"\n  previous_argument="$argument"\ndone\nzip -qr "$archive_path" "$stage_path"\n',
       { mode: 0o755 }
     );
 
-    const result = await run(fixture, ['v1.2.3', distribution], {
-      ARCHIVER_LOG: archiverLog,
-    });
+    const result = await runForPlatformAndNodeArchitecture(
+      fixture,
+      ['v1.2.3', distribution],
+      'MINGW64_NT',
+      'x86_64',
+      'x64',
+      { ARCHIVER_LOG: archiverLog }
+    );
 
     assert.equal(result.code, 0, result.output);
     assert.match(
@@ -306,12 +342,13 @@ describe('release asset construction', () => {
   it('rejects Linux ARMv7 without a supported Node.js 24 runtime', async () => {
     const fixture = await createFixture();
     const distribution = path.join(fixture.root, 'dist-release');
-    await writeNodeArchitectureShim(fixture);
-
-    const result = await run(fixture, ['v1.2.3', distribution], {
-      TEST_NODE_ARCH: 'armv7l',
-      TEST_NODE_BINARY: process.execPath,
-    });
+    const result = await runForPlatformAndNodeArchitecture(
+      fixture,
+      ['v1.2.3', distribution],
+      'Linux',
+      'armv7l',
+      'armv7l'
+    );
 
     assert.notEqual(result.code, 0);
     assert.match(
@@ -327,12 +364,13 @@ describe('release asset construction', () => {
   it('rejects an architecture outside the published archive matrix', async () => {
     const fixture = await createFixture();
     const distribution = path.join(fixture.root, 'dist-release');
-    await writeNodeArchitectureShim(fixture);
-
-    const result = await run(fixture, ['v1.2.3', distribution], {
-      TEST_NODE_ARCH: 'riscv64',
-      TEST_NODE_BINARY: process.execPath,
-    });
+    const result = await runForPlatformAndNodeArchitecture(
+      fixture,
+      ['v1.2.3', distribution],
+      'Linux',
+      'riscv64',
+      'riscv64'
+    );
 
     assert.notEqual(result.code, 0);
     assert.match(
