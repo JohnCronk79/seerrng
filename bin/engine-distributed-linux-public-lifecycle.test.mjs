@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -21,16 +23,20 @@ import {
 } from '../tools/validation-engine/runtime/distributed-linux-host-containment.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import {
+  DISTRIBUTED_LINUX_CONTAINED_ENGINE_BIN,
   DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA,
   DISTRIBUTED_LINUX_HOST_PROFILE_FILE,
   DISTRIBUTED_LINUX_HOST_PROFILE_SCHEMA,
   DISTRIBUTED_LINUX_TIMING_PROFILE_FILE,
+  createDistributedLinuxContainedYamlToolWrappers,
   createDistributedLinuxHostLifecycleManifest,
   executeDistributedLinuxPublicLifecycle,
   fetchAuthenticatedGitState,
   normalizeDistributedLinuxHostProfile,
   runDistributedLinuxProofClientCommand,
 } from '../tools/validation-engine/runtime/distributed-linux-public-lifecycle.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
+import { findNativeExecutable } from '../tools/validation-engine/runtime/native-stage-context.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import {
   DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
@@ -299,6 +305,10 @@ test('generated manifest is accepted by the real containment planner', (t) => {
   });
   assert.equal(plan.manifest.inputs.candidate.target, '/app');
   assert.equal(plan.manifest.inputs.dependencies.target, '/app/node_modules');
+  assert.equal(
+    plan.manifest.inner.environment.PATH.split(':')[0],
+    DISTRIBUTED_LINUX_CONTAINED_ENGINE_BIN
+  );
   assert.deepEqual(plan.manifest.inner.engineArguments, [
     '/app/bin/run-local-validation.mjs',
     '--distributed-contained-run',
@@ -321,6 +331,44 @@ test('generated manifest is accepted by the real containment planner', (t) => {
         role === 'native-process-streams' &&
         fileName === 'native-process-streams.json'
     )
+  );
+});
+
+test('contained YAML wrappers have exact bytes, private executable mode, exclusive ownership, and PATH discovery', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'mode3-yaml-wrappers-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const binDirectory = join(root, 'engine-bin');
+  const created = createDistributedLinuxContainedYamlToolWrappers(binDirectory);
+  const expected = {
+    yamllint:
+      '#!/bin/sh\n# Relocated, read-only prerequisite venv: no global Python/default changes.\nexec /tools/prereqs/tools/python-venv/bin/python3 -m yamllint "$@"\n',
+    yamale:
+      '#!/bin/sh\n# Relocated, read-only prerequisite venv: no global Python/default changes.\nexec /tools/prereqs/tools/python-venv/bin/python3 -m yamale.command_line "$@"\n',
+  };
+  assert.equal(created.binDirectory, binDirectory);
+  assert.deepEqual(Object.keys(created.wrappers).toSorted(), [
+    'yamale',
+    'yamllint',
+  ]);
+  const discoveryEnvironment = {
+    PATH: `${binDirectory}${delimiter}${process.env.PATH ?? ''}`,
+  };
+  for (const [name, bytes] of Object.entries(expected)) {
+    const target = created.wrappers[name];
+    assert.equal(readFileSync(target, 'utf8'), bytes);
+    const metadata = lstatSync(target);
+    assert.equal(metadata.isFile(), true);
+    assert.equal(metadata.isSymbolicLink(), false);
+    if (process.platform !== 'win32')
+      assert.equal(metadata.mode & 0o777, 0o500);
+    assert.equal(
+      findNativeExecutable(name, discoveryEnvironment),
+      realpathSync(target)
+    );
+  }
+  assert.throws(
+    () => createDistributedLinuxContainedYamlToolWrappers(binDirectory),
+    (error) => error?.code === 'EEXIST'
   );
 });
 

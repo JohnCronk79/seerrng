@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   constants,
   existsSync,
@@ -62,6 +63,7 @@ import { executeDistributedLinuxProductionRun } from './distributed-linux-produc
 import {
   createOwnedSourceSnapshot,
   disposeSourceSnapshot,
+  findNativeExecutable,
   verifySourceSnapshot,
 } from './native-stage-context.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
@@ -124,10 +126,31 @@ const CONTAINER = Object.freeze({
   proofConfig: '/config/proof-parent.json',
   proofParent: '/recipes/mode3-proof-parent.py',
   stateRoot: '/run-state',
+  engineBin: '/run-state/engine-bin',
   timingProfile: '/run-state/adaptive-timing-profile.json',
   timingSeed: '/config/adaptive-timing-profile.json',
   tool: '/tools/prereqs',
 });
+
+const YAML_TOOL_WRAPPER_MODE = 0o500;
+const YAML_TOOL_WRAPPERS = Object.freeze([
+  Object.freeze({
+    name: 'yamllint',
+    bytes: Buffer.from(
+      '#!/bin/sh\n# Relocated, read-only prerequisite venv: no global Python/default changes.\nexec /tools/prereqs/tools/python-venv/bin/python3 -m yamllint "$@"\n',
+      'utf8'
+    ),
+  }),
+  Object.freeze({
+    name: 'yamale',
+    bytes: Buffer.from(
+      '#!/bin/sh\n# Relocated, read-only prerequisite venv: no global Python/default changes.\nexec /tools/prereqs/tools/python-venv/bin/python3 -m yamale.command_line "$@"\n',
+      'utf8'
+    ),
+  }),
+]);
+
+export const DISTRIBUTED_LINUX_CONTAINED_ENGINE_BIN = CONTAINER.engineBin;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
@@ -300,6 +323,43 @@ function createDirectoryExclusive(path) {
   mkdirSync(path, { mode: 0o700 });
   syncDirectory(dirname(path));
   return path;
+}
+
+/** Materialize the two Python-module shims required by chart-testing. */
+export function createDistributedLinuxContainedYamlToolWrappers(
+  binDirectoryValue = CONTAINER.engineBin
+) {
+  const binDirectory = absolutePath(
+    binDirectoryValue,
+    'Contained engine tool directory'
+  );
+  createDirectoryExclusive(binDirectory);
+  const wrappers = {};
+  for (const definition of YAML_TOOL_WRAPPERS) {
+    const target = resolve(binDirectory, definition.name);
+    writeExclusive(target, definition.bytes, YAML_TOOL_WRAPPER_MODE);
+    if (process.platform !== 'win32') {
+      chmodSync(target, YAML_TOOL_WRAPPER_MODE);
+      const metadata = lstatSync(target);
+      if (
+        !metadata.isFile() ||
+        metadata.isSymbolicLink() ||
+        (metadata.mode & 0o777) !== YAML_TOOL_WRAPPER_MODE
+      )
+        throw new Error(
+          `Contained YAML tool wrapper mode differs: ${definition.name}`
+        );
+    }
+    if (!readStableFile(target, definition.name).equals(definition.bytes))
+      throw new Error(
+        `Contained YAML tool wrapper bytes differ: ${definition.name}`
+      );
+    wrappers[definition.name] = target;
+  }
+  return Object.freeze({
+    binDirectory,
+    wrappers: Object.freeze(wrappers),
+  });
 }
 
 function normalizePublicRequest(value) {
@@ -780,7 +840,7 @@ export function createDistributedLinuxHostLifecycleManifest({
     ],
     workingDirectory: CONTAINER.candidate,
     environment: {
-      PATH: `${CONTAINER.tool}/tools/ct:${CONTAINER.tool}/tools/helm-docs:${CONTAINER.tool}/tools/lychee-musl/lychee-x86_64-unknown-linux-musl:${CONTAINER.tool}/dotnet9:/opt/codeql:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+      PATH: `${CONTAINER.engineBin}:${CONTAINER.tool}/tools/ct:${CONTAINER.tool}/tools/helm-docs:${CONTAINER.tool}/tools/lychee-musl/lychee-x86_64-unknown-linux-musl:${CONTAINER.tool}/dotnet9:/opt/codeql:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
       HOME: `${CONTAINER.stateRoot}/home`,
       TMPDIR: '/tmp',
       CT_CONFIG_DIR: `${CONTAINER.tool}/tools/ct/etc`,
@@ -1468,6 +1528,12 @@ export async function executeDistributedLinuxContainedLifecycle(
     throw new Error(
       'Contained capacity proof policy differs from its host manifest'
     );
+  const yamlToolWrappers = createDistributedLinuxContainedYamlToolWrappers();
+  for (const [name, expected] of Object.entries(yamlToolWrappers.wrappers)) {
+    const discovered = findNativeExecutable(name, process.env);
+    if (discovered !== realpathSync(expected))
+      throw new Error(`Contained YAML tool discovery differs: ${name}`);
+  }
   const deps = containedDependencies(dependencyOverrides);
   createDirectoryExclusive(resolve(CONTAINER.stateRoot, 'home'));
   const seed = deps.readTimingProfile(request.timingProfileSeedPath);
