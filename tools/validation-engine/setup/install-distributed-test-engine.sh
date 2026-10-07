@@ -692,7 +692,7 @@ install_runner_role() {
     if [[ "$role" == 'node' ]]; then
       printf '  Automatic node startup is deferred until verified application provisioning\n'
       printf '  can supply an explicit --app ID=ABSOLUTE_ROOT binding.\n'
-      printf '  This MVP installs the node for manual foreground startup.\n'
+      printf '  The current installer sets up the node for manual foreground startup.\n'
       startup='manual'
     else
       printf '  %s1%s  Start automatically at boot with systemd\n' "$ORANGE" "$RESET"

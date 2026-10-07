@@ -19,10 +19,12 @@ pnpm validate:development --plan
 pnpm validate:development --plan --json
 pnpm validate:development --tests-only
 pnpm validate:development
+pnpm validate:development -- --distributed-run --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --application ENTRY_ID [--json]
 ```
 
-- `--help` prints the exact supported modes without reading the project or
-  creating files.
+- `--help` prints the public/operator command surface without reading the
+  project or creating files. The contained child mode is deliberately internal
+  and is not an operator command.
 - `--plan` is read-only. It reports current discovery, native ownership,
   commands, exclusions, and staged coverage.
 - `--tests-only` executes the local repository-test plan through its native
@@ -32,12 +34,18 @@ pnpm validate:development
   only when the required source, dependency, toolchain, fixture, network, and
   browser-isolation boundaries can be proved. Otherwise it stops incomplete and
   preserves preparation evidence.
+- `--distributed-run` owns the complete public Mode 3 lifecycle. It requires an
+  exact clean branch published through authenticated Git, existing ordinary
+  marker/state/log paths, the machine-owned host profile described below, and
+  at least one configured remote node already serving the exact candidate.
 
-A reviewed host may supply containment and proof callbacks to the bound engine
-APIs. It may provide mounts, disposable fixtures, network boundaries, and
-durable evidence storage. It must not rediscover tests, choose substitute
-commands, alter planned dependencies, reinterpret results, or decide that an
-incomplete run passed.
+The public Mode 3 command owns candidate freezing, host preparation, Docker
+containment, staged execution, reconciliation, timing persistence, cleanup
+proof, and the success-last marker. Dependency injection and callback seams in
+focused tests are not alternate launchers or authorities. No external host-side
+launcher or wrapper may rediscover tests, choose substitute commands, alter
+planned dependencies, reinterpret results, or decide that an incomplete run
+passed.
 
 There is no public worker-count option. Internal host overrides exist only for
 reviewed engine integration and tests; ordinary baselines must use automatic
@@ -74,10 +82,10 @@ menu-driven Linux setup program. It installs or configures a controller or
 node, manages supported applications, and plans application dependencies. An
 installation offers to continue directly into configuration. Controller
 automatic startup uses a managed systemd service; node automatic startup stays
-disabled until explicit application-root provisioning is complete, so the MVP
-node is started manually with its bound application root.
+disabled until explicit application-root provisioning is complete, so the
+current node service is started manually with its bound application root.
 
-Mode 3 configuration is human-readable text rather than JSON:
+Human-edited Mode 3 fleet configuration uses readable `.cfg` text:
 
 - The controller file is
   `test-suite-multi-computer-<GitHub username>.cfg`. Its global section records
@@ -101,6 +109,14 @@ Mode 3 configuration is human-readable text rather than JSON:
   an `n` expression such as `n-2` or `2n`; the minimum thread count is applied
   after evaluating that rule against the node's detected available threads.
 
+The public run separately requires the machine-owned
+`<state-root>/distributed-linux-host-profile.json`. That containment profile
+binds exact helper, private-daemon, and fixture image identities; existing
+dependency and prerequisite volumes; resource limits; and network proof. The
+current setup menu does not create that profile or build/pull those assets, so
+installing the controller and node alone does not claim a production run is
+prepared.
+
 After configuration, an atomic active-config marker selects the exact file the
 controller or node service must load. Services do not guess between nearby
 configuration files. Configuration writes are private, locked, atomic, and
@@ -122,8 +138,11 @@ prepared controller environment is eligible locally. A remote node is usable
 only when its authenticated identity, candidate catalog, assigned thread
 policy, and reported dependency versions match. If an available remote node is
 missing or has an outdated dependency, the engine lists the exact difference
-and asks whether to continue with only usable nodes or stop for repair. A
-non-interactive run stops instead of assuming consent.
+and the lower-level interactive controller may ask whether to continue with
+only usable nodes or stop for repair. The public contained command is
+non-interactive and stops instead of assuming consent. When an approved `2n`
+capacity proof applies, final reconciliation is stricter: every configured node
+must be online and usable and must execute at least one shard.
 
 The setup menu can resolve and display dependency plans. Fixed installers for
 the profile's approved dependencies are not yet bound, so it must not claim to
@@ -146,12 +165,14 @@ predicted placement. CPU model and clock speed are descriptive only: observed
 task timing, not a hardware lookup, is the scheduling source of truth.
 
 Timing profiles have validated, private, atomic file storage, and successful
-complete observations can update their per-node and per-thread estimates.
-The current staged binding scopes a match to its supplied repository identity.
-Binding the real launch to automatically read, update, and persist useful
-history across consecutive laptop-and-NAS candidates remains part of the
-pending end-to-end proof; a caller must not infer that history was saved or
-reused merely because the scheduler consumed a profile.
+complete observations update their per-node and per-thread estimates. The
+public lifecycle loads
+`<state-root>/distributed-adaptive-timing-profile.json`, using a validated empty
+baseline when it is absent; seals that profile into the contained run; derives
+observations only after the four-stage result reconciles; and atomically writes
+and read-back verifies both the contained and host copies before public
+success. Matching remains scoped to the bound repository and candidate inputs.
+This timing history influences scheduling only and never reuses test results.
 
 The controller executes assigned local tasks through the same native adapter
 used by nodes. Remote requests use the shared cluster key, bounded request
@@ -160,20 +181,22 @@ exactly once against its assigned node and thread slot. Test-result reuse stays
 disabled: timing history can influence placement but cannot skip work or turn
 an old success into a current result.
 
-Catalogs remain platform-specific. A complete Linux run requires a Linux
-controller and Linux nodes with the same clean candidate and dependencies.
-Windows validation is separate and cannot be counted as part of the Linux
-schedule. The Mode 3 protocol does not clone repositories or provision source;
-each node must already expose the explicitly bound application root.
+Catalogs remain platform-specific. The controller catalog and execution run in
+the contained Linux helper; the reviewed outer host may be Windows with Docker,
+and remote nodes are Linux systems serving the same clean candidate and
+dependencies. Windows-native validation is separate and cannot be counted as
+part of the Linux schedule. The Mode 3 protocol does not clone repositories or
+provision source; each node must already expose the explicitly bound
+application root.
 
-### Current proof boundary
+### Proof boundary
 
-Focused configuration, enrollment, dependency-admission, adaptive-scheduling,
-controller/node transport, task-execution, staged-bridge, and reconciliation
-tests are implemented. The first real full four-stage run using the laptop as
-controller and the NAS as a remote node has **not yet completed**. Until that
-run succeeds and its stage timings and evidence are recorded, Mode 3 must not
-be described as fully proven or assigned a production speedup.
+Focused, simulated, or native-only results do not prove a Mode 3 candidate. A
+candidate is proven only when the public command completes all four stages
+against that exact clean published commit, closes its capacity, fleet,
+execution, evidence, and cleanup proofs, and records matching stage and total
+timings. Performance claims require that retained evidence; they cannot be
+inferred from focused tests or a different commit.
 
 ## Test discovery and ownership
 
