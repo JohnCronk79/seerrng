@@ -1,7 +1,6 @@
 // Copyright (c) snapetech and SeerrNG contributors.
 // Fail-closed lease and result accounting for one application submission.
 // The controller queue serializes submissions; each state stays app-isolated.
-import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 import {
   assertAuthenticatedBrokerMessage,
   brokerApplicationIsolationKeySha256,
@@ -13,6 +12,7 @@ import {
   verifyBrokerLogicalCommandIdentity,
   verifyBrokerTask,
 } from './broker-protocol.mjs';
+import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const BROKER_LEASE_STATE_SCHEMA =
   'seerrng-validation-broker-lease-state/v3';

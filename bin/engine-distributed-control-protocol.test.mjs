@@ -9,13 +9,6 @@ import {
   createDistributedAdaptiveSchedule,
 } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
 import {
-  DISTRIBUTED_APP_SUBMISSION_SCHEMA,
-  createDistributedControllerQueue,
-  enqueueDistributedApp,
-  sealDistributedAppSubmission,
-  startNextDistributedApp,
-} from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
-import {
   DISTRIBUTED_EXECUTION_OPEN_ACK_SCHEMA,
   DISTRIBUTED_EXECUTION_OPEN_MANIFEST_SCHEMA,
   DISTRIBUTED_FLEET_PROBE_SCHEMA,
@@ -34,6 +27,13 @@ import {
   verifyDistributedExecutionOpenManifest,
   verifyDistributedFleetReport,
 } from '../tools/validation-engine/runtime/distributed-control-protocol.mjs';
+import {
+  DISTRIBUTED_APP_SUBMISSION_SCHEMA,
+  createDistributedControllerQueue,
+  enqueueDistributedApp,
+  sealDistributedAppSubmission,
+  startNextDistributedApp,
+} from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
 import {
   DISTRIBUTED_TASK_CATALOG_SCHEMA,
   createDistributedExecutionBridge,

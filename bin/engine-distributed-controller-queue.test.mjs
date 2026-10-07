@@ -4,9 +4,6 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
-  canonicalJsonSha256,
-} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
-import {
   DISTRIBUTED_APP_SUBMISSION_SCHEMA,
   DISTRIBUTED_CLEANUP_PROOF_SCHEMA,
   DISTRIBUTED_TERMINAL_RECONCILIATION_SCHEMA,
@@ -26,6 +23,7 @@ import {
   verifyDistributedAppSubmission,
   verifyDistributedControllerQueueTransition,
 } from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const controllerId = 'controller-a';
 const acceptAuthentication = () => true;
@@ -127,9 +125,7 @@ function cleanupFor(queue, completedAtMs = 30) {
     executionId: active.executionId,
     terminalReconciliationSha256:
       active.terminalReconciliation.terminalReconciliationSha256,
-    cleanupInventorySha256: sha256(
-      `cleanup-${active.submission.submissionId}`
-    ),
+    cleanupInventorySha256: sha256(`cleanup-${active.submission.submissionId}`),
     completedAtMs,
     auth: authentication(`cleanup-${active.submission.submissionId}`),
   });
@@ -156,12 +152,10 @@ function finishActive(queue, { status = 'passed', offset = 0 } = {}) {
 test('submission identities are exact, deterministic, sealed, and isolated', () => {
   const input = submissionInput('alpha');
   const first = sealDistributedAppSubmission(input);
-  const reordered = sealDistributedAppSubmission(
-    {
-      ...Object.fromEntries(Object.entries(input).reverse()),
-      adapters: [...input.adapters].reverse(),
-    }
-  );
+  const reordered = sealDistributedAppSubmission({
+    ...Object.fromEntries(Object.entries(input).reverse()),
+    adapters: [...input.adapters].reverse(),
+  });
 
   assert.deepEqual(first, reordered);
   assert.deepEqual(
@@ -660,11 +654,9 @@ test('queue transition provenance accepts only fresh genesis and exact legal lin
     }
   );
   const cleanupProof = cleanupFor(reconciled);
-  const cleaned = recordDistributedCleanupProof(
-    reconciled,
-    cleanupProof,
-    { verifyAuthentication: acceptAuthentication }
-  );
+  const cleaned = recordDistributedCleanupProof(reconciled, cleanupProof, {
+    verifyAuthentication: acceptAuthentication,
+  });
   assert.equal(
     verifyDistributedControllerQueueTransition(reconciled, cleaned),
     cleaned
@@ -698,8 +690,7 @@ test('queue transition provenance accepts only fresh genesis and exact legal lin
     maxSubmissions: 63,
   });
   assert.throws(
-    () =>
-      verifyDistributedControllerQueueTransition(unrelatedPrevious, queued),
+    () => verifyDistributedControllerQueueTransition(unrelatedPrevious, queued),
     /does not match its exact previous queue/
   );
   assert.throws(

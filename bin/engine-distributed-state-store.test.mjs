@@ -8,8 +8,8 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  renameSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -88,7 +88,8 @@ function databasePath(t, label, overrides = {}) {
   t.after(() => rmSync(root, { force: true, recursive: true }));
   const role = overrides.role ?? 'controller';
   const controllerId = overrides.controllerId ?? 'controller-a';
-  const workerId = role === 'worker' ? (overrides.workerId ?? 'worker-a') : null;
+  const workerId =
+    role === 'worker' ? (overrides.workerId ?? 'worker-a') : null;
   const machineIdentitySha256 =
     overrides.machineIdentitySha256 ??
     hash(role === 'worker' ? `${workerId}-machine` : `${controllerId}-machine`);
@@ -106,8 +107,7 @@ function databasePath(t, label, overrides = {}) {
     },
     recoveryAcceptance: {
       staleWriterAfterMs: overrides.staleWriterAfterMs ?? 30_000,
-      allowStaleWriterTakeover:
-        overrides.allowStaleWriterTakeover ?? false,
+      allowStaleWriterTakeover: overrides.allowStaleWriterTakeover ?? false,
       crashRecoveryAccepted: true,
       acceptedAtMs: 11,
       acceptanceId: `recovery-${label}`,
@@ -1817,7 +1817,10 @@ test(
       storeId: 'posix-writable-database-store',
     });
     writableDatabaseStore.close();
-    chmodSync(rootContracts.get(writableDatabasePath).paths.stateDirectory, 0o755);
+    chmodSync(
+      rootContracts.get(writableDatabasePath).paths.stateDirectory,
+      0o755
+    );
     chmodSync(writableDatabasePath, 0o660);
     assert.throws(
       () => openDistributedStateStore(openOptions(writableDatabasePath)),

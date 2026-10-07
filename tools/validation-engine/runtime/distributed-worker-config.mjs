@@ -233,14 +233,11 @@ function sealConfig(value) {
 function strictJson(text) {
   if (typeof text !== 'string')
     throw new Error('Distributed worker config JSON must be text');
-  if (
-    Buffer.byteLength(text, 'utf8') > MAX_DISTRIBUTED_WORKER_CONFIG_BYTES
-  )
+  if (Buffer.byteLength(text, 'utf8') > MAX_DISTRIBUTED_WORKER_CONFIG_BYTES)
     throw new Error('Distributed worker config JSON exceeds its safe limit');
   let offset = 0;
   const whitespace = () => {
-    while (/[\u0009\u000a\u000d\u0020]/.test(text[offset] ?? ''))
-      offset += 1;
+    while (/[\u0009\u000a\u000d\u0020]/.test(text[offset] ?? '')) offset += 1;
   };
   const fail = () => {
     throw new Error('Distributed worker config is not valid strict JSON');

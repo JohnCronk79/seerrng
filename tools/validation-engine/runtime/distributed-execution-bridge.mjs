@@ -7,8 +7,8 @@ import {
   verifyBrokerBinding,
   verifyBrokerTask,
 } from './broker-protocol.mjs';
-import { snapshotDistributedControllerQueue } from './distributed-controller-queue.mjs';
 import { verifyDistributedAdaptiveSchedule } from './distributed-adaptive-scheduler.mjs';
+import { snapshotDistributedControllerQueue } from './distributed-controller-queue.mjs';
 import { verifyDistributedBrokerHandoff } from './distributed-worker-config.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 

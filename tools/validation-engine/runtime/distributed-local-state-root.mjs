@@ -350,10 +350,7 @@ function normalizeRootObjectFingerprint(value, expectedPlatform) {
     ROOT_OBJECT_FINGERPRINT_KEYS,
     'distributed local state root object fingerprint'
   );
-  if (
-    value.schema !==
-    DISTRIBUTED_LOCAL_STATE_ROOT_OBJECT_FINGERPRINT_SCHEMA
-  )
+  if (value.schema !== DISTRIBUTED_LOCAL_STATE_ROOT_OBJECT_FINGERPRINT_SCHEMA)
     throw new Error(
       'Unsupported distributed local state root object fingerprint schema'
     );
@@ -412,10 +409,7 @@ function readVerifiedLocalRootObject(value, label) {
   if (before.isSymbolicLink() || !before.isDirectory())
     throw new Error(`${label} must be an ordinary non-symbolic directory`);
   verifyCanonicalComponents(value, { leafKind: 'directory' });
-  if (
-    process.platform === 'win32' &&
-    realpathSync.native(value) !== value
-  )
+  if (process.platform === 'win32' && realpathSync.native(value) !== value)
     throw new Error(
       `${label} must use its exact native Windows realpath spelling`
     );

@@ -22,13 +22,13 @@ import {
   rehydrateDistributedControllerQueue,
   snapshotDistributedControllerQueue,
 } from './distributed-controller-queue.mjs';
+import { verifyDistributedLocalStateRootAdmission } from './distributed-local-state-root.mjs';
 import {
   describeDistributedWorkerAttemptTransition,
   rehydrateDistributedWorkerAttemptState,
   snapshotDistributedWorkerAttemptState,
   verifyDistributedWorkerAttemptState,
 } from './distributed-worker-attempt-state.mjs';
-import { verifyDistributedLocalStateRootAdmission } from './distributed-local-state-root.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_STATE_STORE_SCHEMA_VERSION = 2;
@@ -484,11 +484,7 @@ function verifyCanonicalComponents(value, { leafKind }) {
 }
 
 function decimalBigInt(value, label, { nonzero = false } = {}) {
-  if (
-    typeof value !== 'bigint' ||
-    value < 0n ||
-    (nonzero && value === 0n)
-  )
+  if (typeof value !== 'bigint' || value < 0n || (nonzero && value === 0n))
     throw new Error(`${label} has no stable filesystem identity`);
   return value.toString(10);
 }
@@ -578,7 +574,10 @@ function stateDirectoryIdentity(path, expectedDeviceId) {
     throw new Error(
       'Distributed state directory changed during filesystem identity verification'
     );
-  const deviceId = decimalBigInt(after.dev, 'Distributed state directory device');
+  const deviceId = decimalBigInt(
+    after.dev,
+    'Distributed state directory device'
+  );
   if (deviceId !== expectedDeviceId)
     throw new Error(
       'Distributed state directory must be on the admitted root filesystem'
@@ -2325,13 +2324,7 @@ class DistributedStateStore {
   }
 }
 
-function initializeSchema(
-  database,
-  metadata,
-  writer,
-  nowMs,
-  verifyFilesystem
-) {
+function initializeSchema(database, metadata, writer, nowMs, verifyFilesystem) {
   const initialize = createTransaction(database, () => {
     requirePristineDatabase(database);
     setAndRequirePragma(
@@ -2535,22 +2528,10 @@ export function initializeDistributedStateStore(options) {
 export function openDistributedStateStore(options) {
   rejectUnknownKeys(
     options,
-    [
-      'config',
-      'documentVerifiers',
-      'expectations',
-      'marker',
-      'writer',
-    ],
+    ['config', 'documentVerifiers', 'expectations', 'marker', 'writer'],
     'distributed state store open'
   );
-  const {
-    config,
-    marker,
-    expectations,
-    writer,
-    documentVerifiers,
-  } = options;
+  const { config, marker, expectations, writer, documentVerifiers } = options;
   const rootContext = createStateRootContext({
     config,
     marker,

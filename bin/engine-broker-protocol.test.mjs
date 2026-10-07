@@ -23,9 +23,7 @@ import {
   verifyBrokerCleanupEvidence,
   verifyBrokerTask,
 } from '../tools/validation-engine/runtime/broker-protocol.mjs';
-import {
-  canonicalJsonSha256,
-} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const h = (character) => character.repeat(64);
 const controllerKinds = new Set([

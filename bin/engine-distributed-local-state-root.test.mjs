@@ -18,6 +18,9 @@ import { join, parse, sep } from 'node:path';
 import test from 'node:test';
 
 import {
+  createDistributedLocalStateRootConfig,
+  createDistributedLocalStateRootMarker,
+  deriveDistributedLocalStateRootPaths,
   DISTRIBUTED_LOCAL_STATE_ROOT_CONFIG_SCHEMA,
   DISTRIBUTED_LOCAL_STATE_ROOT_IDENTITY_SCHEMA,
   DISTRIBUTED_LOCAL_STATE_ROOT_MARKER_FILENAME,
@@ -26,9 +29,6 @@ import {
   DISTRIBUTED_LOCALITY_ATTESTATION_SCHEMA,
   DISTRIBUTED_PHYSICAL_LOCALITY_EVIDENCE,
   DISTRIBUTED_STATE_RECOVERY_POLICY_SCHEMA,
-  createDistributedLocalStateRootConfig,
-  createDistributedLocalStateRootMarker,
-  deriveDistributedLocalStateRootPaths,
   verifyDistributedLocalStateRootAdmission,
   verifyDistributedLocalStateRootConfig,
   verifyDistributedLocalStateRootMarker,

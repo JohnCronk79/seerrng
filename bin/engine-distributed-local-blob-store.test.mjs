@@ -36,9 +36,7 @@ import {
   createDistributedLocalStateRootConfig,
   createDistributedLocalStateRootMarker,
 } from '../tools/validation-engine/runtime/distributed-local-state-root.mjs';
-import {
-  canonicalJsonSha256,
-} from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
+import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 function hash(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -402,20 +400,17 @@ test('rejects group- or world-writable blob boundaries on POSIX', (t) => {
   assert.throws(() => openStore(local), /must not be group- or world-writable/);
 });
 
-test(
-  'requires pre-provisioned admitted directories without creating them',
-  (t) => {
-    const local = localRoot(t, 'local-blob-missing-directories', {
-      createBlobDirectories: false,
-    });
-    assert.throws(
-      () => openStore(local),
-      /must be an existing ordinary directory/
-    );
-    assert.equal(existsSync(join(local.root, 'blobs')), false);
-    assert.equal(existsSync(join(local.root, 'staging')), false);
-  }
-);
+test('requires pre-provisioned admitted directories without creating them', (t) => {
+  const local = localRoot(t, 'local-blob-missing-directories', {
+    createBlobDirectories: false,
+  });
+  assert.throws(
+    () => openStore(local),
+    /must be an existing ordinary directory/
+  );
+  assert.equal(existsSync(join(local.root, 'blobs')), false);
+  assert.equal(existsSync(join(local.root, 'staging')), false);
+});
 
 test('fails closed on directory identity drift after opening', (t) => {
   const local = localRoot(t, 'local-blob-directory-drift');

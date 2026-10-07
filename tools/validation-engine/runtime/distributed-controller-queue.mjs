@@ -79,10 +79,7 @@ const TERMINAL_INPUT_KEYS = [
   'submissionId',
   'submissionSha256',
 ];
-const TERMINAL_KEYS = [
-  ...TERMINAL_INPUT_KEYS,
-  'terminalReconciliationSha256',
-];
+const TERMINAL_KEYS = [...TERMINAL_INPUT_KEYS, 'terminalReconciliationSha256'];
 const CLEANUP_INPUT_KEYS = [
   'applicationIsolationKeySha256',
   'auth',
@@ -174,7 +171,11 @@ function digest(value, label) {
   return value;
 }
 
-function integer(value, label, { minimum = 0, maximum = Number.MAX_SAFE_INTEGER } = {}) {
+function integer(
+  value,
+  label,
+  { minimum = 0, maximum = Number.MAX_SAFE_INTEGER } = {}
+) {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
     throw new Error(
       `${label} must be a safe integer from ${minimum} through ${maximum}`
@@ -211,7 +212,9 @@ function normalizeAuth(value, controllerId) {
   if (!PROOF.test(auth.proof ?? ''))
     throw new Error('Exact detached authentication proof is required');
   if (auth.principalId !== controllerId)
-    throw new Error('Distributed proof must be authenticated by its controller');
+    throw new Error(
+      'Distributed proof must be authenticated by its controller'
+    );
   if (auth.expiresAtMs <= auth.issuedAtMs)
     throw new Error('Authentication expiry must follow its issue time');
   return auth;
@@ -287,7 +290,9 @@ function normalizeSubmissionAdapters(value) {
       ),
     };
   });
-  if (new Set(adapters.map((entry) => entry.adapterId)).size !== adapters.length)
+  if (
+    new Set(adapters.map((entry) => entry.adapterId)).size !== adapters.length
+  )
     throw new Error('Distributed app submission adapter IDs must be unique');
   if (
     new Set(adapters.map((entry) => entry.adapterIdentitySha256)).size !==
@@ -327,14 +332,14 @@ export function sealDistributedAppSubmission(value) {
 export function verifyDistributedAppSubmission(value) {
   exactObject(value, 'distributed app submission', SUBMISSION_KEYS);
   const normalized = sealDistributedAppSubmission(
-    Object.fromEntries(
-      SUBMISSION_INPUT_KEYS.map((key) => [key, value[key]])
-    )
+    Object.fromEntries(SUBMISSION_INPUT_KEYS.map((key) => [key, value[key]]))
   );
   if (value.workKeySha256 !== normalized.workKeySha256)
     throw new Error('Distributed app submission work identity does not match');
   if (value.submissionSha256 !== normalized.submissionSha256)
-    throw new Error('Distributed app submission seal does not match its contents');
+    throw new Error(
+      'Distributed app submission seal does not match its contents'
+    );
   return normalized;
 }
 
@@ -390,10 +395,14 @@ function normalizeTerminalInput(value) {
     reconciliation.completedAtMs < reconciliation.auth.issuedAtMs ||
     reconciliation.completedAtMs > reconciliation.auth.expiresAtMs
   )
-    throw new Error('Terminal reconciliation is outside its authenticated session');
+    throw new Error(
+      'Terminal reconciliation is outside its authenticated session'
+    );
   if (
-    (reconciliation.status === 'passed' && reconciliation.failureSha256 !== null) ||
-    (reconciliation.status === 'failed' && reconciliation.failureSha256 === null)
+    (reconciliation.status === 'passed' &&
+      reconciliation.failureSha256 !== null) ||
+    (reconciliation.status === 'failed' &&
+      reconciliation.failureSha256 === null)
   )
     throw new Error('Terminal failure identity does not match terminal status');
   return reconciliation;
@@ -482,7 +491,10 @@ function cleanupSeal(value) {
 
 export function distributedCleanupProofSigningSha256(value) {
   const proof = normalizeCleanupInput(value);
-  return canonicalJsonSha256({ ...proof, auth: { ...proof.auth, proof: null } });
+  return canonicalJsonSha256({
+    ...proof,
+    auth: { ...proof.auth, proof: null },
+  });
 }
 
 export function sealDistributedCleanupProof(value) {
@@ -506,9 +518,15 @@ function verifyCleanupProof(value, verifyAuthentication) {
   return proof;
 }
 
-function authenticateProof(payload, verifyAuthentication, { sealKey, signingSha256 }) {
+function authenticateProof(
+  payload,
+  verifyAuthentication,
+  { sealKey, signingSha256 }
+) {
   if (typeof verifyAuthentication !== 'function')
-    throw new Error('Distributed proof requires an external authentication verifier');
+    throw new Error(
+      'Distributed proof requires an external authentication verifier'
+    );
   const verified = verifyAuthentication({
     auth: payload.auth,
     signingSha256,
@@ -579,9 +597,7 @@ function validateRecord(value, controllerId, verifyAuthentication) {
   if (value.applicationIsolationKeySha256 !== isolationKey)
     throw new Error('Queue record crossed an application isolation boundary');
   const status = value.status;
-  if (
-    !['queued', ...LIVE_STATUSES, ...FINAL_STATUSES].includes(status)
-  )
+  if (!['queued', ...LIVE_STATUSES, ...FINAL_STATUSES].includes(status))
     throw new Error('Unsupported distributed queue submission status');
   const record = {
     sequence: integer(value.sequence, 'Submission sequence', { minimum: 1 }),
@@ -596,10 +612,8 @@ function validateRecord(value, controllerId, verifyAuthentication) {
       'terminal reconciliation',
       (entry) => verifyTerminalReconciliation(entry, verifyAuthentication)
     ),
-    cleanupProof: exactNullable(
-      value.cleanupProof,
-      'cleanup proof',
-      (entry) => verifyCleanupProof(entry, verifyAuthentication)
+    cleanupProof: exactNullable(value.cleanupProof, 'cleanup proof', (entry) =>
+      verifyCleanupProof(entry, verifyAuthentication)
     ),
     finalizedAtMs: nullableInteger(value.finalizedAtMs, 'Finalization time'),
   };
@@ -630,7 +644,9 @@ function validateRecord(value, controllerId, verifyAuthentication) {
     return record;
   }
   if (terminal === null)
-    throw new Error('Terminal submission state requires reconciliation evidence');
+    throw new Error(
+      'Terminal submission state requires reconciliation evidence'
+    );
   if (
     terminal.controllerId !== controllerId ||
     terminal.submissionId !== submission.submissionId ||
@@ -645,8 +661,7 @@ function validateRecord(value, controllerId, verifyAuthentication) {
       throw new Error('Cleanup-pending submission contains final state');
     return record;
   }
-  if (cleanup === null)
-    throw new Error('Advancement requires cleanup proof');
+  if (cleanup === null) throw new Error('Advancement requires cleanup proof');
   if (
     cleanup.controllerId !== controllerId ||
     cleanup.submissionId !== submission.submissionId ||
@@ -657,7 +672,9 @@ function validateRecord(value, controllerId, verifyAuthentication) {
       terminal.terminalReconciliationSha256 ||
     cleanup.completedAtMs < terminal.completedAtMs
   )
-    throw new Error('Cleanup proof is not bound to its terminal reconciliation');
+    throw new Error(
+      'Cleanup proof is not bound to its terminal reconciliation'
+    );
   if (status === 'ready-to-advance') {
     if (record.finalizedAtMs !== null)
       throw new Error('Ready submission cannot already be finalized');
@@ -672,40 +689,64 @@ function validateRecord(value, controllerId, verifyAuthentication) {
   return record;
 }
 
-function validateQueue(value, { expectedControllerId, expectedQueueSha256, verifyAuthentication }) {
+function validateQueue(
+  value,
+  { expectedControllerId, expectedQueueSha256, verifyAuthentication }
+) {
   exactObject(value, 'persisted distributed controller queue', QUEUE_KEYS);
   if (value.schema !== DISTRIBUTED_CONTROLLER_QUEUE_SCHEMA)
     throw new Error('Unsupported distributed controller queue schema');
   const controllerId = identifier(value.controllerId, 'queue controller ID');
-  if (controllerId !== identifier(expectedControllerId, 'expected controller ID'))
+  if (
+    controllerId !== identifier(expectedControllerId, 'expected controller ID')
+  )
     throw new Error('Persisted queue belongs to a different controller');
   digest(expectedQueueSha256, 'expected queue hash');
   digest(value.queueSha256, 'persisted queue hash');
   if (value.queueSha256 !== expectedQueueSha256)
     throw new Error('Persisted queue does not match its trusted hash');
   if (value.queueSha256 !== queueHash(value))
-    throw new Error('Distributed controller queue seal does not match its contents');
+    throw new Error(
+      'Distributed controller queue seal does not match its contents'
+    );
   if (!FAILURE_POLICIES.has(value.failurePolicy))
     throw new Error('Unsupported distributed queue failure policy');
-  const maxSubmissions = integer(value.maxSubmissions, 'Queue submission limit', {
-    minimum: 1,
-    maximum: MAX_DISTRIBUTED_QUEUE_SUBMISSIONS,
-  });
+  const maxSubmissions = integer(
+    value.maxSubmissions,
+    'Queue submission limit',
+    {
+      minimum: 1,
+      maximum: MAX_DISTRIBUTED_QUEUE_SUBMISSIONS,
+    }
+  );
   if (!Array.isArray(value.submissions))
     throw new Error('Distributed controller submissions must be an array');
   if (value.submissions.length > maxSubmissions)
-    throw new Error('Distributed controller queue exceeds its configured bound');
+    throw new Error(
+      'Distributed controller queue exceeds its configured bound'
+    );
   const submissions = value.submissions.map((entry) =>
     validateRecord(entry, controllerId, verifyAuthentication)
   );
   submissions.forEach((entry, index) => {
     if (entry.sequence !== index + 1)
-      throw new Error('Queue submission sequence must be contiguous and ordered');
+      throw new Error(
+        'Queue submission sequence must be contiguous and ordered'
+      );
   });
   for (const [label, values] of [
-    ['submission ID', submissions.map((entry) => entry.submission.submissionId)],
-    ['submission seal', submissions.map((entry) => entry.submission.submissionSha256)],
-    ['work identity', submissions.map((entry) => entry.submission.workKeySha256)],
+    [
+      'submission ID',
+      submissions.map((entry) => entry.submission.submissionId),
+    ],
+    [
+      'submission seal',
+      submissions.map((entry) => entry.submission.submissionSha256),
+    ],
+    [
+      'work identity',
+      submissions.map((entry) => entry.submission.workKeySha256),
+    ],
   ])
     if (new Set(values).size !== values.length)
       throw new Error(`Distributed queue contains a duplicate ${label}`);
@@ -762,7 +803,9 @@ function validateQueue(value, { expectedControllerId, expectedQueueSha256, verif
 
 function assertTrustedQueue(value) {
   if (!trustedQueues.has(value))
-    throw new Error('Distributed controller queue is not trusted runtime state');
+    throw new Error(
+      'Distributed controller queue is not trusted runtime state'
+    );
   if (value.queueSha256 !== queueHash(value))
     throw new Error('Distributed controller queue changed after verification');
   return value;
@@ -940,7 +983,9 @@ export function startNextDistributedApp(
   if (!next) throw new Error('Distributed controller queue has no pending app');
   const normalizedExecutionId = identifier(executionId, 'execution ID');
   if (
-    queue.submissions.some((entry) => entry.executionId === normalizedExecutionId)
+    queue.submissions.some(
+      (entry) => entry.executionId === normalizedExecutionId
+    )
   )
     throw new Error('Execution ID was already used by this queue');
   const normalizedStartedAtMs = integer(startedAtMs, 'Execution start time');

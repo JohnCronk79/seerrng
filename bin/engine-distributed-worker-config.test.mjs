@@ -3,9 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
-import {
-  assessDistributedWorkerCapacity,
-} from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
+import { assessDistributedWorkerCapacity } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
 import {
   createDistributedBrokerHandoff,
@@ -126,10 +124,7 @@ test('controller config maps to broker and adaptive scheduler contracts', () => 
     distributedWorkerRunsOnControllerHost(config, 'worker-west'),
     false
   );
-  const workerHandoff = distributedBrokerWorkerHandoff(
-    config,
-    'worker-east'
-  );
+  const workerHandoff = distributedBrokerWorkerHandoff(config, 'worker-east');
   assert.equal(workerHandoff.workerAddress, 'https://worker-east.lan:7443');
   assert.equal(workerHandoff.role, 'worker');
   assert.equal(workerHandoff.runsOnControllerHost, false);
@@ -201,9 +196,8 @@ test('controller-host worker placement is explicit and keeps normal worker role 
   );
   const remoteOnlyConfig = createDistributedWorkerConfig(rawConfig(workers));
   const colocatedBrokerHandoff = createDistributedBrokerHandoff(config);
-  const remoteOnlyBrokerHandoff = createDistributedBrokerHandoff(
-    remoteOnlyConfig
-  );
+  const remoteOnlyBrokerHandoff =
+    createDistributedBrokerHandoff(remoteOnlyConfig);
   assert.equal(config.controllerId, 'developer-controller');
   assert.equal(config.controllerWorkerId, 'worker-east');
   assert.deepEqual(
@@ -229,10 +223,7 @@ test('controller-host worker placement is explicit and keeps normal worker role 
     'worker-east'
   );
   assert.equal(localWorkerHandoff.role, 'worker');
-  assert.equal(
-    localWorkerHandoff.runsOnControllerHost,
-    true
-  );
+  assert.equal(localWorkerHandoff.runsOnControllerHost, true);
 
   assert.throws(
     () =>
@@ -396,10 +387,7 @@ test('published schema mirrors every expressible runtime bound', () => {
   );
   assert.equal(schema.properties.revision.maximum, Number.MAX_SAFE_INTEGER);
   assert.equal(schema.properties.controllerId.maxLength, 128);
-  assert.equal(
-    schema.properties.controllerWorkerId.oneOf[1].maxLength,
-    128
-  );
+  assert.equal(schema.properties.controllerWorkerId.oneOf[1].maxLength, 128);
   assert.equal(schema.properties.workers.maxItems, MAX_DISTRIBUTED_WORKERS);
   assert.equal(schema.properties.workers.uniqueItems, true);
   const workerSchema = schema.$defs.worker.properties;
@@ -412,10 +400,7 @@ test('published schema mirrors every expressible runtime bound', () => {
   assert.equal(addressPattern.test('https://worker-east.lan:7443/path'), false);
   assert.equal(workerSchema.identitySha256.minLength, 64);
   assert.equal(workerSchema.identitySha256.maxLength, 64);
-  assert.equal(
-    workerSchema.n.oneOf[1].maximum,
-    MAX_DISTRIBUTED_WORKER_THREADS
-  );
+  assert.equal(workerSchema.n.oneOf[1].maximum, MAX_DISTRIBUTED_WORKER_THREADS);
 });
 
 test('private default inventory is ignored exactly once', () => {

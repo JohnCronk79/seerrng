@@ -1296,9 +1296,7 @@ function assertBrokerMessageByteLimit(value) {
     throw new Error('Broker message must contain JSON values only');
   }
   if (Buffer.byteLength(encoded, 'utf8') > MAX_BROKER_MESSAGE_BYTES)
-    throw new Error(
-      `Broker message exceeds ${MAX_BROKER_MESSAGE_BYTES} bytes`
-    );
+    throw new Error(`Broker message exceeds ${MAX_BROKER_MESSAGE_BYTES} bytes`);
 }
 
 function normalizeMessage(value) {

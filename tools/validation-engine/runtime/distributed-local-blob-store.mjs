@@ -28,9 +28,7 @@ import {
   MAX_DISTRIBUTED_EVIDENCE_ARTIFACT_BYTES,
   verifyDistributedEvidenceManifest,
 } from './distributed-evidence-artifact.mjs';
-import {
-  verifyDistributedLocalStateRootAdmission,
-} from './distributed-local-state-root.mjs';
+import { verifyDistributedLocalStateRootAdmission } from './distributed-local-state-root.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_LOCAL_BLOB_STORE_SCHEMA =
@@ -48,12 +46,7 @@ const HASH64 = /^[a-f0-9]{64}$/;
 const STORE_OPEN_KEYS = ['config', 'expectations', 'marker'];
 const PUBLISH_KEYS = ['artifact', 'chunks', 'manifest'];
 const VERIFY_KEYS = ['artifact', 'manifest'];
-const ASSERT_RECEIPT_KEYS = [
-  'artifact',
-  'manifest',
-  'operation',
-  'receipt',
-];
+const ASSERT_RECEIPT_KEYS = ['artifact', 'manifest', 'operation', 'receipt'];
 const FILE_FINGERPRINT_KEYS = [
   'ctimeNs',
   'deviceId',
@@ -160,11 +153,7 @@ function sameDirectoryStatistics(left, right) {
 }
 
 function decimal(value, label, { nonzero = false } = {}) {
-  if (
-    typeof value !== 'bigint' ||
-    value < 0n ||
-    (nonzero && value === 0n)
-  )
+  if (typeof value !== 'bigint' || value < 0n || (nonzero && value === 0n))
     throw new Error(`${label} has no stable filesystem identity`);
   return value.toString(10);
 }
@@ -209,11 +198,7 @@ function lstatIfPresent(path) {
 
 function directoryFingerprint(path, label, rootDeviceId) {
   const before = lstatIfPresent(path);
-  if (
-    before === null ||
-    before.isSymbolicLink() ||
-    !before.isDirectory()
-  )
+  if (before === null || before.isSymbolicLink() || !before.isDirectory())
     throw new Error(`${label} must be an existing ordinary directory`);
   const nativePath = realpathSync.native(path);
   if (nativePath !== path)
@@ -465,8 +450,7 @@ function readAndHashFile(
   label = 'Distributed local blob'
 ) {
   const beforePath = lstatIfPresent(path);
-  if (beforePath === null)
-    throw new Error(`${label} is missing`);
+  if (beforePath === null) throw new Error(`${label} is missing`);
   if (
     beforePath.isSymbolicLink() ||
     !beforePath.isFile() ||
@@ -750,8 +734,7 @@ function syncDirectoryIfSupported(path, expectedFingerprint) {
       error?.code
     );
     const windowsUnsupported =
-      process.platform === 'win32' &&
-      ['EACCES', 'EPERM'].includes(error?.code);
+      process.platform === 'win32' && ['EACCES', 'EPERM'].includes(error?.code);
     if (!unsupported && !windowsUnsupported) throw error;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
@@ -891,8 +874,7 @@ function publishArtifactBlob(store, value) {
         { create: true }
       );
       const existing = lstatIfPresent(finalPath);
-      const expectedDeviceId =
-        admission.config.rootObjectFingerprint.deviceId;
+      const expectedDeviceId = admission.config.rootObjectFingerprint.deviceId;
       if (existing === null) {
         writeStagingBlob(claim, verifiedArtifact, value.chunks);
         publishStagingBlob(

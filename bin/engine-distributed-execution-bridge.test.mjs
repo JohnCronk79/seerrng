@@ -26,6 +26,11 @@ import {
   startNextDistributedApp,
 } from '../tools/validation-engine/runtime/distributed-controller-queue.mjs';
 import {
+  DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA,
+  createDistributedEvidenceManifest,
+  verifyAuthenticatedDistributedCleanupEvidenceManifest,
+} from '../tools/validation-engine/runtime/distributed-evidence-artifact.mjs';
+import {
   DISTRIBUTED_EXECUTION_BRIDGE_SCHEMA,
   DISTRIBUTED_TASK_CATALOG_SCHEMA,
   DISTRIBUTED_TASK_PAYLOAD_SCHEMA,
@@ -36,10 +41,12 @@ import {
   verifyDistributedTaskCatalog,
 } from '../tools/validation-engine/runtime/distributed-execution-bridge.mjs';
 import {
-  DISTRIBUTED_EVIDENCE_MANIFEST_SCHEMA,
-  createDistributedEvidenceManifest,
-  verifyAuthenticatedDistributedCleanupEvidenceManifest,
-} from '../tools/validation-engine/runtime/distributed-evidence-artifact.mjs';
+  cleanDistributedWorkerAttempt,
+  createDistributedWorkerAttemptState,
+  distributedWorkerCleanupEvidenceContent,
+  requireDistributedWorkerAttemptCleanup,
+  sealTrustedDistributedWorkerCleanupEvidence,
+} from '../tools/validation-engine/runtime/distributed-worker-attempt-state.mjs';
 import {
   DISTRIBUTED_WORKER_CONFIG_SCHEMA,
   createDistributedBrokerHandoff,
@@ -48,13 +55,6 @@ import {
   distributedWorkerRole,
   distributedWorkerRunsOnControllerHost,
 } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
-import {
-  cleanDistributedWorkerAttempt,
-  createDistributedWorkerAttemptState,
-  distributedWorkerCleanupEvidenceContent,
-  requireDistributedWorkerAttemptCleanup,
-  sealTrustedDistributedWorkerCleanupEvidence,
-} from '../tools/validation-engine/runtime/distributed-worker-attempt-state.mjs';
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const controllerId = 'controller-a';
@@ -357,8 +357,7 @@ test('controller accepts cleanup manifests only from its exact runtime bridge', 
   const pending = createDistributedWorkerAttemptState({
     binding: bridge.binding,
     bridgeSha256: bridge.bridgeSha256,
-    applicationIsolationKeySha256:
-      bridge.brokerApplicationIsolationKeySha256,
+    applicationIsolationKeySha256: bridge.brokerApplicationIsolationKeySha256,
     task,
     lease,
     sourceWorkspaceIdentitySha256: hash('source-workspace-unit-a'),
