@@ -277,6 +277,7 @@ const flagOptions = new Set([
   '--distributed-configure-controller',
   '--distributed-configure-node',
   '--distributed-controller-service',
+  '--distributed-contained-run',
   '--distributed-run',
   '--distributed-node',
   '--distributed-node-thread-policy',
@@ -313,6 +314,7 @@ const valueOptions = new Set([
   '--plan-file',
   '--profile',
   '--receipt-dir',
+  '--request-file',
   '--report-file',
   '--state-root',
   '--thread-rule',
@@ -509,6 +511,11 @@ const optionContracts = {
     ]),
     requiredValues: ['--active-config-marker', '--state-root', '--log-root'],
   },
+  'distributed-contained-run': {
+    label: 'Internal distributed contained run mode',
+    allowed: new Set(['--distributed-contained-run', '--request-file']),
+    requiredValues: ['--request-file'],
+  },
   'distributed-run': {
     label: 'Distributed production run mode',
     allowed: new Set([
@@ -673,6 +680,7 @@ function validateOptions(options) {
     '--distributed-configure-controller',
     '--distributed-configure-node',
     '--distributed-controller-service',
+    '--distributed-contained-run',
     '--distributed-run',
     '--distributed-node',
     '--distributed-node-thread-policy',
@@ -784,6 +792,25 @@ export async function executeDistributedLinuxPublicLifecycle(request) {
       'Distributed public lifecycle integration does not export executeDistributedLinuxPublicLifecycle'
     );
   return integration.executeDistributedLinuxPublicLifecycle(request);
+}
+
+/** Internal helper-child seam on this same engine entrypoint. */
+export async function executeDistributedLinuxContainedLifecycle(
+  requestFilePath,
+  options
+) {
+  const integration =
+    await import('../tools/validation-engine/runtime/distributed-linux-public-lifecycle.mjs');
+  if (
+    typeof integration.executeDistributedLinuxContainedLifecycle !== 'function'
+  )
+    throw new Error(
+      'Distributed contained lifecycle integration does not export executeDistributedLinuxContainedLifecycle'
+    );
+  return integration.executeDistributedLinuxContainedLifecycle(
+    requestFilePath,
+    options
+  );
 }
 
 /**
@@ -1053,6 +1080,17 @@ failures, partial output closure and zero active tests fail closed.\n`);
         has('--json')
           ? `${JSON.stringify(execution.result, null, 2)}\n`
           : `Mode 3 distributed validation passed for ${execution.request.runtimeApplicationKey}/${execution.request.applicationEntryId} (${execution.request.runId}).\n`
+      );
+    } else if (distributedMode === '--distributed-contained-run') {
+      requireLinuxDistributedMode('Internal distributed contained run');
+      process.on('SIGINT', interrupt);
+      process.on('SIGTERM', interrupt);
+      const execution = await executeDistributedLinuxContainedLifecycle(
+        requiredValue('--request-file'),
+        { signal: controller.signal }
+      );
+      process.stdout.write(
+        `${JSON.stringify({ runId: execution.runId, status: execution.status })}\n`
       );
     } else if (distributedMode === '--distributed-configure-controller') {
       requireLinuxDistributedMode('Distributed controller configuration');
@@ -1482,6 +1520,7 @@ failures, partial output closure and zero active tests fail closed.\n`);
           process.stdout.write('\nLocal tests passed.\n');
         } else {
           context = await createNativeStageContext(root, {
+            runId: `local-${randomUUID()}`,
             signal: controller.signal,
           });
           if (context.report.blockedRequired.length) {

@@ -15,12 +15,32 @@ import { test } from 'node:test';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { createAdaptiveTimingProfile } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
+import { createRequiredWorkerCapacityProof } from '../tools/validation-engine/runtime/cpu-capacity.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { executeDistributedLinuxProductionRun } from '../tools/validation-engine/runtime/distributed-linux-production-runner.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const digest = (character) => character.repeat(64);
+const candidate = Object.freeze({
+  repository: 'JohnCronk79/seerrng',
+  commit: '1'.repeat(40),
+  tree: '2'.repeat(40),
+  lockSha256: digest('3'),
+  sourceSha256: digest('4'),
+});
+const genericCapacity = Object.freeze({
+  availableLogicalCpus: 2,
+  visibleLogicalCpus: 2,
+  quotaCpus: 2,
+  effectiveLogicalCpus: 2,
+  operatorGithubLogin: null,
+  githubActions: false,
+  policy: 'one-worker-less-than-effective-logical-cpus',
+  configuredWorkers: 1,
+  observedWorkerCount: null,
+});
 
 function repositoryEvidence(profile) {
   return {
@@ -101,14 +121,20 @@ function repositoryEvidence(profile) {
   };
 }
 
-function stagedResult(profile, { passed = true } = {}) {
+function stagedResult(
+  profile,
+  { passed = true, capacity = genericCapacity } = {}
+) {
   const evidence = repositoryEvidence(profile);
   const stageIds = ['repository', 'codeql', 'build', 'browser'];
   return {
     schemaVersion: 2,
     runId: 'production-run-1',
-    candidate: { commit: 'candidate-revision-1' },
+    candidate,
+    executionEnvironmentSha256: digest('e'),
+    mode: 'execute',
     status: passed ? 'passed' : 'failed',
+    localStatus: passed ? 'passed' : 'failed',
     ok: passed,
     stats: { wallMs: 20 },
     lanes: stageIds.map((id, index) => ({
@@ -124,25 +150,36 @@ function stagedResult(profile, { passed = true } = {}) {
       caseAttempts: { passed: 1, failed: 0, skipped: 0 },
     })),
     results: stageIds.map((lane, index) => ({
-      id: `${lane}-unit`,
+      id: `native-${lane}`,
       lane,
+      slots: capacity.configuredWorkers,
+      files: lane === 'repository' ? ['a.test.ts'] : [],
+      runId: 'production-run-1',
+      candidate,
+      executionEnvironmentSha256: digest('e'),
       status: passed || index > 0 ? 'passed' : 'failed',
       wallMs: index + 1,
       startOffsetMs: index * 2,
       endOffsetMs: index * 2 + 1,
     })),
     pendingRequired: [],
+    applicability: [],
     nativeEvidence: {
       'native-repository': {
         status: passed ? 'passed' : 'failed',
         repositoryEvidence: evidence,
       },
     },
+    capacity,
     resultReuse: false,
   };
 }
 
-function harness(t, failure = null) {
+function harness(
+  t,
+  failure = null,
+  { requiredProof = false, additionalNode = false } = {}
+) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-production-runner-'));
   t.after(() => rmSync(root, { force: true, recursive: true }));
   const evidenceDirectory = join(root, 'production-run-1');
@@ -197,13 +234,67 @@ function harness(t, failure = null) {
     name: 'SeerrNG',
     profilePath: '/profiles/seerrng-test-suite-dependancies.cfg',
   };
+  const runCapacity = requiredProof
+    ? Object.freeze({
+        availableLogicalCpus: 12,
+        visibleLogicalCpus: 12,
+        quotaCpus: 12,
+        effectiveLogicalCpus: 12,
+        operatorGithubLogin: 'JohnCronk79',
+        githubActions: false,
+        policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+        configuredWorkers: 24,
+        observedWorkerCount: null,
+      })
+    : genericCapacity;
   const active = {
     configPath: '/config/test-suite-multi-computer-user.cfg',
     role: 'controller',
-    config: { supportedApplications: [application] },
+    config: requiredProof
+      ? {
+          global: {
+            githubUsername: 'JohnCronk79',
+            computerName: "John's laptop",
+            ipAddress: '192.168.10.82',
+            port: 62021,
+            cpuName: 'Focused laptop CPU',
+            availableThreads: 12,
+            threads: '2n',
+            minimumThreadCount: 1,
+          },
+          nodes: [
+            {
+              nodeNumber: '01',
+              computerName: "John's server",
+              ipAddress: '192.168.10.9',
+              port: 62021,
+              cpuName: 'Focused server CPU',
+              availableThreads: 8,
+              threads: 'n-2',
+              minimumThreadCount: 1,
+            },
+            ...(additionalNode
+              ? [
+                  {
+                    nodeNumber: '02',
+                    computerName: 'Additional worker',
+                    ipAddress: '192.168.10.10',
+                    port: 62021,
+                    cpuName: 'Additional worker CPU',
+                    availableThreads: 16,
+                    threads: 'n',
+                    minimumThreadCount: 1,
+                  },
+                ]
+              : []),
+          ],
+          supportedApplications: [application],
+        }
+      : { supportedApplications: [application] },
   };
   const result = stagedResult(initialProfile, {
     passed: failure !== 'stage',
+    capacity: runCapacity,
   });
   const containment = {
     verifyDockerFixture: async () => ({}),
@@ -229,11 +320,23 @@ function harness(t, failure = null) {
     runtimeApplicationKey: 'seerrng',
     sourceRoot: root,
     timingProfilePath,
+    ...(requiredProof
+      ? {
+          nativeContextOptions: {
+            operatorGithubLogin: 'JohnCronk79',
+            requiredCapacityProof: createRequiredWorkerCapacityProof({
+              operatorGithubLogin: 'JohnCronk79',
+              expectedLogicalCpus: 12,
+            }),
+          },
+        }
+      : {}),
   };
   const dependencies = {
     createApplicationListing: () => ({ applications: [application] }),
     createNativeContext: async (_sourceRoot, nativeOptions) => {
       events.push('context:create');
+      assert.equal(nativeOptions.runId, options.runId);
       for (const name of [
         'verifyDockerFixture',
         'verifyGitHistory',
@@ -242,7 +345,52 @@ function harness(t, failure = null) {
       ])
         assert.equal(nativeOptions[name], containment[name]);
       return {
-        report: { blockedRequired: [] },
+        binding: {
+          plan: {
+            runId: 'production-run-1',
+            candidate,
+            executionEnvironmentSha256: digest('e'),
+            maxSlots: runCapacity.configuredWorkers,
+            lanes: ['repository', 'codeql', 'build', 'browser'].map(
+              (id, index) => ({
+                id,
+                kind: id === 'build' ? 'compile' : 'check',
+                required: true,
+                dependsOn: [],
+                after: index
+                  ? [['repository', 'codeql', 'build', 'browser'][index - 1]]
+                  : [],
+                prerequisites: [],
+              })
+            ),
+            units: ['repository', 'codeql', 'build', 'browser'].map((lane) => ({
+              id: `native-${lane}`,
+              lane,
+              slots: runCapacity.configuredWorkers,
+              reads: ['source-manifest'],
+              writes: [
+                lane === 'browser' ? 'scratch-browser' : `scratch-${lane}`,
+              ],
+              files: lane === 'repository' ? ['a.test.ts'] : [],
+              dependsOn: lane === 'browser' ? ['native-build'] : [],
+              after: [],
+            })),
+          },
+          capacity: runCapacity,
+          resultReuse: false,
+        },
+        report: {
+          runId: 'production-run-1',
+          status: 'ready',
+          candidate,
+          capacity: runCapacity,
+          executionEnvironmentSha256: digest('e'),
+          sourceManifest: { sha256: candidate.sourceSha256 },
+          blockedRequired: [],
+          pendingMetadata: [],
+          stages: ['repository', 'codeql', 'build', 'browser'],
+          resultReuse: false,
+        },
         pendingMetadata: [],
         describeNativeProcessReceipts: () => ({
           file: ledgerPath,
@@ -257,8 +405,9 @@ function harness(t, failure = null) {
         },
       };
     },
-    executeStagedValidation: async (_context, _launch, bridgeDependencies) =>
+    executeStagedValidation: async (_context, launch, bridgeDependencies) =>
       await bridgeDependencies.withDistributedNetwork(async () => {
+        assert.equal(launch.controller.runId, options.runId);
         events.push('stages:four');
         return result;
       }),
@@ -285,6 +434,7 @@ function harness(t, failure = null) {
       assert.equal(existsSync(files.processLedger), true);
       assert.equal(existsSync(files.processLedgerSummary), true);
       assert.equal(existsSync(files.processStreams), true);
+      assert.equal(existsSync(files.runExpectations), true);
       if (failure === 'reconciliation')
         throw new Error('Focused reconciliation failure');
       const durableResult = JSON.parse(readFileSync(files.result, 'utf8'));
@@ -367,10 +517,12 @@ test('green production lifecycle persists one profile and writes its contained-r
     outcome.files.processLedgerSummary
   );
   const retainedStreams = readFileSync(outcome.files.processStreams);
+  const retainedExpectations = readFileSync(outcome.files.runExpectations);
   const streamBundle = JSON.parse(retainedStreams.toString('utf8'));
   assert.equal(marker.processLedgerSha256, hash(retainedLedger));
   assert.equal(marker.processLedgerSummarySha256, hash(retainedLedgerSummary));
   assert.equal(marker.processStreamsSha256, hash(retainedStreams));
+  assert.equal(marker.runExpectationsSha256, hash(retainedExpectations));
   assert.equal(streamBundle.sourceLedgerSha256, hash(retainedLedger));
   assert.equal(streamBundle.recordCount, 1);
   assert.equal(streamBundle.streamCount, 2);
@@ -393,6 +545,64 @@ test('green production lifecycle persists one profile and writes its contained-r
   const timingProfileBytes = readFileSync(fixture.options.timingProfilePath);
   assert.equal(marker.timingProfileFileSha256, hash(timingProfileBytes));
   assert.notEqual(marker.timingProfileFileSha256, marker.updatedProfileSha256);
+});
+
+test('required proof seals exact controller and Node 01 fleet capacity before execution', async (t) => {
+  const fixture = harness(t, null, { requiredProof: true });
+  const outcome = await executeDistributedLinuxProductionRun(
+    fixture.options,
+    fixture.dependencies
+  );
+  const expectations = JSON.parse(
+    readFileSync(outcome.files.runExpectations, 'utf8')
+  );
+  assert.equal(expectations.runId, fixture.options.runId);
+  assert.equal(expectations.capacity.configuredWorkers, 24);
+  assert.deepEqual(
+    expectations.requiredFleetProof.nodes.map(
+      ({ nodeId, availableThreads, admittedThreads }) => ({
+        nodeId,
+        availableThreads,
+        admittedThreads,
+      })
+    ),
+    [
+      {
+        nodeId: 'controller',
+        availableThreads: 12,
+        admittedThreads: 24,
+      },
+      { nodeId: 'node-01', availableThreads: 8, admittedThreads: 6 },
+    ]
+  );
+  assert.equal(
+    expectations.requiredFleetProof.requireAtLeastOneShardPerNode,
+    true
+  );
+});
+
+test('required fleet proof derives every additional configured node without hardware literals', async (t) => {
+  const fixture = harness(t, null, {
+    requiredProof: true,
+    additionalNode: true,
+  });
+  const outcome = await executeDistributedLinuxProductionRun(
+    fixture.options,
+    fixture.dependencies
+  );
+  const expectations = JSON.parse(
+    readFileSync(outcome.files.runExpectations, 'utf8')
+  );
+  assert.deepEqual(
+    expectations.requiredFleetProof.nodes.map(
+      ({ nodeId, admittedThreads }) => ({ nodeId, admittedThreads })
+    ),
+    [
+      { nodeId: 'controller', admittedThreads: 24 },
+      { nodeId: 'node-01', admittedThreads: 6 },
+      { nodeId: 'node-02', admittedThreads: 16 },
+    ]
+  );
 });
 
 for (const failure of [

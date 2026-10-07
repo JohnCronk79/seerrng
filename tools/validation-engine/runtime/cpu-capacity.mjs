@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { availableParallelism, cpus } from 'node:os';
 
 const HIGH_THROUGHPUT_GITHUB_LOGINS = new Map([['johncronk79', 'JohnCronk79']]);
+export const REQUIRED_WORKER_CAPACITY_PROOF_SCHEMA =
+  'seerrng-required-worker-capacity-proof/v1';
 
 const approvedGithubLogin = (value) => {
   if (typeof value !== 'string' || value.trim() === '') return null;
@@ -67,6 +69,7 @@ export function selectWorkerCapacity({
   override = null,
   operatorGithubLogin = null,
   githubActions = false,
+  requiredProof = null,
 }) {
   if (typeof githubActions !== 'boolean')
     throw new Error('GitHub Actions context must be boolean');
@@ -97,7 +100,7 @@ export function selectWorkerCapacity({
     : highThroughput
       ? effectiveLogicalCpus * 2
       : Math.max(1, effectiveLogicalCpus - 1);
-  return {
+  const capacity = {
     availableLogicalCpus,
     visibleLogicalCpus,
     quotaCpus,
@@ -115,6 +118,85 @@ export function selectWorkerCapacity({
     configuredWorkers: override ?? automaticWorkers,
     observedWorkerCount: null,
   };
+  if (requiredProof !== null)
+    verifyRequiredWorkerCapacityProof(capacity, requiredProof);
+  return capacity;
+}
+
+export function createRequiredWorkerCapacityProof({
+  operatorGithubLogin,
+  expectedLogicalCpus,
+}) {
+  const approvedOperatorGithubLogin = approvedGithubLogin(operatorGithubLogin);
+  if (!approvedOperatorGithubLogin)
+    throw new Error(
+      'Required capacity proof needs an approved GitHub operator'
+    );
+  if (!Number.isSafeInteger(expectedLogicalCpus) || expectedLogicalCpus < 1)
+    throw new Error(
+      'Required capacity proof needs a positive logical CPU count'
+    );
+  return normalizeRequiredWorkerCapacityProof({
+    schema: REQUIRED_WORKER_CAPACITY_PROOF_SCHEMA,
+    operatorGithubLogin: approvedOperatorGithubLogin,
+    expectedLogicalCpus,
+    expectedConfiguredWorkers: expectedLogicalCpus * 2,
+    githubActions: false,
+    policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+  });
+}
+
+export function normalizeRequiredWorkerCapacityProof(proof) {
+  if (
+    !proof ||
+    typeof proof !== 'object' ||
+    Array.isArray(proof) ||
+    Object.getPrototypeOf(proof) !== Object.prototype ||
+    ![
+      'expectedConfiguredWorkers',
+      'expectedLogicalCpus',
+      'githubActions',
+      'operatorGithubLogin',
+      'policy',
+      'schema',
+    ].every((key) => Object.hasOwn(proof, key)) ||
+    Object.keys(proof).length !== 6 ||
+    proof.schema !== REQUIRED_WORKER_CAPACITY_PROOF_SCHEMA ||
+    approvedGithubLogin(proof.operatorGithubLogin) !==
+      proof.operatorGithubLogin ||
+    !Number.isSafeInteger(proof.expectedLogicalCpus) ||
+    proof.expectedLogicalCpus < 1 ||
+    proof.expectedConfiguredWorkers !== proof.expectedLogicalCpus * 2 ||
+    proof.githubActions !== false ||
+    proof.policy !==
+      'two-workers-per-effective-logical-cpu-for-approved-operator'
+  )
+    throw new Error('Required worker capacity proof policy is invalid');
+  return Object.freeze({
+    schema: proof.schema,
+    operatorGithubLogin: proof.operatorGithubLogin,
+    expectedLogicalCpus: proof.expectedLogicalCpus,
+    expectedConfiguredWorkers: proof.expectedConfiguredWorkers,
+    githubActions: proof.githubActions,
+    policy: proof.policy,
+  });
+}
+
+export function verifyRequiredWorkerCapacityProof(capacity, proofValue) {
+  const proof = normalizeRequiredWorkerCapacityProof(proofValue);
+  if (
+    capacity.availableLogicalCpus !== proof.expectedLogicalCpus ||
+    capacity.visibleLogicalCpus !== proof.expectedLogicalCpus ||
+    capacity.quotaCpus !== proof.expectedLogicalCpus ||
+    capacity.effectiveLogicalCpus !== proof.expectedLogicalCpus ||
+    capacity.operatorGithubLogin !== proof.operatorGithubLogin ||
+    capacity.githubActions !== proof.githubActions ||
+    capacity.policy !== proof.policy ||
+    capacity.configuredWorkers !== proof.expectedConfiguredWorkers ||
+    capacity.observedWorkerCount !== null
+  )
+    throw new Error('Required worker capacity proof did not match admission');
+  return capacity;
 }
 
 export function detectWorkerCapacity(options = {}) {
@@ -129,6 +211,7 @@ export function detectWorkerCapacity(options = {}) {
     sourceRoot = process.cwd(),
     operatorGithubLogin = null,
     environment = process.env,
+    requiredProof = null,
   } = options;
   let quotaCpus = null;
   if (process.platform === 'linux') {
@@ -175,5 +258,6 @@ export function detectWorkerCapacity(options = {}) {
     override,
     operatorGithubLogin: detectedOperatorGithubLogin,
     githubActions: environment.GITHUB_ACTIONS === 'true',
+    requiredProof,
   });
 }

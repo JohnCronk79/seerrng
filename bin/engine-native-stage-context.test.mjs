@@ -147,6 +147,7 @@ test('invalid worker overrides fail before allocating a disposable source copy',
   for (const workerOverride of [0, -1, 1.5, 257, '1', NaN]) {
     await assert.rejects(
       createNativeStageContext(root, {
+        runId: 'native-context-focused-run',
         scratchParent: parent,
         inherited: {},
         workerOverride,
@@ -155,6 +156,28 @@ test('invalid worker overrides fail before allocating a disposable source copy',
     );
     assert.deepEqual(readdirSync(parent).sort(), before);
   }
+});
+
+test('public run and operator identities fail before allocating a source copy', async (t) => {
+  const { root, parent } = fixture(t);
+  const before = readdirSync(parent).sort();
+  await assert.rejects(
+    createNativeStageContext(root, {
+      scratchParent: parent,
+      inherited: {},
+    }),
+    /exact public run ID/u
+  );
+  await assert.rejects(
+    createNativeStageContext(root, {
+      runId: 'native-context-focused-run',
+      operatorGithubLogin: 'not an identity',
+      scratchParent: parent,
+      inherited: {},
+    }),
+    /operator GitHub login is invalid/u
+  );
+  assert.deepEqual(readdirSync(parent).sort(), before);
 });
 
 test('native repository check runs one exact sealed check with authentic receipt and source guards', async (t) => {

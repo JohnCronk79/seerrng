@@ -21,7 +21,12 @@ import {
   relative,
   resolve,
 } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
+import {
+  normalizeRequiredWorkerCapacityProof,
+  verifyRequiredWorkerCapacityProof,
+} from './cpu-capacity.mjs';
 import {
   createAdaptiveTimingObservation,
   distributedAdaptivePolicySha256,
@@ -31,8 +36,13 @@ import {
   persistAdaptiveTimingProfileFile,
   readAdaptiveTimingProfileFile,
 } from './distributed-adaptive-timing-profile-store.mjs';
-import { createSupportedApplicationListing } from './distributed-linux-config.mjs';
+import { DISTRIBUTED_CONTROLLER_NODE_ID } from './distributed-controller-adaptive-bridge.mjs';
+import {
+  createSupportedApplicationListing,
+  evaluateThreadExpression,
+} from './distributed-linux-config.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
+import { distributedLinuxNodeId } from './distributed-linux-node-runner.mjs';
 import { reconcileDistributedLinuxRunEvidence } from './distributed-linux-run-reconciliation.mjs';
 import { executeDistributedLinuxStagedValidation } from './distributed-linux-staged-bridge.mjs';
 import { createNativeStageContext } from './native-stage-context.mjs';
@@ -153,7 +163,9 @@ function normalizeOptions(value) {
     value.nativeContextOptions ?? {},
     [
       'inherited',
+      'operatorGithubLogin',
       'prerequisiteReferences',
+      'requiredCapacityProof',
       'reviewedPrMetadata',
       'scratchParent',
       'stderr',
@@ -280,6 +292,7 @@ function evidencePaths(directory) {
     processLedger: file('native-command-receipts.jsonl'),
     processLedgerSummary: file('native-process-ledger.json'),
     processStreams: file('native-process-streams.json'),
+    runExpectations: file('native-run-expectations.json'),
     reconciliation: file('independent-reconciliation.json'),
     result: file('staged-validation-result.json'),
     timingObservations: file('adaptive-timing-observations.json'),
@@ -335,6 +348,227 @@ function resolveApplication(active, entryId, createApplicationListing) {
     );
   const { applicationId, name, profilePath } = matches[0];
   return structuredClone({ entryId, applicationId, name, profilePath });
+}
+
+const REQUIRED_STAGES = Object.freeze([
+  'repository',
+  'codeql',
+  'build',
+  'browser',
+]);
+
+function exactFieldSet(value, fields, label) {
+  plainObject(value, label);
+  const actual = Object.keys(value).toSorted(compareText);
+  const expected = [...fields].toSorted(compareText);
+  if (!isDeepStrictEqual(actual, expected))
+    throw new Error(`${label} has unexpected or missing fields`);
+  return value;
+}
+
+function stringArray(value, label) {
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== 'string' || !entry) ||
+    new Set(value).size !== value.length
+  )
+    throw new Error(`${label} must be a unique string array`);
+  return [...value];
+}
+
+function requiredFleetProofForController(config, requiredCapacityProof) {
+  if (requiredCapacityProof === null) return null;
+  const machine = (nodeId, nodeNumber, value) => ({
+    nodeId,
+    nodeNumber,
+    computerName: value.computerName,
+    ipAddress: value.ipAddress,
+    port: value.port,
+    cpuName: value.cpuName,
+    availableThreads: value.availableThreads,
+    threadExpression: value.threads,
+    minimumThreadCount: value.minimumThreadCount,
+    admittedThreads: evaluateThreadExpression(
+      value.threads,
+      value.availableThreads,
+      value.minimumThreadCount
+    ),
+  });
+  const nodes = [
+    machine(DISTRIBUTED_CONTROLLER_NODE_ID, 'controller', config.global),
+    ...config.nodes.map((node) =>
+      machine(distributedLinuxNodeId(node.nodeNumber), node.nodeNumber, node)
+    ),
+  ];
+  if (
+    nodes.length < 2 ||
+    nodes[0].availableThreads !== requiredCapacityProof.expectedLogicalCpus ||
+    nodes[0].admittedThreads !==
+      requiredCapacityProof.expectedConfiguredWorkers ||
+    new Set(nodes.map(({ nodeId }) => nodeId)).size !== nodes.length ||
+    new Set(nodes.map(({ nodeNumber }) => nodeNumber)).size !== nodes.length ||
+    new Set(nodes.map(({ ipAddress, port }) => `${ipAddress}:${port}`)).size !==
+      nodes.length ||
+    nodes.some(({ admittedThreads }) => admittedThreads < 1)
+  )
+    throw new Error('Required configured fleet capacity or identity differs');
+  return Object.freeze({
+    schema: 'seerrng-distributed-linux-required-fleet-proof/v1',
+    nodes,
+    requireAllConfiguredNodesOnline: true,
+    requireNoConfiguredNodeExclusions: true,
+    requireAtLeastOneShardPerNode: true,
+  });
+}
+
+function createRunExpectations(context, options, activeConfig) {
+  const binding = plainObject(context.binding, 'native stage binding');
+  const plan = plainObject(binding.plan, 'native stage plan');
+  const report = plainObject(context.report, 'native context report');
+  const capacity = plainObject(binding.capacity, 'native stage capacity');
+  const capacityFields = [
+    'availableLogicalCpus',
+    'configuredWorkers',
+    'effectiveLogicalCpus',
+    'githubActions',
+    'observedWorkerCount',
+    'operatorGithubLogin',
+    'policy',
+    'quotaCpus',
+    'visibleLogicalCpus',
+  ];
+  exactFieldSet(capacity, capacityFields, 'native stage capacity');
+  if (
+    plan.runId !== options.runId ||
+    report.runId !== options.runId ||
+    !isDeepStrictEqual(plan.candidate, report.candidate) ||
+    plan.executionEnvironmentSha256 !== report.executionEnvironmentSha256 ||
+    !isDeepStrictEqual(capacity, report.capacity) ||
+    plan.maxSlots !== capacity.configuredWorkers ||
+    report.sourceManifest?.sha256 !== plan.candidate?.sourceSha256 ||
+    report.status !== 'ready' ||
+    report.resultReuse !== false ||
+    binding.resultReuse !== false ||
+    !isDeepStrictEqual(report.stages, REQUIRED_STAGES) ||
+    !Array.isArray(report.blockedRequired) ||
+    report.blockedRequired.length !== 0 ||
+    !isDeepStrictEqual(context.pendingMetadata, report.pendingMetadata)
+  )
+    throw new Error('Native context identity or admission differs');
+  digest(
+    plan.executionEnvironmentSha256,
+    'Native execution environment identity'
+  );
+  if (!Array.isArray(plan.lanes) || !Array.isArray(plan.units))
+    throw new Error('Native stage plan inventory is incomplete');
+  const lanes = plan.lanes.map((lane, index) => {
+    exactFieldSet(
+      lane,
+      ['after', 'dependsOn', 'id', 'kind', 'prerequisites', 'required'],
+      `native plan lane ${index + 1}`
+    );
+    if (
+      lane.id !== REQUIRED_STAGES[index] ||
+      typeof lane.kind !== 'string' ||
+      typeof lane.required !== 'boolean' ||
+      !Array.isArray(lane.prerequisites)
+    )
+      throw new Error('Native stage lane inventory differs');
+    return {
+      id: lane.id,
+      kind: lane.kind,
+      required: lane.required,
+      dependsOn: stringArray(lane.dependsOn, `${lane.id} dependencies`),
+      after: stringArray(lane.after, `${lane.id} ordering`),
+      prerequisites: structuredClone(lane.prerequisites),
+    };
+  });
+  const units = plan.units.map((unit, index) => {
+    exactFieldSet(
+      unit,
+      ['after', 'dependsOn', 'files', 'id', 'lane', 'reads', 'slots', 'writes'],
+      `native plan unit ${index + 1}`
+    );
+    if (
+      typeof unit.id !== 'string' ||
+      !unit.id ||
+      !REQUIRED_STAGES.includes(unit.lane) ||
+      !Number.isSafeInteger(unit.slots) ||
+      unit.slots !== plan.maxSlots
+    )
+      throw new Error('Native stage unit inventory differs');
+    return {
+      id: unit.id,
+      lane: unit.lane,
+      slots: unit.slots,
+      reads: stringArray(unit.reads, `${unit.id} reads`),
+      writes: stringArray(unit.writes, `${unit.id} writes`),
+      files: stringArray(unit.files, `${unit.id} files`),
+      dependsOn: stringArray(unit.dependsOn, `${unit.id} dependencies`),
+      after: stringArray(unit.after, `${unit.id} ordering`),
+    };
+  });
+  const unitIds = units.map(({ id }) => id);
+  if (
+    units.length < REQUIRED_STAGES.length ||
+    new Set(unitIds).size !== unitIds.length ||
+    REQUIRED_STAGES.some(
+      (stage) =>
+        units.filter(
+          (unit) => unit.id === `native-${stage}` && unit.lane === stage
+        ).length !== 1
+    ) ||
+    units.some((unit) =>
+      [...unit.dependsOn, ...unit.after].some((id) => !unitIds.includes(id))
+    )
+  )
+    throw new Error('Native stage unit identity closure differs');
+  const requiredCapacityProof =
+    options.nativeContextOptions.requiredCapacityProof === undefined ||
+    options.nativeContextOptions.requiredCapacityProof === null
+      ? null
+      : normalizeRequiredWorkerCapacityProof(
+          options.nativeContextOptions.requiredCapacityProof
+        );
+  if (requiredCapacityProof)
+    verifyRequiredWorkerCapacityProof(capacity, requiredCapacityProof);
+  if (
+    options.nativeContextOptions.operatorGithubLogin !== undefined &&
+    options.nativeContextOptions.operatorGithubLogin !== null &&
+    capacity.operatorGithubLogin !==
+      options.nativeContextOptions.operatorGithubLogin
+  )
+    throw new Error('Native context operator identity differs');
+  const requiredFleetProof = requiredFleetProofForController(
+    activeConfig,
+    requiredCapacityProof
+  );
+  return Object.freeze({
+    schema: 'seerrng-distributed-linux-run-expectations/v1',
+    runId: options.runId,
+    candidate: structuredClone(plan.candidate),
+    executionEnvironmentSha256: plan.executionEnvironmentSha256,
+    capacity: structuredClone(capacity),
+    requiredCapacityProof: requiredCapacityProof
+      ? structuredClone(requiredCapacityProof)
+      : null,
+    requiredFleetProof: requiredFleetProof
+      ? structuredClone(requiredFleetProof)
+      : null,
+    context: {
+      status: report.status,
+      stages: [...report.stages],
+      blockedRequired: structuredClone(report.blockedRequired),
+      pendingMetadata: structuredClone(report.pendingMetadata),
+      resultReuse: report.resultReuse,
+    },
+    plan: {
+      maxSlots: plan.maxSlots,
+      lanes,
+      units,
+    },
+    resultReuse: false,
+  });
 }
 
 function requiredPendingMetadata(context, result) {
@@ -865,6 +1099,7 @@ export async function executeDistributedLinuxProductionRun(
 
     context = await deps.createNativeContext(options.sourceRoot, {
       ...options.nativeContextOptions,
+      runId: options.runId,
       signal: options.signal,
       ...Object.fromEntries(
         NATIVE_CONTAINMENT_KEYS.map((name) => [name, options.containment[name]])
@@ -879,6 +1114,16 @@ export async function executeDistributedLinuxProductionRun(
       throw new Error('Native context retains blocked required prerequisites');
     if (typeof context.describeNativeProcessReceipts !== 'function')
       throw new Error('Native context must expose its process receipt ledger');
+    const runExpectations = createRunExpectations(
+      context,
+      options,
+      active.config
+    );
+    const runExpectationsReceipt = writeJson(
+      deps,
+      paths.runExpectations,
+      runExpectations
+    );
 
     const result = await deps.executeStagedValidation(
       context,
@@ -913,12 +1158,14 @@ export async function executeDistributedLinuxProductionRun(
         processLedgerSummary: paths.processLedgerSummary,
         processStreams: paths.processStreams,
         result: paths.result,
+        runExpectations: paths.runExpectations,
         timings: paths.timings,
       }),
       expected: Object.freeze({
         activeConfigPath: active.configPath,
         applicationEntryId: application.entryId,
         profileSha256: sourceProfileSha256,
+        runExpectationsSha256: runExpectationsReceipt.sha256,
         runId: options.runId,
         runtimeApplicationKey: options.runtimeApplicationKey,
       }),
@@ -1021,6 +1268,7 @@ export async function executeDistributedLinuxProductionRun(
       processLedgerSha256: ledgerCollection.ledgerReceipt.sha256,
       processLedgerSummarySha256: ledgerCollection.receipt.sha256,
       processStreamsSha256: ledgerCollection.streamReceipt.sha256,
+      runExpectationsSha256: runExpectationsReceipt.sha256,
       reconciliationSha256: reconciliationReceipt.sha256,
       observationsSha256: observationsReceipt.sha256,
       timingProfileUpdateSha256: timingProfileUpdateReceipt.sha256,
@@ -1039,6 +1287,7 @@ export async function executeDistributedLinuxProductionRun(
         processLedger: paths.processLedger,
         processLedgerSummary: paths.processLedgerSummary,
         processStreams: paths.processStreams,
+        runExpectations: paths.runExpectations,
         reconciliation: paths.reconciliation,
         result: paths.result,
         timingObservations: paths.timingObservations,

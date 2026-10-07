@@ -5,7 +5,12 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import {
+  normalizeRequiredWorkerCapacityProof,
+  verifyRequiredWorkerCapacityProof,
+} from './cpu-capacity.mjs';
 import { verifyDistributedAdaptiveSchedule } from './distributed-adaptive-scheduler.mjs';
+import { evaluateThreadExpression } from './distributed-linux-config.mjs';
 import {
   createDistributedNativeTaskRequest,
   verifyDistributedNativeTaskResult,
@@ -27,6 +32,7 @@ const FILE_ROLES = Object.freeze([
   'processLedgerSummary',
   'processStreams',
   'result',
+  'runExpectations',
   'timings',
 ]);
 const FILE_LIMITS = Object.freeze({
@@ -34,6 +40,7 @@ const FILE_LIMITS = Object.freeze({
   processLedgerSummary: 1024 * 1024,
   processStreams: 512 * 1024 * 1024,
   result: 128 * 1024 * 1024,
+  runExpectations: 16 * 1024 * 1024,
   timings: 64 * 1024 * 1024,
 });
 const MAX_TOTAL_EVIDENCE_BYTES = 768 * 1024 * 1024;
@@ -138,6 +145,14 @@ function duration(value, label) {
     `${label} must be a finite nonnegative duration`
   );
   return value;
+}
+
+function approximatelyEqual(left, right) {
+  return (
+    Number.isFinite(left) &&
+    Number.isFinite(right) &&
+    Math.abs(left - right) <= 5
+  );
 }
 
 function counts(value, label) {
@@ -357,6 +372,7 @@ function normalizeExpected(value) {
       'activeConfigPath',
       'applicationEntryId',
       'profileSha256',
+      'runExpectationsSha256',
       'runId',
       'runtimeApplicationKey',
     ],
@@ -380,6 +396,10 @@ function normalizeExpected(value) {
       value.profileSha256,
       'Expected timing profile identity'
     ),
+    runExpectationsSha256: digest(
+      value.runExpectationsSha256,
+      'Expected native run expectations identity'
+    ),
     runId: token(value.runId, 'expected production run ID'),
     runtimeApplicationKey: token(
       value.runtimeApplicationKey,
@@ -401,6 +421,374 @@ function normalizeCandidate(value) {
     lockSha256: digest(value.lockSha256, 'Candidate lockfile identity'),
     sourceSha256: digest(value.sourceSha256, 'Candidate source identity'),
   };
+}
+
+function uniqueTextList(value, label) {
+  assert(Array.isArray(value), `${label} must be an array`);
+  const normalized = value.map((entry) => text(entry, `${label} entry`));
+  assert(
+    new Set(normalized).size === normalized.length,
+    `${label} contains duplicates`
+  );
+  return normalized;
+}
+
+function normalizeExpectedCapacity(value) {
+  exactKeys(
+    value,
+    [
+      'availableLogicalCpus',
+      'configuredWorkers',
+      'effectiveLogicalCpus',
+      'githubActions',
+      'observedWorkerCount',
+      'operatorGithubLogin',
+      'policy',
+      'quotaCpus',
+      'visibleLogicalCpus',
+    ],
+    'expected native capacity'
+  );
+  const availableLogicalCpus = safeInteger(
+    value.availableLogicalCpus,
+    'expected available logical CPUs',
+    1
+  );
+  const visibleLogicalCpus = safeInteger(
+    value.visibleLogicalCpus,
+    'expected visible logical CPUs',
+    1
+  );
+  const quotaCpus = value.quotaCpus;
+  assert(
+    quotaCpus === null || (Number.isFinite(quotaCpus) && quotaCpus > 0),
+    'Expected CPU quota is invalid'
+  );
+  const effectiveLogicalCpus = safeInteger(
+    value.effectiveLogicalCpus,
+    'expected effective logical CPUs',
+    1
+  );
+  assert(
+    effectiveLogicalCpus ===
+      Math.min(
+        availableLogicalCpus,
+        visibleLogicalCpus,
+        quotaCpus === null
+          ? availableLogicalCpus
+          : Math.max(1, Math.floor(quotaCpus))
+      ),
+    'Expected effective logical CPU calculation differs'
+  );
+  assert(
+    value.operatorGithubLogin === null ||
+      TOKEN.test(text(value.operatorGithubLogin, 'expected operator login')),
+    'Expected operator login is invalid'
+  );
+  assert(
+    typeof value.githubActions === 'boolean',
+    'Expected GitHub Actions context must be boolean'
+  );
+  assert(
+    value.observedWorkerCount === null,
+    'Expected capacity must not invent observed workers'
+  );
+  const configuredWorkers = safeInteger(
+    value.configuredWorkers,
+    'expected configured workers',
+    1
+  );
+  assert(configuredWorkers <= 256, 'Expected configured workers exceed limit');
+  return {
+    availableLogicalCpus,
+    visibleLogicalCpus,
+    quotaCpus,
+    effectiveLogicalCpus,
+    operatorGithubLogin: value.operatorGithubLogin,
+    githubActions: value.githubActions,
+    policy: text(value.policy, 'expected capacity policy'),
+    configuredWorkers,
+    observedWorkerCount: null,
+  };
+}
+
+function normalizeRunExpectations(value, expected) {
+  exactKeys(
+    value,
+    [
+      'candidate',
+      'capacity',
+      'context',
+      'executionEnvironmentSha256',
+      'plan',
+      'requiredCapacityProof',
+      'requiredFleetProof',
+      'resultReuse',
+      'runId',
+      'schema',
+    ],
+    'native run expectations'
+  );
+  assert(
+    value.schema === 'seerrng-distributed-linux-run-expectations/v1' &&
+      value.runId === expected.runId &&
+      value.resultReuse === false,
+    'Native run expectations identity differs'
+  );
+  const candidate = normalizeCandidate(value.candidate);
+  const capacity = normalizeExpectedCapacity(value.capacity);
+  const executionEnvironmentSha256 = digest(
+    value.executionEnvironmentSha256,
+    'Expected execution environment identity'
+  );
+  let requiredCapacityProof = null;
+  if (value.requiredCapacityProof !== null) {
+    try {
+      requiredCapacityProof = normalizeRequiredWorkerCapacityProof(
+        value.requiredCapacityProof
+      );
+      verifyRequiredWorkerCapacityProof(capacity, requiredCapacityProof);
+    } catch (error) {
+      fail(`Required worker capacity proof differs: ${error.message}`);
+    }
+  }
+  let requiredFleetProof = null;
+  if (value.requiredFleetProof !== null) {
+    assert(
+      requiredCapacityProof !== null,
+      'Required fleet proof has no capacity proof authority'
+    );
+    exactKeys(
+      value.requiredFleetProof,
+      [
+        'nodes',
+        'requireAllConfiguredNodesOnline',
+        'requireAtLeastOneShardPerNode',
+        'requireNoConfiguredNodeExclusions',
+        'schema',
+      ],
+      'required fleet proof'
+    );
+    assert(
+      value.requiredFleetProof.schema ===
+        'seerrng-distributed-linux-required-fleet-proof/v1' &&
+        value.requiredFleetProof.requireAllConfiguredNodesOnline === true &&
+        value.requiredFleetProof.requireNoConfiguredNodeExclusions === true &&
+        value.requiredFleetProof.requireAtLeastOneShardPerNode === true &&
+        Array.isArray(value.requiredFleetProof.nodes) &&
+        value.requiredFleetProof.nodes.length >= 2,
+      'Required fleet proof policy differs'
+    );
+    const nodes = value.requiredFleetProof.nodes.map((node, index) => {
+      exactKeys(
+        node,
+        [
+          'admittedThreads',
+          'availableThreads',
+          'computerName',
+          'cpuName',
+          'ipAddress',
+          'minimumThreadCount',
+          'nodeId',
+          'nodeNumber',
+          'port',
+          'threadExpression',
+        ],
+        `required fleet node ${index + 1}`
+      );
+      const normalized = {
+        nodeId: token(node.nodeId, 'required fleet node ID'),
+        nodeNumber: text(node.nodeNumber, 'required fleet node number'),
+        computerName: text(node.computerName, 'required fleet computer name'),
+        ipAddress: text(node.ipAddress, 'required fleet IP address'),
+        port: safeInteger(node.port, 'required fleet port', 1),
+        cpuName: text(node.cpuName, 'required fleet CPU name'),
+        availableThreads: safeInteger(
+          node.availableThreads,
+          'required fleet available threads',
+          1
+        ),
+        threadExpression: text(
+          node.threadExpression,
+          'required fleet thread expression'
+        ),
+        minimumThreadCount: safeInteger(
+          node.minimumThreadCount,
+          'required fleet minimum thread count',
+          1
+        ),
+        admittedThreads: safeInteger(
+          node.admittedThreads,
+          'required fleet admitted threads',
+          1
+        ),
+      };
+      assert(
+        normalized.port <= 65535 &&
+          normalized.admittedThreads ===
+            evaluateThreadExpression(
+              normalized.threadExpression,
+              normalized.availableThreads,
+              normalized.minimumThreadCount
+            ),
+        'Required fleet port or thread calculation differs'
+      );
+      if (index === 0)
+        assert(
+          normalized.nodeId === 'controller' &&
+            normalized.nodeNumber === 'controller',
+          'Required fleet controller identity differs'
+        );
+      else
+        assert(
+          /^(?:0[1-9]|[1-9]\d)$/u.test(normalized.nodeNumber) &&
+            normalized.nodeId === `node-${normalized.nodeNumber}`,
+          'Required fleet remote-node identity differs'
+        );
+      return normalized;
+    });
+    assert(
+      nodes[0].nodeId === 'controller' &&
+        nodes[0].nodeNumber === 'controller' &&
+        nodes[0].availableThreads ===
+          requiredCapacityProof.expectedLogicalCpus &&
+        nodes[0].threadExpression === '2n' &&
+        nodes[0].admittedThreads ===
+          requiredCapacityProof.expectedConfiguredWorkers &&
+        new Set(nodes.map(({ nodeId }) => nodeId)).size === nodes.length &&
+        new Set(nodes.map(({ nodeNumber }) => nodeNumber)).size ===
+          nodes.length &&
+        new Set(nodes.map(({ ipAddress, port }) => `${ipAddress}:${port}`))
+          .size === nodes.length,
+      'Required configured fleet proof differs'
+    );
+    requiredFleetProof = {
+      schema: value.requiredFleetProof.schema,
+      nodes,
+      requireAllConfiguredNodesOnline: true,
+      requireNoConfiguredNodeExclusions: true,
+      requireAtLeastOneShardPerNode: true,
+    };
+  }
+  assert(
+    (requiredCapacityProof === null) === (requiredFleetProof === null),
+    'Required capacity and fleet proofs must be paired'
+  );
+  exactKeys(
+    value.context,
+    ['blockedRequired', 'pendingMetadata', 'resultReuse', 'stages', 'status'],
+    'expected native context'
+  );
+  assert(
+    value.context.status === 'ready' &&
+      value.context.resultReuse === false &&
+      Array.isArray(value.context.blockedRequired) &&
+      value.context.blockedRequired.length === 0 &&
+      Array.isArray(value.context.pendingMetadata),
+    'Expected native context is not ready and complete'
+  );
+  requireDeepEqual(
+    value.context.stages,
+    REQUIRED_STAGES,
+    'Expected native context stages'
+  );
+  exactKeys(value.plan, ['lanes', 'maxSlots', 'units'], 'expected native plan');
+  const maxSlots = safeInteger(
+    value.plan.maxSlots,
+    'expected native plan slot cap',
+    1
+  );
+  assert(
+    maxSlots <= 256 && maxSlots === capacity.configuredWorkers,
+    'Expected native plan slot cap differs from capacity'
+  );
+  assert(
+    Array.isArray(value.plan.lanes) &&
+      value.plan.lanes.length === REQUIRED_STAGES.length,
+    'Expected native lane inventory is incomplete'
+  );
+  const lanes = value.plan.lanes.map((lane, index) => {
+    exactKeys(
+      lane,
+      ['after', 'dependsOn', 'id', 'kind', 'prerequisites', 'required'],
+      `expected native lane ${index + 1}`
+    );
+    const id = token(lane.id, `expected native lane ${index + 1} ID`);
+    assert(
+      id === REQUIRED_STAGES[index] &&
+        typeof lane.required === 'boolean' &&
+        Array.isArray(lane.prerequisites) &&
+        lane.prerequisites.length === 0,
+      'Expected native lane identity or readiness differs'
+    );
+    return {
+      id,
+      kind: text(lane.kind, `${id} lane kind`),
+      required: lane.required,
+      dependsOn: uniqueTextList(lane.dependsOn, `${id} lane dependencies`),
+      after: uniqueTextList(lane.after, `${id} lane ordering`),
+      prerequisites: [],
+    };
+  });
+  const laneIds = lanes.map(({ id }) => id);
+  assert(
+    lanes.every((lane) =>
+      [...lane.dependsOn, ...lane.after].every((id) => laneIds.includes(id))
+    ),
+    'Expected native lane dependency closure differs'
+  );
+  assert(
+    Array.isArray(value.plan.units) &&
+      value.plan.units.length >= REQUIRED_STAGES.length,
+    'Expected native unit inventory is incomplete'
+  );
+  const units = value.plan.units.map((unit, index) => {
+    exactKeys(
+      unit,
+      ['after', 'dependsOn', 'files', 'id', 'lane', 'reads', 'slots', 'writes'],
+      `expected native unit ${index + 1}`
+    );
+    const id = token(unit.id, `expected native unit ${index + 1} ID`);
+    const lane = token(unit.lane, `${id} lane`);
+    assert(
+      laneIds.includes(lane) && unit.slots === maxSlots,
+      `Expected native unit ${id} lane or slots differ`
+    );
+    return {
+      id,
+      lane,
+      slots: unit.slots,
+      reads: uniqueTextList(unit.reads, `${id} reads`),
+      writes: uniqueTextList(unit.writes, `${id} writes`),
+      files: uniqueTextList(unit.files, `${id} files`),
+      dependsOn: uniqueTextList(unit.dependsOn, `${id} dependencies`),
+      after: uniqueTextList(unit.after, `${id} ordering`),
+    };
+  });
+  const unitIds = units.map(({ id }) => id);
+  assert(
+    new Set(unitIds).size === unitIds.length &&
+      REQUIRED_STAGES.every(
+        (stage) =>
+          units.filter(
+            (unit) => unit.id === `native-${stage}` && unit.lane === stage
+          ).length === 1
+      ) &&
+      units.every((unit) =>
+        [...unit.dependsOn, ...unit.after].every((id) => unitIds.includes(id))
+      ),
+    'Expected native unit identity or dependency closure differs'
+  );
+  return deepFreeze({
+    runId: value.runId,
+    candidate,
+    executionEnvironmentSha256,
+    capacity,
+    requiredCapacityProof,
+    requiredFleetProof,
+    context: structuredClone(value.context),
+    plan: { maxSlots, lanes, units },
+  });
 }
 
 function verifyApplicationBinding(result, expected) {
@@ -436,7 +824,7 @@ function verifyApplicationBinding(result, expected) {
   return structuredClone(application);
 }
 
-function verifyStageAccounting(result, expected) {
+function verifyStageAccounting(result, expected, expectations) {
   assert(result.schemaVersion === 2, 'Staged result schema differs');
   assert(result.runId === expected.runId, 'Staged result run ID differs');
   assert(result.mode === 'execute', 'Staged result is not an execution');
@@ -457,6 +845,21 @@ function verifyStageAccounting(result, expected) {
     'Four-stage applicability evidence is missing'
   );
   const candidate = normalizeCandidate(result.candidate);
+  requireDeepEqual(
+    candidate,
+    expectations.candidate,
+    'Staged result/expected candidate'
+  );
+  assert(
+    result.executionEnvironmentSha256 ===
+      expectations.executionEnvironmentSha256,
+    'Staged result execution environment differs'
+  );
+  requireDeepEqual(
+    normalizeExpectedCapacity(result.capacity),
+    expectations.capacity,
+    'Staged result/context capacity'
+  );
   const application = verifyApplicationBinding(result, expected);
 
   assert(
@@ -466,14 +869,28 @@ function verifyStageAccounting(result, expected) {
   );
   requireDeepEqual(
     result.lanes.map((lane) => lane.id),
-    REQUIRED_STAGES,
+    expectations.plan.lanes.map((lane) => lane.id),
     'Four-stage lane order'
   );
+  for (const [index, lane] of result.lanes.entries()) {
+    const expectedLane = expectations.plan.lanes[index];
+    assert(
+      lane.id === expectedLane.id &&
+        lane.kind === expectedLane.kind &&
+        lane.required === expectedLane.required,
+      `Stage lane identity differs: ${expectedLane.id}`
+    );
+  }
   assert(Array.isArray(result.results), 'Four-stage unit results are missing');
   const ids = result.results.map((unit) => text(unit.id, 'stage unit ID'));
   assert(
     new Set(ids).size === ids.length,
     'Stage unit identities are duplicated'
+  );
+  requireDeepEqual(
+    ids,
+    expectations.plan.units.map((unit) => unit.id),
+    'Expected/result unit identity closure'
   );
   for (const stage of REQUIRED_STAGES)
     assert(
@@ -489,6 +906,9 @@ function verifyStageAccounting(result, expected) {
     'Native evidence/unit identity closure'
   );
   let cleanupReceipts = 0;
+  const expectedUnits = new Map(
+    expectations.plan.units.map((unit) => [unit.id, unit])
+  );
   const verifyNestedCleanup = (value, seen = new Set()) => {
     if (!value || typeof value !== 'object' || seen.has(value)) return;
     seen.add(value);
@@ -518,9 +938,11 @@ function verifyStageAccounting(result, expected) {
   };
 
   for (const unit of result.results) {
+    const expectedUnit = expectedUnits.get(unit.id);
+    assert(expectedUnit, `Unexpected stage unit: ${unit.id}`);
     assert(
-      REQUIRED_STAGES.includes(unit.lane),
-      `Unknown unit lane: ${unit.lane}`
+      unit.lane === expectedUnit.lane && unit.slots === expectedUnit.slots,
+      `Stage unit lane or slot demand differs: ${unit.id}`
     );
     assert(
       unit.status === 'passed' && unit.executed === true,
@@ -535,6 +957,11 @@ function verifyStageAccounting(result, expected) {
       candidate,
       `Stage unit candidate ${unit.id}`
     );
+    assert(
+      unit.executionEnvironmentSha256 ===
+        expectations.executionEnvironmentSha256,
+      `Stage unit execution environment differs: ${unit.id}`
+    );
     safeInteger(unit.slots, `Stage unit ${unit.id} slots`, 1);
     assert(
       Array.isArray(unit.files),
@@ -545,12 +972,21 @@ function verifyStageAccounting(result, expected) {
         unit.files.every((file) => typeof file === 'string'),
       `Stage unit ${unit.id} file inventory is invalid`
     );
+    requireDeepEqual(
+      unit.files,
+      expectedUnit.files,
+      `Stage unit ${unit.id} selected files`
+    );
     duration(unit.wallMs, `Stage unit ${unit.id} wall time`);
     duration(unit.startOffsetMs, `Stage unit ${unit.id} start offset`);
     duration(unit.endOffsetMs, `Stage unit ${unit.id} end offset`);
     assert(
       unit.endOffsetMs >= unit.startOffsetMs,
       `Stage unit ${unit.id} timing is inverted`
+    );
+    assert(
+      approximatelyEqual(unit.wallMs, unit.endOffsetMs - unit.startOffsetMs),
+      `Stage unit ${unit.id} wall time differs from its offsets`
     );
     if (unit.cpuMs !== null)
       duration(unit.cpuMs, `Stage unit ${unit.id} CPU time`);
@@ -574,6 +1010,29 @@ function verifyStageAccounting(result, expected) {
       `Native evidence hash differs: ${unit.id}`
     );
     verifyNestedCleanup(unitEvidence);
+  }
+  const resultById = new Map(result.results.map((unit) => [unit.id, unit]));
+  for (const expectedUnit of expectations.plan.units) {
+    const unit = resultById.get(expectedUnit.id);
+    for (const dependencyId of [
+      ...expectedUnit.dependsOn,
+      ...expectedUnit.after,
+    ])
+      assert(
+        unit.startOffsetMs >= resultById.get(dependencyId).endOffsetMs,
+        `Stage unit ${unit.id} started before ${dependencyId} completed`
+      );
+    const lane = expectations.plan.lanes.find(
+      ({ id }) => id === expectedUnit.lane
+    );
+    for (const precedingLane of lane.after)
+      for (const producer of expectations.plan.units.filter(
+        ({ lane: producerLane }) => producerLane === precedingLane
+      ))
+        assert(
+          unit.startOffsetMs >= resultById.get(producer.id).endOffsetMs,
+          `Stage lane ${lane.id} started before ${precedingLane} completed`
+        );
   }
 
   let aggregateCounts = { passed: 0, failed: 0, skipped: 0 };
@@ -622,7 +1081,7 @@ function verifyStageAccounting(result, expected) {
       stats.unitsExecuted === result.results.length &&
       stats.activeUnits === 0 &&
       stats.reservedSlots === 0 &&
-      safeInteger(stats.configuredSlotCap, 'configured slot cap', 1) >= 1 &&
+      stats.configuredSlotCap === expectations.plan.maxSlots &&
       safeInteger(stats.peakActiveUnits, 'peak active units', 1) <=
         result.results.length &&
       safeInteger(stats.peakReservedSlots, 'peak reserved slots', 1) <=
@@ -642,7 +1101,7 @@ function verifyStageAccounting(result, expected) {
   );
   duration(stats.wallMs, 'four-stage wall time');
   assert(
-    stats.wallMs >= Math.max(...result.results.map((unit) => unit.endOffsetMs)),
+    result.results.every((unit) => unit.endOffsetMs <= stats.wallMs + 5),
     'Four-stage wall time does not contain its units'
   );
   return { application, candidate, cleanupReceipts };
@@ -703,7 +1162,7 @@ function scheduleAssignments(schedule) {
     .toSorted((left, right) => left.sequence - right.sequence);
 }
 
-function verifyNodeClosure(evidence, schedule, catalog) {
+function verifyNodeClosure(evidence, schedule, catalog, requiredFleetProof) {
   const scheduledNodeIds = uniqueIds(
     schedule.nodes.map((node) => node.nodeId),
     'scheduled nodes'
@@ -820,9 +1279,98 @@ function verifyNodeClosure(evidence, schedule, catalog) {
       'Dependency node admission partition'
     );
   }
+  if (requiredFleetProof) {
+    const expectedNodes = requiredFleetProof.nodes;
+    const expectedNodeIds = expectedNodes.map(({ nodeId }) => nodeId);
+    requireDeepEqual(
+      scheduledNodeIds,
+      [...expectedNodeIds].toSorted(compareText),
+      'Required configured/scheduled fleet closure'
+    );
+    requireDeepEqual(
+      onlineNodeIds,
+      [...expectedNodeIds].toSorted(compareText),
+      'Required configured/online fleet closure'
+    );
+    assert(
+      evidence.offlineNodes.length === 0,
+      'Required fleet contains an offline configured node'
+    );
+    requireDeepEqual(
+      applicationAvailable.toSorted(compareText),
+      [...expectedNodeIds].toSorted(compareText),
+      'Required fleet application-available closure'
+    );
+    requireDeepEqual(
+      applicationUsable.toSorted(compareText),
+      [...expectedNodeIds].toSorted(compareText),
+      'Required fleet application-usable closure'
+    );
+    assert(
+      applicationExcluded.length === 0,
+      'Required fleet contains an application-excluded node'
+    );
+    if (evidence.dependencyAdmission !== null) {
+      const dependencyAdmission = evidence.dependencyAdmission;
+      requireDeepEqual(
+        nodeIds(
+          dependencyAdmission.availableNodes,
+          'required fleet dependency-available nodes'
+        ).toSorted(compareText),
+        [...expectedNodeIds].toSorted(compareText),
+        'Required fleet dependency-available closure'
+      );
+      requireDeepEqual(
+        nodeIds(
+          dependencyAdmission.usableNodes,
+          'required fleet dependency-usable nodes'
+        ).toSorted(compareText),
+        [...expectedNodeIds].toSorted(compareText),
+        'Required fleet dependency-usable closure'
+      );
+      assert(
+        dependencyAdmission.excludedNodes.length === 0,
+        'Required fleet contains a dependency-excluded node'
+      );
+    }
+    for (const expectedNode of expectedNodes) {
+      const observedNode = evidence.onlineNodes.find(
+        ({ nodeId }) => nodeId === expectedNode.nodeId
+      );
+      assert(
+        observedNode?.computerName === expectedNode.computerName &&
+          observedNode.ipAddress === expectedNode.ipAddress &&
+          observedNode.port === expectedNode.port &&
+          observedNode.cpuName === expectedNode.cpuName &&
+          observedNode.availableThreads === expectedNode.availableThreads,
+        `Required fleet configured identity differs: ${expectedNode.nodeId}`
+      );
+      const capacity = schedule.nodes.find(
+        ({ nodeId }) => nodeId === expectedNode.nodeId
+      );
+      assert(
+        capacity?.effectiveLogicalThreads === expectedNode.availableThreads &&
+          capacity.configuredThreadBudget === expectedNode.admittedThreads &&
+          capacity.admittedThreads === expectedNode.admittedThreads &&
+          capacity.admissionStatus === 'admitted',
+        `Required fleet capacity differs: ${expectedNode.nodeId}`
+      );
+      assert(
+        schedule.threadSlots.some(
+          (slot) => slot.nodeId === expectedNode.nodeId && slot.tests.length > 0
+        ),
+        `Required fleet node received no shard: ${expectedNode.nodeId}`
+      );
+    }
+  }
 }
 
-function verifyRepositoryEvidence(result, expected, candidate) {
+function verifyRepositoryEvidence(
+  result,
+  expected,
+  candidate,
+  requiredFleetProof
+) {
   const records = Object.entries(result.nativeEvidence).filter(
     ([, value]) => value?.repositoryEvidence !== undefined
   );
@@ -999,7 +1547,7 @@ function verifyRepositoryEvidence(result, expected, candidate) {
     catalog.tasks.map((task) => task.taskId),
     'Attempted/catalog shard closure'
   );
-  verifyNodeClosure(evidence, schedule, catalog);
+  verifyNodeClosure(evidence, schedule, catalog, requiredFleetProof);
   return { evidence, catalog, schedule, report };
 }
 
@@ -1332,12 +1880,22 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     'processStreams',
     'native process stream bundle'
   );
+  assert(
+    reader.entries.get('runExpectations').sha256 ===
+      expected.runExpectationsSha256,
+    'Native run expectations file identity differs'
+  );
+  const runExpectations = normalizeRunExpectations(
+    reader.json('runExpectations', 'native run expectations'),
+    expected
+  );
 
-  const stage = verifyStageAccounting(result, expected);
+  const stage = verifyStageAccounting(result, expected, runExpectations);
   const repository = verifyRepositoryEvidence(
     result,
     expected,
-    stage.candidate
+    stage.candidate,
+    runExpectations.requiredFleetProof
   );
   const timing = verifyTimingEvidence(
     timings,
@@ -1363,6 +1921,9 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     activeConfigPath: expected.activeConfigPath,
     application: stage.application,
     candidate: stage.candidate,
+    capacity: runExpectations.capacity,
+    requiredFleetProof: runExpectations.requiredFleetProof,
+    expectedUnitCount: runExpectations.plan.units.length,
     profileSha256: expected.profileSha256,
     policySha256: repository.schedule.policySha256,
     catalogSha256: repository.catalog.catalogSha256,
@@ -1371,6 +1932,7 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     repositoryEvidence: repository.evidence,
     repositoryEvidenceSha256,
     resultSha256: reader.entries.get('result').sha256,
+    runExpectationsSha256: reader.entries.get('runExpectations').sha256,
     timingsSha256: reader.entries.get('timings').sha256,
     processLedgerSha256: processes.ledgerSha256,
     processLedgerSummarySha256: reader.entries.get('processLedgerSummary')

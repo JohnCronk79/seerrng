@@ -75,17 +75,24 @@ function passingReceipt(wallMs = 1) {
   };
 }
 
-function createCatalog(applicationId, candidate) {
-  const task = {
-    schema: DISTRIBUTED_NATIVE_TASK_SCHEMA,
-    taskId: distributedNativeTaskId({
-      applicationId,
+function createCatalog(applicationId, candidate, taskCount = 1) {
+  const tasks = Array.from({ length: taskCount }, (_, index) => {
+    const files = [
+      taskCount === 1
+        ? 'server/example.test.ts'
+        : `server/example-${String(index + 1).padStart(2, '0')}.test.ts`,
+    ];
+    return {
+      schema: DISTRIBUTED_NATIVE_TASK_SCHEMA,
+      taskId: distributedNativeTaskId({
+        applicationId,
+        adapterId: 'vitest',
+        files,
+      }),
       adapterId: 'vitest',
-      files: ['server/example.test.ts'],
-    }),
-    adapterId: 'vitest',
-    files: ['server/example.test.ts'],
-  };
+      files,
+    };
+  }).toSorted((left, right) => left.taskId.localeCompare(right.taskId));
   const candidateCore = {
     schema: DISTRIBUTED_NATIVE_CANDIDATE_SCHEMA,
     commitSha: candidate.commit,
@@ -97,7 +104,6 @@ function createCatalog(applicationId, candidate) {
     ...candidateCore,
     candidateSha256: canonicalJsonSha256(candidateCore),
   };
-  const tasks = [task];
   const inventorySha256 = canonicalJsonSha256({
     schema: 'seerrng-distributed-native-inventory-identity/v1',
     applicationId,
@@ -119,7 +125,7 @@ function createCatalog(applicationId, candidate) {
   };
 }
 
-function createSchedule(catalog, candidate, profile) {
+function createSchedule(catalog, candidate, profile, { fleet = false } = {}) {
   return createDistributedAdaptiveSchedule({
     tests: catalog.tasks.map((task) => ({
       id: task.taskId,
@@ -130,28 +136,71 @@ function createSchedule(catalog, candidate, profile) {
       repositoryIdentitySha256: candidate.sourceSha256,
       dependencies: [],
     })),
-    nodes: [
-      {
-        id: 'controller',
-        scope: {
-          applicationId: catalog.applicationId,
-          laneId: 'repository-native',
-          adapterId: 'vitest',
-          repositoryIdentitySha256: candidate.sourceSha256,
-          environment: 'linux-x64',
-          nodeId: 'controller',
-          selectedN: 1,
-        },
-        adapterIds: ['vitest'],
-        effectiveLogicalThreads: 2,
-        concurrency: { mode: 'explicit', threads: 1 },
-        currentLoadPermille: 0,
-        memory: null,
-        localInteractiveReserveThreads: 0,
-        runsOnControllerHost: true,
-        benchmark: { valid: true, performanceScorePermille: 100 },
-      },
-    ],
+    nodes: fleet
+      ? [
+          {
+            id: 'controller',
+            scope: {
+              applicationId: catalog.applicationId,
+              laneId: 'repository-native',
+              adapterId: 'vitest',
+              repositoryIdentitySha256: candidate.sourceSha256,
+              environment: 'linux-x64',
+              nodeId: 'controller',
+              selectedN: 24,
+            },
+            adapterIds: ['vitest'],
+            effectiveLogicalThreads: 12,
+            concurrency: { mode: 'explicit', threads: 24 },
+            currentLoadPermille: 0,
+            memory: null,
+            localInteractiveReserveThreads: 0,
+            runsOnControllerHost: true,
+            benchmark: { valid: true, performanceScorePermille: 100 },
+          },
+          {
+            id: 'node-01',
+            scope: {
+              applicationId: catalog.applicationId,
+              laneId: 'repository-native',
+              adapterId: 'vitest',
+              repositoryIdentitySha256: candidate.sourceSha256,
+              environment: 'linux-x64',
+              nodeId: 'node-01',
+              selectedN: 6,
+            },
+            adapterIds: ['vitest'],
+            effectiveLogicalThreads: 8,
+            concurrency: { mode: 'explicit', threads: 6 },
+            currentLoadPermille: 0,
+            memory: null,
+            localInteractiveReserveThreads: 0,
+            runsOnControllerHost: false,
+            benchmark: { valid: true, performanceScorePermille: 100 },
+          },
+        ]
+      : [
+          {
+            id: 'controller',
+            scope: {
+              applicationId: catalog.applicationId,
+              laneId: 'repository-native',
+              adapterId: 'vitest',
+              repositoryIdentitySha256: candidate.sourceSha256,
+              environment: 'linux-x64',
+              nodeId: 'controller',
+              selectedN: 1,
+            },
+            adapterIds: ['vitest'],
+            effectiveLogicalThreads: 2,
+            concurrency: { mode: 'explicit', threads: 1 },
+            currentLoadPermille: 0,
+            memory: null,
+            localInteractiveReserveThreads: 0,
+            runsOnControllerHost: true,
+            benchmark: { valid: true, performanceScorePermille: 100 },
+          },
+        ],
     profile,
   });
 }
@@ -176,19 +225,25 @@ function createNativeTaskResult(catalog, task) {
 }
 
 function createRunReport(schedule, catalog, runId) {
-  const slot = schedule.threadSlots.find((entry) => entry.tests.length > 0);
-  const scheduled = slot.tests[0];
-  const task = catalog.tasks.find((entry) => entry.taskId === scheduled.id);
-  const outcome = {
-    sequence: scheduled.sequence,
-    shardId: scheduled.id,
-    nodeId: slot.nodeId,
-    threadSlotId: slot.threadSlotId,
-    status: 'passed',
-    wallMs: 4,
-    result: createNativeTaskResult(catalog, task),
-    failureCode: null,
-  };
+  const outcomes = schedule.threadSlots
+    .flatMap((slot) =>
+      slot.tests.map((scheduled) => {
+        const task = catalog.tasks.find(
+          (entry) => entry.taskId === scheduled.id
+        );
+        return {
+          sequence: scheduled.sequence,
+          shardId: scheduled.id,
+          nodeId: slot.nodeId,
+          threadSlotId: slot.threadSlotId,
+          status: 'passed',
+          wallMs: 4,
+          result: createNativeTaskResult(catalog, task),
+          failureCode: null,
+        };
+      })
+    )
+    .toSorted((left, right) => left.sequence - right.sequence);
   const core = {
     schema: DISTRIBUTED_SHARD_RUN_SCHEMA,
     runId,
@@ -198,7 +253,7 @@ function createRunReport(schedule, catalog, runId) {
     startedAt: '2026-10-07T12:00:00.000Z',
     wallMs: 4,
     status: 'passed',
-    outcomes: [outcome],
+    outcomes,
     resultReuse: false,
   };
   return { ...core, reportSha256: canonicalJsonSha256(core) };
@@ -229,28 +284,27 @@ function createRepositoryEvidence({ catalog, schedule, report }) {
     schedule,
     report,
     shards: clone(report.outcomes),
-    onlineNodes: [
-      {
-        nodeId: 'controller',
-        computerName: 'controller-host',
-        ipAddress: '127.0.0.1',
-        port: 5443,
-        cpuName: 'test-cpu',
-        availableThreads: 2,
-        applicationId: catalog.applicationId,
-        platform: catalog.platform,
-        candidateSha256: catalog.candidate.candidateSha256,
-        catalogSha256: catalog.catalogSha256,
-        inventorySha256: catalog.inventorySha256,
-        taskCount: catalog.tasks.length,
-      },
-    ],
+    onlineNodes: schedule.nodes.map((node, index) => ({
+      nodeId: node.nodeId,
+      computerName:
+        node.nodeId === 'controller' ? 'controller-host' : 'server-host',
+      ipAddress: node.nodeId === 'controller' ? '127.0.0.1' : '192.168.10.9',
+      port: 5443 + index,
+      cpuName: node.nodeId === 'controller' ? 'test-cpu' : 'server-cpu',
+      availableThreads: node.effectiveLogicalThreads,
+      applicationId: catalog.applicationId,
+      platform: catalog.platform,
+      candidateSha256: catalog.candidate.candidateSha256,
+      catalogSha256: catalog.catalogSha256,
+      inventorySha256: catalog.inventorySha256,
+      taskCount: catalog.tasks.length,
+    })),
     offlineNodes: [],
     applicationAdmission: {
       schema: 'test-application-admission/v1',
       applicationId: catalog.applicationId,
-      availableNodes: [{ nodeId: 'controller' }],
-      usableNodes: [{ nodeId: 'controller' }],
+      availableNodes: schedule.nodes.map(({ nodeId }) => ({ nodeId })),
+      usableNodes: schedule.nodes.map(({ nodeId }) => ({ nodeId })),
       excludedNodes: [],
     },
     dependencyAdmission: null,
@@ -273,6 +327,7 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
     'native-codeql': { status: 'passed' },
     'native-build': { status: 'passed' },
     'native-browser': { status: 'passed' },
+    'pr-release-note-contract': { status: 'passed' },
   };
   const stages = ['repository', 'codeql', 'build', 'browser'];
   const stageCounts = {
@@ -281,13 +336,29 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
     build: { passed: 0, failed: 0, skipped: 0 },
     browser: { passed: 1, failed: 0, skipped: 0 },
   };
-  const results = stages.map((lane, index) => {
-    const id = `native-${lane}`;
+  const definitions = [
+    { id: 'native-repository', lane: 'repository', wallMs: 1, start: 0 },
+    { id: 'native-codeql', lane: 'codeql', wallMs: 2, start: 2 },
+    { id: 'native-build', lane: 'build', wallMs: 3, start: 4 },
+    { id: 'native-browser', lane: 'browser', wallMs: 4, start: 7 },
+    {
+      id: 'pr-release-note-contract',
+      lane: 'repository',
+      wallMs: 1,
+      start: 1,
+    },
+  ];
+  const results = definitions.map(({ id, lane, wallMs, start }) => {
     return {
       id,
       lane,
       slots: 1,
-      files: lane === 'repository' ? ['server/example.test.ts'] : [],
+      files:
+        id === 'native-repository'
+          ? ['server/example.test.ts']
+          : id === 'pr-release-note-contract'
+            ? ['CHANGELOG.md']
+            : [],
       runId,
       candidate,
       contractSha256: null,
@@ -296,11 +367,14 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
       status: 'passed',
       reason: null,
       executed: true,
-      wallMs: index + 1,
+      wallMs,
       cpuMs: null,
-      caseAttempts: stageCounts[lane],
-      startOffsetMs: index * 2,
-      endOffsetMs: index * 2 + 1,
+      caseAttempts:
+        id === 'pr-release-note-contract'
+          ? { passed: 0, failed: 0, skipped: 0 }
+          : stageCounts[lane],
+      startOffsetMs: start,
+      endOffsetMs: start + wallMs,
       scheduling: {},
       evidenceSha256: hash(Buffer.from(JSON.stringify(evidence[id]), 'utf8')),
     };
@@ -347,11 +421,11 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
       peakReservedSlots: 1,
       configuredSlotCap: 1,
       caseAttempts: aggregateCounts,
-      selectedFileCount: 1,
-      executedFileCount: 1,
+      selectedFileCount: 2,
+      executedFileCount: 2,
       osThreads: null,
       childCpuMs: null,
-      wallMs: 8,
+      wallMs: 11,
     },
     lanes,
     results,
@@ -361,9 +435,15 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
     applicability: [],
     nativeEvidence: evidence,
     capacity: {
+      availableLogicalCpus: 2,
+      visibleLogicalCpus: 2,
+      quotaCpus: null,
       effectiveLogicalCpus: 2,
+      operatorGithubLogin: null,
       configuredWorkers: 1,
       githubActions: false,
+      policy: 'one-worker-less-than-effective-logical-cpus',
+      observedWorkerCount: null,
     },
     resultReuse: false,
     distributedApplication: {
@@ -380,7 +460,62 @@ function createStageResult({ candidate, repositoryEvidence, runId }) {
   };
 }
 
+function createRunExpectations(result) {
+  return {
+    schema: 'seerrng-distributed-linux-run-expectations/v1',
+    runId: result.runId,
+    candidate: result.candidate,
+    executionEnvironmentSha256: result.executionEnvironmentSha256,
+    capacity: result.capacity,
+    requiredCapacityProof: null,
+    requiredFleetProof: null,
+    context: {
+      status: 'ready',
+      stages: ['repository', 'codeql', 'build', 'browser'],
+      blockedRequired: [],
+      pendingMetadata: [],
+      resultReuse: false,
+    },
+    plan: {
+      maxSlots: result.capacity.configuredWorkers,
+      lanes: result.lanes.map((lane, index, lanes) => ({
+        id: lane.id,
+        kind: lane.kind,
+        required: lane.required,
+        dependsOn: [],
+        after: index ? [lanes[index - 1].id] : [],
+        prerequisites: [],
+      })),
+      units: result.results.map((unit) => ({
+        id: unit.id,
+        lane: unit.lane,
+        slots: unit.slots,
+        reads: ['source-manifest'],
+        writes: [
+          unit.lane === 'browser' ? 'scratch-browser' : `scratch-${unit.lane}`,
+        ],
+        files: unit.files,
+        dependsOn: unit.lane === 'browser' ? ['native-build'] : [],
+        after:
+          unit.id === 'pr-release-note-contract' ? ['native-repository'] : [],
+      })),
+    },
+    resultReuse: false,
+  };
+}
+
 function createTimingEvidence(result, repositoryEvidence, runId) {
+  const nodeTotals = new Map();
+  for (const shard of repositoryEvidence.shards) {
+    const prior = nodeTotals.get(shard.nodeId) ?? {
+      nodeId: shard.nodeId,
+      shardCount: 0,
+      shardWallMs: 0,
+    };
+    prior.shardCount += 1;
+    prior.shardWallMs += shard.wallMs;
+    nodeTotals.set(shard.nodeId, prior);
+  }
   return {
     schema: 'seerrng-distributed-linux-production-timings/v1',
     runId,
@@ -401,16 +536,9 @@ function createTimingEvidence(result, repositoryEvidence, runId) {
       wallMs: unit.wallMs,
     })),
     distributed: {
-      nodeTotals: [
-        {
-          nodeId: 'controller',
-          shardCount: repositoryEvidence.shards.length,
-          shardWallMs: repositoryEvidence.shards.reduce(
-            (sum, shard) => sum + shard.wallMs,
-            0
-          ),
-        },
-      ],
+      nodeTotals: [...nodeTotals.values()].toSorted((left, right) =>
+        left.nodeId.localeCompare(right.nodeId)
+      ),
       reportWallMs: repositoryEvidence.report.wallMs,
       shards: repositoryEvidence.shards.map((shard) => ({
         nodeId: shard.nodeId,
@@ -490,7 +618,7 @@ function createProcessStreams(ledgerBytes) {
   };
 }
 
-function fixture(t) {
+function fixture(t, { fleet = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-run-reconciliation-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const evidenceDirectory = join(root, 'production-run-1');
@@ -504,8 +632,8 @@ function fixture(t) {
     sourceSha256: digest('d'),
   };
   const profile = createAdaptiveTimingProfile();
-  const catalog = createCatalog('seerrng', candidate);
-  const schedule = createSchedule(catalog, candidate, profile);
+  const catalog = createCatalog('seerrng', candidate, fleet ? 30 : 1);
+  const schedule = createSchedule(catalog, candidate, profile, { fleet });
   const report = createRunReport(schedule, catalog, runId);
   const repositoryEvidence = createRepositoryEvidence({
     catalog,
@@ -513,15 +641,75 @@ function fixture(t) {
     report,
   });
   const result = createStageResult({ candidate, repositoryEvidence, runId });
+  if (fleet) {
+    result.capacity = {
+      availableLogicalCpus: 12,
+      visibleLogicalCpus: 12,
+      quotaCpus: 12,
+      effectiveLogicalCpus: 12,
+      operatorGithubLogin: 'JohnCronk79',
+      githubActions: false,
+      policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+      configuredWorkers: 24,
+      observedWorkerCount: null,
+    };
+    result.stats.configuredSlotCap = 24;
+    for (const unit of result.results) unit.slots = 24;
+  }
   const timings = createTimingEvidence(result, repositoryEvidence, runId);
   const paths = {
     processLedger: join(evidenceDirectory, 'native-command-receipts.jsonl'),
     processLedgerSummary: join(evidenceDirectory, 'native-process-ledger.json'),
     processStreams: join(evidenceDirectory, 'native-process-streams.json'),
     result: join(evidenceDirectory, 'staged-validation-result.json'),
+    runExpectations: join(evidenceDirectory, 'native-run-expectations.json'),
     timings: join(evidenceDirectory, 'timings.json'),
   };
   writeJson(paths.result, result);
+  const runExpectations = createRunExpectations(result);
+  if (fleet) {
+    runExpectations.requiredCapacityProof = {
+      schema: 'seerrng-required-worker-capacity-proof/v1',
+      operatorGithubLogin: 'JohnCronk79',
+      expectedLogicalCpus: 12,
+      expectedConfiguredWorkers: 24,
+      githubActions: false,
+      policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+    };
+    runExpectations.requiredFleetProof = {
+      schema: 'seerrng-distributed-linux-required-fleet-proof/v1',
+      nodes: [
+        {
+          nodeId: 'controller',
+          nodeNumber: 'controller',
+          computerName: 'controller-host',
+          ipAddress: '127.0.0.1',
+          port: 5443,
+          cpuName: 'test-cpu',
+          availableThreads: 12,
+          threadExpression: '2n',
+          minimumThreadCount: 1,
+          admittedThreads: 24,
+        },
+        {
+          nodeId: 'node-01',
+          nodeNumber: '01',
+          computerName: 'server-host',
+          ipAddress: '192.168.10.9',
+          port: 5444,
+          cpuName: 'server-cpu',
+          availableThreads: 8,
+          threadExpression: 'n-2',
+          minimumThreadCount: 1,
+          admittedThreads: 6,
+        },
+      ],
+      requireAllConfiguredNodesOnline: true,
+      requireNoConfiguredNodeExclusions: true,
+      requireAtLeastOneShardPerNode: true,
+    };
+  }
+  writeJson(paths.runExpectations, runExpectations);
   writeJson(paths.timings, timings);
   const ledgerBytes = createProcessLedger(candidate);
   writeFileSync(paths.processLedger, ledgerBytes);
@@ -542,6 +730,7 @@ function fixture(t) {
       activeConfigPath: join(root, 'active-config'),
       applicationEntryId: '01',
       profileSha256: canonicalJsonSha256(profile),
+      runExpectationsSha256: hash(jsonBytes(runExpectations)),
       runId,
       runtimeApplicationKey: 'seerrng',
     },
@@ -554,6 +743,17 @@ function rewriteResult(selected, mutate) {
   mutate(result);
   writeJson(selected.paths.result, result);
   return result;
+}
+
+function rewriteExpectations(selected, mutate, { rebind = true } = {}) {
+  const expectations = readJson(selected.paths.runExpectations);
+  mutate(expectations);
+  writeJson(selected.paths.runExpectations, expectations);
+  if (rebind)
+    selected.input.expected.runExpectationsSha256 = hash(
+      jsonBytes(expectations)
+    );
+  return expectations;
 }
 
 function resealRepositoryEvidence(result) {
@@ -597,13 +797,34 @@ test('independently reconciles all durable pre-success evidence', (t) => {
   assert.equal(result.status, 'passed');
   assert.equal(result.runId, selected.input.expected.runId);
   assert.equal(result.repositoryEvidence.completed, true);
-  assert.equal(result.evidenceManifest.files.length, 5);
+  assert.equal(result.evidenceManifest.files.length, 6);
   assert.match(result.evidenceManifestSha256, /^[a-f0-9]{64}$/u);
   assert.match(result.repositoryEvidenceSha256, /^[a-f0-9]{64}$/u);
   assert.equal(result.cleanup.verified, true);
   assert.equal(result.cleanup.processReceiptCount, 1);
   assert.equal(result.cleanup.rawStreamCount, 2);
   assert.equal(result.timing.stageCount, 4);
+});
+
+test('independently proves the configured controller and Node 01 both executed shards', (t) => {
+  const selected = fixture(t, { fleet: true });
+  const result = reconcileDistributedLinuxRunEvidence(selected.input);
+
+  assert.equal(result.capacity.configuredWorkers, 24);
+  assert.deepEqual(
+    result.requiredFleetProof.nodes.map(({ nodeId, admittedThreads }) => ({
+      nodeId,
+      admittedThreads,
+    })),
+    [
+      { nodeId: 'controller', admittedThreads: 24 },
+      { nodeId: 'node-01', admittedThreads: 6 },
+    ]
+  );
+  const usedNodes = new Set(
+    result.repositoryEvidence.shards.map(({ nodeId }) => nodeId)
+  );
+  assert.deepEqual([...usedNodes].toSorted(), ['controller', 'node-01']);
 });
 
 test('rejects a staged result changed after its durable write', (t) => {
@@ -615,6 +836,162 @@ test('rejects a staged result changed after its durable write', (t) => {
   assert.throws(
     () => reconcileDistributedLinuxRunEvidence(selected.input),
     /run ID differs/u
+  );
+});
+
+test('rejects omission of an applicable supplemental unit', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    result.results = result.results.filter(
+      ({ id }) => id !== 'pr-release-note-contract'
+    );
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /Expected\/result unit identity closure differs/u
+  );
+});
+
+test('rejects a unit whose sealed lane, slots, or files changed', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    const unit = result.results.find(
+      ({ id }) => id === 'pr-release-note-contract'
+    );
+    unit.slots = 2;
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /lane or slot demand differs/u
+  );
+});
+
+test('rejects result capacity that differs from the sealed native context', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    result.capacity.configuredWorkers = 2;
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /result\/context capacity differs/u
+  );
+});
+
+test('rejects unit wall time that differs from its exact offset span', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    result.results[0].wallMs += 10;
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /wall time differs from its offsets/u
+  );
+});
+
+test('rejects a dependent unit that starts before its producer completed', (t) => {
+  const selected = fixture(t);
+  rewriteResult(selected, (result) => {
+    const unit = result.results.find(
+      ({ id }) => id === 'pr-release-note-contract'
+    );
+    unit.startOffsetMs = 0;
+    unit.endOffsetMs = 1;
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /started before native-repository completed/u
+  );
+});
+
+test('rejects a run-expectations artifact changed outside its sealed hash', (t) => {
+  const selected = fixture(t);
+  rewriteExpectations(
+    selected,
+    (expectations) => {
+      expectations.plan.units[0].files.push('unsealed.test.ts');
+    },
+    { rebind: false }
+  );
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /expectations file identity differs/u
+  );
+});
+
+test('required fleet proof rejects a configured Node 01 that received no shard', (t) => {
+  const selected = fixture(t);
+  const requiredCapacityProof = {
+    schema: 'seerrng-required-worker-capacity-proof/v1',
+    operatorGithubLogin: 'JohnCronk79',
+    expectedLogicalCpus: 12,
+    expectedConfiguredWorkers: 24,
+    githubActions: false,
+    policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+  };
+  const requiredCapacity = {
+    availableLogicalCpus: 12,
+    visibleLogicalCpus: 12,
+    quotaCpus: 12,
+    effectiveLogicalCpus: 12,
+    operatorGithubLogin: 'JohnCronk79',
+    githubActions: false,
+    policy: 'two-workers-per-effective-logical-cpu-for-approved-operator',
+    configuredWorkers: 24,
+    observedWorkerCount: null,
+  };
+  rewriteResult(selected, (result) => {
+    result.capacity = requiredCapacity;
+    result.stats.configuredSlotCap = 24;
+    for (const unit of result.results) unit.slots = 24;
+  });
+  rewriteExpectations(selected, (expectations) => {
+    expectations.capacity = requiredCapacity;
+    expectations.requiredCapacityProof = requiredCapacityProof;
+    expectations.requiredFleetProof = {
+      schema: 'seerrng-distributed-linux-required-fleet-proof/v1',
+      nodes: [
+        {
+          nodeId: 'controller',
+          nodeNumber: 'controller',
+          computerName: "John's laptop",
+          ipAddress: '192.168.10.82',
+          port: 62021,
+          cpuName: 'Laptop CPU',
+          availableThreads: 12,
+          threadExpression: '2n',
+          minimumThreadCount: 1,
+          admittedThreads: 24,
+        },
+        {
+          nodeId: 'node-01',
+          nodeNumber: '01',
+          computerName: "John's server",
+          ipAddress: '192.168.10.9',
+          port: 62021,
+          cpuName: 'Server CPU',
+          availableThreads: 8,
+          threadExpression: 'n-2',
+          minimumThreadCount: 1,
+          admittedThreads: 6,
+        },
+      ],
+      requireAllConfiguredNodesOnline: true,
+      requireNoConfiguredNodeExclusions: true,
+      requireAtLeastOneShardPerNode: true,
+    };
+    expectations.plan.maxSlots = 24;
+    for (const unit of expectations.plan.units) unit.slots = 24;
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /configured\/scheduled fleet closure differs/u
   );
 });
 

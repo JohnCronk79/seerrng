@@ -136,6 +136,39 @@ test('help documents the Linux controller and node lifecycle', () => {
   assert.match(result.stdout, /--app ID=ABSOLUTE_ROOT/);
   assert.match(result.stdout, /conflict exits with status 20/);
   assert.match(result.stdout, /thread and worker overrides are forbidden/);
+  assert.doesNotMatch(result.stdout, /--distributed-contained-run/);
+});
+
+test('internal contained mode stays hidden and fails closed at its same-entrypoint boundary', (t) => {
+  const paths = fixture();
+  t.after(paths.cleanup);
+  const missingRequest = join(
+    paths.stateRoot,
+    'missing-contained-request.json'
+  );
+  const result = runCli([
+    '--distributed-contained-run',
+    '--request-file',
+    missingRequest,
+  ]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    process.platform === 'linux' ? /fixed internal request/ : /requires Linux/
+  );
+
+  const override = runCli([
+    '--distributed-contained-run',
+    '--request-file',
+    missingRequest,
+    '--thread-rule',
+    '2n',
+  ]);
+  assert.equal(override.status, 1);
+  assert.match(
+    override.stderr,
+    /Internal distributed contained run mode does not accept --thread-rule/
+  );
 });
 
 test('distributed production mode requires one application and rejects override options', (t) => {

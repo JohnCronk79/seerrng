@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
 import {
+  createRequiredWorkerCapacityProof,
   detectWorkerCapacity,
   resolveOperatorGithubLogin,
   selectWorkerCapacity,
@@ -75,6 +76,43 @@ test('the approved GitHub operator automatically receives two workers per effect
     'two-workers-per-effective-logical-cpu-for-approved-operator'
   );
   assert.equal(result.operatorGithubLogin, 'JohnCronk79');
+});
+
+test('required John capacity proof admits exactly 12 logical CPUs and 24 workers', () => {
+  const requiredProof = createRequiredWorkerCapacityProof({
+    operatorGithubLogin: 'JohnCronk79',
+    expectedLogicalCpus: 12,
+  });
+  const result = selectWorkerCapacity({
+    availableLogicalCpus: 12,
+    visibleLogicalCpus: 12,
+    quotaCpus: 12,
+    operatorGithubLogin: 'JohnCronk79',
+    requiredProof,
+  });
+  assert.equal(result.configuredWorkers, 24);
+  assert.throws(
+    () =>
+      selectWorkerCapacity({
+        availableLogicalCpus: 12,
+        visibleLogicalCpus: 12,
+        quotaCpus: 12,
+        operatorGithubLogin: null,
+        requiredProof,
+      }),
+    /did not match admission/u
+  );
+  assert.throws(
+    () =>
+      selectWorkerCapacity({
+        availableLogicalCpus: 11,
+        visibleLogicalCpus: 11,
+        quotaCpus: 11,
+        operatorGithubLogin: 'JohnCronk79',
+        requiredProof,
+      }),
+    /did not match admission/u
+  );
 });
 
 test('automatic policies respect visible and cgroup CPU limits', () => {

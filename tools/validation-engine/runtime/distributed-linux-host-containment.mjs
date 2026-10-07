@@ -45,6 +45,7 @@ const CONTAINED_ARTIFACT_HASH_FIELDS = Object.freeze({
   'native-command-receipts': 'processLedgerSha256',
   'native-process-ledger': 'processLedgerSummarySha256',
   'native-process-streams': 'processStreamsSha256',
+  'native-run-expectations': 'runExpectationsSha256',
   'independent-reconciliation': 'reconciliationSha256',
   'timing-observations': 'observationsSha256',
   'timing-profile-update': 'timingProfileUpdateSha256',

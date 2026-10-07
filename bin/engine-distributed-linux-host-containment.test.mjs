@@ -261,6 +261,7 @@ function manifestFixture() {
         ...[
           ['production-result', 'staged-validation-result.json'],
           ['production-timings', 'timings.json'],
+          ['native-run-expectations', 'native-run-expectations.json'],
           ['native-command-receipts', 'native-command-receipts.jsonl'],
           ['native-process-ledger', 'native-process-ledger.json'],
           ['native-process-streams', 'native-process-streams.json'],
@@ -944,6 +945,9 @@ function outerHarness(
         ok: true,
         resultSha256: sha256(productionArtifactBytes('production-result')),
         timingsSha256: sha256(productionArtifactBytes('production-timings')),
+        runExpectationsSha256: sha256(
+          productionArtifactBytes('native-run-expectations')
+        ),
         processLedgerSha256: sha256(
           productionArtifactBytes('native-command-receipts')
         ),
@@ -979,6 +983,7 @@ function outerHarness(
       [
         'production-result',
         'production-timings',
+        'native-run-expectations',
         'native-command-receipts',
         'native-process-ledger',
         'native-process-streams',

@@ -51,6 +51,7 @@ import {
 import { createStagedValidation } from './staged-validation.mjs';
 
 const prefix = 'seerrng-native-validation-';
+const MACHINE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 const beneath = (root, file) => {
@@ -1546,11 +1547,14 @@ export async function resolveReviewedPrMetadata(
 export async function createNativeStageContext(
   sourceRoot,
   {
+    runId,
     stdout = process.stdout,
     stderr = process.stderr,
     inherited = process.env,
     signal,
     workerOverride = null,
+    operatorGithubLogin = null,
+    requiredCapacityProof = null,
     scratchParent = tmpdir(),
     prerequisiteReferences = {},
     verifyNetworkBoundary,
@@ -1560,11 +1564,26 @@ export async function createNativeStageContext(
     reviewedPrMetadata,
   } = {}
 ) {
+  if (typeof runId !== 'string' || !MACHINE_ID.test(runId))
+    throw new Error('Native stage context requires the exact public run ID');
+  if (
+    operatorGithubLogin !== null &&
+    (typeof operatorGithubLogin !== 'string' ||
+      !MACHINE_ID.test(operatorGithubLogin))
+  )
+    throw new Error('Native stage context operator GitHub login is invalid');
   const capacity = detectWorkerCapacity({
     sourceRoot,
     environment: inherited,
     override: workerOverride,
+    operatorGithubLogin,
+    requiredProof: requiredCapacityProof,
   });
+  if (
+    operatorGithubLogin !== null &&
+    capacity.operatorGithubLogin !== operatorGithubLogin
+  )
+    throw new Error('Native stage context operator identity was not admitted');
   const snapshot = createOwnedSourceSnapshot(sourceRoot, { scratchParent });
   let processReceipts;
   try {
@@ -1671,6 +1690,8 @@ export async function createNativeStageContext(
         const currentCapacity = detectWorkerCapacity({
           sourceRoot: snapshot.authoritativeRoot,
           environment: inherited,
+          operatorGithubLogin,
+          requiredProof: requiredCapacityProof,
         });
         const memory = liveEvaluatorHeadroom();
         if (
@@ -2158,7 +2179,7 @@ export async function createNativeStageContext(
       flag: 'wx',
     });
     const binding = createStagedValidation({
-      runId: `native-${Date.now()}`,
+      runId,
       candidate: snapshot.candidate,
       executionEnvironmentSha256,
       capacity,
@@ -2321,6 +2342,7 @@ export async function createNativeStageContext(
     );
     const report = {
       schema: 1,
+      runId,
       status: localBlocked.length ? 'prerequisite-blocked' : 'ready',
       candidate: snapshot.candidate,
       capacity,
