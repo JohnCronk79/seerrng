@@ -431,6 +431,8 @@ export interface MainSettings {
   spotifyClientSecret?: string;
   youtubeApiKey?: string;
   comicVineApiKey?: string;
+  /** Metron API token. Used only as a fallback when ComicVine search fails. */
+  metronToken?: string;
   googleBooksApiKey?: string;
 }
 
@@ -830,6 +832,7 @@ class Settings {
         spotifyClientSecret: '',
         youtubeApiKey: '',
         comicVineApiKey: '',
+        metronToken: '',
         googleBooksApiKey: '',
       },
       plex: {

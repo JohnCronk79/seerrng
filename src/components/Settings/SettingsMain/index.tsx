@@ -126,6 +126,9 @@ const messages = defineMessages('components.Settings.SettingsMain', {
   comicVineApiKey: 'ComicVine API Key',
   comicVineApiKeyTip:
     'A free ComicVine API key is required for comic discovery and requests.',
+  metronToken: 'Metron API Token',
+  metronTokenTip:
+    'Optional. Metron searches comics when ComicVine search fails. Comic details still require ComicVine.',
 });
 
 const SettingsMain = () => {
@@ -242,6 +245,7 @@ const SettingsMain = () => {
           spotifyClientSecret: data?.spotifyClientSecret ?? '',
           youtubeApiKey: data?.youtubeApiKey ?? '',
           comicVineApiKey: data?.comicVineApiKey ?? '',
+          metronToken: data?.metronToken ?? '',
           googleBooksApiKey: data?.googleBooksApiKey ?? '',
           downloadPathMappingsJson: JSON.stringify(
             data?.downloadPathMappings ?? [],
@@ -276,6 +280,7 @@ const SettingsMain = () => {
               spotifyClientSecret: values.spotifyClientSecret,
               youtubeApiKey: values.youtubeApiKey,
               comicVineApiKey: values.comicVineApiKey,
+              metronToken: values.metronToken,
               googleBooksApiKey: values.googleBooksApiKey,
               downloadPathMappings: JSON.parse(
                 values.downloadPathMappingsJson || '[]'
@@ -785,6 +790,24 @@ const SettingsMain = () => {
                         ) =>
                           setFieldValue('comicVineApiKey', event.target.value)
                         }
+                      />
+                    </div>
+                  </SettingsFormRow>
+                  <SettingsFormRow
+                    htmlFor="metronToken"
+                    label={intl.formatMessage(messages.metronToken)}
+                    description={intl.formatMessage(messages.metronTokenTip)}
+                  >
+                    <div className="form-input-field">
+                      <SensitiveInput
+                        as="field"
+                        id="metronToken"
+                        name="metronToken"
+                        type="text"
+                        value={values.metronToken}
+                        onChange={(
+                          event: React.ChangeEvent<HTMLInputElement>
+                        ) => setFieldValue('metronToken', event.target.value)}
                       />
                     </div>
                   </SettingsFormRow>

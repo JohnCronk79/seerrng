@@ -3347,6 +3347,8 @@
   "components.Settings.SettingsMain.locale": "Display Language",
   "components.Settings.SettingsMain.magazinesMetadata": "Magazine Catalog",
   "components.Settings.SettingsMain.magazinesMetadataDescription": "Add public magazine discovery alongside titles tracked by LazyLibrarian.",
+  "components.Settings.SettingsMain.metronToken": "Metron API Token",
+  "components.Settings.SettingsMain.metronTokenTip": "Optional. Metron searches comics when ComicVine search fails. Comic details still require ComicVine.",
   "components.Settings.SettingsMain.originallanguage": "Discover Language",
   "components.Settings.SettingsMain.originallanguageTip": "Filter content by original language",
   "components.Settings.SettingsMain.partialRequestsEnabled": "Allow Partial Series Requests",

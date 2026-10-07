@@ -21,6 +21,7 @@ export type AvailableCacheIds =
   | 'coverartarchive'
   | 'openlibrary'
   | 'comicvine'
+  | 'metron'
   | 'questarr'
   | 'romarr'
   | 'googlebooks'
@@ -236,6 +237,10 @@ class CacheManager {
       checkPeriod: 60 * 30,
     }),
     comicvine: new Cache('comicvine', 'ComicVine API', {
+      stdTtl: 43200,
+      checkPeriod: 60 * 30,
+    }),
+    metron: new Cache('metron', 'Metron API', {
       stdTtl: 43200,
       checkPeriod: 60 * 30,
     }),
