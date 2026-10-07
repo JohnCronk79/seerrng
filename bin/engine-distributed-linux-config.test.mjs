@@ -365,7 +365,7 @@ test('occupied node conflicts until explicit overwrite clears its thread policy'
   );
 });
 
-test('accepted node reconfiguration preserves dependency selections unless replacements are supplied', () => {
+test('refresh preserves dependency state while overwrite clears stale machine state', () => {
   const selectedApplications = [
     {
       entryId: '01',
@@ -397,6 +397,26 @@ test('accepted node reconfiguration preserves dependency selections unless repla
     ],
     sharedAuthenticationKey: sharedKey('f'),
   });
+  const refresh = applyNodeEnrollmentRequest(controller, {
+    ...enrollmentRequest({ computerName: 'Refreshed server' }),
+  });
+  assert.equal(refresh.response.status, 'accepted');
+  assert.equal(refresh.response.disposition, 'refreshed');
+  assert.equal('selectedApplications' in refresh.response, false);
+  assert.deepEqual(
+    refresh.controllerConfig.nodeDependencyAvailability,
+    controller.nodeDependencyAvailability
+  );
+
+  const existingNode = createNodeConfig({
+    ...nodeConfig(),
+    selectedApplications,
+    dependencyAvailability,
+  });
+  const preserved = applyNodeEnrollmentResponse(existingNode, refresh.response);
+  assert.deepEqual(preserved.selectedApplications, selectedApplications);
+  assert.deepEqual(preserved.dependencyAvailability, dependencyAvailability);
+
   const outcome = applyNodeEnrollmentRequest(controller, {
     ...enrollmentRequest({
       computerName: 'Reconfigured server',
@@ -407,20 +427,12 @@ test('accepted node reconfiguration preserves dependency selections unless repla
 
   assert.equal(outcome.response.status, 'accepted');
   assert.equal(outcome.response.disposition, 'overwritten');
-  assert.equal('selectedApplications' in outcome.response, false);
-  assert.deepEqual(
-    outcome.controllerConfig.nodeDependencyAvailability,
-    controller.nodeDependencyAvailability
-  );
-
-  const existingNode = createNodeConfig({
-    ...nodeConfig(),
-    selectedApplications,
-    dependencyAvailability,
-  });
-  const preserved = applyNodeEnrollmentResponse(existingNode, outcome.response);
-  assert.deepEqual(preserved.selectedApplications, selectedApplications);
-  assert.deepEqual(preserved.dependencyAvailability, dependencyAvailability);
+  assert.deepEqual(outcome.response.selectedApplications, []);
+  assert.deepEqual(outcome.response.dependencyAvailability, []);
+  assert.deepEqual(outcome.controllerConfig.nodeDependencyAvailability, []);
+  const cleared = applyNodeEnrollmentResponse(existingNode, outcome.response);
+  assert.deepEqual(cleared.selectedApplications, []);
+  assert.deepEqual(cleared.dependencyAvailability, []);
 
   const replacementApplications = [
     {

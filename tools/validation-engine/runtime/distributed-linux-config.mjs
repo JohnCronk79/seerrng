@@ -1288,6 +1288,7 @@ export function applyNodeEnrollmentRequest(controllerValue, requestValue) {
       entry.ipAddress === request.ipAddress &&
       entry.nodeNumber !== request.nodeNumber
   );
+  const replacesExistingNode = Boolean(existingNumber && request.overwrite);
 
   if (existingAddress)
     return enrollmentConflict(
@@ -1311,7 +1312,7 @@ export function applyNodeEnrollmentRequest(controllerValue, requestValue) {
 
   let disposition = 'created';
   let enrolled;
-  if (existingNumber && request.overwrite) {
+  if (replacesExistingNode) {
     disposition = 'overwritten';
     enrolled = enrollmentNode(request);
   } else if (existingNumber) {
@@ -1329,16 +1330,16 @@ export function applyNodeEnrollmentRequest(controllerValue, requestValue) {
     : [...controllerConfig.nodes, enrolled];
   let nodeDependencyAvailability =
     controllerConfig.nodeDependencyAvailability ?? [];
-  if (hasDependencyReport)
-    nodeDependencyAvailability = [
-      ...nodeDependencyAvailability.filter(
-        (entry) => entry.nodeNumber !== request.nodeNumber
-      ),
-      {
+  if (hasDependencyReport || replacesExistingNode) {
+    nodeDependencyAvailability = nodeDependencyAvailability.filter(
+      (entry) => entry.nodeNumber !== request.nodeNumber
+    );
+    if (hasDependencyReport)
+      nodeDependencyAvailability.push({
         nodeNumber: request.nodeNumber,
         dependencies: request.dependencyAvailability,
-      },
-    ];
+      });
+  }
   const updatedControllerValue = {
     global: controllerConfig.global,
     nodes,
@@ -1362,10 +1363,14 @@ export function applyNodeEnrollmentRequest(controllerValue, requestValue) {
     nodeNumber: request.nodeNumber,
     sharedAuthenticationKey: controllerConfig.sharedAuthenticationKey,
   };
-  if (hasDependencyReport)
+  if (hasDependencyReport || replacesExistingNode)
     Object.assign(responseValue, {
-      selectedApplications: dependencyPlan.selectedApplications,
-      dependencyAvailability: request.dependencyAvailability,
+      selectedApplications: hasDependencyReport
+        ? dependencyPlan.selectedApplications
+        : [],
+      dependencyAvailability: hasDependencyReport
+        ? request.dependencyAvailability
+        : [],
     });
   const response = createNodeEnrollmentResponse(responseValue);
   return deepFreeze({
