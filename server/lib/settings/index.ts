@@ -312,6 +312,12 @@ export interface ReadarrSettings extends DVRSettings {
   serviceType?: 'ebook' | 'audiobook';
 }
 
+/** A Jellystat statistics server used to show Jellyfin play counts. Read-only. */
+export interface JellystatSettings {
+  url: string;
+  apiKey: string;
+}
+
 /** A Navidrome server used only to mark music as available. */
 export interface NavidromeSettings {
   url: string;
@@ -757,6 +763,7 @@ export interface AllSettings {
   readarr: ReadarrSettings[];
   audiobookshelf?: AudiobookshelfSettings | null;
   navidrome?: NavidromeSettings | null;
+  jellystat?: JellystatSettings | null;
   mylar: MylarSettings[];
   kapowarr: KapowarrSettings[];
   backissue: BackIssueSettings[];
@@ -880,6 +887,7 @@ class Settings {
       readarr: [],
       audiobookshelf: null,
       navidrome: null,
+      jellystat: null,
       mylar: [],
       kapowarr: [],
       backissue: [],
@@ -1393,6 +1401,14 @@ class Settings {
     return this.data.navidrome ?? null;
   }
 
+  get jellystat(): JellystatSettings | null {
+    return this.data.jellystat ?? null;
+  }
+
+  set jellystat(data: JellystatSettings | null) {
+    this.data.jellystat = data;
+  }
+
   set navidrome(data: NavidromeSettings | null) {
     this.data.navidrome = data;
   }
@@ -1836,6 +1852,7 @@ class Settings {
       readarr: [],
       audiobookshelf: null,
       navidrome: null,
+      jellystat: null,
       mylar: [],
       kapowarr: [],
       backissue: [],

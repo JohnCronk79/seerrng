@@ -3,6 +3,7 @@ import KapowarrAPI, {
   KapowarrTaskRunningError,
 } from '@server/api/comics/kapowarr';
 import MylarAPI from '@server/api/comics/mylar';
+import JellystatAPI from '@server/api/jellystat';
 import LazyLibrarianAPI from '@server/api/lazylibrarian';
 import LidarrAPI from '@server/api/servarr/lidarr';
 import RadarrAPI from '@server/api/servarr/radarr';
@@ -35,6 +36,7 @@ import {
   runWithServarrServiceAdmission,
   runWithServarrServiceCollectionMutationAdmission,
 } from '@server/lib/serviceAdmission';
+import { getSettings } from '@server/lib/settings';
 import {
   UserMutationActorUnauthorizedError,
   runAuthorizedUserSecurityMutation,
@@ -1337,6 +1339,51 @@ mediaRoutes.get<{ id: string }, MediaWatchDataResponse>(
         mediaId: req.params.id,
       });
       next({ status: 500, message: 'Failed to fetch watch data.' });
+    }
+  })
+);
+
+mediaRoutes.get<{ id: string }>(
+  '/:id/jellystat',
+  authorizedMutation(Permission.ADMIN, async (req, res, next) => {
+    const mediaId = parseMediaRouteId(req.params.id);
+    if (!mediaId) {
+      return next({ status: 404, message: 'Media does not exist.' });
+    }
+
+    const media = await getRepository(Media).findOne({
+      where: { id: mediaId },
+    });
+    if (!media || !isMediaTypeCategoryEnabled(media.mediaType)) {
+      return next({ status: 404, message: 'Media does not exist.' });
+    }
+
+    const settings = getSettings().jellystat;
+    if (!settings) {
+      return next({ status: 404, message: 'Jellystat is not configured.' });
+    }
+
+    const jellyfinItemId = media.jellyfinMediaId;
+    if (!jellyfinItemId) {
+      return next({
+        status: 404,
+        message: 'This title is not linked to a Jellyfin item.',
+      });
+    }
+
+    try {
+      const playback = await new JellystatAPI(settings).getItemPlayback(
+        jellyfinItemId
+      );
+      return res.status(200).json(playback);
+    } catch (error) {
+      return next({
+        status: 502,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not read watch statistics from Jellystat.',
+      });
     }
   })
 );

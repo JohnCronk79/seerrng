@@ -34,6 +34,7 @@ import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrid
 import type {
   AudiobookshelfSettings,
   BackIssueSettings,
+  JellystatSettings,
   KapowarrSettings,
   LazyLibrarianSettings,
   LidarrSettings,
@@ -60,6 +61,9 @@ const AudiobookshelfModal = dynamic(
 );
 const NavidromeModal = dynamic(
   () => import('@app/components/Settings/NavidromeModal')
+);
+const JellystatModal = dynamic(
+  () => import('@app/components/Settings/JellystatModal')
 );
 const LazyLibrarianModal = dynamic(
   () => import('@app/components/Settings/LazyLibrarianModal')
@@ -92,6 +96,10 @@ const messages = defineMessages('components.Settings', {
     'Optionally sync an Audiobookshelf book library so SeerrNG can recognize matching audiobooks that are already available. This connection is read-only and does not send acquisition requests.',
   addAudiobookshelf: 'Connect Audiobookshelf library',
   navidromesettings: 'Navidrome Availability',
+  jellystatsettings: 'Jellystat Statistics',
+  jellystatDescription:
+    'Optionally show lifetime play counts from Jellystat on titles linked to Jellyfin. This connection is read-only.',
+  addJellystat: 'Connect Jellystat Server',
   navidromeDescription:
     'Optionally read a Navidrome music library so SeerrNG can recognize albums you already have. Albums are matched by MusicBrainz ID. This connection is read-only.',
   addNavidrome: 'Connect Navidrome Server',
@@ -372,6 +380,8 @@ const SettingsServices = () => {
     useSWR<AudiobookshelfSettings | null>('/api/v1/settings/audiobookshelf');
   const { data: navidromeData, mutate: revalidateNavidrome } =
     useSWR<NavidromeSettings | null>('/api/v1/settings/navidrome');
+  const { data: jellystatData, mutate: revalidateJellystat } =
+    useSWR<JellystatSettings | null>('/api/v1/settings/jellystat');
   const {
     data: mylarData,
     error: mylarError,
@@ -426,6 +436,7 @@ const SettingsServices = () => {
   });
   const [editAudiobookshelfModal, setEditAudiobookshelfModal] = useState(false);
   const [editNavidromeModal, setEditNavidromeModal] = useState(false);
+  const [editJellystatModal, setEditJellystatModal] = useState(false);
   const [editMylarModal, setEditMylarModal] = useState<{
     open: boolean;
     mylar: MylarSettings | null;
@@ -460,6 +471,7 @@ const SettingsServices = () => {
       | 'readarr'
       | 'audiobookshelf'
       | 'navidrome'
+      | 'jellystat'
       | 'mylar'
       | 'kapowarr'
       | 'backissue'
@@ -535,6 +547,8 @@ const SettingsServices = () => {
       await axios.delete('/api/v1/settings/audiobookshelf');
     } else if (deleteServerModal.type === 'navidrome') {
       await axios.delete('/api/v1/settings/navidrome');
+    } else if (deleteServerModal.type === 'jellystat') {
+      await axios.delete('/api/v1/settings/jellystat');
     } else {
       await axios.delete(
         `/api/v1/settings/${deleteServerModal.type}/${deleteServerModal.serverId}`
@@ -551,6 +565,7 @@ const SettingsServices = () => {
     revalidateLazyLibrarian();
     revalidateAudiobookshelf();
     revalidateNavidrome();
+    revalidateJellystat();
     mutate('/api/v1/settings/public');
   };
 
@@ -621,6 +636,16 @@ const SettingsServices = () => {
             revalidateReadarr();
             mutate('/api/v1/settings/public');
             setEditReadarrModal({ open: false, readarr: null });
+          }}
+        />
+      )}
+      {editJellystatModal && (
+        <JellystatModal
+          settings={jellystatData ?? null}
+          onClose={() => setEditJellystatModal(false)}
+          onSave={() => {
+            revalidateJellystat();
+            setEditJellystatModal(false);
           }}
         />
       )}
@@ -726,7 +751,9 @@ const SettingsServices = () => {
                         ? 'Audiobookshelf'
                         : deleteServerModal.type === 'navidrome'
                           ? 'Navidrome'
-                          : 'Bookshelf',
+                          : deleteServerModal.type === 'jellystat'
+                            ? 'Jellystat'
+                            : 'Bookshelf',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -1194,6 +1221,56 @@ const SettingsServices = () => {
               >
                 <PlusIcon />
                 <span>{intl.formatMessage(messages.addNavidrome)}</span>
+              </Button>
+            </div>
+          </li>
+        )}
+      </ul>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.jellystatsettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.jellystatDescription)}
+        </p>
+      </div>
+      <ul className="settings-service-grid">
+        {jellystatData &&
+          (() => {
+            const url = new URL(jellystatData.url);
+            return (
+              <ServerInstance
+                name="Jellystat"
+                hostname={url.hostname}
+                port={
+                  url.port
+                    ? Number(url.port)
+                    : url.protocol === 'https:'
+                      ? 443
+                      : 80
+                }
+                isSSL={url.protocol === 'https:'}
+                onEdit={() => setEditJellystatModal(true)}
+                onDelete={() =>
+                  setDeleteServerModal({
+                    open: true,
+                    serverId: null,
+                    type: 'jellystat',
+                  })
+                }
+              />
+            );
+          })()}
+        {!jellystatData && (
+          <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+            <div className="flex h-full w-full items-center justify-center">
+              <Button
+                buttonType="success"
+                buttonSize="standard"
+                onClick={() => setEditJellystatModal(true)}
+              >
+                <PlusIcon />
+                <span>{intl.formatMessage(messages.addJellystat)}</span>
               </Button>
             </div>
           </li>

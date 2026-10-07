@@ -2,6 +2,7 @@ import { parseDownloadPathMappings } from '@server/lib/downloadPathMappings';
 import type {
   AllSettings,
   AudiobookshelfSettings,
+  JellystatSettings,
   NavidromeSettings,
   NotificationAgentKey,
 } from '@server/lib/settings';
@@ -30,6 +31,7 @@ export type ExternalRuntimeConfig = Pick<
   | 'readarr'
   | 'audiobookshelf'
   | 'navidrome'
+  | 'jellystat'
   | 'mylar'
   | 'kapowarr'
   | 'backissue'
@@ -86,6 +88,15 @@ const normalizeServarrServices = (
       is4k: settings.is4k === true,
     };
   });
+};
+
+const normalizeJellystat = (value: unknown): JellystatSettings | null => {
+  if (value === undefined || value === null) return null;
+  const settings = assertRecord(value, 'jellystat');
+  if (typeof settings.url !== 'string' || typeof settings.apiKey !== 'string') {
+    throw new Error('SEERR_EXTERNAL_CONFIG.jellystat is invalid');
+  }
+  return settings as unknown as JellystatSettings;
 };
 
 const normalizeNavidrome = (value: unknown): NavidromeSettings | null => {
@@ -163,6 +174,7 @@ const validate = (value: unknown): ExternalRuntimeConfig => {
     readarr: normalizeServarrServices(root.readarr, 'readarr'),
     audiobookshelf: normalizeAudiobookshelf(root.audiobookshelf),
     navidrome: normalizeNavidrome(root.navidrome),
+    jellystat: normalizeJellystat(root.jellystat),
     // Lenient for optional comics and magazine services: SEERR_EXTERNAL_CONFIG
     // is hand-maintained or may predate an integration, so missing keys mean
     // no configured instances.
@@ -215,6 +227,7 @@ const loadFromSettingsFile = (): ExternalRuntimeConfig | undefined => {
       readarr: settings.readarr ?? [],
       audiobookshelf: settings.audiobookshelf ?? null,
       navidrome: settings.navidrome ?? null,
+      jellystat: settings.jellystat ?? null,
       mylar: settings.mylar ?? [],
       kapowarr: settings.kapowarr ?? [],
       backissue: settings.backissue ?? [],
