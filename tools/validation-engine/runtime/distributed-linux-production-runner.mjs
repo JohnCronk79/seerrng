@@ -993,6 +993,9 @@ export async function executeDistributedLinuxProductionRun(
     );
     if (canonicalJsonSha256(persistedProfile) !== updatedProfileSha256)
       throw new Error('Persisted adaptive timing profile failed readback');
+    const timingProfileFileSha256 = sha256(
+      deps.readEvidenceFile(options.timingProfilePath)
+    );
     const timingProfileUpdateReceipt = writeJson(
       deps,
       paths.timingProfileUpdate,
@@ -1021,6 +1024,7 @@ export async function executeDistributedLinuxProductionRun(
       reconciliationSha256: reconciliationReceipt.sha256,
       observationsSha256: observationsReceipt.sha256,
       timingProfileUpdateSha256: timingProfileUpdateReceipt.sha256,
+      timingProfileFileSha256,
       updatedProfileSha256,
       resultReuse: false,
     };

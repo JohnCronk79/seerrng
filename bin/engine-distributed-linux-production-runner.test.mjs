@@ -262,12 +262,15 @@ function harness(t, failure = null) {
         events.push('stages:four');
         return result;
       }),
-    persistTimingProfile: async (_path, profile) => {
+    persistTimingProfile: async (path, profile) => {
       events.push('profile:persist');
       profilePersistCalls += 1;
       if (failure === 'persist')
         throw new Error('Focused profile persistence failure');
       durableProfile = structuredClone(profile);
+      writeFileSync(path, `${JSON.stringify(profile, null, 2)}\n`, {
+        flag: 'wx',
+      });
       return profile;
     },
     readEvidenceFile: (path) => readFileSync(path),
@@ -387,6 +390,9 @@ test('green production lifecycle persists one profile and writes its contained-r
     marker.updatedProfileSha256,
     outcome.timingUpdate.updatedProfileSha256
   );
+  const timingProfileBytes = readFileSync(fixture.options.timingProfilePath);
+  assert.equal(marker.timingProfileFileSha256, hash(timingProfileBytes));
+  assert.notEqual(marker.timingProfileFileSha256, marker.updatedProfileSha256);
 });
 
 for (const failure of [
