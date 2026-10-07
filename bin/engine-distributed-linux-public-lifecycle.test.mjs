@@ -252,42 +252,109 @@ test('proof client runner delivers the exact canonical request on standard input
   assert.equal(receipt.lifecycle.cleanupVerified, true);
 });
 
-test('authenticated Git closure fetches and binds the exact published branch and tags', () => {
-  const commit = hash40('1');
-  const defaultCommit = hash40('2');
-  const tagCommit = hash40('3');
-  const remote = [
-    `${defaultCommit}\tHEAD`,
-    `${commit}\trefs/heads/feature/focused`,
-    `${tagCommit}\trefs/tags/v1`,
-    '',
-  ].join('\n');
+function focusedGitClosureAdapter({ branch, commit, remote, localTags }) {
   const calls = [];
-  const state = fetchAuthenticatedGitState('ignored-by-focused-adapter', {
+  return {
+    calls,
     git: (_root, args) => {
       calls.push(args);
       const command = args.join(' ');
-      if (command === 'symbolic-ref --short HEAD') return 'feature/focused\n';
+      if (command === 'symbolic-ref --short HEAD') return `${branch}\n`;
       if (command === 'config --get remote.origin.url')
         return 'https://github.com/example/project.git\n';
       if (command.startsWith('ls-remote origin HEAD')) return remote;
       if (command === 'fetch --prune --tags origin') return '';
       if (command === 'rev-parse HEAD') return `${commit}\n`;
       if (command === 'rev-parse --is-shallow-repository') return 'false\n';
-      if (command === 'show-ref --tags') return `${tagCommit} refs/tags/v1\n`;
+      if (command === 'show-ref --tags') return localTags;
       throw new Error(`Unexpected focused Git command: ${command}`);
     },
+  };
+}
+
+test('authenticated Git closure binds origin tags while accepting unrelated local tags', () => {
+  const branch = 'feature/focused';
+  const commit = hash40('1');
+  const defaultCommit = hash40('2');
+  const tagObject = hash40('3');
+  const peeledTagCommit = hash40('4');
+  const unrelatedLocalTag = hash40('5');
+  const remote = [
+    `${defaultCommit}\tHEAD`,
+    `${commit}\trefs/heads/${branch}`,
+    `${tagObject}\trefs/tags/v1`,
+    `${peeledTagCommit}\trefs/tags/v1^{}`,
+    '',
+  ].join('\n');
+  const { calls, git } = focusedGitClosureAdapter({
+    branch,
+    commit,
+    remote,
+    localTags:
+      `${tagObject} refs/tags/v1\n` +
+      `${unrelatedLocalTag} refs/tags/upstream-only\n`,
   });
-  assert.equal(state.branch, 'feature/focused');
+  const state = fetchAuthenticatedGitState('ignored-by-focused-adapter', {
+    git,
+  });
+  assert.equal(state.branch, branch);
   assert.equal(state.commit, commit);
-  assert.deepEqual(state.tagRefs, [`refs/tags/v1 ${tagCommit}`]);
-  assert.equal(
-    calls.filter((args) => args[0] === 'ls-remote').length,
-    2,
+  assert.deepEqual(state.tagRefs, [`refs/tags/v1 ${tagObject}`]);
+  const query = [
+    'ls-remote',
+    'origin',
+    'HEAD',
+    `refs/heads/${branch}`,
+    'refs/tags/*',
+  ];
+  assert.deepEqual(
+    calls.filter(([command]) => ['ls-remote', 'fetch'].includes(command)),
+    [query, ['fetch', '--prune', '--tags', 'origin'], query],
     'Remote refs must be observed before and after the authenticated fetch'
   );
-  assert.ok(
-    calls.some((args) => args.join(' ') === 'fetch --prune --tags origin')
+});
+
+test('authenticated Git closure rejects a missing origin tag after fetch', () => {
+  const branch = 'feature/focused';
+  const commit = hash40('1');
+  const remote = [
+    `${hash40('2')}\tHEAD`,
+    `${commit}\trefs/heads/${branch}`,
+    `${hash40('3')}\trefs/tags/v1`,
+    '',
+  ].join('\n');
+  const { git } = focusedGitClosureAdapter({
+    branch,
+    commit,
+    remote,
+    localTags: `${hash40('4')} refs/tags/upstream-only\n`,
+  });
+
+  assert.throws(
+    () => fetchAuthenticatedGitState('ignored-by-focused-adapter', { git }),
+    /every authenticated origin tag at its exact object ID/u
+  );
+});
+
+test('authenticated Git closure rejects a mismatched origin tag after fetch', () => {
+  const branch = 'feature/focused';
+  const commit = hash40('1');
+  const remote = [
+    `${hash40('2')}\tHEAD`,
+    `${commit}\trefs/heads/${branch}`,
+    `${hash40('3')}\trefs/tags/v1`,
+    '',
+  ].join('\n');
+  const { git } = focusedGitClosureAdapter({
+    branch,
+    commit,
+    remote,
+    localTags: `${hash40('4')} refs/tags/v1\n`,
+  });
+
+  assert.throws(
+    () => fetchAuthenticatedGitState('ignored-by-focused-adapter', { git }),
+    /every authenticated origin tag at its exact object ID/u
   );
 });
 

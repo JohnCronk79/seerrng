@@ -562,23 +562,35 @@ export function fetchAuthenticatedGitState(
     git(sourceRoot, ['rev-parse', '--is-shallow-repository']).trim() !== 'false'
   )
     throw new Error('Authenticated Git closure cannot use shallow history');
-  const tagRefs = remoteRefs
-    .filter(({ ref }) => ref.startsWith('refs/tags/') && !ref.endsWith('^{}'))
+  const originTags = remoteRefs.filter(
+    ({ ref }) => ref.startsWith('refs/tags/') && !ref.endsWith('^{}')
+  );
+  const tagRefs = originTags
     .map(({ oid, ref }) => `${ref} ${oid}`)
     .toSorted(compareText);
   if (tagRefs.length === 0)
     throw new Error('Authenticated Git closure requires complete tags');
-  const localTags = git(sourceRoot, ['show-ref', '--tags'])
+  const localTagRefs = git(sourceRoot, ['show-ref', '--tags'])
     .trim()
     .split(/\r?\n/u)
     .filter(Boolean)
     .map((line) => {
-      const [oid, ref] = line.split(' ');
-      return `${ref} ${oid}`;
-    })
-    .toSorted(compareText);
-  if (JSON.stringify(localTags) !== JSON.stringify(tagRefs))
-    throw new Error('Fetched local tags differ from authenticated remote tags');
+      const [oid, ref, extra] = line.split(' ');
+      if (
+        extra !== undefined ||
+        !HASH40.test(oid ?? '') ||
+        !ref?.startsWith('refs/tags/')
+      )
+        throw new Error('Fetched local tag output is invalid');
+      return { oid, ref };
+    });
+  if (new Set(localTagRefs.map(({ ref }) => ref)).size !== localTagRefs.length)
+    throw new Error('Fetched local tag output is invalid');
+  const localTags = new Map(localTagRefs.map(({ oid, ref }) => [ref, oid]));
+  if (originTags.some(({ oid, ref }) => localTags.get(ref) !== oid))
+    throw new Error(
+      'Fetched local tags do not contain every authenticated origin tag at its exact object ID'
+    );
   return Object.freeze({ branch, commit, remoteRefs, repository, tagRefs });
 }
 
