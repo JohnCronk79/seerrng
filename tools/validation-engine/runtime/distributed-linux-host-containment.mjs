@@ -5,10 +5,17 @@ import { isIP } from 'node:net';
 import { isAbsolute, resolve, win32 } from 'node:path';
 import path from 'node:path/posix';
 
+import {
+  completeDistributedLinuxHostPreparation,
+  distributedLinuxPrettyJsonBytes,
+  distributedLinuxRawSha256,
+  normalizeDistributedLinuxHostPreparationSeal,
+} from './distributed-linux-host-preparation.mjs';
+
 export const DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA =
   'seerrng-distributed-linux-host-containment/v1';
 export const DISTRIBUTED_LINUX_HOST_PLAN_SCHEMA =
-  'seerrng-distributed-linux-host-plan/v1';
+  'seerrng-distributed-linux-host-plan/v2';
 export const DISTRIBUTED_LINUX_HOST_RESULT_SCHEMA =
   'seerrng-distributed-linux-host-result/v1';
 export const DISTRIBUTED_LINUX_PROOF_PARENT_SCHEMA =
@@ -46,6 +53,7 @@ const CONTAINED_ARTIFACT_HASH_FIELDS = Object.freeze({
   'native-process-ledger': 'processLedgerSummarySha256',
   'native-process-streams': 'processStreamsSha256',
   'native-run-expectations': 'runExpectationsSha256',
+  'host-preparation-receipt': 'hostPreparationReceiptSha256',
   'independent-reconciliation': 'reconciliationSha256',
   'timing-observations': 'observationsSha256',
   'timing-profile-update': 'timingProfileUpdateSha256',
@@ -1174,14 +1182,130 @@ function bindSourceFile(mount, targetPath, label) {
     : mount.source;
 }
 
+function preparationInputByRole(preparation, role) {
+  const input = preparation.inputs.find((entry) => entry.role === role);
+  if (!input) throw new Error(`Host-preparation role is absent: ${role}`);
+  return input;
+}
+
+function normalizePreparationRequest(value, manifestValue, manifest) {
+  exactKeys(
+    value,
+    ['containerPath', 'rawSha256', 'value'],
+    'contained host-preparation request'
+  );
+  const requestPath = containerPath(
+    value.containerPath,
+    'contained host-preparation request path'
+  );
+  const requestRawSha256 = sha(
+    value.rawSha256,
+    'contained host-preparation request hash'
+  );
+  const requestValue = plainObject(
+    value.value,
+    'contained host-preparation request value'
+  );
+  if (
+    distributedLinuxRawSha256(distributedLinuxPrettyJsonBytes(requestValue)) !==
+    requestRawSha256
+  )
+    throw new Error('Contained request value differs from its raw hash');
+  const seal = normalizeDistributedLinuxHostPreparationSeal(
+    requestValue.hostPreparation
+  );
+  const admission = completeDistributedLinuxHostPreparation(seal, {
+    role: 'contained-request',
+    containerPath: requestPath,
+    rawSha256: requestRawSha256,
+  });
+  const manifestInput = preparationInputByRole(
+    admission,
+    'containment-manifest'
+  );
+  if (
+    requestValue.manifestPath !== manifestInput.containerPath ||
+    manifestInput.rawSha256 !==
+      distributedLinuxRawSha256(distributedLinuxPrettyJsonBytes(manifestValue))
+  )
+    throw new Error('Containment manifest differs from its preparation seal');
+  const fixedBindings = [
+    [
+      'active-controller-marker',
+      requestValue.activeConfigMarkerPath,
+      undefined,
+    ],
+    ['timing-profile-seed', requestValue.timingProfileSeedPath, undefined],
+    [
+      'authenticated-git-evidence',
+      manifest.gitHistory.evidencePath,
+      manifest.gitHistory.evidenceSha256,
+    ],
+    [
+      'proof-parent-config',
+      manifest.inner.configPath,
+      manifest.inner.configSha256,
+    ],
+    [
+      'proof-parent-script',
+      manifest.inner.parentScript,
+      manifest.inner.parentScriptSha256,
+    ],
+  ];
+  for (const [role, expectedPath, expectedSha256] of fixedBindings) {
+    const input = preparationInputByRole(admission, role);
+    if (
+      input.containerPath !== expectedPath ||
+      (expectedSha256 !== undefined && input.rawSha256 !== expectedSha256)
+    )
+      throw new Error(`Host-preparation binding differs: ${role}`);
+  }
+  const requestArguments = manifest.inner.engineArguments;
+  const requestFlagIndexes = requestArguments.flatMap((entry, index) =>
+    entry === '--request-file' ? [index] : []
+  );
+  if (
+    requestFlagIndexes.length !== 1 ||
+    requestArguments[requestFlagIndexes[0] + 1] !== requestPath
+  )
+    throw new Error(
+      'Engine request argument differs from the preparation seal'
+    );
+  const admissionFiles = admission.inputs.map((input) => {
+    const mount =
+      input.role === 'proof-parent-script'
+        ? manifest.inputs.recipe
+        : manifest.inputs.config;
+    return Object.freeze({
+      ...input,
+      hostPath: bindSourceFile(
+        mount,
+        input.containerPath,
+        `Host-preparation ${input.role}`
+      ),
+    });
+  });
+  return deepFreeze({
+    admission,
+    admissionFiles,
+    requestPath,
+    requestRawSha256,
+  });
+}
+
 /**
  * Create the immutable, data-only Docker plan. No command is executed here.
  */
 export function createDistributedLinuxHostContainmentPlan(
   manifestValue,
-  { uniqueToken } = {}
+  { preparationRequest, uniqueToken } = {}
 ) {
   const manifest = normalizeManifest(manifestValue);
+  const preparation = normalizePreparationRequest(
+    preparationRequest,
+    manifestValue,
+    manifest
+  );
   const names = generatedNames(manifest, uniqueToken);
   const ownership = Object.freeze({
     key: manifest.ownershipLabelKey,
@@ -1223,6 +1347,8 @@ export function createDistributedLinuxHostContainmentPlan(
     names.helper,
     '--label',
     label,
+    '--user',
+    '0:0',
     '--init',
     '--restart',
     'no',
@@ -1258,6 +1384,8 @@ export function createDistributedLinuxHostContainmentPlan(
     manifest.inner.parentScript,
     manifest.inner.configPath,
     manifest.inner.configSha256,
+    preparation.requestPath,
+    preparation.requestRawSha256,
   ]);
   const daemonCommand = Object.freeze([
     'dockerd',
@@ -1298,26 +1426,6 @@ export function createDistributedLinuxHostContainmentPlan(
     ...daemonCommand,
   ]);
   const proofParentConfigBytes = canonicalBytes(manifest.proofParentConfig);
-  const admissionFiles = Object.freeze([
-    Object.freeze({
-      role: 'proof-parent-config',
-      hostPath: bindSourceFile(
-        manifest.inputs.config,
-        manifest.inner.configPath,
-        'Proof parent config'
-      ),
-      sha256: manifest.inner.configSha256,
-    }),
-    Object.freeze({
-      role: 'proof-parent-script',
-      hostPath: bindSourceFile(
-        manifest.inputs.recipe,
-        manifest.inner.parentScript,
-        'Proof parent script'
-      ),
-      sha256: manifest.inner.parentScriptSha256,
-    }),
-  ]);
   return deepFreeze({
     schema: DISTRIBUTED_LINUX_HOST_PLAN_SCHEMA,
     manifest,
@@ -1331,7 +1439,8 @@ export function createDistributedLinuxHostContainmentPlan(
       json: proofParentConfigBytes.toString('utf8'),
       sha256: digest(proofParentConfigBytes),
     },
-    admissionFiles,
+    admissionFiles: preparation.admissionFiles,
+    preparation: preparation.admission,
     startHelper: ['start', names.helper],
     startDaemon: ['start', names.daemon],
     waitHelper: ['wait', names.helper],
@@ -1464,6 +1573,7 @@ function verifyHelperInspect(inspect, plan) {
     inspect?.Image !== manifest.images.helper.id ||
     inspect.Config?.Image !== manifest.images.helper.reference ||
     inspect.Config?.Labels?.[ownership.key] !== ownership.value ||
+    inspect.Config?.User !== '0:0' ||
     inspect.HostConfig?.NanoCpus !== manifest.resources.helper.cpus * 1e9 ||
     inspect.HostConfig?.Memory !== manifest.resources.helper.memoryBytes ||
     inspect.HostConfig?.PidsLimit !== manifest.resources.helper.pidsLimit ||
@@ -1486,6 +1596,8 @@ function verifyHelperInspect(inspect, plan) {
       manifest.inner.parentScript,
       manifest.inner.configPath,
       manifest.inner.configSha256,
+      plan.preparation.inputs.at(-1).containerPath,
+      plan.preparation.inputs.at(-1).rawSha256,
     ]) ||
     !sameArray(inspect.Args, inspect.Config.Cmd)
   )
@@ -2184,9 +2296,13 @@ async function verifyAdmissionFiles(fsAdapter, plan) {
   const result = [];
   for (const file of plan.admissionFiles) {
     const observed = digest(await fsAdapter.readFile(file.hostPath));
-    if (observed !== file.sha256)
+    if (observed !== file.rawSha256)
       throw new Error(`Immutable ${file.role} digest differs`);
-    result.push({ role: file.role, sha256: observed });
+    result.push({
+      role: file.role,
+      containerPath: file.containerPath,
+      rawSha256: observed,
+    });
   }
   return Object.freeze(result);
 }
@@ -2352,7 +2468,7 @@ function verifyContainedRunArtifact(value, manifest) {
   plainObject(value, 'contained run verification');
   const hashes = Object.values(CONTAINED_ARTIFACT_HASH_FIELDS);
   if (
-    value.schema !== 'seerrng-distributed-linux-contained-run-success/v1' ||
+    value.schema !== 'seerrng-distributed-linux-contained-run-success/v2' ||
     value.runId !== manifest.runId ||
     value.status !== 'passed' ||
     value.ok !== true ||
@@ -2586,6 +2702,7 @@ export async function executeDistributedLinuxHostContainment(
   let daemonInspect;
   let helperReady;
   let admissionFiles;
+  let startAdmissionFiles;
   const commands = [];
   const run = async (args, id) => {
     const receipt = await runDocker(adapters, args, id, signal);
@@ -2662,7 +2779,7 @@ export async function executeDistributedLinuxHostContainment(
       await adapters.docker.inspectContainer(plan.names.helper),
       plan
     );
-    const startAdmissionFiles = await verifyAdmissionFiles(adapters.fs, plan);
+    startAdmissionFiles = await verifyAdmissionFiles(adapters.fs, plan);
     if (!sameJson(admissionFiles, startAdmissionFiles))
       throw new Error('Immutable proof inputs changed before helper start');
     await run(plan.startHelper, 'start-helper');
@@ -2748,6 +2865,12 @@ export async function executeDistributedLinuxHostContainment(
       helper: helperInspect,
       helperReady,
       admissionFiles,
+      preparationAdmission: {
+        schema: 'seerrng-distributed-linux-host-preparation-admission/v1',
+        initial: admissionFiles,
+        beforeHelperStart: startAdmissionFiles,
+        verifiedTwice: true,
+      },
       daemon: daemonInspect,
       daemonRuntime,
       status: 'passed',
@@ -2889,7 +3012,7 @@ export async function executeDistributedLinuxHostContainment(
  */
 export function createDistributedLinuxHostContainment(
   manifestValue,
-  { outer, inner } = {}
+  { outer, inner, preparationRequest } = {}
 ) {
   const outerAdapters = normalizeOuterAdapters(outer);
   const uniqueToken = token(
@@ -2898,6 +3021,7 @@ export function createDistributedLinuxHostContainment(
     32
   );
   const plan = createDistributedLinuxHostContainmentPlan(manifestValue, {
+    preparationRequest,
     uniqueToken,
   });
   const containment = inner

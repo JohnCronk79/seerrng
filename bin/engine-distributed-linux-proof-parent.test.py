@@ -84,7 +84,13 @@ def config() -> dict:
         },
         "engine": {
             "executable": "/usr/bin/node",
-            "arguments": ["/engine/entry.mjs", "--manifest", "/config/run.json"],
+            "arguments": [
+                "/engine/entry.mjs",
+                "--manifest",
+                "/config/run.json",
+                "--request-file",
+                "/config/contained-request.json",
+            ],
             "workingDirectory": "/candidate",
             "environment": {
                 "PATH": "/usr/bin:/bin",
@@ -144,7 +150,8 @@ class ProofParentTests(unittest.TestCase):
 
     def test_engine_child_drops_all_capability_sets(self) -> None:
         normalized = MODULE.normalize_config(config())
-        command = MODULE.engine_command(normalized)
+        request_sha256 = "d" * 64
+        command = MODULE.engine_command(normalized, request_sha256)
         self.assertEqual(
             command[:6],
             [
@@ -159,10 +166,37 @@ class ProofParentTests(unittest.TestCase):
         self.assertEqual(command[6:8], ["/usr/bin/env", "-i"])
         self.assertIn("DOCKER_HOST=unix:///run-state/docker/docker.sock", command[8:])
         self.assertIn("PATH=/usr/bin:/bin", command[8:])
-        self.assertEqual(
-            command[-4:],
-            ["/usr/bin/node", "/engine/entry.mjs", "--manifest", "/config/run.json"],
+        self.assertIn(
+            f"{MODULE.CONTAINED_REQUEST_SHA256_ENV}={request_sha256}", command[8:]
         )
+        self.assertEqual(
+            command[-6:],
+            [
+                "/usr/bin/node",
+                "/engine/entry.mjs",
+                "--manifest",
+                "/config/run.json",
+                "--request-file",
+                "/config/contained-request.json",
+            ],
+        )
+
+    def test_contained_request_is_raw_hash_bound_and_rechecked(self) -> None:
+        raw = b'{\n  "schema": "focused"\n}\n'
+        with mock.patch.object(MODULE, "stable_file_bytes", return_value=raw):
+            self.assertEqual(
+                MODULE.verify_contained_request(
+                    "/config/contained-request.json", digest(raw)
+                ),
+                raw,
+            )
+        with mock.patch.object(
+            MODULE, "stable_file_bytes", return_value=raw + b" "
+        ):
+            with self.assertRaisesRegex(ValueError, "contained request changed"):
+                MODULE.verify_contained_request(
+                    "/config/contained-request.json", digest(raw)
+                )
 
     def test_proc_route_parser_excludes_the_default_route(self) -> None:
         raw = (
@@ -240,6 +274,12 @@ class ProofParentTests(unittest.TestCase):
         injected_environment["engine"]["environment"]["LD_PRELOAD"] = "/candidate/inject.so"
         with self.assertRaisesRegex(ValueError, "injection key"):
             MODULE.normalize_config(injected_environment)
+        reserved_environment = config()
+        reserved_environment["engine"]["environment"][
+            MODULE.CONTAINED_REQUEST_SHA256_ENV
+        ] = "e" * 64
+        with self.assertRaisesRegex(ValueError, "injection key"):
+            MODULE.normalize_config(reserved_environment)
         cleanup_budget = config()
         cleanup_budget["cleanup"]["terminalBudgetSeconds"] -= 1
         with self.assertRaisesRegex(ValueError, "cleanup budget differs"):

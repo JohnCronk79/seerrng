@@ -19,6 +19,8 @@ import { createRequiredWorkerCapacityProof } from '../tools/validation-engine/ru
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { executeDistributedLinuxProductionRun } from '../tools/validation-engine/runtime/distributed-linux-production-runner.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
+import { DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA } from '../tools/validation-engine/runtime/distributed-linux-host-preparation.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Node tooling tests exercise the source module directly.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -226,6 +228,22 @@ function harness(
   writeFileSync(ledgerPath, ledgerBytes, { flag: 'wx' });
   const events = [];
   const initialProfile = createAdaptiveTimingProfile();
+  const preparationSources = [
+    ['controller-config', '/config/controller.cfg'],
+    ['active-controller-marker', '/config/active-controller'],
+    ['timing-profile-seed', '/config/adaptive-timing-profile.json'],
+    ['authenticated-git-evidence', '/config/authenticated-git-closure.json'],
+    ['proof-parent-config', '/config/proof-parent.json'],
+    ['proof-parent-script', '/recipes/mode3-proof-parent.py'],
+    ['containment-manifest', '/config/containment-manifest.json'],
+    ['contained-request', '/config/contained-request.json'],
+  ].map(([role, containerPath]) => {
+    const bytes = Buffer.from(`raw ${role}\n`, 'utf8');
+    return { role, containerPath, bytes, rawSha256: hash(bytes) };
+  });
+  const preparationFiles = new Map(
+    preparationSources.map(({ containerPath, bytes }) => [containerPath, bytes])
+  );
   let durableProfile = structuredClone(initialProfile);
   let profilePersistCalls = 0;
   const application = {
@@ -315,6 +333,14 @@ function harness(
     applicationEntryId: application.entryId,
     containment,
     evidenceDirectory,
+    hostPreparation: {
+      schema: DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+      inputs: preparationSources.map(({ role, containerPath, rawSha256 }) => ({
+        role,
+        containerPath,
+        rawSha256,
+      })),
+    },
     runAttempt: 1,
     runId: 'production-run-1',
     runtimeApplicationKey: 'seerrng',
@@ -422,7 +448,10 @@ function harness(
       });
       return profile;
     },
-    readEvidenceFile: (path) => readFileSync(path),
+    readEvidenceFile: (path) =>
+      preparationFiles.has(path)
+        ? preparationFiles.get(path)
+        : readFileSync(path),
     readTimingProfile: async () => {
       events.push('profile:read');
       return structuredClone(durableProfile);
@@ -476,6 +505,7 @@ function harness(
     getProfilePersistCalls: () => profilePersistCalls,
     initialProfile,
     options,
+    preparationFiles,
   };
 }
 
@@ -512,17 +542,32 @@ test('green production lifecycle persists one profile and writes its contained-r
   );
   assert.equal(marker.ok, true);
   assert.equal(marker.status, 'passed');
+  assert.equal(
+    marker.schema,
+    'seerrng-distributed-linux-contained-run-success/v2'
+  );
   const retainedLedger = readFileSync(outcome.files.processLedger);
   const retainedLedgerSummary = readFileSync(
     outcome.files.processLedgerSummary
   );
   const retainedStreams = readFileSync(outcome.files.processStreams);
   const retainedExpectations = readFileSync(outcome.files.runExpectations);
+  const retainedHostPreparation = readFileSync(
+    outcome.files.hostPreparationReceipt
+  );
   const streamBundle = JSON.parse(retainedStreams.toString('utf8'));
   assert.equal(marker.processLedgerSha256, hash(retainedLedger));
   assert.equal(marker.processLedgerSummarySha256, hash(retainedLedgerSummary));
   assert.equal(marker.processStreamsSha256, hash(retainedStreams));
   assert.equal(marker.runExpectationsSha256, hash(retainedExpectations));
+  assert.equal(
+    marker.hostPreparationReceiptSha256,
+    hash(retainedHostPreparation)
+  );
+  assert.deepEqual(
+    JSON.parse(retainedHostPreparation).inputs.map(({ role }) => role),
+    fixture.options.hostPreparation.inputs.map(({ role }) => role)
+  );
   assert.equal(streamBundle.sourceLedgerSha256, hash(retainedLedger));
   assert.equal(streamBundle.recordCount, 1);
   assert.equal(streamBundle.streamCount, 2);
@@ -545,6 +590,39 @@ test('green production lifecycle persists one profile and writes its contained-r
   const timingProfileBytes = readFileSync(fixture.options.timingProfilePath);
   assert.equal(marker.timingProfileFileSha256, hash(timingProfileBytes));
   assert.notEqual(marker.timingProfileFileSha256, marker.updatedProfileSha256);
+});
+
+test('production rejects mutation of every sealed preparation input before launch', async (t) => {
+  for (const role of [
+    'controller-config',
+    'active-controller-marker',
+    'timing-profile-seed',
+    'authenticated-git-evidence',
+    'proof-parent-config',
+    'proof-parent-script',
+    'containment-manifest',
+    'contained-request',
+  ]) {
+    await t.test(role, async (t) => {
+      const fixture = harness(t);
+      const input = fixture.options.hostPreparation.inputs.find(
+        (entry) => entry.role === role
+      );
+      fixture.preparationFiles.set(
+        input.containerPath,
+        Buffer.from(`mutated ${role}\n`, 'utf8')
+      );
+      await assert.rejects(
+        executeDistributedLinuxProductionRun(
+          fixture.options,
+          fixture.dependencies
+        ),
+        new RegExp(`raw hash differs: ${role}`, 'u')
+      );
+      assert.ok(!fixture.events.includes('config:resolve'));
+      assert.ok(!fixture.events.includes('context:create'));
+    });
+  }
 });
 
 test('required proof seals exact controller and Node 01 fleet capacity before execution', async (t) => {

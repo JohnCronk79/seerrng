@@ -21,6 +21,7 @@ import {
 } from '../tools/validation-engine/runtime/distributed-linux-host-containment.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import {
+  DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA,
   DISTRIBUTED_LINUX_HOST_PROFILE_FILE,
   DISTRIBUTED_LINUX_HOST_PROFILE_SCHEMA,
   DISTRIBUTED_LINUX_TIMING_PROFILE_FILE,
@@ -30,6 +31,11 @@ import {
   normalizeDistributedLinuxHostProfile,
   runDistributedLinuxProofClientCommand,
 } from '../tools/validation-engine/runtime/distributed-linux-public-lifecycle.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
+import {
+  DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+  distributedLinuxPrettyJsonBytes,
+} from '../tools/validation-engine/runtime/distributed-linux-host-preparation.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
@@ -149,6 +155,67 @@ function lifecycleFixture(root) {
   });
 }
 
+function preparationRequest(lifecycle) {
+  const manifest = lifecycle.manifest;
+  const inputs = [
+    ['controller-config', '/config/controller.cfg', digest('a')],
+    ['active-controller-marker', '/config/active-controller', digest('b')],
+    [
+      'timing-profile-seed',
+      '/config/adaptive-timing-profile.json',
+      digest('c'),
+    ],
+    [
+      'authenticated-git-evidence',
+      manifest.gitHistory.evidencePath,
+      manifest.gitHistory.evidenceSha256,
+    ],
+    [
+      'proof-parent-config',
+      manifest.inner.configPath,
+      lifecycle.proofParentConfig.sha256,
+    ],
+    [
+      'proof-parent-script',
+      manifest.inner.parentScript,
+      manifest.inner.parentScriptSha256,
+    ],
+    [
+      'containment-manifest',
+      '/config/containment-manifest.json',
+      sha256(distributedLinuxPrettyJsonBytes(manifest)),
+    ],
+  ].map(([role, containerPath, rawSha256]) => ({
+    role,
+    containerPath,
+    rawSha256,
+  }));
+  const value = {
+    schema: DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA,
+    activeConfigMarkerPath: '/config/active-controller',
+    applicationEntryId: '01',
+    evidenceDirectory: '/run-state/production-evidence',
+    hostPreparation: {
+      schema: DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+      inputs,
+    },
+    manifestPath: '/config/containment-manifest.json',
+    operatorGithubLogin: null,
+    reviewBaseCommit: hash40('0'),
+    requiredCapacityProof: null,
+    runId: manifest.runId,
+    runtimeApplicationKey: manifest.network.distributed.runtimeApplicationKey,
+    sourceRoot: manifest.inner.workingDirectory,
+    timingProfilePath: '/run-state/adaptive-timing-profile.json',
+    timingProfileSeedPath: '/config/adaptive-timing-profile.json',
+  };
+  return {
+    containerPath: '/config/contained-request.json',
+    rawSha256: sha256(distributedLinuxPrettyJsonBytes(value)),
+    value,
+  };
+}
+
 test('host profile is data-only and rejects mutable image identities', () => {
   const profile = normalizeDistributedLinuxHostProfile(hostProfile());
   assert.equal(profile.schema, DISTRIBUTED_LINUX_HOST_PROFILE_SCHEMA);
@@ -227,6 +294,7 @@ test('generated manifest is accepted by the real containment planner', (t) => {
     DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA
   );
   const plan = createDistributedLinuxHostContainmentPlan(lifecycle.manifest, {
+    preparationRequest: preparationRequest(lifecycle),
     uniqueToken: 'f'.repeat(32),
   });
   assert.equal(plan.manifest.inputs.candidate.target, '/app');
@@ -246,6 +314,7 @@ test('generated manifest is accepted by the real containment planner', (t) => {
       ({ role }) => role === 'proof-parent-ledger'
     )
   );
+  assert.equal(plan.admissionFiles.length, 8);
   assert.ok(
     plan.manifest.evidence.artifacts.some(
       ({ role, fileName }) =>
@@ -324,6 +393,7 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
   const profile = createAdaptiveTimingProfile();
   const events = [];
   let capturedManifest;
+  let capturedPreparationRequest;
   const request = {
     activeConfigMarkerPath: activeMarker,
     applicationEntryId: '01',
@@ -375,8 +445,9 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
     },
     verifySnapshot: () => events.push('verify-snapshot'),
     disposeSnapshot: () => events.push('dispose-snapshot'),
-    createContainment: (manifest) => {
+    createContainment: (manifest, options) => {
       capturedManifest = manifest;
+      capturedPreparationRequest = options.preparationRequest;
       return {
         executeHostLifecycle: async () => {
           mkdirSync(manifest.evidence.outerDirectory);
@@ -424,6 +495,44 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
       'utf8'
     )
   );
+  const preparationDirectory = join(scratchRoot, 'host-preparation');
+  assert.equal(
+    containedRequest.schema,
+    DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA
+  );
+  assert.equal(
+    containedRequest.hostPreparation.schema,
+    DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA
+  );
+  assert.deepEqual(
+    containedRequest.hostPreparation.inputs.map(({ role }) => role),
+    [
+      'controller-config',
+      'active-controller-marker',
+      'timing-profile-seed',
+      'authenticated-git-evidence',
+      'proof-parent-config',
+      'proof-parent-script',
+      'containment-manifest',
+    ]
+  );
+  const persistedManifestBytes = readFileSync(
+    join(preparationDirectory, 'containment-manifest.json')
+  );
+  assert.equal(
+    containedRequest.hostPreparation.inputs.find(
+      ({ role }) => role === 'containment-manifest'
+    ).rawSha256,
+    sha256(persistedManifestBytes)
+  );
+  const persistedRequestBytes = readFileSync(
+    join(preparationDirectory, 'contained-request.json')
+  );
+  assert.equal(
+    capturedPreparationRequest.rawSha256,
+    sha256(persistedRequestBytes)
+  );
+  assert.deepEqual(capturedPreparationRequest.value, containedRequest);
   assert.equal(containedRequest.operatorGithubLogin, 'JohnCronk79');
   assert.equal(containedRequest.requiredCapacityProof.expectedLogicalCpus, 12);
   assert.equal(
@@ -437,6 +546,11 @@ test('public lifecycle persists the returned profile, cleans preparation, and wr
   assert.ok(
     capturedManifest.evidence.artifacts.some(
       ({ role }) => role === 'native-run-expectations'
+    )
+  );
+  assert.ok(
+    capturedManifest.evidence.artifacts.some(
+      ({ role }) => role === 'host-preparation-receipt'
     )
   );
   assert.deepEqual(events, [

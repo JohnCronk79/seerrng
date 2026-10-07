@@ -30,6 +30,7 @@ if sys.platform != "win32":
 
 SCHEMA = "seerrng-distributed-linux-proof-parent/v1"
 SOCKET_LIMIT = 16_384
+CONTAINED_REQUEST_SHA256_ENV = "SEERR_MODE3_CONTAINED_REQUEST_SHA256"
 UNSAFE_ENVIRONMENT = {
     "BASH_ENV",
     "ENV",
@@ -178,6 +179,7 @@ def normalize_config(value: Any) -> dict[str, Any]:
         raise ValueError("Engine environment must contain exact strings")
     if any(
         key in UNSAFE_ENVIRONMENT
+        or key == CONTAINED_REQUEST_SHA256_ENV
         or re.search(r"secret|token|password|credential|api[_-]?key", key, re.IGNORECASE)
         for key in engine["environment"]
     ):
@@ -766,7 +768,13 @@ class Admission:
         return self.end(request.get("token"), route[2], op)
 
 
-def engine_command(config: dict[str, Any]) -> list[str]:
+def engine_command(config: dict[str, Any], request_sha256: str) -> list[str]:
+    environment = {
+        **config["engine"]["environment"],
+        CONTAINED_REQUEST_SHA256_ENV: exact_digest(
+            request_sha256, "contained request hash"
+        ),
+    }
     return [
         config["binaries"]["setpriv"],
         "--bounding-set=-all",
@@ -776,7 +784,7 @@ def engine_command(config: dict[str, Any]) -> list[str]:
         "--",
         "/usr/bin/env",
         "-i",
-        *(f"{key}={value}" for key, value in sorted(config["engine"]["environment"].items())),
+        *(f"{key}={value}" for key, value in sorted(environment.items())),
         config["engine"]["executable"],
         *config["engine"]["arguments"],
     ]
@@ -871,11 +879,48 @@ def wait_for_docker(config: dict[str, Any], kernel: Kernel) -> None:
     raise RuntimeError("Private Docker daemon did not become ready") from last_error
 
 
-def serve(config_path: str, expected_sha: str) -> int:
+def stable_file_bytes(path_value: str, label: str) -> bytes:
+    path = Path(exact_path(path_value, label))
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be an ordinary file")
+    before = path.stat()
+    raw = path.read_bytes()
+    after = path.stat()
+    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(before, field) != getattr(after, field) for field in fields):
+        raise ValueError(f"{label} changed while it was read")
+    return raw
+
+
+def engine_request_path(config: dict[str, Any]) -> str:
+    arguments = config["engine"]["arguments"]
+    indexes = [index for index, value in enumerate(arguments) if value == "--request-file"]
+    if len(indexes) != 1 or indexes[0] + 1 >= len(arguments):
+        raise ValueError("Engine requires one contained request argument")
+    return exact_path(arguments[indexes[0] + 1], "engine contained request path")
+
+
+def verify_contained_request(path_value: str, expected_sha: str) -> bytes:
+    raw = stable_file_bytes(path_value, "contained request")
+    if sha256(raw) != exact_digest(expected_sha, "contained request hash"):
+        raise ValueError("Read-only contained request changed")
+    return raw
+
+
+def serve(
+    config_path: str,
+    expected_sha: str,
+    request_path_value: str,
+    request_sha256: str,
+) -> int:
     raw = Path(config_path).read_bytes()
     if sha256(raw) != exact_digest(expected_sha, "proof config hash"):
         raise ValueError("Read-only proof config changed")
     config = normalize_config(json.loads(raw))
+    request_path = exact_path(request_path_value, "contained request path")
+    if engine_request_path(config) != request_path:
+        raise ValueError("Engine contained request path differs")
+    verify_contained_request(request_path, request_sha256)
     if os.getuid() != 0:
         raise ValueError("Proof parent must run as uid 0")
     for path_name in ("stateRoot", "logRoot"):
@@ -934,8 +979,9 @@ def serve(config_path: str, expected_sha: str) -> int:
         stdout_path = Path(config["paths"]["logRoot"]) / "engine.stdout.log"
         stderr_path = Path(config["paths"]["logRoot"]) / "engine.stderr.log"
         with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
+            verify_contained_request(request_path, request_sha256)
             child = subprocess.Popen(
-                engine_command(config),
+                engine_command(config, request_sha256),
                 cwd=config["engine"]["workingDirectory"],
                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
                 stdin=subprocess.DEVNULL,
@@ -1043,9 +1089,12 @@ def request_proof(socket_path: str, expected_parent_pid: int) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[1] == "client":
         return request_proof(argv[2], int(argv[3]))
-    if len(argv) != 3:
-        raise SystemExit("usage: mode3-proof-parent.py <config.json> <sha256>")
-    return serve(argv[1], argv[2])
+    if len(argv) != 5:
+        raise SystemExit(
+            "usage: mode3-proof-parent.py <config.json> <sha256> "
+            "<contained-request.json> <request-sha256>"
+        )
+    return serve(argv[1], argv[2], argv[3], argv[4])
 
 
 if __name__ == "__main__":

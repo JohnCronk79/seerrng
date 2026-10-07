@@ -41,6 +41,10 @@ import {
   createSupportedApplicationListing,
   evaluateThreadExpression,
 } from './distributed-linux-config.mjs';
+import {
+  DISTRIBUTED_LINUX_HOST_PREPARATION_RECEIPT_SCHEMA,
+  normalizeDistributedLinuxHostPreparationAdmission,
+} from './distributed-linux-host-preparation.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
 import { distributedLinuxNodeId } from './distributed-linux-node-runner.mjs';
 import { reconcileDistributedLinuxRunEvidence } from './distributed-linux-run-reconciliation.mjs';
@@ -56,6 +60,7 @@ const OPTION_KEYS = Object.freeze([
   'applicationEntryId',
   'containment',
   'evidenceDirectory',
+  'hostPreparation',
   'nativeContextOptions',
   'runAttempt',
   'runId',
@@ -189,6 +194,9 @@ function normalizeOptions(value) {
       value.evidenceDirectory,
       'Production evidence directory'
     ),
+    hostPreparation: normalizeDistributedLinuxHostPreparationAdmission(
+      value.hostPreparation
+    ),
     nativeContextOptions: { ...nativeContextOptions },
     runAttempt: positiveInteger(value.runAttempt ?? 1, 'Run attempt'),
     runId: token(value.runId, 'production run ID'),
@@ -245,10 +253,17 @@ function writeDurableEvidenceFile(path, bytesValue) {
 }
 
 function readEvidenceFile(path) {
-  const metadata = lstatSync(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink())
+  const before = lstatSync(path);
+  if (!before.isFile() || before.isSymbolicLink())
     throw new Error(`Evidence is not a regular file: ${basename(path)}`);
-  return readFileSync(path);
+  const bytes = readFileSync(path);
+  const after = lstatSync(path);
+  for (const field of ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'])
+    if (before[field] !== after[field])
+      throw new Error(`Evidence changed while it was read: ${basename(path)}`);
+  if (bytes.length !== after.size)
+    throw new Error(`Evidence byte count changed: ${basename(path)}`);
+  return bytes;
 }
 
 function dependencies(overrides) {
@@ -288,6 +303,7 @@ function evidencePaths(directory) {
   const file = (name) => resolve(directory, name);
   return Object.freeze({
     failure: file('failure.json'),
+    hostPreparationReceipt: file('host-preparation-receipt.json'),
     containedRunVerification: file(CONTAINED_RUN_VERIFICATION),
     processLedger: file('native-command-receipts.jsonl'),
     processLedgerSummary: file('native-process-ledger.json'),
@@ -328,6 +344,26 @@ function readJson(deps, path, label) {
   } catch (error) {
     throw new Error(`${label} is not valid JSON`, { cause: error });
   }
+}
+
+function verifyHostPreparation(options, deps) {
+  const inputs = options.hostPreparation.inputs.map((input) => {
+    const observed = sha256(deps.readEvidenceFile(input.containerPath));
+    if (observed !== input.rawSha256)
+      throw new Error(`Host-preparation raw hash differs: ${input.role}`);
+    return {
+      role: input.role,
+      containerPath: input.containerPath,
+      rawSha256: observed,
+    };
+  });
+  return Object.freeze({
+    schema: DISTRIBUTED_LINUX_HOST_PREPARATION_RECEIPT_SCHEMA,
+    runId: options.runId,
+    status: 'passed',
+    inputs,
+    resultReuse: false,
+  });
 }
 
 function resolveApplication(active, entryId, createApplicationListing) {
@@ -1083,6 +1119,22 @@ export async function executeDistributedLinuxProductionRun(
   };
 
   try {
+    const hostPreparation = verifyHostPreparation(options, deps);
+    const hostPreparationReceipt = writeJson(
+      deps,
+      paths.hostPreparationReceipt,
+      hostPreparation
+    );
+    const durableHostPreparation = readJson(
+      deps,
+      paths.hostPreparationReceipt,
+      'Host-preparation receipt'
+    );
+    if (
+      sha256(durableHostPreparation.bytes) !== hostPreparationReceipt.sha256 ||
+      !isDeepStrictEqual(durableHostPreparation.value, hostPreparation)
+    )
+      throw new Error('Host-preparation receipt failed readback');
     const active = await deps.resolveActiveConfig(
       options.activeConfigMarkerPath,
       { expectedRole: 'controller' }
@@ -1259,7 +1311,7 @@ export async function executeDistributedLinuxProductionRun(
     );
 
     const marker = {
-      schema: 'seerrng-distributed-linux-contained-run-success/v1',
+      schema: 'seerrng-distributed-linux-contained-run-success/v2',
       runId: options.runId,
       status: 'passed',
       ok: true,
@@ -1269,6 +1321,7 @@ export async function executeDistributedLinuxProductionRun(
       processLedgerSummarySha256: ledgerCollection.receipt.sha256,
       processStreamsSha256: ledgerCollection.streamReceipt.sha256,
       runExpectationsSha256: runExpectationsReceipt.sha256,
+      hostPreparationReceiptSha256: hostPreparationReceipt.sha256,
       reconciliationSha256: reconciliationReceipt.sha256,
       observationsSha256: observationsReceipt.sha256,
       timingProfileUpdateSha256: timingProfileUpdateReceipt.sha256,
@@ -1284,6 +1337,7 @@ export async function executeDistributedLinuxProductionRun(
       evidenceDirectory: options.evidenceDirectory,
       files: Object.freeze({
         containedRunVerification: paths.containedRunVerification,
+        hostPreparationReceipt: paths.hostPreparationReceipt,
         processLedger: paths.processLedger,
         processLedgerSummary: paths.processLedgerSummary,
         processStreams: paths.processStreams,

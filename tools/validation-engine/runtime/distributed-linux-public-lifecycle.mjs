@@ -50,6 +50,13 @@ import {
   DISTRIBUTED_LINUX_HOST_CONTAINMENT_SCHEMA,
   DISTRIBUTED_LINUX_HOST_FINAL_MARKER,
 } from './distributed-linux-host-containment.mjs';
+import {
+  completeDistributedLinuxHostPreparation,
+  DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+  distributedLinuxPrettyJsonBytes,
+  distributedLinuxRawSha256,
+  normalizeDistributedLinuxHostPreparationSeal,
+} from './distributed-linux-host-preparation.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
 import { executeDistributedLinuxProductionRun } from './distributed-linux-production-runner.mjs';
 import {
@@ -64,7 +71,7 @@ export const DISTRIBUTED_LINUX_HOST_PROFILE_FILE =
 export const DISTRIBUTED_LINUX_TIMING_PROFILE_FILE =
   'distributed-adaptive-timing-profile.json';
 export const DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA =
-  'seerrng-distributed-linux-contained-request/v1';
+  'seerrng-distributed-linux-contained-request/v2';
 export const DISTRIBUTED_LINUX_HOST_PROFILE_SCHEMA =
   'seerrng-distributed-linux-host-profile/v1';
 
@@ -82,6 +89,7 @@ const CONTAINED_REQUEST_KEYS = Object.freeze([
   'activeConfigMarkerPath',
   'applicationEntryId',
   'evidenceDirectory',
+  'hostPreparation',
   'manifestPath',
   'operatorGithubLogin',
   'reviewBaseCommit',
@@ -103,6 +111,7 @@ const PROFILE_KEYS = Object.freeze([
   'schema',
   'volumes',
 ]);
+const CONTAINED_REQUEST_SHA256_ENV = 'SEERR_MODE3_CONTAINED_REQUEST_SHA256';
 const CONTAINER = Object.freeze({
   activeMarker: '/config/active-controller',
   candidate: '/app',
@@ -284,10 +293,7 @@ function writeExclusive(path, bytesValue, mode = 0o600) {
 }
 
 function writeJsonExclusive(path, value) {
-  return writeExclusive(
-    path,
-    Buffer.from(`${JSON.stringify(value, null, 2)}\n`)
-  );
+  return writeExclusive(path, distributedLinuxPrettyJsonBytes(value));
 }
 
 function createDirectoryExclusive(path) {
@@ -332,6 +338,9 @@ function normalizeContainedRequest(value) {
     evidenceDirectory: containerAbsolutePath(
       value.evidenceDirectory,
       'Contained evidence directory'
+    ),
+    hostPreparation: normalizeDistributedLinuxHostPreparationSeal(
+      value.hostPreparation
     ),
     manifestPath: containerAbsolutePath(
       value.manifestPath,
@@ -661,6 +670,11 @@ function manifestArtifacts() {
       'native-run-expectations',
       'native-run-expectations.json',
       `${production}/native-run-expectations.json`,
+    ],
+    [
+      'host-preparation-receipt',
+      'host-preparation-receipt.json',
+      `${production}/host-preparation-receipt.json`,
     ],
     [
       'timing-observations',
@@ -1021,15 +1035,15 @@ export async function executeDistributedLinuxPublicLifecycle(
       resolve(preparation, basename(CONTAINER.gitEvidence)),
       canonicalBytes(gitEvidence)
     );
-    writeExclusive(
+    const timingSeedReceipt = writeExclusive(
       resolve(preparation, basename(CONTAINER.timingSeed)),
       Buffer.from(`${JSON.stringify(timingProfile, null, 2)}\n`)
     );
-    writeExclusive(
+    const controllerConfigReceipt = writeExclusive(
       resolve(preparation, basename(CONTAINER.configFile)),
       Buffer.from(serializeControllerConfig(rebound), 'utf8')
     );
-    writeExclusive(
+    const activeMarkerReceipt = writeExclusive(
       resolve(preparation, basename(CONTAINER.activeMarker)),
       Buffer.from(`${CONTAINER.configFile}\n`, 'utf8')
     );
@@ -1061,11 +1075,62 @@ export async function executeDistributedLinuxPublicLifecycle(
       operatorGithubLogin,
       requiredCapacityProof,
     });
+    const proofConfigReceipt = writeExclusive(
+      resolve(preparation, basename(CONTAINER.proofConfig)),
+      Buffer.from(lifecycle.proofParentConfig.json, 'utf8')
+    );
+    if (proofConfigReceipt.sha256 !== lifecycle.proofParentConfig.sha256)
+      throw new Error('Persisted proof parent config hash differs');
+    const manifestReceipt = writeJsonExclusive(
+      resolve(preparation, basename(CONTAINER.manifest)),
+      lifecycle.manifest
+    );
+    const hostPreparation = normalizeDistributedLinuxHostPreparationSeal({
+      schema: DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+      inputs: [
+        {
+          role: 'controller-config',
+          containerPath: CONTAINER.configFile,
+          rawSha256: controllerConfigReceipt.sha256,
+        },
+        {
+          role: 'active-controller-marker',
+          containerPath: CONTAINER.activeMarker,
+          rawSha256: activeMarkerReceipt.sha256,
+        },
+        {
+          role: 'timing-profile-seed',
+          containerPath: CONTAINER.timingSeed,
+          rawSha256: timingSeedReceipt.sha256,
+        },
+        {
+          role: 'authenticated-git-evidence',
+          containerPath: CONTAINER.gitEvidence,
+          rawSha256: gitEvidenceReceipt.sha256,
+        },
+        {
+          role: 'proof-parent-config',
+          containerPath: CONTAINER.proofConfig,
+          rawSha256: proofConfigReceipt.sha256,
+        },
+        {
+          role: 'proof-parent-script',
+          containerPath: CONTAINER.proofParent,
+          rawSha256: parentScriptSha256,
+        },
+        {
+          role: 'containment-manifest',
+          containerPath: CONTAINER.manifest,
+          rawSha256: manifestReceipt.sha256,
+        },
+      ],
+    });
     const containedRequest = normalizeContainedRequest({
       schema: DISTRIBUTED_LINUX_CONTAINED_REQUEST_SCHEMA,
       activeConfigMarkerPath: CONTAINER.activeMarker,
       applicationEntryId: application.entryId,
       evidenceDirectory: `${CONTAINER.stateRoot}/production-evidence`,
+      hostPreparation,
       manifestPath: CONTAINER.manifest,
       operatorGithubLogin,
       reviewBaseCommit: reviewBaseCommit(gitState),
@@ -1076,20 +1141,17 @@ export async function executeDistributedLinuxPublicLifecycle(
       timingProfilePath: CONTAINER.timingProfile,
       timingProfileSeedPath: CONTAINER.timingSeed,
     });
-    writeExclusive(
-      resolve(preparation, basename(CONTAINER.proofConfig)),
-      Buffer.from(lifecycle.proofParentConfig.json, 'utf8')
-    );
-    writeJsonExclusive(
-      resolve(preparation, basename(CONTAINER.manifest)),
-      lifecycle.manifest
-    );
-    writeJsonExclusive(
+    const containedRequestReceipt = writeJsonExclusive(
       resolve(preparation, basename(CONTAINER.containedRequest)),
       containedRequest
     );
     const containment = deps.createContainment(lifecycle.manifest, {
       outer: adapters,
+      preparationRequest: {
+        containerPath: CONTAINER.containedRequest,
+        rawSha256: containedRequestReceipt.sha256,
+        value: containedRequest,
+      },
     });
     const hostResult = await containment.executeHostLifecycle({
       signal: request.signal,
@@ -1321,11 +1383,20 @@ export async function executeDistributedLinuxContainedLifecycle(
     requestFilePathValue,
     'Contained request file'
   );
+  const requestBytes = readStableFile(
+    requestFilePath,
+    'Contained request file'
+  );
+  const requestRawSha256 = distributedLinuxRawSha256(requestBytes);
+  if (
+    requireDigest(
+      process.env[CONTAINED_REQUEST_SHA256_ENV],
+      'Contained request environment hash'
+    ) !== requestRawSha256
+  )
+    throw new Error('Contained request raw hash differs');
   const request = normalizeContainedRequest(
-    parseJsonBytes(
-      readStableFile(requestFilePath, 'Contained request file'),
-      'Contained request file'
-    )
+    parseJsonBytes(requestBytes, 'Contained request file')
   );
   for (const [actual, expected] of [
     [request.activeConfigMarkerPath, CONTAINER.activeMarker],
@@ -1337,10 +1408,39 @@ export async function executeDistributedLinuxContainedLifecycle(
   ])
     if (actual !== expected)
       throw new Error('Contained request differs from fixed internal paths');
+  const expectedPreparationPaths = new Map([
+    ['controller-config', CONTAINER.configFile],
+    ['active-controller-marker', CONTAINER.activeMarker],
+    ['timing-profile-seed', CONTAINER.timingSeed],
+    ['authenticated-git-evidence', CONTAINER.gitEvidence],
+    ['proof-parent-config', CONTAINER.proofConfig],
+    ['proof-parent-script', CONTAINER.proofParent],
+    ['containment-manifest', CONTAINER.manifest],
+  ]);
+  const preparationBytes = new Map();
+  for (const input of request.hostPreparation.inputs) {
+    if (expectedPreparationPaths.get(input.role) !== input.containerPath)
+      throw new Error(`Contained host-preparation path differs: ${input.role}`);
+    const bytes = readStableFile(
+      input.containerPath,
+      `Contained host-preparation ${input.role}`
+    );
+    if (distributedLinuxRawSha256(bytes) !== input.rawSha256)
+      throw new Error(`Contained host-preparation hash differs: ${input.role}`);
+    preparationBytes.set(input.role, bytes);
+  }
+  const hostPreparation = completeDistributedLinuxHostPreparation(
+    request.hostPreparation,
+    {
+      role: 'contained-request',
+      containerPath: requestFilePath,
+      rawSha256: requestRawSha256,
+    }
+  );
   if (process.env.SEERR_MODE3_CONTAINED_RUN_ID !== request.runId)
     throw new Error('Contained run environment identity differs');
   const manifest = parseJsonBytes(
-    readStableFile(request.manifestPath, 'Containment manifest'),
+    preparationBytes.get('containment-manifest'),
     'Containment manifest'
   );
   if (
@@ -1436,6 +1536,7 @@ export async function executeDistributedLinuxContainedLifecycle(
     applicationEntryId: request.applicationEntryId,
     containment: callbacks,
     evidenceDirectory: request.evidenceDirectory,
+    hostPreparation,
     nativeContextOptions: {
       inherited,
       operatorGithubLogin: request.operatorGithubLogin,

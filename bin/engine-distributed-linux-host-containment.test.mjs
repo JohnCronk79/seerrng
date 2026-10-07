@@ -19,6 +19,11 @@ import {
   executeDistributedLinuxHostContainment,
 } from '../tools/validation-engine/runtime/distributed-linux-host-containment.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
+import {
+  DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+  distributedLinuxPrettyJsonBytes,
+} from '../tools/validation-engine/runtime/distributed-linux-host-preparation.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native tooling tests exercise the engine module directly.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -207,7 +212,11 @@ function manifestFixture() {
       parentScriptSha256: sha256(parentBytes),
       configPath: '/config/proof-parent.json',
       engineExecutable: '/usr/local/bin/node',
-      engineArguments: ['/candidate/tools/validation-engine/runtime/entry.mjs'],
+      engineArguments: [
+        '/candidate/tools/validation-engine/runtime/entry.mjs',
+        '--request-file',
+        '/config/contained-request.json',
+      ],
       workingDirectory: '/candidate',
       environment: { PATH: '/usr/local/bin:/usr/bin:/bin' },
     },
@@ -262,6 +271,7 @@ function manifestFixture() {
           ['production-result', 'staged-validation-result.json'],
           ['production-timings', 'timings.json'],
           ['native-run-expectations', 'native-run-expectations.json'],
+          ['host-preparation-receipt', 'host-preparation-receipt.json'],
           ['native-command-receipts', 'native-command-receipts.jsonl'],
           ['native-process-ledger', 'native-process-ledger.json'],
           ['native-process-streams', 'native-process-streams.json'],
@@ -302,12 +312,93 @@ function manifestFixture() {
     proof: base.proof,
     runId: base.runId,
   });
+  const manifest = { ...base, proofParentConfig: proofParentConfig.value };
+  const controllerBytes = Buffer.from('[Global Settings]\nRole = controller\n');
+  const activeMarkerBytes = Buffer.from('/config/controller.cfg\n');
+  const timingSeedBytes = distributedLinuxPrettyJsonBytes(
+    createAdaptiveTimingProfile()
+  );
+  const manifestBytes = distributedLinuxPrettyJsonBytes(manifest);
+  const proofConfigBytes = Buffer.from(proofParentConfig.json);
+  const preparationInputs = [
+    ['controller-config', '/config/controller.cfg', controllerBytes],
+    [
+      'active-controller-marker',
+      '/config/active-controller',
+      activeMarkerBytes,
+    ],
+    [
+      'timing-profile-seed',
+      '/config/adaptive-timing-profile.json',
+      timingSeedBytes,
+    ],
+    ['authenticated-git-evidence', base.gitHistory.evidencePath, gitBytes],
+    ['proof-parent-config', base.inner.configPath, proofConfigBytes],
+    ['proof-parent-script', base.inner.parentScript, parentBytes],
+    [
+      'containment-manifest',
+      '/config/containment-manifest.json',
+      manifestBytes,
+    ],
+  ].map(([role, containerPath, bytes]) => ({
+    role,
+    containerPath,
+    rawSha256: sha256(bytes),
+  }));
+  const requestValue = {
+    schema: 'seerrng-distributed-linux-contained-request/v2',
+    activeConfigMarkerPath: '/config/active-controller',
+    applicationEntryId: '01',
+    evidenceDirectory: '/run-state/production-evidence',
+    hostPreparation: {
+      schema: DISTRIBUTED_LINUX_HOST_PREPARATION_SCHEMA,
+      inputs: preparationInputs,
+    },
+    manifestPath: '/config/containment-manifest.json',
+    operatorGithubLogin: null,
+    reviewBaseCommit: hash40('0'),
+    requiredCapacityProof: null,
+    runId: base.runId,
+    runtimeApplicationKey: base.network.distributed.runtimeApplicationKey,
+    sourceRoot: base.inner.workingDirectory,
+    timingProfilePath: '/run-state/adaptive-timing-profile.json',
+    timingProfileSeedPath: '/config/adaptive-timing-profile.json',
+  };
+  const requestBytes = distributedLinuxPrettyJsonBytes(requestValue);
+  const preparationFiles = new Map([
+    ...preparationInputs.map((entry) => [
+      entry.containerPath,
+      [
+        controllerBytes,
+        activeMarkerBytes,
+        timingSeedBytes,
+        gitBytes,
+        proofConfigBytes,
+        parentBytes,
+        manifestBytes,
+      ][preparationInputs.indexOf(entry)],
+    ]),
+    ['/config/contained-request.json', requestBytes],
+  ]);
   return {
-    manifest: { ...base, proofParentConfig: proofParentConfig.value },
+    manifest,
     gitBytes,
     parentBytes,
+    preparationFiles,
+    preparationRequest: {
+      containerPath: '/config/contained-request.json',
+      rawSha256: sha256(requestBytes),
+      value: requestValue,
+    },
     proofParentConfig,
   };
+}
+
+function createPlan(fixture, options) {
+  return createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+    ...options,
+    preparationRequest: fixture.preparationRequest,
+  });
 }
 
 function passingReceipt(stdout = '', id = 'test') {
@@ -475,6 +566,7 @@ test('combined builder exposes the plan and one-call outer lifecycle seam', () =
         uniqueToken: () => 'combined-builder-token',
       },
     },
+    preparationRequest: fixture.preparationRequest,
   });
   assert.match(built.plan.names.helper, /combined-builder-token/u);
   assert.equal(built.containment, null);
@@ -520,7 +612,7 @@ test('proof adapter delegates to the peer-authenticating engine-owned client', a
 
 test('plan binds a fresh owner, exact mounts, corrected helper capabilities, and private DinD', () => {
   const fixture = manifestFixture();
-  const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+  const plan = createPlan(fixture, {
     uniqueToken: 'fresh-token-1',
   });
   assert.match(plan.names.helper, /fresh-token-1/u);
@@ -532,8 +624,25 @@ test('plan binds a fresh owner, exact mounts, corrected helper capabilities, and
     ['NET_ADMIN', 'SETPCAP']
   );
   assert.ok(plan.helper.includes('no-new-privileges'));
+  const userIndex = plan.helper.indexOf('--user');
+  assert.ok(userIndex > 0);
+  assert.equal(plan.helper[userIndex + 1], '0:0');
   assert.ok(!plan.helper.some((entry) => entry.includes('PATH=/usr/local')));
   assert.ok(plan.helper.includes(fixture.proofParentConfig.sha256));
+  assert.ok(plan.helper.includes(fixture.preparationRequest.rawSha256));
+  assert.deepEqual(
+    plan.admissionFiles.map(({ role }) => role),
+    [
+      'controller-config',
+      'active-controller-marker',
+      'timing-profile-seed',
+      'authenticated-git-evidence',
+      'proof-parent-config',
+      'proof-parent-script',
+      'containment-manifest',
+      'contained-request',
+    ]
+  );
   assert.ok(plan.daemon.includes(`container:${plan.names.helper}`));
   assert.equal(
     plan.daemonCommand.filter((entry) => entry.startsWith('--host=')).length,
@@ -586,6 +695,7 @@ test('manifest mutations fail closed before Docker execution', () => {
   assert.throws(
     () =>
       createDistributedLinuxHostContainmentPlan(configMutation, {
+        preparationRequest: fixture.preparationRequest,
         uniqueToken: 'mutation-1',
       }),
     /Proof parent config differs/u
@@ -595,6 +705,7 @@ test('manifest mutations fail closed before Docker execution', () => {
   assert.throws(
     () =>
       createDistributedLinuxHostContainmentPlan(binaryMutation, {
+        preparationRequest: fixture.preparationRequest,
         uniqueToken: 'mutation-2',
       }),
     /immutable image/u
@@ -604,6 +715,7 @@ test('manifest mutations fail closed before Docker execution', () => {
   assert.throws(
     () =>
       createDistributedLinuxHostContainmentPlan(environmentMutation, {
+        preparationRequest: fixture.preparationRequest,
         uniqueToken: 'mutation-3',
       }),
     /unsafe key/u
@@ -613,6 +725,7 @@ test('manifest mutations fail closed before Docker execution', () => {
   assert.throws(
     () =>
       createDistributedLinuxHostContainmentPlan(tcpMutation, {
+        preparationRequest: fixture.preparationRequest,
         uniqueToken: 'mutation-4',
       }),
     /daemon image entrypoint/u
@@ -622,6 +735,7 @@ test('manifest mutations fail closed before Docker execution', () => {
   assert.throws(
     () =>
       createDistributedLinuxHostContainmentPlan(gitEscape, {
+        preparationRequest: fixture.preparationRequest,
         uniqueToken: 'mutation-5',
       }),
     /Git evidence must stay under read-only config/u
@@ -798,26 +912,22 @@ function outerHarness(
     mutateAdmission = false,
     mutateCleanup = false,
     mutateHelper = false,
+    mutateHelperUser = false,
     mutateProductionArtifact = false,
     mutateTimingProfileArtifact = false,
     mutateVolume = false,
   } = {}
 ) {
-  const files = new Map([
-    [
-      plan.admissionFiles.find(({ role }) => role === 'proof-parent-config')
-        .hostPath,
-      Buffer.from(plan.proofParentConfig.json),
-    ],
-    [
-      plan.admissionFiles.find(({ role }) => role === 'proof-parent-script')
-        .hostPath,
-      fixture.parentBytes,
-    ],
-  ]);
+  const files = new Map(
+    plan.admissionFiles.map(({ containerPath, hostPath }) => [
+      hostPath,
+      fixture.preparationFiles.get(containerPath),
+    ])
+  );
   const writes = [];
   const stopCalls = [];
-  let configReads = 0;
+  const dockerCalls = [];
+  const admissionReads = new Map();
   const containers = new Map();
   const volumes = new Map();
   for (const input of Object.values(fixture.manifest.inputs))
@@ -853,10 +963,13 @@ function outerHarness(
       fixture.manifest.inner.parentScript,
       fixture.manifest.inner.configPath,
       plan.proofParentConfig.sha256,
+      fixture.preparationRequest.containerPath,
+      fixture.preparationRequest.rawSha256,
     ],
     Config: {
       Image: fixture.manifest.images.helper.reference,
       Labels: { [plan.ownership.key]: plan.ownership.value },
+      User: mutateHelperUser ? '' : '0:0',
       Env: [
         `DOCKER_HOST=unix://${fixture.manifest.paths.dockerSocket}`,
         `SEERR_VALIDATION_STATE_DIR=${fixture.manifest.paths.stateRoot}`,
@@ -870,6 +983,8 @@ function outerHarness(
         fixture.manifest.inner.parentScript,
         fixture.manifest.inner.configPath,
         plan.proofParentConfig.sha256,
+        fixture.preparationRequest.containerPath,
+        fixture.preparationRequest.rawSha256,
       ],
     },
     HostConfig: {
@@ -939,7 +1054,7 @@ function outerHarness(
       });
     if (containerPath.endsWith('contained-run-verification.json'))
       return canonicalBytes({
-        schema: 'seerrng-distributed-linux-contained-run-success/v1',
+        schema: 'seerrng-distributed-linux-contained-run-success/v2',
         runId: fixture.manifest.runId,
         status: 'passed',
         ok: true,
@@ -947,6 +1062,9 @@ function outerHarness(
         timingsSha256: sha256(productionArtifactBytes('production-timings')),
         runExpectationsSha256: sha256(
           productionArtifactBytes('native-run-expectations')
+        ),
+        hostPreparationReceiptSha256: sha256(
+          productionArtifactBytes('host-preparation-receipt')
         ),
         processLedgerSha256: sha256(
           productionArtifactBytes('native-command-receipts')
@@ -984,6 +1102,7 @@ function outerHarness(
         'production-result',
         'production-timings',
         'native-run-expectations',
+        'host-preparation-receipt',
         'native-command-receipts',
         'native-process-ledger',
         'native-process-streams',
@@ -1016,6 +1135,7 @@ function outerHarness(
     },
     async run(args, options) {
       const id = options.id;
+      dockerCalls.push(id);
       if (id === 'outer-daemon-identity')
         return passingReceipt(
           `${JSON.stringify(fixture.manifest.outerDaemonId)}\n`,
@@ -1120,15 +1240,18 @@ function outerHarness(
         },
         async readFile(path) {
           if (!files.has(path)) throw new Error(`Unknown fake file ${path}`);
-          if (
-            path ===
-            plan.admissionFiles.find(
-              ({ role }) => role === 'proof-parent-config'
-            ).hostPath
-          ) {
-            configReads += 1;
-            if (mutateAdmission && configReads > 1)
-              return Buffer.from('substituted proof config');
+          const admission = plan.admissionFiles.find(
+            ({ hostPath }) => hostPath === path
+          );
+          if (admission) {
+            const reads = (admissionReads.get(admission.role) ?? 0) + 1;
+            admissionReads.set(admission.role, reads);
+            const mutatedRole =
+              mutateAdmission === true
+                ? 'proof-parent-config'
+                : mutateAdmission || null;
+            if (admission.role === mutatedRole && reads > 1)
+              return Buffer.from(`substituted ${admission.role}`);
           }
           return files.get(path);
         },
@@ -1147,12 +1270,13 @@ function outerHarness(
     },
     writes,
     stopCalls,
+    dockerCalls,
   };
 }
 
 test('outer lifecycle reconciles evidence, stops assets, retains them, and writes its marker last', async () => {
   const fixture = manifestFixture();
-  const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+  const plan = createPlan(fixture, {
     uniqueToken: 'outer-positive',
   });
   const harness = outerHarness(fixture, plan);
@@ -1172,11 +1296,45 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   );
 });
 
-test('outer lifecycle rejects topology and volume mutations without a success marker', async () => {
-  for (const mutation of [{ mutateHelper: true }, { mutateVolume: true }]) {
+test('outer lifecycle rechecks every sealed preparation input before helper start', async () => {
+  const roles = [
+    'controller-config',
+    'active-controller-marker',
+    'timing-profile-seed',
+    'authenticated-git-evidence',
+    'proof-parent-config',
+    'proof-parent-script',
+    'containment-manifest',
+    'contained-request',
+  ];
+  for (const [index, role] of roles.entries()) {
     const fixture = manifestFixture();
-    const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
-      uniqueToken: `outer-mutation-${mutation.mutateHelper ? 'helper' : 'volume'}`,
+    const plan = createPlan(fixture, {
+      uniqueToken: `mutated-${index + 1}`,
+    });
+    const harness = outerHarness(fixture, plan, { mutateAdmission: role });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      /changed before helper start|digest differs/u
+    );
+    assert.ok(!harness.dockerCalls.includes('start-helper'));
+    assert.ok(
+      !harness.writes.some((entry) =>
+        entry.endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
+      )
+    );
+  }
+});
+
+test('outer lifecycle rejects topology and volume mutations without a success marker', async () => {
+  for (const mutation of [
+    { mutateHelper: true },
+    { mutateHelperUser: true },
+    { mutateVolume: true },
+  ]) {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: `outer-mutation-${mutation.mutateHelper ? 'helper' : mutation.mutateHelperUser ? 'helper-user' : 'volume'}`,
     });
     const harness = outerHarness(fixture, plan, mutation);
     await assert.rejects(
@@ -1198,7 +1356,7 @@ test('outer lifecycle rejects substituted inputs, copied artifacts, and contradi
     { mutateCleanup: true },
   ]) {
     const fixture = manifestFixture();
-    const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+    const plan = createPlan(fixture, {
       uniqueToken: mutation.mutateAdmission
         ? 'substituted-input'
         : mutation.mutateProductionArtifact
@@ -1221,7 +1379,7 @@ test('outer lifecycle rejects substituted inputs, copied artifacts, and contradi
 
 test('outer stop exceeds the shared slow terminal budget and remains uncancellable after caller abort', async () => {
   const fixture = manifestFixture();
-  const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+  const plan = createPlan(fixture, {
     uniqueToken: 'abort-cleanup',
   });
   const abortController = new AbortController();
@@ -1245,7 +1403,7 @@ test('outer stop exceeds the shared slow terminal budget and remains uncancellab
 
 test('outer lifecycle preserves primary and failure-evidence errors together', async () => {
   const fixture = manifestFixture();
-  const plan = createDistributedLinuxHostContainmentPlan(fixture.manifest, {
+  const plan = createPlan(fixture, {
     uniqueToken: 'aggregate-failure-evidence',
   });
   const abortController = new AbortController();
