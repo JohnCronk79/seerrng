@@ -1120,6 +1120,30 @@ function parseProfileArtifact(path) {
   return readAdaptiveTimingProfileFile(path);
 }
 
+function preservedPreparationRoot(error, request, snapshot) {
+  if (snapshot?.scratchRoot) return snapshot.scratchRoot;
+  if (
+    error?.preserveTemporary !== true ||
+    typeof error.scratchRoot !== 'string'
+  )
+    return null;
+  let candidate;
+  try {
+    candidate = absolutePath(error.scratchRoot, 'Preserved preparation root');
+  } catch {
+    return null;
+  }
+  const fromStateRoot = relative(request.stateRoot, candidate);
+  if (
+    !fromStateRoot ||
+    fromStateRoot === '..' ||
+    fromStateRoot.startsWith(`..${sep}`) ||
+    isAbsolute(fromStateRoot)
+  )
+    return null;
+  return candidate;
+}
+
 function publicFailure(error, request, snapshot) {
   return {
     schema: 'seerrng-distributed-linux-public-failure/v1',
@@ -1127,7 +1151,11 @@ function publicFailure(error, request, snapshot) {
     status: 'failed',
     name: error?.name ?? 'Error',
     message: error?.message ?? String(error),
-    preservedPreparationRoot: snapshot?.scratchRoot ?? null,
+    preservedPreparationRoot: preservedPreparationRoot(
+      error,
+      request,
+      snapshot
+    ),
   };
 }
 

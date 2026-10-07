@@ -80,6 +80,8 @@ const git = (root, args, input) =>
       '-c',
       'core.fsmonitor=false',
       '-c',
+      'core.longpaths=true',
+      '-c',
       'init.templateDir=',
       ...args,
     ],

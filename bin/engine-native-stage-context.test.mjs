@@ -432,6 +432,41 @@ test('snapshot seals actual working bytes/modes, includes unignored files and om
   assert.equal(existsSync(snapshot.scratchRoot), false);
 });
 
+test(
+  'Windows source snapshots support long owned scratch paths',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    const { root, parent } = fixture(t);
+    const sourceDirectory = path.join(
+      root,
+      'src',
+      ...Array.from({ length: 10 }, (_, index) => `source-${index}`)
+    );
+    mkdirSync(sourceDirectory, { recursive: true });
+    writeFileSync(
+      path.join(sourceDirectory, 'long-path-source.mjs'),
+      'export const longPath = true;\n'
+    );
+    const scratchParent = path.join(
+      parent,
+      ...Array.from({ length: 5 }, (_, index) => `scratch-segment-${index}`)
+    );
+    mkdirSync(scratchParent, { recursive: true });
+
+    const snapshot = createOwnedSourceSnapshot(root, { scratchParent });
+    assert.ok(
+      path.join(
+        snapshot.root,
+        path.relative(root, sourceDirectory),
+        'long-path-source.mjs'
+      ).length > 260
+    );
+    assert.equal(verifySourceSnapshot(snapshot), true);
+    disposeSourceSnapshot(snapshot);
+    assert.equal(existsSync(snapshot.scratchRoot), false);
+  }
+);
+
 test('source changes and manifest changes fail the post-source guard', (t) => {
   const { root, parent } = fixture(t);
   const snapshot = createOwnedSourceSnapshot(root, { scratchParent: parent });

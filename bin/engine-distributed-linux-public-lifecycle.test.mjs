@@ -629,6 +629,92 @@ test('public success rejects missing, tampered, and coherently resealed outer ev
   });
 });
 
+test('public failure records only an explicitly preserved preparation root beneath state', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'mode3-public-failure-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stateRoot = join(root, 'state');
+  const logRoot = join(root, 'logs');
+  const activeMarker = join(stateRoot, 'active-controller');
+  const preservedRoot = join(stateRoot, 'preserved-preparation');
+  for (const directory of [stateRoot, logRoot, preservedRoot])
+    mkdirSync(directory);
+  writeFileSync(activeMarker, 'controller.cfg\n');
+  const request = {
+    activeConfigMarkerPath: activeMarker,
+    applicationEntryId: '01',
+    logRoot,
+    runtimeApplicationKey: 'seerrng',
+    signal: undefined,
+    sourceRoot: ROOT,
+    stateRoot,
+  };
+  const baseDependencies = {
+    createHostAdapters: () => ({}),
+    fetchGitState: () => ({}),
+  };
+  const preservedError = Object.assign(
+    new Error('snapshot preparation failed'),
+    {
+      preserveTemporary: true,
+      scratchRoot: preservedRoot,
+    }
+  );
+  await assert.rejects(
+    executeDistributedLinuxPublicLifecycle(
+      { ...request, runId: 'mode3-preserved-public-failure' },
+      {
+        ...baseDependencies,
+        createSnapshot: () => {
+          throw preservedError;
+        },
+      }
+    ),
+    /snapshot preparation failed/u
+  );
+  const preservedFailure = JSON.parse(
+    readFileSync(
+      join(logRoot, 'mode3-preserved-public-failure', 'failure.json'),
+      'utf8'
+    )
+  );
+  assert.equal(preservedFailure.preservedPreparationRoot, preservedRoot);
+  assert.equal(
+    existsSyncSafe(
+      join(
+        logRoot,
+        'mode3-preserved-public-failure',
+        'launch-result-verification.json'
+      )
+    ),
+    false
+  );
+
+  const outsideRoot = join(root, 'outside-preparation');
+  mkdirSync(outsideRoot);
+  await assert.rejects(
+    executeDistributedLinuxPublicLifecycle(
+      { ...request, runId: 'mode3-forged-public-failure' },
+      {
+        ...baseDependencies,
+        createSnapshot: () => {
+          throw Object.assign(new Error('forged snapshot failure'), {
+            preserveTemporary: true,
+            scratchRoot: outsideRoot,
+          });
+        },
+      }
+    ),
+    /forged snapshot failure/u
+  );
+  const forgedFailure = JSON.parse(
+    readFileSync(
+      join(logRoot, 'mode3-forged-public-failure', 'failure.json'),
+      'utf8'
+    )
+  );
+  assert.equal(forgedFailure.preservedPreparationRoot, null);
+});
+
 test('public lifecycle persists the returned profile, cleans preparation, and writes success last', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'mode3-public-lifecycle-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
