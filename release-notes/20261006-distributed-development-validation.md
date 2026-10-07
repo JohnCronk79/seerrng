@@ -6,4 +6,4 @@ action: none
 breaking: false
 ---
 
-Developers can now prove one validation task across a trusted workstation and remote worker through the existing engine, with exact source matching, certificate-pinned authentication, local task allowlisting, bounded cancellation, and recorded native evidence.
+Mode 3 development validation can now run the complete four-stage engine across a contained Linux controller and configured Linux nodes. Human-readable fleet configuration controls each node's thread budget; shared-key authenticated requests bind work to the exact candidate, and successful timing history improves future shard placement without reusing test results.

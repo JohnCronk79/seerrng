@@ -38,7 +38,6 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 .env.qa.local
-/tools/validation-engine/distributed-workers.json
 
 # vercel
 .vercel
