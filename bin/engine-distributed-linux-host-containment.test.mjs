@@ -940,6 +940,7 @@ function outerHarness(
     mutateProductionArtifact = false,
     mutateTimingProfileArtifact = false,
     mutateVolume = false,
+    mountSourceOverrides = {},
   } = {}
 ) {
   const files = new Map(
@@ -968,7 +969,9 @@ function outerHarness(
   const mountFor = (input) => ({
     Type: input.type,
     Source:
-      input.type === 'bind' ? input.source : `/volumes/${input.source}/_data`,
+      input.type === 'bind'
+        ? (mountSourceOverrides[input.target] ?? input.source)
+        : `/volumes/${input.source}/_data`,
     Name: input.type === 'volume' ? input.source : undefined,
     Destination: input.target,
     RW: false,
@@ -1350,6 +1353,62 @@ test('outer lifecycle reconciles evidence, stops assets, retains them, and write
   assert.ok(
     harness.writes.at(-1).endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
   );
+});
+
+test(
+  'outer lifecycle accepts only the exact Docker Desktop form of a canonical Windows bind source',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const fixture = manifestFixture();
+    const plan = createPlan(fixture, {
+      uniqueToken: 'docker-desktop-bind-source',
+    });
+    const translated = (source) =>
+      `/run/desktop/mnt/host/${source[0].toLowerCase()}/${source.slice(3).replaceAll('\\', '/')}`;
+    const harness = outerHarness(fixture, plan, {
+      mountSourceOverrides: {
+        [fixture.manifest.inputs.git.target]: translated(
+          fixture.manifest.inputs.git.source
+        ),
+        [fixture.manifest.inputs.recipe.target]: translated(
+          fixture.manifest.inputs.recipe.source
+        ),
+      },
+    });
+    const result = await executeDistributedLinuxHostContainment(
+      plan,
+      harness.adapters
+    );
+    assert.equal(result.status, 'passed');
+  }
+);
+
+test('outer lifecycle rejects inexact Docker Desktop bind-source substitutions', async () => {
+  const fixture = manifestFixture();
+  const target = fixture.manifest.inputs.git.target;
+  const substitutions = [
+    '/run/desktop/mnt/host/d/mode3-inputs/git',
+    '/run/desktop/mnt/host/c/mode3-inputs/other',
+    '/host_mnt/c/mode3-inputs/git',
+    '/run/desktop/mnt/host/c/../mode3-inputs/git',
+  ];
+  for (const [index, source] of substitutions.entries()) {
+    const plan = createPlan(fixture, {
+      uniqueToken: `docker-desktop-bind-rejected-${index}`,
+    });
+    const harness = outerHarness(fixture, plan, {
+      mountSourceOverrides: { [target]: source },
+    });
+    await assert.rejects(
+      executeDistributedLinuxHostContainment(plan, harness.adapters),
+      /Read-only input mount differs/u
+    );
+    assert.ok(
+      !harness.writes.some((entry) =>
+        entry.endsWith(DISTRIBUTED_LINUX_HOST_FINAL_MARKER)
+      )
+    );
+  }
 });
 
 test('outer lifecycle rejects missing, tampered, and coherently resealed outer evidence', async (t) => {

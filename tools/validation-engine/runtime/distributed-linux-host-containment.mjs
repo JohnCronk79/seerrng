@@ -1552,13 +1552,37 @@ function verifyVolume(volume, expectedName, ownership) {
   return volume;
 }
 
+function dockerDesktopWindowsBindSource(source) {
+  if (
+    process.platform !== 'win32' ||
+    !win32.isAbsolute(source) ||
+    win32.normalize(source) !== source
+  )
+    return null;
+  const { root } = win32.parse(source);
+  if (!/^[A-Za-z]:\\$/u.test(root) || source === root) return null;
+  const relative = source.slice(root.length);
+  if (
+    !relative ||
+    relative.split('\\').some((part) => !part || part === '.' || part === '..')
+  )
+    return null;
+  return `/run/desktop/mnt/host/${root[0].toLowerCase()}/${relative.replaceAll('\\', '/')}`;
+}
+
+function sameConfiguredBindSource(actual, expected) {
+  if (actual === expected) return true;
+  const dockerDesktopSource = dockerDesktopWindowsBindSource(expected);
+  return dockerDesktopSource !== null && actual === dockerDesktopSource;
+}
+
 function verifyConfiguredReadOnlyMount(actual, expected) {
   if (
     actual?.Type !== expected.type ||
     actual.RW !== false ||
     (expected.type === 'volume'
       ? actual.Name !== expected.source
-      : actual.Source !== expected.source)
+      : !sameConfiguredBindSource(actual.Source, expected.source))
   )
     throw new Error(`Read-only input mount differs: ${expected.target}`);
 }
