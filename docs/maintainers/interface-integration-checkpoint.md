@@ -762,10 +762,9 @@ outstanding. No provider round trips against live services were attempted.
 ## Project-owner release authorization and v3.52.1 verification — October 5, 2026
 
 The project owner directed removal of the individual-specific visual acceptance
-gate. Human review remains required under CONTRIBUTING.md, but acceptance is not
-assigned to any named reviewer. The project owner authorized the release
-without a named person’s separate visual sign-off. This supersedes the earlier
-pending release-gate statuses above.
+gate and authorized the release without a separate reviewer sign-off. The owner
+may confirm acceptance directly under the current contribution policy. This
+supersedes the earlier pending release-gate statuses above.
 
 SeerrNG v3.52.1 was published from tag `v3.52.1` at commit
 `76632411a3f73d0ad4ea31cb10405496d7db474f`. Release workflow run
