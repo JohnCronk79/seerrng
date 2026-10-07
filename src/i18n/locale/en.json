@@ -2244,6 +2244,7 @@
   "components.RequestStatus.SoftwareRequests.retro": "Retro",
   "components.RequestStatus.SoftwareRequests.retry": "Retry",
   "components.RequestStatus.SoftwareRequests.retryCheckRequired": "The provider cannot confirm whether the previous download started. Check the download client’s queue and history. Continue only if no matching download exists.",
+  "components.RequestStatus.SoftwareRequests.rommPlacementPlaced": "In RomM Library",
   "components.RequestStatus.SoftwareRequests.searching": "Searching",
   "components.RequestStatus.SoftwareRequests.submitted": "Requested {date}",
   "components.RequestStatus.SoftwareRequests.title": "Software Requests",

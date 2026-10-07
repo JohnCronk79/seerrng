@@ -8,6 +8,7 @@ import type {
   SoftwareAssetsResponse,
   SoftwareProviderActions,
   SoftwareProviderRequest,
+  SoftwareProviderRomPlacement,
   SoftwareProviderStatus,
 } from '@server/api/software/types';
 import { getRepository } from '@server/datasource';
@@ -38,7 +39,30 @@ export interface SoftwareRequestView {
   status: SoftwareRequestStatus;
   message: string | null;
   actions?: SoftwareProviderActions | null;
+  rommPlacement?: SoftwareProviderRomPlacement | null;
 }
+
+/**
+ * Keeps only the placement fields SeerrNG shows. Anything else from the
+ * provider is dropped, and a malformed value is treated as unknown.
+ */
+export const sanitizeRomPlacement = (
+  value: unknown
+): SoftwareProviderRomPlacement | null => {
+  if (!isRecord(value) || typeof value.placed !== 'boolean') {
+    return null;
+  }
+  const library =
+    typeof value.library === 'string' && value.library.trim()
+      ? value.library
+          .replace(/[\r\n\0]+/g, ' ')
+          .trim()
+          .slice(0, 120)
+      : null;
+  const layout =
+    value.layout === 'flat' || value.layout === 'nested' ? value.layout : null;
+  return { placed: value.placed, library, layout };
+};
 
 export class SoftwareProviderNotConfiguredError extends Error {}
 export class SoftwareRequestConfirmationRequiredError extends Error {}
@@ -408,6 +432,7 @@ export const refreshSoftwareRequest = async (
         providerRequest.status,
         providerRequest.actions
       ),
+      rommPlacement: sanitizeRomPlacement(providerRequest.rommPlacement),
     };
   } catch (error) {
     logger.warn('Software request status could not be refreshed', {
@@ -595,6 +620,7 @@ export const retrySoftwareRequest = async (
         providerRequest.status,
         providerRequest.actions
       ),
+      rommPlacement: sanitizeRomPlacement(providerRequest.rommPlacement),
     };
   };
 

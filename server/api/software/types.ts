@@ -91,10 +91,21 @@ export type SoftwareProviderStatus =
   | 'failed'
   | 'cancelled';
 
+/**
+ * Whether ROMarrNG has placed the finished file in a library folder that RomM
+ * reads. `placed` does not mean RomM has indexed the file.
+ */
+export interface SoftwareProviderRomPlacement {
+  placed: boolean;
+  library: string | null;
+  layout: 'flat' | 'nested' | null;
+}
+
 export interface SoftwareProviderRequest {
   externalRequestId: string;
   status: SoftwareProviderStatus;
   deliverable: boolean;
+  rommPlacement?: SoftwareProviderRomPlacement | null;
   error?: string | null;
   title?: string;
   game?: { id: string; title: string; status: string } | null;

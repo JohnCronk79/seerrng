@@ -327,3 +327,11 @@ For provider API and release details, use the [QuestarrNG
 documentation](https://github.com/snapetech/QuestarrNG) and [ROMarrNG
 documentation](https://github.com/snapetech/ROMarrNG). General desktop apps are
 not part of the current software catalog.
+
+## RomM library status
+
+For ROM requests fulfilled by ROMarrNG, the request shows **In RomM Library**
+once ROMarrNG has placed the finished file in a library folder that RomM reads.
+This means the file is in place. RomM still has to scan its library before the
+game appears there, so the badge does not confirm that RomM has indexed it.
+
