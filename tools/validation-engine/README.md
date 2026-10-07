@@ -19,7 +19,7 @@ pnpm validate:development --plan
 pnpm validate:development --plan --json
 pnpm validate:development --tests-only
 pnpm validate:development
-pnpm validate:development -- --distributed-run --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --application ENTRY_ID [--json]
+pnpm validate:development --distributed-run --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --application ENTRY_ID [--json]
 ```
 
 - `--help` prints the public/operator command surface without reading the
