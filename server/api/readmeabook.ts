@@ -25,6 +25,9 @@ export default class ReadMeABookAPI {
   constructor(private readonly settings: ReadMeABookSettings) {}
 
   private url(path: string): string {
+    // This origin is selected by an administrator in the service settings.
+    // Private hosts are supported for self-hosted deployments; callers cannot
+    // supply the origin, and REQUEST_CONFIG disables redirects.
     return buildServiceUrl({
       useSsl: this.settings.useSsl,
       hostname: this.settings.hostname,
@@ -41,6 +44,8 @@ export default class ReadMeABookAPI {
   ): Promise<T> {
     let response;
     try {
+      // The token and optional request metadata are intentionally sent to the
+      // configured service. They are not arbitrary filesystem contents.
       response = await axios.request<T>({
         ...REQUEST_CONFIG,
         method,

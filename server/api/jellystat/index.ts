@@ -57,6 +57,8 @@ export default class JellystatAPI {
   }
 
   private headers(): Record<string, string> {
+    // The configured Jellystat token is intentionally sent to its validated
+    // service URL; every request disables redirects to retain that boundary.
     return { 'x-api-token': this.settings.apiKey };
   }
 

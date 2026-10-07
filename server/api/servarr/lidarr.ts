@@ -2,6 +2,7 @@ import { normalizeMusicBrainzId } from '@server/lib/externalIds';
 import logger from '@server/logger';
 import ServarrBase, {
   MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+  MAX_SERVARR_LIBRARY_RESULTS,
   MAX_SERVARR_LOOKUP_RESULTS,
   sanitizeServarrProfiles,
   sanitizeServarrRecordArray,
@@ -335,16 +336,71 @@ class LidarrAPI extends ServarrBase<{ albumId: number }> {
     }
   }
 
+  public async getArtistIds(cacheTtl?: number): Promise<number[]> {
+    try {
+      const data = await this.get<unknown>(
+        '/artist',
+        {
+          maxContentLength: MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+        },
+        cacheTtl
+      );
+      if (!Array.isArray(data) || data.length > MAX_SERVARR_LIBRARY_RESULTS) {
+        throw new Error('Lidarr returned an invalid artist list');
+      }
+
+      const ids = data.map((artist) => {
+        if (
+          typeof artist !== 'object' ||
+          artist === null ||
+          Array.isArray(artist) ||
+          !Number.isSafeInteger(artist.id) ||
+          (artist.id as number) <= 0
+        ) {
+          throw new Error('Lidarr returned an invalid artist record');
+        }
+        return artist.id as number;
+      });
+
+      return [...new Set(ids)];
+    } catch (e) {
+      throw new Error(`[Lidarr] Failed to retrieve artists: ${e.message}`, {
+        cause: e,
+      });
+    }
+  }
+
   public async getAlbumsByArtist(
     artistId: number,
     cacheTtl?: number
   ): Promise<LidarrAlbum[]> {
     try {
+      if (!Number.isSafeInteger(artistId) || artistId <= 0) {
+        throw new Error('Invalid Lidarr artist ID');
+      }
       const data = await this.get<LidarrAlbum[]>(
         '/album',
-        { params: { artistId } },
+        {
+          params: { artistId },
+          maxContentLength: MAX_SERVARR_LIBRARY_RESPONSE_BYTES,
+        },
         cacheTtl
       );
+      if (
+        !Array.isArray(data) ||
+        data.length > MAX_SERVARR_LIBRARY_RESULTS ||
+        data.some(
+          (album) =>
+            typeof album !== 'object' ||
+            album === null ||
+            Array.isArray(album) ||
+            !Number.isSafeInteger(album.id) ||
+            !Number.isSafeInteger(album.artistId) ||
+            album.artistId !== artistId
+        )
+      ) {
+        throw new Error('Lidarr returned an invalid artist album list');
+      }
       return sanitizeServarrRecordArray<LidarrAlbum>(data);
     } catch (e) {
       throw new Error(
