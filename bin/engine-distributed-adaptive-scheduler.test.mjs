@@ -12,6 +12,7 @@ import {
   MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS,
   MAX_DISTRIBUTED_NODE_THREADS,
   updateAdaptiveTimingProfile,
+  updateAdaptiveTimingProfileBatch,
   verifyAdaptiveTimingObservation,
   verifyDistributedAdaptiveSchedule,
 } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
@@ -459,6 +460,269 @@ test('timing observation updates reject hostile rehashes and source-profile drif
     /another update policy/
   );
   assert.deepEqual(profile, createAdaptiveTimingProfile());
+});
+
+test('timing observation batches update multiple scopes from one source profile atomically', () => {
+  const profile = createAdaptiveTimingProfile();
+  const observations = [
+    observation({
+      profile,
+      selectedScope: scope('linux-x64', 'node-a'),
+      runId: 'batch-green',
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/a.test.ts', 20)],
+    }),
+    observation({
+      profile,
+      selectedScope: scope('linux-x64', 'node-b'),
+      runId: 'batch-green',
+      performanceScorePermille: 100,
+      results: [
+        resultEntry('unit/a.test.ts', 30),
+        resultEntry('unit/b.test.ts', 40),
+      ],
+    }),
+  ];
+  const receipt = updateAdaptiveTimingProfileBatch(
+    profile,
+    observations,
+    observations.map(observationExpectations)
+  );
+
+  assert.deepEqual(profile, createAdaptiveTimingProfile());
+  assert.deepEqual(
+    {
+      accepted: receipt.accepted,
+      reason: receipt.reason,
+      updatedTests: receipt.updatedTests,
+      observationCount: receipt.observationCount,
+    },
+    {
+      accepted: true,
+      reason: 'accepted',
+      updatedTests: 3,
+      observationCount: 2,
+    }
+  );
+  assert.deepEqual(
+    receipt.profile.scopes.map((entry) => ({
+      nodeId: entry.nodeId,
+      runIds: entry.acceptedRunIds,
+      estimates: entry.tests.map((timing) => [
+        timing.testId,
+        timing.estimateWorkUnits,
+      ]),
+    })),
+    [
+      {
+        nodeId: 'node-a',
+        runIds: ['batch-green'],
+        estimates: [['unit/a.test.ts', 2_000]],
+      },
+      {
+        nodeId: 'node-b',
+        runIds: ['batch-green'],
+        estimates: [
+          ['unit/a.test.ts', 3_000],
+          ['unit/b.test.ts', 4_000],
+        ],
+      },
+    ]
+  );
+});
+
+test('timing observation batches reject mismatches, duplicates, and failures without partial updates', () => {
+  const profile = createAdaptiveTimingProfile();
+  const nodeA = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-a'),
+    runId: 'batch-atomic',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 20)],
+  });
+  const nodeB = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-b'),
+    runId: 'batch-atomic',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/b.test.ts', 30)],
+  });
+  const mismatchedRun = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-b'),
+    runId: 'another-run',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/b.test.ts', 30)],
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfileBatch(
+        profile,
+        [nodeA, mismatchedRun],
+        [nodeA, mismatchedRun].map(observationExpectations)
+      ),
+    /mismatched run provenance/
+  );
+
+  const wrongProfile = rehashObservation(nodeB, (changed) => {
+    changed.source.profileSha256 = '4'.repeat(64);
+  });
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfileBatch(
+        profile,
+        [nodeA, wrongProfile],
+        [nodeA, wrongProfile].map(observationExpectations)
+      ),
+    /another source profile/
+  );
+
+  const duplicateScope = updateAdaptiveTimingProfileBatch(
+    profile,
+    [nodeA, nodeA],
+    [nodeA, nodeA].map(observationExpectations)
+  );
+  assert.deepEqual(
+    {
+      accepted: duplicateScope.accepted,
+      reason: duplicateScope.reason,
+      updatedTests: duplicateScope.updatedTests,
+      observationCount: duplicateScope.observationCount,
+      profile: duplicateScope.profile,
+    },
+    {
+      accepted: false,
+      reason: 'duplicate-scope',
+      updatedTests: 0,
+      observationCount: 2,
+      profile,
+    }
+  );
+
+  const failedNodeB = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-b'),
+    runId: 'batch-atomic',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/b.test.ts', 1)],
+    status: 'failed',
+  });
+  const failed = updateAdaptiveTimingProfileBatch(
+    profile,
+    [nodeA, failedNodeB],
+    [nodeA, failedNodeB].map(observationExpectations)
+  );
+  assert.equal(failed.accepted, false);
+  assert.equal(failed.reason, 'unsuccessful-run');
+  assert.equal(failed.updatedTests, 0);
+  assert.equal(failed.observationCount, 2);
+  assert.deepEqual(failed.profile, profile);
+
+  const invalidNodeA = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-a'),
+    runId: 'batch-atomic',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 1)],
+    valid: false,
+  });
+  const forwardRejection = updateAdaptiveTimingProfileBatch(
+    profile,
+    [failedNodeB, invalidNodeA],
+    [failedNodeB, invalidNodeA].map(observationExpectations)
+  );
+  const reverseRejection = updateAdaptiveTimingProfileBatch(
+    profile,
+    [invalidNodeA, failedNodeB],
+    [invalidNodeA, failedNodeB].map(observationExpectations)
+  );
+  assert.equal(forwardRejection.reason, 'invalid-run');
+  assert.equal(reverseRejection.reason, forwardRejection.reason);
+
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfileBatch(
+        profile,
+        Array(MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS + 1).fill(nodeA),
+        Array(MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS + 1).fill(
+          observationExpectations(nodeA)
+        )
+      ),
+    /batch exceeds its count limit/
+  );
+
+  const hostileNodeB = structuredClone(nodeB);
+  hostileNodeB.results[0].durationMs = 1;
+  assert.throws(
+    () =>
+      updateAdaptiveTimingProfileBatch(
+        profile,
+        [failedNodeB, hostileNodeB],
+        [observationExpectations(failedNodeB), observationExpectations(nodeB)]
+      ),
+    /trusted hash/
+  );
+
+  const existingProfile = applyObservation(profile, {
+    selectedScope: scope('linux-x64', 'node-a'),
+    runId: 'already-accepted',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 50)],
+  }).profile;
+  const repeatedRun = [
+    observation({
+      profile: existingProfile,
+      selectedScope: scope('linux-x64', 'node-a'),
+      runId: 'already-accepted',
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/a.test.ts', 1)],
+    }),
+    observation({
+      profile: existingProfile,
+      selectedScope: scope('linux-x64', 'node-b'),
+      runId: 'already-accepted',
+      performanceScorePermille: 100,
+      results: [resultEntry('unit/b.test.ts', 1)],
+    }),
+  ];
+  const duplicateObservation = updateAdaptiveTimingProfileBatch(
+    existingProfile,
+    repeatedRun,
+    repeatedRun.map(observationExpectations)
+  );
+  assert.equal(duplicateObservation.accepted, false);
+  assert.equal(duplicateObservation.reason, 'duplicate-observation');
+  assert.equal(duplicateObservation.updatedTests, 0);
+  assert.equal(duplicateObservation.observationCount, 2);
+  assert.deepEqual(duplicateObservation.profile, existingProfile);
+  assert.deepEqual(profile, createAdaptiveTimingProfile());
+});
+
+test('single timing observation updates retain their original receipt contract', () => {
+  const profile = createAdaptiveTimingProfile();
+  const sealed = observation({
+    profile,
+    selectedScope: scope('linux-x64', 'node-standard'),
+    runId: 'single-regression',
+    performanceScorePermille: 100,
+    results: [resultEntry('unit/a.test.ts', 25)],
+  });
+  const receipt = updateAdaptiveTimingProfile(
+    profile,
+    sealed,
+    observationExpectations(sealed)
+  );
+
+  assert.deepEqual(Object.keys(receipt).toSorted(), [
+    'accepted',
+    'profile',
+    'reason',
+    'updatedTests',
+  ]);
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.reason, 'accepted');
+  assert.equal(receipt.updatedTests, 1);
+  assert.equal(receipt.profile.scopes[0].tests[0].estimateWorkUnits, 2_500);
 });
 
 test('node admission applies configured threads, load, memory, and local reserve without hardware weighting', () => {

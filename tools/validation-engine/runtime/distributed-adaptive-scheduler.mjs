@@ -121,6 +121,10 @@ const ADAPTIVE_OBSERVATION_SOURCE_KEYS = [
   'submissionSha256',
   'terminalReconciliationSha256',
 ];
+const ADAPTIVE_OBSERVATION_RUN_PROVENANCE_KEYS =
+  ADAPTIVE_OBSERVATION_SOURCE_KEYS.filter(
+    (key) => key !== 'policySha256' && key !== 'profileSha256'
+  );
 const ADAPTIVE_OBSERVATION_BENCHMARK_KEYS = [
   'performanceScorePermille',
   'valid',
@@ -1122,6 +1126,157 @@ export function updateAdaptiveTimingProfile(
     accepted: true,
     reason: 'accepted',
     updatedTests: results.length,
+  };
+}
+
+function ignoredBatchUpdate(profile, reason, observationCount) {
+  return {
+    ...ignoredUpdate(profile, reason),
+    observationCount,
+  };
+}
+
+export function updateAdaptiveTimingProfileBatch(
+  profile,
+  observationValues,
+  expectations,
+  policy = {}
+) {
+  assertAdaptiveTimingProfile(profile);
+  if (!Array.isArray(observationValues))
+    throw new Error('Adaptive timing observation batch must be an array');
+  if (!Array.isArray(expectations))
+    throw new Error('Adaptive timing expectation batch must be an array');
+  if (observationValues.length !== expectations.length)
+    throw new Error(
+      'Adaptive timing observation and expectation batches must have equal length'
+    );
+  if (observationValues.length > MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS)
+    throw new Error(
+      'Adaptive timing observation batch exceeds its count limit'
+    );
+
+  // Verify every external seal before considering any profile mutation.
+  const observations = observationValues.map((observation, index) =>
+    verifyAdaptiveTimingObservation(observation, expectations[index])
+  );
+  if (
+    Buffer.byteLength(JSON.stringify(observations), 'utf8') >
+    MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES
+  )
+    throw new Error('Adaptive timing observation batch exceeds its byte limit');
+  let inventoryCount = 0;
+  let resultCount = 0;
+  for (const observation of observations) {
+    inventoryCount = checkedAdd(
+      inventoryCount,
+      observation.inventory.length,
+      'adaptive timing observation batch inventory count'
+    );
+    resultCount = checkedAdd(
+      resultCount,
+      observation.results.length,
+      'adaptive timing observation batch result count'
+    );
+  }
+  if (
+    inventoryCount > MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS ||
+    resultCount > MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS
+  )
+    throw new Error('Adaptive timing observation batch exceeds its test limit');
+  const normalizedPolicy = normalizePolicy(policy);
+  const observationCount = observations.length;
+  if (observationCount === 0)
+    return ignoredBatchUpdate(profile, 'empty-batch', observationCount);
+
+  const profileSha256 = canonicalJsonSha256(profile);
+  const policySha256 = canonicalJsonSha256(normalizedPolicy);
+  for (const observation of observations) {
+    if (observation.source.profileSha256 !== profileSha256)
+      throw new Error(
+        'Adaptive timing observation belongs to another source profile'
+      );
+    if (observation.source.policySha256 !== policySha256)
+      throw new Error(
+        'Adaptive timing observation belongs to another update policy'
+      );
+  }
+
+  const runProvenanceSha256 = canonicalJsonSha256(
+    Object.fromEntries(
+      ADAPTIVE_OBSERVATION_RUN_PROVENANCE_KEYS.map((key) => [
+        key,
+        observations[0].source[key],
+      ])
+    )
+  );
+  if (
+    observations.some(
+      (observation) =>
+        canonicalJsonSha256(
+          Object.fromEntries(
+            ADAPTIVE_OBSERVATION_RUN_PROVENANCE_KEYS.map((key) => [
+              key,
+              observation.source[key],
+            ])
+          )
+        ) !== runProvenanceSha256
+    )
+  )
+    throw new Error(
+      'Adaptive timing observation batch has mismatched run provenance'
+    );
+
+  const scopeSha256s = observations.map((observation) =>
+    canonicalJsonSha256(scopeIdentity(observation.scope))
+  );
+  if (new Set(scopeSha256s).size !== scopeSha256s.length)
+    return ignoredBatchUpdate(profile, 'duplicate-scope', observationCount);
+  const canonicalObservations = [...observations].toSorted((left, right) =>
+    compareScope(left.scope, right.scope)
+  );
+
+  // Each update is prepared against the same immutable source profile. Only
+  // accepted scope results are merged, and no merged profile is exposed unless
+  // every observation is complete, green, and otherwise eligible.
+  const updates = canonicalObservations.map((observation) =>
+    updateAdaptiveTimingProfile(
+      profile,
+      observation,
+      { expectedObservationSha256: observation.observationSha256 },
+      normalizedPolicy
+    )
+  );
+  const rejected = updates.find((update) => !update.accepted);
+  if (rejected)
+    return ignoredBatchUpdate(profile, rejected.reason, observationCount);
+
+  const next = structuredClone(profile);
+  let updatedTests = 0;
+  for (const [index, update] of updates.entries()) {
+    const scope = canonicalObservations[index].scope;
+    const updatedScope = profileScope(update.profile, scope);
+    if (!updatedScope)
+      throw new Error('Adaptive timing batch update lost an accepted scope');
+    const existingIndex = next.scopes.findIndex((candidate) =>
+      matchingScope(candidate, scope)
+    );
+    if (existingIndex === -1) next.scopes.push(structuredClone(updatedScope));
+    else next.scopes[existingIndex] = structuredClone(updatedScope);
+    updatedTests = checkedAdd(
+      updatedTests,
+      update.updatedTests,
+      'adaptive timing batch updated-test count'
+    );
+  }
+  next.scopes.sort(compareScope);
+  assertAdaptiveTimingProfile(next);
+  return {
+    profile: next,
+    accepted: true,
+    reason: 'accepted',
+    updatedTests,
+    observationCount,
   };
 }
 
