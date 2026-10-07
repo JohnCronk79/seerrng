@@ -35,6 +35,8 @@ const messages = defineMessages('components.Settings.SettingsDownloadClients', {
   baseUrl: 'URL Base',
   baseUrlTransmission:
     'Leave empty to use /transmission. Set this only when Transmission is behind a different path.',
+  baseUrlRtorrent:
+    'Leave empty to use /RPC2. Set this only when the rTorrent XML-RPC endpoint is behind a different path.',
   username: 'Username',
   password: 'Password',
   delugePassword: 'Web UI Password',
@@ -64,6 +66,7 @@ const CLIENT_LABELS: Record<DownloadClientType, string> = {
   transmission: 'Transmission',
   deluge: 'Deluge',
   torrentng: 'TorrentNG',
+  rtorrent: 'rTorrent',
 };
 
 const DEFAULT_PORTS: Record<DownloadClientType, number> = {
@@ -71,10 +74,11 @@ const DEFAULT_PORTS: Record<DownloadClientType, number> = {
   transmission: 9091,
   deluge: 8112,
   torrentng: 8080,
+  rtorrent: 80,
 };
 
 const usesUsername = (type: DownloadClientType) =>
-  type === 'qbittorrent' || type === 'transmission';
+  type === 'qbittorrent' || type === 'transmission' || type === 'rtorrent';
 
 type DraftClient = Omit<DownloadClientSettings, 'id' | 'port'> & {
   id?: number;
@@ -433,7 +437,11 @@ const SettingsDownloadClients = () => {
                     disabled={isSaving}
                     value={client.baseUrl}
                     placeholder={
-                      client.type === 'transmission' ? '/transmission' : ''
+                      client.type === 'transmission'
+                        ? '/transmission'
+                        : client.type === 'rtorrent'
+                          ? '/RPC2'
+                          : ''
                     }
                     onChange={(event) =>
                       updateClient(client.key, {
@@ -445,6 +453,11 @@ const SettingsDownloadClients = () => {
                 {client.type === 'transmission' && (
                   <p className="settings-form-row-description">
                     {intl.formatMessage(messages.baseUrlTransmission)}
+                  </p>
+                )}
+                {client.type === 'rtorrent' && (
+                  <p className="settings-form-row-description">
+                    {intl.formatMessage(messages.baseUrlRtorrent)}
                   </p>
                 )}
               </div>

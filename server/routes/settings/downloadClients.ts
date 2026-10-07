@@ -25,6 +25,7 @@ const DEFAULT_PORTS: Record<DownloadClientType, number> = {
   transmission: 9091,
   deluge: 8112,
   torrentng: 8080,
+  rtorrent: 80,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

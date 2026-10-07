@@ -1,5 +1,6 @@
 import DelugeClient from '@server/api/downloadClients/deluge';
 import QBittorrentClient from '@server/api/downloadClients/qbittorrent';
+import RTorrentClient from '@server/api/downloadClients/rtorrent';
 import TorrentNGClient from '@server/api/downloadClients/torrentng';
 import TransmissionClient from '@server/api/downloadClients/transmission';
 import type { DownloadClientAdapter } from '@server/api/downloadClients/types';
@@ -17,5 +18,7 @@ export const createDownloadClient = (
       return new DelugeClient(settings);
     case 'torrentng':
       return new TorrentNGClient(settings);
+    case 'rtorrent':
+      return new RTorrentClient(settings);
   }
 };

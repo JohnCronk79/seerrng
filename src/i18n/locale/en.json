@@ -3148,6 +3148,7 @@
   "components.Settings.SettingsCategories.tvDescription": "Allow series discovery and requests.",
   "components.Settings.SettingsDownloadClients.addClient": "Add Download Client",
   "components.Settings.SettingsDownloadClients.baseUrl": "URL Base",
+  "components.Settings.SettingsDownloadClients.baseUrlRtorrent": "Leave empty to use /RPC2. Set this only when the rTorrent XML-RPC endpoint is behind a different path.",
   "components.Settings.SettingsDownloadClients.baseUrlTransmission": "Leave empty to use /transmission. Set this only when Transmission is behind a different path.",
   "components.Settings.SettingsDownloadClients.cancel": "Discard Changes",
   "components.Settings.SettingsDownloadClients.clearSecret": "Remove the saved password or token",

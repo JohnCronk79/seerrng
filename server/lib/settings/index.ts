@@ -137,6 +137,7 @@ export const DOWNLOAD_CLIENT_TYPES = [
   'transmission',
   'deluge',
   'torrentng',
+  'rtorrent',
 ] as const;
 
 export type DownloadClientType = (typeof DOWNLOAD_CLIENT_TYPES)[number];
@@ -154,9 +155,9 @@ export interface DownloadClientSettings {
   port: number;
   useSsl: boolean;
   baseUrl: string;
-  /** qBittorrent and Transmission only. */
+  /** qBittorrent, Transmission, and rTorrent (HTTP basic auth) only. */
   username: string;
-  /** Client password, Deluge Web UI password, or TorrentNG API token. */
+  /** Client password, Deluge Web UI password, rTorrent basic-auth password, or TorrentNG API token. */
   password: string;
 }
 
