@@ -905,10 +905,40 @@ if (executedDirectly) {
 const has = (option) => options?.flags.has(option) ?? false;
 const value = (option) => options?.values.get(option);
 const repeated = (option) => options?.repeated.get(option) ?? [];
+const pathValueOptions = new Set([
+  '--active-config-marker',
+  '--config-file',
+  '--dependency-profile',
+  '--log-root',
+  '--output-file',
+  '--plan-file',
+  '--receipt-dir',
+  '--report-file',
+  '--request-file',
+  '--state-root',
+]);
+
+function restoreWindowsPackageScriptPath(pathValue) {
+  const pnpmUserAgent = process.env.npm_config_user_agent ?? '';
+  const pnpmExecutable = process.env.npm_execpath ?? '';
+  const pnpmValidationLifecycle =
+    process.platform === 'win32' &&
+    process.env.npm_lifecycle_event === 'validate:development' &&
+    (pnpmUserAgent.startsWith('pnpm/') ||
+      /(?:^|[\\/])pnpm(?:\.[cm]?js)?$/iu.test(pnpmExecutable));
+  if (!pnpmValidationLifecycle || !isAbsolute(pathValue)) return pathValue;
+  const canonical = resolve(pathValue);
+  return pathValue === canonical.replaceAll('\\', '\\\\')
+    ? canonical
+    : pathValue;
+}
+
 const requiredValue = (option) => {
   const result = value(option);
   if (!result) throw new Error(`Selected mode requires ${option}`);
-  return result;
+  return pathValueOptions.has(option)
+    ? restoreWindowsPackageScriptPath(result)
+    : result;
 };
 const requiredSingleRepeatedValue = (option) => {
   const entries = repeated(option);

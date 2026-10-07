@@ -31,9 +31,10 @@ const cli = fileURLToPath(
 );
 const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-function runCli(args) {
+function runCli(args, { env = process.env } = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     encoding: 'utf8',
+    env,
     timeout: 30_000,
   });
 }
@@ -344,6 +345,17 @@ test('distributed public dispatch fails closed before or after the lifecycle sea
   );
   assert.equal(calls, 0);
 
+  if (process.platform === 'win32') {
+    await assert.rejects(
+      dispatchDistributedLinuxPublicRun(
+        { ...common, stateRoot: common.stateRoot.replaceAll('\\', '\\\\') },
+        dependencies
+      ),
+      /State root must be an absolute canonical directory/
+    );
+    assert.equal(calls, 0);
+  }
+
   await assert.rejects(
     dispatchDistributedLinuxPublicRun(common, dependencies),
     /did not return the exact passing run result/
@@ -467,6 +479,74 @@ test('node thread-policy CLI lists and updates an enrolled controller node', (t)
     'n-2'
   );
 });
+
+test(
+  'Windows package-script path transport restores only fully doubled separators',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    const paths = fixture();
+    t.after(paths.cleanup);
+    const controllerPath = join(
+      paths.configRoot,
+      'test-suite-multi-computer-CliTransport.cfg'
+    );
+    const marker = join(paths.stateRoot, 'active-controller');
+    persistControllerConfigFile(controllerPath, {
+      global: {
+        githubUsername: 'CliTransport',
+        computerName: 'Transport controller',
+        ipAddress: '127.0.0.1',
+        port: 62021,
+        cpuName: 'Transport controller CPU',
+        availableThreads: 12,
+        threads: '2n',
+        minimumThreadCount: 1,
+      },
+      nodes: [],
+      sharedAuthenticationKey: 'a'.repeat(64),
+    });
+    writeFileSync(marker, `${controllerPath}\n`, { mode: 0o600 });
+
+    const doubledMarker = marker.replaceAll('\\', '\\\\');
+    const doubledArguments = [
+      '--distributed-node-thread-policy',
+      '--active-config-marker',
+      doubledMarker,
+      '--json',
+    ];
+    const directEnvironment = { ...process.env };
+    delete directEnvironment.npm_config_user_agent;
+    delete directEnvironment.npm_execpath;
+    delete directEnvironment.npm_lifecycle_event;
+    const pnpmEnvironment = {
+      ...directEnvironment,
+      npm_config_user_agent: 'pnpm/10.24.0 npm/? node/v24.19.0 win32 x64',
+      npm_lifecycle_event: 'validate:development',
+    };
+    const restored = runCli(doubledArguments, {
+      env: pnpmEnvironment,
+    });
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.deepEqual(JSON.parse(restored.stdout), { nodes: [] });
+
+    const direct = runCli(doubledArguments, { env: directEnvironment });
+    assert.equal(direct.status, 1);
+    assert.match(direct.stderr, /absolute canonical file path/);
+
+    const partlyDoubledMarker = marker.replace('\\', '\\\\');
+    const rejected = runCli(
+      [
+        '--distributed-node-thread-policy',
+        '--active-config-marker',
+        partlyDoubledMarker,
+        '--json',
+      ],
+      { env: pnpmEnvironment }
+    );
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /absolute canonical file path/);
+  }
+);
 
 test('node service requires explicit application bindings and never infers a repository', (t) => {
   const paths = fixture();
