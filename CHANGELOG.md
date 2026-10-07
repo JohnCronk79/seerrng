@@ -182,6 +182,41 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.54.0](https://github.com/snapetech/seerrng/compare/v3.53.0..v3.54.0) - 2026-10-07
+
+### User-facing changes
+
+#### Added
+
+- **Bookshelf:** SeerrNG can now search, request, and track ReadMeABook audiobooks, sync a user's Hardcover to-read shelf, and show configurable book and audiobook rows on Discover. Swipe can use favorites or rated library items, and admins can create expiring, single-use sign-in links.
+
+#### Fixed
+
+- **Lidarr:** Lidarr scans now retrieve albums one artist at a time, so large libraries can sync without downloading the entire album collection in one oversized response.
+- **Users:** Creating a local user with a password setup link now renders and sends the email successfully, even when the new account has not yet been reloaded from the database.
+
+#### Security
+
+- **Integrations:** Configured audiobook, music, tuner, downloader, and AI integrations now validate request URLs and block redirects before sending credentials. Dependencies with available security fixes have also been updated; no operator action is required.
+
+### 🚀 Features
+- Add ReadMeABook and per-user book integration - ([f72d01b](https://github.com/snapetech/seerrng/commit/f72d01b87f76f962dd03da6ad2d4a530d8229edd))
+
+### 🐛 Bug Fixes
+- *(docs)* Escape MDX placeholders in maintainer docs - ([1f5f88c](https://github.com/snapetech/seerrng/commit/1f5f88cf37eb57bd70bf9cb69a1e348210108ea3))
+- *(security)* Harden configured outbound integrations - ([6ce6e4c](https://github.com/snapetech/seerrng/commit/6ce6e4cd23b3765a9fc885fc64dadb9446334de7))
+- Resolve user setup and large Lidarr scan failures - ([e2e85db](https://github.com/snapetech/seerrng/commit/e2e85db567d427c09897ba7190dbb48267c76979))
+- Sequence phase 7 migrations after theme adoption - ([2832854](https://github.com/snapetech/seerrng/commit/2832854838e34d696b45732eeafe2ab8dbbf4542))
+
+### 📖 Documentation
+- Allow maintainer-approved AI contributions - ([4e279d3](https://github.com/snapetech/seerrng/commit/4e279d3b43baf5a2a26e49b9a32bae8273913fb8))
+- Record full phase 7 validation outcome - ([c075117](https://github.com/snapetech/seerrng/commit/c075117220bf2cb04e09da602f7f82e5fdd97faa))
+- Record current-main phase 7 handoff - ([ff9295f](https://github.com/snapetech/seerrng/commit/ff9295f58b2964d1897579e29a486b16fb5fee5b))
+- Record final phase 7 validation checkpoint - ([bb8d853](https://github.com/snapetech/seerrng/commit/bb8d853ee163fb735d8a08ebad85f12abb646946))
+- Record phase 7 integration checkpoint - ([b553669](https://github.com/snapetech/seerrng/commit/b553669523cd5cb3ab65f368719e61cb22a03cc6))
+
 ## [3.53.0](https://github.com/snapetech/seerrng/compare/v3.52.1..v3.53.0) - 2026-10-07
 
 ### User-facing changes
