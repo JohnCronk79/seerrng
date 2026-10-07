@@ -62,12 +62,15 @@ metadata regression test, migration test, and release-note fragment.
   confirmed those host-tool differences; Ubuntu CI is the acceptance run for
   this lane.
 - Main Cypress CI on `cee6572f` and `cde107d0` each ran 43 specs (185 tests):
-  152 passed, 1 failed, and 32 were pending. Both failed when `#prowlarr` was
-  absent within the default four-second DOM timeout after the mocked settings
-  request returned HTTP 200 with the expected body. The follow-up raises that
-  DOM wait to ten seconds while retaining the explicit response-body assertion;
-  the next main-branch Cypress run must pass before this retry is considered
-  verified.
+  152 passed, 1 failed, and 32 were pending. The failure was caused by the
+  catch-all settings mock returning `[]` for unrelated settings APIs whose
+  responses are objects, including download-client settings. Those malformed
+  fixtures caused client-side `TypeError`s when settings components accessed
+  missing array fields, replacing the service page with Next.js's error page
+  before `#prowlarr` could be found. The test now supplies the download-client
+  object and passes other settings APIs through to their real handlers. The
+  focused spec passed 1/1; the full local Cypress run passed 43 specs (153
+  passed, 32 pending, 0 failed).
 - The main image scan flagged the published production versions of `sharp`,
   `source-map-js`, and `proxy-addr`. The dependency pins and lockfile now use
   their patched releases. `pnpm audit --prod` reports no known vulnerabilities;
