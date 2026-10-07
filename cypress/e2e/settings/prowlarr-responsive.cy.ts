@@ -61,6 +61,13 @@ describe('Prowlarr settings on a short mobile screen', () => {
             },
           },
         });
+      } else if (pathname === '/api/v1/settings/download-clients') {
+        request.reply({
+          body: {
+            pollIntervalSeconds: 15,
+            clients: [],
+          },
+        });
       } else if (pathname === '/api/v1/settings/prowlarr') {
         request.alias = 'prowlarrSettings';
         request.reply({ body: prowlarrSettings });
@@ -104,7 +111,8 @@ describe('Prowlarr settings on a short mobile screen', () => {
       } else if (pathname === '/api/v1/settings/reader-delivery/groupings') {
         request.reply({ body: [] });
       } else {
-        request.reply({ body: [] });
+        // Preserve the response contracts for settings this test does not cover.
+        request.continue();
       }
     });
     cy.intercept('GET', '/api/v1/overrideRule', { body: [] });
