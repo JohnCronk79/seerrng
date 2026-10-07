@@ -4159,6 +4159,12 @@
     }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .poster-layout[data-poster-state='loading'] {
+      animation: none;
+    }
+  }
+
   .poster-layout [data-poster-region='overlay'] {
     border-radius: inherit;
   }
@@ -7112,6 +7118,8 @@
     bottom: calc(1rem + env(safe-area-inset-bottom));
     z-index: 1;
     max-width: min(32rem, calc(100vw - 2rem));
+    overflow: hidden;
+    text-overflow: ellipsis;
     overflow-wrap: anywhere;
     text-align: right;
     filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.95))
