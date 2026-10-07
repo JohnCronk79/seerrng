@@ -1,4 +1,4 @@
-import TunerrAPI, {
+import {
   TunerrError,
   type TunerrRecordingRule,
   type TunerrRuleHistoryMatch,
@@ -14,6 +14,10 @@ import {
   guideIndex,
   normalizeGuideTitle,
 } from '@server/lib/liveTv/guideIndex';
+import {
+  createLiveTvProvider,
+  type LiveTvProvider,
+} from '@server/lib/liveTv/provider';
 import { Permission } from '@server/lib/permissions';
 import { getSettings, type TunerrSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -153,9 +157,9 @@ export interface CreateRecordingInput {
   tmdbId?: number;
 }
 
-const apiFor = () => new TunerrAPI(getSettings().tunerr);
+const apiFor = (): LiveTvProvider => createLiveTvProvider(getSettings().tunerr);
 
-const ensureTunerrSupportsRules = async (api: TunerrAPI) => {
+const ensureTunerrSupportsRules = async (api: LiveTvProvider) => {
   const ruleset = await api.getRules();
   const missing = api.missingFeatures(ruleset);
   if (missing.length > 0) {

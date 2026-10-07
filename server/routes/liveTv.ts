@@ -1,4 +1,4 @@
-import TunerrAPI, { TunerrError } from '@server/api/tunerr';
+import { TunerrError } from '@server/api/tunerr';
 import { getRepository } from '@server/datasource';
 import RecordingRequest, {
   ACTIVE_RECORDING_STATUSES,
@@ -8,6 +8,7 @@ import {
   findAiringsInSnapshot,
   guideIndex,
 } from '@server/lib/liveTv/guideIndex';
+import { createLiveTvProvider } from '@server/lib/liveTv/provider';
 import {
   cancelRecording,
   type CreateRecordingInput,
@@ -274,7 +275,9 @@ liveTvRoutes.get('/sports/teams', async (_req, res) => {
     return res.status(200).json({ configured: false, teams: [] });
   }
   try {
-    const report = await new TunerrAPI(getSettings().tunerr).getSportsReport();
+    const report = await createLiveTvProvider(
+      getSettings().tunerr
+    ).getSportsReport();
     return res.status(200).json({
       configured: true,
       enabled: report.enabled !== false,

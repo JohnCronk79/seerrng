@@ -1,4 +1,4 @@
-import TunerrAPI, { type TunerrSportsReport } from '@server/api/tunerr';
+import type { TunerrSportsReport } from '@server/api/tunerr';
 import { getRepository } from '@server/datasource';
 import RecordingRequest from '@server/entity/RecordingRequest';
 import SportsFollow from '@server/entity/SportsFollow';
@@ -8,6 +8,7 @@ import {
   guideIndex,
   type GuideSnapshot,
 } from '@server/lib/liveTv/guideIndex';
+import { createLiveTvProvider } from '@server/lib/liveTv/provider';
 import {
   createRecordingRequest,
   isTunerrConfigured,
@@ -116,7 +117,9 @@ export const syncSportsFollows = async (): Promise<void> => {
     if (follows.length === 0) return;
     const snapshot = await guideIndex.get();
     if (!snapshot) return;
-    const report = await new TunerrAPI(getSettings().tunerr).getSportsReport();
+    const report = await createLiveTvProvider(
+      getSettings().tunerr
+    ).getSportsReport();
     const now = new Date();
 
     const byUser = new Map<number, SportsFollow[]>();

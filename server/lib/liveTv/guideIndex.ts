@@ -1,4 +1,5 @@
-import TunerrAPI, { MAX_GUIDE_BYTES } from '@server/api/tunerr';
+import { MAX_GUIDE_BYTES } from '@server/api/tunerr';
+import { createLiveTvProvider } from '@server/lib/liveTv/provider';
 import {
   DEFAULT_XMLTV_LIMITS,
   type GuideProgramme,
@@ -246,7 +247,7 @@ class GuideIndex {
     if (this.refreshing) return this.refreshing;
     this.refreshing = (async () => {
       try {
-        const stream = await new TunerrAPI(settings).openGuide();
+        const stream = await createLiveTvProvider(settings).openGuide();
         const snapshot = await readGuideStream(
           stream,
           new Date(),
