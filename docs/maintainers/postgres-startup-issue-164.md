@@ -2,9 +2,9 @@
 
 ## Recovery identity
 
-- Base: `116e3a447364a2b528cad10d99391cb6ee19cb8c` (`origin/main`).
-- Issue fix commit: `44660cbacb8531d67187cd163d29b679c5947f8f`.
-- Supporting packaging-fixture test commit: `baf51b28`.
+- Base: `a9dd1b5a64cd9ccabe59da198b0524a7886bb708` (`origin/main`).
+- Issue fix commit: `0980bc5d1db052f566cd97b46b98a89149a34952`.
+- Supporting packaging-fixture test commit: `e87fef1e4374eadf0b3e15667eb57f44ccc5a6ff`.
 - Upstream issue: https://github.com/snapetech/seerrng/issues/164.
 - Pre-audit recovery archive: `/tmp/seerrng-issue164-preaudit-20261006.tar`.
 
@@ -23,19 +23,22 @@ metadata regression test, migration test, and release-note fragment.
 
 ## Verification
 
-- Full Linux `pnpm test:ci`: 487 files passed, 1 skipped; 3,375 tests passed,
+- Before rebasing, full Linux `pnpm test:ci`: 487 files passed, 1 skipped; 3,375 tests passed,
   4 skipped; 0 failures. The four skips were PostgreSQL-gated tests.
-- Focused PostgreSQL 18 Node run: 5 passed, 0 failed, 0 skipped. This included
+- Before rebasing, focused PostgreSQL 18 Node run: 5 passed, 0 failed, 0 skipped. This included
   all four database-gated migration tests and the issue migration query test.
 - Focused Linux Vitest metadata regression: 1 passed.
+- On the rebased candidate, the PostgreSQL entity-metadata regression passed
+  (1/1), and the PostgreSQL timestamp migration plus SQLite library migration
+  tests passed (3/3) with a workspace-local temporary directory.
 - Disposable PostgreSQL 18 migration round-trip (before rebase, same issue
   commit contents): all nine columns converted up and down, preserving values
   under an `America/Edmonton` session timezone.
-- Linux `pnpm build`: passed. Translation extraction, 569-file current-batch
+- Before rebasing, Linux `pnpm build`: passed. Translation extraction, 569-file current-batch
   contract, shared-style checks, 68 button/geometry tests, server compilation,
   Next.js compilation, and all 113 static pages completed.
 - Release-note preview rendered the PostgreSQL startup fix note.
-- `pnpm validate:development` on Linux ARM64 passed formatting, lint, types,
+- Before rebasing, `pnpm validate:development` on Linux ARM64 passed formatting, lint, types,
   Vitest (100 files; 453 tests), native TypeScript (2,912 passed, 4 skipped),
   and native JavaScript (485 tests). It failed one tooling test because its
   archive fixture assumed x64. The corrected fixture now passes 7/7 locally;
@@ -43,9 +46,20 @@ metadata regression test, migration test, and release-note fragment.
 - A full `pnpm test:node` attempt was stopped after 9m15s while compiling an
   unrelated Jellyfin suite. No failure was reported; that full lane is not
   counted as passed. Focused relevant Node tests passed separately.
-- The reviewed combined validation engine was not run. Historical
-  `pnpm validate:development` attempts on the prior base had platform/tooling
-  failures; they are not acceptance evidence for this candidate.
+- On the rebased candidate, `pnpm validate:development` on macOS 27 ARM64
+  passed translation and shared-style checks, formatting, lint, server and
+  client type checks, Vitest (104 files; 470 tests), and the native TypeScript
+  and JavaScript lanes. It stopped in platform-aware tooling because several
+  existing shell tests require Linux tools or Bash 5 behavior (`python`, GNU
+  `base64`, `find -printf`, `stat -c`, and `mapfile`). A focused tooling rerun
+  confirmed those host-tool differences; Ubuntu CI is the acceptance run for
+  this lane.
+- Initial PR Cypress CI ran 43 specs (185 tests): 152 passed, 1 failed, and
+  32 were pending. The failure was the Prowlarr settings heading being absent
+  when the test queried it. The component renders after its settings response;
+  the Cypress test now aliases and waits for that mocked request, then checks
+  the section is visible before continuing its existing interaction checks.
+  The updated Cypress test will rerun in the main-branch workflow after push.
 - No live database, account, or provider was used.
 
 ## Release
