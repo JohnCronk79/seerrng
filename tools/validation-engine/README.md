@@ -101,6 +101,11 @@ allowlist. The secret is canonical base64 containing at least 32 random bytes;
 it does not belong in the worker config, command line, logs, repository, or
 native test environment. Authenticated messages tolerate at most five seconds
 of clock skew, so participating machines must keep their clocks synchronized.
+Worker probes retain the short default authentication window. Task requests
+clamp their authentication window between the 30-second default and a
+five-minute cap, based on the controller timeout, so an admitted saturated
+worker can queue them without turning a long execution timeout into an
+unbounded replay window.
 
 Use `--help` for the exact bounded command forms. Mode 3 accepts exactly one
 `--app`. The worker listens on the port in its configured HTTPS address and

@@ -14,7 +14,9 @@ import {
 } from './distributed-native-adapter.mjs';
 import {
   createDistributedTrustedReplayCache,
+  DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
   DISTRIBUTED_TRUSTED_TRANSPORT_PATH,
+  MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS,
   requestDistributedTrustedJson,
   startDistributedTrustedServer,
 } from './distributed-trusted-transport.mjs';
@@ -1252,6 +1254,13 @@ function createDistributedControllerSession({
         kind,
         body,
         timeoutMs: timeout,
+        ttlMs:
+          kind === DISTRIBUTED_TASK_KIND
+            ? Math.min(
+                Math.max(DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS, timeout),
+                MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS
+              )
+            : DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
         signal,
         replayCache,
       })

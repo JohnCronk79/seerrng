@@ -14,7 +14,7 @@ import { isIP } from 'node:net';
 export const DISTRIBUTED_TRUSTED_TRANSPORT_SCHEMA =
   'seerrng-distributed-trusted-transport/v1';
 export const DISTRIBUTED_TRUSTED_TRANSPORT_PATH = '/engine/v1';
-export const MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS = 60_000;
+export const MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS = 5 * 60_000;
 export const DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS = 30_000;
 export const MAX_DISTRIBUTED_TRUSTED_CLOCK_SKEW_MS = 5_000;
 export const DEFAULT_DISTRIBUTED_TRUSTED_CLOCK_SKEW_MS = 5_000;

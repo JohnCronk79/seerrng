@@ -37,7 +37,11 @@ import {
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
-import { distributedTrustedCertificateSha256 } from '../tools/validation-engine/runtime/distributed-trusted-transport.mjs';
+import {
+  DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
+  distributedTrustedCertificateSha256,
+  MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS,
+} from '../tools/validation-engine/runtime/distributed-trusted-transport.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { createDistributedWorkerConfig } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
 
@@ -1393,6 +1397,110 @@ test('controller task path proves worker identity and uses the same local worker
   assert.deepEqual(result.result.result, createNativeResult());
 });
 
+test('remote controller keeps probes short-lived and bounds queued task admission freshness', async () => {
+  const configValue = config({ controllerWorkerId: null });
+  const calls = [];
+  const runId = 'run-controller-auth-window';
+  const result = await runDistributedControllerTask({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerId: 'worker-one',
+    applicationId,
+    taskId,
+    runId,
+    secret: Buffer.alloc(32, 0x5a),
+    timeoutMs: 30 * 60_000,
+    catalogFactory: catalog,
+    requestFactory: request,
+    requestJson: async (options) => {
+      calls.push({ kind: options.kind, ttlMs: options.ttlMs });
+      if (options.kind === DISTRIBUTED_PROBE_KIND)
+        return {
+          body: scheduleWorkerReport({
+            configValue,
+            workerId: 'worker-one',
+            selectedTaskIds: [taskId],
+            capacity: 2,
+          }),
+        };
+      assert.equal(options.kind, DISTRIBUTED_TASK_KIND);
+      return {
+        body: {
+          schema: 'seerrng-distributed-task-result/v1',
+          workerId: 'worker-one',
+          instanceId: 'worker-one-session',
+          runId,
+          applicationId,
+          taskId,
+          status: 'passed',
+          startedAt: '2026-10-06T00:00:00.000Z',
+          wallMs: 3,
+          result: createNativeResult(),
+        },
+      };
+    },
+  });
+  assert.equal(result.result.status, 'passed');
+
+  const shortResult = await runDistributedControllerTask({
+    config: configValue,
+    applications: [{ id: applicationId, root }],
+    workerId: 'worker-one',
+    applicationId,
+    taskId,
+    runId,
+    secret: Buffer.alloc(32, 0x5a),
+    timeoutMs: 5_000,
+    catalogFactory: catalog,
+    requestFactory: request,
+    requestJson: async (options) => {
+      calls.push({ kind: options.kind, ttlMs: options.ttlMs });
+      if (options.kind === DISTRIBUTED_PROBE_KIND)
+        return {
+          body: scheduleWorkerReport({
+            configValue,
+            workerId: 'worker-one',
+            selectedTaskIds: [taskId],
+            capacity: 2,
+          }),
+        };
+      return {
+        body: {
+          schema: 'seerrng-distributed-task-result/v1',
+          workerId: 'worker-one',
+          instanceId: 'worker-one-session',
+          runId,
+          applicationId,
+          taskId,
+          status: 'passed',
+          startedAt: '2026-10-06T00:00:00.000Z',
+          wallMs: 3,
+          result: createNativeResult(),
+        },
+      };
+    },
+  });
+  assert.equal(shortResult.result.status, 'passed');
+  assert.deepEqual(calls, [
+    {
+      kind: DISTRIBUTED_PROBE_KIND,
+      ttlMs: DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
+    },
+    {
+      kind: DISTRIBUTED_TASK_KIND,
+      ttlMs: MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS,
+    },
+    {
+      kind: DISTRIBUTED_PROBE_KIND,
+      ttlMs: DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
+    },
+    {
+      kind: DISTRIBUTED_TASK_KIND,
+      ttlMs: DEFAULT_DISTRIBUTED_TRUSTED_AUTH_TTL_MS,
+    },
+  ]);
+});
+
 test('controller rejects a broader worker catalog before one-task dispatch', async () => {
   const allowedTaskIds = [taskId, secondTaskId];
   let executions = 0;
@@ -1558,30 +1666,37 @@ test('controller validates worker report evidence before dispatch', async (t) =>
 });
 
 test('controller-local timeout aborts the task execution signal', async () => {
+  // AbortSignal.timeout() deliberately uses an unref'ed timer. Keep this
+  // isolated test process alive long enough to observe the timeout itself.
+  const keepAlive = setTimeout(() => {}, 1_000);
   const observedAbort = deferred();
-  const worker = runtime({
-    taskExecutor: async ({ signal }) => {
-      const reason = await abortReason(signal);
-      observedAbort.resolve(reason);
-      throw createTaskFailureError({ aborted: true, timedOut: true });
-    },
-  });
-  const result = await runDistributedControllerTask({
-    config: config(),
-    applications: [{ id: applicationId, root }],
-    workerId: 'worker-one',
-    applicationId,
-    taskId,
-    runId: 'run-local-timeout',
-    timeoutMs: 25,
-    localRuntime: worker,
-    catalogFactory: catalog,
-    requestFactory: request,
-  });
-  assert.equal((await observedAbort.promise).name, 'TimeoutError');
-  assert.equal(result.result.status, 'failed');
-  assert.equal(result.result.failure.reason, 'timed-out');
-  assert.equal(result.result.failure.receipt.timedOut, true);
+  try {
+    const worker = runtime({
+      taskExecutor: async ({ signal }) => {
+        const reason = await abortReason(signal);
+        observedAbort.resolve(reason);
+        throw createTaskFailureError({ aborted: true, timedOut: true });
+      },
+    });
+    const result = await runDistributedControllerTask({
+      config: config(),
+      applications: [{ id: applicationId, root }],
+      workerId: 'worker-one',
+      applicationId,
+      taskId,
+      runId: 'run-local-timeout',
+      timeoutMs: 25,
+      localRuntime: worker,
+      catalogFactory: catalog,
+      requestFactory: request,
+    });
+    assert.equal((await observedAbort.promise).name, 'TimeoutError');
+    assert.equal(result.result.status, 'failed');
+    assert.equal(result.result.failure.reason, 'timed-out');
+    assert.equal(result.result.failure.receipt.timedOut, true);
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
 
 test('drain aborts and waits for in-flight work', async () => {

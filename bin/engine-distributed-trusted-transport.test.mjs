@@ -6,6 +6,7 @@ import {
   createDistributedTrustedReplayCache,
   DEFAULT_DISTRIBUTED_TRUSTED_CLOCK_SKEW_MS,
   distributedTrustedCertificateSha256,
+  MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS,
   MAX_DISTRIBUTED_TRUSTED_CLOCK_SKEW_MS,
   requestDistributedTrustedJson,
   sealDistributedTrustedEnvelope,
@@ -365,6 +366,44 @@ test('clock-skew allowance enforces exact boundaries and retains replay state', 
       /clock-skew allowance/
     );
   }
+});
+
+test('authentication freshness accepts the bounded worker-admission window only', () => {
+  const now = 2_000_000;
+  const bounded = sealDistributedTrustedEnvelope({
+    secret,
+    senderId: clientId,
+    recipientId: serverId,
+    kind: 'fleet.probe',
+    requestId: 'request-auth-window-boundary',
+    nonce: 'nonce-auth-window-boundary',
+    timestampMs: now,
+    ttlMs: MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS,
+    body: { boundary: 'maximum' },
+  });
+  assert.equal(
+    verifyDistributedTrustedEnvelope(bounded, {
+      secret,
+      replayCache: createDistributedTrustedReplayCache(),
+      nowMs: now,
+    }).body.boundary,
+    'maximum'
+  );
+  assert.throws(
+    () =>
+      sealDistributedTrustedEnvelope({
+        secret,
+        senderId: clientId,
+        recipientId: serverId,
+        kind: 'fleet.probe',
+        requestId: 'request-auth-window-outside',
+        nonce: 'nonce-auth-window-outside',
+        timestampMs: now,
+        ttlMs: MAX_DISTRIBUTED_TRUSTED_AUTH_WINDOW_MS + 1,
+        body: { boundary: 'outside' },
+      }),
+    /authentication TTL/
+  );
 });
 
 test('real HTTPS transport tolerates bounded clock skew in both directions', async () => {
