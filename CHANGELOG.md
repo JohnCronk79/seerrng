@@ -180,6 +180,122 @@ that are not called out here.
 
 # Changelog
 
+# Changelog
+
+## [3.53.0](https://github.com/snapetech/seerrng/compare/v3.52.1..v3.53.0) - 2026-10-07
+
+### User-facing changes
+
+#### Added
+
+- **Notifications:** Apprise is now a notification agent. An administrator can route Seerr notifications through an Apprise API server to any service Apprise supports, while the destination URLs stay on the Apprise server.
+  - **Action required:** Optional. To send through Apprise, add an Apprise API server and a saved configuration key under Settings → Notifications → Apprise.
+- **Recordings:** You can now follow sports teams on the Recordings page. SeerrNG requests a recording of each upcoming game that IPTV Tunerr finds in the guide, using the usual approval rules.
+  - **Action required:** Optional. Needs IPTV Tunerr sports automation and a connected Tunerr.
+- **Media:** Administrators can now connect Jellystat to show lifetime play counts and playback time on titles linked to a Jellyfin item. The connection is read-only.
+  - **Action required:** Optional. To show Jellystat play counts, add the Jellystat server and an API key under Settings → Services → Jellystat Statistics.
+- **Downloads:** Download progress can now update live. Connect the torrent clients your *arr services use, and Request Status shows current speed, seeds, and progress while you watch, instead of waiting for the next Download Sync. SeerrNG only reads the clients.
+  - **Action required:** Optional. To enable it, add your qBittorrent, Transmission, Deluge, or TorrentNG client under Settings → Services → Live Download Progress.
+- **Recordings:** Movie and series pages now show when a title airs on Live TV through IPTV Tunerr. People can request a recording of one airing or every airing, with the usual approval rules, and follow it under Recordings.
+  - **Action required:** Optional. Connect IPTV Tunerr under Settings → Services → Live TV (IPTV Tunerr); recording needs a Tunerr version with rule-based recording.
+- **Comics:** Comic search now falls back to Metron when ComicVine search is unavailable or returns an error. Results come only from series that have a ComicVine ID, so requests keep working with the same identifiers. Comic details still require ComicVine.
+  - **Action required:** Optional. To use Metron, create an API token at metron.cloud and enter it under Settings → General → Metron API Token.
+- **Music:** Navidrome is now an availability source for music. SeerrNG reads your Navidrome library on a daily schedule and marks albums it finds as available, matched by MusicBrainz ID. The connection is read-only.
+  - **Action required:** Optional. To mark albums from Navidrome as available, add the server under Settings → Services → Navidrome Availability.
+- **Software:** Available ROM requests now show a DAT Verified badge when ROMarrNG confirms the delivered files match your loaded DATs, and say how many matched when only some did.
+- **Software:** ROM requests now show **In RomM Library** once ROMarrNG has placed the finished file in a library folder RomM reads. The badge means the file is in place. RomM may still need to scan before the game appears.
+- **Downloads:** Live download progress now supports rTorrent. SeerrNG reads speed, progress, and peer counts from rTorrent's XML-RPC interface in one request per refresh, and it never adds, changes, or removes torrents.
+  - **Action required:** Optional. To read progress from rTorrent, add it under Settings → Services → Live Download Progress and enter its XML-RPC endpoint, which is usually a ruTorrent /RPC2 path.
+- **Downloads:** Live download progress now supports SABnzbd. Usenet downloads show progress, speed, and time remaining while you watch them. SeerrNG reads the queue and never changes it. SABnzbd reports one overall speed, so that speed appears on the first item that is downloading.
+  - **Action required:** Optional. To read progress from SABnzbd, add it under Settings → Services → Live Download Progress with its API key.
+- **Soulseek:** SeerrNG can now request single tracks from Soulseek through slskdN, including playlist tracks with no album match, let managers fix albums slskdN flags as transcoded or incomplete, and identify songs with SongID.
+  - **Action required:** Optional. Connect slskdN under Settings → Services → Soulseek (slskdN) with a read-write API key.
+- **Discovery:** New Swipe page: swipe right to request, left to pass, or up if you have already seen it, through movies, series, and books picked from your requests and swipes. Administrators can optionally let Claude order each deck and explain the picks.
+- **Discovery:** Swipe AI ordering now also works with OpenAI and OpenAI-compatible servers such as Ollama and LM Studio, so decks can be ordered by a local model without sending anything outside your network.
+  - **Action required:** Optional. Choose OpenAI or compatible under Settings → Services → Swipe Discovery.
+
+#### Changed
+
+- **Comics:** The comics guide now explains when BackIssue suits reading and shared household libraries, and when Mylar3 or Kapowarr suit automated downloads.
+- **Downloads:** Administrators now see which download client is handling each download, such as a ChaptarrNG direct download or a torrent client, beside its queue status.
+- **Themes:** New installations and upgrades adopt the SeerrNG theme once, resetting older active theme customizations. After signing in, users can choose another theme or customize it; their new account preference survives future logins and upgrades.
+
+#### Fixed
+
+- **Downloads:** Live torrent progress now reaches regular users through private subscription IDs, and stale figures clear when a client stops reporting a torrent.
+- **Database:** PostgreSQL startup now accepts the reader delivery and private game library date columns, so these features no longer prevent the application from starting.
+
+#### Security
+
+- **Dependencies:** Bumped `sharp`, `source-map-js`, and `proxy-addr` to their patched releases, clearing the CVEs the published container image's vulnerability scan was flagging.
+
+#### Deprecated
+
+- **Distribution:** **Breaking:** SeerrNG no longer publishes or updates its YunoHost package. Existing installations remain on their last published package; operators should move to a supported deployment or maintain package updates independently.
+  - **Action required:** Move existing installations to a supported deployment or arrange independent package maintenance.
+
+### 🚀 Features
+- *(comics)* Add Metron as a comic search fallback - ([7a00f59](https://github.com/snapetech/seerrng/commit/7a00f591e5695958c3dc9a9765ce04cc3be3eab1))
+- *(downloads)* Add SABnzbd live download progress - ([884ae47](https://github.com/snapetech/seerrng/commit/884ae47cfef235f825cf04b8f271767533e26698))
+- *(downloads)* Add rTorrent live download progress - ([048be69](https://github.com/snapetech/seerrng/commit/048be698786a1f1c2d2fc0882e5d679198c53b91))
+- *(media)* Show Jellystat watch activity on Jellyfin titles - ([48e8b29](https://github.com/snapetech/seerrng/commit/48e8b29dc5e37663f42c1351f2fcca9f1296f059))
+- *(music)* Add Navidrome as an availability source - ([2408f86](https://github.com/snapetech/seerrng/commit/2408f86f9213614256e7386aa4aeedcb2b1a73d9))
+- *(notifications)* Add Apprise notification agent - ([b37321c](https://github.com/snapetech/seerrng/commit/b37321cbf1a24f2af24d5bbc20295b525b341dd3))
+- *(software)* Show when ROM files are in a RomM library - ([6e0132e](https://github.com/snapetech/seerrng/commit/6e0132ed45c137a169eb21dd904fbc9e391c3eed))
+- *(test-engine)* Make worker defaults operator-aware - ([8e7d81c](https://github.com/snapetech/seerrng/commit/8e7d81c6429830ce2143bd243977c3c8e220da81))
+- *(ui)* Integrate accepted preview and one-time SeerrNG theme adoption - ([dee61ab](https://github.com/snapetech/seerrng/commit/dee61ab886be2dc37925520fd3f52c8d6ba0048a))
+- Support OpenAI and compatible servers for swipe ordering - ([cb11482](https://github.com/snapetech/seerrng/commit/cb11482dd432bdf86b71a8d7aea14af19d26ffe7))
+- Add the Swipe page for movies, series, and books - ([fbb5a72](https://github.com/snapetech/seerrng/commit/fbb5a727542f4fcda88fb243f691b01a8925ba78))
+- Add swipe discovery decks with optional Claude ranking - ([a10aac5](https://github.com/snapetech/seerrng/commit/a10aac5b7a5e202e28b345c0c6cea78357f22423))
+- Record followed sports teams' games through Tunerr - ([068221d](https://github.com/snapetech/seerrng/commit/068221da5620086a360ac0d9773602096bfb1e0e))
+- Show ROMarrNG DAT verification on available ROM requests - ([d0891b6](https://github.com/snapetech/seerrng/commit/d0891b64f37b4c9bfd915ae94eaaaa1bc9f9df2c))
+- Show the download client handling each download to admins - ([97b17ed](https://github.com/snapetech/seerrng/commit/97b17ed7ac47cf1ec0fcd5212db3776897323cb9))
+- Add Soulseek request, album health, and SongID UI - ([0162d13](https://github.com/snapetech/seerrng/commit/0162d134128c726c02d40f3be26fe0d62045d57a))
+- Add Soulseek track requests, album fixes, and SongID via slskdN - ([3d86958](https://github.com/snapetech/seerrng/commit/3d869585f33d9e814d96c885f0e342f19b6c149e))
+- Add Live TV airing and recording UI - ([782ce5d](https://github.com/snapetech/seerrng/commit/782ce5d72752caaa751e4bd3a0d16a2b6de9211b))
+- Add Live TV recording requests through IPTV Tunerr - ([7e5db5e](https://github.com/snapetech/seerrng/commit/7e5db5ec333178583bd1601196ff4df64dd6b0a8))
+- Add live torrent download progress - ([3af6131](https://github.com/snapetech/seerrng/commit/3af6131285272973733e510989f271f46d974bd7))
+
+### 🐛 Bug Fixes
+- *(db)* Support PostgreSQL private library timestamps - ([0980bc5](https://github.com/snapetech/seerrng/commit/0980bc5d1db052f566cd97b46b98a89149a34952))
+- Patch image CVEs and stabilize Prowlarr test - ([9773903](https://github.com/snapetech/seerrng/commit/9773903dfeff38df87d1232b80548c9213b64436))
+- Deliver live download progress to regular users - ([d6176bd](https://github.com/snapetech/seerrng/commit/d6176bd7c310c3e4bef96a3aa4ac37f039e84b66))
+- Prevent login backdrop title overflow - ([7ef38f1](https://github.com/snapetech/seerrng/commit/7ef38f1750e63917f7beae8c441ad4c4dc630538))
+
+### 📖 Documentation
+- *(downloads)* Document rTorrent and TorrentNG client choices - ([4cecbf9](https://github.com/snapetech/seerrng/commit/4cecbf9f42821d2216e0fd52ecb9a7034a03d0d3))
+- *(maintainers)* Record PostgreSQL issue 164 verification - ([749b3b5](https://github.com/snapetech/seerrng/commit/749b3b541f54f5f3a5edc7f2e8ad00f6118cfe27))
+- *(maintainers)* Update market research status after implementation - ([1305bde](https://github.com/snapetech/seerrng/commit/1305bdefe82a8fbc17dd2116317563f38d83a152))
+- *(maintainers)* Record market research and implementation status - ([9e9f7e6](https://github.com/snapetech/seerrng/commit/9e9f7e6816cdae338ebe3eebcc34564e10aa691f))
+- Record Prowlarr mock failure root cause - ([0bbba07](https://github.com/snapetech/seerrng/commit/0bbba079ed2a75e471b2b6cd033d56a78ae34ab9))
+- Plan remaining ReadMeABook features - ([03d8d34](https://github.com/snapetech/seerrng/commit/03d8d34cbcea3f1d50d239fcbd407d51e0301258))
+- Propose fastest-source routing design - ([c037cb7](https://github.com/snapetech/seerrng/commit/c037cb764de5a4248265344e1e97003d14a5af70))
+- Record Tunerr recording-rule fork progress - ([c3e222f](https://github.com/snapetech/seerrng/commit/c3e222f295d24ab73f5551634e5cd2c38a590af6))
+- Record PR 162 integration validation - ([59c2733](https://github.com/snapetech/seerrng/commit/59c2733c15155a0be7a861fe5ec17ef3ab863129))
+- Remove named visual acceptance gate - ([b46ebfd](https://github.com/snapetech/seerrng/commit/b46ebfdc6c5e7d7f483f863523f179c1cb27735e))
+
+### 🚜 Refactor
+- *(livetv)* Route Live TV through a provider interface - ([7e944c3](https://github.com/snapetech/seerrng/commit/7e944c3f53d632f92485d856c0eb6fa30f8bdafe))
+
+### 🧪 Testing
+- *(cypress)* Preserve settings API response shapes - ([714db49](https://github.com/snapetech/seerrng/commit/714db4917a3ddcec17d83c94a27134d81bbe76a8))
+- *(cypress)* Return explicit Prowlarr response bodies - ([cde107d](https://github.com/snapetech/seerrng/commit/cde107d07819ae46f72674e58049806e372bacd6))
+- *(cypress)* Wait for Prowlarr settings load - ([cee6572](https://github.com/snapetech/seerrng/commit/cee6572ff86c9765d9ad89dfaaa5ea12626885a2))
+- *(release)* Make archive fixtures platform-independent - ([e87fef1](https://github.com/snapetech/seerrng/commit/e87fef1e4374eadf0b3e15667eb57f44ccc5a6ff))
+- *(theme)* Persist palette fixtures through account settings - ([8a51821](https://github.com/snapetech/seerrng/commit/8a51821ee17d21e8d2fb5edca3cca2af1b97fc7d))
+- *(ui)* Remove unused provider notice helper - ([c060df0](https://github.com/snapetech/seerrng/commit/c060df0870655421dd1b40f96d3d93fb564c9658))
+
+### ⚙️ Miscellaneous Tasks
+- *(yunohost)* Align package with v3.52.1 - ([c1c66f6](https://github.com/snapetech/seerrng/commit/c1c66f6d3d0bf82b4474b042d5816f4f744d8acc))
+- Stop publishing the YunoHost package - ([0fded66](https://github.com/snapetech/seerrng/commit/0fded66830104a30c97398b09300cb89424b038f))
+- Merge main into theme adoption preview - ([8c341f4](https://github.com/snapetech/seerrng/commit/8c341f4c1d38988b3de1f5775954cbca18e25596))
+- Preserve accepted preview integration checkpoint - ([d933813](https://github.com/snapetech/seerrng/commit/d9338138acf269a37018d2fedc7b7daa8dce2d2d))
+
+
+## New Contributors ❤️
+* @kpmckellar made their first contribution
+* @codex made their first contribution
+
 ## [3.52.1](https://github.com/snapetech/seerrng/compare/v3.52.0..v3.52.1) - 2026-10-05
 
 ### User-facing changes
