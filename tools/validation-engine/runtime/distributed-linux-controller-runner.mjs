@@ -16,6 +16,7 @@ import {
 } from './distributed-linux-config.mjs';
 import { detectLinuxHostProfile } from './distributed-linux-host-profile.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
+import { verifyDistributedLinuxNodeAttestation } from './distributed-linux-node-attestation.mjs';
 import {
   DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
   DISTRIBUTED_LINUX_NODE_PROBE_REQUEST_SCHEMA,
@@ -227,8 +228,8 @@ function createBridgeProbe({
   });
 }
 
-function applicationEvidence(node, catalog) {
-  return deepFreeze({
+function applicationEvidence(node, catalog, nodeAttestation = null) {
+  const evidence = {
     nodeId: node.nodeId,
     computerName: node.computerName,
     ipAddress: node.ipAddress,
@@ -241,7 +242,9 @@ function applicationEvidence(node, catalog) {
     catalogSha256: catalog.catalogSha256,
     inventorySha256: catalog.inventorySha256,
     taskCount: catalog.tasks.length,
-  });
+  };
+  if (nodeAttestation !== null) evidence.nodeAttestation = nodeAttestation;
+  return deepFreeze(evidence);
 }
 
 function applicationAdmissionNode(node, nodeNumber) {
@@ -262,13 +265,14 @@ function normalizeRemoteProbeReport(
 ) {
   exactKeys(
     value,
-    ['applications', 'node', 'requestId', 'schema'],
+    ['applications', 'attestation', 'node', 'requestId', 'schema'],
     `probe report for node-${configuredNode.nodeNumber}`
   );
   if (value.schema !== DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA)
     throw new Error('Remote node probe report uses an unsupported schema');
   if (identifier(value.requestId, 'remote probe request ID') !== requestId)
     throw new Error('Remote node probe request binding is invalid');
+  const attestation = verifyDistributedLinuxNodeAttestation(value.attestation);
   exactKeys(
     value.node,
     [
@@ -340,6 +344,7 @@ function normalizeRemoteProbeReport(
       );
     return deepFreeze({
       node,
+      attestation,
       application: null,
       exclusion: {
         ...applicationAdmissionNode(node, configuredNode.nodeNumber),
@@ -397,7 +402,7 @@ function normalizeRemoteProbeReport(
     throw new Error(
       `Remote ${expectedNodeId} application identity differs from the controller catalog`
     );
-  return deepFreeze({ node, application: normalizedApplication });
+  return deepFreeze({ node, attestation, application: normalizedApplication });
 }
 
 function connectivityFailureCode(error) {
@@ -419,7 +424,7 @@ function scheduleExpectations(schedule) {
 
 function normalizeRemoteTaskReport(
   value,
-  { requestId, nodeId, applicationId, catalog, taskId }
+  { requestId, nodeId, applicationId, catalog, taskId, nodeAttestationSha256 }
 ) {
   exactKeys(
     value,
@@ -428,6 +433,7 @@ function normalizeRemoteTaskReport(
       'candidateSha256',
       'catalogSha256',
       'nodeId',
+      'nodeAttestationSha256',
       'requestId',
       'result',
       'schema',
@@ -446,6 +452,10 @@ function normalizeRemoteTaskReport(
       catalog.candidate.candidateSha256 ||
     digest(value.catalogSha256, 'remote task catalog identity') !==
       catalog.catalogSha256 ||
+    digest(
+      value.nodeAttestationSha256,
+      'remote task node attestation identity'
+    ) !== nodeAttestationSha256 ||
     digest(value.taskId, 'remote task identity') !== taskId
   )
     throw new Error('Remote node task report binding is invalid');
@@ -791,9 +801,16 @@ export async function runDistributedLinuxController({
     }
     applicationUsableNodes.push(admissionNode);
     const bridgeProbe = createBridgeProbe({ ...node, catalog });
-    const evidence = applicationEvidence(node, catalog);
+    const evidence = applicationEvidence(node, catalog, normalized.attestation);
     online.push({ node, bridgeProbe, evidence });
-    remoteNodes.set(nodeId, deepFreeze({ configuredNode, node }));
+    remoteNodes.set(
+      nodeId,
+      deepFreeze({
+        configuredNode,
+        node,
+        nodeAttestationSha256: normalized.attestation.attestationSha256,
+      })
+    );
   }
 
   const applicationAdmissionResult = deepFreeze({
@@ -899,6 +916,7 @@ export async function runDistributedLinuxController({
           applicationId,
           catalog,
           taskId: shard.id,
+          nodeAttestationSha256: remote.nodeAttestationSha256,
         });
       }
       const result = await resultVerifier(unverifiedResult, {

@@ -6,7 +6,12 @@ import { resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
-import { createNodeConfig } from '../tools/validation-engine/runtime/distributed-linux-config.mjs';
+import {
+  createNodeConfig,
+  serializeNodeConfig,
+} from '../tools/validation-engine/runtime/distributed-linux-config.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
+import { DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA } from '../tools/validation-engine/runtime/distributed-linux-node-attestation.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
 import {
   DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
@@ -56,6 +61,22 @@ afterEach(async () => {
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function runtimeAttestation(config) {
+  const core = {
+    schema: DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA,
+    activeNodeConfigSha256: sha256(serializeNodeConfig(config)),
+    runnerClosureSha256: sha256('focused-runner-closure'),
+    nodeExecutableSha256: sha256('focused-node-executable'),
+    nodeVersion: 'v24.21.0',
+    platform: 'linux',
+    architecture: 'x64',
+  };
+  return Object.freeze({
+    ...core,
+    attestationSha256: canonicalJsonSha256(core),
+  });
 }
 
 test('parses strict Linux node CLI application bindings without legacy runtime coupling', () => {
@@ -240,6 +261,9 @@ async function startFixture(overrides = {}) {
         calls.push(options);
         return passingResult(catalogs.full, catalogs.selected);
       }),
+    attestationFactory:
+      overrides.attestationFactory ??
+      (async (activeConfig) => runtimeAttestation(activeConfig)),
     ...(Object.hasOwn(overrides, 'withTaskIsolation')
       ? { withTaskIsolation: overrides.withTaskIsolation }
       : {}),
@@ -305,7 +329,7 @@ test('exports bounded schemas and deterministic enrolled identities', () => {
   );
   assert.equal(
     DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
-    'seerrng-distributed-linux-node-probe-report/v2'
+    'seerrng-distributed-linux-node-probe-report/v3'
   );
   assert.equal(
     DISTRIBUTED_LINUX_NODE_TASK_REQUEST_SCHEMA,
@@ -313,7 +337,7 @@ test('exports bounded schemas and deterministic enrolled identities', () => {
   );
   assert.equal(
     DISTRIBUTED_LINUX_NODE_TASK_REPORT_SCHEMA,
-    'seerrng-distributed-linux-node-task-report/v1'
+    'seerrng-distributed-linux-node-task-report/v2'
   );
   assert.equal(MAX_DISTRIBUTED_LINUX_NODE_APPLICATIONS, 64);
   assert.equal(distributedLinuxNodeId('01'), 'node-01');
@@ -419,6 +443,7 @@ test('real localhost probe and task bind identity, clean catalog shard, and seal
       cpuName: CPU_NAME,
       availableThreads: AVAILABLE_THREADS,
     },
+    attestation: runtimeAttestation(config),
     applications: [
       {
         applicationId: APPLICATION_ID,
@@ -449,6 +474,10 @@ test('real localhost probe and task bind identity, clean catalog shard, and seal
   );
   assert.equal(task.body.catalogSha256, catalogs.full.catalogSha256);
   assert.equal(task.body.taskId, catalogs.selected.taskId);
+  assert.equal(
+    task.body.nodeAttestationSha256,
+    runtimeAttestation(config).attestationSha256
+  );
   assert.equal(task.body.result.resultSha256.length, 64);
   assert.equal(Object.hasOwn(task.body.result, 'label'), false);
   assert.equal(calls.length, 1);
@@ -737,6 +766,8 @@ test('startup fails closed for pending enrollment, profile drift, and ambiguous 
         cpuName: CPU_NAME,
         availableThreads: AVAILABLE_THREADS,
       }),
+      attestationFactory: async (activeConfig) =>
+        runtimeAttestation(activeConfig),
     }),
     /repeat an ID/
   );
@@ -763,6 +794,8 @@ test('active configuration routing requests the enrolled node role without expos
       cpuName: CPU_NAME,
       availableThreads: AVAILABLE_THREADS,
     }),
+    attestationFactory: async (activeConfig) =>
+      runtimeAttestation(activeConfig),
     catalogDiscovery: () => catalogs.full,
     transportStarter: async (options) => {
       starts.push(options);

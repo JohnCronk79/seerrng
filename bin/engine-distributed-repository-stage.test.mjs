@@ -377,6 +377,10 @@ test('runs local checks in order before reconciling one closed distributed run',
     result.repositoryEvidence.schema,
     DISTRIBUTED_REPOSITORY_EVIDENCE_SCHEMA
   );
+  assert.equal(
+    result.repositoryEvidence.schema,
+    'seerrng-distributed-repository-evidence/v3'
+  );
   assert.equal(result.repositoryEvidence.completed, true);
   assert.equal(result.repositoryEvidence.shards.length, 3);
   assert.deepEqual(result.repositoryEvidence.unexecutedShardIds, []);

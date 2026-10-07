@@ -15,6 +15,8 @@ import { runDistributedLinuxController } from '../../tools/validation-engine/run
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases.
 import { createControllerConfig } from '../../tools/validation-engine/runtime/distributed-linux-config.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases.
+import { DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA } from '../../tools/validation-engine/runtime/distributed-linux-node-attestation.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases.
 import {
   DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
   DISTRIBUTED_LINUX_NODE_TASK_REPORT_SCHEMA,
@@ -427,6 +429,19 @@ test('connects the staged gate to the Linux controller without widening reposito
     nodes: [remote],
     sharedAuthenticationKey: SHARED_KEY,
   });
+  const attestationCore = {
+    schema: DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA,
+    activeNodeConfigSha256: sha256('focused-active-node-config'),
+    runnerClosureSha256: sha256('focused-runner-closure'),
+    nodeExecutableSha256: sha256('focused-node-executable'),
+    nodeVersion: 'v24.21.0',
+    platform: 'linux',
+    architecture: 'x64',
+  };
+  const nodeAttestation = Object.freeze({
+    ...attestationCore,
+    attestationSha256: canonicalJsonSha256(attestationCore),
+  });
   const isolation = new AsyncLocalStorage();
   const events = [];
   const isolationAdmissions = [];
@@ -515,6 +530,7 @@ test('connects the staged gate to the Linux controller without widening reposito
                 body: {
                   schema: DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
                   requestId: request.requestId,
+                  attestation: nodeAttestation,
                   node: {
                     nodeId: 'node-01',
                     nodeNumber: remote.nodeNumber,
@@ -549,6 +565,7 @@ test('connects the staged gate to the Linux controller without widening reposito
                 applicationId: APPLICATION_ID,
                 candidateSha256: catalog.candidate.candidateSha256,
                 catalogSha256: catalog.catalogSha256,
+                nodeAttestationSha256: nodeAttestation.attestationSha256,
                 taskId: request.body.request.taskId,
                 result: passingNativeTaskResult(
                   catalog,
@@ -574,6 +591,13 @@ test('connects the staged gate to the Linux controller without widening reposito
   assert.ok(localTaskCalls > 0);
   assert.ok(remoteTaskCalls > 0);
   assert.equal(localTaskCalls + remoteTaskCalls, catalog.tasks.length);
+  assert.deepEqual(
+    result.nativeEvidence[
+      'native-repository'
+    ].repositoryEvidence.onlineNodes.find(({ nodeId }) => nodeId === 'node-01')
+      .nodeAttestation,
+    nodeAttestation
+  );
   assert.equal(isolationAdmissions.length, 2 + localTaskCalls);
   for (const admission of isolationAdmissions) {
     assert.equal(admission.unitId, 'native-repository');

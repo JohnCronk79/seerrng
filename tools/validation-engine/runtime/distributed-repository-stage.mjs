@@ -8,7 +8,7 @@ import {
 import { verifyDistributedShardRun } from './distributed-shard-executor.mjs';
 
 export const DISTRIBUTED_REPOSITORY_EVIDENCE_SCHEMA =
-  'seerrng-distributed-repository-evidence/v2';
+  'seerrng-distributed-repository-evidence/v3';
 
 const HASH64 = /^[a-f0-9]{64}$/;
 const GIT_OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;

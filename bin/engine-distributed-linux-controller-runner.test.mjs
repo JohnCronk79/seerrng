@@ -17,7 +17,10 @@ import {
 import {
   createControllerConfig,
   createNodeConfig,
+  serializeNodeConfig,
 } from '../tools/validation-engine/runtime/distributed-linux-config.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
+import { DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA } from '../tools/validation-engine/runtime/distributed-linux-node-attestation.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
 import {
   DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
@@ -59,6 +62,22 @@ afterEach(async () => {
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function runtimeAttestation(remote) {
+  const core = {
+    schema: DISTRIBUTED_LINUX_NODE_ATTESTATION_SCHEMA,
+    activeNodeConfigSha256: sha256(serializeNodeConfig(nodeConfig(remote))),
+    runnerClosureSha256: sha256('focused-runner-closure'),
+    nodeExecutableSha256: sha256('focused-node-executable'),
+    nodeVersion: 'v24.21.0',
+    platform: 'linux',
+    architecture: 'x64',
+  };
+  return Object.freeze({
+    ...core,
+    attestationSha256: canonicalJsonSha256(core),
+  });
 }
 
 async function availablePort() {
@@ -246,6 +265,7 @@ function probeReport(configuredNode, catalogValue, requestId, overrides = {}) {
   return {
     schema: DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
     requestId,
+    attestation: overrides.attestation ?? runtimeAttestation(configuredNode),
     node: {
       nodeId: `node-${configuredNode.nodeNumber}`,
       nodeNumber: configuredNode.nodeNumber,
@@ -286,6 +306,7 @@ test('runs one full catalog across controller and real authenticated node transp
       availableThreads: 2,
     }),
     catalogDiscovery: () => catalogValue,
+    attestationFactory: async () => runtimeAttestation(remote),
     taskExecutor: async ({ request }) => {
       remoteCalls.push(request.taskId);
       return passingResult(catalogValue, request.taskId);
@@ -329,6 +350,11 @@ test('runs one full catalog across controller and real authenticated node transp
         entry.inventorySha256 === catalogValue.inventorySha256
     )
   );
+  assert.deepEqual(
+    result.onlineNodes.find(({ nodeId }) => nodeId === 'node-01')
+      .nodeAttestation,
+    runtimeAttestation(remote)
+  );
   assert.equal(JSON.stringify(result).includes(SHARED_KEY), false);
   assert.ok(Object.isFrozen(result));
 });
@@ -362,6 +388,7 @@ test('keeps the controller request alive beyond the native and node-handler budg
             applicationId: APPLICATION_ID,
             candidateSha256: catalogValue.candidate.candidateSha256,
             catalogSha256: catalogValue.catalogSha256,
+            nodeAttestationSha256: runtimeAttestation(remote).attestationSha256,
             taskId: options.body.request.taskId,
             result: passingResult(catalogValue, options.body.request.taskId),
           },
@@ -448,6 +475,7 @@ test('keeps an online node available but unusable when this application is not c
           body: {
             schema: DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
             requestId: options.requestId,
+            attestation: runtimeAttestation(remote),
             node: {
               nodeId: 'node-01',
               nodeNumber: remote.nodeNumber,
@@ -571,6 +599,29 @@ test('fails closed for authentication, schema, and exact inventory mismatches', 
       /application identity differs from the controller catalog/
     );
   });
+
+  await context.test(
+    'malformed runtime attestation is not admitted',
+    async () => {
+      const attestation = runtimeAttestation(remote);
+      await assert.rejects(
+        runDistributedLinuxController(
+          baseRunOptions(config, catalogValue, {
+            runId: 'focused-attestation-mismatch',
+            transportRequester: async (options) => ({
+              body: probeReport(remote, catalogValue, options.requestId, {
+                attestation: {
+                  ...attestation,
+                  attestationSha256: 'e'.repeat(64),
+                },
+              }),
+            }),
+          })
+        ),
+        /attestation seal is invalid/
+      );
+    }
+  );
 });
 
 test('loads the controller role from an active marker and keeps exact configuration routing', async () => {
@@ -604,7 +655,7 @@ test('loads the controller role from an active marker and keeps exact configurat
   );
 });
 
-test('sends an exact full-catalog task request and rejects a changed task report binding', async () => {
+test('sends an exact full-catalog task request and rejects changed task attestation binding', async () => {
   const catalogValue = catalog(2);
   const remote = remoteConfig(49_103, { availableThreads: 8 });
   const config = controllerConfig([remote]);
@@ -629,13 +680,14 @@ test('sends an exact full-catalog task request and rejects a changed task report
         );
         return {
           body: {
-            schema: 'seerrng-distributed-linux-node-task-report/v1',
+            schema: DISTRIBUTED_LINUX_NODE_TASK_REPORT_SCHEMA,
             requestId: options.requestId,
             nodeId: 'node-01',
             applicationId: APPLICATION_ID,
             candidateSha256: catalogValue.candidate.candidateSha256,
             catalogSha256: catalogValue.catalogSha256,
-            taskId: 'd'.repeat(64),
+            nodeAttestationSha256: 'd'.repeat(64),
+            taskId: options.body.request.taskId,
             result: passingResult(catalogValue, options.body.request.taskId),
           },
         };
@@ -700,6 +752,7 @@ test('fresh run requirements distinguish available nodes from explicitly accepte
         applicationId: APPLICATION_ID,
         candidateSha256: catalogValue.candidate.candidateSha256,
         catalogSha256: catalogValue.catalogSha256,
+        nodeAttestationSha256: runtimeAttestation(remote).attestationSha256,
         taskId: options.body.request.taskId,
         result: passingResult(catalogValue, options.body.request.taskId),
       },

@@ -7,6 +7,10 @@ import { createNodeConfig } from './distributed-linux-config.mjs';
 import { detectLinuxHostProfile } from './distributed-linux-host-profile.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
 import {
+  createDistributedLinuxNodeAttestation,
+  verifyDistributedLinuxNodeAttestation,
+} from './distributed-linux-node-attestation.mjs';
+import {
   createDistributedNativeTaskRequest,
   DEFAULT_DISTRIBUTED_NATIVE_TASK_TIMEOUT_MS,
   discoverDistributedNativeCatalog,
@@ -31,11 +35,11 @@ import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 export const DISTRIBUTED_LINUX_NODE_PROBE_REQUEST_SCHEMA =
   'seerrng-distributed-linux-node-probe-request/v1';
 export const DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA =
-  'seerrng-distributed-linux-node-probe-report/v2';
+  'seerrng-distributed-linux-node-probe-report/v3';
 export const DISTRIBUTED_LINUX_NODE_TASK_REQUEST_SCHEMA =
   'seerrng-distributed-linux-node-task-request/v1';
 export const DISTRIBUTED_LINUX_NODE_TASK_REPORT_SCHEMA =
-  'seerrng-distributed-linux-node-task-report/v1';
+  'seerrng-distributed-linux-node-task-report/v2';
 export const MAX_DISTRIBUTED_LINUX_NODE_APPLICATIONS = 64;
 // Native process timeout cleanup can consume six seconds on Linux; keep the
 // enclosing handler alive long enough to verify and seal the final receipt.
@@ -526,6 +530,7 @@ export async function startDistributedLinuxNodeRunner({
   withTaskIsolation,
   resultVerifier = verifyDistributedNativeTaskResult,
   activeConfigResolver = resolveActiveLinuxConfig,
+  attestationFactory = createDistributedLinuxNodeAttestation,
   transportStarter = startDistributedNodeTransportServer,
   transportOptions = {},
 } = {}) {
@@ -538,6 +543,7 @@ export async function startDistributedLinuxNodeRunner({
     [requestFactory, 'task request factory'],
     [taskExecutor, 'task executor'],
     [resultVerifier, 'task result verifier'],
+    [attestationFactory, 'runtime attestation factory'],
     [transportStarter, 'transport starter'],
   ])
     if (typeof dependency !== 'function')
@@ -571,6 +577,9 @@ export async function startDistributedLinuxNodeRunner({
     activeConfigResolver,
   });
   const profile = normalizeProfile(await profileDetector(), enrolled);
+  const attestation = verifyDistributedLinuxNodeAttestation(
+    await attestationFactory(enrolled)
+  );
   const bindings = normalizeApplications(applicationBindings);
   const applications = new Map();
   for (const binding of bindings) {
@@ -625,6 +634,7 @@ export async function startDistributedLinuxNodeRunner({
         schema: DISTRIBUTED_LINUX_NODE_PROBE_REPORT_SCHEMA,
         requestId,
         node,
+        attestation,
         applications: applicationIds.map((applicationId) => {
           const application = applications.get(applicationId);
           return application
@@ -742,6 +752,7 @@ export async function startDistributedLinuxNodeRunner({
       applicationId,
       candidateSha256,
       catalogSha256,
+      nodeAttestationSha256: attestation.attestationSha256,
       taskId: request.taskId,
       result: verified,
     });
@@ -788,6 +799,7 @@ export async function startDistributedLinuxNodeRunner({
     route: service.route,
     profile,
     node,
+    attestation,
     applications: deepFreeze(
       [...applications.values()].map(({ catalog }) =>
         applicationSummary(catalog)

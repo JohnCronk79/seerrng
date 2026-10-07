@@ -55,6 +55,7 @@ const portableTests = [
   'bin/engine-distributed-linux-host-profile.test.mjs',
   'bin/engine-distributed-linux-installer.test.mjs',
   'bin/engine-distributed-linux-management.test.mjs',
+  'bin/engine-distributed-linux-node-attestation.test.mjs',
   'bin/engine-distributed-linux-node-runner.test.mjs',
   'bin/engine-distributed-linux-staged-bridge.test.mjs',
   'bin/engine-distributed-native-adapter.test.mjs',
