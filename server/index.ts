@@ -20,6 +20,7 @@ import {
   metricsMiddleware,
 } from '@server/lib/metrics';
 import notificationManager from '@server/lib/notifications';
+import AppriseAgent from '@server/lib/notifications/agents/apprise';
 import DiscordAgent from '@server/lib/notifications/agents/discord';
 import EmailAgent from '@server/lib/notifications/agents/email';
 import GotifyAgent from '@server/lib/notifications/agents/gotify';
@@ -280,6 +281,7 @@ Promise.resolve()
         new DiscordAgent(),
         new EmailAgent(),
         new GotifyAgent(),
+        new AppriseAgent(),
         new NtfyAgent(),
         new PushbulletAgent(),
         new PushoverAgent(),

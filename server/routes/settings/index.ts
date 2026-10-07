@@ -113,18 +113,24 @@ import semver from 'semver';
 import { URL } from 'url';
 import audiobookshelfRoutes from './audiobookshelf';
 import backissueRoutes from './backissue';
+import downloadClientRoutes from './downloadClients';
+import jellystatRoutes from './jellystat';
 import kapowarrRoutes from './kapowarr';
 import lazyLibrarianRoutes from './lazylibrarian';
 import lidarrRoutes from './lidarr';
 import metadataRoutes from './metadata';
 import mylarRoutes from './mylar';
+import navidromeRoutes from './navidrome';
 import notificationRoutes from './notifications';
 import prowlarrRoutes from './prowlarr';
 import radarrRoutes from './radarr';
 import readarrRoutes from './readarr';
 import readerDeliveryRoutes from './readerDelivery';
+import slskdnRoutes from './slskdn';
 import softwareAcquisitionRoutes from './softwareAcquisition';
 import sonarrRoutes from './sonarr';
+import swipeSettingsRoutes from './swipe';
+import tunerrRoutes from './tunerr';
 
 const settingsRoutes = Router();
 settingsRoutes.use(authorizedRouteAccess(Permission.ADMIN));
@@ -1217,6 +1223,7 @@ const parseMainSettingsBody = (
     ['spotifyClientSecret', 'spotifyClientSecret'],
     ['youtubeApiKey', 'youtubeApiKey'],
     ['comicVineApiKey', 'comicVineApiKey'],
+    ['metronToken', 'metronToken'],
     ['googleBooksApiKey', 'googleBooksApiKey'],
   ] as const) {
     const parsed = parsePatchBoundedString(body, key, {
@@ -1422,6 +1429,8 @@ settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/lidarr', lidarrRoutes);
 settingsRoutes.use('/readarr', readarrRoutes);
 settingsRoutes.use('/audiobookshelf', audiobookshelfRoutes);
+settingsRoutes.use('/navidrome', navidromeRoutes);
+settingsRoutes.use('/jellystat', jellystatRoutes);
 settingsRoutes.use('/reader-delivery', readerDeliveryRoutes);
 settingsRoutes.use('/mylar', mylarRoutes);
 settingsRoutes.use('/kapowarr', kapowarrRoutes);
@@ -1431,6 +1440,10 @@ settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 settingsRoutes.use('/software-acquisition', softwareAcquisitionRoutes);
 settingsRoutes.use('/prowlarr', prowlarrRoutes);
+settingsRoutes.use('/download-clients', downloadClientRoutes);
+settingsRoutes.use('/tunerr', tunerrRoutes);
+settingsRoutes.use('/slskdn', slskdnRoutes);
+settingsRoutes.use('/swipe', swipeSettingsRoutes);
 
 export const filteredMainSettings = (
   user: User,

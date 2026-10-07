@@ -9,9 +9,13 @@ import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import OverrideRuleTiles from '@app/components/Settings/OverrideRule/OverrideRuleTiles';
 import ReaderDeliverySettings from '@app/components/Settings/ReaderDeliverySettings';
+import SettingsDownloadClients from '@app/components/Settings/SettingsDownloadClients';
 import { useSettingsPageAction } from '@app/components/Settings/SettingsLayout';
 import SettingsProwlarr from '@app/components/Settings/SettingsProwlarr';
+import SettingsSlskdn from '@app/components/Settings/SettingsSlskdn';
 import SettingsSoftwareAcquisition from '@app/components/Settings/SettingsSoftwareAcquisition';
+import SettingsSwipe from '@app/components/Settings/SettingsSwipe';
+import SettingsTunerr from '@app/components/Settings/SettingsTunerr';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { getSafeHref } from '@app/utils/safeUrl';
@@ -30,10 +34,12 @@ import type { OverrideRuleResultsResponse } from '@server/interfaces/api/overrid
 import type {
   AudiobookshelfSettings,
   BackIssueSettings,
+  JellystatSettings,
   KapowarrSettings,
   LazyLibrarianSettings,
   LidarrSettings,
   MylarSettings,
+  NavidromeSettings,
   RadarrSettings,
   ReadarrSettings,
   SonarrSettings,
@@ -52,6 +58,12 @@ const BackIssueModal = dynamic(
 );
 const AudiobookshelfModal = dynamic(
   () => import('@app/components/Settings/AudiobookshelfModal')
+);
+const NavidromeModal = dynamic(
+  () => import('@app/components/Settings/NavidromeModal')
+);
+const JellystatModal = dynamic(
+  () => import('@app/components/Settings/JellystatModal')
 );
 const LazyLibrarianModal = dynamic(
   () => import('@app/components/Settings/LazyLibrarianModal')
@@ -83,6 +95,14 @@ const messages = defineMessages('components.Settings', {
   audiobookshelfDescription:
     'Optionally sync an Audiobookshelf book library so SeerrNG can recognize matching audiobooks that are already available. This connection is read-only and does not send acquisition requests.',
   addAudiobookshelf: 'Connect Audiobookshelf library',
+  navidromesettings: 'Navidrome Availability',
+  jellystatsettings: 'Jellystat Statistics',
+  jellystatDescription:
+    'Optionally show lifetime play counts from Jellystat on titles linked to Jellyfin. This connection is read-only.',
+  addJellystat: 'Connect Jellystat Server',
+  navidromeDescription:
+    'Optionally read a Navidrome music library so SeerrNG can recognize albums you already have. Albums are matched by MusicBrainz ID. This connection is read-only.',
+  addNavidrome: 'Connect Navidrome Server',
   videoServiceSettingsDescription:
     'Configure your {serverType} server(s) below. You can connect multiple {serverType} servers, but only two of them can be marked as defaults (one non-4K and one 4K). Administrators are able to override the server used to process new requests prior to approval.',
   musicServiceSettingsDescription:
@@ -358,6 +378,10 @@ const SettingsServices = () => {
   } = useSWR<ReadarrSettings[]>('/api/v1/settings/readarr');
   const { data: audiobookshelfData, mutate: revalidateAudiobookshelf } =
     useSWR<AudiobookshelfSettings | null>('/api/v1/settings/audiobookshelf');
+  const { data: navidromeData, mutate: revalidateNavidrome } =
+    useSWR<NavidromeSettings | null>('/api/v1/settings/navidrome');
+  const { data: jellystatData, mutate: revalidateJellystat } =
+    useSWR<JellystatSettings | null>('/api/v1/settings/jellystat');
   const {
     data: mylarData,
     error: mylarError,
@@ -411,6 +435,8 @@ const SettingsServices = () => {
     readarr: null,
   });
   const [editAudiobookshelfModal, setEditAudiobookshelfModal] = useState(false);
+  const [editNavidromeModal, setEditNavidromeModal] = useState(false);
+  const [editJellystatModal, setEditJellystatModal] = useState(false);
   const [editMylarModal, setEditMylarModal] = useState<{
     open: boolean;
     mylar: MylarSettings | null;
@@ -444,6 +470,8 @@ const SettingsServices = () => {
       | 'lidarr'
       | 'readarr'
       | 'audiobookshelf'
+      | 'navidrome'
+      | 'jellystat'
       | 'mylar'
       | 'kapowarr'
       | 'backissue'
@@ -517,6 +545,10 @@ const SettingsServices = () => {
   const deleteServer = async () => {
     if (deleteServerModal.type === 'audiobookshelf') {
       await axios.delete('/api/v1/settings/audiobookshelf');
+    } else if (deleteServerModal.type === 'navidrome') {
+      await axios.delete('/api/v1/settings/navidrome');
+    } else if (deleteServerModal.type === 'jellystat') {
+      await axios.delete('/api/v1/settings/jellystat');
     } else {
       await axios.delete(
         `/api/v1/settings/${deleteServerModal.type}/${deleteServerModal.serverId}`
@@ -532,6 +564,8 @@ const SettingsServices = () => {
     revalidateBackIssue();
     revalidateLazyLibrarian();
     revalidateAudiobookshelf();
+    revalidateNavidrome();
+    revalidateJellystat();
     mutate('/api/v1/settings/public');
   };
 
@@ -602,6 +636,26 @@ const SettingsServices = () => {
             revalidateReadarr();
             mutate('/api/v1/settings/public');
             setEditReadarrModal({ open: false, readarr: null });
+          }}
+        />
+      )}
+      {editJellystatModal && (
+        <JellystatModal
+          settings={jellystatData ?? null}
+          onClose={() => setEditJellystatModal(false)}
+          onSave={() => {
+            revalidateJellystat();
+            setEditJellystatModal(false);
+          }}
+        />
+      )}
+      {editNavidromeModal && (
+        <NavidromeModal
+          settings={navidromeData ?? null}
+          onClose={() => setEditNavidromeModal(false)}
+          onSave={() => {
+            revalidateNavidrome();
+            setEditNavidromeModal(false);
           }}
         />
       )}
@@ -695,7 +749,11 @@ const SettingsServices = () => {
                       ? 'BackIssue'
                       : deleteServerModal.type === 'audiobookshelf'
                         ? 'Audiobookshelf'
-                        : 'Bookshelf',
+                        : deleteServerModal.type === 'navidrome'
+                          ? 'Navidrome'
+                          : deleteServerModal.type === 'jellystat'
+                            ? 'Jellystat'
+                            : 'Bookshelf',
           })}
         >
           {intl.formatMessage(messages.deleteserverconfirm)}
@@ -1120,6 +1178,106 @@ const SettingsServices = () => {
       </div>
       <div className="mt-10 mb-6">
         <h3 className="heading">
+          {intl.formatMessage(messages.navidromesettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.navidromeDescription)}
+        </p>
+      </div>
+      <ul className="settings-service-grid">
+        {navidromeData &&
+          (() => {
+            const url = new URL(navidromeData.url);
+            return (
+              <ServerInstance
+                name={`${navidromeData.username} · Navidrome`}
+                hostname={url.hostname}
+                port={
+                  url.port
+                    ? Number(url.port)
+                    : url.protocol === 'https:'
+                      ? 443
+                      : 80
+                }
+                isSSL={url.protocol === 'https:'}
+                onEdit={() => setEditNavidromeModal(true)}
+                onDelete={() =>
+                  setDeleteServerModal({
+                    open: true,
+                    serverId: null,
+                    type: 'navidrome',
+                  })
+                }
+              />
+            );
+          })()}
+        {!navidromeData && (
+          <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+            <div className="flex h-full w-full items-center justify-center">
+              <Button
+                buttonType="success"
+                buttonSize="standard"
+                onClick={() => setEditNavidromeModal(true)}
+              >
+                <PlusIcon />
+                <span>{intl.formatMessage(messages.addNavidrome)}</span>
+              </Button>
+            </div>
+          </li>
+        )}
+      </ul>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
+          {intl.formatMessage(messages.jellystatsettings)}
+        </h3>
+        <p className="description">
+          {intl.formatMessage(messages.jellystatDescription)}
+        </p>
+      </div>
+      <ul className="settings-service-grid">
+        {jellystatData &&
+          (() => {
+            const url = new URL(jellystatData.url);
+            return (
+              <ServerInstance
+                name="Jellystat"
+                hostname={url.hostname}
+                port={
+                  url.port
+                    ? Number(url.port)
+                    : url.protocol === 'https:'
+                      ? 443
+                      : 80
+                }
+                isSSL={url.protocol === 'https:'}
+                onEdit={() => setEditJellystatModal(true)}
+                onDelete={() =>
+                  setDeleteServerModal({
+                    open: true,
+                    serverId: null,
+                    type: 'jellystat',
+                  })
+                }
+              />
+            );
+          })()}
+        {!jellystatData && (
+          <li className="col-span-1 h-32 rounded-lg border-2 border-dashed border-gray-400 shadow sm:h-44">
+            <div className="flex h-full w-full items-center justify-center">
+              <Button
+                buttonType="success"
+                buttonSize="standard"
+                onClick={() => setEditJellystatModal(true)}
+              >
+                <PlusIcon />
+                <span>{intl.formatMessage(messages.addJellystat)}</span>
+              </Button>
+            </div>
+          </li>
+        )}
+      </ul>
+      <div className="mt-10 mb-6">
+        <h3 className="heading">
           {intl.formatMessage(messages.mylarsettings)}
         </h3>
         <p className="description">
@@ -1386,6 +1544,10 @@ const SettingsServices = () => {
         </ul>
       </div>
       <SettingsProwlarr />
+      <SettingsDownloadClients />
+      <SettingsTunerr />
+      <SettingsSlskdn />
+      <SettingsSwipe />
       <SettingsSoftwareAcquisition />
       {overrideRuleModal.open &&
         radarrData &&

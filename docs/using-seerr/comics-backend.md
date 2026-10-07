@@ -14,6 +14,24 @@ Users with advanced request permission can choose a configured server; other
 requests go to the single default across all three backends. For Kapowarr,
 advanced requesters can also select a root folder already configured there.
 
+BackIssue is the most complete choice when you want to read comics in the
+browser or share a library between household members. It has a browser reader
+with resume and bookmarks, role-based accounts, RSS watching for new uploads,
+and an Android companion app. Mylar3 and Kapowarr remain fine choices for
+automated downloads when you do not need those features.
+
+## Metron Fallback (Optional)
+
+[Metron](https://metron.cloud/) is a community comic database with its own
+API. If you create a free Metron account and enter an API token under
+**Settings > General > Metron API Token**, comic search falls back to Metron
+when ComicVine search is unavailable or returns an error. Metron results are
+limited to series that have a ComicVine ID, so requests from either source
+use the same identifiers.
+
+Metron covers search only. Comic details and issue lists still require
+ComicVine.
+
 ## ComicVine API Key
 
 Comic discovery and requests require a free ComicVine API key, independent of

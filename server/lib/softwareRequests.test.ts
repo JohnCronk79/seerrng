@@ -5,7 +5,10 @@ import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
-import { refreshTrackedSoftwareRequests } from './softwareRequests';
+import {
+  refreshTrackedSoftwareRequests,
+  sanitizeRomPlacement,
+} from './softwareRequests';
 
 setupTestDb();
 
@@ -85,5 +88,83 @@ describe('refreshTrackedSoftwareRequests', () => {
     } finally {
       Object.assign(settings, originalSettings);
     }
+  });
+});
+
+describe('listSoftwareRequestAssets DAT verification', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('keeps only boolean DAT verdicts from ROMarrNG', async () => {
+    const { listSoftwareRequestAssets } = await import('./softwareRequests');
+    const settings = getSettings().softwareAcquisition.romarr;
+    const originalSettings = { ...settings };
+    Object.assign(settings, { hostname: '127.0.0.1', apiKey: 'test-key' });
+    try {
+      mock.method(ROMarrNGAPI.prototype, 'getAssets', async () => ({
+        assets: [
+          { id: 'a', name: 'Good.sfc', size: 1, url: 'x', datVerified: true },
+          { id: 'b', name: 'Hack.sfc', size: 1, datVerified: false },
+          { id: 'c', name: 'Bundle.tar', size: 1, datVerified: null },
+          { id: 'd', name: 'Odd.sfc', size: 1, datVerified: 'yes' },
+        ],
+        bundleSupported: false,
+      }));
+      const assets = await listSoftwareRequestAssets(
+        Object.assign(new SoftwareRequest(), {
+          id: 1,
+          provider: 'romarr' as const,
+          status: 'available' as const,
+          externalRequestId: 'seerrng:software:1',
+        })
+      );
+      assert.deepEqual(
+        assets.map((asset) => [asset.name, asset.datVerified, asset.url]),
+        [
+          ['Good.sfc', true, ''],
+          ['Hack.sfc', false, ''],
+          ['Bundle.tar', undefined, ''],
+          ['Odd.sfc', undefined, ''],
+        ]
+      );
+    } finally {
+      Object.assign(settings, originalSettings);
+    }
+  });
+});
+
+describe('sanitizeRomPlacement', () => {
+  it('keeps placed, library, and layout from a valid provider value', () => {
+    assert.deepEqual(
+      sanitizeRomPlacement({
+        placed: true,
+        library: 'PS5 ROMs',
+        layout: 'nested',
+      }),
+      { placed: true, library: 'PS5 ROMs', layout: 'nested' }
+    );
+  });
+
+  it('drops unknown layouts and blank library names', () => {
+    assert.deepEqual(
+      sanitizeRomPlacement({ placed: false, library: '   ', layout: 'ftp' }),
+      { placed: false, library: null, layout: null }
+    );
+  });
+
+  it('treats a malformed or missing value as unknown', () => {
+    assert.equal(sanitizeRomPlacement(undefined), null);
+    assert.equal(sanitizeRomPlacement({ placed: 'yes' }), null);
+    assert.equal(sanitizeRomPlacement('placed'), null);
+  });
+
+  it('strips control characters and bounds the library name', () => {
+    const placement = sanitizeRomPlacement({
+      placed: true,
+      library: `Line\nBreak${'x'.repeat(200)}`,
+      layout: 'flat',
+    });
+    assert.ok(placement);
+    assert.ok(!/[\r\n\0]/.test(placement.library ?? ''));
+    assert.equal((placement.library ?? '').length, 120);
   });
 });

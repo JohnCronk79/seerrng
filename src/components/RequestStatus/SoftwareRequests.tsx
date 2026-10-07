@@ -1,3 +1,4 @@
+import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
@@ -24,6 +25,9 @@ import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
 const messages = defineMessages('components.RequestStatus.SoftwareRequests', {
+  datVerified: 'DAT Verified',
+  rommPlacementPlaced: 'In RomM Library',
+  datPartlyVerified: '{verified} of {total} DAT Verified',
   title: 'Software Requests',
   requestedBy: 'Requested by {user}',
   pending: 'Pending Approval',
@@ -117,8 +121,15 @@ interface SoftwareRequestResult {
   request: SoftwareRequestRow;
   status: SoftwareStatus;
   message: string | null;
-  assets: { id: string; name: string; size: number; url: string }[];
+  assets: {
+    id: string;
+    name: string;
+    size: number;
+    url: string;
+    datVerified?: boolean;
+  }[];
   bundle?: { name: string; url: string } | null;
+  rommPlacement?: { placed: boolean; library: string | null } | null;
 }
 
 interface SoftwareRequestsResponse {
@@ -135,6 +146,56 @@ interface SoftwareRequestHistoryResponse {
     createdAt: string;
   }[];
 }
+
+/**
+ * ROMarrNG DAT verification for delivered files. Shown only when ROMarrNG
+ * reported a verdict for at least one file.
+ */
+/**
+ * Shows that ROMarrNG placed the file in a library folder RomM reads. RomM may
+ * not have indexed it yet, so the label does not claim that it has.
+ */
+const RommPlacementBadge = ({
+  placement,
+}: {
+  placement: SoftwareRequestResult['rommPlacement'];
+}) => {
+  const intl = useIntl();
+  if (!placement?.placed) return null;
+  return (
+    <Badge badgeType="success">
+      {intl.formatMessage(messages.rommPlacementPlaced)}
+    </Badge>
+  );
+};
+
+const DatVerificationBadge = ({
+  assets,
+}: {
+  assets: SoftwareRequestResult['assets'];
+}) => {
+  const intl = useIntl();
+  const reported = assets.filter(
+    (asset) => typeof asset.datVerified === 'boolean'
+  );
+  if (reported.length === 0) return null;
+  const verified = reported.filter((asset) => asset.datVerified).length;
+  if (verified === assets.length) {
+    return (
+      <Badge badgeType="success">
+        {intl.formatMessage(messages.datVerified)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge badgeType="warning">
+      {intl.formatMessage(messages.datPartlyVerified, {
+        verified,
+        total: assets.length,
+      })}
+    </Badge>
+  );
+};
 
 const DownloadCopies = ({
   requestId,
@@ -462,262 +523,275 @@ const SoftwareRequests = ({
         {intl.formatMessage(messages.title)}
       </h2>
       <div className="app-compact-request-list">
-        {data.results.map(({ request, status, message, assets, bundle }) => (
-          <article
-            key={request.id}
-            className="refreshed-card-surface app-compact-request-card"
-          >
-            <div className="app-compact-request-summary">
-              <div className="app-compact-request-poster">
-                <CachedImage
-                  type="tmdb"
-                  src={request.coverUrl || '/images/seerr_poster_not_found.png'}
-                  alt=""
-                  className="media-detail-artwork-image"
-                  fill
-                />
-              </div>
-              <div>
-                <div className="app-compact-request-header">
-                  <div>
-                    <div className="app-compact-request-badges">
-                      <span className="app-compact-request-category">
-                        {groupLabel(request.category)}
-                      </span>
-                      <span className="app-compact-request-status">
-                        {statusLabel(status)}
-                      </span>
-                    </div>
-                    <h3 className="app-compact-request-title">
-                      {request.title}
-                    </h3>
-                    <div className="refreshed-detail-text-muted app-compact-request-meta">
-                      {request.platform?.name && (
-                        <span>{request.platform.name}</span>
-                      )}
-                      {request.variant && (
-                        <>
+        {data.results.map(
+          ({ request, status, message, assets, bundle, rommPlacement }) => (
+            <article
+              key={request.id}
+              className="refreshed-card-surface app-compact-request-card"
+            >
+              <div className="app-compact-request-summary">
+                <div className="app-compact-request-poster">
+                  <CachedImage
+                    type="tmdb"
+                    src={
+                      request.coverUrl || '/images/seerr_poster_not_found.png'
+                    }
+                    alt=""
+                    className="media-detail-artwork-image"
+                    fill
+                  />
+                </div>
+                <div>
+                  <div className="app-compact-request-header">
+                    <div>
+                      <div className="app-compact-request-badges">
+                        <span className="app-compact-request-category">
+                          {groupLabel(request.category)}
+                        </span>
+                        <span className="app-compact-request-status">
+                          {statusLabel(status)}
+                        </span>
+                      </div>
+                      <h3 className="app-compact-request-title">
+                        {request.title}
+                      </h3>
+                      <div className="refreshed-detail-text-muted app-compact-request-meta">
+                        {request.platform?.name && (
+                          <span>{request.platform.name}</span>
+                        )}
+                        {request.variant && (
+                          <>
+                            <span>
+                              {intl.formatMessage(messages.operatingSystem, {
+                                value: operatingSystemLabel(
+                                  request.variant.operatingSystem
+                                ),
+                              })}
+                            </span>
+                            <span>
+                              {intl.formatMessage(messages.architecture, {
+                                value: architectureLabel(
+                                  request.variant.architecture
+                                ),
+                              })}
+                            </span>
+                          </>
+                        )}
+                        {canManage && request.requestedBy && (
                           <span>
-                            {intl.formatMessage(messages.operatingSystem, {
-                              value: operatingSystemLabel(
-                                request.variant.operatingSystem
-                              ),
+                            {intl.formatMessage(messages.requestedBy, {
+                              user: request.requestedBy.displayName,
                             })}
                           </span>
-                          <span>
-                            {intl.formatMessage(messages.architecture, {
-                              value: architectureLabel(
-                                request.variant.architecture
-                              ),
-                            })}
-                          </span>
-                        </>
-                      )}
-                      {canManage && request.requestedBy && (
+                        )}
                         <span>
-                          {intl.formatMessage(messages.requestedBy, {
-                            user: request.requestedBy.displayName,
+                          {intl.formatMessage(messages.submitted, {
+                            date: intl.formatDate(request.createdAt, {
+                              dateStyle: 'medium',
+                            }),
                           })}
                         </span>
+                      </div>
+                      {message && status === 'failed' && (
+                        <p className="app-compact-request-warning">{message}</p>
                       )}
-                      <span>
-                        {intl.formatMessage(messages.submitted, {
-                          date: intl.formatDate(request.createdAt, {
-                            dateStyle: 'medium',
-                          }),
-                        })}
-                      </span>
+                      {request.actions?.cancel === false &&
+                        request.actions.cancelReason && (
+                          <p className="app-compact-request-note">
+                            {request.actions.cancelReason}
+                          </p>
+                        )}
                     </div>
-                    {message && status === 'failed' && (
-                      <p className="app-compact-request-warning">{message}</p>
-                    )}
-                    {request.actions?.cancel === false &&
-                      request.actions.cancelReason && (
-                        <p className="app-compact-request-note">
-                          {request.actions.cancelReason}
-                        </p>
-                      )}
-                  </div>
-                  <div className="app-action-row">
-                    {canManage && status === 'pending' && (
-                      <>
-                        <Button
-                          buttonType="success"
-                          buttonSize="sm"
-                          disabled={workingId === request.id}
-                          onClick={() => mutateRequest(request.id, 'approve')}
-                        >
-                          {intl.formatMessage(messages.approve)}
-                        </Button>
-                        <Button
-                          buttonType="default"
-                          buttonSize="sm"
-                          disabled={workingId === request.id}
-                          onClick={() => mutateRequest(request.id, 'decline')}
-                        >
-                          {intl.formatMessage(messages.decline)}
-                        </Button>
-                      </>
-                    )}
-                    {canRequest &&
-                      status === 'pending' &&
-                      request.requestedBy?.id === user?.id && (
-                        <Button
-                          buttonType="default"
-                          buttonSize="sm"
-                          disabled={workingId === request.id}
-                          onClick={() => mutateRequest(request.id, 'withdraw')}
-                        >
-                          {intl.formatMessage(messages.withdraw)}
-                        </Button>
-                      )}
-                    {canCancelRequest(request) && (
-                      <Button
-                        buttonType="default"
-                        buttonSize="sm"
-                        disabled={workingId === request.id}
-                        onClick={() => mutateRequest(request.id, 'cancel')}
-                      >
-                        {intl.formatMessage(messages.cancel)}
-                      </Button>
-                    )}
-                    {status === 'failed' && canRetryRequest(request) && (
-                      <Button
-                        buttonType="default"
-                        buttonSize="sm"
-                        disabled={workingId === request.id}
-                        onClick={() =>
-                          mutateRequest(request.id, 'retry', false)
-                        }
-                      >
-                        {intl.formatMessage(messages.retry)}
-                      </Button>
-                    )}
-                    {status === 'cancelled' && canManageRequest(request) && (
-                      <RequestActionButton
-                        action="delete"
-                        label={intl.formatMessage(messages.clearCancelled)}
-                        tooltip={intl.formatMessage(messages.clearCancelled)}
-                        busy={clearingId === request.id}
-                        disabled={workingId === request.id}
-                        onClick={() => setClearSelection(request.id)}
-                      />
-                    )}
-                    {status === 'available' && (
-                      <DownloadCopies
-                        requestId={request.id}
-                        assets={assets}
-                        bundle={bundle}
-                      />
-                    )}
-                  </div>
-                </div>
-                {handoffConfirmation?.requestId === request.id && (
-                  <div
-                    className="app-page-alert app-page-alert-warning app-compact-request-confirmation"
-                    role="alert"
-                  >
-                    <p className="app-compact-request-confirmation-copy">
-                      {intl.formatMessage(messages.retryCheckRequired)}
-                    </p>
-                    <div className="app-action-row app-compact-request-confirmation-actions">
-                      <Button
-                        buttonType="default"
-                        buttonSize="sm"
-                        disabled={workingId === request.id}
-                        onClick={() => setHandoffConfirmation(null)}
-                      >
-                        {intl.formatMessage(messages.cancelRetry)}
-                      </Button>
-                      <Button
-                        buttonType="warning"
-                        buttonSize="sm"
-                        disabled={workingId === request.id}
-                        onClick={() =>
-                          mutateRequest(
-                            request.id,
-                            handoffConfirmation.action,
-                            true
-                          )
-                        }
-                      >
-                        {intl.formatMessage(messages.confirmAfterCheck)}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                <div className="app-compact-request-history-trigger">
-                  <Button
-                    type="button"
-                    buttonType="manage"
-                    buttonSize="sm"
-                    aria-expanded={historyRequestId === request.id}
-                    aria-label={intl.formatMessage(messages.history)}
-                    onClick={() =>
-                      setHistoryRequestId((current) =>
-                        current === request.id ? null : request.id
-                      )
-                    }
-                  >
-                    <ClockIcon className="app-action-icon" aria-hidden="true" />
-                    {intl.formatMessage(messages.history)}
-                    <ChevronDownIcon
-                      className="app-disclosure-chevron"
-                      aria-hidden="true"
-                    />
-                  </Button>
-                </div>
-                {historyRequestId === request.id && (
-                  <div className="refreshed-inset-surface app-compact-request-history">
-                    {historyError ? (
-                      <p className="app-compact-request-history-error">
-                        {intl.formatMessage(messages.historyError)}
-                      </p>
-                    ) : !historyData ? (
-                      <p className="refreshed-detail-text-muted app-compact-request-history-copy">
-                        {intl.formatMessage(messages.historyLoading)}
-                      </p>
-                    ) : historyData.history.length === 0 ? (
-                      <p className="refreshed-detail-text-muted app-compact-request-history-copy">
-                        {intl.formatMessage(messages.noHistory)}
-                      </p>
-                    ) : (
-                      <ol className="app-compact-request-history-list">
-                        {historyData.history.map((event) => (
-                          <li
-                            key={event.id}
-                            className="app-compact-request-history-row"
+                    <div className="app-action-row">
+                      {canManage && status === 'pending' && (
+                        <>
+                          <Button
+                            buttonType="success"
+                            buttonSize="sm"
+                            disabled={workingId === request.id}
+                            onClick={() => mutateRequest(request.id, 'approve')}
                           >
-                            <span className="refreshed-detail-text app-compact-request-history-status">
-                              {statusLabel(event.status)}
-                              {event.percent !== null &&
-                                event.percent !== undefined &&
-                                ` · ${Math.round(event.percent)}%`}
-                            </span>
-                            <time
-                              className="refreshed-detail-text-muted"
-                              dateTime={event.createdAt}
-                            >
-                              {intl.formatDate(event.createdAt, {
-                                dateStyle: 'medium',
-                                timeStyle: 'short',
-                              })}
-                            </time>
-                            {event.message && (
-                              <p className="refreshed-detail-text-muted app-compact-request-history-message">
-                                {event.message}
-                              </p>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    )}
+                            {intl.formatMessage(messages.approve)}
+                          </Button>
+                          <Button
+                            buttonType="default"
+                            buttonSize="sm"
+                            disabled={workingId === request.id}
+                            onClick={() => mutateRequest(request.id, 'decline')}
+                          >
+                            {intl.formatMessage(messages.decline)}
+                          </Button>
+                        </>
+                      )}
+                      {canRequest &&
+                        status === 'pending' &&
+                        request.requestedBy?.id === user?.id && (
+                          <Button
+                            buttonType="default"
+                            buttonSize="sm"
+                            disabled={workingId === request.id}
+                            onClick={() =>
+                              mutateRequest(request.id, 'withdraw')
+                            }
+                          >
+                            {intl.formatMessage(messages.withdraw)}
+                          </Button>
+                        )}
+                      {canCancelRequest(request) && (
+                        <Button
+                          buttonType="default"
+                          buttonSize="sm"
+                          disabled={workingId === request.id}
+                          onClick={() => mutateRequest(request.id, 'cancel')}
+                        >
+                          {intl.formatMessage(messages.cancel)}
+                        </Button>
+                      )}
+                      {status === 'failed' && canRetryRequest(request) && (
+                        <Button
+                          buttonType="default"
+                          buttonSize="sm"
+                          disabled={workingId === request.id}
+                          onClick={() =>
+                            mutateRequest(request.id, 'retry', false)
+                          }
+                        >
+                          {intl.formatMessage(messages.retry)}
+                        </Button>
+                      )}
+                      {status === 'cancelled' && canManageRequest(request) && (
+                        <RequestActionButton
+                          action="delete"
+                          label={intl.formatMessage(messages.clearCancelled)}
+                          tooltip={intl.formatMessage(messages.clearCancelled)}
+                          busy={clearingId === request.id}
+                          disabled={workingId === request.id}
+                          onClick={() => setClearSelection(request.id)}
+                        />
+                      )}
+                      {status === 'available' && (
+                        <DatVerificationBadge assets={assets} />
+                      )}
+                      <RommPlacementBadge placement={rommPlacement} />
+                      {status === 'available' && (
+                        <DownloadCopies
+                          requestId={request.id}
+                          assets={assets}
+                          bundle={bundle}
+                        />
+                      )}
+                    </div>
                   </div>
-                )}
+                  {handoffConfirmation?.requestId === request.id && (
+                    <div
+                      className="app-page-alert app-page-alert-warning app-compact-request-confirmation"
+                      role="alert"
+                    >
+                      <p className="app-compact-request-confirmation-copy">
+                        {intl.formatMessage(messages.retryCheckRequired)}
+                      </p>
+                      <div className="app-action-row app-compact-request-confirmation-actions">
+                        <Button
+                          buttonType="default"
+                          buttonSize="sm"
+                          disabled={workingId === request.id}
+                          onClick={() => setHandoffConfirmation(null)}
+                        >
+                          {intl.formatMessage(messages.cancelRetry)}
+                        </Button>
+                        <Button
+                          buttonType="warning"
+                          buttonSize="sm"
+                          disabled={workingId === request.id}
+                          onClick={() =>
+                            mutateRequest(
+                              request.id,
+                              handoffConfirmation.action,
+                              true
+                            )
+                          }
+                        >
+                          {intl.formatMessage(messages.confirmAfterCheck)}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="app-compact-request-history-trigger">
+                    <Button
+                      type="button"
+                      buttonType="manage"
+                      buttonSize="sm"
+                      aria-expanded={historyRequestId === request.id}
+                      aria-label={intl.formatMessage(messages.history)}
+                      onClick={() =>
+                        setHistoryRequestId((current) =>
+                          current === request.id ? null : request.id
+                        )
+                      }
+                    >
+                      <ClockIcon
+                        className="app-action-icon"
+                        aria-hidden="true"
+                      />
+                      {intl.formatMessage(messages.history)}
+                      <ChevronDownIcon
+                        className="app-disclosure-chevron"
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  </div>
+                  {historyRequestId === request.id && (
+                    <div className="refreshed-inset-surface app-compact-request-history">
+                      {historyError ? (
+                        <p className="app-compact-request-history-error">
+                          {intl.formatMessage(messages.historyError)}
+                        </p>
+                      ) : !historyData ? (
+                        <p className="refreshed-detail-text-muted app-compact-request-history-copy">
+                          {intl.formatMessage(messages.historyLoading)}
+                        </p>
+                      ) : historyData.history.length === 0 ? (
+                        <p className="refreshed-detail-text-muted app-compact-request-history-copy">
+                          {intl.formatMessage(messages.noHistory)}
+                        </p>
+                      ) : (
+                        <ol className="app-compact-request-history-list">
+                          {historyData.history.map((event) => (
+                            <li
+                              key={event.id}
+                              className="app-compact-request-history-row"
+                            >
+                              <span className="refreshed-detail-text app-compact-request-history-status">
+                                {statusLabel(event.status)}
+                                {event.percent !== null &&
+                                  event.percent !== undefined &&
+                                  ` · ${Math.round(event.percent)}%`}
+                              </span>
+                              <time
+                                className="refreshed-detail-text-muted"
+                                dateTime={event.createdAt}
+                              >
+                                {intl.formatDate(event.createdAt, {
+                                  dateStyle: 'medium',
+                                  timeStyle: 'short',
+                                })}
+                              </time>
+                              {event.message && (
+                                <p className="refreshed-detail-text-muted app-compact-request-history-message">
+                                  {event.message}
+                                </p>
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          )
+        )}
       </div>
       {data.pageInfo.pages > 1 && (
         <PaginationFooter

@@ -14,6 +14,12 @@ tags:
     description: Public API endpoints requiring no authentication.
   - name: settings
     description: Endpoints related to Seerr's settings and configuration.
+  - name: live-tv
+    description: Live TV airings and recording requests through IPTV Tunerr.
+  - name: soulseek
+    description: Soulseek track requests, library-health fixes, and SongID through slskdN.
+  - name: swipe
+    description: Swipe discovery decks and swipe decisions.
   - name: auth
     description: Endpoints related to logging in or out, and the currently authenticated user.
   - name: users
@@ -60,6 +66,318 @@ servers:
 
 components:
   schemas:
+    SwipeCard:
+      type: object
+      properties:
+        mediaType:
+          type: string
+          enum: [movie, tv, book]
+        id:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        year:
+          type: integer
+        overview:
+          type: string
+        imageUrl:
+          type: string
+        rating:
+          type: number
+        authorId:
+          type: string
+        because:
+          type: string
+          description: Why the card is in the deck, for example a liked title.
+        reason:
+          type: string
+          description: AI explanation when an AI provider ranked the deck.
+    SwipeSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        aiProvider:
+          type: string
+          enum: [none, anthropic, openai]
+        aiApiKey:
+          type: string
+          description: API key for the selected AI provider (optional for local OpenAI-compatible servers). Omit or send the redacted value to keep the saved key.
+        clearAiApiKey:
+          type: boolean
+        aiModel:
+          type: string
+          maxLength: 100
+        aiBaseUrl:
+          type: string
+          maxLength: 2048
+          description: OpenAI-compatible base URL for the `openai` provider, for example https://api.openai.com/v1 or http://ollama:11434/v1.
+        aiEffort:
+          type: string
+          enum: [low, medium, high]
+    TrackRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [pending, searching, completed, failed, declined, cancelled]
+        artist:
+          type: string
+        title:
+          type: string
+        recordingMbid:
+          type: string
+        source:
+          type: string
+          enum: [manual, playlist, songid]
+        searchCount:
+          type: integer
+        lastMatchCount:
+          type: integer
+        lastError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        requestedBy:
+          type: object
+          properties:
+            id:
+              type: integer
+            displayName:
+              type: string
+    SlskdnSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        hostname:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+        apiKey:
+          type: string
+          description: slskdN API key (read-write role; administrator for SongID). Omit or send the redacted value to keep the saved key.
+        clearApiKey:
+          type: boolean
+        searchFilter:
+          type: string
+          maxLength: 512
+    SongIdResult:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+        stage:
+          type: string
+        percentComplete:
+          type: number
+        queuePosition:
+          type: integer
+        albums:
+          type: array
+          items:
+            type: object
+            properties:
+              releaseId:
+                type: string
+              releaseGroupId:
+                type: string
+              title:
+                type: string
+              artist:
+                type: string
+              isExact:
+                type: boolean
+        tracks:
+          type: array
+          items:
+            type: object
+            properties:
+              recordingId:
+                type: string
+              title:
+                type: string
+              artist:
+                type: string
+              isExact:
+                type: boolean
+    RecordingRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+          enum: [airing, series]
+        status:
+          type: string
+          enum:
+            [
+              pending,
+              scheduled,
+              recording,
+              completed,
+              failed,
+              declined,
+              cancelled,
+            ]
+        title:
+          type: string
+        subTitle:
+          type: string
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        tmdbId:
+          type: integer
+        channel:
+          type: string
+          description: Tunerr guide number
+        channelName:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        completedCount:
+          type: integer
+        failedCount:
+          type: integer
+        lastError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        requestedBy:
+          type: object
+          properties:
+            id:
+              type: integer
+            displayName:
+              type: string
+    LiveTvAiring:
+      type: object
+      properties:
+        channel:
+          type: string
+        channelName:
+          type: string
+        start:
+          type: string
+          format: date-time
+        stop:
+          type: string
+          format: date-time
+        title:
+          type: string
+        subTitle:
+          type: string
+        season:
+          type: integer
+        episode:
+          type: integer
+        categories:
+          type: array
+          items:
+            type: string
+    TunerrSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        hostname:
+          type: string
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+        deckPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        tunerPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        guideUrl:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+          description: Tunerr deck password. Omit or send the redacted value to keep the saved password.
+        clearPassword:
+          type: boolean
+        guideHours:
+          type: integer
+          minimum: 6
+          maximum: 336
+    DownloadClientSettings:
+      type: object
+      required: [name, type, hostname]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          maxLength: 80
+        type:
+          type: string
+          enum: [qbittorrent, transmission, deluge, torrentng]
+        enabled:
+          type: boolean
+        hostname:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        useSsl:
+          type: boolean
+        baseUrl:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+          description: Client password, Deluge Web UI password, or TorrentNG API token. Omit or send the redacted value to keep the saved secret.
+        clearPassword:
+          type: boolean
+    LiveDownloadSettings:
+      type: object
+      properties:
+        pollIntervalSeconds:
+          type: integer
+          minimum: 1
+          maximum: 60
+        clients:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/DownloadClientSettings'
     ReaderDeliverySettings:
       type: object
       required:
@@ -7744,6 +8062,1124 @@ paths:
           description: Managed shelf not found
         '502':
           description: Reader service could not delete the managed shelf
+  /live/downloads:
+    get:
+      summary: Stream live torrent download progress
+      description: >-
+        Server-sent events (`event: downloads`) with live progress for the
+        authorized torrents, read from the configured download clients. Pass
+        the opaque `liveDownloadToken` values returned with visible media
+        download items. Administrators may pass raw torrent info hashes.
+        Non-torrent or unauthorized IDs are ignored. Events identify the item
+        with the submitted ID and never return the raw hash. When a client
+        stops reporting a previously visible torrent, an `unavailable` event
+        clears the browser's stale progress. Returns 204 when no download
+        client is configured.
+      tags:
+        - request
+      parameters:
+        - in: query
+          name: ids
+          required: true
+          description: Comma-separated opaque liveDownloadToken values for this user; administrators may use 40- or 64-character hexadecimal info hashes. At most 100 IDs are used.
+          schema:
+            type: string
+            maxLength: 16384
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '204':
+          description: No download client is configured
+        '400':
+          description: No valid authorized live download IDs were given
+        '429':
+          description: Too many concurrent streams
+  /settings/download-clients:
+    get:
+      summary: Get live download progress settings
+      description: Returns the torrent clients SeerrNG reads for live download progress. Passwords and tokens are always redacted.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Live download settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveDownloadSettings'
+    put:
+      summary: Update live download progress settings
+      description: Replaces the list of torrent clients and the refresh interval. SeerrNG only reads these clients; it never adds, changes, or removes torrents.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LiveDownloadSettings'
+      responses:
+        '200':
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveDownloadSettings'
+        '400':
+          description: Invalid settings
+  /settings/download-clients/test:
+    post:
+      summary: Test a download client connection
+      description: Signs in to the client and reads its version. The submitted settings are not saved. Omit the password to use the saved one for the same client ID.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DownloadClientSettings'
+      responses:
+        '200':
+          description: Connected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  version:
+                    type: string
+        '400':
+          description: Invalid settings
+        '502':
+          description: The client could not be reached or rejected the credentials
+  /settings/download-clients/status:
+    get:
+      summary: Get live download client health
+      description: Reports the result of the most recent poll of each enabled client. Clients are polled only while a browser is viewing a download.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Client health
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscribers:
+                    type: integer
+                  clients:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        clientId:
+                          type: integer
+                        ok:
+                          type: boolean
+                        checkedAt:
+                          type: string
+                        error:
+                          type: string
+  /live-tv/status:
+    get:
+      summary: Get Live TV availability
+      description: Reports whether IPTV Tunerr is configured and its guide is loaded. Administrators also receive guide statistics.
+      tags:
+        - live-tv
+      responses:
+        '200':
+          description: Live TV status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  guideReady:
+                    type: boolean
+                  canRequest:
+                    type: boolean
+  /live-tv/airings:
+    get:
+      summary: Find upcoming Live TV airings of a title
+      description: Searches the indexed Tunerr guide for upcoming programmes whose title matches one of the given titles. Matching ignores case, accents, punctuation, a leading "The", and a trailing year.
+      tags:
+        - live-tv
+      parameters:
+        - in: query
+          name: title
+          required: true
+          description: Title to match. Repeat for alternate titles (up to 4 are used).
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 8
+            items:
+              type: string
+              maxLength: 300
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        '200':
+          description: Upcoming airings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  guideReady:
+                    type: boolean
+                  airings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LiveTvAiring'
+        '400':
+          description: No title given
+  /live-tv/recordings:
+    get:
+      summary: List Live TV recording requests
+      description: Returns the caller's recording requests. Users who can manage or view all requests may pass `scope=all`.
+      tags:
+        - live-tv
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [mine, all]
+        - in: query
+          name: filter
+          schema:
+            type: string
+            enum: [all, active]
+        - in: query
+          name: take
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: skip
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Recording requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pageInfo:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      take:
+                        type: integer
+                      skip:
+                        type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecordingRequest'
+    post:
+      summary: Request a Live TV recording
+      description: >-
+        Requests one airing (`kind: airing`, with the airing's `channel` and
+        `start` from `/live-tv/airings`) or every airing of a title
+        (`kind: series`, optionally limited to one `channel`). Requests by
+        users who can manage or auto-approve requests are scheduled in Tunerr
+        immediately; others wait for approval.
+      tags:
+        - live-tv
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, title]
+              properties:
+                kind:
+                  type: string
+                  enum: [airing, series]
+                title:
+                  type: string
+                  maxLength: 300
+                channel:
+                  type: string
+                  maxLength: 255
+                start:
+                  type: string
+                  format: date-time
+                mediaType:
+                  type: string
+                  enum: [movie, tv]
+                tmdbId:
+                  type: integer
+      responses:
+        '201':
+          description: Recording requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRequest'
+        '400':
+          description: Invalid request
+        '403':
+          description: The user cannot request recordings
+        '404':
+          description: Live TV is not set up, or the airing or title is not in the guide
+        '409':
+          description: Duplicate request or too many active recordings
+        '502':
+          description: Tunerr could not be reached
+        '503':
+          description: The guide is not loaded, or Tunerr does not support rule-based recording
+  /live-tv/recordings/{id}/approve:
+    post:
+      summary: Approve a recording request
+      description: Creates the Tunerr recording rule for a pending request. Requires the Manage Requests permission.
+      tags:
+        - live-tv
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Recording scheduled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Recording not found
+        '409':
+          description: Not pending, or the airing already ended
+        '502':
+          description: Tunerr could not be reached
+        '503':
+          description: Tunerr does not support rule-based recording
+  /live-tv/recordings/{id}/decline:
+    post:
+      summary: Decline a recording request
+      tags:
+        - live-tv
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Recording declined
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Recording not found
+        '409':
+          description: Not pending
+  /live-tv/recordings/{id}:
+    delete:
+      summary: Cancel a recording request
+      description: Cancels an active recording request and removes its Tunerr rule. The requester or a user with Manage Requests can cancel.
+      tags:
+        - live-tv
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Recording cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Recording not found
+        '409':
+          description: The recording is no longer active
+        '502':
+          description: Tunerr could not be reached
+  /settings/tunerr:
+    get:
+      summary: Get IPTV Tunerr settings
+      description: The deck password is always redacted.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Tunerr settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunerrSettings'
+    put:
+      summary: Update IPTV Tunerr settings
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TunerrSettings'
+      responses:
+        '200':
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunerrSettings'
+        '400':
+          description: Invalid settings
+  /settings/tunerr/test:
+    post:
+      summary: Test the IPTV Tunerr connection
+      description: Reads recording rules through the deck and opens the guide. Reports Tunerr recording features SeerrNG needs that are missing. Settings are not saved.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TunerrSettings'
+      responses:
+        '200':
+          description: Deck and guide reachable
+        '400':
+          description: Invalid settings
+        '502':
+          description: The deck or guide could not be reached
+  /soulseek/status:
+    get:
+      summary: Get Soulseek request availability
+      tags:
+        - soulseek
+      responses:
+        '200':
+          description: Whether slskdN is configured and the user can request tracks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  canRequest:
+                    type: boolean
+  /soulseek/track-requests:
+    get:
+      summary: List Soulseek track requests
+      description: Returns the caller's track requests. Users who can manage or view all requests may pass `scope=all`.
+      tags:
+        - soulseek
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [mine, all]
+        - in: query
+          name: filter
+          schema:
+            type: string
+            enum: [all, active]
+        - in: query
+          name: take
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: skip
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Track requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pageInfo:
+                    type: object
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrackRequest'
+    post:
+      summary: Request tracks from Soulseek
+      description: >-
+        Requests individual tracks through the slskdN wishlist, for example
+        singles or playlist tracks without an album match. Requests by users
+        who can manage requests or auto-approve music start searching
+        immediately; others wait for approval. An identical active request is
+        returned instead of a duplicate.
+      tags:
+        - soulseek
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tracks]
+              properties:
+                tracks:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [artist, title]
+                    properties:
+                      artist:
+                        type: string
+                        maxLength: 255
+                      title:
+                        type: string
+                        maxLength: 255
+                      recordingMbid:
+                        type: string
+                      source:
+                        type: string
+                        enum: [manual, playlist, songid]
+      responses:
+        '201':
+          description: Track requests created or reused
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrackRequest'
+        '400':
+          description: Invalid tracks
+        '403':
+          description: The user cannot request music
+        '404':
+          description: slskdN is not set up
+        '409':
+          description: Too many active track requests
+        '502':
+          description: slskdN could not be reached
+  /soulseek/track-requests/{id}/approve:
+    post:
+      summary: Approve a track request
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Search started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Request not found
+        '409':
+          description: Not pending
+        '502':
+          description: slskdN could not be reached
+  /soulseek/track-requests/{id}/decline:
+    post:
+      summary: Decline a track request
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Request not found
+        '409':
+          description: Not pending
+  /soulseek/track-requests/{id}:
+    delete:
+      summary: Cancel a track request
+      description: Removes the slskdN wishlist entry. The requester or a manager can cancel.
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackRequest'
+        '403':
+          description: Access denied
+        '404':
+          description: Request not found
+        '409':
+          description: No longer active
+        '502':
+          description: slskdN could not be reached
+  /soulseek/albums/{releaseGroupId}/issues:
+    get:
+      summary: List slskdN library-health issues for an album
+      description: Looks up open slskdN issues (transcodes, missing tracks, and similar) for each release of the MusicBrainz release group. Requires Manage Requests.
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: releaseGroupId
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F-]{36}$'
+      responses:
+        '200':
+          description: Album issues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        issueId:
+                          type: string
+                        type:
+                          type: string
+                        severity:
+                          type: string
+                        status:
+                          type: string
+                        title:
+                          type: string
+                        reason:
+                          type: string
+                        canAutoFix:
+                          type: boolean
+                        remediationJobId:
+                          type: string
+        '400':
+          description: Invalid album ID
+        '403':
+          description: Access denied
+        '502':
+          description: slskdN could not be reached
+  /soulseek/albums/{releaseGroupId}/remediate:
+    post:
+      summary: Fix album issues with slskdN
+      description: Starts slskdN remediation for the given issues. Only issues that belong to this album and that slskdN can fix automatically are sent. Requires Manage Requests.
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: releaseGroupId
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F-]{36}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issueIds]
+              properties:
+                issueIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    type: string
+                    maxLength: 128
+      responses:
+        '202':
+          description: Remediation started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                  issueCount:
+                    type: integer
+        '400':
+          description: Invalid request
+        '403':
+          description: Access denied
+        '409':
+          description: None of the issues can be fixed automatically
+        '502':
+          description: slskdN could not be reached
+  /soulseek/songid:
+    post:
+      summary: Identify a song with slskdN SongID
+      description: Starts a SongID analysis of a link or text. Poll the result with GET `/soulseek/songid/{id}`; only the requester (or a manager) can read it. The slskdN API key needs the administrator role.
+      tags:
+        - soulseek
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  type: string
+                  maxLength: 2048
+      responses:
+        '202':
+          description: Analysis started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SongIdResult'
+        '400':
+          description: No source given
+        '403':
+          description: Access denied
+        '404':
+          description: slskdN is not set up
+        '502':
+          description: slskdN could not run SongID
+        '503':
+          description: This slskdN does not support SongID
+  /soulseek/songid/{id}:
+    get:
+      summary: Get a SongID result
+      tags:
+        - soulseek
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+      responses:
+        '200':
+          description: SongID result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SongIdResult'
+        '404':
+          description: Not found
+  /settings/slskdn:
+    get:
+      summary: Get slskdN settings
+      description: The API key is always redacted.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: slskdN settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlskdnSettings'
+    put:
+      summary: Update slskdN settings
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlskdnSettings'
+      responses:
+        '200':
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlskdnSettings'
+        '400':
+          description: Invalid settings
+  /settings/slskdn/test:
+    post:
+      summary: Test the slskdN connection
+      description: Reads the slskdN version and reports which optional features (wishlist, library health, SongID) the API key can use. Settings are not saved.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SlskdnSettings'
+      responses:
+        '200':
+          description: Connected
+        '400':
+          description: Invalid settings
+        '502':
+          description: slskdN could not be reached
+  /live-tv/sports/teams:
+    get:
+      summary: List teams in Tunerr's sports schedule
+      description: Teams from IPTV Tunerr's API-Sports schedules, for following. Requires Tunerr sports automation.
+      tags:
+        - live-tv
+      responses:
+        '200':
+          description: Teams
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  enabled:
+                    type: boolean
+                  teams:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        dataset:
+                          type: string
+                        league:
+                          type: string
+                        team:
+                          type: string
+        '502':
+          description: Tunerr could not be reached
+  /live-tv/sports/follows:
+    get:
+      summary: List the teams the user follows
+      tags:
+        - live-tv
+      responses:
+        '200':
+          description: Followed teams
+    post:
+      summary: Follow a team
+      description: Live TV Sync requests a recording of each upcoming game Tunerr matches to a guide airing, using the usual approval rules. Up to 20 teams per user.
+      tags:
+        - live-tv
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset, team]
+              properties:
+                dataset:
+                  type: string
+                  maxLength: 32
+                team:
+                  type: string
+                  maxLength: 128
+      responses:
+        '200':
+          description: Already following
+        '201':
+          description: Following
+        '400':
+          description: Invalid team
+        '403':
+          description: The user cannot request recordings
+        '409':
+          description: Too many followed teams
+  /live-tv/sports/follows/{id}:
+    delete:
+      summary: Stop following a team
+      tags:
+        - live-tv
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Unfollowed
+        '404':
+          description: Not following
+  /swipe/status:
+    get:
+      summary: Get swipe availability
+      description: Requires the Request permission. Returns 404 when an administrator has turned swipe off.
+      tags:
+        - swipe
+      responses:
+        '200':
+          description: Swipe is available
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  aiRanking:
+                    type: boolean
+        '403':
+          description: The user cannot make requests
+        '404':
+          description: Swipe is turned off
+  /swipe/deck:
+    get:
+      summary: Get the user's swipe deck
+      description: >-
+        Returns up to 20 recommendations from SeerrNG's catalogs (TMDB
+        recommendations and trending titles, Open Library subjects and trending
+        books). Titles the user owns, requested, or already swiped are left
+        out. When an AI provider is configured it reorders the deck and adds a
+        reason to each pick.
+      tags:
+        - swipe
+      parameters:
+        - in: query
+          name: mediaType
+          required: true
+          schema:
+            type: string
+            enum: [movie, tv, book]
+        - in: query
+          name: refresh
+          schema:
+            type: string
+            enum: ['true', 'false']
+      responses:
+        '200':
+          description: Deck
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mediaType:
+                    type: string
+                  ranked:
+                    type: boolean
+                  remaining:
+                    type: integer
+                  cards:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SwipeCard'
+        '400':
+          description: Invalid media type
+        '502':
+          description: The catalogs could not be reached
+  /swipe/decisions:
+    post:
+      summary: Record a swipe
+      description: >-
+        `want` (swipe right) records interest; the client then submits the
+        request through `POST /request`. `pass` hides the title for good.
+        `seen` marks it as already watched or read and counts as a taste
+        signal.
+      tags:
+        - swipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mediaType, id, decision]
+              properties:
+                mediaType:
+                  type: string
+                  enum: [movie, tv, book]
+                id:
+                  type: string
+                  maxLength: 64
+                decision:
+                  type: string
+                  enum: [want, pass, seen]
+      responses:
+        '200':
+          description: Recorded
+        '400':
+          description: Invalid swipe
+        '404':
+          description: The card is not in the user's deck
+  /swipe/undo:
+    post:
+      summary: Undo the last pass or seen swipe
+      tags:
+        - swipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mediaType]
+              properties:
+                mediaType:
+                  type: string
+                  enum: [movie, tv, book]
+      responses:
+        '200':
+          description: The restored card
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  card:
+                    $ref: '#/components/schemas/SwipeCard'
+        '404':
+          description: Nothing to undo
+        '409':
+          description: The last swipe was a request; cancel it from Requests instead
+  /swipe/profile:
+    get:
+      summary: Get the user's swipe preferences
+      tags:
+        - swipe
+      responses:
+        '200':
+          description: Preferences
+    put:
+      summary: Update the user's swipe preferences
+      tags:
+        - swipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tasteNotes:
+                  type: string
+                  maxLength: 1000
+                seriesRequest:
+                  type: string
+                  enum: [first-season, all-seasons]
+                bookFormat:
+                  type: string
+                  enum: [ebook, audiobook]
+      responses:
+        '200':
+          description: Saved
+        '400':
+          description: Invalid preferences
+  /settings/swipe:
+    get:
+      summary: Get swipe settings
+      description: The AI API key is always redacted.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Swipe settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwipeSettings'
+    put:
+      summary: Update swipe settings
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwipeSettings'
+      responses:
+        '200':
+          description: Saved
+        '400':
+          description: Invalid settings
+  /settings/swipe/test:
+    post:
+      summary: Test the swipe AI provider
+      description: Sends one small ranking request to the selected AI provider with the submitted or saved key and model. Settings are not saved.
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwipeSettings'
+      responses:
+        '200':
+          description: The provider answered
+        '400':
+          description: Invalid settings
+        '502':
+          description: The provider rejected or failed the request
   /settings/prowlarr:
     get:
       summary: Get Prowlarr connection settings

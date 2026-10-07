@@ -4,6 +4,7 @@ import Modal from '@app/components/Common/Modal';
 import Tooltip from '@app/components/Common/Tooltip';
 import DownloadBlock from '@app/components/DownloadBlock';
 import IssueMediaSummary from '@app/components/IssueDetails/IssueMediaSummary';
+import JellystatWatchSummary from '@app/components/Media/JellystatWatchSummary';
 import AvailabilityValue from '@app/components/MediaDetails/AvailabilityValue';
 import RequestBlock from '@app/components/RequestBlock';
 import SelectableDownloadList from '@app/components/SelectableDownloadList';
@@ -261,6 +262,9 @@ const ManageSlideOver = ({
                         onUpdate={revalidate}
                         onDialogChange={setConfirmationOpen}
                       />
+                    )}
+                    {data.mediaInfo && hasPermission(Permission.ADMIN) && (
+                      <JellystatWatchSummary mediaId={data.mediaInfo.id} />
                     )}
                     {(safeTautulliUrl || watchData?.data) && (
                       <div className="flex flex-wrap items-start gap-2">

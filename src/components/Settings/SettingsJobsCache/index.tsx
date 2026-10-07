@@ -101,6 +101,8 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'magazine-scan': 'LazyLibrarian Magazine Scan',
     'download-sync': 'Download Sync',
     'software-request-reconciliation': 'Software Request Reconciliation',
+    'live-tv-sync': 'Live TV Sync',
+    'soulseek-sync': 'Soulseek Sync',
     'download-recovery': 'Download Recovery',
     'download-sync-reset': 'Download Sync Reset',
     'image-cache-cleanup': 'Image Cache Cleanup',

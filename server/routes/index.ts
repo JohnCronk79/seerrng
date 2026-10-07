@@ -70,6 +70,8 @@ import { imageCacheWarmRateLimit, warmImageCache } from './imageproxy';
 import indexerSearchRoutes from './indexerSearch';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
+import liveRoutes from './live';
+import liveTvRoutes from './liveTv';
 import magazineRoutes from './magazine';
 import mediaRoutes from './media';
 import movieRoutes from './movie';
@@ -83,6 +85,8 @@ import searchRoutes from './search';
 import seriesRoutes from './series';
 import serviceRoutes from './service';
 import softwareRoutes from './software';
+import soulseekRoutes from './soulseek';
+import swipeRoutes from './swipe';
 import tvRoutes from './tv';
 import user from './user';
 
@@ -357,6 +361,10 @@ router.get(
 );
 
 router.use('/user', isAuthenticated(), user);
+router.use('/live', isAuthenticated(), liveRoutes);
+router.use('/live-tv', isAuthenticated(), liveTvRoutes);
+router.use('/soulseek', isAuthenticated(), soulseekRoutes);
+router.use('/swipe', isAuthenticated(), swipeRoutes);
 router.get('/settings/public', async (req, res) => {
   const settings = getSettings();
 

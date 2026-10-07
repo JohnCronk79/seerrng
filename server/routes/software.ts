@@ -1370,7 +1370,15 @@ softwareRoutes.get('/status', async (req, res) => {
     : refreshedViews;
   return res.status(200).json({
     results: views.map(
-      ({ request, status, message, assets, actions, bundleName }) => ({
+      ({
+        request,
+        status,
+        message,
+        assets,
+        actions,
+        bundleName,
+        rommPlacement,
+      }) => ({
         request: serializeRequest(request, actions),
         status,
         message,
@@ -1379,7 +1387,9 @@ softwareRoutes.get('/status', async (req, res) => {
           name: asset.name,
           size: asset.size,
           url: `/api/v1/request/software/status/${request.id}/downloads/${encodeURIComponent(asset.id)}`,
+          datVerified: asset.datVerified,
         })),
+        rommPlacement: rommPlacement ?? null,
         bundle: bundleName
           ? {
               name: bundleName,
@@ -1419,6 +1429,7 @@ softwareRoutes.get('/status/:id', async (req, res) => {
       name: asset.name,
       size: asset.size,
       url: `/api/v1/request/software/status/${request.id}/downloads/${encodeURIComponent(asset.id)}`,
+      datVerified: asset.datVerified,
     })),
     bundle: view.bundleName
       ? {
@@ -1678,6 +1689,7 @@ softwareRoutes.get('/status/:id/downloads', async (req, res) => {
       name: asset.name,
       size: asset.size,
       url: `/api/v1/request/software/status/${request.id}/downloads/${encodeURIComponent(asset.id)}`,
+      datVerified: asset.datVerified,
     })),
     bundle: view.bundleName
       ? {

@@ -8,6 +8,12 @@ import downloadTracker from '@server/lib/downloadtracker';
 import episodeWatchAhead from '@server/lib/episodeWatchAhead';
 import { syncAllExternalRequestLists } from '@server/lib/externalRequestLists';
 import ImageProxy from '@server/lib/imageproxy';
+import { guideIndex } from '@server/lib/liveTv/guideIndex';
+import {
+  isTunerrConfigured,
+  syncRecordings,
+} from '@server/lib/liveTv/recordings';
+import { syncSportsFollows } from '@server/lib/liveTv/sports';
 import refreshToken from '@server/lib/refreshToken';
 import { captureReleaseCalendarHistory } from '@server/lib/releaseCalendar/history';
 import { reconcileActiveRequests } from '@server/lib/requestStatus';
@@ -21,6 +27,7 @@ import {
 } from '@server/lib/scanners/jellyfin';
 import { lidarrScanner } from '@server/lib/scanners/lidarr';
 import { lazyLibrarianScanner } from '@server/lib/scanners/magazines/lazylibrarian';
+import { navidromeScanner } from '@server/lib/scanners/navidrome';
 import { plexFullScanner, plexRecentScanner } from '@server/lib/scanners/plex';
 import { radarrScanner } from '@server/lib/scanners/radarr';
 import { readarrScanner } from '@server/lib/scanners/readarr';
@@ -28,6 +35,10 @@ import { sonarrScanner } from '@server/lib/scanners/sonarr';
 import type { JobId } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { refreshTrackedSoftwareRequests } from '@server/lib/softwareRequests';
+import {
+  isSlskdnConfigured,
+  syncTrackRequests,
+} from '@server/lib/soulseek/trackRequests';
 import { isWatchAheadMediaServer } from '@server/lib/watchAheadEligibility';
 import watchlistSync from '@server/lib/watchlistsync';
 import logger from '@server/logger';
@@ -407,6 +418,24 @@ export const startJobs = (): void => {
   });
 
   scheduledJobs.push({
+    id: 'navidrome-scan',
+    name: 'Navidrome Scan',
+    type: 'process',
+    interval: 'hours',
+    cronSchedule: jobs['navidrome-scan'].schedule,
+    job: schedule.scheduleJob(jobs['navidrome-scan'].schedule, () => {
+      logger.info('Starting scheduled job: Navidrome Scan', { label: 'Jobs' });
+      return runTrackedJob('Navidrome Scan', async () => {
+        await navidromeScanner.run();
+      });
+    }),
+    running: () => navidromeScanner.status().running,
+    cancelFn: () => {
+      navidromeScanner.cancel();
+    },
+  });
+
+  scheduledJobs.push({
     id: 'readarr-request-retry',
     name: 'Bookshelf Request Retry',
     type: 'process',
@@ -557,6 +586,41 @@ export const startJobs = (): void => {
         );
       }
     ),
+  });
+
+  scheduledJobs.push({
+    id: 'live-tv-sync',
+    name: 'Live TV Sync',
+    type: 'process',
+    interval: 'minutes',
+    cronSchedule: jobs['live-tv-sync'].schedule,
+    job: schedule.scheduleJob(jobs['live-tv-sync'].schedule, () => {
+      if (!isTunerrConfigured()) {
+        return;
+      }
+      logger.debug('Starting scheduled job: Live TV Sync', {
+        label: 'Jobs',
+      });
+      return runTrackedJob('Live TV Sync', async () => {
+        await guideIndex.get();
+        await syncSportsFollows();
+        await syncRecordings();
+      });
+    }),
+  });
+
+  scheduledJobs.push({
+    id: 'soulseek-sync',
+    name: 'Soulseek Sync',
+    type: 'process',
+    interval: 'minutes',
+    cronSchedule: jobs['soulseek-sync'].schedule,
+    job: schedule.scheduleJob(jobs['soulseek-sync'].schedule, () => {
+      if (!isSlskdnConfigured()) {
+        return;
+      }
+      return runTrackedJob('Soulseek Sync', syncTrackRequests);
+    }),
   });
 
   scheduledJobs.push({

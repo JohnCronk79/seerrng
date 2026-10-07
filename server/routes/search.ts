@@ -3,6 +3,7 @@ import CoverArtArchive from '@server/api/coverartarchive';
 import LazyLibrarianAPI, {
   type LazyLibrarianMagazine,
 } from '@server/api/lazylibrarian';
+import MetronAPI from '@server/api/metron';
 import MusicBrainz, { escapeMusicBrainzQuery } from '@server/api/musicbrainz';
 import OpenLibraryAPI from '@server/api/openlibrary';
 import TheAudioDb from '@server/api/theaudiodb';
@@ -78,6 +79,40 @@ import { In } from 'typeorm';
 
 const searchRoutes = Router();
 const MAX_SEARCH_QUERY_LENGTH = 256;
+
+/**
+ * Searches ComicVine, then Metron when ComicVine throws or reports a failed
+ * status. Metron results carry ComicVine IDs, so they flow into the same
+ * request path. Detail pages still require ComicVine.
+ */
+export const searchComicVolumes = async ({
+  comicVine,
+  metron,
+  query,
+  page,
+}: {
+  comicVine: ComicVineAPI;
+  metron?: MetronAPI;
+  query: string;
+  page: number;
+}): Promise<Awaited<ReturnType<ComicVineAPI['searchVolumes']>>> => {
+  const fallback = () =>
+    metron ? metron.searchVolumes({ query, page, limit: 20 }) : undefined;
+  try {
+    const response = await comicVine.searchVolumes({ query, page, limit: 20 });
+    if (response.status_code !== 1) {
+      return (await fallback()) ?? response;
+    }
+    return response;
+  } catch (error) {
+    const replacement = await fallback();
+    if (replacement) {
+      return replacement;
+    }
+    throw error;
+  }
+};
+
 export const SEARCH_RATE_LIMIT = {
   windowMs: 60 * 1000,
   limit: 30,
@@ -421,7 +456,7 @@ searchRoutes.get('/', async (req, res, next) => {
         : undefined);
   const musicEnabled =
     settings.lidarr.length > 0 && isMediaCategoryEnabled('music');
-  const comicVineApiKey = getSettings().main.comicVineApiKey;
+  const { comicVineApiKey, metronToken } = getSettings().main;
   const comicsEnabled = !!comicVineApiKey && isMediaCategoryEnabled('comic');
   const magazinesEnabled =
     settings.lazylibrarian.length > 0 && isMediaCategoryEnabled('magazine');
@@ -491,6 +526,8 @@ searchRoutes.get('/', async (req, res, next) => {
       const comicVine = comicVineApiKey
         ? new ComicVineAPI(comicVineApiKey)
         : undefined;
+      const metron =
+        comicVine && metronToken ? new MetronAPI(metronToken) : undefined;
       const theAudioDb = new TheAudioDb();
       const coverArtArchive = new CoverArtArchive();
       const personMapper = new TmdbPersonMapper();
@@ -591,11 +628,7 @@ searchRoutes.get('/', async (req, res, next) => {
           ? searchBookshelfAuthors(getSettings().readarr, queryString)
           : Promise.resolve([]),
         shouldSearchComics && comicsEnabled && comicVine
-          ? comicVine.searchVolumes({
-              query: queryString,
-              page,
-              limit: 20,
-            })
+          ? searchComicVolumes({ comicVine, metron, query: queryString, page })
           : Promise.resolve({
               error: 'OK',
               limit: 20,

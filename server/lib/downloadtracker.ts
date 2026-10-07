@@ -56,9 +56,15 @@ export interface DownloadingItem {
   estimatedCompletionTime: Date;
   title: string;
   downloadId: string;
+  /** Opaque, user-scoped ID for live torrent progress. */
+  liveDownloadToken?: string;
   percent?: number;
   trackedDownloadStatus?: string;
   trackedDownloadState?: string;
+  /** `torrent` or `usenet`, as reported by the *arr queue. */
+  protocol?: string;
+  /** Download client name configured in the *arr service. */
+  downloadClient?: string;
   episode?: EpisodeNumberResult;
 }
 
@@ -72,9 +78,21 @@ export interface ServarrHistoryEvidence {
 
 const getQueueState = (
   item: QueueItem
-): Pick<DownloadingItem, 'trackedDownloadStatus' | 'trackedDownloadState'> => ({
+): Pick<
+  DownloadingItem,
+  | 'trackedDownloadStatus'
+  | 'trackedDownloadState'
+  | 'protocol'
+  | 'downloadClient'
+> => ({
   trackedDownloadStatus: item.trackedDownloadStatus,
   trackedDownloadState: item.trackedDownloadState,
+  protocol:
+    typeof item.protocol === 'string' ? item.protocol.slice(0, 32) : undefined,
+  downloadClient:
+    typeof item.downloadClient === 'string'
+      ? item.downloadClient.slice(0, 120)
+      : undefined,
 });
 
 export const DOWNLOAD_TRACKER_SERVER_CONCURRENCY = 5;

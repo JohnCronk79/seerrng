@@ -7,6 +7,7 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import { resolveLiveDownloadToken } from './liveDownloadTokens';
 import {
   aliasDownloadId,
   restrictMediaIssuesForUser,
@@ -154,6 +155,8 @@ const createOperationalMedia = () =>
         estimatedCompletionTime: new Date('2026-03-01T00:00:00Z'),
         title: 'Private.Release.Name-GROUP',
         downloadId: 'private-downloader-id',
+        protocol: 'torrent',
+        downloadClient: 'Private qBittorrent',
         episode: {
           seasonNumber: 2,
           episodeNumber: 3,
@@ -165,6 +168,30 @@ const createOperationalMedia = () =>
   });
 
 describe('restrictMediaOperationalFieldsForUser', () => {
+  it('adds a user-scoped live ID while keeping the torrent hash redacted', () => {
+    const hash = 'a'.repeat(40);
+    const source = createOperationalMedia();
+    source.downloadStatus![0].downloadId = hash;
+
+    const media = restrictMediaOperationalFieldsForUser(
+      source,
+      new User({ id: 10, permissions: Permission.REQUEST })
+    );
+    const download = media?.downloadStatus?.[0];
+
+    assert.equal(download?.downloadId, aliasDownloadId(hash));
+    assert.notEqual(download?.downloadId, hash);
+    assert.ok(download?.liveDownloadToken);
+    assert.equal(
+      resolveLiveDownloadToken(download?.liveDownloadToken, 10),
+      hash
+    );
+    assert.equal(
+      resolveLiveDownloadToken(download?.liveDownloadToken, 20),
+      undefined
+    );
+  });
+
   it('removes backend routes and release identifiers for ordinary users', () => {
     const media = restrictMediaOperationalFieldsForUser(
       createOperationalMedia(),
@@ -186,6 +213,24 @@ describe('restrictMediaOperationalFieldsForUser', () => {
       seasonNumber: 2,
       episodeNumber: 3,
     });
+  });
+
+  it('keeps the download client name for administrators only', () => {
+    const user = restrictMediaOperationalFieldsForUser(
+      createOperationalMedia(),
+      new User({ id: 10, permissions: Permission.REQUEST })
+    );
+    assert.strictEqual(user?.downloadStatus?.[0].downloadClient, undefined);
+    assert.strictEqual(user?.downloadStatus?.[0].protocol, undefined);
+
+    const admin = restrictMediaOperationalFieldsForUser(
+      createOperationalMedia(),
+      new User({ id: 1, permissions: Permission.ADMIN })
+    );
+    assert.strictEqual(
+      admin?.downloadStatus?.[0].downloadClient,
+      'Private qBittorrent'
+    );
   });
 
   it('keeps service routes for request managers but still redacts releases', () => {

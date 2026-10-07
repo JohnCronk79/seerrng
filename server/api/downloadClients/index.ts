@@ -1,0 +1,27 @@
+import DelugeClient from '@server/api/downloadClients/deluge';
+import QBittorrentClient from '@server/api/downloadClients/qbittorrent';
+import RTorrentClient from '@server/api/downloadClients/rtorrent';
+import SabnzbdClient from '@server/api/downloadClients/sabnzbd';
+import TorrentNGClient from '@server/api/downloadClients/torrentng';
+import TransmissionClient from '@server/api/downloadClients/transmission';
+import type { DownloadClientAdapter } from '@server/api/downloadClients/types';
+import type { DownloadClientSettings } from '@server/lib/settings';
+
+export const createDownloadClient = (
+  settings: DownloadClientSettings
+): DownloadClientAdapter => {
+  switch (settings.type) {
+    case 'qbittorrent':
+      return new QBittorrentClient(settings);
+    case 'transmission':
+      return new TransmissionClient(settings);
+    case 'deluge':
+      return new DelugeClient(settings);
+    case 'torrentng':
+      return new TorrentNGClient(settings);
+    case 'rtorrent':
+      return new RTorrentClient(settings);
+    case 'sabnzbd':
+      return new SabnzbdClient(settings);
+  }
+};

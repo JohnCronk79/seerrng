@@ -132,6 +132,138 @@ export interface ProwlarrSettings extends SoftwareProviderSettings {
   categoryMappings: ProwlarrCategoryMappings;
 }
 
+export const DOWNLOAD_CLIENT_TYPES = [
+  'qbittorrent',
+  'transmission',
+  'deluge',
+  'torrentng',
+  'rtorrent',
+  'sabnzbd',
+] as const;
+
+export type DownloadClientType = (typeof DOWNLOAD_CLIENT_TYPES)[number];
+
+/**
+ * A torrent client SeerrNG reads for live download progress. SeerrNG never
+ * adds, changes, or removes torrents through this connection.
+ */
+export interface DownloadClientSettings {
+  id: number;
+  name: string;
+  type: DownloadClientType;
+  enabled: boolean;
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  baseUrl: string;
+  /** qBittorrent, Transmission, and rTorrent (HTTP basic auth) only. */
+  username: string;
+  /** Client password, Deluge Web UI password, rTorrent basic-auth password, TorrentNG API token, or SABnzbd API key. */
+  password: string;
+}
+
+export interface LiveDownloadSettings {
+  pollIntervalSeconds: number;
+  clients: DownloadClientSettings[];
+}
+
+export const defaultLiveDownloadSettings = (): LiveDownloadSettings => ({
+  pollIntervalSeconds: 3,
+  clients: [],
+});
+
+/**
+ * IPTV Tunerr connection for Live TV airings and recording requests. Rule
+ * calls go through the authenticated Tunerr deck (`deckPort`, `/api/...`);
+ * the guide is read from the tuner's public XMLTV endpoint.
+ */
+export interface TunerrSettings {
+  enabled: boolean;
+  hostname: string;
+  useSsl: boolean;
+  baseUrl: string;
+  deckPort: number;
+  tunerPort: number;
+  /** Optional full XMLTV URL; defaults to the tuner's /guide.xml. */
+  guideUrl: string;
+  username: string;
+  password: string;
+  /** How far ahead to index the guide, in hours. */
+  guideHours: number;
+}
+
+export const defaultTunerrSettings = (): TunerrSettings => ({
+  enabled: false,
+  hostname: '',
+  useSsl: false,
+  baseUrl: '',
+  deckPort: 48879,
+  tunerPort: 5004,
+  guideUrl: '',
+  username: '',
+  password: '',
+  guideHours: 72,
+});
+
+/**
+ * slskdN (or a compatible slskd/slskr) connection for Soulseek track
+ * requests, library-health fixes, and SongID. Uses an API key with the
+ * read-write role; SongID runs need the administrator role.
+ */
+export interface SlskdnSettings {
+  enabled: boolean;
+  hostname: string;
+  port: number;
+  useSsl: boolean;
+  baseUrl: string;
+  apiKey: string;
+  /** Optional slskdN wishlist filter applied to track requests. */
+  searchFilter: string;
+}
+
+export const defaultSlskdnSettings = (): SlskdnSettings => ({
+  enabled: false,
+  hostname: '',
+  port: 5030,
+  useSsl: false,
+  baseUrl: '',
+  apiKey: '',
+  searchFilter: '',
+});
+
+export type SwipeAiProvider = 'none' | 'anthropic' | 'openai';
+export type SwipeAiEffort = 'low' | 'medium' | 'high';
+
+/**
+ * Swipe discovery. Decks come from SeerrNG's own catalogs; an optional AI
+ * provider only reorders them and explains each pick.
+ */
+export interface SwipeSettings {
+  enabled: boolean;
+  aiProvider: SwipeAiProvider;
+  /** API key for the selected provider (optional for local servers). */
+  aiApiKey: string;
+  aiModel: string;
+  /**
+   * OpenAI-compatible base URL, used only when aiProvider is `openai`
+   * (OpenAI, or a local server such as Ollama or LM Studio).
+   */
+  aiBaseUrl: string;
+  aiEffort: SwipeAiEffort;
+}
+
+export const DEFAULT_SWIPE_AI_MODEL = 'claude-opus-5-5';
+export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+export const defaultSwipeSettings = (): SwipeSettings => ({
+  enabled: true,
+  aiProvider: 'none',
+  aiApiKey: '',
+  aiModel: DEFAULT_SWIPE_AI_MODEL,
+  aiBaseUrl: DEFAULT_OPENAI_BASE_URL,
+  aiEffort: 'low',
+});
+
 export interface DVRSettings {
   id: number;
   name: string;
@@ -179,6 +311,20 @@ export interface ReadarrSettings extends DVRSettings {
   activeMetadataProfileId?: number;
   activeMetadataProfileName?: string;
   serviceType?: 'ebook' | 'audiobook';
+}
+
+/** A Jellystat statistics server used to show Jellyfin play counts. Read-only. */
+export interface JellystatSettings {
+  url: string;
+  apiKey: string;
+}
+
+/** A Navidrome server used only to mark music as available. */
+export interface NavidromeSettings {
+  url: string;
+  username: string;
+  password: string;
+  syncEnabled: boolean;
 }
 
 export interface AudiobookshelfSettings {
@@ -300,6 +446,8 @@ export interface MainSettings {
   spotifyClientSecret?: string;
   youtubeApiKey?: string;
   comicVineApiKey?: string;
+  /** Metron API token. Used only as a fallback when ComicVine search fails. */
+  metronToken?: string;
   googleBooksApiKey?: string;
 }
 
@@ -464,6 +612,23 @@ export interface NotificationAgentGotify extends NotificationAgentConfig {
   };
 }
 
+/**
+ * Apprise API (https://github.com/caronc/apprise-api). The destination URLs
+ * stay in the Apprise configuration saved under `configKey`; SeerrNG only
+ * stores the API base URL and that key.
+ */
+export interface NotificationAgentApprise extends NotificationAgentConfig {
+  options: {
+    url: string;
+    configKey: string;
+    tag?: string;
+    authMethodUsernamePassword?: boolean;
+    username?: string;
+    password?: string;
+    locale: AvailableLocale;
+  };
+}
+
 export interface NotificationAgentNtfy extends NotificationAgentConfig {
   options: {
     url: string;
@@ -480,6 +645,7 @@ export interface NotificationAgentNtfy extends NotificationAgentConfig {
 }
 
 export enum NotificationAgentKey {
+  APPRISE = 'apprise',
   DISCORD = 'discord',
   EMAIL = 'email',
   GOTIFY = 'gotify',
@@ -493,6 +659,7 @@ export enum NotificationAgentKey {
 }
 
 interface NotificationAgents {
+  apprise: NotificationAgentApprise;
   discord: NotificationAgentDiscord;
   email: NotificationAgentEmail;
   gotify: NotificationAgentGotify;
@@ -523,6 +690,7 @@ export type JobId =
   | 'sonarr-scan'
   | 'lidarr-scan'
   | 'readarr-scan'
+  | 'navidrome-scan'
   | 'readarr-request-retry'
   | 'mylar-scan'
   | 'kapowarr-scan'
@@ -530,6 +698,8 @@ export type JobId =
   | 'magazine-scan'
   | 'download-sync'
   | 'software-request-reconciliation'
+  | 'live-tv-sync'
+  | 'soulseek-sync'
   | 'download-recovery'
   | 'download-sync-reset'
   | 'jellyfin-recently-added-scan'
@@ -593,12 +763,18 @@ export interface AllSettings {
   lidarr: LidarrSettings[];
   readarr: ReadarrSettings[];
   audiobookshelf?: AudiobookshelfSettings | null;
+  navidrome?: NavidromeSettings | null;
+  jellystat?: JellystatSettings | null;
   mylar: MylarSettings[];
   kapowarr: KapowarrSettings[];
   backissue: BackIssueSettings[];
   lazylibrarian: LazyLibrarianSettings[];
   softwareAcquisition: SoftwareAcquisitionSettings;
   prowlarr: ProwlarrSettings;
+  liveDownloads: LiveDownloadSettings;
+  tunerr: TunerrSettings;
+  slskdn: SlskdnSettings;
+  swipe: SwipeSettings;
   discoveryIntegrations: DiscoveryIntegrationsSettings;
   readerDelivery: ReaderDeliverySettings;
   public: PublicSettings;
@@ -674,6 +850,7 @@ class Settings {
         spotifyClientSecret: '',
         youtubeApiKey: '',
         comicVineApiKey: '',
+        metronToken: '',
         googleBooksApiKey: '',
       },
       plex: {
@@ -710,6 +887,8 @@ class Settings {
       lidarr: [],
       readarr: [],
       audiobookshelf: null,
+      navidrome: null,
+      jellystat: null,
       mylar: [],
       kapowarr: [],
       backissue: [],
@@ -743,6 +922,10 @@ class Settings {
         apiKey: '',
         categoryMappings: defaultProwlarrCategoryMappings(),
       },
+      liveDownloads: defaultLiveDownloadSettings(),
+      tunerr: defaultTunerrSettings(),
+      slskdn: defaultSlskdnSettings(),
+      swipe: defaultSwipeSettings(),
       public: {
         initialized: false,
       },
@@ -840,6 +1023,17 @@ class Settings {
               locale: 'en',
             },
           },
+          apprise: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              configKey: '',
+              tag: '',
+              locale: 'en',
+            },
+          },
           ntfy: {
             enabled: false,
             embedPoster: true,
@@ -882,6 +1076,9 @@ class Settings {
         'readarr-scan': {
           schedule: '0 45 4 * * *',
         },
+        'navidrome-scan': {
+          schedule: '0 15 5 * * *',
+        },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
         },
@@ -905,6 +1102,12 @@ class Settings {
         },
         'software-request-reconciliation': {
           schedule: '0 * * * * *',
+        },
+        'live-tv-sync': {
+          schedule: '30 * * * * *',
+        },
+        'soulseek-sync': {
+          schedule: '45 */2 * * * *',
         },
         'download-recovery': {
           schedule: '0 */5 * * * *',
@@ -1195,6 +1398,22 @@ class Settings {
     return this.data.audiobookshelf ?? null;
   }
 
+  get navidrome(): NavidromeSettings | null {
+    return this.data.navidrome ?? null;
+  }
+
+  get jellystat(): JellystatSettings | null {
+    return this.data.jellystat ?? null;
+  }
+
+  set jellystat(data: JellystatSettings | null) {
+    this.data.jellystat = data;
+  }
+
+  set navidrome(data: NavidromeSettings | null) {
+    this.data.navidrome = data;
+  }
+
   set audiobookshelf(data: AudiobookshelfSettings | null) {
     this.data.audiobookshelf = data;
   }
@@ -1264,6 +1483,38 @@ class Settings {
 
   set prowlarr(data: ProwlarrSettings) {
     this.data.prowlarr = mergeSettings(this.data.prowlarr, data);
+  }
+
+  get liveDownloads(): LiveDownloadSettings {
+    return this.data.liveDownloads;
+  }
+
+  set liveDownloads(data: LiveDownloadSettings) {
+    this.data.liveDownloads = data;
+  }
+
+  get tunerr(): TunerrSettings {
+    return this.data.tunerr;
+  }
+
+  set tunerr(data: TunerrSettings) {
+    this.data.tunerr = data;
+  }
+
+  get slskdn(): SlskdnSettings {
+    return this.data.slskdn;
+  }
+
+  set slskdn(data: SlskdnSettings) {
+    this.data.slskdn = data;
+  }
+
+  get swipe(): SwipeSettings {
+    return this.data.swipe;
+  }
+
+  set swipe(data: SwipeSettings) {
+    this.data.swipe = data;
   }
 
   get public(): PublicSettings {
@@ -1601,6 +1852,8 @@ class Settings {
       lidarr: [],
       readarr: [],
       audiobookshelf: null,
+      navidrome: null,
+      jellystat: null,
       mylar: [],
       kapowarr: [],
       backissue: [],
@@ -1634,6 +1887,10 @@ class Settings {
         apiKey: '',
         categoryMappings: defaultProwlarrCategoryMappings(),
       },
+      liveDownloads: defaultLiveDownloadSettings(),
+      tunerr: defaultTunerrSettings(),
+      slskdn: defaultSlskdnSettings(),
+      swipe: defaultSwipeSettings(),
       public: {
         initialized: false,
       },
@@ -1731,6 +1988,17 @@ class Settings {
               locale: 'en',
             },
           },
+          apprise: {
+            enabled: false,
+            embedPoster: false,
+            types: 0,
+            options: {
+              url: '',
+              configKey: '',
+              tag: '',
+              locale: 'en',
+            },
+          },
           ntfy: {
             enabled: false,
             embedPoster: true,
@@ -1772,6 +2040,9 @@ class Settings {
         'readarr-scan': {
           schedule: '0 45 4 * * *',
         },
+        'navidrome-scan': {
+          schedule: '0 15 5 * * *',
+        },
         'readarr-request-retry': {
           schedule: '0 */5 * * * *',
         },
@@ -1795,6 +2066,12 @@ class Settings {
         },
         'software-request-reconciliation': {
           schedule: '0 * * * * *',
+        },
+        'live-tv-sync': {
+          schedule: '30 * * * * *',
+        },
+        'soulseek-sync': {
+          schedule: '45 */2 * * * *',
         },
         'download-recovery': {
           schedule: '0 */5 * * * *',
