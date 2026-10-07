@@ -781,3 +781,59 @@ The published release has no live Grimmory, BookOrbit, Steam, QuestarrNG, or
 ROMarrNG round-trip claim. The broader Cypress run remains incomplete and is
 not recorded as a pass; the prior run entered an unstubbed provider test and
 made outbound requests. No further provider tests were run.
+
+## PR #162 forward integration — October 6, 2026
+
+John Cronk's PR #162, “feat(ui): preserve accepted preview and adopt SeerrNG
+theme once,” targeted `main` from `JohnCronk79/seerrng` branch
+`integration/preview-v3483-20261004`. Its source head was
+`8e7d81c6429830ce2143bd243977c3c8e220da81`; the fetched `main` head was
+`b46ebfdc6c5e7d7f483f863523f179c1cb27735e`. A rebase produced widespread
+historical snapshot conflicts, so the integration followed the maintainer
+forward-merge workflow and preserved both published histories. The only
+manual source conflict was this checkpoint: the PR's October 4 acceptance and
+theme authorization entries were retained with the later `main` entries.
+Integration commit: `8c341f4c1d38988b3de1f5775954cbca18e25596`.
+
+The application change is limited to saved-theme migration and account
+selection, the Watchlist success state, the documented movie `stale` route,
+and corresponding tests and Cypress fixture updates. Existing source-specific
+GitHub checks had passed on the PR's original head; checks for the integrated
+head are pending a normal push to the PR branch. Recovery refs preserve the
+source and base tips as `recovery/pr162-source-pre-integration-20261006` and
+`recovery/main-pre-pr162-20261006`. The work used the isolated worktree
+`/tmp/seerrng-pr162-integration-20261006`; unrelated ROMarrNG changes in the
+primary checkout were left untouched.
+
+The pinned local toolchain was Node `v24.15.0` and pnpm `10.24.0`. A frozen
+dependency install completed without changing the lockfile (SHA-256
+`40cb5a6475750b19ec14a381df9ad13ec06b02fa37d9782240cb60da6c877830`). The
+comprehensive `pnpm validate:development` run passed translation extraction,
+the 569-file current-batch check, inspection of all 397 shared-style
+components, formatting, lint, server and client type checks, and all 100
+Vitest files (458 tests). The native TypeScript runner completed 2,919 tests:
+2,913 passed, four PostgreSQL-only checks were skipped, and two tests in
+untouched mainline files failed in this full run. The failures were
+`Authenticated metadata resource boundaries` in `server/routes/index.test.ts`
+(404 instead of the expected 429) and the hidden-account search case in
+`server/routes/user.test.ts` (missing `results`). Both exact cases passed when
+rerun alone through the native runner. The full Node JavaScript lane passed
+493/493 on rerun after one non-reproducible failure in its first attempt.
+
+The macOS tooling lane could not produce a reliable full pass. Its POSIX
+fixtures assume Linux tools: BSD `base64` rejected GNU's `-w0` option, BSD
+`stat` rejected `-c`, and the system Bash rejected the `{1,512}` regex bound.
+Even with temporary GNU `base64` and Python aliases, 43 tooling tests still
+failed on those macOS utility differences. No repository files were changed
+to work around the host. Linux CI's tooling job remains required to establish
+those results for the integrated head.
+
+The guarded `pnpm build` completed successfully. Translation and current-batch
+guards passed, the shared UI style suite passed 68/68, server and client
+compilation succeeded, and Next.js generated all 113 static pages. The build
+log is `/tmp/seerrng-pr162-build-20261006.log`; validation and lane logs are
+under `/tmp/seerrng-pr162-*-20261006.log`. This integration did not run a new
+whole-site visual review or live-provider round trip. The PR's documented
+preview acceptance remains the visual evidence for its submitted scope.
+Fresh Linux CI, including the bundle-budget check, and the PR's required
+checks must pass before merging.
