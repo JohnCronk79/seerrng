@@ -798,8 +798,7 @@ Integration commit: `8c341f4c1d38988b3de1f5775954cbca18e25596`.
 The application change is limited to saved-theme migration and account
 selection, the Watchlist success state, the documented movie `stale` route,
 and corresponding tests and Cypress fixture updates. Existing source-specific
-GitHub checks had passed on the PR's original head; checks for the integrated
-head are pending a normal push to the PR branch. Recovery refs preserve the
+GitHub checks had passed on the PR's original head. Recovery refs preserve the
 source and base tips as `recovery/pr162-source-pre-integration-20261006` and
 `recovery/main-pre-pr162-20261006`. The work used the isolated worktree
 `/tmp/seerrng-pr162-integration-20261006`; unrelated ROMarrNG changes in the
@@ -837,3 +836,14 @@ whole-site visual review or live-provider round trip. The PR's documented
 preview acceptance remains the visual evidence for its submitted scope.
 Fresh Linux CI, including the bundle-budget check, and the PR's required
 checks must pass before merging.
+
+After the normal PR-branch push, fresh GitHub checks passed build, bundle
+budget, lint, security, i18n, and external-link validation. Cypress exposed one
+desktop login smoke failure: a long rotating backdrop title extended beyond
+the viewport because the desktop `.page-title` rule permits visible overflow.
+The login backdrop now clips that title with an ellipsis in
+`src/styles/globals.css`, without changing page titles elsewhere. A fresh
+production build passed, including all 68 shared-style tests and all 113
+generated pages. The exact `cypress/e2e/public-smoke.cy.ts` file then passed
+all four cases locally, including desktop and mobile login. GitHub checks must
+rerun against this repair before merge.
