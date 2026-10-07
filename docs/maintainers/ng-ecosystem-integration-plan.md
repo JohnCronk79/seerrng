@@ -439,13 +439,15 @@ SQLite and PostgreSQL migrations are included: `1791090000000` through
 A collision check covers both migration histories, and the SQLite migration
 suite passes; PostgreSQL migrations were not run locally. The exact new feature
 tests pass in focused reruns. The latest focused post-rebase run passed 23 tests
-across six Phase 7 and PostgreSQL metadata suites. The most recent cumulative
-validation attempt passed its 104-file Vitest lane (470 tests), then was
-interrupted during the native TypeScript lane; native JavaScript and tooling
-lanes were not reached. A complete required validation/build pass is still
-pending. No live ReadMeABook or Hardcover
-round-trip, desktop/narrow visual review, or physical Swipe interaction review
-has been performed; see the current evidence entry in
+across six Phase 7 and PostgreSQL metadata suites. A fresh cumulative run on the
+pushed head passed Vitest (471 tests), native TypeScript (3,099 passed, four
+PostgreSQL-only skips), and native JavaScript (493 tests). Its platform-aware
+tooling lane failed 31 of 237 checks on macOS ARM64 due to Linux/GNU command and
+architecture assumptions; the full validator exited 1. The detailed result is
+in `interface-integration-checkpoint.md`. A complete passing validation/build
+gate is still pending. No live ReadMeABook or Hardcover round-trip,
+desktop/narrow visual review, or physical Swipe interaction review has been
+performed; see the current evidence entry in
 `interface-integration-checkpoint.md`.
 
 ReadMeABook (`kikootwo/ReadMeABook`) is AGPL-3.0 and SeerrNG is MIT. The

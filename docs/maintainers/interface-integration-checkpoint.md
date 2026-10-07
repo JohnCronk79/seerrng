@@ -957,15 +957,20 @@ lock check (`pnpm install --lockfile-only --frozen-lockfile --offline`) passed.
 Formatting passed with `pnpm format:check`. The release-note preview against
 the current `origin/main` contains the Bookshelf entry only.
 
-The cumulative `pnpm validate:development` attempt used Node 24.19.0 and pnpm
-10.24.0 before the last main advance. Its sandboxed attempt could not bind
-Supertest loopback listeners; the retry with loopback access passed all 104
-Vitest files (470 tests). Preliminary translation, current-batch (594 files),
-shared-style (421 components), formatting, lint, and server/client type checks
-also completed. The native TypeScript lane selected 417 files and was stopped
-after roughly an hour while still progressing; its TAP output had reached ID
-629, with no final count. Native JavaScript and tooling lanes did not run. This
-is partial evidence, not a passing cumulative gate. No build was run, as the
-maintainer assigned that to another agent. No live ReadMeABook/Hardcover
-round-trip or new visual/physical Swipe review was done. Do not merge into
-`main` until the remaining gate, build, and review are complete.
+The exact pushed head `ff9295f58b2964d1897579e29a486b16fb5fee5b` completed a
+fresh `pnpm validate:development` run with Node 24.19.0 and pnpm 10.24.0.
+Translation extraction, the 594-file current-batch check, the 421-component
+shared-style inspection, formatting, lint, and server/client type checks passed.
+Vitest passed all 104 files (471 tests). The 417-file native TypeScript lane
+passed 3,099 of 3,103 tests; four PostgreSQL-only checks were skipped. The
+native JavaScript lane passed 493/493 tests. Platform-aware tooling ran 237
+tests: 206 passed and 31 failed on this macOS ARM64 host. The failures include
+Linux/GNU command assumptions such as `mv -T`, `stat -c`, `find -printf`,
+`tar --transform`, GNU `base64` flags, an unavailable `python` alias, and an
+amd64-only package smoke check. The validator exited 1 in this tooling lane,
+so the cumulative gate is not green; the raw log is
+`/private/tmp/seerrng-phase2-validate-current-main-20261007.log`. No build was
+run, as the maintainer assigned that to another agent. No live
+ReadMeABook/Hardcover round-trip or new visual/physical Swipe review was done.
+Do not merge into `main` until compatible tooling verification, the assigned
+build, and review are complete.
