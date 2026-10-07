@@ -23,6 +23,16 @@ const coverage = {
   categoryCatalog: [],
 };
 
+const prowlarrSettings = {
+  hostname: 'prowlarr.test',
+  port: 9696,
+  useSsl: false,
+  baseUrl: '',
+  apiKey: 'REDACTED',
+  apiKeyConfigured: true,
+  categoryMappings,
+};
+
 const diagnostics = Array.from({ length: 27 }, (_, index) => ({
   id: index + 1,
   name: index === 26 ? 'AnimeTosho (Usenet)' : `Indexer ${index + 1}`,
@@ -43,60 +53,58 @@ describe('Prowlarr settings on a short mobile screen', () => {
         request.continue();
       } else if (pathname === '/api/v1/settings/cache') {
         request.reply({
-          apiCaches: [],
-          imageCache: {
-            tmdb: { imageCount: 0, size: 0 },
-            avatar: { imageCount: 0, size: 0 },
+          body: {
+            apiCaches: [],
+            imageCache: {
+              tmdb: { imageCount: 0, size: 0 },
+              avatar: { imageCount: 0, size: 0 },
+            },
           },
         });
       } else if (pathname === '/api/v1/settings/prowlarr') {
         request.alias = 'prowlarrSettings';
-        request.reply({
-          hostname: 'prowlarr.test',
-          port: 9696,
-          useSsl: false,
-          baseUrl: '',
-          apiKey: 'REDACTED',
-          apiKeyConfigured: true,
-          categoryMappings,
-        });
+        request.reply({ body: prowlarrSettings });
       } else if (pathname === '/api/v1/settings/prowlarr/coverage') {
-        request.reply(coverage);
+        request.reply({ body: coverage });
       } else if (pathname === '/api/v1/settings/software-acquisition') {
         request.reply({
-          romarr: {
-            hostname: '',
-            port: 6868,
-            useSsl: false,
-            baseUrl: '',
-            apiKey: '',
-            apiKeyConfigured: false,
+          body: {
+            romarr: {
+              hostname: '',
+              port: 6868,
+              useSsl: false,
+              baseUrl: '',
+              apiKey: '',
+              apiKeyConfigured: false,
+            },
+            questarr: {
+              hostname: '',
+              port: 3000,
+              useSsl: false,
+              baseUrl: '',
+              apiKey: '',
+              apiKeyConfigured: false,
+            },
+            emulationCatalogProvider: 'questarr',
+            emulationSystemGroups: {},
           },
-          questarr: {
-            hostname: '',
-            port: 3000,
-            useSsl: false,
-            baseUrl: '',
-            apiKey: '',
-            apiKeyConfigured: false,
-          },
-          emulationCatalogProvider: 'questarr',
-          emulationSystemGroups: {},
         });
       } else if (pathname === '/api/v1/settings/reader-delivery') {
         request.reply({
-          grimmoryUrl: '',
-          grimmoryUsername: '',
-          grimmoryPassword: '',
-          bookorbitUrl: '',
-          bookorbitUsername: '',
-          bookorbitPassword: '',
-          preferredProvider: 'grimmory',
+          body: {
+            grimmoryUrl: '',
+            grimmoryUsername: '',
+            grimmoryPassword: '',
+            bookorbitUrl: '',
+            bookorbitUsername: '',
+            bookorbitPassword: '',
+            preferredProvider: 'grimmory',
+          },
         });
       } else if (pathname === '/api/v1/settings/reader-delivery/groupings') {
-        request.reply([]);
+        request.reply({ body: [] });
       } else {
-        request.reply([]);
+        request.reply({ body: [] });
       }
     });
     cy.intercept('GET', '/api/v1/overrideRule', { body: [] });
@@ -114,7 +122,10 @@ describe('Prowlarr settings on a short mobile screen', () => {
 
   it('keeps save reachable after scrolling the long indexer report', () => {
     cy.visit('/settings/services');
-    cy.wait('@prowlarrSettings').its('response.statusCode').should('eq', 200);
+    cy.wait('@prowlarrSettings').then(({ response }) => {
+      expect(response?.statusCode).to.equal(200);
+      expect(response?.body).to.deep.equal(prowlarrSettings);
+    });
     cy.get('#prowlarr').should('be.visible');
     cy.contains('#prowlarr h3', 'Prowlarr indexers').scrollIntoView();
     cy.get('#prowlarr')
