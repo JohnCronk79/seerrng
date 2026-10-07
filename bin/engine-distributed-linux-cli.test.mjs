@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These focused tests run in native Node without application aliases.
@@ -24,10 +24,12 @@ import {
   activateAcceptedLinuxNodeEnrollment,
   createPendingLinuxNode,
 } from '../tools/validation-engine/runtime/distributed-linux-management.mjs';
+import { dispatchDistributedLinuxPublicRun } from './run-local-validation.mjs';
 
 const cli = fileURLToPath(
   new URL('./run-local-validation.mjs', import.meta.url)
 );
+const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 function runCli(args) {
   return spawnSync(process.execPath, [cli, ...args], {
@@ -123,6 +125,7 @@ test('help documents the Linux controller and node lifecycle', () => {
   assert.match(result.stdout, /--distributed-configure-controller/);
   assert.match(result.stdout, /--distributed-configure-node/);
   assert.match(result.stdout, /--distributed-controller-service/);
+  assert.match(result.stdout, /--distributed-run/);
   assert.match(result.stdout, /--distributed-node/);
   assert.match(result.stdout, /--distributed-node-thread-policy/);
   assert.match(result.stdout, /--distributed-applications/);
@@ -132,6 +135,158 @@ test('help documents the Linux controller and node lifecycle', () => {
   assert.match(result.stdout, /--distributed-dependency-report/);
   assert.match(result.stdout, /--app ID=ABSOLUTE_ROOT/);
   assert.match(result.stdout, /conflict exits with status 20/);
+  assert.match(result.stdout, /thread and worker overrides are forbidden/);
+});
+
+test('distributed production mode requires one application and rejects override options', (t) => {
+  const paths = fixture();
+  t.after(paths.cleanup);
+  const marker = join(paths.stateRoot, 'active-controller');
+  writeFileSync(marker, 'focused-controller.cfg\n');
+  const base = [
+    '--distributed-run',
+    '--active-config-marker',
+    marker,
+    '--state-root',
+    paths.stateRoot,
+    '--log-root',
+    paths.logRoot,
+  ];
+
+  const missing = runCli(base);
+  assert.equal(missing.status, 1);
+  assert.match(
+    missing.stderr,
+    /Distributed production run mode requires --application/
+  );
+
+  const multiple = runCli([
+    ...base,
+    '--application',
+    '01',
+    '--application',
+    '02',
+  ]);
+  assert.equal(multiple.status, 1);
+  assert.match(multiple.stderr, /requires exactly one --application/);
+
+  const threadOverride = runCli([
+    ...base,
+    '--application',
+    '01',
+    '--thread-rule',
+    '2n',
+  ]);
+  assert.equal(threadOverride.status, 1);
+  assert.match(
+    threadOverride.stderr,
+    /Distributed production run mode does not accept --thread-rule/
+  );
+
+  const relativeState = runCli([
+    '--distributed-run',
+    '--active-config-marker',
+    marker,
+    '--state-root',
+    'relative-state',
+    '--log-root',
+    paths.logRoot,
+    '--application',
+    '01',
+  ]);
+  assert.equal(relativeState.status, 1);
+  assert.match(
+    relativeState.stderr,
+    /State root must be an absolute canonical directory/
+  );
+});
+
+test('distributed public dispatch derives and seals the minimal run request', async (t) => {
+  const paths = fixture();
+  t.after(paths.cleanup);
+  const marker = join(paths.stateRoot, 'active-controller');
+  writeFileSync(marker, 'focused-controller.cfg\n');
+  const signal = new AbortController().signal;
+  let received;
+  const execution = await dispatchDistributedLinuxPublicRun(
+    {
+      activeConfigMarkerPath: marker,
+      applicationEntryId: '01',
+      logRoot: paths.logRoot,
+      sourceRoot: repositoryRoot,
+      stateRoot: paths.stateRoot,
+      signal,
+    },
+    {
+      uniqueId: () => '00000000-0000-4000-8000-000000000001',
+      executeLifecycle: async (request) => {
+        received = request;
+        return Object.freeze({
+          runId: request.runId,
+          status: 'passed',
+        });
+      },
+    }
+  );
+
+  assert.deepEqual(Object.keys(received).sort(), [
+    'activeConfigMarkerPath',
+    'applicationEntryId',
+    'logRoot',
+    'runId',
+    'runtimeApplicationKey',
+    'signal',
+    'sourceRoot',
+    'stateRoot',
+  ]);
+  assert.equal(received.activeConfigMarkerPath, marker);
+  assert.equal(received.applicationEntryId, '01');
+  assert.equal(received.logRoot, paths.logRoot);
+  assert.equal(received.runId, 'mode3-00000000-0000-4000-8000-000000000001');
+  assert.equal(received.runtimeApplicationKey, 'seerrng');
+  assert.equal(received.signal, signal);
+  assert.equal(received.sourceRoot, repositoryRoot);
+  assert.equal(received.stateRoot, paths.stateRoot);
+  assert.equal(Object.isFrozen(received), true);
+  assert.equal(execution.request, received);
+  assert.equal(execution.result.status, 'passed');
+});
+
+test('distributed public dispatch fails closed before or after the lifecycle seam', async (t) => {
+  const paths = fixture();
+  t.after(paths.cleanup);
+  const marker = join(paths.stateRoot, 'active-controller');
+  writeFileSync(marker, 'focused-controller.cfg\n');
+  let calls = 0;
+  const common = {
+    activeConfigMarkerPath: marker,
+    applicationEntryId: '01',
+    logRoot: paths.logRoot,
+    sourceRoot: repositoryRoot,
+    stateRoot: paths.stateRoot,
+  };
+  const dependencies = {
+    uniqueId: () => '00000000-0000-4000-8000-000000000002',
+    executeLifecycle: async (request) => {
+      calls += 1;
+      return { runId: request.runId, status: 'incomplete' };
+    },
+  };
+
+  await assert.rejects(
+    dispatchDistributedLinuxPublicRun(
+      { ...common, stateRoot: 'relative-state' },
+      dependencies
+    ),
+    /State root must be an absolute canonical directory/
+  );
+  assert.equal(calls, 0);
+
+  await assert.rejects(
+    dispatchDistributedLinuxPublicRun(common, dependencies),
+    /did not return the exact passing run result/
+  );
+  assert.equal(calls, 1);
 });
 
 test('dependency planning requires entries or all, never both', (t) => {

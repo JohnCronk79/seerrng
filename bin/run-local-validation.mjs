@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   appendFileSync,
   lstatSync,
@@ -277,6 +277,7 @@ const flagOptions = new Set([
   '--distributed-configure-controller',
   '--distributed-configure-node',
   '--distributed-controller-service',
+  '--distributed-run',
   '--distributed-node',
   '--distributed-node-thread-policy',
   '--distributed-applications',
@@ -508,6 +509,19 @@ const optionContracts = {
     ]),
     requiredValues: ['--active-config-marker', '--state-root', '--log-root'],
   },
+  'distributed-run': {
+    label: 'Distributed production run mode',
+    allowed: new Set([
+      '--distributed-run',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+      '--application',
+      '--json',
+    ]),
+    requiredValues: ['--active-config-marker', '--state-root', '--log-root'],
+    requiredRepeated: ['--application'],
+  },
   'distributed-applications': {
     label: 'Distributed application listing mode',
     allowed: new Set([
@@ -659,6 +673,7 @@ function validateOptions(options) {
     '--distributed-configure-controller',
     '--distributed-configure-node',
     '--distributed-controller-service',
+    '--distributed-run',
     '--distributed-node',
     '--distributed-node-thread-policy',
     '--distributed-applications',
@@ -694,7 +709,7 @@ function validateOptions(options) {
     if (!options.repeated.has(option))
       throw new Error(`${contract.label} requires ${option}`);
   if (
-    name === 'distributed-app-delete' &&
+    ['distributed-app-delete', 'distributed-run'].includes(name) &&
     (options.repeated.get('--application') ?? []).length !== 1
   )
     throw new Error(
@@ -722,16 +737,143 @@ function validateOptions(options) {
   return { name, hostedOption, distributedOption };
 }
 
+function canonicalOrdinaryPath(pathValue, label, kind) {
+  if (!isAbsolute(pathValue) || resolve(pathValue) !== pathValue)
+    throw new Error(`${label} must be an absolute canonical ${kind}`);
+  const metadata = lstatSync(pathValue);
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata[`is${kind === 'file' ? 'File' : 'Directory'}`]()
+  )
+    throw new Error(`${label} must be an ordinary ${kind}`);
+  return pathValue;
+}
+
+function runtimeApplicationKey(sourceRoot) {
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      readFileSync(resolve(sourceRoot, 'package.json'), 'utf8')
+    );
+  } catch (error) {
+    throw new Error('The repository package manifest is not valid JSON', {
+      cause: error,
+    });
+  }
+  const name = manifest?.name;
+  if (
+    typeof name !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(name)
+  )
+    throw new Error(
+      'The repository package name is not a valid distributed runtime application key'
+    );
+  return name;
+}
+
+/**
+ * Public integration seam for the engine-owned host lifecycle. The integration
+ * module builds the deployment-specific manifest and adapters, then owns both
+ * the outer containment and inner production runner.
+ */
+export async function executeDistributedLinuxPublicLifecycle(request) {
+  const integration =
+    await import('../tools/validation-engine/runtime/distributed-linux-public-lifecycle.mjs');
+  if (typeof integration.executeDistributedLinuxPublicLifecycle !== 'function')
+    throw new Error(
+      'Distributed public lifecycle integration does not export executeDistributedLinuxPublicLifecycle'
+    );
+  return integration.executeDistributedLinuxPublicLifecycle(request);
+}
+
+/**
+ * Validate and bind the small public command contract before invoking the
+ * deployment-specific engine integration. Dependency injection is limited to
+ * focused tests; the public CLI always uses the engine-owned lifecycle above.
+ */
+export async function dispatchDistributedLinuxPublicRun(
+  {
+    activeConfigMarkerPath,
+    applicationEntryId,
+    logRoot,
+    sourceRoot,
+    stateRoot,
+    signal,
+  },
+  {
+    executeLifecycle = executeDistributedLinuxPublicLifecycle,
+    uniqueId = randomUUID,
+  } = {}
+) {
+  if (
+    typeof applicationEntryId !== 'string' ||
+    !applicationEntryId.trim() ||
+    applicationEntryId !== applicationEntryId.trim()
+  )
+    throw new Error('Exactly one non-empty application entry ID is required');
+  if (signal !== undefined && !(signal instanceof AbortSignal))
+    throw new Error('Distributed production signal must be an AbortSignal');
+  if (typeof executeLifecycle !== 'function')
+    throw new Error('Distributed public lifecycle integration is required');
+  if (typeof uniqueId !== 'function')
+    throw new Error('Distributed run ID generator is required');
+  const canonicalSourceRoot = canonicalOrdinaryPath(
+    sourceRoot,
+    'Repository source root',
+    'directory'
+  );
+  const runId = `mode3-${uniqueId()}`;
+  if (
+    !/^mode3-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+      runId
+    )
+  )
+    throw new Error('The distributed run ID generator returned an invalid ID');
+  const request = Object.freeze({
+    activeConfigMarkerPath: canonicalOrdinaryPath(
+      activeConfigMarkerPath,
+      'Active config marker',
+      'file'
+    ),
+    applicationEntryId,
+    logRoot: canonicalOrdinaryPath(logRoot, 'Log root', 'directory'),
+    runId,
+    runtimeApplicationKey: runtimeApplicationKey(canonicalSourceRoot),
+    signal,
+    sourceRoot: canonicalSourceRoot,
+    stateRoot: canonicalOrdinaryPath(stateRoot, 'State root', 'directory'),
+  });
+
+  const result = await executeLifecycle(request);
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    result.status !== 'passed' ||
+    result.runId !== request.runId
+  )
+    throw new Error(
+      'Distributed public lifecycle did not return the exact passing run result'
+    );
+  return Object.freeze({ request, result });
+}
+
+const executedDirectly =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
 let options;
 let selectedMode;
-try {
-  options = parseOptions(process.argv.slice(2));
-  selectedMode = validateOptions(options);
-} catch (error) {
-  options = undefined;
-  selectedMode = undefined;
-  process.stderr.write(`${error.message}. Use --help.\n`);
-  process.exitCode = 1;
+if (executedDirectly) {
+  try {
+    options = parseOptions(process.argv.slice(2));
+    selectedMode = validateOptions(options);
+  } catch (error) {
+    options = undefined;
+    selectedMode = undefined;
+    process.stderr.write(`${error.message}. Use --help.\n`);
+    process.exitCode = 1;
+  }
 }
 const has = (option) => options?.flags.has(option) ?? false;
 const value = (option) => options?.values.get(option);
@@ -812,7 +954,9 @@ async function supportedApplicationsForActiveConfig(active, signal) {
   });
 }
 
-if (!options) {
+if (!executedDirectly) {
+  // Importing exposes focused command helpers without executing the CLI.
+} else if (!options) {
   // The parse error above is the complete fail-closed result.
 } else if (selectedMode.name === 'help') {
   process.stdout
@@ -826,6 +970,7 @@ if (!options) {
        node bin/run-local-validation.mjs --distributed-configure-controller --config-file ABSOLUTE_FILE --profile GITHUB_USER --controller-name NAME --listen-address IP --listen-port PORT --thread-rule RULE --minimum-thread-count COUNT --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR [--allow-existing-config-update]
        node bin/run-local-validation.mjs --distributed-configure-node --config-file ABSOLUTE_FILE --node-id ## --node-name NAME --listen-address IP --listen-port PORT --controller-address IP --controller-port PORT --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR [--allow-existing-config-update] [--overwrite-node]
        node bin/run-local-validation.mjs --distributed-controller-service --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR
+       node bin/run-local-validation.mjs --distributed-run --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --application ENTRY_ID [--json]
        node bin/run-local-validation.mjs --distributed-node --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --app ID=ABSOLUTE_ROOT
        node bin/run-local-validation.mjs --distributed-node-thread-policy --active-config-marker ABSOLUTE_FILE [--node-id ## --thread-rule RULE --minimum-thread-count COUNT] [--json]
        node bin/run-local-validation.mjs --distributed-applications --active-config-marker ABSOLUTE_FILE --json
@@ -857,6 +1002,9 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
               A controller conflict exits with status 20 without activating the node.
 --distributed-controller-service
               Serve private-LAN node enrollment from the exact active configuration.
+--distributed-run
+              Run one fresh engine-owned contained four-stage Mode 3 lifecycle.
+              The application entry is singular; thread and worker overrides are forbidden.
 --distributed-node
               Serve explicitly bound applications from the exact active node configuration.
 --distributed-node-thread-policy
@@ -890,7 +1038,23 @@ failures, partial output closure and zero active tests fail closed.\n`);
     const hostedMode = selectedMode.hostedOption;
     const distributedMode = selectedMode.distributedOption;
     const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-    if (distributedMode === '--distributed-configure-controller') {
+    if (distributedMode === '--distributed-run') {
+      process.on('SIGINT', interrupt);
+      process.on('SIGTERM', interrupt);
+      const execution = await dispatchDistributedLinuxPublicRun({
+        activeConfigMarkerPath: requiredValue('--active-config-marker'),
+        applicationEntryId: requiredSingleRepeatedValue('--application'),
+        logRoot: requiredValue('--log-root'),
+        sourceRoot: root,
+        stateRoot: requiredValue('--state-root'),
+        signal: controller.signal,
+      });
+      process.stdout.write(
+        has('--json')
+          ? `${JSON.stringify(execution.result, null, 2)}\n`
+          : `Mode 3 distributed validation passed for ${execution.request.runtimeApplicationKey}/${execution.request.applicationEntryId} (${execution.request.runId}).\n`
+      );
+    } else if (distributedMode === '--distributed-configure-controller') {
       requireLinuxDistributedMode('Distributed controller configuration');
       validateReservedLinuxDirectories();
       const configured = configureLinuxController({
@@ -1308,7 +1472,9 @@ failures, partial output closure and zero active tests fail closed.\n`);
         process.on('SIGINT', interrupt);
         process.on('SIGTERM', interrupt);
         if (has('--tests-only')) {
-          const totals = await executePlan(plan, { signal: controller.signal });
+          const totals = await executePlan(plan, {
+            signal: controller.signal,
+          });
           for (const [lane, count] of totals)
             process.stdout.write(
               `${lane}: ${count.total} tests, ${count.active} active\n`
