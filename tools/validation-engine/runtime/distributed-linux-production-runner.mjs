@@ -13,7 +13,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, normalize, resolve } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  normalize,
+  relative,
+  resolve,
+} from 'node:path';
 
 import {
   createAdaptiveTimingObservation,
@@ -272,6 +279,7 @@ function evidencePaths(directory) {
     containedRunVerification: file(CONTAINED_RUN_VERIFICATION),
     processLedger: file('native-command-receipts.jsonl'),
     processLedgerSummary: file('native-process-ledger.json'),
+    processStreams: file('native-process-streams.json'),
     reconciliation: file('independent-reconciliation.json'),
     result: file('staged-validation-result.json'),
     timingObservations: file('adaptive-timing-observations.json'),
@@ -407,6 +415,145 @@ function timingEvidence(result, repositoryEvidence, runId) {
   };
 }
 
+function parseProcessLedgerRecords(bytes, expectedCount) {
+  let source;
+  try {
+    source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new Error('Native process receipt ledger is not UTF-8', {
+      cause: error,
+    });
+  }
+  if (!source.endsWith('\n'))
+    throw new Error('Native process receipt ledger is not durably terminated');
+  const lines = source.split('\n');
+  lines.pop();
+  if (lines.length < 2 || lines.some((line) => line.length === 0))
+    throw new Error('Native process receipt ledger is incomplete');
+  const values = lines.map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      throw new Error(
+        `Native process receipt ledger record ${index + 1} is invalid JSON`,
+        { cause: error }
+      );
+    }
+  });
+  const [header, ...records] = values;
+  if (header?.schema !== 1 || !header.candidate)
+    throw new Error('Native process receipt ledger header is invalid');
+  if (
+    !Number.isSafeInteger(expectedCount) ||
+    expectedCount < 1 ||
+    records.length !== expectedCount
+  )
+    throw new Error('Native process receipt ledger count differs');
+  const ids = new Set();
+  const paths = new Set();
+  for (const [index, record] of records.entries()) {
+    plainObject(record, `native process receipt ${index + 1}`);
+    if (
+      record.sequence !== index + 1 ||
+      typeof record.id !== 'string' ||
+      !record.id ||
+      ids.has(record.id) ||
+      typeof record.commandId !== 'string' ||
+      !record.commandId
+    )
+      throw new Error('Native process receipt identity closure differs');
+    ids.add(record.id);
+    for (const stream of ['stdout', 'stderr']) {
+      const path = absolutePath(
+        record[`${stream}Log`],
+        `Native process ${stream} log`
+      );
+      if (paths.has(path))
+        throw new Error('Native process receipts reuse a stream log');
+      paths.add(path);
+      if (
+        !Number.isSafeInteger(record[`${stream}Bytes`]) ||
+        record[`${stream}Bytes`] < 0
+      )
+        throw new Error('Native process stream byte count is invalid');
+      digest(record[`${stream}Sha256`], `Native process ${stream} stream hash`);
+    }
+  }
+  return records;
+}
+
+function stableNativeLogBytes(pathValue, logRoot, deps, label) {
+  const path = absolutePath(pathValue, label);
+  const child = relative(logRoot, path);
+  if (
+    !child ||
+    child === '..' ||
+    child.startsWith('../') ||
+    child.startsWith('..\\') ||
+    isAbsolute(child) ||
+    dirname(child) !== '.'
+  )
+    throw new Error(`${label} is outside the owned native log directory`);
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    realpathSync(path) !== path
+  )
+    throw new Error(`${label} is not an ordinary canonical file`);
+  const bytes = deps.readEvidenceFile(path);
+  const after = lstatSync(path);
+  for (const field of ['dev', 'ino', 'mode', 'size', 'mtimeMs', 'ctimeMs'])
+    if (before[field] !== after[field])
+      throw new Error(`${label} changed during collection`);
+  if (bytes.length !== after.size)
+    throw new Error(`${label} byte count changed during collection`);
+  return bytes;
+}
+
+function collectNativeProcessStreams(records, ledgerPath, deps) {
+  const scratchRoot = dirname(ledgerPath);
+  const logRoot = resolve(scratchRoot, 'logs');
+  const metadata = lstatSync(logRoot);
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    realpathSync(logRoot) !== logRoot
+  )
+    throw new Error('Native process log root is not an ordinary directory');
+  return records.map((record, index) => ({
+    sequence: record.sequence,
+    id: record.id,
+    commandId: record.commandId,
+    streams: Object.fromEntries(
+      ['stdout', 'stderr'].map((stream) => {
+        const bytes = stableNativeLogBytes(
+          record[`${stream}Log`],
+          logRoot,
+          deps,
+          `Native process receipt ${index + 1} ${stream} log`
+        );
+        if (
+          bytes.length !== record[`${stream}Bytes`] ||
+          sha256(bytes) !== record[`${stream}Sha256`]
+        )
+          throw new Error(
+            `Native process receipt ${index + 1} ${stream} log differs`
+          );
+        return [
+          stream,
+          {
+            fileName: basename(record[`${stream}Log`]),
+            bytes: bytes.length,
+            sha256: record[`${stream}Sha256`],
+            contentBase64: bytes.toString('base64'),
+          },
+        ];
+      })
+    ),
+  }));
+}
+
 function copyProcessLedger(context, deps, paths) {
   const summary = plainObject(
     context.describeNativeProcessReceipts(),
@@ -426,6 +573,16 @@ function copyProcessLedger(context, deps, paths) {
     summary.pending.length !== 0
   )
     throw new Error('Native process receipt ledger is not closed');
+  const records = parseProcessLedgerRecords(bytes, summary.records);
+  const streams = collectNativeProcessStreams(records, sourcePath, deps);
+  const streamReceipt = writeJson(deps, paths.processStreams, {
+    schema: 'seerrng-distributed-linux-process-streams/v1',
+    sourceLedgerSha256: sourceSha256,
+    recordCount: records.length,
+    streamCount: records.length * 2,
+    records: streams,
+    resultReuse: false,
+  });
   const ledgerReceipt = deps.writeEvidenceFile(paths.processLedger, bytes);
   const durableSummary = {
     schema: 'seerrng-distributed-linux-process-ledger/v1',
@@ -437,7 +594,7 @@ function copyProcessLedger(context, deps, paths) {
     evidenceFile: paths.processLedger,
   };
   const receipt = writeJson(deps, paths.processLedgerSummary, durableSummary);
-  return { durableSummary, receipt };
+  return { durableSummary, ledgerReceipt, receipt, streamReceipt };
 }
 
 function positiveDuration(value, label) {
@@ -754,6 +911,7 @@ export async function executeDistributedLinuxProductionRun(
       files: Object.freeze({
         processLedger: paths.processLedger,
         processLedgerSummary: paths.processLedgerSummary,
+        processStreams: paths.processStreams,
         result: paths.result,
         timings: paths.timings,
       }),
@@ -857,7 +1015,9 @@ export async function executeDistributedLinuxProductionRun(
       ok: true,
       resultSha256: resultReceipt.sha256,
       timingsSha256: timingsReceipt.sha256,
-      processLedgerSha256: ledgerCollection.receipt.sha256,
+      processLedgerSha256: ledgerCollection.ledgerReceipt.sha256,
+      processLedgerSummarySha256: ledgerCollection.receipt.sha256,
+      processStreamsSha256: ledgerCollection.streamReceipt.sha256,
       reconciliationSha256: reconciliationReceipt.sha256,
       observationsSha256: observationsReceipt.sha256,
       timingProfileUpdateSha256: timingProfileUpdateReceipt.sha256,
@@ -874,6 +1034,7 @@ export async function executeDistributedLinuxProductionRun(
         containedRunVerification: paths.containedRunVerification,
         processLedger: paths.processLedger,
         processLedgerSummary: paths.processLedgerSummary,
+        processStreams: paths.processStreams,
         reconciliation: paths.reconciliation,
         result: paths.result,
         timingObservations: paths.timingObservations,

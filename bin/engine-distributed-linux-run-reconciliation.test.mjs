@@ -456,6 +456,40 @@ function createProcessLedger(candidate) {
   );
 }
 
+function createProcessStreams(ledgerBytes) {
+  const [, record] = ledgerBytes
+    .toString('utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const contents = { stdout: Buffer.from('ok\n'), stderr: Buffer.alloc(0) };
+  return {
+    schema: 'seerrng-distributed-linux-process-streams/v1',
+    sourceLedgerSha256: hash(ledgerBytes),
+    recordCount: 1,
+    streamCount: 2,
+    records: [
+      {
+        sequence: record.sequence,
+        id: record.id,
+        commandId: record.commandId,
+        streams: Object.fromEntries(
+          ['stdout', 'stderr'].map((stream) => [
+            stream,
+            {
+              fileName: `native-command-1.${stream}.log`,
+              bytes: contents[stream].length,
+              sha256: hash(contents[stream]),
+              contentBase64: contents[stream].toString('base64'),
+            },
+          ])
+        ),
+      },
+    ],
+    resultReuse: false,
+  };
+}
+
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-run-reconciliation-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -483,6 +517,7 @@ function fixture(t) {
   const paths = {
     processLedger: join(evidenceDirectory, 'native-command-receipts.jsonl'),
     processLedgerSummary: join(evidenceDirectory, 'native-process-ledger.json'),
+    processStreams: join(evidenceDirectory, 'native-process-streams.json'),
     result: join(evidenceDirectory, 'staged-validation-result.json'),
     timings: join(evidenceDirectory, 'timings.json'),
   };
@@ -490,6 +525,7 @@ function fixture(t) {
   writeJson(paths.timings, timings);
   const ledgerBytes = createProcessLedger(candidate);
   writeFileSync(paths.processLedger, ledgerBytes);
+  writeJson(paths.processStreams, createProcessStreams(ledgerBytes));
   writeJson(paths.processLedgerSummary, {
     schema: 'seerrng-distributed-linux-process-ledger/v1',
     records: 1,
@@ -547,6 +583,12 @@ function rewriteLedger(selected, mutate) {
   writeJson(selected.paths.processLedgerSummary, summary);
 }
 
+function rewriteProcessStreams(selected, mutate) {
+  const streams = readJson(selected.paths.processStreams);
+  mutate(streams);
+  writeJson(selected.paths.processStreams, streams);
+}
+
 test('independently reconciles all durable pre-success evidence', (t) => {
   const selected = fixture(t);
   const result = reconcileDistributedLinuxRunEvidence(selected.input);
@@ -555,11 +597,12 @@ test('independently reconciles all durable pre-success evidence', (t) => {
   assert.equal(result.status, 'passed');
   assert.equal(result.runId, selected.input.expected.runId);
   assert.equal(result.repositoryEvidence.completed, true);
-  assert.equal(result.evidenceManifest.files.length, 4);
+  assert.equal(result.evidenceManifest.files.length, 5);
   assert.match(result.evidenceManifestSha256, /^[a-f0-9]{64}$/u);
   assert.match(result.repositoryEvidenceSha256, /^[a-f0-9]{64}$/u);
   assert.equal(result.cleanup.verified, true);
   assert.equal(result.cleanup.processReceiptCount, 1);
+  assert.equal(result.cleanup.rawStreamCount, 2);
   assert.equal(result.timing.stageCount, 4);
 });
 
@@ -683,6 +726,33 @@ test('rejects a process receipt whose cleanup did not complete', (t) => {
   assert.throws(
     () => reconcileDistributedLinuxRunEvidence(selected.input),
     /cleanup did not complete/u
+  );
+});
+
+test('rejects a raw process stream whose bytes differ from its ledger', (t) => {
+  const selected = fixture(t);
+  rewriteProcessStreams(selected, (streams) => {
+    streams.records[0].streams.stdout.contentBase64 = Buffer.from(
+      'tampered\n',
+      'utf8'
+    ).toString('base64');
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /stdout content differs/u
+  );
+});
+
+test('rejects a raw process stream bundle bound to another ledger', (t) => {
+  const selected = fixture(t);
+  rewriteProcessStreams(selected, (streams) => {
+    streams.sourceLedgerSha256 = digest('f');
+  });
+
+  assert.throws(
+    () => reconcileDistributedLinuxRunEvidence(selected.input),
+    /stream bundle is incomplete/u
   );
 });
 

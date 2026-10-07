@@ -25,16 +25,18 @@ const REQUIRED_STAGES = Object.freeze([
 const FILE_ROLES = Object.freeze([
   'processLedger',
   'processLedgerSummary',
+  'processStreams',
   'result',
   'timings',
 ]);
 const FILE_LIMITS = Object.freeze({
   processLedger: 128 * 1024 * 1024,
   processLedgerSummary: 1024 * 1024,
+  processStreams: 512 * 1024 * 1024,
   result: 128 * 1024 * 1024,
   timings: 64 * 1024 * 1024,
 });
-const MAX_TOTAL_EVIDENCE_BYTES = 256 * 1024 * 1024;
+const MAX_TOTAL_EVIDENCE_BYTES = 768 * 1024 * 1024;
 const STALE_TIMESTAMP_TOLERANCE_MS = 2_000;
 const INVENTORY_IDENTITY_SCHEMA =
   'seerrng-distributed-native-inventory-identity/v1';
@@ -1208,10 +1210,108 @@ function verifyProcessLedger(reader, summary, result) {
     'Process receipt sequence closure'
   );
   return {
-    records: records.length,
+    recordCount: records.length,
+    records,
     cleanupVerified: true,
     ledgerSha256: ledgerEntry.sha256,
   };
+}
+
+function verifyProcessStreams(value, ledgerSha256, ledgerRecords) {
+  exactKeys(
+    value,
+    [
+      'recordCount',
+      'records',
+      'resultReuse',
+      'schema',
+      'sourceLedgerSha256',
+      'streamCount',
+    ],
+    'native process stream bundle'
+  );
+  assert(
+    value.schema === 'seerrng-distributed-linux-process-streams/v1' &&
+      value.resultReuse === false &&
+      value.sourceLedgerSha256 === ledgerSha256 &&
+      Array.isArray(value.records) &&
+      value.recordCount === ledgerRecords.length &&
+      value.records.length === ledgerRecords.length &&
+      value.streamCount === ledgerRecords.length * 2,
+    'Native process stream bundle is incomplete'
+  );
+  const fileNames = new Set();
+  let streamCount = 0;
+  for (const [index, bundled] of value.records.entries()) {
+    exactKeys(
+      bundled,
+      ['commandId', 'id', 'sequence', 'streams'],
+      `native process stream record ${index + 1}`
+    );
+    const ledger = ledgerRecords[index];
+    assert(
+      bundled.sequence === ledger.sequence &&
+        bundled.id === ledger.id &&
+        bundled.commandId === ledger.commandId,
+      `Native process stream record ${index + 1} identity differs`
+    );
+    exactKeys(
+      bundled.streams,
+      ['stderr', 'stdout'],
+      `native process stream record ${index + 1} streams`
+    );
+    for (const stream of ['stdout', 'stderr']) {
+      const entry = bundled.streams[stream];
+      exactKeys(
+        entry,
+        ['bytes', 'contentBase64', 'fileName', 'sha256'],
+        `native process stream record ${index + 1} ${stream}`
+      );
+      const fileName = text(
+        entry.fileName,
+        `native process stream record ${index + 1} ${stream} file name`
+      );
+      assert(
+        !fileName.includes('/') &&
+          !fileName.includes('\\') &&
+          fileName !== '.' &&
+          fileName !== '..' &&
+          !fileNames.has(fileName),
+        'Native process stream file names are invalid or duplicated'
+      );
+      fileNames.add(fileName);
+      assert(
+        typeof entry.contentBase64 === 'string',
+        `Native process stream record ${index + 1} ${stream} payload is missing`
+      );
+      const bytes = Buffer.from(entry.contentBase64, 'base64');
+      assert(
+        bytes.toString('base64') === entry.contentBase64,
+        `Native process stream record ${index + 1} ${stream} payload is not canonical base64`
+      );
+      const expectedBytes = safeInteger(
+        ledger[`${stream}Bytes`],
+        `Native process receipt ${index + 1} ${stream} byte count`
+      );
+      const expectedSha256 = digest(
+        ledger[`${stream}Sha256`],
+        `Native process receipt ${index + 1} ${stream} hash`
+      );
+      assert(
+        entry.bytes === expectedBytes &&
+          bytes.length === expectedBytes &&
+          entry.sha256 === expectedSha256 &&
+          sha256(bytes) === expectedSha256,
+        `Native process stream record ${index + 1} ${stream} content differs`
+      );
+      streamCount += 1;
+    }
+  }
+  assert(
+    streamCount === value.streamCount,
+    'Native process stream count differs'
+  );
+  return { streamCount, verified: true };
 }
 
 /**
@@ -1228,6 +1328,10 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     'processLedgerSummary',
     'native process ledger summary'
   );
+  const processStreams = reader.json(
+    'processStreams',
+    'native process stream bundle'
+  );
 
   const stage = verifyStageAccounting(result, expected);
   const repository = verifyRepositoryEvidence(
@@ -1242,6 +1346,11 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     expected
   );
   const processes = verifyProcessLedger(reader, processLedgerSummary, result);
+  const streams = verifyProcessStreams(
+    processStreams,
+    processes.ledgerSha256,
+    processes.records
+  );
   reader.assertStable();
 
   const evidenceManifestSha256 = canonicalJsonSha256(reader.manifest);
@@ -1270,7 +1379,8 @@ export function reconcileDistributedLinuxRunEvidence(inputValue) {
     evidenceManifestSha256,
     cleanup: {
       nativeReceiptCount: stage.cleanupReceipts,
-      processReceiptCount: processes.records,
+      processReceiptCount: processes.recordCount,
+      rawStreamCount: streams.streamCount,
       verified: true,
     },
     timing,

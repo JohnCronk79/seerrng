@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -147,7 +148,44 @@ function harness(t, failure = null) {
   const evidenceDirectory = join(root, 'production-run-1');
   const timingProfilePath = join(root, 'timing-profile.json');
   const ledgerPath = join(root, 'source-native-ledger.jsonl');
-  const ledgerBytes = Buffer.from('{"schema":1}\n', 'utf8');
+  const nativeLogs = join(root, 'logs');
+  mkdirSync(nativeLogs);
+  const stdoutLog = join(nativeLogs, 'native-command-1.stdout.log');
+  const stderrLog = join(nativeLogs, 'native-command-1.stderr.log');
+  const stdoutBytes = Buffer.from('focused output\n', 'utf8');
+  const stderrBytes = Buffer.alloc(0);
+  writeFileSync(stdoutLog, stdoutBytes, { flag: 'wx' });
+  writeFileSync(stderrLog, stderrBytes, { flag: 'wx' });
+  const ledgerBytes = Buffer.from(
+    `${JSON.stringify({ schema: 1, candidate: { sourceSha256: digest('a') } })}\n${JSON.stringify(
+      {
+        sequence: 1,
+        id: 'native-command-1',
+        commandId: 'repository-check',
+        role: 'command',
+        status: 'passed',
+        exitCode: 0,
+        signal: null,
+        aborted: false,
+        timedOut: false,
+        spawnError: null,
+        wallMs: 1,
+        lifecycle: {
+          spawned: true,
+          completed: true,
+          cleanupVerified: true,
+          cleanupError: null,
+        },
+        stdoutLog,
+        stderrLog,
+        stdoutBytes: stdoutBytes.length,
+        stderrBytes: stderrBytes.length,
+        stdoutSha256: hash(stdoutBytes),
+        stderrSha256: hash(stderrBytes),
+      }
+    )}\n`,
+    'utf8'
+  );
   writeFileSync(ledgerPath, ledgerBytes, { flag: 'wx' });
   const events = [];
   const initialProfile = createAdaptiveTimingProfile();
@@ -243,6 +281,7 @@ function harness(t, failure = null) {
       assert.equal(existsSync(files.timings), true);
       assert.equal(existsSync(files.processLedger), true);
       assert.equal(existsSync(files.processLedgerSummary), true);
+      assert.equal(existsSync(files.processStreams), true);
       if (failure === 'reconciliation')
         throw new Error('Focused reconciliation failure');
       const durableResult = JSON.parse(readFileSync(files.result, 'utf8'));
@@ -320,6 +359,30 @@ test('green production lifecycle persists one profile and writes its contained-r
   );
   assert.equal(marker.ok, true);
   assert.equal(marker.status, 'passed');
+  const retainedLedger = readFileSync(outcome.files.processLedger);
+  const retainedLedgerSummary = readFileSync(
+    outcome.files.processLedgerSummary
+  );
+  const retainedStreams = readFileSync(outcome.files.processStreams);
+  const streamBundle = JSON.parse(retainedStreams.toString('utf8'));
+  assert.equal(marker.processLedgerSha256, hash(retainedLedger));
+  assert.equal(marker.processLedgerSummarySha256, hash(retainedLedgerSummary));
+  assert.equal(marker.processStreamsSha256, hash(retainedStreams));
+  assert.equal(streamBundle.sourceLedgerSha256, hash(retainedLedger));
+  assert.equal(streamBundle.recordCount, 1);
+  assert.equal(streamBundle.streamCount, 2);
+  assert.equal(
+    Buffer.from(
+      streamBundle.records[0].streams.stdout.contentBase64,
+      'base64'
+    ).toString('utf8'),
+    'focused output\n'
+  );
+  assert.equal(
+    Buffer.from(streamBundle.records[0].streams.stderr.contentBase64, 'base64')
+      .length,
+    0
+  );
   assert.equal(
     marker.updatedProfileSha256,
     outcome.timingUpdate.updatedProfileSha256
