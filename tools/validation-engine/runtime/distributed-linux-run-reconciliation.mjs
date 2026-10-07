@@ -1,0 +1,1279 @@
+// Copyright (c) snapetech and SeerrNG contributors.
+// Independent disk-only reconciliation for one production Linux Mode 3 run.
+import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+
+import { verifyDistributedAdaptiveSchedule } from './distributed-adaptive-scheduler.mjs';
+import {
+  createDistributedNativeTaskRequest,
+  verifyDistributedNativeTaskResult,
+} from './distributed-native-adapter.mjs';
+import { verifyDistributedShardRun } from './distributed-shard-executor.mjs';
+import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
+
+const HASH64 = /^[a-f0-9]{64}$/u;
+const GIT_OBJECT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const REQUIRED_STAGES = Object.freeze([
+  'repository',
+  'codeql',
+  'build',
+  'browser',
+]);
+const FILE_ROLES = Object.freeze([
+  'processLedger',
+  'processLedgerSummary',
+  'result',
+  'timings',
+]);
+const FILE_LIMITS = Object.freeze({
+  processLedger: 128 * 1024 * 1024,
+  processLedgerSummary: 1024 * 1024,
+  result: 128 * 1024 * 1024,
+  timings: 64 * 1024 * 1024,
+});
+const MAX_TOTAL_EVIDENCE_BYTES = 256 * 1024 * 1024;
+const STALE_TIMESTAMP_TOLERANCE_MS = 2_000;
+const INVENTORY_IDENTITY_SCHEMA =
+  'seerrng-distributed-native-inventory-identity/v1';
+
+function fail(message) {
+  throw new Error(
+    `Independent distributed Linux reconciliation failed: ${message}`
+  );
+}
+
+function assert(condition, message) {
+  if (!condition) fail(message);
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function plainObject(value, label) {
+  assert(
+    value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      [Object.prototype, null].includes(Object.getPrototypeOf(value)),
+    `${label} must be a plain object`
+  );
+  return value;
+}
+
+function exactKeys(value, expected, label) {
+  plainObject(value, label);
+  const actual = Reflect.ownKeys(value);
+  const wanted = [...expected].toSorted(compareText);
+  assert(
+    actual.every((key) => typeof key === 'string') &&
+      actual.length === wanted.length &&
+      actual.toSorted(compareText).every((key, index) => key === wanted[index]),
+    `${label} has unexpected or missing fields`
+  );
+  return value;
+}
+
+function text(value, label) {
+  assert(
+    typeof value === 'string' &&
+      value.length > 0 &&
+      value === value.trim() &&
+      value.normalize('NFC') === value,
+    `Exact ${label} is required`
+  );
+  return value;
+}
+
+function token(value, label) {
+  const normalized = text(value, label);
+  assert(TOKEN.test(normalized), `Exact ${label} is required`);
+  return normalized;
+}
+
+function digest(value, label) {
+  assert(
+    typeof value === 'string' && HASH64.test(value),
+    `${label} must be a lowercase SHA-256 digest`
+  );
+  return value;
+}
+
+function gitObject(value, label) {
+  assert(
+    typeof value === 'string' && GIT_OBJECT.test(value),
+    `${label} must be a Git object ID`
+  );
+  return value;
+}
+
+function safeInteger(value, label, minimum = 0) {
+  assert(
+    Number.isSafeInteger(value) && value >= minimum,
+    `${label} must be a safe integer of at least ${minimum}`
+  );
+  return value;
+}
+
+function duration(value, label) {
+  assert(
+    Number.isFinite(value) && value >= 0,
+    `${label} must be a finite nonnegative duration`
+  );
+  return value;
+}
+
+function counts(value, label) {
+  plainObject(value, label);
+  const normalized = {
+    passed: safeInteger(value.passed, `${label} passed count`),
+    failed: safeInteger(value.failed, `${label} failed count`),
+    skipped: safeInteger(value.skipped, `${label} skipped count`),
+  };
+  safeInteger(
+    normalized.passed + normalized.failed + normalized.skipped,
+    `${label} total count`
+  );
+  return normalized;
+}
+
+function addCounts(left, right, label) {
+  const total = {
+    passed: left.passed + right.passed,
+    failed: left.failed + right.failed,
+    skipped: left.skipped + right.skipped,
+  };
+  return counts(total, label);
+}
+
+function requireDeepEqual(actual, expected, label) {
+  assert(isDeepStrictEqual(actual, expected), `${label} differs`);
+  return actual;
+}
+
+function canonicalPath(value) {
+  const normalized = resolve(value);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function samePath(left, right) {
+  return canonicalPath(left) === canonicalPath(right);
+}
+
+function metadataIdentity(metadata) {
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    mode: metadata.mode,
+    size: metadata.size,
+    modifiedAtMs: metadata.mtimeMs,
+    changedAtMs: metadata.ctimeMs,
+    bornAtMs: metadata.birthtimeMs,
+  };
+}
+
+function readStableEvidenceFile({
+  role,
+  path,
+  evidenceRoot,
+  evidenceRootBirthtimeMs,
+}) {
+  assert(
+    typeof path === 'string' && isAbsolute(path),
+    `${role} evidence path must be absolute`
+  );
+  const absolute = resolve(path);
+  assert(
+    samePath(dirname(absolute), evidenceRoot),
+    `${role} evidence path is stale or outside the current evidence directory`
+  );
+  let before;
+  try {
+    before = lstatSync(absolute);
+  } catch (error) {
+    fail(`${role} evidence file is missing: ${error.message}`);
+  }
+  assert(
+    before.isFile() && !before.isSymbolicLink(),
+    `${role} evidence is not an ordinary file`
+  );
+  assert(
+    samePath(realpathSync(absolute), absolute),
+    `${role} evidence path resolves through an untrusted link`
+  );
+  assert(
+    before.size > 0 && before.size <= FILE_LIMITS[role],
+    `${role} evidence exceeds its bounded size`
+  );
+  if (evidenceRootBirthtimeMs > 0)
+    assert(
+      before.mtimeMs + STALE_TIMESTAMP_TOLERANCE_MS >= evidenceRootBirthtimeMs,
+      `${role} evidence is stale for this run directory`
+    );
+  const first = readFileSync(absolute);
+  const middle = lstatSync(absolute);
+  const second = readFileSync(absolute);
+  const after = lstatSync(absolute);
+  assert(
+    isDeepStrictEqual(metadataIdentity(before), metadataIdentity(middle)) &&
+      isDeepStrictEqual(metadataIdentity(middle), metadataIdentity(after)) &&
+      first.equals(second),
+    `${role} evidence changed while it was read`
+  );
+  const relativePath = relative(evidenceRoot, absolute).split(sep).join('/');
+  assert(
+    relativePath.length > 0 &&
+      !relativePath.startsWith('../') &&
+      !relativePath.includes('/'),
+    `${role} evidence path is not a direct run artifact`
+  );
+  return {
+    role,
+    absolute,
+    relativePath,
+    bytes: first,
+    metadata: metadataIdentity(after),
+    sha256: sha256(first),
+  };
+}
+
+function createEvidenceReader(value) {
+  exactKeys(
+    value,
+    ['evidenceDirectory', 'expected', 'files'],
+    'distributed Linux reconciliation input'
+  );
+  const directory = text(value.evidenceDirectory, 'evidence directory');
+  assert(isAbsolute(directory), 'Evidence directory must be absolute');
+  const evidenceRoot = resolve(directory);
+  let rootMetadata;
+  try {
+    rootMetadata = lstatSync(evidenceRoot);
+  } catch (error) {
+    fail(`Evidence directory is missing: ${error.message}`);
+  }
+  assert(
+    rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink(),
+    'Evidence directory is not an ordinary directory'
+  );
+  assert(
+    samePath(realpathSync(evidenceRoot), evidenceRoot),
+    'Evidence directory resolves through an untrusted link'
+  );
+  exactKeys(value.files, FILE_ROLES, 'pre-success evidence files');
+  const pathIdentities = FILE_ROLES.map((role) =>
+    canonicalPath(text(value.files[role], `${role} evidence path`))
+  );
+  assert(
+    new Set(pathIdentities).size === FILE_ROLES.length,
+    'Pre-success evidence paths contain a duplicate'
+  );
+  const entries = new Map();
+  let totalBytes = 0;
+  for (const role of FILE_ROLES) {
+    const entry = readStableEvidenceFile({
+      role,
+      path: value.files[role],
+      evidenceRoot,
+      evidenceRootBirthtimeMs: rootMetadata.birthtimeMs,
+    });
+    totalBytes += entry.bytes.length;
+    assert(
+      Number.isSafeInteger(totalBytes) &&
+        totalBytes <= MAX_TOTAL_EVIDENCE_BYTES,
+      'Pre-success evidence exceeds the aggregate size bound'
+    );
+    entries.set(role, entry);
+  }
+  const json = (role, label) => {
+    const entry = entries.get(role);
+    let source;
+    try {
+      source = new TextDecoder('utf-8', { fatal: true }).decode(entry.bytes);
+    } catch (error) {
+      fail(`${label} is not UTF-8: ${error.message}`);
+    }
+    assert(source.endsWith('\n'), `${label} is not a complete durable record`);
+    try {
+      return JSON.parse(source);
+    } catch (error) {
+      fail(`${label} is not valid JSON: ${error.message}`);
+    }
+  };
+  const assertStable = () => {
+    for (const entry of entries.values()) {
+      const metadata = lstatSync(entry.absolute);
+      assert(
+        metadata.isFile() &&
+          !metadata.isSymbolicLink() &&
+          samePath(realpathSync(entry.absolute), entry.absolute) &&
+          isDeepStrictEqual(metadataIdentity(metadata), entry.metadata),
+        `${entry.role} evidence changed before reconciliation completed`
+      );
+      const reread = readFileSync(entry.absolute);
+      assert(
+        reread.length === entry.bytes.length &&
+          sha256(reread) === entry.sha256 &&
+          reread.equals(entry.bytes),
+        `${entry.role} evidence changed before reconciliation completed`
+      );
+    }
+  };
+  const manifest = deepFreeze({
+    schema: 'seerrng-distributed-linux-evidence-manifest/v1',
+    files: [...entries.values()]
+      .map((entry) => ({
+        role: entry.role,
+        path: entry.relativePath,
+        bytes: entry.bytes.length,
+        sha256: entry.sha256,
+      }))
+      .toSorted((left, right) => compareText(left.role, right.role)),
+  });
+  return { entries, json, assertStable, evidenceRoot, manifest };
+}
+
+function normalizeExpected(value) {
+  exactKeys(
+    value,
+    [
+      'activeConfigPath',
+      'applicationEntryId',
+      'profileSha256',
+      'runId',
+      'runtimeApplicationKey',
+    ],
+    'expected production run identities'
+  );
+  const activeConfigPath = text(
+    value.activeConfigPath,
+    'expected active config path'
+  );
+  assert(
+    isAbsolute(activeConfigPath),
+    'Expected active config path must be absolute'
+  );
+  return deepFreeze({
+    activeConfigPath: resolve(activeConfigPath),
+    applicationEntryId: text(
+      value.applicationEntryId,
+      'expected application entry ID'
+    ),
+    profileSha256: digest(
+      value.profileSha256,
+      'Expected timing profile identity'
+    ),
+    runId: token(value.runId, 'expected production run ID'),
+    runtimeApplicationKey: token(
+      value.runtimeApplicationKey,
+      'expected runtime application key'
+    ),
+  });
+}
+
+function normalizeCandidate(value) {
+  exactKeys(
+    value,
+    ['commit', 'lockSha256', 'repository', 'sourceSha256', 'tree'],
+    'staged candidate'
+  );
+  return {
+    repository: text(value.repository, 'candidate repository'),
+    commit: gitObject(value.commit, 'Candidate commit'),
+    tree: gitObject(value.tree, 'Candidate tree'),
+    lockSha256: digest(value.lockSha256, 'Candidate lockfile identity'),
+    sourceSha256: digest(value.sourceSha256, 'Candidate source identity'),
+  };
+}
+
+function verifyApplicationBinding(result, expected) {
+  const application = plainObject(
+    result.distributedApplication,
+    'distributed application binding'
+  );
+  const supported = plainObject(
+    application.supportedApplication,
+    'supported application binding'
+  );
+  assert(
+    application.runtimeApplicationKey === expected.runtimeApplicationKey &&
+      supported.entryId === expected.applicationEntryId &&
+      application.configuredApplicationId === supported.applicationId &&
+      application.dependencyProfilePath === supported.profilePath &&
+      isAbsolute(application.dependencyProfilePath),
+    'Distributed application binding differs from the expected run'
+  );
+  for (const [field, label] of [
+    ['configuredApplicationId', 'configured application ID'],
+    ['dependencyProfilePath', 'dependency profile path'],
+    ['runtimeApplicationKey', 'runtime application key'],
+  ])
+    text(application[field], label);
+  for (const [field, label] of [
+    ['applicationId', 'supported application ID'],
+    ['entryId', 'supported application entry ID'],
+    ['name', 'supported application name'],
+    ['profilePath', 'supported application profile path'],
+  ])
+    text(supported[field], label);
+  return structuredClone(application);
+}
+
+function verifyStageAccounting(result, expected) {
+  assert(result.schemaVersion === 2, 'Staged result schema differs');
+  assert(result.runId === expected.runId, 'Staged result run ID differs');
+  assert(result.mode === 'execute', 'Staged result is not an execution');
+  assert(
+    result.ok === true &&
+      result.status === 'passed' &&
+      result.localStatus === 'passed' &&
+      result.resultReuse === false,
+    'Four-stage result did not pass without reuse'
+  );
+  assert(
+    Array.isArray(result.pendingRequired) &&
+      result.pendingRequired.length === 0,
+    'Four-stage result retains required pending work'
+  );
+  assert(
+    Array.isArray(result.applicability),
+    'Four-stage applicability evidence is missing'
+  );
+  const candidate = normalizeCandidate(result.candidate);
+  const application = verifyApplicationBinding(result, expected);
+
+  assert(
+    Array.isArray(result.lanes) &&
+      result.lanes.length === REQUIRED_STAGES.length,
+    'Four-stage lane inventory is incomplete'
+  );
+  requireDeepEqual(
+    result.lanes.map((lane) => lane.id),
+    REQUIRED_STAGES,
+    'Four-stage lane order'
+  );
+  assert(Array.isArray(result.results), 'Four-stage unit results are missing');
+  const ids = result.results.map((unit) => text(unit.id, 'stage unit ID'));
+  assert(
+    new Set(ids).size === ids.length,
+    'Stage unit identities are duplicated'
+  );
+  for (const stage of REQUIRED_STAGES)
+    assert(
+      result.results.filter((unit) => unit.id === `native-${stage}`).length ===
+        1,
+      `Primary ${stage} stage result is missing or duplicated`
+    );
+
+  const evidence = plainObject(result.nativeEvidence, 'native stage evidence');
+  requireDeepEqual(
+    Object.keys(evidence).toSorted(compareText),
+    [...ids].toSorted(compareText),
+    'Native evidence/unit identity closure'
+  );
+  let cleanupReceipts = 0;
+  const verifyNestedCleanup = (value, seen = new Set()) => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (
+      !Array.isArray(value) &&
+      Object.prototype.hasOwnProperty.call(value, 'lifecycle')
+    ) {
+      const lifecycle = plainObject(
+        value.lifecycle,
+        'native receipt lifecycle'
+      );
+      assert(
+        lifecycle.spawned === true &&
+          lifecycle.completed === true &&
+          lifecycle.cleanupVerified === true &&
+          lifecycle.cleanupError === null,
+        'Native receipt cleanup evidence is incomplete'
+      );
+      if (Object.prototype.hasOwnProperty.call(value, 'aborted'))
+        assert(value.aborted === false, 'Native receipt was aborted');
+      if (Object.prototype.hasOwnProperty.call(value, 'timedOut'))
+        assert(value.timedOut === false, 'Native receipt timed out');
+      cleanupReceipts += 1;
+    }
+    for (const nested of Object.values(value))
+      verifyNestedCleanup(nested, seen);
+  };
+
+  for (const unit of result.results) {
+    assert(
+      REQUIRED_STAGES.includes(unit.lane),
+      `Unknown unit lane: ${unit.lane}`
+    );
+    assert(
+      unit.status === 'passed' && unit.executed === true,
+      `Stage unit did not pass: ${unit.id}`
+    );
+    assert(
+      unit.runId === expected.runId,
+      `Stage unit run ID differs: ${unit.id}`
+    );
+    requireDeepEqual(
+      unit.candidate,
+      candidate,
+      `Stage unit candidate ${unit.id}`
+    );
+    safeInteger(unit.slots, `Stage unit ${unit.id} slots`, 1);
+    assert(
+      Array.isArray(unit.files),
+      `Stage unit ${unit.id} files are missing`
+    );
+    assert(
+      new Set(unit.files).size === unit.files.length &&
+        unit.files.every((file) => typeof file === 'string'),
+      `Stage unit ${unit.id} file inventory is invalid`
+    );
+    duration(unit.wallMs, `Stage unit ${unit.id} wall time`);
+    duration(unit.startOffsetMs, `Stage unit ${unit.id} start offset`);
+    duration(unit.endOffsetMs, `Stage unit ${unit.id} end offset`);
+    assert(
+      unit.endOffsetMs >= unit.startOffsetMs,
+      `Stage unit ${unit.id} timing is inverted`
+    );
+    if (unit.cpuMs !== null)
+      duration(unit.cpuMs, `Stage unit ${unit.id} CPU time`);
+    const attempts = counts(
+      unit.caseAttempts,
+      `Stage unit ${unit.id} case attempts`
+    );
+    assert(attempts.failed === 0, `Stage unit ${unit.id} has failed cases`);
+    const unitEvidence = plainObject(
+      evidence[unit.id],
+      `native evidence ${unit.id}`
+    );
+    assert(
+      unitEvidence.status === 'passed' ||
+        (unitEvidence.status === 'failed' && unitEvidence.advisory === true),
+      `Native evidence is unresolved: ${unit.id}`
+    );
+    assert(
+      unit.evidenceSha256 ===
+        sha256(Buffer.from(JSON.stringify(unitEvidence), 'utf8')),
+      `Native evidence hash differs: ${unit.id}`
+    );
+    verifyNestedCleanup(unitEvidence);
+  }
+
+  let aggregateCounts = { passed: 0, failed: 0, skipped: 0 };
+  for (const lane of result.lanes) {
+    assert(
+      lane.required === true && lane.status === 'passed',
+      `Required ${lane.id} lane did not pass`
+    );
+    const units = result.results.filter((unit) => unit.lane === lane.id);
+    const laneCounts = units.reduce(
+      (sum, unit) =>
+        addCounts(sum, unit.caseAttempts, `${lane.id} lane case attempts`),
+      { passed: 0, failed: 0, skipped: 0 }
+    );
+    const spanWallMs =
+      Math.max(...units.map((unit) => unit.endOffsetMs)) -
+      Math.min(...units.map((unit) => unit.startOffsetMs));
+    const cpuKnown = units.every((unit) => unit.cpuMs !== null);
+    assert(
+      lane.unitCount === units.length &&
+        lane.unitsExecuted === units.length &&
+        lane.unitWallMs === units.reduce((sum, unit) => sum + unit.wallMs, 0) &&
+        lane.spanWallMs === spanWallMs &&
+        lane.cpuMs ===
+          (cpuKnown ? units.reduce((sum, unit) => sum + unit.cpuMs, 0) : null),
+      `Stage lane accounting differs: ${lane.id}`
+    );
+    requireDeepEqual(
+      counts(lane.caseAttempts, `${lane.id} lane case attempts`),
+      laneCounts,
+      `${lane.id} lane case accounting`
+    );
+    aggregateCounts = addCounts(
+      aggregateCounts,
+      laneCounts,
+      'global stage case attempts'
+    );
+  }
+
+  const stats = plainObject(result.stats, 'four-stage statistics');
+  const selectedFiles = new Set(result.results.flatMap((unit) => unit.files))
+    .size;
+  const childCpuKnown = result.results.every((unit) => unit.cpuMs !== null);
+  assert(
+    stats.unitsQueued === result.results.length &&
+      stats.unitsExecuted === result.results.length &&
+      stats.activeUnits === 0 &&
+      stats.reservedSlots === 0 &&
+      safeInteger(stats.configuredSlotCap, 'configured slot cap', 1) >= 1 &&
+      safeInteger(stats.peakActiveUnits, 'peak active units', 1) <=
+        result.results.length &&
+      safeInteger(stats.peakReservedSlots, 'peak reserved slots', 1) <=
+        stats.configuredSlotCap &&
+      stats.selectedFileCount === selectedFiles &&
+      stats.executedFileCount === selectedFiles &&
+      stats.childCpuMs ===
+        (childCpuKnown
+          ? result.results.reduce((sum, unit) => sum + unit.cpuMs, 0)
+          : null),
+    'Global four-stage accounting differs'
+  );
+  requireDeepEqual(
+    counts(stats.caseAttempts, 'global case attempts'),
+    aggregateCounts,
+    'Global case accounting'
+  );
+  duration(stats.wallMs, 'four-stage wall time');
+  assert(
+    stats.wallMs >= Math.max(...result.results.map((unit) => unit.endOffsetMs)),
+    'Four-stage wall time does not contain its units'
+  );
+  return { application, candidate, cleanupReceipts };
+}
+
+function verifyLocalReceipt(receipt, label) {
+  plainObject(receipt, label);
+  assert(
+    receipt.status === 'passed' &&
+      receipt.exitCode === 0 &&
+      receipt.signal === null &&
+      receipt.aborted === false &&
+      receipt.timedOut === false &&
+      receipt.spawnError === null,
+    `${label} did not pass cleanly`
+  );
+  duration(receipt.wallMs, `${label} wall time`);
+  const lifecycle = plainObject(receipt.lifecycle, `${label} lifecycle`);
+  assert(
+    lifecycle.spawned === true &&
+      lifecycle.completed === true &&
+      lifecycle.cleanupVerified === true &&
+      lifecycle.cleanupError === null,
+    `${label} cleanup did not complete`
+  );
+  return receipt;
+}
+
+function uniqueIds(values, label) {
+  assert(Array.isArray(values), `${label} must be an array`);
+  const ids = values.map((value) => text(value, `${label} identity`));
+  assert(new Set(ids).size === ids.length, `${label} contains duplicates`);
+  return ids;
+}
+
+function nodeIds(values, label) {
+  assert(Array.isArray(values), `${label} must be an array`);
+  return uniqueIds(
+    values.map((value) => plainObject(value, `${label} entry`).nodeId),
+    label
+  );
+}
+
+function scheduleAssignments(schedule) {
+  return schedule.threadSlots
+    .flatMap((slot) =>
+      slot.tests.map((test) => ({
+        sequence: test.sequence,
+        shardId: test.id,
+        nodeId: slot.nodeId,
+        threadSlotId: slot.threadSlotId,
+        adapterId: test.adapterId,
+        fingerprint: test.fingerprint,
+        laneId: test.laneId,
+        dependencies: test.dependencies,
+      }))
+    )
+    .toSorted((left, right) => left.sequence - right.sequence);
+}
+
+function verifyNodeClosure(evidence, schedule, catalog) {
+  const scheduledNodeIds = uniqueIds(
+    schedule.nodes.map((node) => node.nodeId),
+    'scheduled nodes'
+  ).toSorted(compareText);
+  const onlineNodeIds = nodeIds(
+    evidence.onlineNodes,
+    'online node evidence'
+  ).toSorted(compareText);
+  requireDeepEqual(
+    onlineNodeIds,
+    scheduledNodeIds,
+    'Online/scheduled node closure'
+  );
+  const offlineNodeIds = nodeIds(
+    evidence.offlineNodes,
+    'offline node evidence'
+  );
+  assert(
+    offlineNodeIds.every((nodeId) => !scheduledNodeIds.includes(nodeId)),
+    'Offline nodes overlap the schedule'
+  );
+  for (const node of evidence.onlineNodes)
+    assert(
+      node.applicationId === catalog.applicationId &&
+        node.platform === catalog.platform &&
+        node.candidateSha256 === catalog.candidate.candidateSha256 &&
+        node.catalogSha256 === catalog.catalogSha256 &&
+        node.inventorySha256 === catalog.inventorySha256 &&
+        node.taskCount === catalog.tasks.length,
+      `Online node ${node.nodeId} belongs to another repository inventory`
+    );
+
+  const applicationAdmission = plainObject(
+    evidence.applicationAdmission,
+    'application admission evidence'
+  );
+  assert(
+    applicationAdmission.applicationId === catalog.applicationId,
+    'Application admission belongs to another application'
+  );
+  const applicationUsable = nodeIds(
+    applicationAdmission.usableNodes,
+    'application-usable nodes'
+  );
+  const applicationAvailable = nodeIds(
+    applicationAdmission.availableNodes,
+    'application-available nodes'
+  );
+  const applicationExcluded = nodeIds(
+    applicationAdmission.excludedNodes,
+    'application-excluded nodes'
+  );
+  assert(
+    applicationUsable.every((nodeId) =>
+      applicationAvailable.includes(nodeId)
+    ) &&
+      applicationExcluded.every((nodeId) =>
+        applicationAvailable.includes(nodeId)
+      ) &&
+      applicationUsable.every(
+        (nodeId) => !applicationExcluded.includes(nodeId)
+      ),
+    'Application node admission sets overlap or do not close'
+  );
+  requireDeepEqual(
+    [...applicationUsable, ...applicationExcluded].toSorted(compareText),
+    applicationAvailable.toSorted(compareText),
+    'Application node admission partition'
+  );
+
+  if (evidence.dependencyAdmission === null) {
+    requireDeepEqual(
+      applicationUsable.toSorted(compareText),
+      scheduledNodeIds,
+      'Application admission/schedule node closure'
+    );
+  } else {
+    const dependencyAdmission = plainObject(
+      evidence.dependencyAdmission,
+      'dependency admission evidence'
+    );
+    const dependencyAvailable = nodeIds(
+      dependencyAdmission.availableNodes,
+      'dependency-available nodes'
+    );
+    const dependencyUsable = nodeIds(
+      dependencyAdmission.usableNodes,
+      'dependency-usable nodes'
+    );
+    const dependencyExcluded = nodeIds(
+      dependencyAdmission.excludedNodes,
+      'dependency-excluded nodes'
+    );
+    requireDeepEqual(
+      dependencyUsable.toSorted(compareText),
+      scheduledNodeIds,
+      'Dependency admission/schedule node closure'
+    );
+    assert(
+      dependencyUsable.every((nodeId) =>
+        dependencyAvailable.includes(nodeId)
+      ) &&
+        dependencyExcluded.every((nodeId) =>
+          dependencyAvailable.includes(nodeId)
+        ) &&
+        dependencyUsable.every(
+          (nodeId) => !dependencyExcluded.includes(nodeId)
+        ),
+      'Dependency node admission sets overlap or do not close'
+    );
+    requireDeepEqual(
+      [...dependencyUsable, ...dependencyExcluded].toSorted(compareText),
+      dependencyAvailable.toSorted(compareText),
+      'Dependency node admission partition'
+    );
+  }
+}
+
+function verifyRepositoryEvidence(result, expected, candidate) {
+  const records = Object.entries(result.nativeEvidence).filter(
+    ([, value]) => value?.repositoryEvidence !== undefined
+  );
+  assert(
+    records.length === 1 && records[0][0] === 'native-repository',
+    'Result must contain exactly one primary repository evidence record'
+  );
+  const evidence = plainObject(
+    records[0][1].repositoryEvidence,
+    'distributed repository evidence'
+  );
+  assert(
+    evidence.schema === 'seerrng-distributed-repository-evidence/v3' &&
+      evidence.completed === true &&
+      evidence.resultReuse === false,
+    'Distributed repository evidence is incomplete'
+  );
+  for (const [field, label] of [
+    ['unexecutedSteps', 'unexecuted repository steps'],
+    ['unexecutedShardIds', 'unexecuted shard identities'],
+    ['duplicateShardIds', 'duplicate shard identities'],
+    ['foreignShardIds', 'foreign shard identities'],
+  ])
+    assert(
+      Array.isArray(evidence[field]) && evidence[field].length === 0,
+      `Distributed repository evidence retains ${label}`
+    );
+
+  assert(
+    Array.isArray(evidence.localChecks) &&
+      Array.isArray(evidence.attemptedSteps),
+    'Distributed local-check evidence is missing'
+  );
+  const attemptedSteps = evidence.attemptedSteps.map((step) => ({
+    index: safeInteger(step.index, 'attempted repository step index'),
+    name: text(step.name, 'attempted repository step name'),
+    kind: text(step.kind, 'attempted repository step kind'),
+  }));
+  const localSteps = evidence.localChecks.map((check) => {
+    const identity = {
+      index: safeInteger(check.index, 'local repository step index'),
+      name: text(check.name, 'local repository step name'),
+      kind: text(check.kind, 'local repository step kind'),
+    };
+    verifyLocalReceipt(check.receipt, `Local repository check ${check.name}`);
+    return identity;
+  });
+  assert(
+    new Set(localSteps.map(({ index }) => index)).size === localSteps.length,
+    'Local repository step indexes are duplicated'
+  );
+  requireDeepEqual(attemptedSteps, localSteps, 'Attempted/local step closure');
+
+  const catalog = plainObject(evidence.catalog, 'distributed native catalog');
+  assert(
+    Array.isArray(catalog.tasks) && catalog.tasks.length > 0,
+    'Distributed native catalog is empty'
+  );
+  createDistributedNativeTaskRequest(catalog, catalog.tasks[0].taskId);
+  assert(
+    catalog.applicationId === expected.runtimeApplicationKey &&
+      catalog.candidate.commitSha === candidate.commit &&
+      catalog.candidate.treeSha === candidate.tree &&
+      catalog.candidate.lockfileSha256 === candidate.lockSha256,
+    'Distributed catalog belongs to another application or candidate'
+  );
+  assert(
+    catalog.inventorySha256 ===
+      canonicalJsonSha256({
+        schema: INVENTORY_IDENTITY_SCHEMA,
+        applicationId: catalog.applicationId,
+        platform: catalog.platform,
+        candidateSha256: catalog.candidate.candidateSha256,
+        tasks: catalog.tasks,
+      }),
+    'Distributed catalog inventory hash differs'
+  );
+  requireDeepEqual(
+    catalog.tasks.map((task) => task.taskId),
+    catalog.tasks.map((task) => task.taskId).toSorted(compareText),
+    'Distributed catalog task order'
+  );
+
+  const scheduleValue = plainObject(
+    evidence.schedule,
+    'distributed adaptive schedule'
+  );
+  const expectations = {
+    expectedApplicationId: catalog.applicationId,
+    expectedProfileSha256: expected.profileSha256,
+    expectedRepositoryIdentitySha256: candidate.sourceSha256,
+    expectedScheduleSha256: digest(
+      scheduleValue.scheduleSha256,
+      'Distributed schedule identity'
+    ),
+    expectedTestInventorySha256: digest(
+      scheduleValue.testInventorySha256,
+      'Distributed schedule inventory identity'
+    ),
+  };
+  const schedule = verifyDistributedAdaptiveSchedule(
+    scheduleValue,
+    expectations
+  );
+  digest(schedule.policySha256, 'Distributed schedule policy identity');
+  const assignments = scheduleAssignments(schedule);
+  const tasks = new Map(catalog.tasks.map((task) => [task.taskId, task]));
+  assert(
+    tasks.size === catalog.tasks.length,
+    'Catalog task identities duplicate'
+  );
+  assert(
+    assignments.length === tasks.size,
+    'Distributed schedule does not close the catalog'
+  );
+  for (const [index, assignment] of assignments.entries()) {
+    const task = tasks.get(assignment.shardId);
+    assert(
+      assignment.sequence === index + 1 &&
+        task &&
+        assignment.adapterId === task.adapterId &&
+        assignment.fingerprint === task.taskId &&
+        assignment.laneId === 'repository-native' &&
+        Array.isArray(assignment.dependencies) &&
+        assignment.dependencies.length === 0,
+      `Distributed assignment changed catalog identity: ${assignment.shardId}`
+    );
+  }
+  requireDeepEqual(
+    assignments.map(({ shardId }) => shardId).toSorted(compareText),
+    [...tasks.keys()].toSorted(compareText),
+    'Catalog/schedule shard closure'
+  );
+
+  const reportValue = plainObject(evidence.report, 'distributed shard report');
+  const report = verifyDistributedShardRun(reportValue, {
+    schedule,
+    expectations,
+    expectedReportSha256: digest(
+      reportValue.reportSha256,
+      'Distributed report identity'
+    ),
+  });
+  assert(
+    report.runId === expected.runId &&
+      report.status === 'passed' &&
+      report.resultReuse === false,
+    'Distributed report did not pass for the expected run'
+  );
+  for (const [index, outcome] of report.outcomes.entries()) {
+    const assignment = assignments[index];
+    assert(
+      outcome.status === 'passed' &&
+        outcome.failureCode === null &&
+        outcome.sequence === assignment.sequence &&
+        outcome.shardId === assignment.shardId &&
+        outcome.nodeId === assignment.nodeId &&
+        outcome.threadSlotId === assignment.threadSlotId,
+      `Distributed report changed assignment: ${assignment.shardId}`
+    );
+    verifyDistributedNativeTaskResult(outcome.result, {
+      catalog,
+      expectedCatalogSha256: catalog.catalogSha256,
+      taskId: assignment.shardId,
+    });
+  }
+  requireDeepEqual(
+    evidence.shards,
+    report.outcomes,
+    'Shard/report outcome closure'
+  );
+  requireDeepEqual(
+    evidence.attemptedShardIds,
+    catalog.tasks.map((task) => task.taskId),
+    'Attempted/catalog shard closure'
+  );
+  verifyNodeClosure(evidence, schedule, catalog);
+  return { evidence, catalog, schedule, report };
+}
+
+function expectedTimingEvidence(result, repositoryEvidence, runId) {
+  const nodeTotals = new Map();
+  const shards = repositoryEvidence.shards.map((shard) => {
+    const prior = nodeTotals.get(shard.nodeId) ?? {
+      nodeId: shard.nodeId,
+      shardCount: 0,
+      shardWallMs: 0,
+    };
+    prior.shardCount += 1;
+    prior.shardWallMs += shard.wallMs;
+    nodeTotals.set(shard.nodeId, prior);
+    return {
+      nodeId: shard.nodeId,
+      shardId: shard.shardId,
+      status: shard.status,
+      threadSlotId: shard.threadSlotId,
+      wallMs: shard.wallMs,
+    };
+  });
+  return {
+    schema: 'seerrng-distributed-linux-production-timings/v1',
+    runId,
+    totalWallMs: result.stats.wallMs,
+    stages: result.lanes.map((lane) => ({
+      id: lane.id,
+      spanWallMs: lane.spanWallMs,
+      status: lane.status,
+      unitWallMs: lane.unitWallMs,
+      unitsExecuted: lane.unitsExecuted,
+    })),
+    units: result.results.map((unit) => ({
+      endOffsetMs: unit.endOffsetMs,
+      id: unit.id,
+      lane: unit.lane,
+      startOffsetMs: unit.startOffsetMs,
+      status: unit.status,
+      wallMs: unit.wallMs,
+    })),
+    distributed: {
+      nodeTotals: [...nodeTotals.values()].toSorted((left, right) =>
+        compareText(left.nodeId, right.nodeId)
+      ),
+      reportWallMs: repositoryEvidence.report.wallMs,
+      shards,
+    },
+    resultReuse: false,
+  };
+}
+
+function verifyTimingEvidence(value, result, repositoryEvidence, expected) {
+  requireDeepEqual(
+    value,
+    expectedTimingEvidence(result, repositoryEvidence, expected.runId),
+    'Durable timing evidence'
+  );
+  duration(value.totalWallMs, 'durable total wall time');
+  for (const stage of value.stages) {
+    duration(stage.spanWallMs, `${stage.id} timing span`);
+    duration(stage.unitWallMs, `${stage.id} unit wall time`);
+  }
+  for (const unit of value.units) {
+    duration(unit.wallMs, `${unit.id} timing wall time`);
+    duration(unit.startOffsetMs, `${unit.id} timing start offset`);
+    duration(unit.endOffsetMs, `${unit.id} timing end offset`);
+    assert(
+      unit.endOffsetMs >= unit.startOffsetMs,
+      `Durable unit timing is inverted: ${unit.id}`
+    );
+  }
+  for (const node of value.distributed.nodeTotals) {
+    safeInteger(node.shardCount, `${node.nodeId} shard count`, 1);
+    duration(node.shardWallMs, `${node.nodeId} shard wall time`);
+  }
+  duration(value.distributed.reportWallMs, 'distributed report wall time');
+  return {
+    totalWallMs: value.totalWallMs,
+    stageCount: value.stages.length,
+    unitCount: value.units.length,
+    shardCount: value.distributed.shards.length,
+  };
+}
+
+function parseJsonLines(bytes, label) {
+  let source;
+  try {
+    source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    fail(`${label} is not UTF-8: ${error.message}`);
+  }
+  assert(source.endsWith('\n'), `${label} is not durably terminated`);
+  const lines = source.split('\n');
+  lines.pop();
+  assert(lines.length > 0, `${label} is empty`);
+  assert(
+    lines.every((line) => line.length > 0),
+    `${label} has blank records`
+  );
+  return lines.map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      fail(`${label} record ${index + 1} is invalid JSON: ${error.message}`);
+    }
+  });
+}
+
+function verifyLedgerRecord(record, label) {
+  plainObject(record, label);
+  safeInteger(record.sequence, `${label} sequence`, 1);
+  text(record.id, `${label} ID`);
+  text(record.commandId, `${label} command ID`);
+  assert(
+    ['command', 'server'].includes(record.role),
+    `${label} role is invalid`
+  );
+  assert(
+    record.aborted === false &&
+      record.timedOut === false &&
+      record.spawnError === null,
+    `${label} was interrupted`
+  );
+  duration(record.wallMs, `${label} wall time`);
+  const lifecycle = plainObject(record.lifecycle, `${label} lifecycle`);
+  assert(
+    lifecycle.spawned === true &&
+      lifecycle.completed === true &&
+      lifecycle.cleanupVerified === true &&
+      lifecycle.cleanupError === null,
+    `${label} cleanup did not complete`
+  );
+  const passed =
+    record.status === 'passed' &&
+    record.exitCode === 0 &&
+    record.signal === null;
+  const advisoryFailure =
+    record.role === 'command' &&
+    record.status === 'failed' &&
+    Number.isSafeInteger(record.exitCode) &&
+    record.exitCode > 0 &&
+    record.signal === null;
+  const stoppedServer =
+    record.role === 'server' &&
+    record.status === 'stopped' &&
+    ((record.exitCode === 0 && record.signal === null) ||
+      (record.exitCode === null &&
+        ['SIGTERM', 'SIGKILL'].includes(record.signal)));
+  assert(
+    passed || advisoryFailure || stoppedServer,
+    `${label} terminal state is invalid`
+  );
+  for (const stream of ['stdout', 'stderr']) {
+    text(record[`${stream}Log`], `${label} ${stream} log path`);
+    safeInteger(record[`${stream}Bytes`], `${label} ${stream} bytes`);
+    digest(record[`${stream}Sha256`], `${label} ${stream} hash`);
+  }
+}
+
+function verifyProcessLedger(reader, summary, result) {
+  const ledgerEntry = reader.entries.get('processLedger');
+  assert(
+    summary.schema === 'seerrng-distributed-linux-process-ledger/v1' &&
+      summary.cleanupVerified === true &&
+      Array.isArray(summary.pending) &&
+      summary.pending.length === 0,
+    'Durable process ledger summary is not closed'
+  );
+  safeInteger(summary.records, 'process ledger summary record count', 1);
+  assert(
+    summary.sourceSha256 === ledgerEntry.sha256 &&
+      summary.evidenceSha256 === ledgerEntry.sha256,
+    'Durable process ledger summary hash differs'
+  );
+  assert(
+    typeof summary.evidenceFile === 'string' &&
+      samePath(summary.evidenceFile, ledgerEntry.absolute),
+    'Durable process ledger summary path differs'
+  );
+  const lines = parseJsonLines(ledgerEntry.bytes, 'native process ledger');
+  const [header, ...records] = lines;
+  exactKeys(header, ['candidate', 'schema'], 'native process ledger header');
+  assert(header.schema === 1, 'Native process ledger schema differs');
+  requireDeepEqual(
+    header.candidate,
+    result.candidate,
+    'Process ledger candidate'
+  );
+  assert(
+    records.length === summary.records,
+    'Process ledger record count differs from its summary'
+  );
+  const ids = [];
+  const sequences = [];
+  for (const [index, record] of records.entries()) {
+    verifyLedgerRecord(record, `Native process receipt ${index + 1}`);
+    ids.push(record.id);
+    sequences.push(record.sequence);
+  }
+  assert(
+    new Set(ids).size === ids.length,
+    'Process receipt IDs are duplicated'
+  );
+  requireDeepEqual(
+    sequences.toSorted((left, right) => left - right),
+    Array.from({ length: records.length }, (_, index) => index + 1),
+    'Process receipt sequence closure'
+  );
+  return {
+    records: records.length,
+    cleanupVerified: true,
+    ledgerSha256: ledgerEntry.sha256,
+  };
+}
+
+/**
+ * Reconcile a completed production run only from its durable pre-success files
+ * and externally expected run/application/profile identities. The caller must
+ * write this returned receipt before it writes any terminal success marker.
+ */
+export function reconcileDistributedLinuxRunEvidence(inputValue) {
+  const reader = createEvidenceReader(inputValue);
+  const expected = normalizeExpected(inputValue.expected);
+  const result = reader.json('result', 'staged validation result');
+  const timings = reader.json('timings', 'production timing evidence');
+  const processLedgerSummary = reader.json(
+    'processLedgerSummary',
+    'native process ledger summary'
+  );
+
+  const stage = verifyStageAccounting(result, expected);
+  const repository = verifyRepositoryEvidence(
+    result,
+    expected,
+    stage.candidate
+  );
+  const timing = verifyTimingEvidence(
+    timings,
+    result,
+    repository.evidence,
+    expected
+  );
+  const processes = verifyProcessLedger(reader, processLedgerSummary, result);
+  reader.assertStable();
+
+  const evidenceManifestSha256 = canonicalJsonSha256(reader.manifest);
+  const repositoryEvidenceSha256 = canonicalJsonSha256(repository.evidence);
+  return deepFreeze({
+    schema: 'seerrng-distributed-linux-run-reconciliation/v1',
+    ok: true,
+    status: 'passed',
+    runId: expected.runId,
+    activeConfigPath: expected.activeConfigPath,
+    application: stage.application,
+    candidate: stage.candidate,
+    profileSha256: expected.profileSha256,
+    policySha256: repository.schedule.policySha256,
+    catalogSha256: repository.catalog.catalogSha256,
+    scheduleSha256: repository.schedule.scheduleSha256,
+    reportSha256: repository.report.reportSha256,
+    repositoryEvidence: repository.evidence,
+    repositoryEvidenceSha256,
+    resultSha256: reader.entries.get('result').sha256,
+    timingsSha256: reader.entries.get('timings').sha256,
+    processLedgerSha256: processes.ledgerSha256,
+    processLedgerSummarySha256: reader.entries.get('processLedgerSummary')
+      .sha256,
+    evidenceManifest: reader.manifest,
+    evidenceManifestSha256,
+    cleanup: {
+      nativeReceiptCount: stage.cleanupReceipts,
+      processReceiptCount: processes.records,
+      verified: true,
+    },
+    timing,
+    resultReuse: false,
+  });
+}

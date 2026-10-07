@@ -26,6 +26,7 @@ import {
 } from './distributed-adaptive-timing-profile-store.mjs';
 import { createSupportedApplicationListing } from './distributed-linux-config.mjs';
 import { resolveActiveLinuxConfig } from './distributed-linux-management.mjs';
+import { reconcileDistributedLinuxRunEvidence } from './distributed-linux-run-reconciliation.mjs';
 import { executeDistributedLinuxStagedValidation } from './distributed-linux-staged-bridge.mjs';
 import { createNativeStageContext } from './native-stage-context.mjs';
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
@@ -241,6 +242,7 @@ function dependencies(overrides) {
     persistTimingProfile: persistAdaptiveTimingProfileFile,
     readEvidenceFile,
     readTimingProfile: readAdaptiveTimingProfileFile,
+    reconcileEvidence: reconcileDistributedLinuxRunEvidence,
     resolveActiveConfig: resolveActiveLinuxConfig,
     updateTimingProfileBatch: updateAdaptiveTimingProfileBatch,
     writeEvidenceFile: writeDurableEvidenceFile,
