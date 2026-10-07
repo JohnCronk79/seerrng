@@ -23,10 +23,15 @@ const producerPath = fileURLToPath(
   )
 );
 
-test('producer pins Git pack creation to one deterministic thread', () => {
+test('producer normalizes and packs Git objects deterministically', () => {
+  const producer = readFileSync(producerPath, 'utf8');
   assert.match(
-    readFileSync(producerPath, 'utf8'),
-    /args: \[\s+'-c',\s+'pack\.threads=1',\s+'bundle',\s+'create'/u
+    producer,
+    /args: \[\s+'repack',\s+'-a',\s+'-d',\s+'-f',\s+'-F',\s+'--threads=1',\s+'--no-write-bitmap-index'/u
+  );
+  assert.match(
+    producer,
+    /args: \[\s+'-c',\s+'pack\.threads=1',\s+'-c',\s+'pack\.useBitmaps=false',\s+'bundle',\s+'create'/u
   );
 });
 

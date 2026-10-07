@@ -459,8 +459,24 @@ function createAndVerifyBundle({
   );
   runGit({
     args: [
+      'repack',
+      '-a',
+      '-d',
+      '-f',
+      '-F',
+      '--threads=1',
+      '--no-write-bitmap-index',
+    ],
+    cwd: seed,
+    environment,
+    label: 'normalize the shallow source objects deterministically',
+  });
+  runGit({
+    args: [
       '-c',
       'pack.threads=1',
+      '-c',
+      'pack.useBitmaps=false',
       'bundle',
       'create',
       bundle,
