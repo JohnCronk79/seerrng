@@ -1,4 +1,4 @@
-import { DbAwareColumn } from '@server/utils/DbColumnHelper';
+import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   Column,
   Entity,
@@ -68,6 +68,8 @@ export default class ReaderDeliveryGrouping {
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
 
-  @UpdateDateColumn({ type: 'datetime' })
+  @UpdateDateColumn({
+    type: resolveDbType('datetime'),
+  })
   public updatedAt: Date;
 }

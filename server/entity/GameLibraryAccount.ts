@@ -1,4 +1,4 @@
-import { DbAwareColumn } from '@server/utils/DbColumnHelper';
+import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
 import {
   Column,
   Entity,
@@ -43,6 +43,8 @@ export default class GameLibraryAccount {
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public linkedAt: Date;
 
-  @UpdateDateColumn({ type: 'datetime' })
+  @UpdateDateColumn({
+    type: resolveDbType('datetime'),
+  })
   public updatedAt: Date;
 }
