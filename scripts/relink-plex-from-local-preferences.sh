@@ -52,7 +52,8 @@ if [[ ! "$PLEX_PROXY_PORT" =~ ^[0-9]{1,5}$ ]] ||
   echo "PLEX_PROXY_PORT must be an integer from 1 through 65535" >&2
   exit 2
 fi
-if [[ ! "$PLEX_TOKEN" =~ ^[A-Za-z0-9_-]{1,512}$ ]]; then
+if ((${#PLEX_TOKEN} < 1 || ${#PLEX_TOKEN} > 512)) ||
+  [[ ! "$PLEX_TOKEN" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "Plex Preferences.xml contains an invalid token" >&2
   exit 1
 fi

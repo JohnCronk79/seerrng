@@ -49,7 +49,7 @@ function git(cwd, args, { allowFailure = false } = {}) {
   return result;
 }
 
-function createFixture({ objectFormat = 'sha1' } = {}) {
+function createFixture({ objectFormat = 'sha1', withReleaseTags = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'seerrng-worker-bundle-test-'));
   const source = join(root, 'source');
   const output = join(root, 'output');
@@ -63,18 +63,43 @@ function createFixture({ objectFormat = 'sha1' } = {}) {
   ]);
   git(source, ['config', 'user.name', 'Worker Bundle Test']);
   git(source, ['config', 'user.email', 'worker-bundle@example.invalid']);
-  writeFileSync(join(source, 'candidate.txt'), 'first\n');
+  writeFileSync(join(source, 'candidate.txt'), 'base\n');
   git(source, ['add', '--', 'candidate.txt']);
-  git(source, ['commit', '--quiet', '-m', 'first']);
-  const firstCommit = git(source, [
+  git(source, ['commit', '--quiet', '-m', 'base']);
+  const baseCommit = git(source, [
     'rev-parse',
     '--verify',
     'HEAD^{commit}',
   ]).stdout.trim();
-  writeFileSync(join(source, 'candidate.txt'), 'second\n');
-  writeFileSync(join(source, 'second.txt'), 'tip only\n');
-  git(source, ['add', '--', 'candidate.txt', 'second.txt']);
-  git(source, ['commit', '--quiet', '-m', 'second']);
+  writeFileSync(join(source, 'candidate.txt'), 'release\n');
+  writeFileSync(join(source, 'release.txt'), 'tagged release\n');
+  git(source, ['add', '--', 'candidate.txt', 'release.txt']);
+  git(source, ['commit', '--quiet', '-m', 'release']);
+  const releaseCommit = git(source, [
+    'rev-parse',
+    '--verify',
+    'HEAD^{commit}',
+  ]).stdout.trim();
+  const releaseTagNames = withReleaseTags
+    ? ['v3.1.0', 'v3.1.1', 'v3.preview']
+    : [];
+  if (withReleaseTags) {
+    git(source, ['tag', 'v3.1.0', releaseCommit]);
+    git(source, [
+      'tag',
+      '--annotate',
+      '--message',
+      'annotated release',
+      'v3.1.1',
+      releaseCommit,
+    ]);
+    git(source, ['tag', 'v3.preview', releaseCommit]);
+    git(source, ['tag', 'unrelated', releaseCommit]);
+  }
+  writeFileSync(join(source, 'candidate.txt'), 'candidate\n');
+  writeFileSync(join(source, 'candidate-only.txt'), 'tip only\n');
+  git(source, ['add', '--', 'candidate.txt', 'candidate-only.txt']);
+  git(source, ['commit', '--quiet', '-m', 'candidate']);
   const sourceCommit = git(source, [
     'rev-parse',
     '--verify',
@@ -85,11 +110,22 @@ function createFixture({ objectFormat = 'sha1' } = {}) {
     '--verify',
     'HEAD^{tree}',
   ]).stdout.trim();
+  const releaseTags = releaseTagNames.map((name) => ({
+    commitId: git(source, [
+      'rev-parse',
+      '--verify',
+      `${name}^{commit}`,
+    ]).stdout.trim(),
+    objectId: git(source, ['rev-parse', '--verify', name]).stdout.trim(),
+    refName: `refs/tags/${name}`,
+  }));
   return {
     root,
     source,
     output,
-    firstCommit,
+    baseCommit,
+    releaseCommit,
+    releaseTags,
     sourceCommit,
     sourceTree,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
@@ -101,20 +137,43 @@ function inspectBundle({
   root,
   sourceCommit,
   sourceTree,
-  firstCommit,
+  baseCommit,
+  releaseCommit,
+  releaseTags,
 }) {
   const inspect = join(root, 'inspect');
   mkdirSync(inspect, { mode: 0o700 });
   git(inspect, ['init', '--quiet', '--template=']);
-  assert.equal(
-    git(inspect, ['bundle', 'list-heads', bundle]).stdout.trim(),
-    `${sourceCommit} HEAD`
+  const bundleHeads = new Map(
+    git(inspect, ['bundle', 'list-heads', bundle])
+      .stdout.trim()
+      .split(/\r?\n/u)
+      .map((line) => {
+        const [objectId, refName] = line.split(' ');
+        return [refName, objectId];
+      })
+  );
+  assert.deepEqual(
+    bundleHeads,
+    new Map([
+      ['HEAD', sourceCommit],
+      ...releaseTags.map(({ objectId, refName }) => [refName, objectId]),
+    ])
   );
   git(inspect, ['bundle', 'verify', bundle]);
   git(inspect, ['bundle', 'unbundle', bundle]);
-  writeFileSync(join(inspect, '.git', 'shallow'), `${sourceCommit}\n`, {
-    flag: 'wx',
-  });
+  for (const { objectId, refName } of releaseTags)
+    git(inspect, ['update-ref', refName, objectId]);
+  writeFileSync(
+    join(inspect, '.git', 'shallow'),
+    `${[sourceCommit, ...releaseTags.map(({ commitId }) => commitId)]
+      .sort()
+      .filter(
+        (value, index, values) => index === 0 || value !== values[index - 1]
+      )
+      .join('\n')}\n`,
+    { flag: 'wx' }
+  );
   git(inspect, ['update-ref', 'refs/heads/candidate', sourceCommit]);
   git(inspect, ['checkout', '--quiet', '--detach', sourceCommit]);
   assert.equal(
@@ -129,12 +188,40 @@ function inspectBundle({
     git(inspect, ['rev-list', '--count', 'HEAD']).stdout.trim(),
     '1'
   );
-  assert.notEqual(
-    git(inspect, ['cat-file', '-e', `${firstCommit}^{commit}`], {
+  assert.equal(
+    git(inspect, ['cat-file', '-e', `${releaseCommit}^{commit}`], {
       allowFailure: true,
     }).status,
     0
   );
+  assert.notEqual(
+    git(inspect, ['cat-file', '-e', `${baseCommit}^{commit}`], {
+      allowFailure: true,
+    }).status,
+    0
+  );
+  assert.deepEqual(
+    git(inspect, ['tag', '--list']).stdout.trim().split(/\r?\n/u),
+    releaseTags.map(({ refName }) => refName.slice('refs/tags/'.length))
+  );
+  for (const { commitId, objectId, refName } of releaseTags) {
+    assert.equal(
+      git(inspect, ['rev-parse', '--verify', refName]).stdout.trim(),
+      objectId
+    );
+    assert.equal(
+      git(inspect, [
+        'rev-parse',
+        '--verify',
+        `${refName}^{commit}`,
+      ]).stdout.trim(),
+      commitId
+    );
+    assert.equal(
+      git(inspect, ['rev-list', '--count', refName]).stdout.trim(),
+      '1'
+    );
+  }
   assert.equal(
     git(inspect, [
       'status',
@@ -153,7 +240,7 @@ function inspectBundle({
   assert.equal(fsck.stdout.trim(), '');
 }
 
-test('producer emits a deterministic one-head bundle with no parent history', () => {
+test('producer emits a deterministic shallow candidate with exact release tags', () => {
   const fixture = createFixture();
   try {
     const firstBundle = join(fixture.output, 'first.bundle');
@@ -177,13 +264,17 @@ test('producer emits a deterministic one-head bundle with no parent history', ()
       'schema',
       'sourceCommit',
       'sourceTree',
+      'releaseTagCount',
+      'releaseTagsSha256',
       'bundleSha256',
       'bundleBytes',
       'outputPath',
     ]);
-    assert.equal(provenance.schema, 'seerrng-worker-source-bundle/v1');
+    assert.equal(provenance.schema, 'seerrng-worker-source-bundle/v2');
     assert.equal(provenance.sourceCommit, fixture.sourceCommit);
     assert.equal(provenance.sourceTree, fixture.sourceTree);
+    assert.equal(provenance.releaseTagCount, fixture.releaseTags.length);
+    assert.match(provenance.releaseTagsSha256, /^[a-f0-9]{64}$/);
     assert.match(provenance.bundleSha256, /^[a-f0-9]{64}$/);
     assert.equal(provenance.bundleBytes, statSync(firstBundle).size);
     assert.equal(provenance.outputPath, firstBundle);
@@ -198,6 +289,7 @@ test('producer emits a deterministic one-head bundle with no parent history', ()
     });
     assert.equal(repeated.bundleSha256, provenance.bundleSha256);
     assert.equal(repeated.bundleBytes, provenance.bundleBytes);
+    assert.equal(repeated.releaseTagsSha256, provenance.releaseTagsSha256);
     inspectBundle({ bundle: firstBundle, ...fixture });
   } finally {
     fixture.cleanup();
@@ -215,6 +307,22 @@ test('producer rejects a dirty source worktree', () => {
           outputPath: join(fixture.output, 'dirty.bundle'),
         }),
       /requires a clean source worktree/
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('producer rejects a source without SeerrNG v3 release tags', () => {
+  const fixture = createFixture({ withReleaseTags: false });
+  try {
+    assert.throws(
+      () =>
+        createWorkerSourceBundle({
+          sourceRoot: fixture.source,
+          outputPath: join(fixture.output, 'no-tags.bundle'),
+        }),
+      /requires at least one SeerrNG v3 release tag/
     );
   } finally {
     fixture.cleanup();

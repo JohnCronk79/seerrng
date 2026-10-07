@@ -1,5 +1,5 @@
 // Copyright (c) snapetech and SeerrNG contributors.
-// Creates the single-tip source bundle admitted by Dockerfile.worker.
+// Creates the shallow candidate-and-release-tags bundle admitted by Dockerfile.worker.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -29,6 +29,7 @@ import {
 import { pathToFileURL } from 'node:url';
 
 const GIT_SHA1 = /^[a-f0-9]{40}$/;
+const RELEASE_TAG_REF_PREFIX = 'refs/tags/v3.';
 const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 function comparablePath(value) {
@@ -65,11 +66,19 @@ function safeGitEnvironment(environment) {
   };
 }
 
-function runGit({ args, cwd, environment, label, allowFailure = false }) {
+function runGit({
+  args,
+  cwd,
+  environment,
+  label,
+  allowFailure = false,
+  input,
+}) {
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     env: environment,
+    input,
     maxBuffer: MAX_GIT_OUTPUT_BYTES,
     shell: false,
     windowsHide: true,
@@ -130,6 +139,72 @@ function assertUnused(path) {
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function sha256Text(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function inspectReleaseTags(repository, environment) {
+  const output = runGit({
+    args: [
+      'for-each-ref',
+      '--sort=refname',
+      '--format=%(refname)%09%(objecttype)%09%(objectname)%09%(*objecttype)%09%(*objectname)',
+      'refs/tags/v3.*',
+    ],
+    cwd: repository,
+    environment,
+    label: 'inspect SeerrNG release tags',
+  }).stdout.trimEnd();
+  if (!output)
+    throw new Error(
+      'Worker source bundle requires at least one SeerrNG v3 release tag'
+    );
+  const releaseTags = output.split(/\r?\n/u).map((line) => {
+    const [refName, objectType, objectId, peeledType, peeledObjectId, ...rest] =
+      line.split('\t');
+    if (
+      rest.length > 0 ||
+      !refName?.startsWith(RELEASE_TAG_REF_PREFIX) ||
+      !GIT_SHA1.test(objectId ?? '')
+    )
+      throw new Error('Worker source bundle found an invalid release tag ref');
+    let commitId;
+    if (objectType === 'commit' && !peeledType && !peeledObjectId)
+      commitId = objectId;
+    else if (
+      objectType === 'tag' &&
+      peeledType === 'commit' &&
+      GIT_SHA1.test(peeledObjectId ?? '')
+    )
+      commitId = peeledObjectId;
+    else
+      throw new Error(
+        `Worker source bundle release tag must resolve to a commit: ${refName}`
+      );
+    return Object.freeze({ commitId, objectId, refName });
+  });
+  if (
+    new Set(releaseTags.map(({ refName }) => refName)).size !==
+    releaseTags.length
+  )
+    throw new Error('Worker source bundle release tag refs must be unique');
+  return Object.freeze(releaseTags);
+}
+
+function canonicalReleaseTags(releaseTags) {
+  return releaseTags
+    .map(
+      ({ commitId, objectId, refName }) =>
+        `${objectId} ${commitId} ${refName}\n`
+    )
+    .join('');
+}
+
+function assertReleaseTagsMatch(actual, expected, label) {
+  if (canonicalReleaseTags(actual) !== canonicalReleaseTags(expected))
+    throw new Error(`Worker source bundle ${label} release tags do not match`);
 }
 
 function inspectSourceRoot(sourceRoot, environment) {
@@ -205,7 +280,14 @@ function inspectSourceRoot(sourceRoot, environment) {
   });
   if (status)
     throw new Error('Worker source bundle requires a clean source worktree');
-  return { source, sourceCommit, sourceTree };
+  const releaseTags = inspectReleaseTags(source, environment);
+  return {
+    source,
+    sourceCommit,
+    sourceTree,
+    releaseTags,
+    releaseTagsSha256: sha256Text(canonicalReleaseTags(releaseTags)),
+  };
 }
 
 function inspectOutputPath(outputPath, source) {
@@ -288,21 +370,43 @@ function verifyRepository({
     throw new Error(`Worker source bundle ${label} worktree is not clean`);
 }
 
-function assertExactBundleHead({
+function assertExactBundleHeads({
   repository,
   bundle,
   sourceCommit,
+  releaseTags,
   environment,
 }) {
-  const heads = gitText({
+  const output = runGit({
     args: ['bundle', 'list-heads', bundle],
     cwd: repository,
     environment,
     label: 'inspect bundle heads',
-  });
-  if (heads !== `${sourceCommit} HEAD`)
+  }).stdout.trim();
+  const actual = new Map();
+  for (const line of output.split(/\r?\n/u)) {
+    const [objectId, refName, ...rest] = line.split(' ');
+    if (
+      rest.length > 0 ||
+      !GIT_SHA1.test(objectId ?? '') ||
+      !refName ||
+      actual.has(refName)
+    )
+      throw new Error('Worker source bundle exposes invalid or duplicate refs');
+    actual.set(refName, objectId);
+  }
+  const expected = new Map([
+    ['HEAD', sourceCommit],
+    ...releaseTags.map(({ objectId, refName }) => [refName, objectId]),
+  ]);
+  if (
+    actual.size !== expected.size ||
+    [...expected].some(
+      ([refName, objectId]) => actual.get(refName) !== objectId
+    )
+  )
     throw new Error(
-      'Worker source bundle must expose exactly SOURCE_COMMIT HEAD'
+      'Worker source bundle must expose exactly SOURCE_COMMIT HEAD and the sealed release tags'
     );
 }
 
@@ -311,6 +415,7 @@ function createAndVerifyBundle({
   source,
   sourceCommit,
   sourceTree,
+  releaseTags,
   temporaryRoot,
   environment,
 }) {
@@ -328,6 +433,7 @@ function createAndVerifyBundle({
       '--no-recurse-submodules',
       pathToFileURL(source).href,
       sourceCommit,
+      ...releaseTags.map(({ refName }) => `+${refName}:${refName}`),
     ],
     cwd: seed,
     environment,
@@ -346,11 +452,22 @@ function createAndVerifyBundle({
     environment,
     label: 'seed',
   });
+  assertReleaseTagsMatch(
+    inspectReleaseTags(seed, environment),
+    releaseTags,
+    'seed'
+  );
   runGit({
-    args: ['bundle', 'create', bundle, 'HEAD'],
+    args: [
+      'bundle',
+      'create',
+      bundle,
+      'HEAD',
+      ...releaseTags.map(({ refName }) => refName),
+    ],
     cwd: seed,
     environment,
-    label: 'create the tip-only bundle',
+    label: 'create the candidate-and-release-tags bundle',
   });
   runGit({
     args: ['bundle', 'verify', bundle],
@@ -358,10 +475,11 @@ function createAndVerifyBundle({
     environment,
     label: 'verify the created bundle',
   });
-  assertExactBundleHead({
+  assertExactBundleHeads({
     repository: seed,
     bundle,
     sourceCommit,
+    releaseTags,
     environment,
   });
 
@@ -372,10 +490,11 @@ function createAndVerifyBundle({
     environment,
     label: 'verify the bundle in an independent repository',
   });
-  assertExactBundleHead({
+  assertExactBundleHeads({
     repository: verification,
     bundle,
     sourceCommit,
+    releaseTags,
     environment,
   });
   runGit({
@@ -390,11 +509,29 @@ function createAndVerifyBundle({
     environment,
     label: 'verify the imported source commit',
   });
-  writeFileSync(join(verification, '.git', 'shallow'), `${sourceCommit}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
-    mode: 0o600,
+  runGit({
+    args: ['update-ref', '--stdin'],
+    cwd: verification,
+    environment,
+    input: releaseTags
+      .map(({ objectId, refName }) => `update ${refName} ${objectId}\n`)
+      .join(''),
+    label: 'restore the imported release tag refs',
   });
+  writeFileSync(
+    join(verification, '.git', 'shallow'),
+    `${[sourceCommit, ...releaseTags.map(({ commitId }) => commitId)]
+      .sort()
+      .filter(
+        (value, index, values) => index === 0 || value !== values[index - 1]
+      )
+      .join('\n')}\n`,
+    {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    }
+  );
   runGit({
     args: ['update-ref', 'refs/heads/candidate', sourceCommit],
     cwd: verification,
@@ -414,6 +551,30 @@ function createAndVerifyBundle({
     environment,
     label: 'imported',
   });
+  assertReleaseTagsMatch(
+    inspectReleaseTags(verification, environment),
+    releaseTags,
+    'imported'
+  );
+  for (const { commitId, refName } of releaseTags) {
+    if (
+      gitText({
+        args: ['rev-list', '--count', refName],
+        cwd: verification,
+        environment,
+        label: `count imported release tag ${refName}`,
+      }) !== '1' ||
+      gitText({
+        args: ['rev-parse', '--verify', `${refName}^{commit}`],
+        cwd: verification,
+        environment,
+        label: `verify imported release tag ${refName}`,
+      }) !== commitId
+    )
+      throw new Error(
+        `Worker source bundle imported release tag is not shallow and exact: ${refName}`
+      );
+  }
   if (
     gitText({
       args: ['remote'],
@@ -433,13 +594,22 @@ function createAndVerifyBundle({
     throw new Error('Worker source bundle import contains unreachable objects');
 }
 
-function sourceStillMatches({ source, sourceCommit, sourceTree, environment }) {
+function sourceStillMatches({
+  source,
+  sourceCommit,
+  sourceTree,
+  releaseTags,
+  releaseTagsSha256,
+  environment,
+}) {
   const current = inspectSourceRoot(source, environment);
   if (
     current.sourceCommit !== sourceCommit ||
-    current.sourceTree !== sourceTree
+    current.sourceTree !== sourceTree ||
+    current.releaseTagsSha256 !== releaseTagsSha256
   )
     throw new Error('Worker source changed while its bundle was created');
+  assertReleaseTagsMatch(current.releaseTags, releaseTags, 'source');
 }
 
 export function createWorkerSourceBundle({
@@ -478,9 +648,11 @@ export function createWorkerSourceBundle({
     )
       throw new Error('Worker source bundle output verification failed');
     return Object.freeze({
-      schema: 'seerrng-worker-source-bundle/v1',
+      schema: 'seerrng-worker-source-bundle/v2',
       sourceCommit: sourceIdentity.sourceCommit,
       sourceTree: sourceIdentity.sourceTree,
+      releaseTagCount: sourceIdentity.releaseTags.length,
+      releaseTagsSha256: sourceIdentity.releaseTagsSha256,
       bundleSha256,
       bundleBytes,
       outputPath: output,

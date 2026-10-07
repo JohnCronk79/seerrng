@@ -35,6 +35,7 @@ test('worker image pins the approved Node base and exact native tool set', () =>
     'jq',
     'libc6-compat',
     'make',
+    'openssh-keygen=10.2_p1-r0',
     'py3-setuptools',
     'python3',
     'sqlite',
@@ -51,11 +52,15 @@ test('worker image pins the approved Node base and exact native tool set', () =>
   assert.match(logicalDockerfile, /apk info -e tini=0\.19\.0-r3 >\/dev\/null/);
   assert.match(
     logicalDockerfile,
+    /apk info -e openssh-keygen=10\.2_p1-r0 >\/dev\/null/
+  );
+  assert.match(
+    logicalDockerfile,
     /test "\$\(tini --version 2>&1\)" = "tini version 0\.19\.0"/
   );
   assert.match(
     logicalDockerfile,
-    /for required_command in helm jq sqlite3 zip unzip find tar python tini; do\s+command -v "\$required_command" >\/dev\/null \|\| exit 1;\s+done/
+    /for required_command in helm jq sqlite3 zip unzip find tar python ssh-keygen tini; do\s+command -v "\$required_command" >\/dev\/null \|\| exit 1;\s+done/
   );
   assert.match(
     logicalDockerfile,
@@ -106,7 +111,27 @@ test('worker image admits only a sealed bundle and exact commit identity', () =>
   );
   assert.match(
     logicalDockerfile,
-    /test "\$\(git -C \/workspace bundle list-heads \/tmp\/source\.bundle\)"\s+= "\$SOURCE_COMMIT HEAD"/
+    /git -C \/workspace bundle list-heads \/tmp\/source\.bundle\s+> \/tmp\/source-bundle-heads/
+  );
+  assert.match(
+    logicalDockerfile,
+    /case "\$ref_name" in\s+HEAD\) test "\$object_id" = "\$SOURCE_COMMIT" \|\| exit 1 ;;\s+refs\/tags\/v3\.\*\)/
+  );
+  assert.match(
+    logicalDockerfile,
+    /git -C \/workspace check-ref-format "\$ref_name" \|\| exit 1/
+  );
+  assert.match(
+    logicalDockerfile,
+    /grep -Fxc "\$SOURCE_COMMIT HEAD" \/tmp\/source-bundle-heads/
+  );
+  assert.match(
+    logicalDockerfile,
+    /cut -d ' ' -f 2 \/tmp\/source-bundle-heads\s+> \/tmp\/source-bundle-refnames/
+  );
+  assert.match(
+    logicalDockerfile,
+    /duplicate_refs="\$\(uniq -d \/tmp\/source-bundle-refnames\)"\s+&& test -z "\$duplicate_refs"/
   );
   assert.match(
     logicalDockerfile,
@@ -114,7 +139,15 @@ test('worker image admits only a sealed bundle and exact commit identity', () =>
   );
   assert.match(
     logicalDockerfile,
-    /printf '%s\\n' "\$SOURCE_COMMIT" > \/workspace\/\.git\/shallow/
+    /git -C \/workspace update-ref "\$ref_name" "\$object_id" \|\| exit 1/
+  );
+  assert.match(
+    logicalDockerfile,
+    /peeled_commit="\$\(git -C \/workspace rev-parse\s+--verify "\$\{ref_name\}\^\{commit\}"\)" \|\| exit 1/
+  );
+  assert.match(
+    logicalDockerfile,
+    /sort -u \/tmp\/source-shallow -o \/workspace\/\.git\/shallow/
   );
   assert.match(
     logicalDockerfile,
@@ -133,7 +166,15 @@ test('worker image admits only a sealed bundle and exact commit identity', () =>
     logicalDockerfile,
     /test "\$\(git -C \/workspace rev-list --count HEAD\)" = 1/
   );
+  assert.match(
+    logicalDockerfile,
+    /commit_count="\$\(git -C \/workspace rev-list --count "\$ref_name"\)"\s+\|\| exit 1;\s+test "\$commit_count" = 1 \|\| exit 1/
+  );
   assert.match(logicalDockerfile, /test -z "\$\(git -C \/workspace remote\)"/);
+  assert.match(
+    logicalDockerfile,
+    /git -C \/workspace for-each-ref --sort=refname\s+--format='%\(objectname\) %\(refname\)' refs\/tags/
+  );
   assert.match(
     logicalDockerfile,
     /unreachable_objects="\$\(git -C \/workspace fsck --full\s+--unreachable --no-reflogs 2>\/dev\/null\)"\s+&& test -z "\$unreachable_objects"/

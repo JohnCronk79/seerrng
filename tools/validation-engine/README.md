@@ -137,12 +137,15 @@ is not implemented.
 
 The Linux worker image is defined by
 `tools/validation-engine/container/Dockerfile.worker`. Its `source.bundle` must
-be generated from an exact clean depth-1 candidate snapshot rather than full
-repository history and supplied with `SOURCE_COMMIT` and
-`SOURCE_BUNDLE_SHA256`. The build verifies the bundle and commit, imports it
-into a one-commit shallow Git checkout with no remote, installs frozen
-lockfile-bound dependencies without the Cypress binary, and verifies clean Git
-metadata. It runs the existing engine entry point as a non-root user. Runtime
+be generated from an exact clean depth-1 candidate snapshot plus the exact
+`v3.*` release-tag refs, with each tagged commit kept as a separate shallow
+boundary rather than importing repository history. Bundle provenance records
+the release-tag count and digest. The build receives `SOURCE_COMMIT` and
+`SOURCE_BUNDLE_SHA256`, verifies the bundle, restores only those release-tag
+refs, and imports the candidate as a one-commit shallow checkout with no
+remote. It installs frozen lockfile-bound dependencies without the Cypress
+binary and verifies clean Git metadata. It runs the existing engine entry
+point as a non-root user. Runtime
 orchestration must make the container read-only, provide bounded temporary
 storage, drop all capabilities, enable `no-new-privileges`, and mount TLS,
 manifest, and evidence paths with only their required access. Full Linux

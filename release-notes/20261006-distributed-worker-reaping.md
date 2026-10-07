@@ -6,4 +6,4 @@ action: none
 breaking: false
 ---
 
-Distributed validation workers now run under a pinned, verified init process that forwards shutdown signals and reaps orphaned test processes consistently across Docker hosts.
+Distributed validation workers now carry their pinned process reaper, required native tools, and sealed shallow release-tag metadata, so the complete native test catalog runs consistently across Docker hosts.
