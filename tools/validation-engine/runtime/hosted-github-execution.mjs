@@ -2115,7 +2115,18 @@ export async function executeHostedTestLane({
         receipt = error.receipt;
       }
       if (receipt && !receipt.stdoutTruncated && !receipt.stderrTruncated)
-        fileLedger = readNodeTapHierarchy(Buffer.from(receipt.stdout), file);
+        fileLedger = readNodeTapHierarchy(Buffer.from(receipt.stdout), file, {
+          sourceEntries: [
+            {
+              // Node reports a source-only wrapper using the platform-native
+              // command path (including escaped Windows separators). Bind that
+              // wrapper to the exact planned file so it cannot masquerade as a
+              // discovered test case.
+              name: path.normalize(file),
+              absoluteFile: path.resolve(root, file),
+            },
+          ],
+        });
     } catch (error) {
       executionError ??= error;
     }
@@ -2131,9 +2142,9 @@ export async function executeHostedTestLane({
         `Temporary validation files retained because child cleanup is uncertain: ${directory}\n`
       );
     const syntheticEmptyFile =
-      fileLedger?.cases.length === 1 &&
-      fileLedger.cases[0].leafName === file &&
-      fileLedger.cases[0].suitePath.length === 0;
+      fileLedger?.issues.includes(
+        'Native source wrapper has no discovered cases'
+      ) === true;
     const complete =
       !cleanupError &&
       receipt?.status === 'passed' &&

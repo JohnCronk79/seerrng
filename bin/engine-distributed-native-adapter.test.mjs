@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import {
   createDistributedNativeCatalog,
@@ -18,8 +17,6 @@ import {
 } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native engine tests do not resolve application aliases.
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
-
-const engineRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 function write(root, file, content) {
   const path = join(root, ...file.split('/'));
@@ -162,12 +159,39 @@ function createFixture(t) {
     'node_modules/typescript/index.js',
     `module.exports=(${fakeTypeScript.toString()})();\n`
   );
-  write(root, 'node_modules/vitest/vitest.mjs', 'export {};\n');
-  write(root, 'vitest.config.mts', 'export default {};\n');
+  write(
+    root,
+    'node_modules/vitest/vitest.mjs',
+    `import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const output = process.argv.find((argument) => argument.startsWith('--outputFile.json='))?.slice('--outputFile.json='.length);
+if (!output) throw new Error('missing fixture Vitest report path');
+writeFileSync(output, JSON.stringify({
+  numTotalTests: 1,
+  numPassedTests: 1,
+  numFailedTests: 0,
+  success: true,
+  testResults: [{ name: resolve('server/native-typescript.test.ts'), assertionResults: [] }],
+}));
+`
+  );
+  write(
+    root,
+    'vitest.config.mts',
+    `import { resolve } from 'node:path';
+const projectRoot = process.cwd();
+export default { resolve: { alias: { 'node:test': resolve(projectRoot, 'server/test/vitestNodeTest.ts') } } };
+`
+  );
   write(
     root,
     'server/test/index.mts',
     '// fixture native TypeScript adapter\n'
+  );
+  write(
+    root,
+    'server/test/vitestNodeTest.ts',
+    '// fixture canonical node:test-to-Vitest adapter\n'
   );
   write(
     root,
@@ -285,6 +309,20 @@ test('native discovery seals every locally owned task before allowlist selection
       ...toolingFiles,
     ].toSorted()
   );
+  assert.equal(
+    discovered.tasks.find(({ files }) =>
+      files.includes('server/native-typescript.test.ts')
+    )?.adapterId,
+    'vitest'
+  );
+  assert.equal(
+    discovered.tasks.filter(({ adapterId }) => adapterId === 'tooling').length,
+    1
+  );
+  assert.deepEqual(
+    discovered.tasks.find(({ adapterId }) => adapterId === 'tooling')?.files,
+    toolingFiles
+  );
   const selectedIds = discovered.tasks
     .filter(({ adapterId }) => adapterId !== 'tooling')
     .slice(0, 2)
@@ -310,78 +348,6 @@ test('native discovery seals every locally owned task before allowlist selection
       }),
     /exact field set/
   );
-});
-
-test('distributed discovery CLI emits the local sealed catalog without execution or writes', (t) => {
-  const root = createFixture(t);
-  const result = spawnSync(
-    process.execPath,
-    [
-      join(engineRoot, 'bin/run-local-validation.mjs'),
-      '--distributed-discover',
-      '--app',
-      `fixture-app=${root}`,
-      '--application',
-      'fixture-app',
-      '--json',
-    ],
-    {
-      cwd: engineRoot,
-      encoding: 'utf8',
-      env: { ...process.env, NODE_OPTIONS: '' },
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    }
-  );
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, '');
-  const catalog = JSON.parse(result.stdout);
-  assert.equal(catalog.applicationId, 'fixture-app');
-  assert.equal(catalog.tasks.length, 5);
-  assert.equal(
-    catalog.tasks.some(({ files }) =>
-      files.includes('scripts/hanging-native.test.mjs')
-    ),
-    true
-  );
-  const plain = spawnSync(
-    process.execPath,
-    [
-      join(engineRoot, 'bin/run-local-validation.mjs'),
-      '--distributed-discover',
-      '--app',
-      `fixture-app=${root}`,
-      '--application',
-      'fixture-app',
-    ],
-    {
-      cwd: engineRoot,
-      encoding: 'utf8',
-      env: { ...process.env, NODE_OPTIONS: '' },
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    }
-  );
-  assert.ifError(plain.error);
-  assert.equal(plain.status, 0, plain.stderr);
-  assert.equal(plain.stderr, '');
-  assert.match(plain.stdout, /5 locally derived tasks for fixture-app/);
-  for (const { taskId } of catalog.tasks)
-    assert.match(plain.stdout, new RegExp(taskId));
-  const status = spawnSync(
-    'git',
-    ['status', '--porcelain=v1', '--untracked-files=all'],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      shell: false,
-      windowsHide: true,
-    }
-  );
-  assert.ifError(status.error);
-  assert.equal(status.status, 0, status.stderr);
-  assert.equal(status.stdout, '');
 });
 
 test('native discovery rejects an ignored test file absent from HEAD', (t) => {
@@ -608,6 +574,36 @@ test('native adapter derives, binds, and executes only one exact local task', as
   assert.equal(Object.isFrozen(verified.totals['node-js']), true);
   assert.equal(Object.isFrozen(verified.receipt), true);
   assert.equal(Object.isFrozen(verified.receipt.lifecycle), true);
+
+  const canonicalTypeScriptTaskId = distributedNativeTaskId({
+    applicationId: 'fixture-app',
+    adapterId: 'vitest',
+    files: ['server/native-typescript.test.ts'],
+  });
+  const canonicalTypeScriptCatalog = createDistributedNativeCatalog(root, {
+    applicationId: 'fixture-app',
+    allowedTaskIds: [canonicalTypeScriptTaskId],
+  });
+  const canonicalTypeScriptResult = await executeDistributedNativeTask({
+    root,
+    applicationId: 'fixture-app',
+    allowedTaskIds: [canonicalTypeScriptTaskId],
+    expectedCandidate: canonicalTypeScriptCatalog.candidate,
+    request: createDistributedNativeTaskRequest(
+      canonicalTypeScriptCatalog,
+      canonicalTypeScriptTaskId
+    ),
+    stdout: sink().stream,
+    stderr: sink().stream,
+  });
+  assert.equal(canonicalTypeScriptResult.adapterId, 'vitest');
+  assert.deepEqual(canonicalTypeScriptResult.files, [
+    'server/native-typescript.test.ts',
+  ]);
+  assert.deepEqual(canonicalTypeScriptResult.totals.vitest, {
+    total: 1,
+    active: 1,
+  });
 
   const bindingAttacks = [
     (value) => {

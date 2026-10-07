@@ -1,15 +1,16 @@
 // Copyright (c) snapetech and SeerrNG contributors.
-// Pure adaptive scheduling primitives for heterogeneous distributed workers.
+// Pure adaptive scheduling primitives for heterogeneous distributed nodes.
 import { canonicalJsonSha256 } from './run-scoped-ledger.mjs';
 
 export const DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA =
-  'seerrng-distributed-adaptive-profile/v2';
+  'seerrng-distributed-adaptive-profile/v3';
 export const DISTRIBUTED_ADAPTIVE_OBSERVATION_SCHEMA =
-  'seerrng-distributed-adaptive-observation/v1';
+  'seerrng-distributed-adaptive-observation/v2';
 export const DISTRIBUTED_ADAPTIVE_SCHEDULE_SCHEMA =
-  'seerrng-distributed-adaptive-schedule/v2';
-export const DISTRIBUTED_WORKER_CAPACITY_SCHEMA =
-  'seerrng-distributed-worker-capacity/v2';
+  'seerrng-distributed-adaptive-schedule/v3';
+export const DISTRIBUTED_NODE_CAPACITY_SCHEMA =
+  'seerrng-distributed-node-capacity/v3';
+export const MAX_DISTRIBUTED_NODE_THREADS = 256;
 export const MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS = 65_536;
 export const MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES = 16 * 1024 * 1024;
 
@@ -25,19 +26,19 @@ const SCHEDULE_KEYS = [
   'repositoryIdentitySha256',
   'scheduleSha256',
   'schema',
-  'slots',
+  'threadSlots',
   'testInventorySha256',
-  'workerCapacitiesSha256',
-  'workers',
+  'nodeCapacitiesSha256',
+  'nodes',
 ];
-const SCHEDULE_SLOT_KEYS = [
+const SCHEDULE_THREAD_SLOT_KEYS = [
   'performanceScorePermille',
   'predictedBusyMs',
   'predictedFinishOffsetMs',
-  'slotId',
-  'slotIndex',
+  'threadSlotId',
+  'threadSlotIndex',
   'tests',
-  'workerId',
+  'nodeId',
 ];
 const SCHEDULE_TEST_KEYS = [
   'adapterId',
@@ -68,11 +69,10 @@ const CAPACITY_KEYS = [
   'memoryLimitedThreads',
   'performanceScorePermille',
   'performanceScoreSource',
-  'role',
   'runsOnControllerHost',
   'schema',
   'scope',
-  'workerId',
+  'nodeId',
 ];
 const VERIFY_SCHEDULE_EXPECTATION_KEYS = [
   'expectedApplicationId',
@@ -104,7 +104,7 @@ const ADAPTIVE_OBSERVATION_SCOPE_KEYS = [
   'laneId',
   'repositoryIdentitySha256',
   'selectedN',
-  'workerClass',
+  'nodeId',
 ];
 const ADAPTIVE_OBSERVATION_SOURCE_KEYS = [
   'applicationIsolationKeySha256',
@@ -145,7 +145,6 @@ const DEFAULT_POLICY = Object.freeze({
   maximumSamplesPerTest: 9,
   rollingQuantilePermille: 750,
   unknownEstimateMultiplierPermille: 1_250,
-  unmeasuredPerformanceFractionPermille: 500,
 });
 
 const HASH64 = /^[a-f0-9]{64}$/;
@@ -272,10 +271,6 @@ function normalizePolicy(policy = {}) {
   );
   if (normalized.unknownEstimateMultiplierPermille < 1_000)
     throw new Error('Unknown-test estimate multiplier cannot reduce work');
-  permille(
-    normalized.unmeasuredPerformanceFractionPermille,
-    'unmeasured performance fraction'
-  );
   return normalized;
 }
 
@@ -315,11 +310,11 @@ function robustRollingEstimate(samples, quantilePermille) {
   return quantile(bounded, quantilePermille);
 }
 
-function workerScopeIdentity(value, label = 'distributed worker scope') {
+function nodeTimingScopeIdentity(value, label = 'distributed node scope') {
   plainObject(value, label);
   return {
     environment: nonemptyText(value.environment, `${label} environment`),
-    workerClass: nonemptyText(value.workerClass, `${label} worker class`),
+    nodeId: nonemptyText(value.nodeId, `${label} node ID`),
   };
 }
 
@@ -334,7 +329,7 @@ function scopeIdentity(value, label = 'adaptive timing scope') {
       `${label} repository identity`
     ),
     environment: nonemptyText(value.environment, `${label} environment`),
-    workerClass: nonemptyText(value.workerClass, `${label} worker class`),
+    nodeId: nonemptyText(value.nodeId, `${label} node ID`),
     selectedN: positiveInteger(value.selectedN, `${label} selected N`),
   };
 }
@@ -349,7 +344,7 @@ function compareScope(left, right) {
       right.repositoryIdentitySha256
     ) ||
     compareText(left.environment, right.environment) ||
-    compareText(left.workerClass, right.workerClass) ||
+    compareText(left.nodeId, right.nodeId) ||
     left.selectedN - right.selectedN
   );
 }
@@ -361,7 +356,7 @@ function matchingScope(left, right) {
     left.adapterId === right.adapterId &&
     left.repositoryIdentitySha256 === right.repositoryIdentitySha256 &&
     left.environment === right.environment &&
-    left.workerClass === right.workerClass &&
+    left.nodeId === right.nodeId &&
     left.selectedN === right.selectedN
   );
 }
@@ -532,7 +527,7 @@ function sealAdaptiveTimingObservation(value) {
     // observation. source.scheduleTestInventorySha256 separately binds the
     // full schedule inventory that the controller reconciled externally.
     observedInventorySha256: canonicalJsonSha256({
-      schema: 'seerrng-distributed-adaptive-observed-inventory/v1',
+      schema: 'seerrng-distributed-adaptive-observed-inventory/v2',
       scope: normalized.scope,
       inventory: normalized.inventory,
     }),
@@ -658,7 +653,7 @@ export function assertAdaptiveTimingProfile(value) {
         'repositoryIdentitySha256',
         'selectedN',
         'tests',
-        'workerClass',
+        'nodeId',
       ],
       'distributed adaptive profile scope'
     );
@@ -725,7 +720,7 @@ export function assertAdaptiveTimingProfile(value) {
         'accepted observation ID'
       );
       const expectedObservationId = canonicalJsonSha256({
-        schema: 'seerrng-distributed-adaptive-observation-identity/v2',
+        schema: 'seerrng-distributed-adaptive-observation-identity/v3',
         scope: normalizedScope,
         ...provenance,
       });
@@ -787,81 +782,66 @@ export function assertAdaptiveTimingProfile(value) {
   return value;
 }
 
-function concurrencyBudget(worker) {
-  const concurrency = worker.concurrency ?? { mode: 'auto' };
-  plainObject(concurrency, 'distributed worker concurrency');
+function concurrencyBudget(node) {
+  const concurrency = node.concurrency ?? { mode: 'auto' };
+  plainObject(concurrency, 'distributed node concurrency');
   if (concurrency.mode === 'auto') {
     if (Object.keys(concurrency).length !== 1)
-      throw new Error('Automatic worker concurrency fields are not canonical');
+      throw new Error('Automatic node concurrency fields are not canonical');
     return {
-      configuredThreadBudget: worker.effectiveLogicalThreads,
+      configuredThreadBudget: Math.min(
+        node.effectiveLogicalThreads,
+        MAX_DISTRIBUTED_NODE_THREADS
+      ),
       concurrencyPolicy: 'auto',
     };
   }
   if (concurrency.mode !== 'explicit')
-    throw new Error('Worker concurrency mode must be auto or explicit');
+    throw new Error('Node concurrency mode must be auto or explicit');
   exactKeys(
     concurrency,
     ['mode', 'threads'],
-    'explicit distributed worker concurrency'
+    'explicit distributed node concurrency'
   );
+  const configuredThreadBudget = positiveInteger(
+    concurrency.threads,
+    'explicit node thread budget'
+  );
+  if (configuredThreadBudget > MAX_DISTRIBUTED_NODE_THREADS)
+    throw new Error(
+      `Explicit node thread budget cannot exceed ${MAX_DISTRIBUTED_NODE_THREADS}`
+    );
   return {
-    configuredThreadBudget: positiveInteger(
-      concurrency.threads,
-      'explicit worker thread budget'
-    ),
+    configuredThreadBudget,
     concurrencyPolicy: 'explicit',
   };
 }
 
-function benchmarkPerformanceScore(worker, policy) {
-  if (worker.benchmark === undefined || worker.benchmark === null)
-    return {
-      performanceScorePermille: policy.coldStartPerformanceScorePermille,
-      performanceScoreSource: 'cold-start-conservative',
-    };
-  plainObject(worker.benchmark, 'distributed worker benchmark');
-  if (worker.benchmark.valid !== true)
-    return {
-      performanceScorePermille: policy.coldStartPerformanceScorePermille,
-      performanceScoreSource: 'cold-start-conservative',
-    };
-  return {
-    performanceScorePermille: positiveInteger(
-      worker.benchmark.performanceScorePermille,
-      'measured benchmark performance score'
-    ),
-    performanceScoreSource: 'measured-benchmark',
-  };
-}
-
-export function assessDistributedWorkerCapacity(worker, policy = {}) {
-  plainObject(worker, 'distributed worker');
+export function assessDistributedNodeCapacity(node, policy = {}) {
+  plainObject(node, 'distributed node');
   const normalizedPolicy = normalizePolicy(policy);
-  const workerId = nonemptyText(worker.id, 'distributed worker id');
-  const scope = workerScopeIdentity(worker.scope);
+  const nodeId = nonemptyText(node.id, 'distributed node id');
+  const scope = nodeTimingScopeIdentity(node.scope);
+  if (scope.nodeId !== nodeId)
+    throw new Error('Distributed node timing scope must use its node ID');
   const adapterIds = normalizeAdapterIds(
-    worker.adapterIds,
-    'distributed worker adapter IDs'
+    node.adapterIds,
+    'distributed node adapter IDs'
   );
   const effectiveLogicalThreads = positiveInteger(
-    worker.effectiveLogicalThreads,
+    node.effectiveLogicalThreads,
     'effective logical thread count'
   );
-  const { configuredThreadBudget, concurrencyPolicy } =
-    concurrencyBudget(worker);
+  const { configuredThreadBudget, concurrencyPolicy } = concurrencyBudget(node);
   const currentLoadPermille = permille(
-    worker.currentLoadPermille ?? 0,
-    'current worker load'
+    node.currentLoadPermille ?? 0,
+    'current node load'
   );
-  const role = worker.role ?? 'worker';
-  if (role !== 'worker')
-    throw new Error('Distributed worker role must be worker');
-  const runsOnControllerHost = worker.runsOnControllerHost ?? false;
+  const runsOnControllerHost = node.runsOnControllerHost ?? false;
   if (typeof runsOnControllerHost !== 'boolean')
     throw new Error('Controller-host placement must be boolean');
   const requestedInteractiveReserve =
-    worker.localInteractiveReserveThreads ??
+    node.localInteractiveReserveThreads ??
     (runsOnControllerHost ? normalizedPolicy.controllerReserveThreads : 0);
   nonnegativeInteger(
     requestedInteractiveReserve,
@@ -874,7 +854,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     checkedMultiply(
       effectiveLogicalThreads,
       currentLoadPermille,
-      'worker load reservation'
+      'node load reservation'
     ) / 1_000
   );
   const cpuAvailableThreads = Math.max(
@@ -882,19 +862,19 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     effectiveLogicalThreads - loadReservedThreads - interactiveReservedThreads
   );
   let memoryLimitedThreads = effectiveLogicalThreads;
-  if (worker.memory !== undefined && worker.memory !== null) {
-    plainObject(worker.memory, 'distributed worker memory');
+  if (node.memory !== undefined && node.memory !== null) {
+    plainObject(node.memory, 'distributed node memory');
     const availableBytes = nonnegativeInteger(
-      worker.memory.availableBytes,
-      'available worker memory'
+      node.memory.availableBytes,
+      'available node memory'
     );
     const reserveBytes = nonnegativeInteger(
-      worker.memory.reserveBytes,
-      'worker memory reserve'
+      node.memory.reserveBytes,
+      'node memory reserve'
     );
     const bytesPerThread = positiveInteger(
-      worker.memory.bytesPerThread,
-      'worker memory per thread'
+      node.memory.bytesPerThread,
+      'node memory per thread'
     );
     memoryLimitedThreads = Math.floor(
       Math.max(0, availableBytes - reserveBytes) / bytesPerThread
@@ -905,32 +885,27 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     cpuAvailableThreads,
     memoryLimitedThreads
   );
-  const explicitRejected =
-    concurrencyPolicy === 'explicit' &&
-    configuredThreadBudget > availableThreads;
-  const admittedThreads = explicitRejected
-    ? 0
-    : concurrencyPolicy === 'explicit'
+  const admittedThreads =
+    concurrencyPolicy === 'explicit'
       ? configuredThreadBudget
       : Math.min(configuredThreadBudget, availableThreads);
-  const { performanceScorePermille, performanceScoreSource } =
-    benchmarkPerformanceScore(worker, normalizedPolicy);
+  // Schedule v3 retains a neutral scale for arithmetic only. Every admitted
+  // thread slot uses the same scale; scope-specific verified timing history
+  // supplies the actual performance signal when durations are predicted.
+  const performanceScorePermille =
+    normalizedPolicy.coldStartPerformanceScorePermille;
+  const performanceScoreSource = 'timing-scale-neutral';
   const capacityWeight = checkedMultiply(
     admittedThreads,
     performanceScorePermille,
-    `distributed capacity for ${workerId}`
+    `distributed capacity for ${nodeId}`
   );
-  const admissionStatus = explicitRejected
-    ? 'rejected'
-    : admittedThreads > 0
-      ? 'admitted'
-      : 'unavailable';
+  const admissionStatus = admittedThreads > 0 ? 'admitted' : 'unavailable';
   return {
-    schema: DISTRIBUTED_WORKER_CAPACITY_SCHEMA,
-    workerId,
+    schema: DISTRIBUTED_NODE_CAPACITY_SCHEMA,
+    nodeId,
     scope,
     adapterIds,
-    role,
     runsOnControllerHost,
     concurrencyPolicy,
     configuredThreadBudget,
@@ -940,11 +915,7 @@ export function assessDistributedWorkerCapacity(worker, policy = {}) {
     memoryLimitedThreads,
     availableThreads,
     admissionStatus,
-    admissionReason: explicitRejected
-      ? 'explicit-thread-budget-unavailable'
-      : admittedThreads === 0
-        ? 'no-current-capacity'
-        : null,
+    admissionReason: admittedThreads === 0 ? 'no-current-capacity' : null,
     admittedThreads,
     performanceScoreSource,
     performanceScorePermille,
@@ -1037,7 +1008,7 @@ export function updateAdaptiveTimingProfile(
   const submissionSha256 = observation.source.submissionSha256;
   const observationSha256 = observation.observationSha256;
   const observationId = canonicalJsonSha256({
-    schema: 'seerrng-distributed-adaptive-observation-identity/v2',
+    schema: 'seerrng-distributed-adaptive-observation-identity/v3',
     scope,
     runId,
     candidateSha256,
@@ -1067,13 +1038,6 @@ export function updateAdaptiveTimingProfile(
     return ignoredUpdate(profile, 'incomplete-run');
   if (observation.status !== 'passed')
     return ignoredUpdate(profile, 'unsuccessful-run');
-  if (
-    !observation.benchmark ||
-    observation.benchmark.valid !== true ||
-    !Number.isSafeInteger(observation.benchmark.performanceScorePermille) ||
-    observation.benchmark.performanceScorePermille < 1
-  )
-    return ignoredUpdate(profile, 'unmeasured-run');
   if (!Array.isArray(observation.inventory) || !observation.inventory.length)
     throw new Error('Adaptive timing inventory must be a nonempty array');
   if (!Array.isArray(observation.results) || !observation.results.length)
@@ -1124,9 +1088,12 @@ export function updateAdaptiveTimingProfile(
     selectedScope.tests.map((entry) => [entry.testId, entry])
   );
   for (const result of results) {
+    // Keep the profile's existing work-unit scale without normalizing elapsed
+    // time against a CPU benchmark. The matching scope's timing history is the
+    // sole node-performance signal used by future schedules.
     const workUnits = checkedMultiply(
       result.durationMs,
-      observation.benchmark.performanceScorePermille,
+      normalizedPolicy.coldStartPerformanceScorePermille,
       `adaptive timing work for ${result.testId}`
     );
     const prior = entries.get(result.testId);
@@ -1156,33 +1123,6 @@ export function updateAdaptiveTimingProfile(
     reason: 'accepted',
     updatedTests: results.length,
   };
-}
-
-function conservativeColdPerformanceScore(workers, policy) {
-  const measured = workers
-    .filter((worker) => worker.benchmark?.valid === true)
-    .map((worker) =>
-      positiveInteger(
-        worker.benchmark.performanceScorePermille,
-        'measured benchmark performance score'
-      )
-    );
-  if (!measured.length) return policy.coldStartPerformanceScorePermille;
-  const slowestMeasured = measured.reduce(
-    (slowest, performanceScore) => Math.min(slowest, performanceScore),
-    Number.MAX_SAFE_INTEGER
-  );
-  const fraction = Math.max(
-    1,
-    Math.floor(
-      checkedMultiply(
-        slowestMeasured,
-        policy.unmeasuredPerformanceFractionPermille,
-        'unmeasured performance estimate'
-      ) / 1_000
-    )
-  );
-  return Math.min(policy.coldStartPerformanceScorePermille, fraction);
 }
 
 function dependencyGraph(tests) {
@@ -1231,17 +1171,17 @@ function timingScopeFor(test, capacity) {
     adapterId: test.adapterId,
     repositoryIdentitySha256: test.repositoryIdentitySha256,
     environment: capacity.scope.environment,
-    workerClass: capacity.scope.workerClass,
+    nodeId: capacity.nodeId,
     selectedN: capacity.admittedThreads,
   };
 }
 
-function slotStates(capacities) {
+function threadSlotStates(capacities) {
   return capacities.flatMap((capacity) =>
     Array.from({ length: capacity.admittedThreads }, (_, index) => ({
       capacity,
-      slotId: `${capacity.workerId}.slot-${index + 1}`,
-      slotIndex: index + 1,
+      threadSlotId: `${capacity.nodeId}.thread-${index + 1}`,
+      threadSlotIndex: index + 1,
       predictedBusyMs: 0,
       predictedFinishOffsetMs: 0,
       tests: [],
@@ -1279,11 +1219,11 @@ function prepareSchedulingCandidates({
     );
     if (!eligibleCapacities.length)
       throw new Error(
-        `No admitted worker supports adapter ${test.adapterId} for ${test.id}`
+        `No admitted node supports adapter ${test.adapterId} for ${test.id}`
       );
     const estimates = new Map(
       eligibleCapacities.map((capacity) => [
-        capacity.workerId,
+        capacity.nodeId,
         estimateAdaptiveTestWork(
           profile,
           { scope: timingScopeFor(test, capacity), test },
@@ -1351,10 +1291,13 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
     policy,
     graph,
   });
-  const states = slotStates(capacities);
+  const states = threadSlotStates(capacities);
   const pending = new Set(tests.map((test) => test.id));
   const completed = new Set();
   const running = new Map();
+  const assignedTestsByNode = new Map(
+    capacities.map((capacity) => [capacity.nodeId, 0])
+  );
   let currentOffsetMs = 0;
   let nextSequence = 1;
 
@@ -1382,7 +1325,7 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
       let eligibleSlots = [];
       for (const candidate of ready) {
         const matching = freeSlots.filter((state) =>
-          candidate.estimates.has(state.capacity.workerId)
+          candidate.estimates.has(state.capacity.nodeId)
         );
         if (matching.length) {
           selectedCandidate = candidate;
@@ -1394,7 +1337,7 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
       const choices = eligibleSlots
         .map((state) => {
           const estimate = selectedCandidate.estimates.get(
-            state.capacity.workerId
+            state.capacity.nodeId
           );
           return {
             state,
@@ -1409,11 +1352,15 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
         .toSorted(
           (left, right) =>
             left.durationMs - right.durationMs ||
+            assignedTestsByNode.get(left.state.capacity.nodeId) *
+              right.state.capacity.admittedThreads -
+              assignedTestsByNode.get(right.state.capacity.nodeId) *
+                left.state.capacity.admittedThreads ||
             compareText(
-              left.state.capacity.workerId,
-              right.state.capacity.workerId
+              left.state.capacity.nodeId,
+              right.state.capacity.nodeId
             ) ||
-            left.state.slotIndex - right.state.slotIndex
+            left.state.threadSlotIndex - right.state.threadSlotIndex
         );
       const selected = choices[0];
       const finishOffsetMs = checkedAdd(
@@ -1438,9 +1385,13 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
       selected.state.predictedBusyMs = checkedAdd(
         selected.state.predictedBusyMs,
         selected.durationMs,
-        `predicted busy time for ${selected.state.slotId}`
+        `predicted busy time for ${selected.state.threadSlotId}`
       );
       selected.state.predictedFinishOffsetMs = finishOffsetMs;
+      assignedTestsByNode.set(
+        selected.state.capacity.nodeId,
+        assignedTestsByNode.get(selected.state.capacity.nodeId) + 1
+      );
       pending.delete(selectedCandidate.test.id);
       running.set(selectedCandidate.test.id, finishOffsetMs);
       nextSequence += 1;
@@ -1455,19 +1406,20 @@ function createContinuousSchedule({ tests, capacities, profile, policy }) {
     currentOffsetMs = Math.min(...futureFinishes);
   }
 
-  const slots = states.map((state) => ({
-    slotId: state.slotId,
-    workerId: state.capacity.workerId,
-    slotIndex: state.slotIndex,
+  const threadSlots = states.map((state) => ({
+    threadSlotId: state.threadSlotId,
+    nodeId: state.capacity.nodeId,
+    threadSlotIndex: state.threadSlotIndex,
     performanceScorePermille: state.capacity.performanceScorePermille,
     predictedBusyMs: state.predictedBusyMs,
     predictedFinishOffsetMs: state.predictedFinishOffsetMs,
     tests: state.tests,
   }));
   return {
-    slots,
-    predictedWallMs: slots.reduce(
-      (maximum, slot) => Math.max(maximum, slot.predictedFinishOffsetMs),
+    threadSlots,
+    predictedWallMs: threadSlots.reduce(
+      (maximum, threadSlot) =>
+        Math.max(maximum, threadSlot.predictedFinishOffsetMs),
       0
     ),
   };
@@ -1481,11 +1433,11 @@ function equalArray(left, right) {
 }
 
 function normalizeScheduleCapacity(value, index) {
-  const label = `distributed schedule worker capacity ${index}`;
+  const label = `distributed schedule node capacity ${index}`;
   exactKeys(value, CAPACITY_KEYS, label);
-  if (value.schema !== DISTRIBUTED_WORKER_CAPACITY_SCHEMA)
-    throw new Error('Unsupported distributed worker capacity schema');
-  exactKeys(value.scope, ['environment', 'workerClass'], `${label} scope`);
+  if (value.schema !== DISTRIBUTED_NODE_CAPACITY_SCHEMA)
+    throw new Error('Unsupported distributed node capacity schema');
+  exactKeys(value.scope, ['environment', 'nodeId'], `${label} scope`);
   if (!Array.isArray(value.adapterIds))
     throw new Error(`${label} adapter IDs must be an array`);
   const adapterIds = uniqueSorted(
@@ -1496,38 +1448,33 @@ function normalizeScheduleCapacity(value, index) {
   );
   if (!equalArray(adapterIds, value.adapterIds))
     throw new Error(`${label} adapter IDs are not canonical`);
-  if (value.role !== 'worker') throw new Error(`${label} role is invalid`);
   if (typeof value.runsOnControllerHost !== 'boolean')
     throw new Error(`${label} controller-host placement is invalid`);
   if (!['auto', 'explicit'].includes(value.concurrencyPolicy))
     throw new Error(`${label} concurrency policy is invalid`);
-  if (!['admitted', 'rejected', 'unavailable'].includes(value.admissionStatus))
+  if (!['admitted', 'unavailable'].includes(value.admissionStatus))
     throw new Error(`${label} admission status is invalid`);
-  if (
-    !['measured-benchmark', 'cold-start-conservative'].includes(
-      value.performanceScoreSource
-    )
-  )
+  if (value.performanceScoreSource !== 'timing-scale-neutral')
     throw new Error(`${label} performance score source is invalid`);
   if (
     value.admissionReason !== null &&
-    !['explicit-thread-budget-unavailable', 'no-current-capacity'].includes(
-      value.admissionReason
-    )
+    value.admissionReason !== 'no-current-capacity'
   )
     throw new Error(`${label} admission reason is invalid`);
+  const configuredThreadBudget = positiveInteger(
+    value.configuredThreadBudget,
+    `${label} configured thread budget`
+  );
+  if (configuredThreadBudget > MAX_DISTRIBUTED_NODE_THREADS)
+    throw new Error(`${label} configured thread budget exceeds its maximum`);
   const capacity = {
-    schema: DISTRIBUTED_WORKER_CAPACITY_SCHEMA,
-    workerId: nonemptyText(value.workerId, `${label} worker ID`),
-    scope: workerScopeIdentity(value.scope, `${label} scope`),
+    schema: DISTRIBUTED_NODE_CAPACITY_SCHEMA,
+    nodeId: nonemptyText(value.nodeId, `${label} node ID`),
+    scope: nodeTimingScopeIdentity(value.scope, `${label} scope`),
     adapterIds,
-    role: value.role,
     runsOnControllerHost: value.runsOnControllerHost,
     concurrencyPolicy: value.concurrencyPolicy,
-    configuredThreadBudget: positiveInteger(
-      value.configuredThreadBudget,
-      `${label} configured thread budget`
-    ),
+    configuredThreadBudget,
     effectiveLogicalThreads: positiveInteger(
       value.effectiveLogicalThreads,
       `${label} effective logical threads`
@@ -1564,9 +1511,16 @@ function normalizeScheduleCapacity(value, index) {
       `${label} capacity weight`
     ),
   };
+  if (capacity.scope.nodeId !== capacity.nodeId)
+    throw new Error(`${label} timing scope must use its node ID`);
   if (
     capacity.availableThreads > capacity.effectiveLogicalThreads ||
-    capacity.admittedThreads > capacity.availableThreads ||
+    capacity.admittedThreads > capacity.configuredThreadBudget ||
+    (capacity.concurrencyPolicy === 'auto' &&
+      capacity.admittedThreads > capacity.availableThreads) ||
+    (capacity.concurrencyPolicy === 'explicit' &&
+      capacity.admissionStatus === 'admitted' &&
+      capacity.admittedThreads !== capacity.configuredThreadBudget) ||
     (!capacity.runsOnControllerHost &&
       capacity.interactiveReservedThreads !== 0) ||
     capacity.capacityWeight !==
@@ -1580,10 +1534,6 @@ function normalizeScheduleCapacity(value, index) {
   if (
     (capacity.admissionStatus === 'admitted' &&
       (capacity.admittedThreads === 0 || capacity.admissionReason !== null)) ||
-    (capacity.admissionStatus === 'rejected' &&
-      (capacity.admittedThreads !== 0 ||
-        capacity.concurrencyPolicy !== 'explicit' ||
-        capacity.admissionReason !== 'explicit-thread-budget-unavailable')) ||
     (capacity.admissionStatus === 'unavailable' &&
       (capacity.admittedThreads !== 0 ||
         capacity.admissionReason !== 'no-current-capacity'))
@@ -1651,15 +1601,15 @@ function normalizeScheduledTest(value, label) {
   return test;
 }
 
-function normalizeScheduleSlot(value, index) {
-  const label = `distributed schedule slot ${index}`;
-  exactKeys(value, SCHEDULE_SLOT_KEYS, label);
+function normalizeScheduleThreadSlot(value, index) {
+  const label = `distributed schedule thread slot ${index}`;
+  exactKeys(value, SCHEDULE_THREAD_SLOT_KEYS, label);
   if (!Array.isArray(value.tests))
     throw new Error(`${label} tests must be an array`);
   return {
-    slotId: nonemptyText(value.slotId, `${label} ID`),
-    workerId: nonemptyText(value.workerId, `${label} worker ID`),
-    slotIndex: positiveInteger(value.slotIndex, `${label} index`),
+    threadSlotId: nonemptyText(value.threadSlotId, `${label} ID`),
+    nodeId: nonemptyText(value.nodeId, `${label} node ID`),
+    threadSlotIndex: positiveInteger(value.threadSlotIndex, `${label} index`),
     performanceScorePermille: positiveInteger(
       value.performanceScorePermille,
       `${label} performance score`
@@ -1679,7 +1629,8 @@ function normalizeScheduleSlot(value, index) {
 }
 
 function unsignedSchedule(value) {
-  const { scheduleSha256: _scheduleSha256, ...unsigned } = value;
+  const unsigned = { ...value };
+  delete unsigned.scheduleSha256;
   return unsigned;
 }
 
@@ -1691,68 +1642,66 @@ function normalizeAndValidateSchedule(value) {
     throw new Error('Unsupported distributed adaptive schedule algorithm');
   if (value.profileSchema !== DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA)
     throw new Error('Unsupported distributed adaptive profile binding');
-  if (!Array.isArray(value.workers) || !value.workers.length)
-    throw new Error('Distributed adaptive schedule workers must be nonempty');
-  const workers = value.workers.map(normalizeScheduleCapacity);
-  for (let index = 1; index < workers.length; index += 1)
-    if (compareText(workers[index - 1].workerId, workers[index].workerId) >= 0)
-      throw new Error(
-        'Distributed adaptive schedule workers are not canonical'
-      );
-  const workerCapacitiesSha256 = sha256Digest(
-    value.workerCapacitiesSha256,
-    'worker capacities hash'
+  if (!Array.isArray(value.nodes) || !value.nodes.length)
+    throw new Error('Distributed adaptive schedule nodes must be nonempty');
+  const nodes = value.nodes.map(normalizeScheduleCapacity);
+  for (let index = 1; index < nodes.length; index += 1)
+    if (compareText(nodes[index - 1].nodeId, nodes[index].nodeId) >= 0)
+      throw new Error('Distributed adaptive schedule nodes are not canonical');
+  const nodeCapacitiesSha256 = sha256Digest(
+    value.nodeCapacitiesSha256,
+    'node capacities hash'
   );
-  if (workerCapacitiesSha256 !== canonicalJsonSha256(workers))
+  if (nodeCapacitiesSha256 !== canonicalJsonSha256(nodes))
     throw new Error(
-      'Distributed worker capacity hash does not match its contents'
+      'Distributed node capacity hash does not match its contents'
     );
-  if (!Array.isArray(value.slots) || !value.slots.length)
-    throw new Error('Distributed adaptive schedule slots must be nonempty');
-  const slots = value.slots.map(normalizeScheduleSlot);
-  const expectedSlots = workers.flatMap((worker) =>
-    Array.from({ length: worker.admittedThreads }, (_, index) => ({
-      slotId: `${worker.workerId}.slot-${index + 1}`,
-      workerId: worker.workerId,
-      slotIndex: index + 1,
+  if (!Array.isArray(value.threadSlots) || !value.threadSlots.length)
+    throw new Error(
+      'Distributed adaptive schedule thread slots must be nonempty'
+    );
+  const threadSlots = value.threadSlots.map(normalizeScheduleThreadSlot);
+  const expectedThreadSlots = nodes.flatMap((node) =>
+    Array.from({ length: node.admittedThreads }, (_, index) => ({
+      threadSlotId: `${node.nodeId}.thread-${index + 1}`,
+      nodeId: node.nodeId,
+      threadSlotIndex: index + 1,
     }))
   );
-  if (slots.length !== expectedSlots.length)
+  if (threadSlots.length !== expectedThreadSlots.length)
     throw new Error(
-      'Distributed schedule slots do not match admitted capacity'
+      'Distributed schedule thread slots do not match admitted capacity'
     );
-  const workerById = new Map(
-    workers.map((worker) => [worker.workerId, worker])
-  );
-  for (const [index, slot] of slots.entries()) {
-    const expected = expectedSlots[index];
-    const worker = workerById.get(slot.workerId);
+  const nodeById = new Map(nodes.map((node) => [node.nodeId, node]));
+  for (const [index, threadSlot] of threadSlots.entries()) {
+    const expected = expectedThreadSlots[index];
+    const node = nodeById.get(threadSlot.nodeId);
     if (
       !expected ||
-      slot.slotId !== expected.slotId ||
-      slot.workerId !== expected.workerId ||
-      slot.slotIndex !== expected.slotIndex ||
-      !worker ||
-      slot.performanceScorePermille !== worker.performanceScorePermille
+      threadSlot.threadSlotId !== expected.threadSlotId ||
+      threadSlot.nodeId !== expected.nodeId ||
+      threadSlot.threadSlotIndex !== expected.threadSlotIndex ||
+      !node ||
+      threadSlot.performanceScorePermille !== node.performanceScorePermille
     )
-      throw new Error('Distributed schedule slots are not canonical');
+      throw new Error('Distributed schedule thread slots are not canonical');
     let priorFinishOffsetMs = 0;
     let predictedBusyMs = 0;
-    for (const [testIndex, test] of slot.tests.entries()) {
+    for (const [testIndex, test] of threadSlot.tests.entries()) {
       if (
         testIndex > 0 &&
         (test.predictedStartOffsetMs < priorFinishOffsetMs ||
-          test.sequence <= slot.tests[testIndex - 1].sequence)
+          test.sequence <= threadSlot.tests[testIndex - 1].sequence)
       )
         throw new Error(
-          'Distributed schedule slot tests overlap or are not canonical'
+          'Distributed schedule thread-slot tests overlap or are not canonical'
         );
-      if (!worker.adapterIds.includes(test.adapterId))
+      if (!node.adapterIds.includes(test.adapterId))
         throw new Error(
           'Distributed schedule assigned an incompatible adapter'
         );
       const expectedDurationMs = Math.ceil(
-        test.estimatedWorkUnits / worker.performanceScorePermille
+        test.estimatedWorkUnits / node.performanceScorePermille
       );
       if (test.predictedDurationMs !== expectedDurationMs)
         throw new Error(
@@ -1761,18 +1710,20 @@ function normalizeAndValidateSchedule(value) {
       predictedBusyMs = checkedAdd(
         predictedBusyMs,
         test.predictedDurationMs,
-        `predicted busy time for ${slot.slotId}`
+        `predicted busy time for ${threadSlot.threadSlotId}`
       );
       priorFinishOffsetMs = test.predictedFinishOffsetMs;
     }
     if (
-      slot.predictedBusyMs !== predictedBusyMs ||
-      slot.predictedFinishOffsetMs !== priorFinishOffsetMs
+      threadSlot.predictedBusyMs !== predictedBusyMs ||
+      threadSlot.predictedFinishOffsetMs !== priorFinishOffsetMs
     )
-      throw new Error('Distributed schedule slot summary is inconsistent');
+      throw new Error(
+        'Distributed schedule thread-slot summary is inconsistent'
+      );
   }
 
-  const scheduledTests = slots.flatMap((slot) => slot.tests);
+  const scheduledTests = threadSlots.flatMap((threadSlot) => threadSlot.tests);
   if (!scheduledTests.length)
     throw new Error('Distributed adaptive schedule must contain tests');
   const testIds = scheduledTests.map((test) => test.id);
@@ -1834,8 +1785,9 @@ function normalizeAndValidateSchedule(value) {
   );
   if (
     predictedWallMs !==
-    slots.reduce(
-      (maximum, slot) => Math.max(maximum, slot.predictedFinishOffsetMs),
+    threadSlots.reduce(
+      (maximum, threadSlot) =>
+        Math.max(maximum, threadSlot.predictedFinishOffsetMs),
       0
     )
   )
@@ -1848,10 +1800,10 @@ function normalizeAndValidateSchedule(value) {
     testInventorySha256: testInventoryIdentity,
     profileSha256: sha256Digest(value.profileSha256, 'schedule profile hash'),
     policySha256: sha256Digest(value.policySha256, 'schedule policy hash'),
-    workerCapacitiesSha256,
+    nodeCapacitiesSha256,
     profileSchema: DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA,
-    workers,
-    slots,
+    nodes,
+    threadSlots,
     predictedWallMs,
     scheduleSha256: sha256Digest(value.scheduleSha256, 'schedule hash'),
   };
@@ -1926,15 +1878,15 @@ function sealSchedule(value) {
 
 export function createDistributedAdaptiveSchedule({
   tests: rawTests,
-  workers: rawWorkers,
+  nodes,
   profile,
   policy = {},
 }) {
   assertAdaptiveTimingProfile(profile);
   if (!Array.isArray(rawTests) || !rawTests.length)
     throw new Error('Distributed schedule tests must be a nonempty array');
-  if (!Array.isArray(rawWorkers) || !rawWorkers.length)
-    throw new Error('Distributed schedule workers must be a nonempty array');
+  if (!Array.isArray(nodes) || !nodes.length)
+    throw new Error('Distributed schedule nodes must be a nonempty array');
   const tests = rawTests.map((test, index) =>
     normalizeScheduleTest(test, `distributed schedule test ${index}`)
   );
@@ -1956,38 +1908,22 @@ export function createDistributedAdaptiveSchedule({
     tests.map((test) => test.id),
     'distributed schedule tests'
   );
-  for (const worker of rawWorkers)
-    nonemptyText(worker?.id, 'distributed schedule worker id');
+  for (const node of nodes)
+    nonemptyText(node?.id, 'distributed schedule node id');
   uniqueSorted(
-    rawWorkers.map((worker) => worker.id),
-    'distributed schedule workers'
+    nodes.map((node) => node.id),
+    'distributed schedule nodes'
   );
   const normalizedPolicy = normalizePolicy(policy);
-  const capacityPolicy = {
-    ...normalizedPolicy,
-    coldStartPerformanceScorePermille: conservativeColdPerformanceScore(
-      rawWorkers,
-      normalizedPolicy
-    ),
-  };
-  const capacities = rawWorkers
-    .map((worker) => assessDistributedWorkerCapacity(worker, capacityPolicy))
-    .toSorted((left, right) => compareText(left.workerId, right.workerId));
-  const rejectedExplicit = capacities.find(
-    (capacity) =>
-      capacity.concurrencyPolicy === 'explicit' &&
-      capacity.admissionStatus !== 'admitted'
-  );
-  if (rejectedExplicit)
-    throw new Error(
-      `Explicit worker capacity unavailable: ${rejectedExplicit.workerId}`
-    );
+  const capacities = nodes
+    .map((node) => assessDistributedNodeCapacity(node, normalizedPolicy))
+    .toSorted((left, right) => compareText(left.nodeId, right.nodeId));
   const admittedCapacities = capacities.filter(
     (capacity) => capacity.admittedThreads > 0
   );
   if (!admittedCapacities.length)
-    throw new Error('No distributed worker passed capacity admission');
-  const { slots, predictedWallMs } = createContinuousSchedule({
+    throw new Error('No distributed node passed capacity admission');
+  const { threadSlots, predictedWallMs } = createContinuousSchedule({
     tests,
     capacities: admittedCapacities,
     profile,
@@ -2001,10 +1937,10 @@ export function createDistributedAdaptiveSchedule({
     testInventorySha256: testInventorySha256(tests),
     profileSha256: canonicalJsonSha256(profile),
     policySha256: canonicalJsonSha256(normalizedPolicy),
-    workerCapacitiesSha256: canonicalJsonSha256(capacities),
+    nodeCapacitiesSha256: canonicalJsonSha256(capacities),
     profileSchema: profile.schema,
-    workers: capacities,
-    slots,
+    nodes: capacities,
+    threadSlots,
     predictedWallMs,
   });
 }

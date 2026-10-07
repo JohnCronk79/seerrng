@@ -37,7 +37,7 @@ export const DISTRIBUTED_TASK_FAILURE_RECEIPT_SCHEMA =
 export const DISTRIBUTED_CONTROLLER_FAILURE_SCHEMA =
   'seerrng-distributed-controller-failure/v1';
 export const DISTRIBUTED_SCHEDULE_REPORT_SCHEMA =
-  'seerrng-distributed-schedule-report/v1';
+  'seerrng-distributed-schedule-report/v2';
 export const DISTRIBUTED_SCHEDULE_FAILURE_REPORT_SCHEMA =
   'seerrng-distributed-schedule-failure-report/v1';
 export const MAX_DISTRIBUTED_SCHEDULE_REPORT_BYTES = 32 * 1024 * 1024;
@@ -1456,6 +1456,7 @@ export function verifyDistributedScheduleOutcome(
       'evidenceSha256',
       'failure',
       'instanceId',
+      'nativeTotals',
       'reason',
       'status',
       'taskId',
@@ -1478,6 +1479,7 @@ export function verifyDistributedScheduleOutcome(
     evidenceSha256,
     failure,
     controllerFailure,
+    nativeTotals,
   } = value;
   taskId = digest(taskId, 'schedule outcome task ID');
   workerId = identifier(workerId, 'schedule outcome worker ID');
@@ -1502,6 +1504,35 @@ export function verifyDistributedScheduleOutcome(
       evidenceSha256,
       'distributed schedule outcome evidence hash'
     );
+  }
+  if (status === 'passed') {
+    exactKeys(
+      nativeTotals,
+      ['active', 'adapterId', 'total'],
+      'distributed schedule native totals'
+    );
+    nativeTotals = {
+      adapterId: identifier(
+        nativeTotals.adapterId,
+        'distributed schedule native adapter ID'
+      ),
+      active: boundedInteger(
+        nativeTotals.active,
+        'Distributed schedule active native cases',
+        { minimum: 1 }
+      ),
+      total: boundedInteger(
+        nativeTotals.total,
+        'Distributed schedule total native cases',
+        { minimum: 1 }
+      ),
+    };
+    if (nativeTotals.active > nativeTotals.total)
+      throw new Error(
+        'Distributed schedule active native cases exceed total cases'
+      );
+  } else if (nativeTotals !== null) {
+    throw new Error('Only passed distributed outcomes carry native totals');
   }
   if (status === 'failed') {
     failure = verifyDistributedTaskFailureEvidence(failure);
@@ -1553,6 +1584,7 @@ export function verifyDistributedScheduleOutcome(
     evidenceSha256,
     failure,
     controllerFailure,
+    nativeTotals,
   });
 }
 
@@ -1567,6 +1599,7 @@ function scheduleOutcome(
     evidenceSha256,
     failure = null,
     controllerFailure = null,
+    nativeTotals = null,
   },
   context
 ) {
@@ -1581,6 +1614,7 @@ function scheduleOutcome(
       evidenceSha256,
       failure,
       controllerFailure,
+      nativeTotals,
     },
     context
   );
@@ -1802,6 +1836,7 @@ function prospectiveScheduleReport(core, tasks, assignments, reports) {
     evidenceSha256: 'f'.repeat(64),
     failure: maximumFailure,
     controllerFailure: null,
+    nativeTotals: null,
   };
   const maximumControllerFailure = {
     schema: DISTRIBUTED_CONTROLLER_FAILURE_SCHEMA,
@@ -1828,6 +1863,7 @@ function prospectiveScheduleReport(core, tasks, assignments, reports) {
     evidenceSha256: 'f'.repeat(64),
     failure: null,
     controllerFailure: maximumControllerFailure,
+    nativeTotals: null,
   };
   const envelopeBytes = Buffer.byteLength(
     `${JSON.stringify(envelope)}\n`,
@@ -2081,6 +2117,18 @@ export async function runDistributedControllerSchedule({
           const started = performance.now();
           try {
             const result = await sessions.get(workerId).execute(unit.id, runId);
+            const nativeTotals =
+              result.status === 'passed'
+                ? (() => {
+                    const entries = Object.entries(result.result.totals);
+                    if (entries.length !== 1)
+                      throw new Error(
+                        'Distributed native result requires one adapter total'
+                      );
+                    const [adapterId, totals] = entries[0];
+                    return { adapterId, ...totals };
+                  })()
+                : null;
             outcome =
               result.status === 'passed'
                 ? scheduleOutcome(
@@ -2092,6 +2140,7 @@ export async function runDistributedControllerSchedule({
                       reason: null,
                       wallMs: result.wallMs,
                       evidenceSha256: result.result.resultSha256,
+                      nativeTotals,
                     },
                     outcomeContext
                   )

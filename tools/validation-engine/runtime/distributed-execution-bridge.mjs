@@ -200,12 +200,6 @@ function positiveInteger(value, label) {
   return value;
 }
 
-function nonnegativeInteger(value, label) {
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw new Error(`${label} must be a nonnegative safe integer`);
-  return value;
-}
-
 function sameCanonical(left, right) {
   return canonicalJsonSha256(left) === canonicalJsonSha256(right);
 }
@@ -419,7 +413,7 @@ function activeQueueRecord(queueValue) {
 }
 
 function scheduleTests(schedule) {
-  return schedule.slots
+  return schedule.threadSlots
     .flatMap((slot) =>
       slot.tests.map((test, index) => ({
         slot,
@@ -436,12 +430,12 @@ function verifyScheduleWorkers(schedule, brokerHandoff) {
   const enabled = config.workers
     .filter((worker) => worker.enabled)
     .toSorted((left, right) => compareText(left.id, right.id));
-  const scheduled = [...schedule.workers].toSorted((left, right) =>
-    compareText(left.workerId, right.workerId)
+  const scheduled = [...schedule.nodes].toSorted((left, right) =>
+    compareText(left.nodeId, right.nodeId)
   );
   if (
     enabled.length !== scheduled.length ||
-    enabled.some((worker, index) => worker.id !== scheduled[index]?.workerId)
+    enabled.some((worker, index) => worker.id !== scheduled[index]?.nodeId)
   )
     throw new Error(
       'Distributed schedule worker inventory does not match enabled configuration'
@@ -449,10 +443,6 @@ function verifyScheduleWorkers(schedule, brokerHandoff) {
   for (const [index, worker] of enabled.entries()) {
     const capacity = scheduled[index];
     const runsOnControllerHost = config.controllerWorkerId === worker.id;
-    if (capacity.role !== 'worker')
-      throw new Error(
-        'Distributed schedule contains a non-worker execution role'
-      );
     if (capacity.runsOnControllerHost !== runsOnControllerHost)
       throw new Error('Distributed schedule controller-host placement drifted');
     if (worker.n === 'auto') {
@@ -498,9 +488,9 @@ function assignmentCore({
     taskId: catalogTask.taskId,
     unitId: catalogTask.unitId,
     caseId: catalogTask.caseId,
-    assignedWorkerId: slot.workerId,
-    assignedSlotId: slot.slotId,
-    assignedSlotIndex: slot.slotIndex,
+    assignedWorkerId: slot.nodeId,
+    assignedSlotId: `${slot.nodeId}.slot-${slot.threadSlotIndex}`,
+    assignedSlotIndex: slot.threadSlotIndex,
     assignedSlotPosition: slotPosition,
     dependencyTaskIds: dependencyTaskIds.toSorted(compareText),
     priorSlotTaskId,
@@ -541,7 +531,9 @@ function deriveBridge({
   });
   const usedAdapterIds = [
     ...new Set(
-      schedule.slots.flatMap((slot) => slot.tests.map((test) => test.adapterId))
+      schedule.threadSlots.flatMap((slot) =>
+        slot.tests.map((test) => test.adapterId)
+      )
     ),
   ].toSorted(compareText);
   const submittedAdapterIds = submission.adapters.map(
@@ -615,9 +607,9 @@ function deriveBridge({
       caseId: catalogTask.caseId,
       adapterId: test.adapterId,
       assignment: {
-        workerId: slot.workerId,
-        slotId: slot.slotId,
-        slotIndex: slot.slotIndex,
+        workerId: core.assignedWorkerId,
+        slotId: core.assignedSlotId,
+        slotIndex: core.assignedSlotIndex,
         slotPosition: core.assignedSlotPosition,
       },
       dependencyTaskIds: core.dependencyTaskIds,

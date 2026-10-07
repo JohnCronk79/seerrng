@@ -489,17 +489,24 @@ const scheduleWorkerReport = ({
   };
 };
 
-const passedScheduleTaskResult = ({ workerId, selectedTaskId, runId }) => ({
-  workerId,
-  instanceId: `${workerId}-session`,
-  runId,
-  applicationId,
-  taskId: selectedTaskId,
-  status: 'passed',
-  startedAt: '2026-10-06T00:00:00.000Z',
-  wallMs: 2,
-  result: { resultSha256: sha256(`passed:${workerId}:${selectedTaskId}`) },
-});
+const passedScheduleTaskResult = ({ workerId, selectedTaskId, runId }) => {
+  const selectedTask = taskDefinitions.get(selectedTaskId);
+  assert.ok(selectedTask, `Unknown fixture task: ${selectedTaskId}`);
+  return {
+    workerId,
+    instanceId: `${workerId}-session`,
+    runId,
+    applicationId,
+    taskId: selectedTaskId,
+    status: 'passed',
+    startedAt: '2026-10-06T00:00:00.000Z',
+    wallMs: 2,
+    result: {
+      resultSha256: sha256(`passed:${workerId}:${selectedTaskId}`),
+      totals: { [selectedTask.adapterId]: { total: 1, active: 1 } },
+    },
+  };
+};
 
 const failedScheduleTaskResult = ({ workerId, selectedTaskId, runId }) => ({
   workerId,
@@ -839,6 +846,7 @@ test('controller schedule uses canonical capacity slots after every worker probe
           'evidenceSha256',
           'failure',
           'instanceId',
+          'nativeTotals',
           'reason',
           'status',
           'taskId',

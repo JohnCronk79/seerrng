@@ -1,4 +1,5 @@
 // Copyright (c) snapetech and SeerrNG contributors.
+/* eslint-disable no-relative-import-paths/no-relative-import-paths -- Focused native tests cannot resolve application aliases. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
@@ -52,7 +53,6 @@ import {
   createDistributedBrokerHandoff,
   createDistributedWorkerConfig,
   distributedWorkerConcurrency,
-  distributedWorkerRole,
   distributedWorkerRunsOnControllerHost,
 } from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
 import { canonicalJsonSha256 } from '../tools/validation-engine/runtime/run-scoped-ledger.mjs';
@@ -100,23 +100,18 @@ function workerConfig({ localN = 2, remoteEnabled = true, revision = 1 } = {}) {
   });
 }
 
-function schedulingWorker(config, id, threads, score) {
+function schedulingNode(config, id, threads) {
   return {
     id,
     scope: {
       environment: 'linux-x64',
-      workerClass: id === 'worker-local' ? 'local-standard' : 'remote-standard',
+      nodeId: id,
     },
     adapterIds: adapters().map((entry) => entry.adapterId),
     effectiveLogicalThreads: threads,
     concurrency: distributedWorkerConcurrency(config, id),
-    role: distributedWorkerRole(config, id),
     runsOnControllerHost: distributedWorkerRunsOnControllerHost(config, id),
     currentLoadPermille: 0,
-    benchmark: {
-      valid: true,
-      performanceScorePermille: score,
-    },
   };
 }
 
@@ -199,9 +194,9 @@ function fixture({
   assert.equal(profile.schema, DISTRIBUTED_ADAPTIVE_PROFILE_SCHEMA);
   const schedule = createDistributedAdaptiveSchedule({
     tests: scheduledTests(),
-    workers: [
-      schedulingWorker(config, 'worker-local', 4, 1_000),
-      schedulingWorker(config, 'worker-remote', 2, 800),
+    nodes: [
+      schedulingNode(config, 'worker-local', 4),
+      schedulingNode(config, 'worker-remote', 2),
     ],
     profile,
   });
@@ -266,17 +261,16 @@ function verifyBridge(
 }
 
 function rehashBridge(value) {
-  const { bridgeSha256: _bridgeSha256, ...unsigned } = value;
+  const unsigned = { ...value };
+  delete unsigned.bridgeSha256;
   value.bridgeSha256 = canonicalJsonSha256(unsigned);
   return value;
 }
 
 function rehashAssignment(value) {
-  const {
-    assignmentSha256: _assignmentSha256,
-    taskSha256: _taskSha256,
-    ...core
-  } = value;
+  const core = { ...value };
+  delete core.assignmentSha256;
+  delete core.taskSha256;
   value.assignmentSha256 = canonicalJsonSha256(core);
   return value;
 }
@@ -674,7 +668,14 @@ test('bridge seals the exact broker-enforced worker assignment and dependency ga
     slotIndex: dependent.assignedSlotIndex,
     slotPosition: dependent.assignedSlotPosition,
   });
-  assert.equal(dependent.assignedSlotPosition, 2);
+  const scheduledSlot = selected.schedule.threadSlots.find((slot) =>
+    slot.tests.some((entry) => entry.id === dependent.testId)
+  );
+  assert.ok(scheduledSlot);
+  assert.equal(
+    dependent.assignedSlotPosition,
+    scheduledSlot.tests.findIndex((entry) => entry.id === dependent.testId) + 1
+  );
   assert.deepEqual(task.dependencyTaskIds, dependent.dependencyTaskIds);
 
   // Broker state consumes these immutable task-v2 fields and therefore receives

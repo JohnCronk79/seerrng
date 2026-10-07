@@ -48,122 +48,132 @@ not manual replacements for the local commands.
 
 ## Distributed developer-fleet mode
 
-Mode 3 uses this same `validate:development` entry point for discovery,
-controller, and worker modes; there is no second runner. Read-only distributed
-discovery derives the complete platform-specific native task catalog from the
-tests-only plan. The catalog contains one task for each selected Vitest,
-TypeScript `node:test`, and JavaScript `node:test` file, plus one task for the
-complete registered tooling lane.
+Mode 3 extends the same engine and native test ownership into a Linux
+controller-and-node fleet. It does not define a second test suite. The
+production staged bridge keeps the four-stage gate and replaces only the native
+repository-test execution inside Stage 1:
 
-This is a complete **native tests-only** catalog, not the complete pre-PR gate.
-It does not include repository and supplemental checks, CodeQL, production
-builds, Cypress, hosted-job checks, or pull-request metadata. A successful Mode
-3 schedule therefore cannot be reported as a successful full
-`pnpm validate:development` run.
+1. Stage 1 repository and supplemental checks remain controller-local and cross
+   their normal isolation boundary one check at a time.
+2. The complete platform-specific native catalog is distributed across the
+   controller and every admitted node. It contains one task for each selected
+   Vitest, TypeScript `node:test`, and JavaScript `node:test` file, plus one task
+   for the complete registered tooling lane.
+3. CodeQL, the guarded production build, and Cypress/browser validation remain
+   controller-local and retain their existing stage order and evidence rules.
 
-Every participating worker must run the same immutable image built from the
-same clean committed source, tracked lockfile, supported Node and pnpm versions,
-and installed lockfile-bound dependencies. Every discovered task file must be
-an ordinary blob tracked by `HEAD`, and its working bytes must match that blob;
-ignored or hidden local test content fails discovery. The image build described
-below imports the sealed source snapshot and installs dependencies once; the
-Mode 3 controller protocol itself neither transfers source nor installs
-dependencies. A task is identified by `distributedNativeTaskId()` from its
-application ID, native adapter ID, and canonical repository-relative file list.
-Workers accept only IDs named locally with `--allow-task`; a controller cannot
-transmit a command, arguments, working directory, environment, or executable
-path.
+The bridge reconciles the distributed catalog, schedule, assignment, result,
+and native case totals back into the ordinary Stage 1 receipt. A native-only
+Mode 3 result is not a full-gate result. Only the staged bridge completing all
+four stages may satisfy the local pre-PR gate.
 
-Use either discovery form below to print the sealed local catalog and its task
-IDs. Discovery launches no native task. The second form also exclusively
-creates a compact sealed task manifest at an unused absolute path outside the
-source checkout:
+### Linux setup and configuration
 
-```text
-pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng
-pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng --json
-pnpm validate:development --distributed-discover --app seerrng=ABSOLUTE_ROOT --application seerrng --task-file ABSOLUTE_FILE
-```
+`tools/validation-engine/setup/install-distributed-test-engine.sh` is the
+menu-driven Linux setup program. It installs or configures a controller or
+node, manages supported applications, and plans application dependencies. An
+installation offers to continue directly into configuration. Controller
+automatic startup uses a managed systemd service; node automatic startup stays
+disabled until explicit application-root provisioning is complete, so the MVP
+node is started manually with its bound application root.
 
-The manifest binds the application, platform, candidate, full catalog and
-inventory hashes, task count, canonical unique task IDs, and its own SHA-256
-seal. Schedule and worker admission independently rediscover the complete local
-catalog and require every bound value to match. A schedule accepts exactly one
-selection form: at least two repeated `--task` values for an explicit partial
-smoke, or one `--task-file` for a complete catalog. A worker likewise accepts
-exactly one local allowlist form: repeated `--allow-task` values for a partial
-smoke, or one `--allow-task-file` for the complete bound catalog.
+Mode 3 configuration is human-readable text rather than JSON:
 
-Remote workers require a configured HTTPS origin, a pinned certificate SHA-256
-fingerprint, the shared fleet secret in
-`SEERRNG_DISTRIBUTED_SHARED_SECRET`, and an exact controller source-address
-allowlist. The secret is canonical base64 containing at least 32 random bytes;
-it does not belong in the worker config, command line, logs, repository, or
-native test environment. Authenticated messages tolerate at most five seconds
-of clock skew, so participating machines must keep their clocks synchronized.
-Worker probes retain the short default authentication window. Task requests
-clamp their authentication window between the 30-second default and a
-five-minute cap, based on the controller timeout, so an admitted saturated
-worker can queue them without turning a long execution timeout into an
-unbounded replay window.
+- The controller file is
+  `test-suite-multi-computer-<GitHub username>.cfg`. Its global section records
+  the controller identity, address, detected CPU and available threads, thread
+  rule, and minimum thread count. It also owns supported applications,
+  application dependency requirements, enrolled node identities and thread
+  policies, and each node's reported dependency availability.
+- Each node has one `test-suite-multi-computer-node-##.cfg`. It records the
+  controller address, that node's descriptive name, address, detected CPU and
+  available threads, selected applications, and verified dependency versions.
+- The shared cluster key is the final setting in each enrolled configuration.
+  First contact intentionally trusts the private LAN: the operator supplies the
+  controller address and selected node number, and the controller returns the
+  same cluster key only after accepting the enrollment. Reusing an occupied
+  node number requires an explicit overwrite choice.
+- One node means one logical computer at one IP address. A physical computer
+  running multiple virtual machines exposes each VM as a separate node with
+  its own address. The controller rejects assigning one address to two node
+  numbers.
+- Node execution counts are controller-owned. A thread rule may be a number or
+  an `n` expression such as `n-2` or `2n`; the minimum thread count is applied
+  after evaluating that rule against the node's detected available threads.
 
-Use `--help` for the exact bounded command forms. Mode 3 accepts exactly one
-`--app`. The worker listens on the port in its configured HTTPS address and
-remains active until interrupted. The secret-free worker configuration records
-each worker's enabled state, HTTPS identity, and either an explicit capacity or
-automatic capacity detection.
+After configuration, an atomic active-config marker selects the exact file the
+controller or node service must load. Services do not guess between nearby
+configuration files. Configuration writes are private, locked, atomic, and
+read back before acceptance.
 
-`--distributed-controller` retains the one-worker, one-task acceptance path.
-When `--worker-id` names the configured controller-local worker, it uses the
-same worker handler in-process without opening an HTTPS connection; set
-`controllerWorkerId` to `null` when proving the real HTTPS path.
+### Application dependencies and node admission
 
-`--distributed-schedule` uses every enabled configured worker and requires at
-least two workers and two selected tasks. Before starting any native task, the
-controller probes every worker and requires authenticated, idle,
-candidate-matched capability and capacity evidence. It then assigns the
-canonical task list deterministically across interleaved worker-capacity slots
-and never exceeds each worker's admitted capacity. A verified native failure
-does not suppress independent tasks. An unknown transport outcome makes that
-worker unavailable; its task is not retried or reassigned because doing so could
-execute it twice. The schedule passes only when every selected task passes and
-writes one sealed, size-bounded aggregate JSON report outside the checkout. A
-manifest-backed report records the admitted manifest seal; repeated-ID smoke
-reports record `null`. Controller or fleet-admission errors also write bounded,
-sealed failure evidence without copying arbitrary exception text into the log.
+Each supported repository owns one
+`<appname>-test-suite-dependancies.cfg` profile containing a single
+`[Dependencies]` section with dependency names and exact required versions.
+The controller records the full product/version application ID, a descriptive
+instance name, and the absolute path to that repository-owned profile. Nodes
+receive selected application metadata and report the dependency versions they
+actually provide; they do not keep copied profile files.
 
-Catalogs are platform-specific. A complete Linux catalog must use a Linux
-controller and Linux-only workers built from the same candidate and worker
-image. Do not mix a native Windows worker into that schedule: platform
-exclusions and the tooling task can differ even when some per-file task IDs are
-the same. Windows validation remains a separate native run and cannot be
-counted as part of the Linux schedule. Cross-platform aggregate reconciliation
-is not implemented.
+The controller reads the current application profile for every run, probes all
+configured nodes, and distinguishes available nodes from usable nodes. The
+prepared controller environment is eligible locally. A remote node is usable
+only when its authenticated identity, candidate catalog, assigned thread
+policy, and reported dependency versions match. If an available remote node is
+missing or has an outdated dependency, the engine lists the exact difference
+and asks whether to continue with only usable nodes or stop for repair. A
+non-interactive run stops instead of assuming consent.
 
-The Linux worker image is defined by
-`tools/validation-engine/container/Dockerfile.worker`. Its `source.bundle` must
-be generated from an exact clean depth-1 candidate snapshot plus the exact
-`v3.*` release-tag refs, with each tagged commit kept as a separate shallow
-boundary rather than importing repository history. Bundle provenance records
-the release-tag count and digest. The build receives `SOURCE_COMMIT` and
-`SOURCE_BUNDLE_SHA256`, verifies the bundle, restores only those release-tag
-refs, and imports the candidate as a one-commit shallow checkout with no
-remote. It installs frozen lockfile-bound dependencies without the Cypress
-binary and verifies clean Git metadata. It runs the existing engine entry
-point as a non-root user. Runtime
-orchestration must make the container read-only, provide bounded temporary
-storage, drop all capabilities, enable `no-new-privileges`, and mount TLS,
-manifest, and evidence paths with only their required access. Full Linux
-catalog workers must use the identical built image rather than independently
-rebuilt variants.
+The setup menu can resolve and display dependency plans. Fixed installers for
+the profile's approved dependencies are not yet bound, so it must not claim to
+have installed or repaired those tools until the adapters are implemented.
 
-The implemented slice covers source and task identity, sealed task-manifest
-handoff, all-worker admission, deterministic capacity-aware scheduling,
-authenticated local and remote execution, cancellation, native result
-evidence, and aggregate reconciliation. It does not yet provide task-duration
-weighting, timing-history reuse, multi-application queues, source distribution,
-disconnect retry, controller-crash recovery, or cross-platform aggregation.
-Those capabilities must not be inferred from a successful Mode 3 run.
+### Adaptive scheduling and execution
+
+Before launching native work, the one-shot controller rediscovers the exact
+clean committed catalog locally and requires each node to prove the same
+application, platform, candidate, inventory, and catalog. A node accepts only a
+locally discovered task ID; the controller does not send arbitrary commands,
+arguments, paths, or environments.
+
+The adaptive scheduler combines each admitted computer's controller-owned
+thread budget with test dependencies and timing estimates. Matching timing
+history supplies duration-weighted work estimates; new or changed tests use a
+bounded cold-start estimate. The schedule assigns work continuously across the
+available thread slots, preserves declared dependencies, and records its
+predicted placement. CPU model and clock speed are descriptive only: observed
+task timing, not a hardware lookup, is the scheduling source of truth.
+
+Timing profiles have validated, private, atomic file storage, and successful
+complete observations can update their per-node and per-thread estimates.
+The current staged binding scopes a match to its supplied repository identity.
+Binding the real launch to automatically read, update, and persist useful
+history across consecutive laptop-and-NAS candidates remains part of the
+pending end-to-end proof; a caller must not infer that history was saved or
+reused merely because the scheduler consumed a profile.
+
+The controller executes assigned local tasks through the same native adapter
+used by nodes. Remote requests use the shared cluster key, bounded request
+identity, and exact candidate/catalog bindings. Every task must reconcile
+exactly once against its assigned node and thread slot. Test-result reuse stays
+disabled: timing history can influence placement but cannot skip work or turn
+an old success into a current result.
+
+Catalogs remain platform-specific. A complete Linux run requires a Linux
+controller and Linux nodes with the same clean candidate and dependencies.
+Windows validation is separate and cannot be counted as part of the Linux
+schedule. The Mode 3 protocol does not clone repositories or provision source;
+each node must already expose the explicitly bound application root.
+
+### Current proof boundary
+
+Focused configuration, enrollment, dependency-admission, adaptive-scheduling,
+controller/node transport, task-execution, staged-bridge, and reconciliation
+tests are implemented. The first real full four-stage run using the laptop as
+controller and the NAS as a remote node has **not yet completed**. Until that
+run succeeds and its stage timings and evidence are recorded, Mode 3 must not
+be described as fully proven or assigned a production speedup.
 
 ## Test discovery and ownership
 

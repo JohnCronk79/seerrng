@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
-import { assessDistributedWorkerCapacity } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
+import { assessDistributedNodeCapacity } from '../tools/validation-engine/runtime/distributed-adaptive-scheduler.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
 import {
   createDistributedBrokerHandoff,
@@ -135,17 +135,16 @@ test('controller config maps to broker and adaptive scheduler contracts', () => 
     handoff.brokerWorkerPolicySha256
   );
   assert.deepEqual(workerHandoff.brokerWorkerConfig, broker);
-  const admitted = assessDistributedWorkerCapacity({
+  const admitted = assessDistributedNodeCapacity({
     id: 'worker-east',
-    scope: { environment: 'linux-x64', workerClass: 'desktop' },
+    scope: { environment: 'linux-x64', nodeId: 'worker-east' },
+    adapterIds: ['node-native'],
     effectiveLogicalThreads: 8,
     concurrency: distributedWorkerConcurrency(config, 'worker-east'),
-    role: 'worker',
     currentLoadPermille: 0,
-    benchmark: { valid: true, performanceScorePermille: 200 },
   });
   assert.equal(admitted.admittedThreads, 6);
-  assert.equal(admitted.capacityWeight, 1200);
+  assert.equal(admitted.capacityWeight, 600);
 });
 
 test('worker list rejects duplicate stable identities', () => {

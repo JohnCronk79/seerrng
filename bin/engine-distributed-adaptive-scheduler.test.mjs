@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- These tests run in native Node without application TS aliases.
 import {
-  assessDistributedWorkerCapacity,
+  assessDistributedNodeCapacity,
   createAdaptiveTimingObservation,
   createAdaptiveTimingProfile,
   createDistributedAdaptiveSchedule,
@@ -10,6 +10,7 @@ import {
   estimateAdaptiveTestWork,
   MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_BYTES,
   MAX_DISTRIBUTED_ADAPTIVE_OBSERVATION_TESTS,
+  MAX_DISTRIBUTED_NODE_THREADS,
   updateAdaptiveTimingProfile,
   verifyAdaptiveTimingObservation,
   verifyDistributedAdaptiveSchedule,
@@ -22,7 +23,7 @@ const alternateRepositoryIdentitySha256 = '8'.repeat(64);
 
 const scope = (
   environment,
-  workerClass,
+  nodeId,
   {
     applicationId = 'seerrng',
     laneId = 'unit',
@@ -36,7 +37,7 @@ const scope = (
   adapterId,
   repositoryIdentitySha256: repositoryIdentity,
   environment,
-  workerClass,
+  nodeId,
   selectedN,
 });
 
@@ -89,11 +90,12 @@ const observation = ({
   status = 'passed',
   benchmarkValid = true,
   runAttempt = 1,
+  schema = 'seerrng-distributed-adaptive-observation/v2',
   policy = {},
   source = {},
 }) =>
   createAdaptiveTimingObservation({
-    schema: 'seerrng-distributed-adaptive-observation/v1',
+    schema,
     source: {
       applicationIsolationKeySha256: 'b'.repeat(64),
       brokerReconciliationInputSha256: 'c'.repeat(64),
@@ -138,13 +140,12 @@ const applyObservation = (profile, options, policy = {}) => {
   );
 };
 
-const worker = ({
+const node = ({
   id,
   selectedScope,
   threads,
   performanceScorePermille,
   concurrency = { mode: 'auto' },
-  role = 'worker',
   currentLoadPermille = 0,
   memory = null,
   localInteractiveReserveThreads,
@@ -152,11 +153,10 @@ const worker = ({
   adapterIds = ['native-generic'],
 }) => ({
   id,
-  scope: selectedScope,
+  scope: { ...selectedScope, nodeId: id },
   adapterIds,
   effectiveLogicalThreads: threads,
   concurrency,
-  role,
   currentLoadPermille,
   memory,
   localInteractiveReserveThreads,
@@ -176,14 +176,15 @@ const scheduleExpectations = (schedule) => ({
 });
 
 const scheduledTest = (schedule, testId) =>
-  schedule.slots
-    .flatMap((slot) => slot.tests)
+  schedule.threadSlots
+    .flatMap((threadSlot) => threadSlot.tests)
     .find((entry) => entry.id === testId);
 
 const rehashSchedule = (schedule, mutate) => {
   const changed = structuredClone(schedule);
   mutate(changed);
-  const { scheduleSha256: _scheduleSha256, ...unsigned } = changed;
+  const unsigned = { ...changed };
+  delete unsigned.scheduleSha256;
   changed.scheduleSha256 = canonicalJsonSha256(unsigned);
   return changed;
 };
@@ -191,15 +192,16 @@ const rehashSchedule = (schedule, mutate) => {
 const rehashObservation = (sealedObservation, mutate) => {
   const changed = structuredClone(sealedObservation);
   mutate(changed);
-  const { observationSha256: _observationSha256, ...unsigned } = changed;
+  const unsigned = { ...changed };
+  delete unsigned.observationSha256;
   changed.observationSha256 = canonicalJsonSha256(unsigned);
   return changed;
 };
 
 const refreshScheduleInventoryHash = (schedule) => {
   schedule.testInventorySha256 = canonicalJsonSha256(
-    schedule.slots
-      .flatMap((slot) => slot.tests)
+    schedule.threadSlots
+      .flatMap((threadSlot) => threadSlot.tests)
       .map((entry) => ({
         id: entry.id,
         fingerprint: entry.fingerprint,
@@ -216,7 +218,7 @@ const refreshScheduleInventoryHash = (schedule) => {
 };
 
 const continuousDependencyFixture = () => {
-  const selectedScope = scope('linux-x64', 'worker-standard', {
+  const selectedScope = scope('linux-x64', 'node-a', {
     selectedN: 2,
   });
   const results = [
@@ -241,9 +243,9 @@ const continuousDependencyFixture = () => {
     testEntry('unit/long.test.ts'),
     testEntry('unit/short.test.ts'),
   ];
-  const workers = [
-    worker({
-      id: 'worker-a',
+  const nodes = [
+    node({
+      id: 'node-a',
       selectedScope,
       threads: 4,
       performanceScorePermille: 100,
@@ -253,14 +255,14 @@ const continuousDependencyFixture = () => {
   return {
     profile,
     tests,
-    workers,
-    schedule: createDistributedAdaptiveSchedule({ tests, workers, profile }),
+    nodes,
+    schedule: createDistributedAdaptiveSchedule({ tests, nodes, profile }),
   };
 };
 
 test('timing observations are canonical, sealed, bounded, and deeply frozen', () => {
   const profile = createAdaptiveTimingProfile();
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const results = [
     resultEntry('unit/b.test.ts', 20),
     resultEntry('unit/a.test.ts', 10),
@@ -321,7 +323,7 @@ test('timing observations are canonical, sealed, bounded, and deeply frozen', ()
   assert.equal(
     sealed.observedInventorySha256,
     canonicalJsonSha256({
-      schema: 'seerrng-distributed-adaptive-observed-inventory/v1',
+      schema: 'seerrng-distributed-adaptive-observed-inventory/v2',
       scope: sealed.scope,
       inventory: sealed.inventory,
     })
@@ -331,11 +333,9 @@ test('timing observations are canonical, sealed, bounded, and deeply frozen', ()
     sealed.observedInventorySha256
   );
 
-  const {
-    observationSha256: _observationSha256,
-    observedInventorySha256: _observedInventorySha256,
-    ...observationInput
-  } = structuredClone(sealed);
+  const observationInput = structuredClone(sealed);
+  delete observationInput.observationSha256;
+  delete observationInput.observedInventorySha256;
   assert.throws(
     () =>
       createAdaptiveTimingObservation({
@@ -380,7 +380,7 @@ test('timing observations are canonical, sealed, bounded, and deeply frozen', ()
 
 test('timing observation updates reject hostile rehashes and source-profile drift', () => {
   const profile = createAdaptiveTimingProfile();
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const sealed = observation({
     profile,
     selectedScope,
@@ -461,15 +461,14 @@ test('timing observation updates reject hostile rehashes and source-profile drif
   assert.deepEqual(profile, createAdaptiveTimingProfile());
 });
 
-test('worker admission applies explicit N, load, memory, and local reserve without using clock speed', () => {
+test('node admission applies configured threads, load, memory, and local reserve without hardware weighting', () => {
   const candidate = {
-    ...worker({
+    ...node({
       id: 'developer-main',
       selectedScope: scope('windows-x64', 'desktop-fast'),
       threads: 16,
       performanceScorePermille: 200,
       concurrency: { mode: 'explicit', threads: 4 },
-      role: 'worker',
       runsOnControllerHost: true,
       currentLoadPermille: 250,
       memory: {
@@ -481,8 +480,9 @@ test('worker admission applies explicit N, load, memory, and local reserve witho
     }),
     clockSpeedMhz: 9_999,
   };
-  const admitted = assessDistributedWorkerCapacity(candidate);
-  assert.equal(admitted.schema, 'seerrng-distributed-worker-capacity/v2');
+  const admitted = assessDistributedNodeCapacity(candidate);
+  assert.deepEqual(assessDistributedNodeCapacity(candidate), admitted);
+  assert.equal(admitted.schema, 'seerrng-distributed-node-capacity/v3');
   assert.equal(admitted.concurrencyPolicy, 'explicit');
   assert.equal(admitted.configuredThreadBudget, 4);
   assert.equal(admitted.loadReservedThreads, 4);
@@ -491,43 +491,69 @@ test('worker admission applies explicit N, load, memory, and local reserve witho
   assert.equal(admitted.availableThreads, 4);
   assert.equal(admitted.admissionStatus, 'admitted');
   assert.equal(admitted.admittedThreads, 4);
-  assert.equal(admitted.performanceScoreSource, 'measured-benchmark');
-  assert.equal(admitted.capacityWeight, 800);
+  assert.equal(admitted.performanceScoreSource, 'timing-scale-neutral');
+  assert.equal(admitted.performanceScorePermille, 100);
+  assert.equal(admitted.capacityWeight, 400);
   assert.equal(Object.hasOwn(admitted, 'clockSpeedMhz'), false);
 });
 
-test('explicit N fails closed while auto N adapts to current capacity', () => {
+test('explicit threads permit intentional oversubscription while auto adapts', () => {
   const common = {
-    id: 'worker-a',
+    id: 'node-a',
     selectedScope: scope('linux-x64', 'standard'),
     threads: 8,
     performanceScorePermille: 100,
     currentLoadPermille: 250,
-    role: 'worker',
     runsOnControllerHost: true,
   };
-  const rejected = assessDistributedWorkerCapacity(
-    worker({
+  const explicit = assessDistributedNodeCapacity(
+    node({
       ...common,
-      concurrency: { mode: 'explicit', threads: 6 },
+      concurrency: { mode: 'explicit', threads: 16 },
     })
   );
-  assert.equal(rejected.availableThreads, 5);
-  assert.equal(rejected.admissionStatus, 'rejected');
-  assert.equal(rejected.admissionReason, 'explicit-thread-budget-unavailable');
-  assert.equal(rejected.admittedThreads, 0);
-  assert.equal(rejected.capacityWeight, 0);
+  assert.equal(explicit.effectiveLogicalThreads, 8);
+  assert.equal(explicit.availableThreads, 5);
+  assert.equal(explicit.configuredThreadBudget, 16);
+  assert.equal(explicit.admissionStatus, 'admitted');
+  assert.equal(explicit.admissionReason, null);
+  assert.equal(explicit.admittedThreads, 16);
+  assert.equal(explicit.capacityWeight, 1_600);
 
-  const adaptive = assessDistributedWorkerCapacity(worker(common));
+  const maximum = assessDistributedNodeCapacity(
+    node({
+      ...common,
+      threads: 1,
+      concurrency: {
+        mode: 'explicit',
+        threads: MAX_DISTRIBUTED_NODE_THREADS,
+      },
+    })
+  );
+  assert.equal(maximum.admittedThreads, MAX_DISTRIBUTED_NODE_THREADS);
+  assert.throws(
+    () =>
+      assessDistributedNodeCapacity(
+        node({
+          ...common,
+          concurrency: {
+            mode: 'explicit',
+            threads: MAX_DISTRIBUTED_NODE_THREADS + 1,
+          },
+        })
+      ),
+    /cannot exceed 256/
+  );
+
+  const adaptive = assessDistributedNodeCapacity(node(common));
   assert.equal(adaptive.concurrencyPolicy, 'auto');
   assert.equal(adaptive.admissionStatus, 'admitted');
   assert.equal(adaptive.admittedThreads, 5);
   assert.equal(adaptive.capacityWeight, 500);
 
-  const unavailable = assessDistributedWorkerCapacity(
-    worker({
+  const unavailable = assessDistributedNodeCapacity(
+    node({
       ...common,
-      role: 'worker',
       currentLoadPermille: 1_000,
     })
   );
@@ -536,11 +562,11 @@ test('explicit N fails closed while auto N adapts to current capacity', () => {
   assert.equal(unavailable.admittedThreads, 0);
 });
 
-test('worker role and controller-host placement remain independent', () => {
+test('controller-host placement alone controls the interactive reserve', () => {
   const selectedScope = scope('linux-x64', 'standard');
-  const remote = assessDistributedWorkerCapacity(
-    worker({
-      id: 'remote-worker',
+  const remote = assessDistributedNodeCapacity(
+    node({
+      id: 'remote-node',
       selectedScope,
       threads: 8,
       performanceScorePermille: 100,
@@ -548,84 +574,172 @@ test('worker role and controller-host placement remain independent', () => {
       runsOnControllerHost: false,
     })
   );
-  assert.equal(remote.role, 'worker');
+  assert.equal(Object.hasOwn(remote, 'role'), false);
   assert.equal(remote.runsOnControllerHost, false);
   assert.equal(remote.interactiveReservedThreads, 0);
   assert.equal(remote.availableThreads, 8);
 
-  const local = assessDistributedWorkerCapacity(
-    worker({
-      id: 'local-worker',
+  const local = assessDistributedNodeCapacity(
+    node({
+      id: 'local-node',
       selectedScope,
       threads: 8,
       performanceScorePermille: 100,
       runsOnControllerHost: true,
     })
   );
-  assert.equal(local.role, 'worker');
+  assert.equal(Object.hasOwn(local, 'role'), false);
   assert.equal(local.runsOnControllerHost, true);
   assert.equal(local.interactiveReservedThreads, 1);
   assert.equal(local.availableThreads, 7);
-
-  assert.throws(
-    () =>
-      assessDistributedWorkerCapacity(
-        worker({
-          id: 'invalid-role',
-          selectedScope,
-          threads: 8,
-          performanceScorePermille: 100,
-          role: 'controller',
-          runsOnControllerHost: true,
-        })
-      ),
-    /role must be worker/
-  );
 });
 
-test('an unmeasured worker receives a conservative benchmark weight', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
-  const measured = worker({
-    id: 'measured',
-    selectedScope,
-    threads: 4,
-    performanceScorePermille: 100,
-    concurrency: { mode: 'explicit', threads: 1 },
-  });
-  const unmeasured = {
-    ...worker({
-      id: 'unmeasured',
-      selectedScope,
-      threads: 4,
-      performanceScorePermille: 9_999,
-      concurrency: { mode: 'explicit', threads: 1 },
-    }),
-    benchmark: null,
-  };
+test('first run spreads tests across admitted node thread slots without hardware weighting', () => {
+  const selectedScope = scope('linux-x64', 'node-standard');
+  const nodes = [
+    {
+      ...node({
+        id: 'laptop-node',
+        selectedScope,
+        threads: 12,
+        performanceScorePermille: 9_999,
+        concurrency: { mode: 'explicit', threads: 24 },
+      }),
+      clockSpeedMhz: 9_999,
+    },
+    {
+      ...node({
+        id: 'server-node',
+        selectedScope,
+        threads: 8,
+        performanceScorePermille: 1,
+        concurrency: { mode: 'explicit', threads: 6 },
+      }),
+      benchmark: null,
+      clockSpeedMhz: 1,
+    },
+  ];
+  const tests = Array.from({ length: 10 }, (_, index) =>
+    testEntry(`unit/test-${String(index + 1).padStart(2, '0')}.test.ts`)
+  );
   const schedule = createDistributedAdaptiveSchedule({
-    tests: [testEntry('unit/a.test.ts')],
-    workers: [unmeasured, measured],
+    tests,
+    nodes,
     profile: createAdaptiveTimingProfile(),
   });
+  const changedHardwareHints = createDistributedAdaptiveSchedule({
+    tests,
+    nodes: [
+      {
+        ...nodes[0],
+        benchmark: { valid: true, performanceScorePermille: 1 },
+        clockSpeedMhz: 1,
+      },
+      {
+        ...nodes[1],
+        benchmark: { valid: true, performanceScorePermille: 9_999 },
+        clockSpeedMhz: 9_999,
+      },
+    ],
+    profile: createAdaptiveTimingProfile(),
+  });
+  assert.deepEqual(changedHardwareHints, schedule);
   assert.deepEqual(
-    schedule.workers.map((entry) => [
-      entry.workerId,
+    schedule.nodes.map((entry) => [
+      entry.nodeId,
       entry.performanceScoreSource,
       entry.performanceScorePermille,
+      entry.capacityWeight,
     ]),
     [
-      ['measured', 'measured-benchmark', 100],
-      ['unmeasured', 'cold-start-conservative', 50],
+      ['laptop-node', 'timing-scale-neutral', 100, 2_400],
+      ['server-node', 'timing-scale-neutral', 100, 600],
     ]
   );
+  assert.equal(schedule.threadSlots.length, 30);
   assert.deepEqual(
-    schedule.slots[0].tests.map((entry) => entry.id),
-    ['unit/a.test.ts']
+    Object.fromEntries(
+      schedule.nodes.map(({ nodeId }) => [
+        nodeId,
+        schedule.threadSlots
+          .filter((threadSlot) => threadSlot.nodeId === nodeId)
+          .reduce((count, threadSlot) => count + threadSlot.tests.length, 0),
+      ])
+    ),
+    { 'laptop-node': 8, 'server-node': 2 }
   );
-  assert.deepEqual(schedule.slots[1].tests, []);
 });
 
-test('timing calibration is isolated by environment and worker class', () => {
+test('node scheduler rejects every superseded sealed schema generation', () => {
+  const selectedScope = scope('linux-x64', 'node-a');
+  const tests = [testEntry('unit/a.test.ts')];
+  const nodes = [
+    node({
+      id: 'node-a',
+      selectedScope,
+      threads: 4,
+      performanceScorePermille: 100,
+      concurrency: { mode: 'explicit', threads: 1 },
+    }),
+  ];
+  const profile = createAdaptiveTimingProfile();
+  assert.throws(
+    () =>
+      observation({
+        profile,
+        selectedScope,
+        runId: 'obsolete-observation',
+        performanceScorePermille: 100,
+        results: [resultEntry('unit/a.test.ts', 10)],
+        schema: 'seerrng-distributed-adaptive-observation/v1',
+      }),
+    /Unsupported distributed adaptive observation schema/
+  );
+  assert.throws(
+    () =>
+      createDistributedAdaptiveSchedule({
+        tests,
+        nodes,
+        profile: {
+          schema: 'seerrng-distributed-adaptive-profile/v2',
+          scopes: [],
+        },
+      }),
+    /Unsupported distributed adaptive profile schema/
+  );
+
+  const schedule = createDistributedAdaptiveSchedule({
+    tests,
+    nodes,
+    profile,
+  });
+  const obsoleteSchedule = rehashSchedule(schedule, (changed) => {
+    changed.schema = 'seerrng-distributed-adaptive-schedule/v2';
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        obsoleteSchedule,
+        scheduleExpectations(obsoleteSchedule)
+      ),
+    /Unsupported distributed adaptive schedule schema/
+  );
+
+  const obsoleteCapacity = rehashSchedule(schedule, (changed) => {
+    changed.nodes[0].schema = 'seerrng-distributed-node-capacity/v2';
+    changed.nodeCapacitiesSha256 = canonicalJsonSha256(changed.nodes);
+  });
+  assert.throws(
+    () =>
+      verifyDistributedAdaptiveSchedule(
+        obsoleteCapacity,
+        scheduleExpectations(obsoleteCapacity)
+      ),
+    /Unsupported distributed node capacity schema/
+  );
+});
+
+test('timing calibration is isolated by environment and node ID', () => {
   const windowsScope = scope('windows-x64', 'desktop-fast');
   const linuxScope = scope('linux-x64', 'github-standard');
   const first = applyObservation(createAdaptiveTimingProfile(), {
@@ -644,28 +758,96 @@ test('timing calibration is isolated by environment and worker class', () => {
   assert.deepEqual(
     second.profile.scopes.map((entry) => [
       entry.environment,
-      entry.workerClass,
+      entry.nodeId,
       entry.tests[0].estimateWorkUnits,
     ]),
     [
-      ['linux-x64', 'github-standard', 6_000],
+      ['linux-x64', 'github-standard', 3_000],
       ['windows-x64', 'desktop-fast', 4_000],
     ]
   );
 });
 
-test('timing scopes isolate repository, application, lane, adapter, environment, worker class, and selected N', () => {
+test('node-specific verified timing scopes drive placement without benchmark data', () => {
+  const nodeAScope = scope('linux-x64', 'node-a');
+  const nodeBScope = scope('linux-x64', 'node-b');
+  const resultsA = [
+    resultEntry('unit/a.test.ts', 10),
+    resultEntry('unit/b.test.ts', 100),
+  ];
+  const resultsB = [
+    resultEntry('unit/a.test.ts', 100),
+    resultEntry('unit/b.test.ts', 10),
+  ];
+  const first = applyObservation(createAdaptiveTimingProfile(), {
+    selectedScope: nodeAScope,
+    runId: 'node-a-timing-1',
+    performanceScorePermille: 1,
+    benchmarkValid: false,
+    results: resultsA,
+  });
+  const profile = applyObservation(first.profile, {
+    selectedScope: nodeBScope,
+    runId: 'node-b-timing-1',
+    performanceScorePermille: 1,
+    benchmarkValid: false,
+    results: resultsB,
+  }).profile;
+  const nodes = [
+    {
+      ...node({
+        id: 'node-a',
+        selectedScope: nodeAScope,
+        threads: 4,
+        performanceScorePermille: 9_999,
+        concurrency: { mode: 'explicit', threads: 1 },
+      }),
+      benchmark: null,
+    },
+    {
+      ...node({
+        id: 'node-b',
+        selectedScope: nodeBScope,
+        threads: 4,
+        performanceScorePermille: 1,
+        concurrency: { mode: 'explicit', threads: 1 },
+      }),
+      benchmark: null,
+    },
+  ];
+  const schedule = createDistributedAdaptiveSchedule({
+    tests: [testEntry('unit/a.test.ts'), testEntry('unit/b.test.ts')],
+    nodes,
+    profile,
+  });
+  assert.deepEqual(
+    schedule.threadSlots.map((threadSlot) => [
+      threadSlot.nodeId,
+      threadSlot.tests.map((entry) => [
+        entry.id,
+        entry.estimateSource,
+        entry.predictedDurationMs,
+      ]),
+    ]),
+    [
+      ['node-a', [['unit/a.test.ts', 'profile', 10]]],
+      ['node-b', [['unit/b.test.ts', 'profile', 10]]],
+    ]
+  );
+});
+
+test('timing scopes isolate repository, application, lane, adapter, environment, node ID, and selected N', () => {
   const scopes = [
-    scope('linux-x64', 'worker-standard'),
-    scope('linux-x64', 'worker-standard', { applicationId: 'other-app' }),
-    scope('linux-x64', 'worker-standard', { laneId: 'cypress' }),
-    scope('linux-x64', 'worker-standard', { adapterId: 'cypress-native' }),
-    scope('linux-x64', 'worker-standard', {
+    scope('linux-x64', 'node-standard'),
+    scope('linux-x64', 'node-standard', { applicationId: 'other-app' }),
+    scope('linux-x64', 'node-standard', { laneId: 'cypress' }),
+    scope('linux-x64', 'node-standard', { adapterId: 'cypress-native' }),
+    scope('linux-x64', 'node-standard', {
       repositoryIdentity: alternateRepositoryIdentitySha256,
     }),
-    scope('windows-x64', 'worker-standard'),
-    scope('linux-x64', 'worker-fast'),
-    scope('linux-x64', 'worker-standard', { selectedN: 2 }),
+    scope('windows-x64', 'node-standard'),
+    scope('linux-x64', 'node-fast'),
+    scope('linux-x64', 'node-standard', { selectedN: 2 }),
   ];
   let profile = createAdaptiveTimingProfile();
   for (const [index, selectedScope] of scopes.entries())
@@ -689,7 +871,7 @@ test('timing scopes isolate repository, application, lane, adapter, environment,
 });
 
 test('rolled observation provenance remains replay-safe through its source-profile binding', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const policy = {
     acceptedRunWindow: 2,
     maximumSamplesPerTest: 2,
@@ -715,11 +897,11 @@ test('rolled observation provenance remains replay-safe through its source-profi
   }
   const [firstObservation, secondObservation] = sealedObservations;
   assert.deepEqual(profile.scopes[0].acceptedRunIds, ['run-2', 'run-3']);
-  assert.equal(profile.schema, 'seerrng-distributed-adaptive-profile/v2');
+  assert.equal(profile.schema, 'seerrng-distributed-adaptive-profile/v3');
   assert.equal(profile.scopes[0].acceptedObservations.length, 2);
   assert.deepEqual(profile.scopes[0].acceptedObservations[0], {
     observationId: canonicalJsonSha256({
-      schema: 'seerrng-distributed-adaptive-observation-identity/v2',
+      schema: 'seerrng-distributed-adaptive-observation-identity/v3',
       scope: selectedScope,
       runId: 'run-2',
       candidateSha256: 'a'.repeat(64),
@@ -766,13 +948,13 @@ test('rolled observation provenance remains replay-safe through its source-profi
 });
 
 test('only complete valid successful runs update timing history', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const empty = createAdaptiveTimingProfile();
   const passing = observation({
     profile: empty,
     selectedScope,
     runId: 'run-1',
-    performanceScorePermille: 100,
+    performanceScorePermille: 9_999,
     results: [resultEntry('unit/a.test.ts', 100)],
   });
   for (const patch of [
@@ -808,6 +990,18 @@ test('only complete valid successful runs update timing history', () => {
   assert.equal(accepted.accepted, true);
   assert.equal(accepted.updatedTests, 1);
   assert.equal(accepted.profile.scopes[0].tests[0].estimateWorkUnits, 10_000);
+  const acceptedWithoutBenchmark = applyObservation(empty, {
+    selectedScope,
+    runId: 'run-without-benchmark',
+    performanceScorePermille: 1,
+    benchmarkValid: false,
+    results: [resultEntry('unit/a.test.ts', 100)],
+  });
+  assert.equal(acceptedWithoutBenchmark.accepted, true);
+  assert.equal(
+    acceptedWithoutBenchmark.profile.scopes[0].tests[0].estimateWorkUnits,
+    10_000
+  );
   const duplicate = updateAdaptiveTimingProfile(
     accepted.profile,
     passing,
@@ -819,7 +1013,7 @@ test('only complete valid successful runs update timing history', () => {
 });
 
 test('failed and partial observations cannot make a test appear artificially fast', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const initial = applyObservation(createAdaptiveTimingProfile(), {
     selectedScope,
     runId: 'green-1',
@@ -852,7 +1046,7 @@ test('failed and partial observations cannot make a test appear artificially fas
 });
 
 test('new and changed tests receive conservative fallback estimates', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   const profile = applyObservation(createAdaptiveTimingProfile(), {
     selectedScope,
     runId: 'green-1',
@@ -899,7 +1093,7 @@ test('new and changed tests receive conservative fallback estimates', () => {
 });
 
 test('rolling calibration is bounded and robust against a single extreme sample', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   let profile = createAdaptiveTimingProfile();
   const durations = [100, 101, 99, 100, 10_000, 102, 98, 100, 101, 99];
   for (const [index, durationMs] of durations.entries()) {
@@ -921,9 +1115,9 @@ test('rolling calibration is bounded and robust against a single extreme sample'
   assert.ok(timing.estimateWorkUnits <= 10_200);
 });
 
-test('heterogeneous scheduling is deterministic across N discrete per-worker slots', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
-  const twoSlotScope = scope('linux-x64', 'worker-standard', {
+test('timing history drives deterministic scheduling across node thread slots', () => {
+  const nodeBScope = scope('linux-x64', 'node-b');
+  const nodeAScope = scope('linux-x64', 'node-a', {
     selectedN: 2,
   });
   const results = [
@@ -932,13 +1126,13 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
     resultEntry('unit/c.test.ts', 50),
   ];
   const twoSlotProfile = applyObservation(createAdaptiveTimingProfile(), {
-    selectedScope: twoSlotScope,
+    selectedScope: nodeAScope,
     runId: 'green-n2',
     performanceScorePermille: 100,
     results,
   }).profile;
   const profile = applyObservation(twoSlotProfile, {
-    selectedScope,
+    selectedScope: nodeBScope,
     runId: 'green-n1',
     performanceScorePermille: 200,
     results: [
@@ -947,19 +1141,19 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
       resultEntry('unit/c.test.ts', 25),
     ],
   }).profile;
-  const workers = [
-    worker({
-      id: 'worker-a',
-      selectedScope,
+  const nodes = [
+    node({
+      id: 'node-a',
+      selectedScope: nodeAScope,
       threads: 8,
-      performanceScorePermille: 100,
+      performanceScorePermille: 9_999,
       concurrency: { mode: 'explicit', threads: 2 },
     }),
-    worker({
-      id: 'worker-b',
-      selectedScope,
+    node({
+      id: 'node-b',
+      selectedScope: nodeBScope,
       threads: 8,
-      performanceScorePermille: 200,
+      performanceScorePermille: 1,
       concurrency: { mode: 'explicit', threads: 1 },
     }),
   ];
@@ -968,12 +1162,12 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
   );
   const first = createDistributedAdaptiveSchedule({
     tests,
-    workers,
+    nodes,
     profile,
   });
   const reordered = createDistributedAdaptiveSchedule({
     tests: [...tests].reverse(),
-    workers: [...workers].reverse(),
+    nodes: [...nodes].reverse(),
     profile,
   });
   assert.deepEqual(reordered, first);
@@ -982,12 +1176,12 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
     first
   );
   assert.equal(Object.isFrozen(first), true);
-  assert.equal(Object.isFrozen(first.workers), true);
-  assert.equal(Object.isFrozen(first.workers[0]), true);
-  assert.equal(Object.isFrozen(first.slots), true);
-  assert.equal(Object.isFrozen(first.slots[0].tests), true);
-  assert.equal(Object.isFrozen(first.slots[0].tests[0]), true);
-  assert.equal(first.schema, 'seerrng-distributed-adaptive-schedule/v2');
+  assert.equal(Object.isFrozen(first.nodes), true);
+  assert.equal(Object.isFrozen(first.nodes[0]), true);
+  assert.equal(Object.isFrozen(first.threadSlots), true);
+  assert.equal(Object.isFrozen(first.threadSlots[0].tests), true);
+  assert.equal(Object.isFrozen(first.threadSlots[0].tests[0]), true);
+  assert.equal(first.schema, 'seerrng-distributed-adaptive-schedule/v3');
   assert.equal(
     first.algorithm,
     'deterministic-heterogeneous-dependency-list/v1'
@@ -995,33 +1189,33 @@ test('heterogeneous scheduling is deterministic across N discrete per-worker slo
   assert.equal(first.applicationId, 'seerrng');
   assert.equal(first.repositoryIdentitySha256, repositoryIdentitySha256);
   assert.deepEqual(
-    first.workers.map((entry) => [
-      entry.workerId,
+    first.nodes.map((entry) => [
+      entry.nodeId,
       entry.admittedThreads,
       entry.capacityWeight,
     ]),
     [
-      ['worker-a', 2, 200],
-      ['worker-b', 1, 200],
+      ['node-a', 2, 200],
+      ['node-b', 1, 100],
     ]
   );
   assert.deepEqual(
-    first.slots.map((slot) => [
-      slot.slotId,
-      slot.tests.map((entry) => entry.id),
-      slot.predictedFinishOffsetMs,
+    first.threadSlots.map((threadSlot) => [
+      threadSlot.threadSlotId,
+      threadSlot.tests.map((entry) => entry.id),
+      threadSlot.predictedFinishOffsetMs,
     ]),
     [
-      ['worker-a.slot-1', ['unit/b.test.ts'], 50],
-      ['worker-a.slot-2', ['unit/c.test.ts'], 50],
-      ['worker-b.slot-1', ['unit/a.test.ts'], 50],
+      ['node-a.thread-1', ['unit/b.test.ts'], 50],
+      ['node-a.thread-2', ['unit/c.test.ts'], 50],
+      ['node-b.thread-1', ['unit/a.test.ts'], 50],
     ]
   );
   assert.equal(first.predictedWallMs, 50);
 });
 
-test('one test occupies one slot and cannot claim divisible N speedup', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard', {
+test('one test occupies one thread slot and cannot claim divisible thread speedup', () => {
+  const selectedScope = scope('linux-x64', 'node-a', {
     selectedN: 4,
   });
   const profile = applyObservation(createAdaptiveTimingProfile(), {
@@ -1032,9 +1226,9 @@ test('one test occupies one slot and cannot claim divisible N speedup', () => {
   }).profile;
   const schedule = createDistributedAdaptiveSchedule({
     tests: [testEntry('unit/a.test.ts')],
-    workers: [
-      worker({
-        id: 'worker-a',
+    nodes: [
+      node({
+        id: 'node-a',
         selectedScope,
         threads: 8,
         performanceScorePermille: 100,
@@ -1043,20 +1237,20 @@ test('one test occupies one slot and cannot claim divisible N speedup', () => {
     ],
     profile,
   });
-  assert.equal(schedule.slots.length, 4);
-  assert.equal(schedule.slots[0].predictedFinishOffsetMs, 100);
+  assert.equal(schedule.threadSlots.length, 4);
+  assert.equal(schedule.threadSlots[0].predictedFinishOffsetMs, 100);
   assert.deepEqual(
-    schedule.slots.map((slot) => slot.tests.length),
+    schedule.threadSlots.map((threadSlot) => threadSlot.tests.length),
     [1, 0, 0, 0]
   );
   assert.equal(schedule.predictedWallMs, 100);
 });
 
 test('one schedule cannot mix application or repository namespaces', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
-  const workers = [
-    worker({
-      id: 'worker-a',
+  const selectedScope = scope('linux-x64', 'node-standard');
+  const nodes = [
+    node({
+      id: 'node-a',
       selectedScope,
       threads: 4,
       performanceScorePermille: 100,
@@ -1066,7 +1260,7 @@ test('one schedule cannot mix application or repository namespaces', () => {
   const schedule = (tests) =>
     createDistributedAdaptiveSchedule({
       tests,
-      workers,
+      nodes,
       profile: createAdaptiveTimingProfile(),
     });
   assert.throws(
@@ -1093,8 +1287,8 @@ test('one schedule cannot mix application or repository namespaces', () => {
   );
 });
 
-test('adapter eligibility excludes workers that cannot run a test', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
+test('adapter eligibility excludes nodes that cannot run a test', () => {
+  const selectedScope = scope('linux-x64', 'node-standard');
   const schedule = createDistributedAdaptiveSchedule({
     tests: [
       testEntry('cypress/a.cy.ts', 'a-v1', {
@@ -1102,8 +1296,8 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
         adapterId: 'cypress-native',
       }),
     ],
-    workers: [
-      worker({
+    nodes: [
+      node({
         id: 'unit-only',
         selectedScope,
         threads: 4,
@@ -1111,7 +1305,7 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
         concurrency: { mode: 'explicit', threads: 1 },
         adapterIds: ['native-generic'],
       }),
-      worker({
+      node({
         id: 'cypress-capable',
         selectedScope,
         threads: 4,
@@ -1123,9 +1317,9 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
     profile: createAdaptiveTimingProfile(),
   });
   assert.deepEqual(
-    schedule.slots.map((slot) => [
-      slot.workerId,
-      slot.tests.map((entry) => entry.id),
+    schedule.threadSlots.map((threadSlot) => [
+      threadSlot.nodeId,
+      threadSlot.tests.map((entry) => entry.id),
     ]),
     [
       ['cypress-capable', ['cypress/a.cy.ts']],
@@ -1141,8 +1335,8 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
             adapterId: 'cypress-native',
           }),
         ],
-        workers: [
-          worker({
+        nodes: [
+          node({
             id: 'unit-only',
             selectedScope,
             threads: 4,
@@ -1153,15 +1347,15 @@ test('adapter eligibility excludes workers that cannot run a test', () => {
         ],
         profile: createAdaptiveTimingProfile(),
       }),
-    /No admitted worker supports adapter cypress-native/
+    /No admitted node supports adapter cypress-native/
   );
 });
 
 test('dependencies release continuously without a global stage barrier', () => {
-  const { profile, schedule, tests, workers } = continuousDependencyFixture();
+  const { profile, schedule, tests, nodes } = continuousDependencyFixture();
   const reordered = createDistributedAdaptiveSchedule({
     tests: [...tests].reverse(),
-    workers,
+    nodes,
     profile,
   });
   assert.deepEqual(reordered, schedule);
@@ -1185,7 +1379,9 @@ test('dependencies release continuously without a global stage barrier', () => {
     ]
   );
   assert.deepEqual(
-    schedule.slots.map((slot) => slot.tests.map((entry) => entry.id)),
+    schedule.threadSlots.map((threadSlot) =>
+      threadSlot.tests.map((entry) => entry.id)
+    ),
     [
       ['unit/long.test.ts'],
       ['unit/short.test.ts', 'unit/followup.test.ts', 'unit/final.test.ts'],
@@ -1193,7 +1389,7 @@ test('dependencies release continuously without a global stage barrier', () => {
   );
   assert.equal(schedule.predictedWallMs, 100);
 
-  const selectedScope = scope('linux-x64', 'worker-standard');
+  const selectedScope = scope('linux-x64', 'node-standard');
   assert.throws(
     () =>
       createDistributedAdaptiveSchedule({
@@ -1205,9 +1401,9 @@ test('dependencies release continuously without a global stage barrier', () => {
             dependencies: ['unit/a.test.ts'],
           }),
         ],
-        workers: [
-          worker({
-            id: 'worker-a',
+        nodes: [
+          node({
+            id: 'node-a',
             selectedScope,
             threads: 4,
             performanceScorePermille: 100,
@@ -1264,7 +1460,7 @@ test('schedule verifier rejects external bindings and hostile rehashes', () => {
     const final = scheduledTest(changed, 'unit/final.test.ts');
     final.predictedStartOffsetMs = 15;
     final.predictedFinishOffsetMs = 25;
-    changed.slots[1].predictedFinishOffsetMs = 25;
+    changed.threadSlots[1].predictedFinishOffsetMs = 25;
   });
   assert.throws(
     () =>
@@ -1276,8 +1472,8 @@ test('schedule verifier rejects external bindings and hostile rehashes', () => {
   );
 
   const incompatibleAdapter = rehashSchedule(schedule, (changed) => {
-    changed.workers[0].adapterIds = ['another-adapter'];
-    changed.workerCapacitiesSha256 = canonicalJsonSha256(changed.workers);
+    changed.nodes[0].adapterIds = ['another-adapter'];
+    changed.nodeCapacitiesSha256 = canonicalJsonSha256(changed.nodes);
   });
   assert.throws(
     () =>
@@ -1339,24 +1535,28 @@ test('schedule verifier rejects external bindings and hostile rehashes', () => {
   );
 });
 
-test('a distributed schedule refuses to silently reduce an explicit worker N', () => {
-  const selectedScope = scope('linux-x64', 'worker-standard');
-  assert.throws(
-    () =>
-      createDistributedAdaptiveSchedule({
-        tests: [testEntry('unit/a.test.ts')],
-        workers: [
-          worker({
-            id: 'worker-a',
-            selectedScope,
-            threads: 4,
-            performanceScorePermille: 100,
-            concurrency: { mode: 'explicit', threads: 4 },
-            currentLoadPermille: 500,
-          }),
-        ],
-        profile: createAdaptiveTimingProfile(),
+test('a distributed schedule preserves intentional explicit oversubscription', () => {
+  const selectedScope = scope('linux-x64', 'node-standard');
+  const schedule = createDistributedAdaptiveSchedule({
+    tests: [testEntry('unit/a.test.ts')],
+    nodes: [
+      node({
+        id: 'node-a',
+        selectedScope,
+        threads: 4,
+        performanceScorePermille: 100,
+        concurrency: { mode: 'explicit', threads: 8 },
+        currentLoadPermille: 500,
       }),
-    /Explicit worker capacity unavailable: worker-a/
+    ],
+    profile: createAdaptiveTimingProfile(),
+  });
+  assert.equal(schedule.nodes[0].availableThreads, 2);
+  assert.equal(schedule.nodes[0].configuredThreadBudget, 8);
+  assert.equal(schedule.nodes[0].admittedThreads, 8);
+  assert.equal(schedule.threadSlots.length, 8);
+  assert.deepEqual(
+    schedule.threadSlots.map((threadSlot) => threadSlot.tests.length),
+    [1, 0, 0, 0, 0, 0, 0, 0]
   );
 });

@@ -1,22 +1,13 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   lstatSync,
   readFileSync,
-  realpathSync,
   writeFileSync,
 } from 'node:fs';
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import { createNativeStageContext } from '../tools/validation-engine/runtime/native-stage-context.mjs';
@@ -48,28 +39,31 @@ import {
 } from './local-validation.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import {
-  createDistributedControllerFailureReport,
-  createDistributedScheduleFailureReport,
-  createDistributedWorkerRuntime,
-  encodeBoundedDistributedReport,
-  parseDistributedApplicationBindings,
-  runDistributedControllerSchedule,
-  runDistributedControllerTask,
-  startDistributedWorkerServer,
-} from '../tools/validation-engine/runtime/distributed-runtime.mjs';
+  activateAcceptedLinuxNodeEnrollment,
+  configureLinuxController,
+  createPendingLinuxNode,
+  resolveActiveLinuxConfig,
+} from '../tools/validation-engine/runtime/distributed-linux-management.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import {
-  configuredDistributedWorker,
-  parseDistributedWorkerConfig,
-} from '../tools/validation-engine/runtime/distributed-worker-config.mjs';
+  requestNodeEnrollment,
+  requestSupportedApplications,
+  startNodeEnrollmentServer,
+} from '../tools/validation-engine/runtime/distributed-node-enrollment-transport.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
 import {
-  createDistributedTaskManifest,
-  readDistributedTaskManifest,
-  verifyDistributedTaskManifestCatalog,
-} from '../tools/validation-engine/runtime/distributed-task-manifest.mjs';
+  addSupportedApplicationToControllerConfigFile,
+  compareDependencyAvailability,
+  createDependencyProvisioningPlanFromApplicationListing,
+  createSupportedApplicationListing,
+  deleteSupportedApplicationFromControllerConfigFile,
+  setControllerNodeThreadPolicyInFile,
+} from '../tools/validation-engine/runtime/distributed-linux-config.mjs';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
-import { discoverDistributedNativeCatalog } from '../tools/validation-engine/runtime/distributed-native-adapter.mjs';
+import {
+  parseDistributedLinuxNodeApplicationBindings,
+  startDistributedLinuxNodeRunner,
+} from '../tools/validation-engine/runtime/distributed-linux-node-runner.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const git = (root, parameters, encoding = 'utf8') =>
@@ -280,37 +274,54 @@ const flagOptions = new Set([
   '--github-receipt',
   '--github-run-test-lane',
   '--github-reconcile',
-  '--distributed-discover',
-  '--distributed-controller',
-  '--distributed-schedule',
-  '--distributed-worker',
+  '--distributed-configure-controller',
+  '--distributed-configure-node',
+  '--distributed-controller-service',
+  '--distributed-node',
+  '--distributed-node-thread-policy',
+  '--distributed-applications',
+  '--distributed-app-add',
+  '--distributed-app-delete',
+  '--distributed-dependency-plan',
+  '--distributed-dependency-report',
+  '--all-applications',
+  '--allow-existing-config-update',
+  '--overwrite-node',
 ]);
 const valueOptions = new Set([
-  '--application',
-  '--allow-task-file',
+  '--active-config-marker',
+  '--application-id',
+  '--application-name',
   '--case',
-  '--distributed-config',
+  '--config-file',
+  '--controller-address',
+  '--controller-name',
+  '--controller-port',
+  '--dependency-name',
+  '--dependency-profile',
   '--expected-plan-sha256',
   '--job-status',
   '--lane',
-  '--listen-host',
+  '--listen-address',
+  '--listen-port',
+  '--log-root',
+  '--minimum-thread-count',
+  '--node-id',
+  '--node-name',
   '--output-file',
   '--plan-file',
+  '--profile',
   '--receipt-dir',
   '--report-file',
-  '--task-file',
-  '--timeout-ms',
-  '--tls-cert',
-  '--tls-key',
+  '--state-root',
+  '--thread-rule',
   '--unit',
-  '--worker-id',
 ]);
 const repeatedValueOptions = new Set([
-  '--allow-controller',
-  '--allow-task',
+  '--application',
   '--app',
   '--evidence',
-  '--task',
+  '--dependency',
 ]);
 
 const optionContracts = {
@@ -428,75 +439,159 @@ const optionContracts = {
     ]),
     requiredValues: ['--plan-file', '--receipt-dir'],
   },
-  'distributed-controller': {
-    label: 'Distributed controller mode',
+  'distributed-configure-controller': {
+    label: 'Distributed controller configuration mode',
     allowed: new Set([
-      '--distributed-controller',
-      '--distributed-config',
-      '--worker-id',
-      '--application',
-      '--task',
-      '--timeout-ms',
-      '--app',
-      '--report-file',
+      '--distributed-configure-controller',
+      '--config-file',
+      '--profile',
+      '--controller-name',
+      '--listen-address',
+      '--listen-port',
+      '--thread-rule',
+      '--minimum-thread-count',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+      '--allow-existing-config-update',
     ]),
     requiredValues: [
-      '--distributed-config',
-      '--worker-id',
-      '--application',
-      '--report-file',
+      '--config-file',
+      '--profile',
+      '--controller-name',
+      '--listen-address',
+      '--listen-port',
+      '--thread-rule',
+      '--minimum-thread-count',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
     ],
-    requiredRepeated: ['--app', '--task'],
   },
-  'distributed-schedule': {
-    label: 'Distributed schedule mode',
+  'distributed-configure-node': {
+    label: 'Distributed node configuration mode',
     allowed: new Set([
-      '--distributed-schedule',
-      '--distributed-config',
-      '--application',
-      '--task',
-      '--task-file',
-      '--timeout-ms',
-      '--app',
-      '--report-file',
+      '--distributed-configure-node',
+      '--config-file',
+      '--node-id',
+      '--node-name',
+      '--listen-address',
+      '--listen-port',
+      '--controller-address',
+      '--controller-port',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+      '--allow-existing-config-update',
+      '--overwrite-node',
     ]),
-    requiredValues: ['--distributed-config', '--application', '--report-file'],
-    requiredRepeated: ['--app'],
+    requiredValues: [
+      '--config-file',
+      '--node-id',
+      '--node-name',
+      '--listen-address',
+      '--listen-port',
+      '--controller-address',
+      '--controller-port',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+    ],
   },
-  'distributed-discover': {
-    label: 'Distributed discovery mode',
+  'distributed-controller-service': {
+    label: 'Distributed controller service mode',
     allowed: new Set([
-      '--distributed-discover',
-      '--application',
-      '--app',
-      '--task-file',
+      '--distributed-controller-service',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+    ]),
+    requiredValues: ['--active-config-marker', '--state-root', '--log-root'],
+  },
+  'distributed-applications': {
+    label: 'Distributed application listing mode',
+    allowed: new Set([
+      '--distributed-applications',
+      '--active-config-marker',
       '--json',
     ]),
-    requiredValues: ['--application'],
-    requiredRepeated: ['--app'],
+    requiredValues: ['--active-config-marker'],
   },
-  'distributed-worker': {
-    label: 'Distributed worker mode',
+  'distributed-app-add': {
+    label: 'Distributed application add mode',
     allowed: new Set([
-      '--distributed-worker',
-      '--distributed-config',
-      '--worker-id',
-      '--app',
-      '--tls-cert',
-      '--tls-key',
-      '--listen-host',
-      '--allow-controller',
-      '--allow-task',
-      '--allow-task-file',
+      '--distributed-app-add',
+      '--active-config-marker',
+      '--application-id',
+      '--application-name',
+      '--dependency-profile',
+      '--json',
     ]),
     requiredValues: [
-      '--distributed-config',
-      '--worker-id',
-      '--tls-cert',
-      '--tls-key',
-      '--listen-host',
+      '--active-config-marker',
+      '--application-id',
+      '--application-name',
+      '--dependency-profile',
     ],
-    requiredRepeated: ['--app', '--allow-controller'],
+  },
+  'distributed-app-delete': {
+    label: 'Distributed application delete mode',
+    allowed: new Set([
+      '--distributed-app-delete',
+      '--active-config-marker',
+      '--application',
+      '--json',
+    ]),
+    requiredValues: ['--active-config-marker'],
+    requiredRepeated: ['--application'],
+  },
+  'distributed-dependency-plan': {
+    label: 'Distributed dependency planning mode',
+    allowed: new Set([
+      '--distributed-dependency-plan',
+      '--active-config-marker',
+      '--application',
+      '--all-applications',
+      '--dependency-name',
+      '--json',
+    ]),
+    requiredValues: ['--active-config-marker'],
+  },
+  'distributed-dependency-report': {
+    label: 'Distributed dependency reporting mode',
+    allowed: new Set([
+      '--distributed-dependency-report',
+      '--active-config-marker',
+      '--application',
+      '--dependency',
+      '--json',
+    ]),
+    requiredValues: ['--active-config-marker'],
+    requiredRepeated: ['--application'],
+  },
+  'distributed-node': {
+    label: 'Distributed node service mode',
+    allowed: new Set([
+      '--distributed-node',
+      '--active-config-marker',
+      '--state-root',
+      '--log-root',
+      '--app',
+    ]),
+    requiredValues: ['--active-config-marker', '--state-root', '--log-root'],
+    requiredRepeated: ['--app'],
+  },
+  'distributed-node-thread-policy': {
+    label: 'Distributed node thread-policy mode',
+    allowed: new Set([
+      '--distributed-node-thread-policy',
+      '--active-config-marker',
+      '--node-id',
+      '--thread-rule',
+      '--minimum-thread-count',
+      '--json',
+    ]),
+    requiredValues: ['--active-config-marker'],
   },
 };
 
@@ -561,10 +656,16 @@ function validateOptions(options) {
     throw new Error('Choose exactly one hosted GitHub mode');
 
   const distributedModes = [
-    '--distributed-discover',
-    '--distributed-controller',
-    '--distributed-schedule',
-    '--distributed-worker',
+    '--distributed-configure-controller',
+    '--distributed-configure-node',
+    '--distributed-controller-service',
+    '--distributed-node',
+    '--distributed-node-thread-policy',
+    '--distributed-applications',
+    '--distributed-app-add',
+    '--distributed-app-delete',
+    '--distributed-dependency-plan',
+    '--distributed-dependency-report',
   ].filter((option) => options.flags.has(option));
   if (distributedModes.length > 1)
     throw new Error('Choose exactly one distributed mode');
@@ -592,26 +693,30 @@ function validateOptions(options) {
   for (const option of contract.requiredRepeated ?? [])
     if (!options.repeated.has(option))
       throw new Error(`${contract.label} requires ${option}`);
-  const taskIds = options.repeated.get('--task') ?? [];
-  if (name === 'distributed-controller' && taskIds.length !== 1)
-    throw new Error('Distributed controller mode requires exactly one --task');
-  if (name === 'distributed-schedule') {
-    const hasTaskFile = options.values.has('--task-file');
-    if (hasTaskFile === taskIds.length > 0)
+  if (
+    name === 'distributed-app-delete' &&
+    (options.repeated.get('--application') ?? []).length !== 1
+  )
+    throw new Error(
+      `${optionContracts[name].label} requires exactly one --application`
+    );
+  if (name === 'distributed-dependency-plan') {
+    const applications = options.repeated.get('--application') ?? [];
+    const all = options.flags.has('--all-applications');
+    if (all === applications.length > 0)
       throw new Error(
-        'Distributed schedule mode requires exactly one of --task or --task-file'
-      );
-    if (!hasTaskFile && taskIds.length < 2)
-      throw new Error(
-        'Distributed schedule mode requires at least two --task values'
+        'Distributed dependency planning mode requires exactly one of --application or --all-applications'
       );
   }
-  if (name === 'distributed-worker') {
-    const allowedTaskIds = options.repeated.get('--allow-task') ?? [];
-    const hasTaskFile = options.values.has('--allow-task-file');
-    if (hasTaskFile === allowedTaskIds.length > 0)
+  if (name === 'distributed-node-thread-policy') {
+    const policyOptions = [
+      '--node-id',
+      '--thread-rule',
+      '--minimum-thread-count',
+    ].filter((option) => options.values.has(option));
+    if (policyOptions.length !== 0 && policyOptions.length !== 3)
       throw new Error(
-        'Distributed worker mode requires exactly one of --allow-task or --allow-task-file'
+        'Distributed node thread-policy mode requires node ID, thread rule, and minimum thread count together'
       );
   }
   return { name, hostedOption, distributedOption };
@@ -636,128 +741,75 @@ const requiredValue = (option) => {
   if (!result) throw new Error(`Selected mode requires ${option}`);
   return result;
 };
+const requiredSingleRepeatedValue = (option) => {
+  const entries = repeated(option);
+  if (entries.length !== 1)
+    throw new Error(`Selected mode requires exactly one ${option}`);
+  return entries[0];
+};
 
-function distributedFleetSecret() {
-  const encoded = process.env.SEERRNG_DISTRIBUTED_SHARED_SECRET;
-  if (
-    typeof encoded !== 'string' ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      encoded
-    )
-  )
-    throw new Error(
-      'Distributed mode requires canonical base64 SEERRNG_DISTRIBUTED_SHARED_SECRET'
-    );
-  const secret = Buffer.from(encoded, 'base64');
-  if (secret.length < 32 || secret.toString('base64') !== encoded) {
-    secret.fill(0);
-    throw new Error('Distributed fleet secret must contain at least 32 bytes');
-  }
-  delete process.env.SEERRNG_DISTRIBUTED_SHARED_SECRET;
-  return secret;
+const NODE_ENROLLMENT_CONFLICT_EXIT_CODE = 20;
+
+function requireLinuxDistributedMode(label) {
+  if (process.platform !== 'linux') throw new Error(`${label} requires Linux`);
 }
 
-function positiveMilliseconds(option, fallback) {
-  const raw = value(option);
-  if (raw === undefined) return fallback;
-  if (!/^[1-9]\d{0,8}$/.test(raw))
-    throw new Error(`${option} must be a positive integer`);
-  return Number(raw);
+function canonicalIntegerOption(option, minimum, maximum) {
+  const raw = requiredValue(option);
+  if (!/^(?:0|[1-9]\d*)$/.test(raw))
+    throw new Error(`${option} must use canonical decimal digits`);
+  const result = Number(raw);
+  if (!Number.isSafeInteger(result) || result < minimum || result > maximum)
+    throw new Error(`${option} must be from ${minimum} through ${maximum}`);
+  return result;
 }
 
-function taskSelection(
-  option,
-  fileOption,
-  minimum,
-  { applications, applicationId = null } = {}
-) {
-  const manifestFile = value(fileOption);
-  if (!manifestFile)
-    return { taskIds: repeated(option), selectionManifestSha256: null };
-  const manifest = readDistributedTaskManifest(manifestFile, { minimum });
-  if (applicationId && manifest.applicationId !== applicationId)
-    throw new Error(
-      'Distributed task manifest does not match the selected application'
-    );
-  const application = applications?.find(
-    ({ id }) => id === manifest.applicationId
-  );
-  if (!application)
-    throw new Error(
-      'Distributed task manifest application is not registered locally'
-    );
-  const catalog = discoverDistributedNativeCatalog(application.root, {
-    applicationId: manifest.applicationId,
+function reservedLinuxDirectory(option) {
+  const directory = requiredValue(option);
+  if (!isAbsolute(directory) || resolve(directory) !== directory)
+    throw new Error(`${option} must be an absolute canonical directory`);
+  const metadata = lstatSync(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink())
+    throw new Error(`${option} must be an ordinary directory`);
+  return directory;
+}
+
+function validateReservedLinuxDirectories() {
+  reservedLinuxDirectory('--state-root');
+  reservedLinuxDirectory('--log-root');
+}
+
+function nodeEnrollmentConflict(response) {
+  const detail =
+    response.reason === 'node-number-occupied'
+      ? `Node ${response.nodeNumber} is already assigned; rerun locally with --overwrite-node to replace it`
+      : 'Node enrollment conflict: this IP address is assigned to another node';
+  return Object.assign(new Error(detail), {
+    code: 'ERR_NODE_ENROLLMENT_CONFLICT',
+    exitCode: NODE_ENROLLMENT_CONFLICT_EXIT_CODE,
   });
-  verifyDistributedTaskManifestCatalog(manifest, catalog, { minimum });
-  return {
-    taskIds: manifest.taskIds,
-    selectionManifestSha256: manifest.manifestSha256,
-  };
 }
 
-const MAX_DISTRIBUTED_REPORT_BYTES = 32 * 1024 * 1024;
-
-function distributedOutputFile(sourceRoot, outputFile, kind = 'report') {
-  const label = `Distributed ${kind} file`;
-  if (!isAbsolute(outputFile))
-    throw new Error(
-      `${label} must be absolute and outside the source checkout`
-    );
-  const realSourceRoot = realpathSync(sourceRoot);
-  const lexicalRelation = relative(realSourceRoot, resolve(outputFile));
-  const lexicallyOutsideSource =
-    isAbsolute(lexicalRelation) ||
-    lexicalRelation === '..' ||
-    lexicalRelation.startsWith(`..${sep}`);
-  if (!lexicallyOutsideSource)
-    throw new Error(
-      `${label} must be absolute and outside the source checkout`
-    );
-  let realParent;
-  try {
-    realParent = realpathSync(dirname(outputFile));
-  } catch (error) {
-    if (error.code === 'ENOENT' || error.code === 'ENOTDIR')
-      throw new Error(`${label} requires an existing parent directory`, {
-        cause: error,
-      });
-    throw error;
-  }
-  const relation = relative(realSourceRoot, realParent);
-  const outsideSource =
-    isAbsolute(relation) ||
-    relation === '..' ||
-    relation.startsWith(`..${sep}`);
-  if (!outsideSource)
-    throw new Error(
-      `${label} must be absolute and outside the source checkout`
-    );
-  const admitted = join(realParent, basename(outputFile));
-  try {
-    const existing = lstatSync(admitted);
-    throw new Error(
-      existing.isSymbolicLink()
-        ? `${label} must not be an existing symlink or reparse point`
-        : `${label} must not already exist`
-    );
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-  return admitted;
+function parseDependencyAvailability(values) {
+  return values.map((binding) => {
+    const equals = binding.indexOf('=');
+    if (equals < 1 || equals === binding.length - 1)
+      throw new Error('--dependency must use NAME=ACTUAL_VERSION');
+    return {
+      name: binding.slice(0, equals),
+      version: binding.slice(equals + 1),
+    };
+  });
 }
 
-function writeDistributedReport(reportFile, encoded) {
-  if (typeof encoded !== 'string')
-    throw new Error('Distributed report encoding must be text');
-  if (Buffer.byteLength(encoded) > MAX_DISTRIBUTED_REPORT_BYTES)
-    throw new Error('Distributed report exceeds the bounded output size');
-  writeFileSync(reportFile, encoded, { flag: 'wx', mode: 0o600 });
-}
-
-function writeDistributedControllerReport(reportFile, report) {
-  const encoded = `${JSON.stringify(report, null, 2)}\n`;
-  writeDistributedReport(reportFile, encoded);
+async function supportedApplicationsForActiveConfig(active, signal) {
+  if (active.role === 'controller')
+    return createSupportedApplicationListing(active.config);
+  return requestSupportedApplications({
+    controllerIpAddress: active.config.controller.ipAddress,
+    controllerPort: active.config.controller.port,
+    signal,
+  });
 }
 
 if (!options) {
@@ -771,10 +823,16 @@ if (!options) {
        node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
        node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
        node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
-       node bin/run-local-validation.mjs --distributed-discover --app ID=ABSOLUTE_ROOT --application ID [--task-file ABSOLUTE_FILE] [--json]
-       node bin/run-local-validation.mjs --distributed-controller --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT --application ID --task ID --report-file ABSOLUTE_FILE [--timeout-ms MS]
-       node bin/run-local-validation.mjs --distributed-schedule --distributed-config FILE --app ID=ABSOLUTE_ROOT --application ID (--task ID --task ID [--task ID ...] | --task-file ABSOLUTE_FILE) --report-file ABSOLUTE_FILE [--timeout-ms MS]
-       node bin/run-local-validation.mjs --distributed-worker --distributed-config FILE --worker-id ID --app ID=ABSOLUTE_ROOT (--allow-task ID [--allow-task ID ...] | --allow-task-file ABSOLUTE_FILE) --tls-cert FILE --tls-key FILE --listen-host ADDRESS --allow-controller ADDRESS
+       node bin/run-local-validation.mjs --distributed-configure-controller --config-file ABSOLUTE_FILE --profile GITHUB_USER --controller-name NAME --listen-address IP --listen-port PORT --thread-rule RULE --minimum-thread-count COUNT --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR [--allow-existing-config-update]
+       node bin/run-local-validation.mjs --distributed-configure-node --config-file ABSOLUTE_FILE --node-id ## --node-name NAME --listen-address IP --listen-port PORT --controller-address IP --controller-port PORT --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR [--allow-existing-config-update] [--overwrite-node]
+       node bin/run-local-validation.mjs --distributed-controller-service --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR
+       node bin/run-local-validation.mjs --distributed-node --active-config-marker ABSOLUTE_FILE --state-root ABSOLUTE_DIR --log-root ABSOLUTE_DIR --app ID=ABSOLUTE_ROOT
+       node bin/run-local-validation.mjs --distributed-node-thread-policy --active-config-marker ABSOLUTE_FILE [--node-id ## --thread-rule RULE --minimum-thread-count COUNT] [--json]
+       node bin/run-local-validation.mjs --distributed-applications --active-config-marker ABSOLUTE_FILE --json
+       node bin/run-local-validation.mjs --distributed-app-add --active-config-marker ABSOLUTE_FILE --application-id 'PRODUCT VERSION' --application-name NAME --dependency-profile ABSOLUTE_FILE [--json]
+       node bin/run-local-validation.mjs --distributed-app-delete --active-config-marker ABSOLUTE_FILE --application ENTRY_ID [--json]
+       node bin/run-local-validation.mjs --distributed-dependency-plan --active-config-marker ABSOLUTE_FILE (--application ENTRY_ID ... | --all-applications) [--dependency-name NAME] --json
+       node bin/run-local-validation.mjs --distributed-dependency-report --active-config-marker ABSOLUTE_FILE --application ENTRY_ID ... [--dependency NAME=ACTUAL_VERSION ...] --json
 
 Runs the existing engine's staged native PR-parity gate: repository checks,
 CodeQL, production builds, browser tests and applicable supplemental checks.
@@ -792,24 +850,32 @@ CodeQL, production builds, browser tests and applicable supplemental checks.
               Seal one native job/case result and its current-attempt ledger entry.
 --github-reconcile
               Verify native needs and complete sealed receipts against the plan.
---distributed-discover
-              Read the clean local tests-only plan and list its native task IDs.
---distributed-controller
-              Probe one configured trusted worker and run one locally derived task.
---distributed-schedule
-              Run explicit locally derived tasks across every enabled configured worker.
---distributed-worker
-              Serve locally derived native tasks for an authenticated controller.
---app         Register the one distributed application as ID=ABSOLUTE_ROOT.
---allow-task  Locally allow a discovered task on a distributed worker; repeatable.
---allow-task-file
-              Read the worker task allowlist from one sealed absolute manifest.
---task        Select a discovered task; once for a controller, repeat for a schedule.
---task-file   Write discovery IDs to, or read a schedule selection from, one sealed absolute manifest.
---json        Machine-readable local plan, distributed catalog, hosted plan, or hosted result.
+--distributed-configure-controller
+              Create or explicitly update the Linux controller configuration.
+--distributed-configure-node
+              Register one Linux node with the selected private-LAN controller.
+              A controller conflict exits with status 20 without activating the node.
+--distributed-controller-service
+              Serve private-LAN node enrollment from the exact active configuration.
+--distributed-node
+              Serve explicitly bound applications from the exact active node configuration.
+--distributed-node-thread-policy
+              List enrolled nodes or assign one node's controller-owned thread policy.
+--distributed-applications
+              List controller-supported application entries; nodes fetch the list in memory.
+--distributed-app-add
+              Add one controller app entry from its repository-owned dependency profile.
+--distributed-app-delete
+              Delete one numbered controller app entry.
+--distributed-dependency-plan
+              Union and deduplicate selected app requirements without installing anything.
+--distributed-dependency-report
+              Persist actual node availability and compare it with selected requirements.
+--app         Register an explicit distributed application as ID=ABSOLUTE_ROOT;
+              repeatable for the node service.
+--json        Machine-readable local plan, distributed result, hosted plan, or hosted result.
 --help        Show help without reading the project or creating files.
 
-Distributed secrets are accepted only through SEERRNG_DISTRIBUTED_SHARED_SECRET.
 Does not install dependencies, synchronize source, apply live migrations, or edit GitHub workflows.
 Native, Vitest-only, tooling and CI commands retain their existing behavior.
 Builds and fixture migrations use an owned disposable source/configuration copy.
@@ -824,273 +890,271 @@ failures, partial output closure and zero active tests fail closed.\n`);
     const hostedMode = selectedMode.hostedOption;
     const distributedMode = selectedMode.distributedOption;
     const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-    if (distributedMode === '--distributed-discover') {
-      const applications = parseDistributedApplicationBindings(
-        repeated('--app')
-      );
-      const applicationId = requiredValue('--application');
-      const application = applications.find(({ id }) => id === applicationId);
-      if (!application)
-        throw new Error(
-          `Distributed discovery does not register application: ${applicationId}`
-        );
-      const taskFile = value('--task-file')
-        ? distributedOutputFile(
-            root,
-            requiredValue('--task-file'),
-            'task manifest'
-          )
-        : null;
-      const catalog = discoverDistributedNativeCatalog(application.root, {
-        applicationId,
+    if (distributedMode === '--distributed-configure-controller') {
+      requireLinuxDistributedMode('Distributed controller configuration');
+      validateReservedLinuxDirectories();
+      const configured = configureLinuxController({
+        configPath: requiredValue('--config-file'),
+        activeConfigMarkerPath: requiredValue('--active-config-marker'),
+        operator: {
+          githubUsername: requiredValue('--profile'),
+          computerName: requiredValue('--controller-name'),
+          ipAddress: requiredValue('--listen-address'),
+          port: canonicalIntegerOption('--listen-port', 1, 65_535),
+          threads: requiredValue('--thread-rule'),
+          minimumThreadCount: canonicalIntegerOption(
+            '--minimum-thread-count',
+            1,
+            256
+          ),
+        },
+        allowExistingUpdate: has('--allow-existing-config-update'),
       });
-      if (taskFile) {
-        const manifest = createDistributedTaskManifest(catalog);
-        writeDistributedReport(taskFile, `${JSON.stringify(manifest)}\n`);
-      }
-      if (has('--json'))
-        process.stdout.write(`${JSON.stringify(catalog, null, 2)}\n`);
-      else {
-        process.stdout.write(
-          `Distributed discovery ${catalog.catalogSha256}: ${catalog.tasks.length} locally derived tasks for ${applicationId} (${catalog.platform}).\n`
-        );
-        for (const task of catalog.tasks)
-          process.stdout.write(
-            `${task.taskId} ${task.adapterId} ${task.files.join(',')}\n`
-          );
-      }
-    } else if (distributedMode) {
+      process.stdout.write(
+        `Mode 3 controller ${configured.global.computerName} is configured and active.\n`
+      );
+    } else if (distributedMode === '--distributed-configure-node') {
+      requireLinuxDistributedMode('Distributed node configuration');
+      validateReservedLinuxDirectories();
       process.on('SIGINT', interrupt);
       process.on('SIGTERM', interrupt);
-      const config = parseDistributedWorkerConfig(
-        readFileSync(resolve(requiredValue('--distributed-config')), 'utf8')
+      const configPath = requiredValue('--config-file');
+      const pending = createPendingLinuxNode({
+        configPath,
+        controller: {
+          ipAddress: requiredValue('--controller-address'),
+          port: canonicalIntegerOption('--controller-port', 1, 65_535),
+        },
+        node: {
+          nodeNumber: requiredValue('--node-id'),
+          computerName: requiredValue('--node-name'),
+          ipAddress: requiredValue('--listen-address'),
+          port: canonicalIntegerOption('--listen-port', 1, 65_535),
+        },
+        allowExistingUpdate: has('--allow-existing-config-update'),
+      });
+      const enrollmentResponse = await requestNodeEnrollment({
+        controllerIpAddress: pending.controller.ipAddress,
+        controllerPort: pending.controller.port,
+        enrollmentRequest: {
+          ...pending.node,
+          overwrite: has('--overwrite-node'),
+        },
+        signal: controller.signal,
+      });
+      if (enrollmentResponse.status === 'conflict')
+        throw nodeEnrollmentConflict(enrollmentResponse);
+      const enrolled = activateAcceptedLinuxNodeEnrollment({
+        configPath,
+        activeConfigMarkerPath: requiredValue('--active-config-marker'),
+        pendingConfig: pending,
+        allowExistingUpdate: has('--allow-existing-config-update'),
+        response: enrollmentResponse,
+      });
+      process.stdout.write(
+        `Mode 3 node ${enrolled.node.nodeNumber} is enrolled and active.\n`
       );
-      const applications = parseDistributedApplicationBindings(
+    } else if (distributedMode === '--distributed-controller-service') {
+      requireLinuxDistributedMode('Distributed controller service');
+      validateReservedLinuxDirectories();
+      process.on('SIGINT', interrupt);
+      process.on('SIGTERM', interrupt);
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker'),
+        { expectedRole: 'controller' }
+      );
+      let service;
+      try {
+        service = await startNodeEnrollmentServer({
+          controllerConfigPath: active.configPath,
+          host: active.config.global.ipAddress,
+          port: active.config.global.port,
+        });
+        process.stdout.write(
+          `Mode 3 controller enrollment service is listening on ${service.host}:${service.port}.\n`
+        );
+        if (!controller.signal.aborted)
+          await new Promise((resolveStop) =>
+            controller.signal.addEventListener('abort', resolveStop, {
+              once: true,
+            })
+          );
+      } finally {
+        await service?.close();
+      }
+    } else if (distributedMode === '--distributed-node-thread-policy') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker'),
+        { expectedRole: 'controller' }
+      );
+      if (value('--node-id') === undefined) {
+        const nodes = active.config.nodes.map((node) => ({ ...node }));
+        if (has('--json'))
+          process.stdout.write(`${JSON.stringify({ nodes })}\n`);
+        else if (nodes.length === 0)
+          process.stdout.write('No enrolled nodes are available.\n');
+        else
+          for (const node of nodes)
+            process.stdout.write(
+              `${node.nodeNumber} ${node.computerName}: ${node.threads ?? 'unassigned'} (minimum ${node.minimumThreadCount ?? 'unassigned'})\n`
+            );
+      } else {
+        const node = setControllerNodeThreadPolicyInFile(active.configPath, {
+          nodeNumber: requiredValue('--node-id'),
+          threads: requiredValue('--thread-rule'),
+          minimumThreadCount: canonicalIntegerOption(
+            '--minimum-thread-count',
+            1,
+            256
+          ),
+        });
+        if (has('--json'))
+          process.stdout.write(`${JSON.stringify({ node })}\n`);
+        else
+          process.stdout.write(
+            `Mode 3 node ${node.nodeNumber} thread policy is ${node.threads} with minimum ${node.minimumThreadCount}.\n`
+          );
+      }
+    } else if (distributedMode === '--distributed-applications') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker')
+      );
+      const listing = await supportedApplicationsForActiveConfig(
+        active,
+        controller.signal
+      );
+      if (has('--json')) process.stdout.write(`${JSON.stringify(listing)}\n`);
+      else {
+        for (const application of listing.applications)
+          process.stdout.write(
+            `${application.entryId} ${application.name} (${application.applicationId})\n`
+          );
+      }
+    } else if (distributedMode === '--distributed-app-add') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker'),
+        { expectedRole: 'controller' }
+      );
+      const application = addSupportedApplicationToControllerConfigFile(
+        active.configPath,
+        {
+          applicationId: requiredValue('--application-id'),
+          name: requiredValue('--application-name'),
+          profilePath: requiredValue('--dependency-profile'),
+        }
+      );
+      if (has('--json'))
+        process.stdout.write(`${JSON.stringify({ application })}\n`);
+      else
+        process.stdout.write(
+          `Supported application ${application.entryId}: ${application.name} (${application.applicationId}).\n`
+        );
+    } else if (distributedMode === '--distributed-app-delete') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker'),
+        { expectedRole: 'controller' }
+      );
+      const application = deleteSupportedApplicationFromControllerConfigFile(
+        active.configPath,
+        requiredSingleRepeatedValue('--application')
+      );
+      if (has('--json'))
+        process.stdout.write(`${JSON.stringify({ application })}\n`);
+      else
+        process.stdout.write(
+          `Removed supported application ${application.entryId}: ${application.name}.\n`
+        );
+    } else if (distributedMode === '--distributed-dependency-plan') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker')
+      );
+      const listing = await supportedApplicationsForActiveConfig(
+        active,
+        controller.signal
+      );
+      const selectedEntries = has('--all-applications')
+        ? listing.applications.map((application) => application.entryId)
+        : repeated('--application');
+      const plan = createDependencyProvisioningPlanFromApplicationListing(
+        listing,
+        selectedEntries,
+        { dependencyNameFilter: value('--dependency-name') ?? null }
+      );
+      if (has('--json')) process.stdout.write(`${JSON.stringify(plan)}\n`);
+      else
+        process.stdout.write(
+          `Dependency plan contains ${plan.dependencies.length} requirement(s) for ${plan.selectedApplications.length} selected application(s).\n`
+        );
+    } else if (distributedMode === '--distributed-dependency-report') {
+      const active = resolveActiveLinuxConfig(
+        requiredValue('--active-config-marker'),
+        { expectedRole: 'node' }
+      );
+      const listing = await supportedApplicationsForActiveConfig(
+        active,
+        controller.signal
+      );
+      const selectedEntries = repeated('--application');
+      const plan = createDependencyProvisioningPlanFromApplicationListing(
+        listing,
+        selectedEntries
+      );
+      const availability = parseDependencyAvailability(
+        repeated('--dependency')
+      );
+      const response = await requestNodeEnrollment({
+        controllerIpAddress: active.config.controller.ipAddress,
+        controllerPort: active.config.controller.port,
+        enrollmentRequest: {
+          ...active.config.node,
+          overwrite: false,
+          selectedApplicationEntries: selectedEntries,
+          dependencyAvailability: availability,
+        },
+        signal: controller.signal,
+      });
+      if (response.status === 'conflict')
+        throw nodeEnrollmentConflict(response);
+      activateAcceptedLinuxNodeEnrollment({
+        configPath: active.configPath,
+        activeConfigMarkerPath: requiredValue('--active-config-marker'),
+        pendingConfig: active.config,
+        allowExistingUpdate: true,
+        response,
+      });
+      const report = compareDependencyAvailability(plan, availability);
+      if (has('--json')) process.stdout.write(`${JSON.stringify(report)}\n`);
+      else
+        process.stdout.write(
+          `Dependency availability is ${report.status} for ${report.selectedApplications.length} selected application(s).\n`
+        );
+      if (report.status !== 'ready') process.exitCode = 1;
+    } else if (distributedMode === '--distributed-node') {
+      requireLinuxDistributedMode('Distributed node service');
+      validateReservedLinuxDirectories();
+      process.on('SIGINT', interrupt);
+      process.on('SIGTERM', interrupt);
+      const applications = parseDistributedLinuxNodeApplicationBindings(
         repeated('--app')
       );
-      if (distributedMode === '--distributed-worker') {
-        const workerId = requiredValue('--worker-id');
-        const worker = configuredDistributedWorker(config, workerId);
-        const address = new URL(worker.address);
-        const { taskIds: allowedTaskIds } = taskSelection(
-          '--allow-task',
-          '--allow-task-file',
-          1,
-          { applications }
+      let service;
+      try {
+        service = await startDistributedLinuxNodeRunner({
+          activeConfigMarkerPath: requiredValue('--active-config-marker'),
+          applications,
+          signal: controller.signal,
+        });
+        process.stdout.write(
+          `Mode 3 ${service.nodeId} is listening on ${service.host}:${service.port} for ${service.applications.length} explicitly bound application(s).\n`
         );
-        const secret = distributedFleetSecret();
-        let service;
-        try {
-          service = await startDistributedWorkerServer({
-            config,
-            workerId,
-            applications,
-            allowedTaskIds,
-            key: readFileSync(resolve(requiredValue('--tls-key'))),
-            certificate: readFileSync(resolve(requiredValue('--tls-cert'))),
-            secret,
-            allowedSourceAddresses: repeated('--allow-controller'),
-            host: requiredValue('--listen-host'),
-            port: Number(address.port || 443),
-          });
-          secret.fill(0);
-          const report = service.runtime.report(
-            applications.map(({ id }) => id)
+        if (!controller.signal.aborted)
+          await new Promise((resolveStop) =>
+            controller.signal.addEventListener('abort', resolveStop, {
+              once: true,
+            })
           );
-          process.stdout.write(
-            `Distributed worker ${worker.id} ready with ${report.capacity.configuredWorkers} slots for ${report.applications.length} application(s).\n`
-          );
-          if (!controller.signal.aborted)
-            await new Promise((resolveStop) =>
-              controller.signal.addEventListener('abort', resolveStop, {
-                once: true,
-              })
-            );
-        } finally {
-          secret.fill(0);
-          await service?.close();
-        }
-      } else if (distributedMode === '--distributed-controller') {
-        const workerId = requiredValue('--worker-id');
-        const worker = configuredDistributedWorker(config, workerId);
-        const reportFile = distributedOutputFile(
-          root,
-          requiredValue('--report-file')
-        );
-        const taskId = repeated('--task')[0];
-        const localRuntime =
-          config.controllerWorkerId === worker.id
-            ? createDistributedWorkerRuntime({
-                config,
-                workerId,
-                applications,
-                allowedTaskIds: [taskId],
-              })
-            : null;
-        const applicationId = requiredValue('--application');
-        const runId = randomUUID();
-        const startedAt = new Date().toISOString();
-        const started = performance.now();
-        const secret = localRuntime ? undefined : distributedFleetSecret();
-        let result;
-        let controllerError;
-        try {
-          result = await runDistributedControllerTask({
-            config,
-            applications,
-            workerId,
-            applicationId,
-            taskId,
-            runId,
-            secret,
-            timeoutMs: positiveMilliseconds('--timeout-ms', 30 * 60 * 1000),
-            localRuntime,
-            signal: controller.signal,
-          });
-        } catch (error) {
-          controllerError = error;
-        } finally {
-          secret?.fill(0);
-          try {
-            await localRuntime?.drain();
-          } catch (error) {
-            controllerError ??= error;
-          }
-        }
-        if (controllerError)
-          result = createDistributedControllerFailureReport({
-            configSha256: config.configSha256,
-            controllerId: config.controllerId,
-            workerId: worker.id,
-            runId,
-            applicationId,
-            taskId,
-            startedAt,
-            wallMs: performance.now() - started,
-            error: controllerError,
-            controllerAborted: controller.signal.aborted,
-          });
-        writeDistributedControllerReport(reportFile, result);
-        if (result.controllerFailure) {
-          process.stderr.write(
-            `Distributed controller failed closed (${result.controllerFailure.errorCode}); remote outcome is unknown. Evidence: ${reportFile}\n`
-          );
-          process.exitCode = controller.signal.aborted ? 130 : 1;
-        } else if (result.result.status === 'failed') {
-          process.stderr.write(
-            `Distributed task ${result.result.taskId} failed on ${result.result.workerId} (${result.result.failure.reason}). Evidence: ${reportFile}\n`
-          );
-          process.exitCode = 1;
-        } else
-          process.stdout.write(
-            `Distributed task ${result.result.taskId} passed on ${result.result.workerId} in ${Math.round(result.result.wallMs)} ms. Evidence: ${reportFile}\n`
-          );
-      } else {
-        const workers = config.workers.filter(({ enabled }) => enabled);
-        if (workers.length < 2)
-          throw new Error(
-            'Distributed schedule mode requires at least two enabled configured workers'
-          );
-        const workerIds = workers.map(({ id }) => id);
-        const applicationId = requiredValue('--application');
-        const { taskIds: selectedTaskIds, selectionManifestSha256 } =
-          taskSelection('--task', '--task-file', 2, {
-            applications,
-            applicationId,
-          });
-        const reportFile = distributedOutputFile(
-          root,
-          requiredValue('--report-file')
-        );
-        const localRuntimes = new Map();
-        const remote = workerIds.some(
-          (workerId) => workerId !== config.controllerWorkerId
-        );
-        let secret;
-        let result;
-        let scheduleError;
-        const scheduleRunId = randomUUID();
-        const scheduleStartedAt = new Date().toISOString();
-        const scheduleStarted = performance.now();
-        try {
-          secret = remote ? distributedFleetSecret() : undefined;
-          if (
-            config.controllerWorkerId &&
-            workerIds.includes(config.controllerWorkerId)
-          )
-            localRuntimes.set(
-              config.controllerWorkerId,
-              createDistributedWorkerRuntime({
-                config,
-                workerId: config.controllerWorkerId,
-                applications,
-                allowedTaskIds: selectedTaskIds,
-              })
-            );
-          result = await runDistributedControllerSchedule({
-            config,
-            applications,
-            workerIds,
-            applicationId,
-            taskIds: selectedTaskIds,
-            selectionManifestSha256,
-            runId: scheduleRunId,
-            secret,
-            timeoutMs: positiveMilliseconds('--timeout-ms', 30 * 60 * 1000),
-            localRuntimes,
-            signal: controller.signal,
-          });
-        } catch (error) {
-          scheduleError = error;
-        } finally {
-          secret?.fill(0);
-          for (const runtime of localRuntimes.values())
-            try {
-              await runtime.drain();
-            } catch (error) {
-              scheduleError ??= error;
-            }
-        }
-        if (scheduleError) {
-          const failureReport = createDistributedScheduleFailureReport({
-            configSha256: config.configSha256,
-            controllerId: config.controllerId,
-            enabledWorkerIds: workerIds,
-            runId: scheduleRunId,
-            applicationId,
-            taskIds: selectedTaskIds,
-            selectionManifestSha256,
-            startedAt: scheduleStartedAt,
-            wallMs: performance.now() - scheduleStarted,
-            error: scheduleError,
-            controllerAborted: controller.signal.aborted,
-          });
-          writeDistributedReport(
-            reportFile,
-            encodeBoundedDistributedReport(failureReport)
-          );
-          process.stderr.write(
-            `Distributed schedule failed before a complete result (${failureReport.errorCode}); task execution outcome is ${failureReport.taskExecutionOutcome}. Evidence: ${reportFile}\n`
-          );
-          process.exitCode = controller.signal.aborted ? 130 : 1;
-        } else {
-          writeDistributedReport(
-            reportFile,
-            encodeBoundedDistributedReport(result)
-          );
-          const passed = result.outcomes.filter(
-            ({ status }) => status === 'passed'
-          ).length;
-          if (result.status !== 'passed') {
-            process.stderr.write(
-              `Distributed schedule failed (${passed}/${result.outcomes.length} tasks passed). Evidence: ${reportFile}\n`
-            );
-            process.exitCode = controller.signal.aborted ? 130 : 1;
-          } else
-            process.stdout.write(
-              `Distributed schedule passed ${result.outcomes.length} tasks across ${result.workerReports.length} workers. Evidence: ${reportFile}\n`
-            );
-        }
+      } finally {
+        await service?.close();
       }
     } else if (hostedMode) {
       if (hostedMode === '--github-plan') {

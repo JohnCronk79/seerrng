@@ -24,10 +24,12 @@ import {
 } from 'node:fs';
 import { freemem, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node runtime cannot resolve application aliases.
 import {
   createPlan,
   executePlan,
+  isolatedEnvironment,
   runCommand,
   startCommand,
 } from '../../../bin/local-validation.mjs';
@@ -1069,6 +1071,156 @@ export function createNativeProcessReceiptLedger(scratchRoot, candidate) {
   };
 }
 
+const repositoryCheckPrefix = 'repository-check-';
+
+function sealNativeValue(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.values(value).forEach(sealNativeValue);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function disposeRepositoryCheckDirectory(directory, scratchRoot) {
+  const absolute = path.resolve(directory);
+  if (
+    path.dirname(absolute) !== scratchRoot ||
+    !path.basename(absolute).startsWith(repositoryCheckPrefix) ||
+    lstatSync(absolute).isSymbolicLink() ||
+    !beneath(scratchRoot, realpathSync(absolute))
+  )
+    throw new Error('Refusing unsafe repository check cleanup');
+  rmSync(absolute, { recursive: true, force: true });
+}
+
+function requireRepositoryCheckReceipt(receipt, expected, scratchRoot) {
+  requireRepositoryNativeReceipt(receipt, scratchRoot);
+  if (receipt.id !== (expected.id ?? expected.name))
+    throw new Error('Native repository check receipt identity mismatch');
+  return receipt;
+}
+
+/**
+ * Bind one check executor to an immutable repository plan. Callers provide the
+ * structured clone and original index emitted by the distributed compositor;
+ * execution always uses the sealed plan entry, never caller-controlled bytes.
+ */
+export function createNativeRepositoryCheckExecutor(
+  repositoryPlanValue,
+  {
+    nativeRun,
+    scratchRoot: scratchRootValue,
+    inherited = process.env,
+    verifySource,
+    stdout = process.stdout,
+  } = {}
+) {
+  if (typeof nativeRun !== 'function')
+    throw new Error('Native repository check requires the native runner');
+  if (typeof verifySource !== 'function')
+    throw new Error('Native repository check requires the source guard');
+  if (typeof stdout?.write !== 'function')
+    throw new Error('Native repository check requires an output stream');
+  if (
+    !repositoryPlanValue ||
+    typeof repositoryPlanValue !== 'object' ||
+    !Array.isArray(repositoryPlanValue.steps)
+  )
+    throw new Error(
+      'Native repository check requires a sealed repository plan'
+    );
+
+  const repositoryPlan = sealNativeValue(structuredClone(repositoryPlanValue));
+  const root = realpathSync(repositoryPlan.root);
+  if (root !== repositoryPlan.root)
+    throw new Error('Native repository check plan root is not canonical');
+  const scratchRoot = realpathSync(scratchRootValue);
+
+  return async function executeRepositoryCheck(stepValue, execution = {}) {
+    if (
+      !execution ||
+      typeof execution !== 'object' ||
+      Array.isArray(execution) ||
+      Object.keys(execution).some((key) => !['index', 'signal'].includes(key))
+    )
+      throw new Error('Native repository check execution context is invalid');
+    const { index, signal } = execution;
+    if (signal !== undefined && !(signal instanceof AbortSignal))
+      throw new Error('Native repository check signal must be an AbortSignal');
+    if (
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= repositoryPlan.steps.length
+    )
+      throw new Error(
+        'Native repository check index is outside the sealed plan'
+      );
+    const expected = repositoryPlan.steps[index];
+    if (
+      expected.kind !== 'check' ||
+      stepValue?.kind !== 'check' ||
+      !isDeepStrictEqual(stepValue, expected)
+    )
+      throw new Error(
+        'Native repository check differs from its sealed plan step'
+      );
+
+    signal?.throwIfAborted();
+    await verifySource();
+    signal?.throwIfAborted();
+
+    const configDirectory = mkdtempSync(
+      path.join(scratchRoot, repositoryCheckPrefix)
+    );
+    const command = {
+      ...structuredClone(expected),
+      cwd: root,
+      env: isolatedEnvironment(configDirectory, inherited),
+    };
+    const failures = [];
+    let receipt;
+    try {
+      stdout.write(`\n[${expected.name}]\n`);
+      try {
+        receipt = await nativeRun(command, { signal });
+        requireRepositoryCheckReceipt(receipt, expected, scratchRoot);
+      } catch (error) {
+        if (error?.receipt) {
+          receipt = error.receipt;
+          try {
+            requireRepositoryCheckReceipt(receipt, expected, scratchRoot);
+          } catch (receiptError) {
+            failures.push(receiptError);
+          }
+        }
+        failures.unshift(error);
+      }
+    } finally {
+      try {
+        disposeRepositoryCheckDirectory(configDirectory, scratchRoot);
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await verifySource();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      const error = new AggregateError(
+        failures,
+        'Native repository check or its source/cleanup guard failed'
+      );
+      if (receipt) error.receipt = receipt;
+      throw error;
+    }
+    return receipt;
+  };
+}
+
 export async function executeNativeRepository(
   plan,
   {
@@ -2016,7 +2168,7 @@ export async function createNativeStageContext(
       prChecks: [...normalized.prChecks, ...blockers],
     });
     let preserveTemporary = false;
-    const verifySource = async () => {
+    const verifyRepositoryCheckSource = () => {
       verifySourceSnapshot(snapshot);
       verifySourceSnapshot(docsLinkSnapshot);
       verifySourceSnapshot(supplementalSnapshot, { derivedOutputs });
@@ -2024,6 +2176,9 @@ export async function createNativeStageContext(
         closures: inputClosures,
         files: inputFiles,
       });
+    };
+    const verifySource = async () => {
+      verifyRepositoryCheckSource();
       if (networkBoundaryProof.isolated) {
         if (typeof verifyNetworkBoundary === 'function') {
           const fresh = validateNativeBoundaryProof(
@@ -2095,6 +2250,19 @@ export async function createNativeStageContext(
       ...(typeof withRepositoryIsolation === 'function'
         ? { withRepositoryIsolation }
         : {}),
+      executeRepositoryCheck: createNativeRepositoryCheckExecutor(
+        binding.repositoryPlan,
+        {
+          nativeRun,
+          scratchRoot: snapshot.scratchRoot,
+          inherited: env,
+          // The coordinator's full guards verify live policy before and after
+          // the repository stage. Per-check guards run inside loopback-only
+          // isolation, so they revalidate only sealed source and native inputs.
+          verifySource: verifyRepositoryCheckSource,
+          stdout,
+        }
+      ),
       executeRepository: async (plan) => {
         if (
           !withRepositoryIsolation &&

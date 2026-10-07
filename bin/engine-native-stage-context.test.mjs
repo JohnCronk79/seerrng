@@ -20,6 +20,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Standalone Node tests cannot resolve application aliases.
 import {
+  createNativeRepositoryCheckExecutor,
   createNativeStageContext,
   createOwnedDocsLinkSnapshot,
   createOwnedSourceSnapshot,
@@ -68,6 +69,78 @@ function fixture(t) {
   return { root, parent };
 }
 
+function repositoryCheckFixture(t) {
+  const { parent } = fixture(t);
+  const root = path.join(parent, 'sealed-plan-root');
+  const scratchRoot = path.join(parent, 'sealed-check-scratch');
+  mkdirSync(root);
+  mkdirSync(scratchRoot);
+  const plan = {
+    root,
+    platform: process.platform,
+    testsOnly: false,
+    inventory: [],
+    steps: [
+      {
+        name: 'Formatting',
+        command: process.execPath,
+        args: ['bin/run-prettier.mjs', '--check'],
+        kind: 'check',
+      },
+      {
+        name: 'Node JavaScript 1/1',
+        command: process.execPath,
+        args: ['--test', 'server/test/example.test.mjs'],
+        kind: 'node-js',
+        files: ['server/test/example.test.mjs'],
+      },
+      {
+        name: 'Lint',
+        command: process.execPath,
+        args: ['node_modules/eslint/bin/eslint.js', './server/**/*.ts'],
+        kind: 'check',
+      },
+    ],
+  };
+  return { parent, plan, root, scratchRoot };
+}
+
+function completeCheckReceipt(scratchRoot, id, { status = 'passed' } = {}) {
+  const stdout = Buffer.from('complete check stdout\n');
+  const stderr = Buffer.from('');
+  const stdoutLog = path.join(scratchRoot, `${id}.stdout.log`);
+  const stderrLog = path.join(scratchRoot, `${id}.stderr.log`);
+  writeFileSync(stdoutLog, stdout);
+  writeFileSync(stderrLog, stderr);
+  return {
+    id,
+    status,
+    exitCode: status === 'passed' ? 0 : 1,
+    signal: null,
+    aborted: false,
+    timedOut: false,
+    stopped: false,
+    spawnError: null,
+    wallMs: 1,
+    stdout: stdout.toString('utf8'),
+    stderr: stderr.toString('utf8'),
+    stdoutLog,
+    stderrLog,
+    stdoutBytes: stdout.length,
+    stderrBytes: stderr.length,
+    stdoutSha256: sha(stdout),
+    stderrSha256: sha(stderr),
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    lifecycle: {
+      spawned: true,
+      completed: true,
+      cleanupVerified: true,
+      cleanupError: null,
+    },
+  };
+}
+
 test('invalid worker overrides fail before allocating a disposable source copy', async (t) => {
   const { root, parent } = fixture(t);
   const before = readdirSync(parent).sort();
@@ -82,6 +155,221 @@ test('invalid worker overrides fail before allocating a disposable source copy',
     );
     assert.deepEqual(readdirSync(parent).sort(), before);
   }
+});
+
+test('native repository check runs one exact sealed check with authentic receipt and source guards', async (t) => {
+  const { plan, root, scratchRoot } = repositoryCheckFixture(t);
+  const events = [];
+  const controller = new AbortController();
+  let configDirectory;
+  let actualCommand;
+  const receipt = completeCheckReceipt(scratchRoot, 'Formatting');
+  const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+    scratchRoot,
+    inherited: { NODE_OPTIONS: '--unsealed', PATH: process.env.PATH },
+    stdout: { write() {} },
+    verifySource: async () => events.push('verify'),
+    nativeRun: async (command, options) => {
+      events.push('run');
+      actualCommand = command;
+      configDirectory = command.env.CONFIG_DIRECTORY;
+      assert.equal(options.signal, controller.signal);
+      assert.equal(existsSync(configDirectory), true);
+      return receipt;
+    },
+  });
+
+  const returned = await executeRepositoryCheck(
+    structuredClone(plan.steps[0]),
+    {
+      index: 0,
+      signal: controller.signal,
+    }
+  );
+
+  assert.equal(returned, receipt);
+  assert.deepEqual(events, ['verify', 'run', 'verify']);
+  assert.deepEqual(
+    {
+      name: actualCommand.name,
+      command: actualCommand.command,
+      args: actualCommand.args,
+      kind: actualCommand.kind,
+    },
+    plan.steps[0]
+  );
+  assert.equal(actualCommand.cwd, root);
+  assert.equal(actualCommand.env.NODE_ENV, 'test');
+  assert.equal(actualCommand.env.ALLOW_NETWORK, 'false');
+  assert.equal(actualCommand.env.SEERR_TEST_FAIL_ON_NETWORK, 'true');
+  assert.equal(actualCommand.env.NODE_OPTIONS, undefined);
+  assert.equal(existsSync(configDirectory), false);
+});
+
+test('native repository check rejects test lanes and modified commands before source checks or spawn', async (t) => {
+  const { plan, scratchRoot } = repositoryCheckFixture(t);
+  let runCalls = 0;
+  let verifyCalls = 0;
+  const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+    scratchRoot,
+    stdout: { write() {} },
+    verifySource: async () => {
+      verifyCalls += 1;
+    },
+    nativeRun: async () => {
+      runCalls += 1;
+      return completeCheckReceipt(scratchRoot, 'Formatting');
+    },
+  });
+  const changedCommand = structuredClone(plan.steps[0]);
+  changedCommand.command = 'unsealed-command';
+  const changedArgs = structuredClone(plan.steps[0]);
+  changedArgs.args.push('--write');
+  const relabeledLane = structuredClone(plan.steps[1]);
+  relabeledLane.kind = 'check';
+
+  for (const [step, index] of [
+    [structuredClone(plan.steps[1]), 1],
+    [changedCommand, 0],
+    [changedArgs, 0],
+    [structuredClone(plan.steps[0]), 2],
+    [relabeledLane, 1],
+  ])
+    await assert.rejects(
+      executeRepositoryCheck(step, { index }),
+      /differs from its sealed plan step/
+    );
+
+  assert.equal(verifyCalls, 0);
+  assert.equal(runCalls, 0);
+});
+
+test('native repository check fails closed across source, signal, command, and receipt boundaries', async (t) => {
+  const { plan, scratchRoot } = repositoryCheckFixture(t);
+  const check = structuredClone(plan.steps[0]);
+
+  await t.test('pre-source failure prevents spawn', async () => {
+    let runCalls = 0;
+    const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+      scratchRoot,
+      stdout: { write() {} },
+      verifySource: async () => {
+        throw new Error('pre-source changed');
+      },
+      nativeRun: async () => {
+        runCalls += 1;
+      },
+    });
+    await assert.rejects(
+      executeRepositoryCheck(check, { index: 0 }),
+      /pre-source changed/
+    );
+    assert.equal(runCalls, 0);
+  });
+
+  await t.test(
+    'post-source failure overrides apparent command success',
+    async () => {
+      let verifyCalls = 0;
+      const receipt = completeCheckReceipt(scratchRoot, 'Formatting');
+      const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+        scratchRoot,
+        stdout: { write() {} },
+        verifySource: async () => {
+          verifyCalls += 1;
+          if (verifyCalls === 2) throw new Error('post-source changed');
+        },
+        nativeRun: async () => receipt,
+      });
+      await assert.rejects(
+        executeRepositoryCheck(check, { index: 0 }),
+        /post-source changed/
+      );
+      assert.equal(verifyCalls, 2);
+    }
+  );
+
+  await t.test(
+    'command failure retains its authentic receipt and post-guard',
+    async () => {
+      let verifyCalls = 0;
+      const receipt = completeCheckReceipt(scratchRoot, 'Formatting', {
+        status: 'failed',
+      });
+      const failure = Object.assign(new Error('native check failed'), {
+        receipt,
+      });
+      const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+        scratchRoot,
+        stdout: { write() {} },
+        verifySource: async () => {
+          verifyCalls += 1;
+        },
+        nativeRun: async () => {
+          throw failure;
+        },
+      });
+      await assert.rejects(
+        executeRepositoryCheck(check, { index: 0 }),
+        (error) => error === failure && error.receipt === receipt
+      );
+      assert.equal(verifyCalls, 2);
+    }
+  );
+
+  await t.test(
+    'pre-aborted signal prevents source checks and spawn',
+    async () => {
+      let verifyCalls = 0;
+      let runCalls = 0;
+      const controller = new AbortController();
+      controller.abort();
+      const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+        scratchRoot,
+        stdout: { write() {} },
+        verifySource: async () => {
+          verifyCalls += 1;
+        },
+        nativeRun: async () => {
+          runCalls += 1;
+        },
+      });
+      await assert.rejects(
+        executeRepositoryCheck(check, {
+          index: 0,
+          signal: controller.signal,
+        }),
+        { name: 'AbortError' }
+      );
+      assert.equal(verifyCalls, 0);
+      assert.equal(runCalls, 0);
+    }
+  );
+
+  await t.test(
+    'receipt identity tampering is rejected after one spawn',
+    async () => {
+      let runCalls = 0;
+      let verifyCalls = 0;
+      const executeRepositoryCheck = createNativeRepositoryCheckExecutor(plan, {
+        scratchRoot,
+        stdout: { write() {} },
+        verifySource: async () => {
+          verifyCalls += 1;
+        },
+        nativeRun: async () => {
+          runCalls += 1;
+          return completeCheckReceipt(scratchRoot, 'another-command');
+        },
+      });
+      await assert.rejects(
+        executeRepositoryCheck(check, { index: 0 }),
+        /receipt identity mismatch/
+      );
+      assert.equal(runCalls, 1);
+      assert.equal(verifyCalls, 2);
+    }
+  );
 });
 
 test('snapshot seals actual working bytes/modes, includes unignored files and omits credentials', (t) => {

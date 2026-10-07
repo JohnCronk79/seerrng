@@ -137,8 +137,9 @@ RUN CYPRESS_INSTALL_BINARY=0 CI=true \
     && rm -rf /root/.npm
 
 # Runtime orchestration must supply --read-only, a bounded --tmpfs /tmp,
-# --cap-drop=ALL, and --security-opt=no-new-privileges. TLS material and the
-# canonical task manifest are mounted read-only; evidence is mounted separately.
+# --cap-drop=ALL, and --security-opt=no-new-privileges. The active node config
+# and application root are mounted read-only; run evidence uses a separate
+# bounded writable mount.
 ENV HOME=/tmp/home
 ENV XDG_CACHE_HOME=/tmp/cache
 ENV TMPDIR=/tmp

@@ -532,7 +532,7 @@ function deriveAvailableTasksAndPlan(rootValue, applicationId) {
   const plan = createPlan(root, {
     testsOnly: true,
     platform: process.platform,
-    canonicalTypescript: false,
+    canonicalTypescript: true,
   });
   const available = createAvailableTasks(plan, applicationId);
   verifyTaskFilesAtHead(root, available);

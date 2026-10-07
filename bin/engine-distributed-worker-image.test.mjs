@@ -233,15 +233,16 @@ test('worker image contains no secret or repository bootstrap channel', () => {
   assert.doesNotMatch(dockerfile, /^VOLUME\b/m);
 });
 
-test('worker image leaves isolation, scratch, and credentials to runtime mounts', () => {
+test('worker image leaves isolation, config, application, and evidence to runtime mounts', () => {
   for (const requirement of [
     '--read-only',
     '--tmpfs /tmp',
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
-    'TLS material',
-    'task manifest',
+    'active node config',
+    'application root',
     'mounted read-only',
+    'bounded writable mount',
   ])
     assert.ok(
       dockerfile.includes(requirement),
