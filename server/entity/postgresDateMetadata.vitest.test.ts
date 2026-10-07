@@ -6,6 +6,30 @@ describe('PostgreSQL entity date metadata', () => {
     vi.resetModules();
   });
 
+  it('reproduces TypeORM rejecting datetime metadata for PostgreSQL', async () => {
+    const { DataSource, EntitySchema } = await import('typeorm');
+    const entity = new EntitySchema({
+      name: 'ReaderDeliveryGrouping',
+      columns: {
+        id: { type: Number, primary: true },
+        updatedAt: { type: 'datetime' },
+      },
+    });
+    const source = new DataSource({
+      type: 'postgres',
+      database: 'metadata-test',
+      entities: [entity],
+    });
+
+    await expect(
+      (
+        source as unknown as { buildMetadatas: () => Promise<void> }
+      ).buildMetadatas()
+    ).rejects.toThrow(
+      'Data type "datetime" in "ReaderDeliveryGrouping.updatedAt" is not supported by "postgres" database.'
+    );
+  });
+
   it('builds metadata for date columns on entities added in SeerrNG 3.52', async () => {
     vi.resetModules();
     vi.doMock('@server/utils/dbType', () => ({ isPgsql: true }));

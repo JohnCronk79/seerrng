@@ -28,6 +28,13 @@ metadata regression test, migration test, and release-note fragment.
 - Before rebasing, focused PostgreSQL 18 Node run: 5 passed, 0 failed, 0 skipped. This included
   all four database-gated migration tests and the issue migration query test.
 - Focused Linux Vitest metadata regression: 1 passed.
+- The PostgreSQL metadata test now also records the original failure mode:
+  TypeORM rejects `datetime` for `ReaderDeliveryGrouping.updatedAt` while
+  building PostgreSQL metadata. The current database-aware column type builds
+  successfully.
+- After adding that negative regression case, the focused metadata suite passed
+  2/2 locally; the PostgreSQL timestamp migration query and two SQLite library
+  migration tests passed 3/3.
 - On the rebased candidate, the PostgreSQL entity-metadata regression passed
   (1/1), and the PostgreSQL timestamp migration plus SQLite library migration
   tests passed (3/3) with a workspace-local temporary directory.
@@ -54,12 +61,17 @@ metadata regression test, migration test, and release-note fragment.
   `base64`, `find -printf`, `stat -c`, and `mapfile`). A focused tooling rerun
   confirmed those host-tool differences; Ubuntu CI is the acceptance run for
   this lane.
-- Initial PR Cypress CI ran 43 specs (185 tests): 152 passed, 1 failed, and
-  32 were pending. The failure was the Prowlarr settings heading being absent
-  when the test queried it. The component renders after its settings response;
-  the Cypress test now aliases and waits for that mocked request, then checks
-  the section is visible before continuing its existing interaction checks.
-  The updated Cypress test will rerun in the main-branch workflow after push.
+- Main Cypress CI on `cee6572f` and `cde107d0` each ran 43 specs (185 tests):
+  152 passed, 1 failed, and 32 were pending. Both failed when `#prowlarr` was
+  absent within the default four-second DOM timeout after the mocked settings
+  request returned HTTP 200 with the expected body. The follow-up raises that
+  DOM wait to ten seconds while retaining the explicit response-body assertion;
+  the next main-branch Cypress run must pass before this retry is considered
+  verified.
+- The main image scan flagged the published production versions of `sharp`,
+  `source-map-js`, and `proxy-addr`. The dependency pins and lockfile now use
+  their patched releases. `pnpm audit --prod` reports no known vulnerabilities;
+  the next main-branch Trivy scan must pass to verify the built image.
 - No live database, account, or provider was used.
 
 ## Release

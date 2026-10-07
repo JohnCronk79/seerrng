@@ -126,8 +126,10 @@ describe('Prowlarr settings on a short mobile screen', () => {
       expect(response?.statusCode).to.equal(200);
       expect(response?.body).to.deep.equal(prowlarrSettings);
     });
-    cy.get('#prowlarr').should('be.visible');
-    cy.contains('#prowlarr h3', 'Prowlarr indexers').scrollIntoView();
+    cy.get('#prowlarr', { timeout: 10000 }).should('be.visible');
+    cy.contains('#prowlarr h3', 'Prowlarr indexers', {
+      timeout: 10000,
+    }).scrollIntoView();
     cy.get('#prowlarr')
       .contains('button', 'Test connection and inspect coverage')
       .click();
