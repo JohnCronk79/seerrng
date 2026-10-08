@@ -1,0 +1,869 @@
+{
+  "schema": "vroom-application-adapter/v2",
+  "apiVersion": 2,
+  "vroomVersion": "0.0.1",
+  "applicationId": "seerrng",
+  "capabilities": {
+    "local": true,
+    "hosted": true,
+    "distributed": true
+  },
+  "policy": {
+    "schema": "vroom-application-policy-profile/v2",
+    "source": {
+      "manifest": {
+        "path": "package.json",
+        "format": "json",
+        "expectedName": "seerrng",
+        "nameField": "name",
+        "versionField": "version"
+      },
+      "releaseTagPrefix": "v",
+      "requiredPaths": [
+        { "id": "charts", "path": "charts", "kind": "directory" },
+        { "id": "ci-workflow", "path": ".github/workflows/ci.yml", "kind": "file" },
+        { "id": "cypress", "path": "cypress", "kind": "directory" },
+        { "id": "docs", "path": "docs", "kind": "directory" },
+        { "id": "gen-docs", "path": "gen-docs", "kind": "directory" },
+        { "id": "jellyfin-plugin", "path": "integrations/jellyfin-plugin", "kind": "directory" },
+        { "id": "manifest", "path": "package.json", "kind": "file" },
+        { "id": "playwright", "path": "playwright", "kind": "directory" },
+        { "id": "server", "path": "server", "kind": "directory" },
+        { "id": "src", "path": "src", "kind": "directory" },
+        { "id": "timing-seed", "path": "tools/validation-engine/hosted-test-timing-profile.json", "kind": "file" }
+      ]
+    },
+    "dependencies": {
+      "packageManager": { "kind": "pnpm", "version": "10.24.0" },
+      "workspaces": [
+        {
+          "id": "docs",
+          "root": "gen-docs",
+          "manifestPath": "package.json",
+          "lockfilePath": "pnpm-lock.yaml",
+          "installPath": "node_modules"
+        },
+        {
+          "id": "root",
+          "root": null,
+          "manifestPath": "package.json",
+          "lockfilePath": "pnpm-lock.yaml",
+          "installPath": "node_modules"
+        }
+      ],
+      "tools": [
+        { "id": "codeql-actions", "kind": "codeql-pack", "name": "codeql/actions-queries", "version": "0.6.36" },
+        { "id": "codeql-javascript", "kind": "codeql-pack", "name": "codeql/javascript-queries", "version": "2.4.6" },
+        { "id": "codeql-models", "kind": "codeql-pack", "name": "snapetech/seerrng-codeql-models", "version": "0.0.15" },
+        { "id": "ct", "kind": "recipe-tool", "role": "chart-testing", "versionPattern": "^Version: 3\\.14\\.0" },
+        { "id": "cypress", "kind": "node-package", "workspaceId": "root", "packageName": "cypress", "version": "16.0.0", "entryPoint": "index.js" },
+        { "id": "docker", "kind": "recipe-tool", "role": "container", "versionPattern": "^Docker version .+" },
+        { "id": "dotnet", "kind": "recipe-tool", "role": "dotnet", "versionPattern": "^9\\.0\\." },
+        { "id": "git", "kind": "recipe-tool", "role": "git", "versionPattern": "^git version .+" },
+        { "id": "helm", "kind": "recipe-tool", "role": "helm", "versionPattern": ".+" },
+        {
+          "id": "helm-docs-image",
+          "kind": "container-image",
+          "image": "jnorwood/helm-docs:v1.14.2",
+          "digest": "sha256:7e562b49ab6b1dbc50c3da8f2dd6ffa8a5c6bba327b1c6335cc15ce29267979c"
+        },
+        {
+          "id": "jellyfin-image",
+          "kind": "container-image",
+          "image": "jellyfin/jellyfin",
+          "digest": "sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db"
+        },
+        { "id": "lychee", "kind": "recipe-tool", "role": "link-check", "versionPattern": "^lychee 0\\.24\\.2" },
+        { "id": "node", "kind": "recipe-tool", "role": "node", "versionPattern": "^v24\\.(?:1[5-9]|[2-9][0-9]*)\\.[0-9]+$" },
+        { "id": "playwright", "kind": "node-package", "workspaceId": "root", "packageName": "@playwright/test", "version": "1.63.0", "entryPoint": "index.js" },
+        { "id": "python", "kind": "recipe-tool", "role": "python", "versionPattern": "^Python 3\\." },
+        { "id": "vitest", "kind": "node-package", "workspaceId": "root", "packageName": "vitest", "version": "4.1.11", "entryPoint": "vitest.mjs" },
+        { "id": "yamale", "kind": "recipe-tool", "role": "yaml-schema", "versionPattern": "^yamale 6\\.0\\.0" },
+        { "id": "yamllint", "kind": "recipe-tool", "role": "yaml-lint", "versionPattern": "^yamllint 1\\.33\\.0" }
+      ]
+    },
+    "capacity": {
+      "limits": {
+        "maximumWorkers": 256,
+        "maximumNodes": 256,
+        "maximumThreadsPerNode": 256,
+        "maximumShards": 32,
+        "maximumFilesPerShard": 1000
+      },
+      "overrides": [
+        {
+          "id": "john-distributed",
+          "context": "distributed",
+          "subject": { "kind": "github-login", "value": "JohnCronk79" },
+          "logicalCpuMultiplier": 2
+        },
+        {
+          "id": "john-local",
+          "context": "local",
+          "subject": { "kind": "github-login", "value": "JohnCronk79" },
+          "logicalCpuMultiplier": 2
+        }
+      ]
+    },
+    "repository": {
+      "testRoots": ["bin", "cypress", "deploy", "gen-docs", "packaging", "playwright", "scripts", "server", "src", "test"],
+      "testCandidates": {
+        "include": [
+          "bin/**/*.test.js",
+          "bin/**/*.test.ts",
+          "bin/**/*.test.cjs",
+          "bin/**/*.test.cts",
+          "bin/**/*.test.mjs",
+          "bin/**/*.test.mts",
+          "bin/**/*.test.jsx",
+          "bin/**/*.test.tsx",
+          "bin/**/*.spec.js",
+          "bin/**/*.spec.ts",
+          "bin/**/*.spec.cjs",
+          "bin/**/*.spec.cts",
+          "bin/**/*.spec.mjs",
+          "bin/**/*.spec.mts",
+          "bin/**/*.spec.jsx",
+          "bin/**/*.spec.tsx",
+          "bin/**/*.cy.js",
+          "bin/**/*.cy.ts",
+          "bin/**/*.cy.jsx",
+          "bin/**/*.cy.tsx",
+          "cypress/**/*.test.js",
+          "cypress/**/*.test.ts",
+          "cypress/**/*.test.cjs",
+          "cypress/**/*.test.cts",
+          "cypress/**/*.test.mjs",
+          "cypress/**/*.test.mts",
+          "cypress/**/*.test.jsx",
+          "cypress/**/*.test.tsx",
+          "cypress/**/*.spec.js",
+          "cypress/**/*.spec.ts",
+          "cypress/**/*.spec.cjs",
+          "cypress/**/*.spec.cts",
+          "cypress/**/*.spec.mjs",
+          "cypress/**/*.spec.mts",
+          "cypress/**/*.spec.jsx",
+          "cypress/**/*.spec.tsx",
+          "cypress/**/*.cy.js",
+          "cypress/**/*.cy.ts",
+          "cypress/**/*.cy.jsx",
+          "cypress/**/*.cy.tsx",
+          "deploy/**/*.test.js",
+          "deploy/**/*.test.ts",
+          "deploy/**/*.test.cjs",
+          "deploy/**/*.test.cts",
+          "deploy/**/*.test.mjs",
+          "deploy/**/*.test.mts",
+          "deploy/**/*.test.jsx",
+          "deploy/**/*.test.tsx",
+          "deploy/**/*.spec.js",
+          "deploy/**/*.spec.ts",
+          "deploy/**/*.spec.cjs",
+          "deploy/**/*.spec.cts",
+          "deploy/**/*.spec.mjs",
+          "deploy/**/*.spec.mts",
+          "deploy/**/*.spec.jsx",
+          "deploy/**/*.spec.tsx",
+          "deploy/**/*.cy.js",
+          "deploy/**/*.cy.ts",
+          "deploy/**/*.cy.jsx",
+          "deploy/**/*.cy.tsx",
+          "gen-docs/**/*.test.js",
+          "gen-docs/**/*.test.ts",
+          "gen-docs/**/*.test.cjs",
+          "gen-docs/**/*.test.cts",
+          "gen-docs/**/*.test.mjs",
+          "gen-docs/**/*.test.mts",
+          "gen-docs/**/*.test.jsx",
+          "gen-docs/**/*.test.tsx",
+          "gen-docs/**/*.spec.js",
+          "gen-docs/**/*.spec.ts",
+          "gen-docs/**/*.spec.cjs",
+          "gen-docs/**/*.spec.cts",
+          "gen-docs/**/*.spec.mjs",
+          "gen-docs/**/*.spec.mts",
+          "gen-docs/**/*.spec.jsx",
+          "gen-docs/**/*.spec.tsx",
+          "gen-docs/**/*.cy.js",
+          "gen-docs/**/*.cy.ts",
+          "gen-docs/**/*.cy.jsx",
+          "gen-docs/**/*.cy.tsx",
+          "packaging/**/*.test.js",
+          "packaging/**/*.test.ts",
+          "packaging/**/*.test.cjs",
+          "packaging/**/*.test.cts",
+          "packaging/**/*.test.mjs",
+          "packaging/**/*.test.mts",
+          "packaging/**/*.test.jsx",
+          "packaging/**/*.test.tsx",
+          "packaging/**/*.spec.js",
+          "packaging/**/*.spec.ts",
+          "packaging/**/*.spec.cjs",
+          "packaging/**/*.spec.cts",
+          "packaging/**/*.spec.mjs",
+          "packaging/**/*.spec.mts",
+          "packaging/**/*.spec.jsx",
+          "packaging/**/*.spec.tsx",
+          "packaging/**/*.cy.js",
+          "packaging/**/*.cy.ts",
+          "packaging/**/*.cy.jsx",
+          "packaging/**/*.cy.tsx",
+          "playwright/**/*.test.js",
+          "playwright/**/*.test.ts",
+          "playwright/**/*.test.cjs",
+          "playwright/**/*.test.cts",
+          "playwright/**/*.test.mjs",
+          "playwright/**/*.test.mts",
+          "playwright/**/*.test.jsx",
+          "playwright/**/*.test.tsx",
+          "playwright/**/*.spec.js",
+          "playwright/**/*.spec.ts",
+          "playwright/**/*.spec.cjs",
+          "playwright/**/*.spec.cts",
+          "playwright/**/*.spec.mjs",
+          "playwright/**/*.spec.mts",
+          "playwright/**/*.spec.jsx",
+          "playwright/**/*.spec.tsx",
+          "playwright/**/*.cy.js",
+          "playwright/**/*.cy.ts",
+          "playwright/**/*.cy.jsx",
+          "playwright/**/*.cy.tsx",
+          "scripts/**/*.test.js",
+          "scripts/**/*.test.ts",
+          "scripts/**/*.test.cjs",
+          "scripts/**/*.test.cts",
+          "scripts/**/*.test.mjs",
+          "scripts/**/*.test.mts",
+          "scripts/**/*.test.jsx",
+          "scripts/**/*.test.tsx",
+          "scripts/**/*.spec.js",
+          "scripts/**/*.spec.ts",
+          "scripts/**/*.spec.cjs",
+          "scripts/**/*.spec.cts",
+          "scripts/**/*.spec.mjs",
+          "scripts/**/*.spec.mts",
+          "scripts/**/*.spec.jsx",
+          "scripts/**/*.spec.tsx",
+          "scripts/**/*.cy.js",
+          "scripts/**/*.cy.ts",
+          "scripts/**/*.cy.jsx",
+          "scripts/**/*.cy.tsx",
+          "server/**/*.test.js",
+          "server/**/*.test.ts",
+          "server/**/*.test.cjs",
+          "server/**/*.test.cts",
+          "server/**/*.test.mjs",
+          "server/**/*.test.mts",
+          "server/**/*.test.jsx",
+          "server/**/*.test.tsx",
+          "server/**/*.spec.js",
+          "server/**/*.spec.ts",
+          "server/**/*.spec.cjs",
+          "server/**/*.spec.cts",
+          "server/**/*.spec.mjs",
+          "server/**/*.spec.mts",
+          "server/**/*.spec.jsx",
+          "server/**/*.spec.tsx",
+          "server/**/*.cy.js",
+          "server/**/*.cy.ts",
+          "server/**/*.cy.jsx",
+          "server/**/*.cy.tsx",
+          "src/**/*.test.js",
+          "src/**/*.test.ts",
+          "src/**/*.test.cjs",
+          "src/**/*.test.cts",
+          "src/**/*.test.mjs",
+          "src/**/*.test.mts",
+          "src/**/*.test.jsx",
+          "src/**/*.test.tsx",
+          "src/**/*.spec.js",
+          "src/**/*.spec.ts",
+          "src/**/*.spec.cjs",
+          "src/**/*.spec.cts",
+          "src/**/*.spec.mjs",
+          "src/**/*.spec.mts",
+          "src/**/*.spec.jsx",
+          "src/**/*.spec.tsx",
+          "src/**/*.cy.js",
+          "src/**/*.cy.ts",
+          "src/**/*.cy.jsx",
+          "src/**/*.cy.tsx",
+          "test/**/*.test.js",
+          "test/**/*.test.ts",
+          "test/**/*.test.cjs",
+          "test/**/*.test.cts",
+          "test/**/*.test.mjs",
+          "test/**/*.test.mts",
+          "test/**/*.test.jsx",
+          "test/**/*.test.tsx",
+          "test/**/*.spec.js",
+          "test/**/*.spec.ts",
+          "test/**/*.spec.cjs",
+          "test/**/*.spec.cts",
+          "test/**/*.spec.mjs",
+          "test/**/*.spec.mts",
+          "test/**/*.spec.jsx",
+          "test/**/*.spec.tsx",
+          "test/**/*.cy.js",
+          "test/**/*.cy.ts",
+          "test/**/*.cy.jsx",
+          "test/**/*.cy.tsx"
+        ],
+        "exclude": []
+      },
+      "groups": [
+        {
+          "id": "cypress",
+          "workspaceId": "root",
+          "runner": "cypress",
+          "toolId": "cypress",
+          "include": [
+            "cypress/e2e/**/*.cy.js",
+            "cypress/e2e/**/*.cy.ts",
+            "cypress/e2e/**/*.cy.jsx",
+            "cypress/e2e/**/*.cy.tsx"
+          ],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": true,
+          "configPath": "cypress.config.ts"
+        },
+        {
+          "id": "docs-security",
+          "workspaceId": "docs",
+          "runner": "node-test",
+          "toolId": null,
+          "include": ["gen-docs/scripts/image-size-security.test.mjs"],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": false,
+          "configPath": null
+        },
+        {
+          "id": "node-mjs",
+          "workspaceId": "root",
+          "runner": "node-test",
+          "toolId": null,
+          "include": [
+            "server/**/*.test.mjs",
+            "server/**/*.spec.mjs",
+            "src/**/*.test.mjs",
+            "src/**/*.spec.mjs"
+          ],
+          "exclude": ["server/test/distributedStagedValidation.test.mjs"],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": false,
+          "configPath": null
+        },
+        {
+          "id": "playwright",
+          "workspaceId": "root",
+          "runner": "playwright",
+          "toolId": "playwright",
+          "include": [
+            "playwright/**/*.spec.js",
+            "playwright/**/*.spec.ts",
+            "playwright/**/*.spec.jsx",
+            "playwright/**/*.spec.tsx"
+          ],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": true,
+          "configPath": "playwright.config.ts"
+        },
+        {
+          "id": "tooling",
+          "workspaceId": "root",
+          "runner": "node-test",
+          "toolId": null,
+          "include": [
+            "bin/**/*.test.mjs",
+            "deploy/**/*.test.mjs",
+            "packaging/**/*.test.mjs",
+            "scripts/**/*.test.mjs",
+            "server/test/distributedStagedValidation.test.mjs"
+          ],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": false,
+          "configPath": null
+        },
+        {
+          "id": "vitest",
+          "workspaceId": "root",
+          "runner": "vitest",
+          "toolId": "vitest",
+          "include": ["server/**/*.test.ts", "src/**/*.test.ts", "src/**/*.test.tsx"],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": true,
+          "configPath": "vitest.config.mts"
+        },
+        {
+          "id": "vroom-conformance",
+          "workspaceId": "root",
+          "runner": "node-test",
+          "toolId": null,
+          "include": ["test/vroom-application-adapter.test.mjs"],
+          "exclude": [],
+          "platforms": ["darwin", "linux", "win32"],
+          "aggregate": false,
+          "configPath": null
+        }
+      ],
+      "moduleAliases": [
+        {
+          "id": "vitest-node-test",
+          "specifier": "node:test",
+          "targetPath": "server/test/vitestNodeTest.ts",
+          "groupId": "vitest"
+        }
+      ],
+      "scripts": [
+        { "id": "app-start", "workspaceId": "root", "name": "start" },
+        { "id": "bundle-check", "workspaceId": "root", "name": "bundle:check" },
+        { "id": "current-batch", "workspaceId": "root", "name": "current-batch:check" },
+        { "id": "docs-build", "workspaceId": "docs", "name": "build" },
+        { "id": "docs-generate", "workspaceId": "docs", "name": "gen-api-docs" },
+        { "id": "format-check", "workspaceId": "root", "name": "format:check" },
+        { "id": "i18n-check", "workspaceId": "root", "name": "i18n:check" },
+        { "id": "lint", "workspaceId": "root", "name": "lint" },
+        { "id": "production-build", "workspaceId": "root", "name": "build" },
+        { "id": "security-council", "workspaceId": "root", "name": "security:council" },
+        { "id": "typecheck", "workspaceId": "root", "name": "typecheck" }
+      ]
+    },
+    "environment": {
+      "unsetNames": ["CI", "VITEST"],
+      "unsetPrefixes": ["DATABASE_", "DB_", "TS_NODE_"]
+    },
+    "stages": {
+      "services": [
+        {
+          "id": "browser-app",
+          "startScriptId": "app-start",
+          "readiness": [
+            { "path": "/api/v1/status/ready", "status": 204 },
+            { "path": "/login", "status": 200 }
+          ],
+          "timeoutId": "service"
+        }
+      ],
+      "units": [
+        { "id": "ci-i18n", "kind": "script", "stage": "repository", "scriptId": "i18n-check", "serviceId": null, "timeoutId": "repository" },
+        {
+          "id": "ci-jellyfin-plugin",
+          "kind": "command-sequence",
+          "recipe": "dotnet-container-smoke",
+          "stage": "build",
+          "serviceId": null,
+          "timeoutId": "build",
+          "commands": [
+            {
+              "id": "publish",
+              "operation": "dotnet-publish",
+              "toolId": "dotnet",
+              "requirementIds": [],
+              "arguments": [
+                { "kind": "literal", "value": "publish", "events": [] },
+                { "kind": "repository-path", "path": "integrations/jellyfin-plugin/SeerrNG.JellyfinBridge.csproj", "events": [] },
+                { "kind": "literal", "value": "--configuration", "events": [] },
+                { "kind": "literal", "value": "Release", "events": [] },
+                { "kind": "literal", "value": "--disable-build-servers", "events": [] },
+                { "kind": "literal", "value": "--output", "events": [] },
+                { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-plugin-output", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "DOTNET_CLI_HOME", "value": { "kind": "owned-path", "root": "fixtures", "path": "dotnet-home" } },
+                { "name": "DOTNET_CLI_TELEMETRY_OPTOUT", "value": { "kind": "literal", "value": "1" } },
+                { "name": "NUGET_PACKAGES", "value": { "kind": "owned-path", "root": "fixtures", "path": "nuget-packages" } }
+              ],
+              "writes": [
+                { "kind": "repository-path", "path": "integrations/jellyfin-plugin/obj" },
+                { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-plugin-output" }
+              ],
+              "events": [],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            },
+            {
+              "id": "smoke",
+              "operation": "container-smoke-script",
+              "toolId": "python",
+              "requirementIds": ["smoke-runtime"],
+              "arguments": [
+                { "kind": "repository-path", "path": "integrations/jellyfin-plugin/smoke-test.py", "events": [] },
+                { "kind": "literal", "value": "--plugin-output", "events": [] },
+                { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-plugin-output", "events": [] },
+                { "kind": "literal", "value": "--image", "events": [] },
+                { "kind": "container-image", "imageId": "jellyfin-image", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "TEMP", "value": { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-smoke" } },
+                { "name": "TMP", "value": { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-smoke" } },
+                { "name": "TMPDIR", "value": { "kind": "owned-path", "root": "fixtures", "path": "jellyfin-smoke" } }
+              ],
+              "writes": [],
+              "events": [],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": true }
+            }
+          ],
+          "requirements": [
+            {
+              "id": "smoke-runtime",
+              "kind": "container-runtime",
+              "toolId": "docker",
+              "imageIds": ["jellyfin-image"],
+              "features": ["cleanup-proof", "daemon", "loopback", "owned-bind-paths"],
+              "events": []
+            }
+          ]
+        },
+        {
+          "id": "ci-release-notes",
+          "kind": "command-sequence",
+          "recipe": "git-release-validation",
+          "stage": "repository",
+          "serviceId": null,
+          "timeoutId": "repository",
+          "commands": [
+            {
+              "id": "release-note",
+              "operation": "git-repository-script",
+              "toolId": "node",
+              "requirementIds": ["release-body-integrity", "release-git", "release-message-integrity"],
+              "arguments": [
+                { "kind": "repository-path", "path": "scripts/check-release-notes.mjs", "events": [] },
+                { "kind": "literal", "value": "--base", "events": [] },
+                { "kind": "metadata", "name": "base-commit", "events": [] },
+                { "kind": "literal", "value": "--head", "events": [] },
+                { "kind": "metadata", "name": "head-commit", "events": [] },
+                { "kind": "literal", "value": "--pr-body", "events": ["pull_request"] },
+                { "kind": "metadata", "name": "pull-request-body-file", "events": ["pull_request"] },
+                { "kind": "literal", "value": "--pr-body", "events": ["push"] },
+                { "kind": "metadata", "name": "head-message-file", "events": ["push"] },
+                { "kind": "literal", "value": "--summary-file", "events": [] },
+                { "kind": "owned-path", "root": "fixtures", "path": "release-note-summary.md", "events": [] },
+                { "kind": "literal", "value": "--allow-mixed-push-batch", "events": ["push"] }
+              ],
+              "workspaceId": "root",
+              "environment": [],
+              "writes": [{ "kind": "owned-path", "root": "fixtures", "path": "release-note-summary.md" }],
+              "events": [],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            },
+            {
+              "id": "changelog-tags",
+              "operation": "git-repository-script",
+              "toolId": "node",
+              "requirementIds": ["release-git"],
+              "arguments": [{ "kind": "repository-path", "path": "scripts/check-changelog-tags.mjs", "events": [] }],
+              "workspaceId": "root",
+              "environment": [],
+              "writes": [],
+              "events": [],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            }
+          ],
+          "requirements": [
+            { "id": "release-body-integrity", "kind": "metadata-file-sha256", "file": "pull-request-body-file", "digest": "pull-request-body-sha256", "events": ["pull_request"] },
+            { "id": "release-git", "kind": "git-state", "toolId": "git", "features": ["complete-history", "complete-tags"], "events": [] },
+            { "id": "release-message-integrity", "kind": "metadata-file-sha256", "file": "head-message-file", "digest": "head-message-sha256", "events": ["push"] }
+          ]
+        },
+        { "id": "ci-security-council", "kind": "script", "stage": "repository", "scriptId": "security-council", "serviceId": null, "timeoutId": "repository" },
+        { "id": "ci-test-build", "kind": "script", "stage": "build", "scriptId": "production-build", "serviceId": null, "timeoutId": "build" },
+        { "id": "ci-test-bundle", "kind": "script", "stage": "build", "scriptId": "bundle-check", "serviceId": null, "timeoutId": "build" },
+        { "id": "ci-test-format", "kind": "script", "stage": "repository", "scriptId": "format-check", "serviceId": null, "timeoutId": "repository" },
+        { "id": "ci-test-lint", "kind": "script", "stage": "repository", "scriptId": "lint", "serviceId": null, "timeoutId": "repository" },
+        { "id": "ci-unit-node", "kind": "group", "stage": "repository", "groupId": "node-mjs", "serviceId": null, "timeoutId": "repository" },
+        { "id": "ci-unit-vitest", "kind": "group", "stage": "repository", "groupId": "vitest", "serviceId": null, "timeoutId": "repository" },
+        { "id": "codeql-actions", "kind": "codeql", "stage": "codeql", "language": "actions", "querySuite": "security-and-quality", "codeqlPackIds": ["codeql-actions"], "serviceId": null, "timeoutId": "codeql" },
+        { "id": "codeql-javascript", "kind": "codeql", "stage": "codeql", "language": "javascript-typescript", "querySuite": "security-and-quality", "codeqlPackIds": ["codeql-javascript", "codeql-models"], "serviceId": null, "timeoutId": "codeql" },
+        { "id": "current-batch", "kind": "script", "stage": "repository", "scriptId": "current-batch", "serviceId": null, "timeoutId": "repository" },
+        { "id": "cypress-run", "kind": "group", "stage": "browser", "groupId": "cypress", "serviceId": "browser-app", "timeoutId": "browser" },
+        {
+          "id": "docs-links",
+          "kind": "command-sequence",
+          "recipe": "link-validation",
+          "stage": "repository",
+          "serviceId": null,
+          "timeoutId": "repository",
+          "commands": [
+            {
+              "id": "link-scan",
+              "operation": "link-check",
+              "toolId": "lychee",
+              "requirementIds": ["link-network"],
+              "arguments": [
+                { "kind": "literal", "value": "--format", "events": [] },
+                { "kind": "literal", "value": "markdown", "events": [] },
+                { "kind": "literal", "value": "--mode", "events": [] },
+                { "kind": "literal", "value": "task", "events": [] },
+                { "kind": "literal", "value": "--output", "events": [] },
+                { "kind": "owned-path", "root": "fixtures", "path": "lychee-out.md", "events": [] },
+                { "kind": "literal", "value": "--verbose", "events": [] },
+                { "kind": "literal", "value": "--no-progress", "events": [] },
+                { "kind": "literal", "value": "--accept", "events": [] },
+                { "kind": "literal", "value": "200..204,300..304,307,308,404,429,999", "events": [] },
+                { "kind": "literal", "value": "--exclude", "events": [] },
+                { "kind": "link-exclude", "value": "^file://", "events": [] },
+                { "kind": "literal", "value": "--exclude", "events": [] },
+                { "kind": "link-exclude", "value": "^https?://(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\]|\\[::\\])", "events": [] },
+                { "kind": "literal", "value": "--exclude", "events": [] },
+                { "kind": "link-exclude", "value": "^https?://support\\.discord\\.com", "events": [] },
+                { "kind": "repository-glob", "pattern": "docs/**/*.md", "events": [] },
+                { "kind": "repository-glob", "pattern": "docs/**/*.mdx", "events": [] },
+                { "kind": "repository-glob", "pattern": "gen-docs/**/*.md", "events": [] },
+                { "kind": "repository-glob", "pattern": "gen-docs/**/*.mdx", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "GH_TOKEN", "value": { "kind": "unset" } },
+                { "name": "GITHUB_TOKEN", "value": { "kind": "unset" } },
+                { "name": "GITLAB_TOKEN", "value": { "kind": "unset" } }
+              ],
+              "writes": [{ "kind": "owned-path", "root": "fixtures", "path": "lychee-out.md" }],
+              "events": [],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "lychee-markdown", "report": { "kind": "owned-path", "root": "fixtures", "path": "lychee-out.md" } },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            }
+          ],
+          "requirements": [{ "id": "link-network", "kind": "network", "access": "external-http", "events": [] }]
+        },
+        {
+          "id": "helm-lint-test",
+          "kind": "command-sequence",
+          "recipe": "helm-chart-validation",
+          "stage": "build",
+          "serviceId": null,
+          "timeoutId": "build",
+          "commands": [
+            {
+              "id": "list-changed",
+              "operation": "chart-test",
+              "toolId": "ct",
+              "requirementIds": ["ct-chart-schema", "ct-lintconf", "helm-git", "helm-target"],
+              "arguments": [
+                { "kind": "literal", "value": "list-changed", "events": [] },
+                { "kind": "literal", "value": "--target-branch", "events": [] },
+                { "kind": "metadata", "name": "default-branch", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "CT_CONFIG_DIR", "value": { "kind": "tool-root", "toolId": "ct" } },
+                { "name": "PATH", "value": { "kind": "tool-path-list", "toolIds": ["helm", "yamale", "yamllint"], "appendInherited": true } }
+              ],
+              "writes": [],
+              "events": ["pull_request"],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            },
+            {
+              "id": "docs-pr",
+              "operation": "container-dry-run",
+              "toolId": "docker",
+              "requirementIds": ["helm-docs-runtime"],
+              "arguments": [
+                { "kind": "literal", "value": "run", "events": [] },
+                { "kind": "literal", "value": "--rm", "events": [] },
+                { "kind": "literal", "value": "--user", "events": [] },
+                { "kind": "runtime-user-group", "events": [] },
+                { "kind": "literal", "value": "--volume", "events": [] },
+                { "kind": "repository-bind", "containerPath": "/helm-docs", "readOnly": true, "events": [] },
+                { "kind": "container-image", "imageId": "helm-docs-image", "events": [] },
+                { "kind": "literal", "value": "--chart-search-root", "events": [] },
+                { "kind": "iteration-directory", "events": [] },
+                { "kind": "literal", "value": "--dry-run", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [],
+              "writes": [],
+              "events": ["pull_request"],
+              "forEach": { "kind": "prior-output-repository-directories", "commandId": "list-changed", "root": "charts" },
+              "condition": { "kind": "prior-output-nonempty", "commandId": "list-changed", "stream": "stdout", "events": ["pull_request"] },
+              "result": { "kind": "stdout-equals-iteration-file", "fileName": "README.md" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": true }
+            },
+            {
+              "id": "docs-push",
+              "operation": "container-dry-run",
+              "toolId": "docker",
+              "requirementIds": ["helm-docs-runtime"],
+              "arguments": [
+                { "kind": "literal", "value": "run", "events": [] },
+                { "kind": "literal", "value": "--rm", "events": [] },
+                { "kind": "literal", "value": "--user", "events": [] },
+                { "kind": "runtime-user-group", "events": [] },
+                { "kind": "literal", "value": "--volume", "events": [] },
+                { "kind": "repository-bind", "containerPath": "/helm-docs", "readOnly": true, "events": [] },
+                { "kind": "container-image", "imageId": "helm-docs-image", "events": [] },
+                { "kind": "literal", "value": "--chart-search-root", "events": [] },
+                { "kind": "iteration-directory", "events": [] },
+                { "kind": "literal", "value": "--dry-run", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [],
+              "writes": [],
+              "events": ["push"],
+              "forEach": { "kind": "repository-parent-of-match", "root": "charts", "include": ["charts/**/Chart.yaml"], "exclude": [] },
+              "condition": null,
+              "result": { "kind": "stdout-equals-iteration-file", "fileName": "README.md" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": true }
+            },
+            {
+              "id": "lint-pr",
+              "operation": "chart-test",
+              "toolId": "ct",
+              "requirementIds": ["ct-chart-schema", "ct-lintconf", "helm-git", "helm-target"],
+              "arguments": [
+                { "kind": "literal", "value": "lint", "events": [] },
+                { "kind": "literal", "value": "--target-branch", "events": [] },
+                { "kind": "metadata", "name": "default-branch", "events": [] },
+                { "kind": "literal", "value": "--validate-maintainers=false", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "CT_CONFIG_DIR", "value": { "kind": "tool-root", "toolId": "ct" } },
+                { "name": "PATH", "value": { "kind": "tool-path-list", "toolIds": ["helm", "yamale", "yamllint"], "appendInherited": true } }
+              ],
+              "writes": [],
+              "events": ["pull_request"],
+              "forEach": null,
+              "condition": { "kind": "prior-output-nonempty", "commandId": "list-changed", "stream": "stdout", "events": ["pull_request"] },
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            },
+            {
+              "id": "lint-push",
+              "operation": "chart-test",
+              "toolId": "ct",
+              "requirementIds": ["ct-chart-schema", "ct-lintconf", "helm-git"],
+              "arguments": [
+                { "kind": "literal", "value": "lint", "events": [] },
+                { "kind": "literal", "value": "--all", "events": [] },
+                { "kind": "literal", "value": "--validate-maintainers=false", "events": [] }
+              ],
+              "workspaceId": "root",
+              "environment": [
+                { "name": "CT_CONFIG_DIR", "value": { "kind": "tool-root", "toolId": "ct" } },
+                { "name": "PATH", "value": { "kind": "tool-path-list", "toolIds": ["helm", "yamale", "yamllint"], "appendInherited": true } }
+              ],
+              "writes": [],
+              "events": ["push"],
+              "forEach": null,
+              "condition": null,
+              "result": { "kind": "exit-code" },
+              "lifecycle": { "processTreeCleanup": true, "containerCleanupProof": false }
+            }
+          ],
+          "requirements": [
+            { "id": "ct-chart-schema", "kind": "tool-file-sha256", "toolId": "ct", "path": "etc/chart_schema.yaml", "digest": "a554cca0ea6454b6359f88f505146d79fbad7077bdc0572dcf698c0f3e033c53", "events": [] },
+            { "id": "ct-lintconf", "kind": "tool-file-sha256", "toolId": "ct", "path": "etc/lintconf.yaml", "digest": "8dee081250acc0e2619674392c67f2801051b5de37289591a54e4b38aa77802e", "events": [] },
+            { "id": "helm-docs-runtime", "kind": "container-runtime", "toolId": "docker", "imageIds": ["helm-docs-image"], "features": ["cleanup-proof", "daemon", "read-only-repository-bind"], "events": [] },
+            { "id": "helm-git", "kind": "git-state", "toolId": "git", "features": ["complete-history"], "events": [] },
+            { "id": "helm-target", "kind": "git-state", "toolId": "git", "features": ["default-branch", "target-ref"], "events": ["pull_request"] }
+          ]
+        },
+        { "id": "local-typecheck", "kind": "script", "stage": "repository", "scriptId": "typecheck", "serviceId": null, "timeoutId": "repository" },
+        { "id": "playwright-run", "kind": "group", "stage": "browser", "groupId": "playwright", "serviceId": "browser-app", "timeoutId": "browser" },
+        { "id": "test-docs-build", "kind": "script", "stage": "build", "scriptId": "docs-build", "serviceId": null, "timeoutId": "build" },
+        { "id": "test-docs-generate", "kind": "script", "stage": "build", "scriptId": "docs-generate", "serviceId": null, "timeoutId": "build" },
+        { "id": "test-docs-security", "kind": "group", "stage": "repository", "groupId": "docs-security", "serviceId": null, "timeoutId": "repository" },
+        { "id": "vroom-conformance", "kind": "group", "stage": "repository", "groupId": "vroom-conformance", "serviceId": null, "timeoutId": "repository" }
+      ]
+    },
+    "hosted": {
+      "workflows": [
+        {
+          "id": "ci",
+          "path": ".github/workflows/ci.yml",
+          "jobs": [
+            { "id": "i18n", "unitIds": ["ci-i18n", "ci-security-council"] },
+            { "id": "jellyfin-plugin", "unitIds": ["ci-jellyfin-plugin"] },
+            { "id": "playwright", "unitIds": ["playwright-run"] },
+            { "id": "release-notes", "unitIds": ["ci-release-notes"] },
+            { "id": "test", "unitIds": ["ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint"] },
+            { "id": "unit-test", "unitIds": ["ci-unit-node", "ci-unit-vitest"] }
+          ]
+        },
+        { "id": "codeql", "path": ".github/workflows/codeql.yml", "jobs": [{ "id": "analyze", "unitIds": ["codeql-actions", "codeql-javascript"] }] },
+        { "id": "cypress", "path": ".github/workflows/cypress.yml", "jobs": [{ "id": "cypress-run", "unitIds": ["cypress-run"] }] },
+        { "id": "docs-links", "path": ".github/workflows/docs-link-check.yml", "jobs": [{ "id": "link-check", "unitIds": ["docs-links"] }] },
+        { "id": "helm", "path": ".github/workflows/lint-helm-charts.yml", "jobs": [{ "id": "lint-test", "unitIds": ["helm-lint-test"] }] },
+        { "id": "test-docs", "path": ".github/workflows/test-docs.yml", "jobs": [{ "id": "test-build", "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] }] }
+      ],
+      "filters": [
+        { "id": "ci-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-council", "ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint", "ci-unit-node", "ci-unit-vitest"] },
+        { "id": "ci-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-council", "ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint", "ci-unit-node", "ci-unit-vitest"] },
+        { "id": "codeql-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": ["**/*.md", "docs/**"], "unitIds": ["codeql-actions", "codeql-javascript"] },
+        { "id": "codeql-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": ["**/*.md", "docs/**"], "unitIds": ["codeql-actions", "codeql-javascript"] },
+        { "id": "cypress-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": [".github/workflows/ci.yml", ".github/workflows/cypress.yml", "bin/**", "config/**", "cypress.config.ts", "cypress/**", "next.config.ts", "package.json", "pnpm-lock.yaml", "scripts/export-external-config.mjs", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json", "vitest.config.mts"], "exclude": [], "unitIds": ["cypress-run"] },
+        { "id": "cypress-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/cypress.yml", "bin/**", "config/**", "cypress.config.ts", "cypress/**", "next.config.ts", "package.json", "pnpm-lock.yaml", "scripts/export-external-config.mjs", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json", "vitest.config.mts"], "exclude": [], "unitIds": ["cypress-run"] },
+        { "id": "docs-links-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": [".github/workflows/ci.yml", ".github/workflows/docs-link-check.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["docs-links"] },
+        { "id": "docs-links-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/docs-link-check.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["docs-links"] },
+        { "id": "helm-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/lint-helm-charts.yml", "charts/**"], "exclude": [], "unitIds": ["helm-lint-test"] },
+        { "id": "helm-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/lint-helm-charts.yml", "charts/**"], "exclude": [], "unitIds": ["helm-lint-test"] },
+        { "id": "playwright-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": [".github/workflows/ci.yml", "bin/**", "config/**", "next.config.ts", "package.json", "playwright.config.ts", "playwright/**", "pnpm-lock.yaml", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json"], "exclude": [], "unitIds": ["playwright-run"] },
+        { "id": "playwright-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", "bin/**", "config/**", "next.config.ts", "package.json", "playwright.config.ts", "playwright/**", "pnpm-lock.yaml", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json"], "exclude": [], "unitIds": ["playwright-run"] },
+        { "id": "release-pr", "events": ["pull_request"], "actorTypes": ["user"], "targetBranches": ["*"], "include": ["**"], "exclude": [], "unitIds": ["ci-release-notes"] },
+        { "id": "release-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": [], "unitIds": ["ci-release-notes"] },
+        { "id": "test-docs-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] },
+        { "id": "test-docs-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] }
+      ],
+      "fallbacks": {
+        "newBranch": "run-all",
+        "largeUpdate": { "threshold": 1000, "action": "run-all" }
+      }
+    },
+    "artifacts": {
+      "outputs": [
+        { "id": "codeql-actions-sarif", "unitId": "codeql-actions", "kind": "codeql-sarif", "fileName": "codeql-actions.sarif", "maxBytes": 268435456, "retention": "durable" },
+        { "id": "codeql-javascript-sarif", "unitId": "codeql-javascript", "kind": "codeql-sarif", "fileName": "codeql-javascript.sarif", "maxBytes": 268435456, "retention": "durable" },
+        { "id": "cypress-report", "unitId": "cypress-run", "kind": "browser-report", "fileName": "cypress-results.json", "maxBytes": 134217728, "retention": "run" },
+        { "id": "docs-link-report", "unitId": "docs-links", "kind": "log", "fileName": "lychee-out.md", "maxBytes": 16777216, "retention": "run" },
+        { "id": "node-test-report", "unitId": "ci-unit-node", "kind": "tap", "fileName": "node-tests.tap", "maxBytes": 134217728, "retention": "run" },
+        { "id": "playwright-report", "unitId": "playwright-run", "kind": "browser-report", "fileName": "playwright-results.json", "maxBytes": 134217728, "retention": "run" },
+        { "id": "release-note-summary", "unitId": "ci-release-notes", "kind": "manifest", "fileName": "release-note-summary.md", "maxBytes": 1048576, "retention": "run" },
+        { "id": "vitest-report", "unitId": "ci-unit-vitest", "kind": "json-report", "fileName": "vitest-results.json", "maxBytes": 134217728, "retention": "run" }
+      ]
+    },
+    "timing": {
+      "seed": { "path": "tools/validation-engine/hosted-test-timing-profile.json", "required": true },
+      "timeouts": [
+        { "id": "browser", "defaultMs": 2700000, "maximumMs": 4500000 },
+        { "id": "build", "defaultMs": 1800000, "maximumMs": 5400000 },
+        { "id": "codeql", "defaultMs": 600000, "maximumMs": 1800000 },
+        { "id": "repository", "defaultMs": 1800000, "maximumMs": 4500000 },
+        { "id": "service", "defaultMs": 600000, "maximumMs": 900000 }
+      ],
+      "shards": [
+        { "id": "cypress-shards", "unitId": "cypress-run", "count": 6 },
+        { "id": "node-shards", "unitId": "ci-unit-node", "count": 4 },
+        { "id": "vitest-shards", "unitId": "ci-unit-vitest", "count": 4 }
+      ],
+      "maximumConcurrentCases": 30,
+      "maxSamples": 50,
+      "resultReuse": false,
+      "crossRunGreenResults": false
+    }
+  }
+}
