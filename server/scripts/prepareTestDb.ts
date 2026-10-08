@@ -11,9 +11,11 @@ const defaultTestConfigDirectory = path.join(
   'cypress/runtime-config'
 );
 const configDirectory =
-  process.env.CONFIG_DIRECTORY || defaultTestConfigDirectory;
-// The data source reads CONFIG_DIRECTORY when it is imported. Set it before
-// loading seedTestDb so the default Cypress prep path cannot target config/.
+  process.env.VROOM_FIXTURE_ROOT ||
+  process.env.CONFIG_DIRECTORY ||
+  defaultTestConfigDirectory;
+// Vroom's owned fixture root is authoritative when present. The data source
+// reads CONFIG_DIRECTORY when imported, so map it before loading seedTestDb.
 process.env.CONFIG_DIRECTORY = configDirectory;
 const targetSettingsPath = path.join(configDirectory, 'settings.json');
 const liveSettingsPath = path.join(repoRoot, 'config/settings.json');

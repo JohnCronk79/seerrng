@@ -1,6 +1,6 @@
 {
-  "schema": "vroom-application-adapter/v2",
-  "apiVersion": 2,
+  "schema": "vroom-application-adapter/v3",
+  "apiVersion": 3,
   "vroomVersion": "0.0.1",
   "applicationId": "seerrng",
   "capabilities": {
@@ -9,7 +9,7 @@
     "distributed": true
   },
   "policy": {
-    "schema": "vroom-application-policy-profile/v2",
+    "schema": "vroom-application-policy-profile/v3",
     "source": {
       "manifest": {
         "path": "package.json",
@@ -53,6 +53,7 @@
       ],
       "tools": [
         { "id": "codeql-actions", "kind": "codeql-pack", "name": "codeql/actions-queries", "version": "0.6.36" },
+        { "id": "codeql-cli", "kind": "recipe-tool", "role": "codeql", "versionPattern": "^CodeQL command-line toolchain release 2\\.27\\.1\\.$" },
         { "id": "codeql-javascript", "kind": "codeql-pack", "name": "codeql/javascript-queries", "version": "2.4.6" },
         { "id": "codeql-models", "kind": "codeql-pack", "name": "snapetech/seerrng-codeql-models", "version": "0.0.15" },
         { "id": "ct", "kind": "recipe-tool", "role": "chart-testing", "versionPattern": "^Version: 3\\.14\\.0" },
@@ -421,17 +422,21 @@
         }
       ],
       "scripts": [
-        { "id": "app-start", "workspaceId": "root", "name": "start" },
+        { "id": "browser-prepare", "workspaceId": "root", "name": "cypress:prepare" },
+        { "id": "browser-start", "workspaceId": "root", "name": "cypress:start" },
         { "id": "bundle-check", "workspaceId": "root", "name": "bundle:check" },
-        { "id": "current-batch", "workspaceId": "root", "name": "current-batch:check" },
+        { "id": "current-batch-contract", "workspaceId": "root", "name": "current-batch:contract" },
         { "id": "docs-build", "workspaceId": "docs", "name": "build" },
         { "id": "docs-generate", "workspaceId": "docs", "name": "gen-api-docs" },
         { "id": "format-check", "workspaceId": "root", "name": "format:check" },
         { "id": "i18n-check", "workspaceId": "root", "name": "i18n:check" },
         { "id": "lint", "workspaceId": "root", "name": "lint" },
-        { "id": "production-build", "workspaceId": "root", "name": "build" },
-        { "id": "security-council", "workspaceId": "root", "name": "security:council" },
-        { "id": "typecheck", "workspaceId": "root", "name": "typecheck" }
+        { "id": "production-build", "workspaceId": "root", "name": "build:compile" },
+        { "id": "security-council-browser", "workspaceId": "root", "name": "security:council:browser" },
+        { "id": "security-council-server", "workspaceId": "root", "name": "security:council:server" },
+        { "id": "security-council-workflow", "workspaceId": "root", "name": "security:council:workflow" },
+        { "id": "typecheck", "workspaceId": "root", "name": "typecheck" },
+        { "id": "ui-style-contract", "workspaceId": "root", "name": "ui-style:contract" }
       ]
     },
     "environment": {
@@ -442,7 +447,8 @@
       "services": [
         {
           "id": "browser-app",
-          "startScriptId": "app-start",
+          "prepareScriptId": "browser-prepare",
+          "startScriptId": "browser-start",
           "readiness": [
             { "path": "/api/v1/status/ready", "status": 204 },
             { "path": "/login", "status": 200 }
@@ -451,7 +457,7 @@
         }
       ],
       "units": [
-        { "id": "ci-i18n", "kind": "script", "stage": "repository", "scriptId": "i18n-check", "serviceId": null, "timeoutId": "repository" },
+        { "id": "ci-i18n", "kind": "script", "stage": "repository", "scriptId": "i18n-check", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [], "requiredOutputs": [] },
         {
           "id": "ci-jellyfin-plugin",
           "kind": "command-sequence",
@@ -459,6 +465,8 @@
           "stage": "build",
           "serviceId": null,
           "timeoutId": "build",
+          "dependsOn": [],
+          "after": [],
           "commands": [
             {
               "id": "publish",
@@ -534,6 +542,8 @@
           "stage": "repository",
           "serviceId": null,
           "timeoutId": "repository",
+          "dependsOn": [],
+          "after": [],
           "commands": [
             {
               "id": "release-note",
@@ -585,17 +595,21 @@
             { "id": "release-message-integrity", "kind": "metadata-file-sha256", "file": "head-message-file", "digest": "head-message-sha256", "events": ["push"] }
           ]
         },
-        { "id": "ci-security-council", "kind": "script", "stage": "repository", "scriptId": "security-council", "serviceId": null, "timeoutId": "repository" },
-        { "id": "ci-test-build", "kind": "script", "stage": "build", "scriptId": "production-build", "serviceId": null, "timeoutId": "build" },
-        { "id": "ci-test-bundle", "kind": "script", "stage": "build", "scriptId": "bundle-check", "serviceId": null, "timeoutId": "build" },
-        { "id": "ci-test-format", "kind": "script", "stage": "repository", "scriptId": "format-check", "serviceId": null, "timeoutId": "repository" },
-        { "id": "ci-test-lint", "kind": "script", "stage": "repository", "scriptId": "lint", "serviceId": null, "timeoutId": "repository" },
-        { "id": "ci-unit-node", "kind": "group", "stage": "repository", "groupId": "node-mjs", "serviceId": null, "timeoutId": "repository" },
-        { "id": "ci-unit-vitest", "kind": "group", "stage": "repository", "groupId": "vitest", "serviceId": null, "timeoutId": "repository" },
-        { "id": "codeql-actions", "kind": "codeql", "stage": "codeql", "language": "actions", "querySuite": "security-and-quality", "codeqlPackIds": ["codeql-actions"], "serviceId": null, "timeoutId": "codeql" },
-        { "id": "codeql-javascript", "kind": "codeql", "stage": "codeql", "language": "javascript-typescript", "querySuite": "security-and-quality", "codeqlPackIds": ["codeql-javascript", "codeql-models"], "serviceId": null, "timeoutId": "codeql" },
-        { "id": "current-batch", "kind": "script", "stage": "repository", "scriptId": "current-batch", "serviceId": null, "timeoutId": "repository" },
-        { "id": "cypress-run", "kind": "group", "stage": "browser", "groupId": "cypress", "serviceId": "browser-app", "timeoutId": "browser" },
+        { "id": "ci-security-workflow-boundaries", "kind": "script", "stage": "repository", "scriptId": "security-council-workflow", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-i18n"], "after": [], "requiredOutputs": [] },
+        { "id": "ci-security-tooling", "kind": "group", "stage": "repository", "groupId": "tooling", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-security-workflow-boundaries"], "after": [] },
+        { "id": "ci-security-browser-boundaries", "kind": "script", "stage": "repository", "scriptId": "security-council-browser", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-security-tooling"], "after": [], "requiredOutputs": [] },
+        { "id": "ci-security-server-boundaries", "kind": "script", "stage": "repository", "scriptId": "security-council-server", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-security-browser-boundaries"], "after": [], "requiredOutputs": [] },
+        { "id": "ci-test-build", "kind": "script", "stage": "build", "scriptId": "production-build", "serviceId": null, "timeoutId": "build", "dependsOn": ["ci-test-format", "ui-style-contract"], "after": [], "requiredOutputs": [{ "kind": "file", "path": ".next/BUILD_ID", "nonEmpty": true }, { "kind": "file", "path": "dist/index.js", "nonEmpty": true }] },
+        { "id": "ci-test-bundle", "kind": "script", "stage": "build", "scriptId": "bundle-check", "serviceId": null, "timeoutId": "build", "dependsOn": ["ci-test-build"], "after": [], "requiredOutputs": [] },
+        { "id": "ci-test-format", "kind": "script", "stage": "repository", "scriptId": "format-check", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-test-lint"], "after": [], "requiredOutputs": [] },
+        { "id": "ci-test-lint", "kind": "script", "stage": "repository", "scriptId": "lint", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [], "requiredOutputs": [] },
+        { "id": "ci-unit-node", "kind": "group", "stage": "repository", "groupId": "node-mjs", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [] },
+        { "id": "ci-unit-vitest", "kind": "group", "stage": "repository", "groupId": "vitest", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [] },
+        { "id": "codeql-actions", "kind": "codeql", "stage": "codeql", "serviceId": null, "timeoutId": "codeql", "dependsOn": [], "after": [], "toolId": "codeql-cli", "language": "actions", "querySuite": "security-and-quality", "queryPackId": "codeql-actions", "modelPackIds": [] },
+        { "id": "codeql-javascript", "kind": "codeql", "stage": "codeql", "serviceId": null, "timeoutId": "codeql", "dependsOn": [], "after": [], "toolId": "codeql-cli", "language": "javascript-typescript", "querySuite": "security-and-quality", "queryPackId": "codeql-javascript", "modelPackIds": ["codeql-models"] },
+        { "id": "current-batch-contract", "kind": "script", "stage": "repository", "scriptId": "current-batch-contract", "serviceId": null, "timeoutId": "repository", "dependsOn": ["ci-i18n"], "after": [], "requiredOutputs": [] },
+        { "id": "ui-style-contract", "kind": "script", "stage": "repository", "scriptId": "ui-style-contract", "serviceId": null, "timeoutId": "repository", "dependsOn": ["current-batch-contract"], "after": [], "requiredOutputs": [] },
+        { "id": "cypress-run", "kind": "group", "stage": "browser", "groupId": "cypress", "serviceId": "browser-app", "timeoutId": "browser", "dependsOn": ["ci-test-bundle"], "after": [] },
         {
           "id": "docs-links",
           "kind": "command-sequence",
@@ -603,6 +617,8 @@
           "stage": "repository",
           "serviceId": null,
           "timeoutId": "repository",
+          "dependsOn": [],
+          "after": [],
           "commands": [
             {
               "id": "link-scan",
@@ -654,6 +670,8 @@
           "stage": "build",
           "serviceId": null,
           "timeoutId": "build",
+          "dependsOn": [],
+          "after": [],
           "commands": [
             {
               "id": "list-changed",
@@ -783,12 +801,12 @@
             { "id": "helm-target", "kind": "git-state", "toolId": "git", "features": ["default-branch", "target-ref"], "events": ["pull_request"] }
           ]
         },
-        { "id": "local-typecheck", "kind": "script", "stage": "repository", "scriptId": "typecheck", "serviceId": null, "timeoutId": "repository" },
-        { "id": "playwright-run", "kind": "group", "stage": "browser", "groupId": "playwright", "serviceId": "browser-app", "timeoutId": "browser" },
-        { "id": "test-docs-build", "kind": "script", "stage": "build", "scriptId": "docs-build", "serviceId": null, "timeoutId": "build" },
-        { "id": "test-docs-generate", "kind": "script", "stage": "build", "scriptId": "docs-generate", "serviceId": null, "timeoutId": "build" },
-        { "id": "test-docs-security", "kind": "group", "stage": "repository", "groupId": "docs-security", "serviceId": null, "timeoutId": "repository" },
-        { "id": "vroom-conformance", "kind": "group", "stage": "repository", "groupId": "vroom-conformance", "serviceId": null, "timeoutId": "repository" }
+        { "id": "local-typecheck", "kind": "script", "stage": "repository", "scriptId": "typecheck", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [], "requiredOutputs": [] },
+        { "id": "playwright-run", "kind": "group", "stage": "browser", "groupId": "playwright", "serviceId": "browser-app", "timeoutId": "browser", "dependsOn": ["ci-test-bundle"], "after": ["cypress-run"] },
+        { "id": "test-docs-build", "kind": "script", "stage": "build", "scriptId": "docs-build", "serviceId": null, "timeoutId": "build", "dependsOn": ["test-docs-generate"], "after": [], "requiredOutputs": [] },
+        { "id": "test-docs-generate", "kind": "script", "stage": "build", "scriptId": "docs-generate", "serviceId": null, "timeoutId": "build", "dependsOn": ["test-docs-security"], "after": [], "requiredOutputs": [] },
+        { "id": "test-docs-security", "kind": "group", "stage": "repository", "groupId": "docs-security", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [] },
+        { "id": "vroom-conformance", "kind": "group", "stage": "repository", "groupId": "vroom-conformance", "serviceId": null, "timeoutId": "repository", "dependsOn": [], "after": [] }
       ]
     },
     "hosted": {
@@ -797,11 +815,11 @@
           "id": "ci",
           "path": ".github/workflows/ci.yml",
           "jobs": [
-            { "id": "i18n", "unitIds": ["ci-i18n", "ci-security-council"] },
+            { "id": "i18n", "unitIds": ["ci-i18n", "ci-security-workflow-boundaries", "ci-security-tooling", "ci-security-browser-boundaries", "ci-security-server-boundaries"] },
             { "id": "jellyfin-plugin", "unitIds": ["ci-jellyfin-plugin"] },
             { "id": "playwright", "unitIds": ["playwright-run"] },
             { "id": "release-notes", "unitIds": ["ci-release-notes"] },
-            { "id": "test", "unitIds": ["ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint"] },
+            { "id": "test", "unitIds": ["ci-test-lint", "ci-test-format", "current-batch-contract", "ui-style-contract", "ci-test-build", "ci-test-bundle"] },
             { "id": "unit-test", "unitIds": ["ci-unit-node", "ci-unit-vitest"] }
           ]
         },
@@ -809,11 +827,11 @@
         { "id": "cypress", "path": ".github/workflows/cypress.yml", "jobs": [{ "id": "cypress-run", "unitIds": ["cypress-run"] }] },
         { "id": "docs-links", "path": ".github/workflows/docs-link-check.yml", "jobs": [{ "id": "link-check", "unitIds": ["docs-links"] }] },
         { "id": "helm", "path": ".github/workflows/lint-helm-charts.yml", "jobs": [{ "id": "lint-test", "unitIds": ["helm-lint-test"] }] },
-        { "id": "test-docs", "path": ".github/workflows/test-docs.yml", "jobs": [{ "id": "test-build", "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] }] }
+        { "id": "test-docs", "path": ".github/workflows/test-docs.yml", "jobs": [{ "id": "test-build", "unitIds": ["test-docs-security", "test-docs-generate", "test-docs-build"] }] }
       ],
       "filters": [
-        { "id": "ci-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-council", "ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint", "ci-unit-node", "ci-unit-vitest"] },
-        { "id": "ci-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-council", "ci-test-build", "ci-test-bundle", "ci-test-format", "ci-test-lint", "ci-unit-node", "ci-unit-vitest"] },
+        { "id": "ci-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-workflow-boundaries", "ci-security-tooling", "ci-security-browser-boundaries", "ci-security-server-boundaries", "ci-test-lint", "ci-test-format", "current-batch-contract", "ui-style-contract", "ci-test-build", "ci-test-bundle", "ci-unit-node", "ci-unit-vitest"] },
+        { "id": "ci-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": [], "unitIds": ["ci-i18n", "ci-jellyfin-plugin", "ci-security-workflow-boundaries", "ci-security-tooling", "ci-security-browser-boundaries", "ci-security-server-boundaries", "ci-test-lint", "ci-test-format", "current-batch-contract", "ui-style-contract", "ci-test-build", "ci-test-bundle", "ci-unit-node", "ci-unit-vitest"] },
         { "id": "codeql-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": ["**/*.md", "docs/**"], "unitIds": ["codeql-actions", "codeql-javascript"] },
         { "id": "codeql-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": ["**/*.md", "docs/**"], "unitIds": ["codeql-actions", "codeql-javascript"] },
         { "id": "cypress-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["*"], "include": [".github/workflows/ci.yml", ".github/workflows/cypress.yml", "bin/**", "config/**", "cypress.config.ts", "cypress/**", "next.config.ts", "package.json", "pnpm-lock.yaml", "scripts/export-external-config.mjs", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json", "vitest.config.mts"], "exclude": [], "unitIds": ["cypress-run"] },
@@ -826,8 +844,8 @@
         { "id": "playwright-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", "bin/**", "config/**", "next.config.ts", "package.json", "playwright.config.ts", "playwright/**", "pnpm-lock.yaml", "server/**", "src/**", "tools/validation-engine/**", "tsconfig.json"], "exclude": [], "unitIds": ["playwright-run"] },
         { "id": "release-pr", "events": ["pull_request"], "actorTypes": ["user"], "targetBranches": ["*"], "include": ["**"], "exclude": [], "unitIds": ["ci-release-notes"] },
         { "id": "release-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": ["**"], "exclude": [], "unitIds": ["ci-release-notes"] },
-        { "id": "test-docs-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] },
-        { "id": "test-docs-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-build", "test-docs-generate", "test-docs-security"] }
+        { "id": "test-docs-pr", "events": ["pull_request"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-security", "test-docs-generate", "test-docs-build"] },
+        { "id": "test-docs-push", "events": ["push"], "actorTypes": [], "targetBranches": ["main"], "include": [".github/workflows/ci.yml", ".github/workflows/test-docs.yml", "bin/**", "docs/**", "gen-docs/**", "package.json", "pnpm-lock.yaml", "server/test/**", "tools/validation-engine/**", "vitest.config.mts"], "exclude": [], "unitIds": ["test-docs-security", "test-docs-generate", "test-docs-build"] }
       ],
       "fallbacks": {
         "newBranch": "run-all",
@@ -860,7 +878,7 @@
         { "id": "node-shards", "unitId": "ci-unit-node", "count": 4 },
         { "id": "vitest-shards", "unitId": "ci-unit-vitest", "count": 4 }
       ],
-      "maximumConcurrentCases": 30,
+      "maximumConcurrentCases": 35,
       "maxSamples": 50,
       "resultReuse": false,
       "crossRunGreenResults": false
