@@ -31,12 +31,23 @@ const installer = path.join(
   'install-distributed-test-engine.sh'
 );
 
-function runBash(arguments_, options = {}) {
-  return spawnSync(resolveBash(), arguments_, {
+function runBashScript(script, arguments_ = [], options = {}) {
+  return spawnSync(resolveBash(), ['--', script, ...arguments_], {
     cwd: repositoryRoot,
     encoding: 'utf8',
     env: withGitBashOnPath(options.env ?? process.env),
     input: options.input,
+    shell: false,
+    windowsHide: true,
+  });
+}
+
+function checkBashSyntax(script) {
+  return spawnSync(resolveBash(), ['-n', '--', script], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    env: withGitBashOnPath(process.env),
+    shell: false,
     windowsHide: true,
   });
 }
@@ -47,6 +58,7 @@ function runExecutable(executable, arguments_, options = {}) {
     encoding: 'utf8',
     env: options.env ?? process.env,
     input: options.input,
+    shell: false,
     windowsHide: true,
   });
 }
@@ -175,8 +187,7 @@ function nodeConfigurationInput() {
 }
 
 async function installAt(root, sourceRoot, role, startup = 'manual') {
-  return runBash([
-    installer,
+  return runBashScript(installer, [
     '--install-root',
     root,
     '--engine-source-root',
@@ -273,7 +284,7 @@ async function startControllerAndStop(executable, arguments_) {
 }
 
 test('Linux installer has valid Bash syntax and the approved public contract', async () => {
-  const result = runBash(['-n', installer]);
+  const result = checkBashSyntax(installer);
   assert.equal(result.status, 0, result.stderr);
 
   const source = await readFile(installer, 'utf8');
@@ -351,10 +362,19 @@ test('Linux installer has valid Bash syntax and the approved public contract', a
   assert.doesNotMatch(source, /\bshare\s*=/i);
 });
 
-test('installer validation matches the Linux config value boundaries', () => {
-  const result = runBash([
-    '-c',
+test('installer validation matches the Linux config value boundaries', async (t) => {
+  const fixtureRoot = await mkdtemp(
+    path.join(os.tmpdir(), 'seerrng-installer-contract-')
+  );
+  t.after(() => rm(fixtureRoot, { force: true, recursive: true }));
+  const contractDirectory = path.join(fixtureRoot, 'contract path $quoted');
+  const contractScript = path.join(contractDirectory, 'validate-contract.sh');
+  await mkdir(contractDirectory, { recursive: true });
+  await writeFile(
+    contractScript,
     [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
       'source "$1"',
       'valid_ip_address 192.168.10.50',
       '! valid_ip_address 999.168.10.50',
@@ -366,10 +386,11 @@ test('installer validation matches the Linux config value boundaries', () => {
       'valid_minimum_thread_count 1',
       'valid_minimum_thread_count 256',
       '! valid_minimum_thread_count 257',
-    ].join('; '),
-    'installer-contract-test',
-    installer,
-  ]);
+      '',
+    ].join('\n'),
+    { mode: 0o600 }
+  );
+  const result = runBashScript(contractScript, [installer]);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
@@ -668,15 +689,9 @@ test(
     const installResult = await installAt(root, sourceRoot, 'node');
     assert.equal(installResult.status, 0, installResult.stderr);
 
-    const configureResult = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-node',
-        '--yes',
-      ],
+    const configureResult = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-node', '--yes'],
       { input: nodeConfigurationInput() }
     );
     assert.equal(
@@ -710,15 +725,9 @@ test(
     assert.equal(installResult.status, 0, installResult.stderr);
     const log = path.join(root, 'occupied-decline.arguments');
 
-    const configureResult = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-node',
-        '--yes',
-      ],
+    const configureResult = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-node', '--yes'],
       {
         env: {
           ...process.env,
@@ -757,15 +766,9 @@ test(
     assert.equal(installResult.status, 0, installResult.stderr);
     const log = path.join(root, 'occupied-overwrite.arguments');
 
-    const configureResult = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-node',
-        '--yes',
-      ],
+    const configureResult = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-node', '--yes'],
       {
         env: {
           ...process.env,
@@ -793,8 +796,7 @@ test(
 );
 
 test('overwrite is not exposed as an installer launch option', () => {
-  const result = runBash([
-    installer,
+  const result = runBashScript(installer, [
     '--plan',
     '--action',
     'configure-node',
@@ -815,15 +817,9 @@ test(
     assert.equal(installResult.status, 0, installResult.stderr);
     const log = path.join(root, 'other-error.arguments');
 
-    const configureResult = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-node',
-        '--yes',
-      ],
+    const configureResult = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-node', '--yes'],
       {
         env: {
           ...process.env,
@@ -855,15 +851,9 @@ test(
     const installResult = await installAt(root, sourceRoot, 'controller');
     assert.equal(installResult.status, 0, installResult.stderr);
 
-    const configureResult = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-controller',
-        '--yes',
-      ],
+    const configureResult = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-controller', '--yes'],
       {
         input: [
           'JohnCronk79',
@@ -917,15 +907,9 @@ test(
     await writeFile(activeConfig, `${controllerConfig}\n`, 'utf8');
 
     const log = path.join(root, 'node-thread-policy.arguments');
-    const result = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'configure-controller',
-        '--yes',
-      ],
+    const result = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'configure-controller', '--yes'],
       {
         env: { ...process.env, SEERRNG_FAKE_RUNNER_LOG: log },
         input: ['2', '1', 'n-2', '2', ''].join('\n'),
@@ -970,15 +954,9 @@ test(
     const profile = path.join(root, 'seerrng-test-suite-dependancies.cfg');
     await writeFile(profile, '[Dependencies]\nnode = 24.21.0\n', 'utf8');
 
-    const result = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'manage-applications',
-        '--yes',
-      ],
+    const result = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'manage-applications', '--yes'],
       {
         input: [
           '2',
@@ -1025,15 +1003,9 @@ test(
     await writeFile(nodeConfig, '[fake node]\n', 'utf8');
     await writeFile(activeConfig, `${nodeConfig}\n`, 'utf8');
 
-    const result = runBash(
-      [
-        installer,
-        '--install-root',
-        root,
-        '--action',
-        'install-dependencies',
-        '--plan',
-      ],
+    const result = runBashScript(
+      installer,
+      ['--install-root', root, '--action', 'install-dependencies', '--plan'],
       { input: '2\n' }
     );
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);

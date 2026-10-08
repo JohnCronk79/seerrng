@@ -533,7 +533,14 @@ test(
     assert.equal(direct.status, 1);
     assert.match(direct.stderr, /absolute canonical file path/);
 
-    const partlyDoubledMarker = marker.replace('\\', '\\\\');
+    // Deliberately duplicate exactly one separator for the rejection case.
+    const firstSeparator = marker.indexOf('\\');
+    assert.notEqual(firstSeparator, -1);
+    const partlyDoubledMarker =
+      marker.slice(0, firstSeparator + 1) +
+      '\\' +
+      marker.slice(firstSeparator + 1);
+    assert.notEqual(partlyDoubledMarker, doubledMarker);
     const rejected = runCli(
       [
         '--distributed-node-thread-policy',
