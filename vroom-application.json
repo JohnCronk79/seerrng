@@ -56,12 +56,12 @@
         { "id": "codeql-cli", "kind": "recipe-tool", "role": "codeql", "versionPattern": "^CodeQL command-line toolchain release 2\\.27\\.1\\.$" },
         { "id": "codeql-javascript", "kind": "codeql-pack", "name": "codeql/javascript-queries", "version": "2.4.6" },
         { "id": "codeql-models", "kind": "codeql-pack", "name": "snapetech/seerrng-codeql-models", "version": "0.0.15" },
-        { "id": "ct", "kind": "recipe-tool", "role": "chart-testing", "versionPattern": "^Version: 3\\.14\\.0" },
+        { "id": "ct", "kind": "recipe-tool", "role": "chart-testing", "versionPattern": "^Version: 3\\.14\\.0$" },
         { "id": "cypress", "kind": "node-package", "workspaceId": "root", "packageName": "cypress", "version": "16.0.0", "entryPoint": "index.js" },
-        { "id": "docker", "kind": "recipe-tool", "role": "container", "versionPattern": "^Docker version .+" },
-        { "id": "dotnet", "kind": "recipe-tool", "role": "dotnet", "versionPattern": "^9\\.0\\." },
-        { "id": "git", "kind": "recipe-tool", "role": "git", "versionPattern": "^git version .+" },
-        { "id": "helm", "kind": "recipe-tool", "role": "helm", "versionPattern": ".+" },
+        { "id": "docker", "kind": "recipe-tool", "role": "container", "versionPattern": "^Docker version .+$" },
+        { "id": "dotnet", "kind": "recipe-tool", "role": "dotnet", "versionPattern": "^9\\.0\\..+$" },
+        { "id": "git", "kind": "recipe-tool", "role": "git", "versionPattern": "^git version .+$" },
+        { "id": "helm", "kind": "recipe-tool", "role": "helm", "versionPattern": "^.+$" },
         {
           "id": "helm-docs-image",
           "kind": "container-image",
@@ -74,13 +74,13 @@
           "image": "jellyfin/jellyfin",
           "digest": "sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db"
         },
-        { "id": "lychee", "kind": "recipe-tool", "role": "link-check", "versionPattern": "^lychee 0\\.24\\.2" },
+        { "id": "lychee", "kind": "recipe-tool", "role": "link-check", "versionPattern": "^lychee 0\\.24\\.2$" },
         { "id": "node", "kind": "recipe-tool", "role": "node", "versionPattern": "^v24\\.(?:1[5-9]|[2-9][0-9]*)\\.[0-9]+$" },
         { "id": "playwright", "kind": "node-package", "workspaceId": "root", "packageName": "@playwright/test", "version": "1.63.0", "entryPoint": "index.js" },
-        { "id": "python", "kind": "recipe-tool", "role": "python", "versionPattern": "^Python 3\\." },
+        { "id": "python", "kind": "recipe-tool", "role": "python", "versionPattern": "^Python 3\\..+$" },
         { "id": "vitest", "kind": "node-package", "workspaceId": "root", "packageName": "vitest", "version": "4.1.11", "entryPoint": "vitest.mjs" },
-        { "id": "yamale", "kind": "recipe-tool", "role": "yaml-schema", "versionPattern": "^yamale 6\\.0\\.0" },
-        { "id": "yamllint", "kind": "recipe-tool", "role": "yaml-lint", "versionPattern": "^yamllint 1\\.33\\.0" }
+        { "id": "yamale", "kind": "recipe-tool", "role": "yaml-schema", "versionPattern": "^yamale 6\\.0\\.0$" },
+        { "id": "yamllint", "kind": "recipe-tool", "role": "yaml-lint", "versionPattern": "^yamllint 1\\.33\\.0$" }
       ]
     },
     "capacity": {

@@ -166,6 +166,18 @@ test('all four closed command recipe families remain declared', () => {
   ]);
 });
 
+test('every recipe tool has a bounded anchored version pattern', () => {
+  const recipeTools = adapterData.policy.dependencies.tools.filter(
+    (tool) => tool.kind === 'recipe-tool'
+  );
+  assert.ok(recipeTools.length > 0);
+  for (const tool of recipeTools) {
+    assert.ok(tool.versionPattern.startsWith('^'), tool.id);
+    assert.ok(tool.versionPattern.endsWith('$'), tool.id);
+    assert.doesNotThrow(() => new RegExp(tool.versionPattern, 'u'), tool.id);
+  }
+});
+
 test('every current candidate has exactly one adapter group owner', () => {
   const repository = adapterData.policy.repository;
   const candidates = matcher(repository.testCandidates);
