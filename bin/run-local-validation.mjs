@@ -12,8 +12,20 @@ import { executeStagedValidation } from '../tools/validation-engine/runtime/stag
 import {
   createHostedGithubPlan,
   githubChangedFilesRange,
-  reconcileHostedGithubNeeds,
 } from '../tools/validation-engine/runtime/hosted-github-plan.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import { createHostedTestInventory } from '../tools/validation-engine/runtime/hosted-test-inventory.mjs';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
+import {
+  admitHostedGithubUnit,
+  executeHostedTestLane,
+  loadHostedReceiptDirectory,
+  materializeHostedVitestLane,
+  readHostedGithubPlan,
+  reconcileHostedGithubExecution,
+  sealHostedGithubUnitReceipt,
+  verifyHostedGithubPlanContext,
+} from '../tools/validation-engine/runtime/hosted-github-execution.mjs';
 import {
   createPlan,
   executePlan,
@@ -141,15 +153,45 @@ function hostedGithubInput(root) {
     },
     changedFiles,
     workflowHashes,
+    testInventory: createHostedTestInventory(root),
   };
 }
 
-function writeHostedPlanOutputs(plan) {
+function writeHostedPlanOutputs(plan, planFile) {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) throw new Error('Hosted GitHub planning requires GITHUB_OUTPUT');
+  if (!planFile) throw new Error('Hosted GitHub planning requires --plan-file');
+  writeFileSync(planFile, `${JSON.stringify(plan, null, 2)}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
   const byWorkflow = Object.fromEntries(
     plan.units.map((unit) => [unit.workflow, unit.applicable])
   );
+  const unit = plan.units.find((entry) => entry.id === 'ci-unit-test');
+  const cypress = plan.units.find((entry) => entry.id === 'cypress-run');
+  if (!unit || !cypress)
+    throw new Error('Hosted plan is missing its sharded test units');
+  const unitMatrix = {
+    include: unit.caseAssignments.map((assignment) => ({
+      case_id: assignment.caseId,
+    })),
+  };
+  const cypressMatrix = {
+    include: cypress.caseAssignments.map((assignment) => {
+      const lane = assignment.lanes.find((entry) => entry.id === 'cypress');
+      if (
+        !lane ||
+        !lane.files.length ||
+        lane.files.some(
+          (file) =>
+            file.includes(',') || file.includes('\r') || file.includes('\n')
+        )
+      )
+        throw new Error('Hosted Cypress matrix contains unsafe specs');
+      return { case_id: assignment.caseId, specs: lane.files.join(',') };
+    }),
+  };
   const values = {
     planSha256: plan.planSha256,
     runId: plan.event.runId,
@@ -161,6 +203,8 @@ function writeHostedPlanOutputs(plan) {
     testDocs: byWorkflow.testDocs,
     docsLinks: byWorkflow.docsLinks,
     helm: byWorkflow.helm,
+    unitMatrix: JSON.stringify(unitMatrix),
+    cypressMatrix: JSON.stringify(cypressMatrix),
   };
   appendFileSync(
     output,
@@ -170,33 +214,291 @@ function writeHostedPlanOutputs(plan) {
   );
 }
 
-const args = process.argv.slice(2);
-const allowed = new Set([
+function writeHostedAdmissionOutputs(decision) {
+  const output = process.env.GITHUB_OUTPUT;
+  if (!output)
+    throw new Error('Hosted GitHub admission requires GITHUB_OUTPUT');
+  appendFileSync(
+    output,
+    `${[
+      ['action', decision.action],
+      ['execute', 'true'],
+      ['decisionSha256', decision.decisionSha256],
+    ]
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n')}\n`
+  );
+}
+
+const flagOptions = new Set([
   '--help',
   '-h',
   '--plan',
   '--json',
-  '--tests-only',
+  '--dev-tests-only',
   '--github-plan',
+  '--github-admit',
+  '--github-materialize-test-lane',
+  '--github-receipt',
+  '--github-run-test-lane',
   '--github-reconcile',
 ]);
-if (args.some((arg) => !allowed.has(arg))) {
-  process.stderr.write('Unknown option. Use --help.\n');
+const valueOptions = new Set([
+  '--case',
+  '--expected-plan-sha256',
+  '--job-status',
+  '--lane',
+  '--output-file',
+  '--plan-file',
+  '--receipt-dir',
+  '--report-file',
+  '--unit',
+]);
+const repeatedValueOptions = new Set(['--evidence']);
+
+const optionContracts = {
+  'local-full': {
+    label: 'Local full mode',
+    allowed: new Set(),
+    requiredValues: [],
+  },
+  'local-tests-only': {
+    label: 'Local tests-only mode',
+    allowed: new Set(['--dev-tests-only']),
+    requiredValues: [],
+  },
+  'local-plan': {
+    label: 'Local plan mode',
+    allowed: new Set(['--plan', '--dev-tests-only', '--json']),
+    requiredValues: [],
+  },
+  'github-plan': {
+    label: 'GitHub plan mode',
+    allowed: new Set(['--github-plan', '--plan-file', '--json']),
+    requiredValues: ['--plan-file'],
+  },
+  'github-admit': {
+    label: 'GitHub admission mode',
+    allowed: new Set([
+      '--github-admit',
+      '--unit',
+      '--case',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--json',
+    ]),
+    requiredValues: [
+      '--unit',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+    ],
+  },
+  'github-run-test-lane': {
+    label: 'GitHub test-lane mode',
+    allowed: new Set([
+      '--github-run-test-lane',
+      '--unit',
+      '--case',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--report-file',
+      '--json',
+    ]),
+    requiredValues: [
+      '--unit',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--report-file',
+    ],
+  },
+  'github-materialize-test-lane': {
+    label: 'GitHub test-lane materialization mode',
+    allowed: new Set([
+      '--github-materialize-test-lane',
+      '--unit',
+      '--case',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--output-file',
+      '--json',
+    ]),
+    requiredValues: [
+      '--unit',
+      '--case',
+      '--lane',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--output-file',
+    ],
+  },
+  'github-receipt': {
+    label: 'GitHub receipt mode',
+    allowed: new Set([
+      '--github-receipt',
+      '--unit',
+      '--case',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--job-status',
+      '--evidence',
+      '--json',
+    ]),
+    requiredValues: [
+      '--unit',
+      '--plan-file',
+      '--expected-plan-sha256',
+      '--receipt-dir',
+      '--job-status',
+    ],
+  },
+  'github-reconcile': {
+    label: 'GitHub reconciliation mode',
+    allowed: new Set([
+      '--github-reconcile',
+      '--plan-file',
+      '--receipt-dir',
+      '--json',
+    ]),
+    requiredValues: ['--plan-file', '--receipt-dir'],
+  },
+};
+
+function parseOptions(args) {
+  const flags = new Set();
+  const values = new Map();
+  const repeated = new Map();
+  for (let index = 0; index < args.length; index++) {
+    const option = args[index];
+    if (flagOptions.has(option)) {
+      if (flags.has(option)) throw new Error(`Duplicate option: ${option}`);
+      flags.add(option);
+      continue;
+    }
+    if (valueOptions.has(option) || repeatedValueOptions.has(option)) {
+      const value = args[++index];
+      if (!value || value.startsWith('-'))
+        throw new Error(`Missing value for ${option}`);
+      if (repeatedValueOptions.has(option)) {
+        const entries = repeated.get(option) ?? [];
+        if (entries.includes(value))
+          throw new Error(`Duplicate value for ${option}: ${value}`);
+        entries.push(value);
+        repeated.set(option, entries);
+      } else {
+        if (values.has(option)) throw new Error(`Duplicate option: ${option}`);
+        values.set(option, value);
+      }
+      continue;
+    }
+    throw new Error(`Unknown option: ${option}`);
+  }
+  return { flags, values, repeated };
+}
+
+function validateOptions(options) {
+  const helpAliases = ['--help', '-h'].filter((option) =>
+    options.flags.has(option)
+  );
+  if (helpAliases.length > 1) throw new Error('Duplicate option: --help');
+
+  const names = new Set([
+    ...options.flags,
+    ...options.values.keys(),
+    ...options.repeated.keys(),
+  ]);
+  if (helpAliases.length) {
+    if (names.size !== 1)
+      throw new Error('Help mode cannot be combined with other options');
+    return { name: 'help', hostedOption: null };
+  }
+
+  const hostedModes = [
+    '--github-plan',
+    '--github-admit',
+    '--github-materialize-test-lane',
+    '--github-run-test-lane',
+    '--github-receipt',
+    '--github-reconcile',
+  ].filter((option) => options.flags.has(option));
+  if (hostedModes.length > 1)
+    throw new Error('Choose exactly one hosted GitHub mode');
+
+  const hostedOption = hostedModes[0] ?? null;
+  const name = hostedOption
+    ? hostedOption.slice(2)
+    : options.flags.has('--plan')
+      ? 'local-plan'
+      : options.flags.has('--dev-tests-only')
+        ? 'local-tests-only'
+        : 'local-full';
+  const contract = optionContracts[name];
+  for (const option of names)
+    if (!contract.allowed.has(option))
+      throw new Error(`${contract.label} does not accept ${option}`);
+  for (const option of contract.requiredValues)
+    if (!options.values.has(option))
+      throw new Error(`${contract.label} requires ${option}`);
+  return { name, hostedOption };
+}
+
+let options;
+let selectedMode;
+try {
+  options = parseOptions(process.argv.slice(2));
+  selectedMode = validateOptions(options);
+} catch (error) {
+  options = undefined;
+  selectedMode = undefined;
+  process.stderr.write(`${error.message}. Use --help.\n`);
   process.exitCode = 1;
-} else if (args.includes('--help') || args.includes('-h')) {
+}
+const has = (option) => options?.flags.has(option) ?? false;
+const value = (option) => options?.values.get(option);
+const repeated = (option) => options?.repeated.get(option) ?? [];
+const requiredValue = (option) => {
+  const result = value(option);
+  if (!result) throw new Error(`Hosted mode requires ${option}`);
+  return result;
+};
+
+if (!options) {
+  // The parse error above is the complete fail-closed result.
+} else if (selectedMode.name === 'help') {
   process.stdout
-    .write(`Usage: node bin/run-local-validation.mjs [--tests-only] [--plan [--json]]
-       node bin/run-local-validation.mjs --github-plan [--json]
-       node bin/run-local-validation.mjs --github-reconcile [--json]
+    .write(`Usage: node bin/run-local-validation.mjs [--dev-tests-only] [--plan [--json]]
+       node bin/run-local-validation.mjs --github-plan --plan-file FILE [--json]
+       node bin/run-local-validation.mjs --github-admit --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR [--json]
+       node bin/run-local-validation.mjs --github-materialize-test-lane --unit ID --case ID --lane vitest --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --output-file FILE [--json]
+       node bin/run-local-validation.mjs --github-run-test-lane --unit ID [--case ID] --lane ID --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --report-file FILE [--json]
+       node bin/run-local-validation.mjs --github-receipt --unit ID [--case ID] --plan-file FILE --expected-plan-sha256 SHA --receipt-dir DIR --job-status STATUS [--evidence FILE ...] [--json]
+       node bin/run-local-validation.mjs --github-reconcile --plan-file FILE --receipt-dir DIR [--json]
 
 Runs the existing engine's staged native PR-parity gate: repository checks,
 CodeQL, production builds, browser tests and applicable supplemental checks.
---tests-only  Run all discovered test suites once, preserving their native runner.
+--dev-tests-only  Run all discovered test suites once, preserving their native runner.
 --plan        Print files, framework ownership, platform exclusions, and commands;
               do not create files or launch children.
 --github-plan Create the current-run GitHub plan and native-job selections.
+--github-admit
+              Bind one native job/case to the immutable current-attempt plan.
+--github-materialize-test-lane
+              Bind one planned Vitest shard into a runner-temp native config.
+--github-run-test-lane
+              Run an engine-assigned native test lane with its sealed worker budget.
+--github-receipt
+              Seal one native job/case result and its current-attempt ledger entry.
 --github-reconcile
-              Verify current-run GitHub needs against the exact hosted plan.
+              Verify native needs and complete sealed receipts against the plan.
 --json        Machine-readable local plan, hosted plan, or hosted result.
 --help        Show help without reading the project or creating files.
 
@@ -211,66 +513,133 @@ failures, partial output closure and zero active tests fail closed.\n`);
   let context;
   let failure;
   try {
-    const githubPlan = args.includes('--github-plan');
-    const githubReconcile = args.includes('--github-reconcile');
-    if (githubPlan && githubReconcile)
-      throw new Error('Choose one hosted GitHub mode');
-    if (
-      (githubPlan || githubReconcile) &&
-      (args.includes('--plan') || args.includes('--tests-only'))
-    )
-      throw new Error(
-        'Hosted GitHub modes cannot be combined with local modes'
-      );
-    if (
-      args.includes('--json') &&
-      !args.includes('--plan') &&
-      !githubPlan &&
-      !githubReconcile
-    )
-      throw new Error('--json requires a plan or reconciliation mode');
+    const hostedMode = selectedMode.hostedOption;
     const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-    if (githubPlan || githubReconcile) {
-      const plan = createHostedGithubPlan(hostedGithubInput(root));
-      if (githubPlan) {
-        writeHostedPlanOutputs(plan);
+    if (hostedMode) {
+      if (hostedMode === '--github-plan') {
+        const plan = createHostedGithubPlan(hostedGithubInput(root));
+        writeHostedPlanOutputs(plan, requiredValue('--plan-file'));
+        const applicableUnits = plan.units.filter((unit) => unit.applicable);
+        const applicableCases = applicableUnits.reduce(
+          (total, unit) => total + unit.cases.length,
+          0
+        );
         process.stdout.write(
-          args.includes('--json')
+          has('--json')
             ? `${JSON.stringify(plan, null, 2)}\n`
-            : `Hosted GitHub plan ${plan.planSha256}: ${plan.units.filter((unit) => unit.applicable).length}/${plan.units.length} native jobs selected.\n`
+            : `Hosted GitHub plan ${plan.planSha256}: ${applicableUnits.length}/${plan.units.length} logical units selected across ${applicableCases} runner cases.\n`
         );
       } else {
-        const expectedPlan = process.env.SEERRNG_ENGINE_EXPECTED_PLAN_SHA256;
-        if (expectedPlan !== plan.planSha256)
-          throw new Error(
-            'Hosted GitHub plan changed before reconciliation; rerun all jobs because failed-job result reuse is disabled'
+        const planFile = requiredValue('--plan-file');
+        const plan = readHostedGithubPlan(planFile);
+        if (hostedMode === '--github-admit') {
+          const result = admitHostedGithubUnit({
+            root,
+            plan,
+            expectedPlanSha256: requiredValue('--expected-plan-sha256'),
+            unitId: requiredValue('--unit'),
+            caseId: value('--case'),
+            receiptDir: requiredValue('--receipt-dir'),
+          });
+          writeHostedAdmissionOutputs(result.decision);
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(
+                  {
+                    admission: result.admission,
+                    decision: result.decision,
+                  },
+                  null,
+                  2
+                )}\n`
+              : `Admitted ${result.admission.unitId}/${result.admission.caseId} for hosted plan ${plan.planSha256}: ${result.decision.action}.\n`
           );
-        let needs;
-        try {
-          needs = JSON.parse(process.env.SEERRNG_ENGINE_NEEDS_JSON ?? '');
-        } catch {
-          throw new Error(
-            'Hosted GitHub reconciliation requires valid needs JSON'
+        } else if (hostedMode === '--github-materialize-test-lane') {
+          if (requiredValue('--lane') !== 'vitest')
+            throw new Error('Hosted materialization supports Vitest only');
+          const result = materializeHostedVitestLane({
+            root,
+            plan,
+            expectedPlanSha256: requiredValue('--expected-plan-sha256'),
+            unitId: requiredValue('--unit'),
+            caseId: requiredValue('--case'),
+            receiptDir: requiredValue('--receipt-dir'),
+            outputFile: requiredValue('--output-file'),
+          });
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(result, null, 2)}\n`
+              : `Materialized ${result.unitId}/${result.caseId} ${result.laneId} shard with ${result.files.length} files and ${result.configuredWorkers} workers.\n`
+          );
+        } else if (hostedMode === '--github-run-test-lane') {
+          const result = await executeHostedTestLane({
+            root,
+            plan,
+            expectedPlanSha256: requiredValue('--expected-plan-sha256'),
+            unitId: requiredValue('--unit'),
+            caseId: value('--case'),
+            laneId: requiredValue('--lane'),
+            receiptDir: requiredValue('--receipt-dir'),
+            reportFile: requiredValue('--report-file'),
+          });
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(result, null, 2)}\n`
+              : `Hosted ${result.laneId} passed: ${result.counts.active}/${result.counts.total} active tests.\n`
+          );
+        } else if (hostedMode === '--github-receipt') {
+          const result = sealHostedGithubUnitReceipt({
+            root,
+            plan,
+            expectedPlanSha256: requiredValue('--expected-plan-sha256'),
+            unitId: requiredValue('--unit'),
+            caseId: value('--case'),
+            receiptDir: requiredValue('--receipt-dir'),
+            jobStatus: requiredValue('--job-status'),
+            evidenceFiles: repeated('--evidence'),
+          });
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(result.receipt, null, 2)}\n`
+              : `Sealed ${result.receipt.unitId}/${result.receipt.caseId}: ${result.receipt.jobStatus}.\n`
+          );
+        } else {
+          verifyHostedGithubPlanContext(root, plan);
+          const expectedPlan = process.env.SEERRNG_ENGINE_EXPECTED_PLAN_SHA256;
+          if (expectedPlan !== plan.planSha256)
+            throw new Error(
+              'Hosted GitHub plan artifact does not match engine-plan output'
+            );
+          let needs;
+          try {
+            needs = JSON.parse(process.env.SEERRNG_ENGINE_NEEDS_JSON ?? '');
+          } catch {
+            throw new Error(
+              'Hosted GitHub reconciliation requires valid needs JSON'
+            );
+          }
+          const evidence = loadHostedReceiptDirectory(
+            requiredValue('--receipt-dir')
+          );
+          const result = reconcileHostedGithubExecution(plan, needs, evidence);
+          const externalSummary = result.complete
+            ? ''
+            : ' External PR metadata remains outside this native result.';
+          process.stdout.write(
+            has('--json')
+              ? `${JSON.stringify(result, null, 2)}\n`
+              : `Hosted engine validation ${result.status}: ${result.receipts.succeeded} sealed cases passed and ${result.jobs.skipped} jobs were inapplicable.${externalSummary}\n`
           );
         }
-        const result = reconcileHostedGithubNeeds(plan, needs);
-        const externalSummary = result.complete
-          ? ''
-          : ' External PR metadata remains outside this native result.';
-        process.stdout.write(
-          args.includes('--json')
-            ? `${JSON.stringify(result, null, 2)}\n`
-            : `Hosted GitHub native validation ${result.status}: ${result.jobs.succeeded} jobs passed and ${result.jobs.skipped} were inapplicable.${externalSummary}\n`
-        );
       }
     } else {
-      preflight(root, { testsOnly: args.includes('--tests-only') });
+      preflight(root, { testsOnly: has('--dev-tests-only') });
       const plan = createPlan(root, {
-        testsOnly: args.includes('--tests-only'),
-        canonicalTypescript: !args.includes('--tests-only'),
+        testsOnly: has('--dev-tests-only'),
+        canonicalTypescript: !has('--dev-tests-only'),
       });
-      if (args.includes('--plan')) {
-        if (!args.includes('--tests-only'))
+      if (has('--plan')) {
+        if (!has('--dev-tests-only'))
           plan.stagedCoverage = {
             stages: ['repository', 'codeql', 'build', 'browser'],
             supplementalScope: 'full',
@@ -284,7 +653,7 @@ failures, partial output closure and zero active tests fail closed.\n`);
             githubMetadata: 'pending until an actual PR exists',
             status: 'planned-only; no prerequisite execution or result reuse',
           };
-        if (args.includes('--json'))
+        if (has('--json'))
           process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
         else {
           printPlan(plan);
@@ -297,7 +666,7 @@ failures, partial output closure and zero active tests fail closed.\n`);
         printPlan(plan, process.stdout, { details: false });
         process.on('SIGINT', interrupt);
         process.on('SIGTERM', interrupt);
-        if (args.includes('--tests-only')) {
+        if (has('--dev-tests-only')) {
           const totals = await executePlan(plan, { signal: controller.signal });
           for (const [lane, count] of totals)
             process.stdout.write(

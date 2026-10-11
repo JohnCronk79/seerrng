@@ -304,7 +304,13 @@ const count = (value, name) => {
   return value;
 };
 
-export function acceptNativeCypressResults(envelope, plan) {
+export function acceptNativeCypressResults(
+  envelope,
+  plan,
+  { allowNoActiveTests = false } = {}
+) {
+  if (typeof allowNoActiveTests !== 'boolean')
+    throw new Error('Invalid native Cypress active-test policy');
   if (
     envelope?.schema !== 1 ||
     !sameIdentity(envelope.candidate, plan.candidate) ||
@@ -392,7 +398,7 @@ export function acceptNativeCypressResults(envelope, plan) {
   }
   if (
     count(native.totalTests, 'totalTests') !== cases.length ||
-    totals.passed + totals.failed < 1
+    (!allowNoActiveTests && totals.passed + totals.failed < 1)
   )
     throw new Error('Cypress executed no active test cases');
   return {

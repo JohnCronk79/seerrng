@@ -796,6 +796,36 @@ export function repositoryIsolationReadiness(
   };
 }
 
+function nodeTapSourceEntries(command) {
+  if (!['node-js', 'node-ts', 'tooling'].includes(command.kind)) return [];
+  // Older parser unit fixtures without a command root cannot claim the narrow
+  // module-load exception; their ordinary TAP cases remain strictly checked.
+  if (typeof command.cwd !== 'string' || !command.cwd) return [];
+  if (
+    !Array.isArray(command.files) ||
+    !command.files.length ||
+    command.files.some((file) => !safe(file)) ||
+    new Set(command.files).size !== command.files.length
+  )
+    throw new Error('Native Node source ownership is incomplete or duplicated');
+  const root = path.resolve(command.cwd),
+    // The Node CLI expands/sorts file patterns. The programmatic TypeScript
+    // runner instead preserves the supplied file array.
+    ordered =
+      command.kind === 'node-ts'
+        ? [...command.files]
+        : command.files.map((file) => path.normalize(file)).sort();
+  return ordered.map((file) => {
+    const absolute = path.resolve(root, file);
+    if (!beneath(root, absolute))
+      throw new Error(`Unsafe native Node source path: ${file}`);
+    return {
+      name: command.kind === 'node-ts' ? absolute : path.normalize(file),
+      absoluteFile: absolute,
+    };
+  });
+}
+
 export function repositoryNativeCases(
   command,
   receipt,
@@ -912,7 +942,9 @@ export function repositoryNativeCases(
       : command.kind === 'tooling'
         ? 'bin/run-tooling-tests.mjs'
         : 'node:test';
-  const ledger = readNodeTapHierarchy(raw.subarray(marker), runner);
+  const ledger = readNodeTapHierarchy(raw.subarray(marker), runner, {
+    sourceEntries: nodeTapSourceEntries(command),
+  });
   if (
     !ledger.complete ||
     (!collectFailures && ledger.counts.failed) ||

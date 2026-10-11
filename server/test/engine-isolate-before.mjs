@@ -3,11 +3,17 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 // Must execute BEFORE the original setup imports datasource/settings. Vitest
-// isolates JS modules, but environment paths otherwise survive worker reuse.
+// isolates JS modules, but inherited runtime modes and environment paths
+// otherwise survive worker reuse and can change unit-test behavior.
 const prefix = 'seerrng-engine-config-';
 const directory = mkdtempSync(join(tmpdir(), prefix));
+const inheritedRuntimeKeys = new Set([
+  'E2E_TESTS',
+  'SEERR_EXTERNAL_CONFIG',
+  'SEERR_EXTERNAL_READ_ONLY',
+]);
 for (const key of Object.keys(process.env)) {
-  if (/^(?:DB_|DATABASE_)/.test(key) || key === 'SEERR_EXTERNAL_CONFIG')
+  if (/^(?:DB_|DATABASE_)/.test(key) || inheritedRuntimeKeys.has(key))
     delete process.env[key];
 }
 process.env.NODE_ENV = 'test';

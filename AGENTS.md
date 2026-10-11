@@ -33,7 +33,9 @@ Before implementation or merge conflict resolution, read these complete files:
    evidence procedure. This complements the standard; it does not replace it.
 3. For forward integration, `docs/maintainers/ui-forward-merge-guide.md`.
 
-Test-engine behavior and developer guidance: `tools/validation-engine/README.md`.
+Vroom test configuration is defined in `vroom-app.cfg`. Read
+`vroom-app-config.README.md` before changing test definitions or running a
+different validation workload.
 
 Read applicable existing task/security/contribution instructions too. These
 instructions supplement existing functional, security, migration, and release
@@ -62,9 +64,7 @@ do not choose a new design merely to make a check pass.
 ## Required verification
 
 Work in approved page/asset batches. During editing, run affected focused checks
-and record a preview as an iteration, not a release candidate. Test discovery,
-scheduling, input freshness, isolation and result accounting belong to the
-existing engine implementation, not a separate agent execution procedure.
+and record a preview as an iteration, not a release candidate.
 Follow the fix-it audit too: prose instructions are not executable tests.
 Inspect the plan/inventory for connected native/source/DOM/style suites; report
 actual execution, counts, skips and exclusions separately from discovery.
