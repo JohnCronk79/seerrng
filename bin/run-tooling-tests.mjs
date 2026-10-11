@@ -1,10 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withGitBashOnPath } from './platform-tools.mjs';
-// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths -- Native Node tooling cannot resolve the application's TS aliases.
-import { detectWorkerCapacity } from '../tools/validation-engine/runtime/cpu-capacity.mjs';
 
 export function parseToolingWorkers(args) {
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== 'string'))
@@ -21,23 +19,6 @@ export function parseToolingWorkers(args) {
 }
 
 const portableTests = [
-  'bin/engine-browser-readiness.test.mjs',
-  'bin/engine-cpu-capacity.test.mjs',
-  'bin/engine-vitest-binding.test.mjs',
-  'bin/engine-codeql-stage.test.mjs',
-  'bin/engine-build-browser-stage.test.mjs',
-  'bin/engine-staged-validation.test.mjs',
-  'bin/engine-pr-check-stages.test.mjs',
-  'bin/engine-native-stage-context.test.mjs',
-  'bin/engine-native-accounting.test.mjs',
-  'bin/engine-native-process-ledger.test.mjs',
-  'bin/engine-workflow-triggers.test.mjs',
-  'bin/engine-github-binding.test.mjs',
-  'bin/engine-hosted-github-execution.test.mjs',
-  'bin/engine-hosted-test-inventory.test.mjs',
-  'bin/engine-run-scoped-ledger.test.mjs',
-  'bin/engine-controller-ordering.test.mjs',
-  'bin/local-validation.test.mjs',
   'bin/check-current-batch-contract-lib.test.mjs',
   'bin/check-i18n-lib.test.mjs',
   'bin/extract-messages-lib.test.mjs',
@@ -63,19 +44,6 @@ const portableTests = [
   'packaging/unraid/unraid-template.test.mjs',
 ];
 
-const registeredToolingTests = new Set(portableTests);
-const unregisteredEngineTests = readdirSync(
-  fileURLToPath(new URL('.', import.meta.url))
-)
-  .filter((file) => /^engine-.*\.test\.mjs$/.test(file))
-  .map((file) => `bin/${file}`)
-  .filter((file) => !registeredToolingTests.has(file));
-if (unregisteredEngineTests.length) {
-  throw new Error(
-    `Engine tooling suites are not registered: ${unregisteredEngineTests.join(', ')}`
-  );
-}
-
 const posixOnlyTests = [
   'deploy/bookshelf-hardcover-migration.test.mjs',
   'deploy/bookshelf-migration-lab.test.mjs',
@@ -99,9 +67,7 @@ if (
 ) {
   const workers =
     parseToolingWorkers(process.argv.slice(2)) ??
-    detectWorkerCapacity({
-      sourceRoot: resolve(fileURLToPath(new URL('..', import.meta.url))),
-    }).configuredWorkers;
+    Math.max(1, availableParallelism());
 
   if (process.platform === 'win32') {
     console.log(

@@ -363,12 +363,6 @@ test('accepted poster, tree, and shared ownership contracts reject functional re
       'margin-inline-start: 0;',
       'page progress must remain right justified',
     ],
-    [
-      'bin/local-validation.mjs',
-      "['Shared visual standard', 'bin/check-refreshed-ui-style.js']",
-      "['Shared visual standard', 'bin/removed-style-check.js']",
-      'the cumulative runner must discover current-batch and shared-style checks',
-    ],
   ];
   const baseline = validateCurrentBatchContract(repositoryFilesWith());
   for (const [fileName, original, replacement, reason] of cases) {
