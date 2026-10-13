@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { availableParallelism, cpus, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,31 +18,44 @@ const VROOM_ROOT = dirname(fileURLToPath(import.meta.url));
 // A. CliInterface
 // Owns the user-facing command syntax. It prints help when requested, validates
 // the application-folder and optional workload arguments, resolves the
-// application path, applies dev as the default workload, and selects the local
-// execution mode. It does not read configuration or execute work.
+// application path, applies dev as the default workload, and selects local,
+// GitHub execution, or GitHub plan-only mode. It does not read configuration
+// or execute work.
 function CliInterface(args) {
-  const help = `Usage: node vroom.mjs <application-folder> [workload] [--github]
+  const help = `Usage: node vroom.mjs <application-folder> [workload] [--github | --github-plan]
 
 Runs a workload from <application-folder>\\${CONFIG_FILE}.
 The workload defaults to "${DEFAULT_WORKLOAD}" when omitted.
 Use --github only inside GitHub Actions to select Mode 2 execution.
+Use --github-plan inside GitHub Actions to emit the configured VM matrix
+without executing the workload.
 
 Examples:
-  node vroom.mjs C:\\path\\to\\seerr
-  node vroom.mjs C:\\path\\to\\seerr dev
-  node vroom.mjs C:\\path\\to\\seerr compile
-  node vroom.mjs C:\\path\\to\\seerr pre-pr
-  node vroom.mjs /work/seerr github --github
+  node vroom.mjs C:\\path\\to\\application
+  node vroom.mjs C:\\path\\to\\application dev
+  node vroom.mjs C:\\path\\to\\application compile
+  node vroom.mjs C:\\path\\to\\application pre-pr
+  node vroom.mjs /work/application github --github-plan
+  node vroom.mjs /work/application github --github
 `;
 
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(help);
     return null;
   }
-  const githubFlags = args.filter((argument) => argument === '--github');
-  const positional = args.filter((argument) => argument !== '--github');
+  const githubFlags = args.filter(
+    (argument) => argument === '--github' || argument === '--github-plan'
+  );
+  const positional = args.filter(
+    (argument) => argument !== '--github' && argument !== '--github-plan'
+  );
   if (
-    args.some((argument) => argument.startsWith('-') && argument !== '--github') ||
+    args.some(
+      (argument) =>
+        argument.startsWith('-') &&
+        argument !== '--github' &&
+        argument !== '--github-plan'
+    ) ||
     githubFlags.length > 1 ||
     positional.length < 1 ||
     positional.length > 2
@@ -53,11 +66,17 @@ Examples:
   if (!/^[a-z0-9][a-z0-9-]*$/i.test(workload))
     throw new Error(`Invalid workload name: ${workload}`);
 
+  const githubPlan = githubFlags[0] === '--github-plan';
   const executionMode = githubFlags.length ? 'github' : 'local';
   if (executionMode === 'github' && process.env.GITHUB_ACTIONS !== 'true')
-    throw new Error('--github requires the GitHub Actions environment');
+    throw new Error(`${githubPlan ? '--github-plan' : '--github'} requires the GitHub Actions environment`);
 
-  return { applicationRoot: resolve(positional[0]), workload, executionMode };
+  return {
+    applicationRoot: resolve(positional[0]),
+    workload,
+    executionMode,
+    githubPlan,
+  };
 }
 
 // B. loadApplicationConfiguration
@@ -611,10 +630,10 @@ function CpuThreadPanning(mode, configuration) {
   };
 }
 
-// E. ExecutionLocal, ExecutionGitHub, and ExecutionCluster
-// Own destination-specific process execution. Scheduler decides what runs,
-// where it is assigned, and how much capacity it receives; these functions
-// only carry out that assignment and return a result.
+// E. ExecutionLocal
+// Owns process execution on the current computer. Scheduler decides what runs,
+// where it is assigned, and how much capacity it receives; ExecutionLocal only
+// carries out that assignment and returns a normalized result.
 function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allocatedCapacity, mode = 'local', signal }) {
   const startedAt = new Date();
   const startedClock = Date.now();
@@ -744,6 +763,9 @@ function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allo
   });
 }
 
+// F. ExecutionGitHub
+// Owns execution and receipt creation inside one assigned GitHub VM. It does
+// not plan workloads, create shards, or select a target.
 async function ExecutionGitHub(request) {
   if (process.env.GITHUB_ACTIONS !== 'true')
     throw new Error('ExecutionGitHub requires the GitHub Actions environment');
@@ -796,21 +818,24 @@ async function ExecutionGitHub(request) {
   return { ...result, receiptPath };
 }
 
+// G. ExecutionCluster
+// Reserves the future Mode 3 transport boundary without becoming a scheduler.
 async function ExecutionCluster() {
   throw new Error('ExecutionCluster is reserved for Mode 3 and is not implemented');
 }
 
-// F. Scheduler
+// H. Scheduler
 // Owns the one application-agnostic scheduler used by every Vroom mode. It
 // creates and displays the application-work plan, loads Vroom configuration,
 // obtains CPU and weighted target resources, resolves generic command behavior,
-// creates and assigns shards, applies changed-file rules, enforces dependencies
-// and exclusivity, balances worker capacity using timing history, executes
-// nodes with their application-declared non-secret environments, handles
-// cancellation and failures, collects results, and maintains
-// five rotating timing logs per active profile. Destination-specific process
-// handling remains in the Execution functions above.
-async function Scheduler(configuration, mode, signal) {
+// creates and assigns deterministic local or multi-VM shards, emits the GitHub
+// VM matrix, applies changed-file rules, enforces dependencies and exclusivity,
+// balances worker capacity using timing history, executes nodes with their
+// application-declared non-secret environments, handles cancellation and
+// failures, collects results, and maintains five rotating timing logs per
+// active profile. Destination-specific process handling remains in the
+// Execution functions above.
+async function Scheduler(configuration, mode, signal, { githubPlan = false } = {}) {
   const kindOrder = new Map([
     ['check', 0],
     ['prepare', 1],
@@ -844,12 +869,102 @@ async function Scheduler(configuration, mode, signal) {
 
   const vroomConfiguration = await loadVroomConfiguration();
   const resources = CpuThreadPanning(mode, vroomConfiguration);
-  if (mode === 'github' && resources.targets.length !== 1)
-    throw new Error('Current GitHub execution requires exactly one configured VM');
+  const multiVmGithub = mode === 'github' && resources.targets.length > 1;
+  const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+  const githubAssignments = new Map();
+  if (multiVmGithub) {
+    const unsupported = plan.jobs.filter((job) => job.after.length || job.exclusive);
+    if (unsupported.length)
+      throw new Error(
+        `Multi-VM GitHub execution does not yet support cross-VM dependencies or exclusivity: ${unsupported.map((job) => job.name).join(', ')}`
+      );
+
+    for (let jobIndex = 0; jobIndex < plan.jobs.length; jobIndex += 1) {
+      const job = plan.jobs[jobIndex];
+      const assignments = resources.targets.map((resourceTarget, targetIndex) => ({
+        targetId: resourceTarget.id,
+        targetIndex,
+        estimatedWeight: 0,
+        files: [],
+        wholeJob: false,
+      }));
+      if (job.files.length) {
+        const work = await Promise.all(
+          job.files.map(async (file) => {
+            const fileStats = await stat(join(plan.applicationRoot, file));
+            return {
+              file,
+              estimatedWeight: fileStats.isFile() ? Math.max(1, fileStats.size) : 1,
+            };
+          })
+        );
+        work.sort(
+          (left, right) =>
+            right.estimatedWeight - left.estimatedWeight ||
+            compareText(left.file, right.file)
+        );
+        for (const item of work) {
+          const assignment = assignments.reduce((selected, candidate) => {
+            if (candidate.estimatedWeight < selected.estimatedWeight) return candidate;
+            if (
+              candidate.estimatedWeight === selected.estimatedWeight &&
+              candidate.targetIndex < selected.targetIndex
+            )
+              return candidate;
+            return selected;
+          });
+          assignment.files.push(item.file);
+          assignment.estimatedWeight += item.estimatedWeight;
+        }
+        for (const assignment of assignments) assignment.files.sort(compareText);
+      } else {
+        const assignment = assignments[jobIndex % assignments.length];
+        assignment.wholeJob = true;
+        assignment.estimatedWeight = 1;
+      }
+      githubAssignments.set(job.name, assignments);
+    }
+  }
+
+  if (githubPlan) {
+    if (mode !== 'github') throw new Error('--github-plan requires GitHub execution mode');
+    const outputPath = process.env.GITHUB_OUTPUT?.trim();
+    if (!outputPath) throw new Error('--github-plan requires GITHUB_OUTPUT');
+    const matrix = { target: resources.targets.map((resourceTarget) => resourceTarget.id) };
+    await appendFile(outputPath, `matrix=${JSON.stringify(matrix)}\n`, 'utf8');
+    process.stdout.write(
+      `GitHub VM matrix: ${matrix.target.join(', ')}\n` +
+        `Configured capacity: ${resources.totalCapacity} thread slots across ${resources.targets.length} VM(s)\n`
+    );
+    for (const job of plan.jobs) {
+      const assignments = githubAssignments.get(job.name);
+      if (!assignments) continue;
+      const summary = assignments
+        .map((assignment) =>
+          job.files.length
+            ? `${assignment.targetId}=${assignment.files.length} file(s)`
+            : `${assignment.targetId}=${assignment.wholeJob ? 'whole job' : 'no work'}`
+        )
+        .join(', ');
+      process.stdout.write(`[assign] ${job.name}: ${summary}\n`);
+    }
+    return { resources, results: [], timingLogPaths: [], plannedOnly: true };
+  }
+
   if (mode === 'cluster') await ExecutionCluster();
-  const target = resources.targets[0];
+  const requestedTargetId = process.env.VROOM_GITHUB_TARGET_ID?.trim();
+  let target = resources.targets[0];
+  if (mode === 'github' && requestedTargetId)
+    target = resources.targets.find((candidate) => candidate.id === requestedTargetId);
+  else if (multiVmGithub)
+    throw new Error('Multi-VM GitHub execution requires VROOM_GITHUB_TARGET_ID');
   if (!target || target.capacity < 1)
-    throw new Error(`${mode} execution target has no capacity`);
+    throw new Error(
+      requestedTargetId
+        ? `Configured GitHub target does not exist or has no capacity: ${requestedTargetId}`
+        : `${mode} execution target has no capacity`
+    );
+  const targetIndex = resources.targets.findIndex((candidate) => candidate.id === target.id);
   const execute = mode === 'github' ? ExecutionGitHub : ExecutionLocal;
 
   const userDataRoot = join(plan.applicationRoot, USER_DATA_FOLDER);
@@ -1031,8 +1146,17 @@ async function Scheduler(configuration, mode, signal) {
       behavior = 'single-process';
 
     const selectedFiles = selectedFilesByJob.get(job.name) ?? [];
-    let historyCommand = job.files.length
-      ? `${job.command}\u0000${job.files.join('\u0000')}`
+    const githubAssignment = multiVmGithub
+      ? githubAssignments.get(job.name)?.[targetIndex]
+      : null;
+    const assignedToTarget = !multiVmGithub
+      ? true
+      : job.files.length
+        ? githubAssignment.files.length > 0
+        : githubAssignment.wholeJob;
+    const executionFiles = multiVmGithub ? githubAssignment.files : job.files;
+    let historyCommand = executionFiles.length
+      ? `${job.command}\u0000${executionFiles.join('\u0000')}`
       : job.command;
     const environmentEntries = Object.entries(job.environment).sort(([left], [right]) =>
       left.localeCompare(right)
@@ -1042,12 +1166,17 @@ async function Scheduler(configuration, mode, signal) {
         .map(([name, value]) => `${name}=${value}`)
         .join('\u0000')}`;
     return {
-      id: `shard-${String(index + 1).padStart(2, '0')}`,
+      id:
+        mode === 'github'
+          ? `shard-${String(index + 1).padStart(2, '0')}-${target.id}`
+          : `shard-${String(index + 1).padStart(2, '0')}`,
       job,
       behavior,
       resolvedCommand,
       selectedFiles,
-      executionFiles: job.files,
+      executionFiles,
+      assignedToTarget,
+      estimatedWeight: githubAssignment?.estimatedWeight ?? null,
       historyCommand,
       timingSamples: history.get(`${job.name}\u0000${historyCommand}`) ?? [],
       averageDurationMs: null,
@@ -1060,6 +1189,7 @@ async function Scheduler(configuration, mode, signal) {
   const activeWorkerGroup = shards
     .filter(
       (shard) =>
+        shard.assignedToTarget &&
         shard.behavior === 'worker-based' &&
         (!shard.job.when.length || shard.selectedFiles.length)
     )
@@ -1109,6 +1239,17 @@ async function Scheduler(configuration, mode, signal) {
       `Controller/node: ${target.name} (${target.effectiveLogicalCpus} logical CPUs, ${target.threadPolicy} = ${target.capacity} thread slots)\n` +
       `Timing history: ${history.size ? `${history.size} matching job record(s)` : 'none; this run is the calibration run'}\n\n`
   );
+  if (multiVmGithub) {
+    for (const shard of shards) {
+      const assignment = shard.assignedToTarget
+        ? shard.executionFiles.length
+          ? `${shard.executionFiles.length} file(s), estimated weight ${shard.estimatedWeight}`
+          : 'whole job'
+        : 'assigned to another GitHub VM';
+      process.stdout.write(`[assignment] ${shard.job.name} -> ${target.id}: ${assignment}\n`);
+    }
+    process.stdout.write('\n');
+  }
   for (const shard of shards) {
     if (!shard.job.when.length) continue;
     process.stdout.write(
@@ -1121,6 +1262,24 @@ async function Scheduler(configuration, mode, signal) {
   const results = new Map();
   const running = new Map();
   for (const shard of shards) {
+    if (shard.assignedToTarget) continue;
+    state.set(shard.job.name, 'not-needed');
+    results.set(shard.job.name, {
+      shardId: shard.id,
+      jobName: shard.job.name,
+      command: shard.historyCommand,
+      targetId: target.id,
+      targetCapacity: target.capacity,
+      allocatedCapacity: 0,
+      startedAt: null,
+      finishedAt: new Date().toISOString(),
+      durationMs: 0,
+      status: 'not-needed',
+      detail: 'assigned to another configured GitHub VM',
+    });
+  }
+  for (const shard of shards) {
+    if (state.get(shard.job.name) !== 'pending') continue;
     if (!shard.job.when.length || shard.selectedFiles.length) continue;
     state.set(shard.job.name, 'not-needed');
     results.set(shard.job.name, {
@@ -1402,11 +1561,11 @@ async function Scheduler(configuration, mode, signal) {
   return { resources, results: orderedResults, timingLogPaths };
 }
 
-// G. runVroom
-// Owns end-to-end coordination and the final result. It connects functions A-E,
+// I. runVroom
+// Owns end-to-end coordination and the final result. It connects functions A-H,
 // installs and removes interruption and disconnect handlers, prints the final
 // per-job summary and timing-log location, and returns the process exit code for
-// success, failure, or interruption. It does not duplicate functions A-E.
+// success, failure, or interruption. It does not duplicate functions A-H.
 async function runVroom() {
   const options = CliInterface(process.argv.slice(2));
   if (!options) return 0;
@@ -1422,7 +1581,15 @@ async function runVroom() {
   process.on('SIGHUP', interrupt);
 
   try {
-    const outcome = await Scheduler(configuration, options.executionMode, controller.signal);
+    const outcome = await Scheduler(configuration, options.executionMode, controller.signal, {
+      githubPlan: options.githubPlan,
+    });
+    if (outcome.plannedOnly) {
+      process.stdout.write(
+        `\nVroom GitHub plan: ${outcome.resources.targets.length} configured VM(s)\n`
+      );
+      return 0;
+    }
     process.stdout.write(`\nVroom result: ${configuration.workload}\n`);
     let passed = true;
     for (const result of outcome.results) {
@@ -1460,3 +1627,4 @@ try {
   process.stderr.write(`Vroom error: ${error.message}\n`);
   process.exitCode = 1;
 }
+
