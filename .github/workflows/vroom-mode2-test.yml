@@ -8,6 +8,7 @@ on:
       - test/vroom-mode2-single-vm-proof
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -71,6 +72,42 @@ jobs:
         with:
           name: vroom-mode2-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}
           if-no-files-found: error
+          path: |
+            vroom-user-data/test-timming-logs/github/
+            vroom-user-data/github-receipts/
+
+  vroom-reconcile:
+    name: Reconcile Vroom results
+    needs:
+      - vroom-plan
+      - vroom-test
+    if: always() && needs.vroom-plan.result == 'success'
+    runs-on: ubuntu-latest
+    env:
+      VROOM_GITHUB_RECONCILE: true
+      VROOM_GITHUB_TOKEN: ${{ github.token }}
+      VROOM_GITHUB_EXECUTION_RESULT: ${{ needs.vroom-test.result }}
+    steps:
+      - name: Checkout SeerrNG
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          package-manager-cache: false
+
+      - name: Reconcile and save Vroom results
+        run: node .vroom-test/vroom.mjs . github --github
+
+      - name: Upload reconciled Vroom records
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vroom-mode2-${{ github.run_id }}-${{ github.run_attempt }}-reconciled
+          if-no-files-found: warn
           path: |
             vroom-user-data/test-timming-logs/github/
             vroom-user-data/github-receipts/

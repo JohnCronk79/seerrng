@@ -794,6 +794,7 @@ function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allo
 async function ExecutionGitHub(request) {
   if (process.env.GITHUB_ACTIONS !== 'true')
     throw new Error('ExecutionGitHub requires the GitHub Actions environment');
+
   const requiredEnvironment = [
     'GITHUB_REPOSITORY',
     'GITHUB_RUN_ID',
@@ -1327,6 +1328,39 @@ async function Scheduler(
     profiles: plan.profiles,
     selectedJobNames: plannedJobNames,
   });
+  if (mode === 'github' && process.env.VROOM_GITHUB_RECONCILE === 'true') {
+    const repository = process.env.GITHUB_REPOSITORY?.trim();
+    const runId = process.env.GITHUB_RUN_ID?.trim();
+    const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
+    const token = process.env.VROOM_GITHUB_TOKEN?.trim();
+    if (!repository || !runId || !runAttempt || !token)
+      throw new Error(
+        'GitHub reconciliation requires repository, run, attempt, and token environment values'
+      );
+    const timingOutcome = await TimingResults({
+      action: 'save',
+      applicationRoot: plan.applicationRoot,
+      workload: plan.workload,
+      profiles: plan.profiles,
+      selectedJobNames: plannedJobNames,
+      mode,
+      target: null,
+      resources,
+      results: [],
+      history: preliminaryTimingState.history,
+      githubReturn: { repository, runId, runAttempt, token },
+    });
+    if (process.env.VROOM_GITHUB_EXECUTION_RESULT !== 'success')
+      throw new Error(
+        `GitHub VM execution completed with ${process.env.VROOM_GITHUB_EXECUTION_RESULT ?? 'an unknown result'}`
+      );
+    return {
+      resources,
+      results: timingOutcome.results,
+      receiptPaths: timingOutcome.receiptPaths,
+      timingLogPaths: timingOutcome.timingLogPaths,
+    };
+  }
   const multiVmGithub = mode === 'github' && resources.targets.length > 1;
   const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
   const githubAssignments = new Map();
@@ -1961,9 +1995,13 @@ async function runVroom() {
   }
 }
 
-try {
-  process.exitCode = await runVroom();
-} catch (error) {
-  process.stderr.write(`Vroom error: ${error.message}\n`);
-  process.exitCode = 1;
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    process.exitCode = await runVroom();
+  } catch (error) {
+    process.stderr.write(`Vroom error: ${error.message}\n`);
+    process.exitCode = 1;
+  }
 }
+
+export { TimingResults };
