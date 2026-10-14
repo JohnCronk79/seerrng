@@ -24,7 +24,7 @@ const ciWorkflow = yaml.load(
 );
 const steps = workflow.jobs['lint-test'].steps;
 
-test('chart validation uses version-aware comparison for pull requests', () => {
+test('provider-native chart validation uses version-aware comparison for pull requests', () => {
   const listChanged = steps.find(
     (step) => step.name === 'Run chart-testing (list-changed)'
   );
@@ -32,26 +32,23 @@ test('chart validation uses version-aware comparison for pull requests', () => {
     (step) => step.name === 'Run chart-testing (pull request)'
   );
 
-  assert.equal(
-    listChanged.if,
-    "steps.engine-admission.outputs.execute == 'true'"
-  );
+  assert.equal(listChanged.if, undefined);
   assert.match(listChanged.run, /GITHUB_EVENT_NAME.*pull_request/iu);
   assert.equal(
     pullRequestLint.if,
-    "!cancelled() && steps.engine-admission.outputs.execute == 'true' && github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
+    "!cancelled() && github.event_name == 'pull_request' && steps.list-changed.outputs.changed == 'true'"
   );
   assert.match(pullRequestLint.run, /ct lint --target-branch/iu);
 });
 
-test('centrally selected chart validation retains push-wide lint behavior', () => {
+test('provider-native chart validation retains push-wide lint behavior', () => {
   const pushLint = steps.find(
     (step) => step.name === 'Run chart-testing (push)'
   );
 
   assert.equal(
     pushLint.if,
-    "!cancelled() && steps.engine-admission.outputs.execute == 'true' && github.event_name == 'push'"
+    "!cancelled() && github.event_name == 'push'"
   );
   assert.match(pushLint.run, /ct lint --all --validate-maintainers=false/iu);
   assert.ok(Object.hasOwn(workflow.on, 'workflow_call'));
@@ -60,14 +57,5 @@ test('centrally selected chart validation retains push-wide lint behavior', () =
     ciWorkflow.jobs.helm.uses,
     './.github/workflows/lint-helm-charts.yml'
   );
-  assert.match(ciWorkflow.jobs.helm.if, /always\(\)/u);
-  assert.match(ciWorkflow.jobs.helm.if, /!cancelled\(\)/u);
-  assert.match(
-    ciWorkflow.jobs.helm.if,
-    /needs\.engine-plan\.result == 'success'/u
-  );
-  assert.match(
-    ciWorkflow.jobs.helm.if,
-    /needs\.engine-plan\.outputs\.helm == 'true'/u
-  );
+  assert.equal(ciWorkflow.jobs.helm.if, "needs.engine-plan.result == 'success'");
 });
