@@ -654,12 +654,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/lint-helm-charts.yml
-    with:
-      plan_sha256: ''
-      engine_run_id: ''
-      engine_run_attempt: ''
-      execution_sha: ''
-      unit_id: ''
 
   engine-reconcile:
     name: Vroom result
