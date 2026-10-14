@@ -1627,4 +1627,3 @@ try {
   process.stderr.write(`Vroom error: ${error.message}\n`);
   process.exitCode = 1;
 }
-
