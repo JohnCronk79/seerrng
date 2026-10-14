@@ -36,7 +36,7 @@ jobs:
         run: node .vroom-test/vroom.mjs . github --github-plan
 
   vroom-test:
-    name: ${{ matrix.target }} - four-thread Vitest sample
+    name: ${{ matrix.node }} - four-thread Vitest sample
     needs: vroom-plan
     strategy:
       fail-fast: false
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      VROOM_GITHUB_TARGET_ID: ${{ matrix.target }}
+      VROOM_NODE_ID: ${{ matrix.node }}
       VROOM_GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout SeerrNG
@@ -68,16 +68,6 @@ jobs:
 
       - name: Run assigned Vroom shard
         run: node .vroom-test/vroom.mjs . github --github
-
-      - name: Upload Vroom records
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: vroom-mode2-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}
-          if-no-files-found: error
-          path: |
-            vroom-user-data/test-timming-logs/github/
-            vroom-user-data/github-receipts/
 
   vroom-reconcile:
     name: Reconcile Vroom results
@@ -104,13 +94,3 @@ jobs:
 
       - name: Reconcile and save Vroom results
         run: node .vroom-test/vroom.mjs . github --github
-
-      - name: Upload reconciled Vroom records
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: vroom-mode2-${{ github.run_id }}-${{ github.run_attempt }}-reconciled
-          if-no-files-found: warn
-          path: |
-            vroom-user-data/test-timming-logs/github/
-            vroom-user-data/github-receipts/

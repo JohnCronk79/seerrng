@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { availableParallelism, cpus, hostname } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 
@@ -28,7 +28,7 @@ function CliInterface(args) {
 Runs a workload from <application-folder>\\${CONFIG_FILE}.
 The workload defaults to "${DEFAULT_WORKLOAD}" when omitted.
 Use --github only inside GitHub Actions to select Mode 2 execution.
-Use --github-plan inside GitHub Actions to emit the configured VM matrix
+Use --github-plan inside GitHub Actions to emit the configured node matrix
 without executing the workload.
 
 Examples:
@@ -467,14 +467,10 @@ async function loadVroomConfiguration() {
       ),
     },
     github: {
-      virtualMachines: readInteger(
-        github.get('virtual machines'),
-        'github virtual machines',
-        20
-      ),
-      availableThreadsPerMachine: readInteger(
-        github.get('available threads per machine'),
-        'github available threads per machine'
+      nodes: readInteger(github.get('nodes'), 'github nodes', 20),
+      availableThreadsPerNode: readInteger(
+        github.get('available threads per node'),
+        'github available threads per node'
       ),
       threadPolicy: readThreadPolicy(
         github.get('threads'),
@@ -496,9 +492,9 @@ async function loadVroomConfiguration() {
 // D. CpuThreadPanning
 // Owns CPU and thread planning for local, GitHub, and cluster execution. It
 // combines normalized Vroom configuration with live or configured resources
-// and returns one generic weighted target map. Shared GitHub VMs keep equal
+// and returns one generic weighted node map. Shared GitHub nodes keep equal
 // configured weights because provider-load variation is noise. Local and Mode 3
-// cluster targets ask TimingResults for measured performance. Scheduler owns
+// cluster nodes ask TimingResults for measured performance. Scheduler owns
 // all work assignment.
 async function CpuThreadPanning(mode, configuration, timingRequest) {
   if (!['local', 'github', 'cluster'].includes(mode))
@@ -562,10 +558,10 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
     visibleLogicalCpus,
     quotaCpus === null ? availableLogicalCpus : Math.max(1, Math.floor(quotaCpus))
   );
-  const targets = [];
+  const nodes = [];
   if (mode === 'local') {
     const policy = applyThreadPolicy(configuration.local.threadPolicy, effectiveLogicalCpus);
-    targets.push({
+    nodes.push({
       id: 'local',
       name: hostname(),
       role: 'controller-node',
@@ -578,13 +574,13 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
       capacity: policy.capacity,
     });
   } else if (mode === 'github') {
-    const machineCount = configuration.github.virtualMachines;
-    const logicalCpus = configuration.github.availableThreadsPerMachine;
+    const nodeCount = configuration.github.nodes;
+    const logicalCpus = configuration.github.availableThreadsPerNode;
     const policy = applyThreadPolicy(configuration.github.threadPolicy, logicalCpus);
-    for (let number = 1; number <= machineCount; number += 1) {
-      targets.push({
-        id: `github-vm-${String(number).padStart(2, '0')}`,
-        name: `GitHub VM ${String(number).padStart(2, '0')}`,
+    for (let number = 1; number <= nodeCount; number += 1) {
+      nodes.push({
+        id: `github-node-${String(number).padStart(2, '0')}`,
+        name: `GitHub node ${String(number).padStart(2, '0')}`,
         role: 'node',
         source: 'github',
         availableLogicalCpus: logicalCpus,
@@ -600,7 +596,7 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
       configuration.cluster.controllerThreadPolicy,
       effectiveLogicalCpus
     );
-    targets.push({
+    nodes.push({
       id: 'controller',
       name: hostname(),
       role: 'controller-node',
@@ -615,7 +611,7 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
     for (const node of configuration.cluster.nodes) {
       const logicalCpus = node.availableThreads;
       const policy = applyThreadPolicy(node.threadPolicy, logicalCpus);
-      targets.push({
+      nodes.push({
         id: node.id,
         name: node.name,
         role: 'node',
@@ -632,7 +628,7 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
 
   const timingWeights =
     mode === 'github'
-      ? { targetWeights: new Map(targets.map((target) => [target.id, 1])) }
+      ? { nodeWeights: new Map(nodes.map((node) => [node.id, 1])) }
       : await TimingResults({
           action: 'weights',
           applicationRoot: timingRequest.applicationRoot,
@@ -640,42 +636,110 @@ async function CpuThreadPanning(mode, configuration, timingRequest) {
           profiles: timingRequest.profiles,
           selectedJobNames: timingRequest.selectedJobNames,
           mode,
-          target: null,
-          resourceTargets: targets,
+          node: null,
+          resourceNodes: nodes,
         });
-  for (const target of targets) {
-    target.performanceWeight = timingWeights.targetWeights.get(target.id) ?? 1;
-    target.weightedCapacity = target.capacity * target.performanceWeight;
+  for (const node of nodes) {
+    node.performanceWeight = timingWeights.nodeWeights.get(node.id) ?? 1;
+    node.weightedCapacity = node.capacity * node.performanceWeight;
   }
 
   return {
     mode,
     configPath: configuration.configPath,
     controllerId: mode === 'local' ? 'local' : mode === 'cluster' ? 'controller' : 'github',
-    targets,
-    totalCapacity: targets.reduce((total, target) => total + target.capacity, 0),
-    totalWeightedCapacity: targets.reduce(
-      (total, target) => total + target.weightedCapacity,
+    nodes,
+    totalCapacity: nodes.reduce((total, node) => total + node.capacity, 0),
+    totalWeightedCapacity: nodes.reduce(
+      (total, node) => total + node.weightedCapacity,
       0
     ),
   };
 }
 
-// E. ExecutionLocal
-// Owns process execution on the current computer. Scheduler decides what runs,
-// where it is assigned, and how much capacity it receives; ExecutionLocal only
-// carries out that assignment and returns a normalized result.
-function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allocatedCapacity, mode = 'local', signal }) {
+// E. Controller
+// Owns the boundary between Scheduler's node assignments and the environment
+// that delivers those assignments. It never selects work, balances capacity,
+// or becomes another scheduler. Local mode calls ExecutionNode in this process.
+// In GitHub mode the thin workflow has already provisioned each hosted VM and
+// started Vroom; Controller validates the GitHub node identity and starts only
+// that node's assigned work. Mode 3 will extend this function so the controller
+// contacts enrolled cluster nodes, starts Vroom with an immutable assignment,
+// tracks delivery, cancellation, and node loss, and receives the returned
+// disposition. The remote Mode 3 transport is deliberately not implemented
+// until its contract is recovered and approved from DB-3.
+async function Controller({ mode, request }) {
+  if (mode === 'local') return ExecutionNode({ ...request, mode, executionContext: null });
+  if (mode === 'github') {
+    if (process.env.GITHUB_ACTIONS !== 'true')
+      throw new Error('GitHub node execution requires the GitHub Actions environment');
+    const requiredEnvironment = [
+      'GITHUB_REPOSITORY',
+      'GITHUB_RUN_ID',
+      'GITHUB_RUN_ATTEMPT',
+      'GITHUB_SHA',
+      'GITHUB_JOB',
+      'VROOM_NODE_ID',
+    ];
+    const missing = requiredEnvironment.filter((name) => !process.env[name]);
+    if (missing.length)
+      throw new Error(`GitHub Actions environment is missing ${missing.join(', ')}`);
+    if (process.env.VROOM_NODE_ID !== request.node.id)
+      throw new Error(
+        `GitHub node identity ${process.env.VROOM_NODE_ID} does not match assignment ${request.node.id}`
+      );
+    if (
+      !request.assignment ||
+      request.assignment.shardId !== request.shard.id ||
+      request.assignment.jobName !== request.shard.job.name ||
+      request.assignment.nodeId !== request.node.id ||
+      request.assignment.nodeCapacity !== request.node.capacity
+    )
+      throw new Error(`GitHub node received an invalid planned assignment for ${request.shard.id}`);
+    return ExecutionNode({
+      ...request,
+      mode,
+      executionContext: {
+        provider: 'github-actions',
+        repository: process.env.GITHUB_REPOSITORY,
+        runId: process.env.GITHUB_RUN_ID,
+        runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+        commitSha: process.env.GITHUB_SHA,
+        providerJob: process.env.GITHUB_JOB,
+        workflow: process.env.GITHUB_WORKFLOW ?? '',
+      },
+    });
+  }
+  if (mode === 'cluster')
+    throw new Error('Controller cluster dispatch is reserved for Mode 3 and is not implemented');
+  throw new Error(`Controller received unsupported execution mode: ${mode}`);
+}
+
+// F. ExecutionNode
+// Runs one Scheduler-approved assignment on the node where this Vroom process
+// is already running. It owns process launch, interruption, cleanup, normalized
+// results, and the small provider-neutral node receipt. It never chooses a node,
+// creates a shard, assigns capacity, or transports results between machines.
+async function ExecutionNode({
+  applicationRoot,
+  executionCommand,
+  shard,
+  node,
+  allocatedCapacity,
+  mode,
+  executionContext,
+  signal,
+}) {
   const startedAt = new Date();
   const startedClock = Date.now();
-  return new Promise((complete) => {
+  const result = await new Promise((complete) => {
     const child = spawn(executionCommand, {
       cwd: applicationRoot,
       env: {
         ...process.env,
         ...shard.job.environment,
         VROOM_EXECUTION_MODE: mode,
-        VROOM_TARGET_ID: target.id,
+        VROOM_NODE_ID: node.id,
         VROOM_ALLOCATED_THREADS: String(allocatedCapacity),
       },
       stdio: 'inherit',
@@ -772,8 +836,8 @@ function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allo
         executedCommand: executionCommand,
         behavior: shard.behavior,
         estimatedWeight: shard.estimatedWeight,
-        targetId: target.id,
-        targetCapacity: target.capacity,
+        nodeId: node.id,
+        nodeCapacity: node.capacity,
         allocatedCapacity,
         startedAt: startedAt.toISOString(),
         finishedAt: new Date().toISOString(),
@@ -793,43 +857,17 @@ function ExecutionLocal({ applicationRoot, executionCommand, shard, target, allo
       else finish('failed', childSignal || `exit ${code ?? 1}`, code ?? 1);
     });
   });
-}
-
-// F. ExecutionGitHub
-// Owns execution and receipt creation inside one assigned GitHub VM. It does
-// not plan workloads, create shards, or select a target.
-async function ExecutionGitHub(request) {
-  if (process.env.GITHUB_ACTIONS !== 'true')
-    throw new Error('ExecutionGitHub requires the GitHub Actions environment');
-
-  const requiredEnvironment = [
-    'GITHUB_REPOSITORY',
-    'GITHUB_RUN_ID',
-    'GITHUB_RUN_ATTEMPT',
-    'GITHUB_SHA',
-    'GITHUB_JOB',
-  ];
-  const missing = requiredEnvironment.filter((name) => !process.env[name]);
-  if (missing.length)
-    throw new Error(`GitHub Actions environment is missing ${missing.join(', ')}`);
-
-  const result = await ExecutionLocal({ ...request, mode: 'github' });
-  const runScope = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
-  const receiptFolder = join(request.applicationRoot, USER_DATA_FOLDER, 'github-receipts', runScope);
+  if (!executionContext) return result;
+  const runScope = `${executionContext.provider}-${executionContext.runId}-${executionContext.runAttempt}`;
+  const receiptFolder = join(applicationRoot, USER_DATA_FOLDER, 'node-receipts', runScope);
   await mkdir(receiptFolder, { recursive: true });
-  const receiptPath = join(receiptFolder, `${request.shard.id}.json`);
+  const receiptPath = join(receiptFolder, `${shard.id}.json`);
   const receipt = {
-    schema: 'vroom-github-receipt-v1',
-    provider: 'github-actions',
-    repository: process.env.GITHUB_REPOSITORY,
-    runId: process.env.GITHUB_RUN_ID,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
-    commitSha: process.env.GITHUB_SHA,
-    githubJob: process.env.GITHUB_JOB,
-    workflow: process.env.GITHUB_WORKFLOW ?? '',
+    schema: 'vroom-node-receipt-v1',
+    ...executionContext,
     shardId: result.shardId,
     jobName: result.jobName,
-    targetId: result.targetId,
+    nodeId: result.nodeId,
     allocatedThreads: result.allocatedCapacity,
     result: result.status,
     exitCode: result.exitCode,
@@ -845,142 +883,90 @@ async function ExecutionGitHub(request) {
     });
   } catch (error) {
     if (error.code === 'EEXIST')
-      throw new Error(`GitHub receipt already exists for ${request.shard.id}: ${receiptPath}`);
+      throw new Error(`Node receipt already exists for ${shard.id}: ${receiptPath}`);
     throw error;
   }
   return { ...result, receiptPath };
 }
 
-// G. ExecutionCluster
-// Reserves the future Mode 3 transport boundary without becoming a scheduler.
-async function ExecutionCluster() {
-  throw new Error('ExecutionCluster is reserved for Mode 3 and is not implemented');
-}
-
-// H. TimingResults
-// Owns timing-history intake and completed-result storage for the application
-// that invoked Vroom. It reads comparable timing logs for Scheduler, validates
-// and stores returned receipts, writes the combined timing record, and keeps
-// only the latest five timing logs and GitHub receipt sets. For hosted work it
-// downloads the expected GitHub artifacts itself and interprets their receipts
-// and timing records. It does not schedule work or assign shards.
-async function TimingResults(request) {
+// G. ResultTransfer
+// Moves immutable assignment plans, node receipts, and timing records across an
+// execution provider boundary.
+// It owns provider discovery, download, archive handling, and upload, but it does
+// not interpret timing, accept a receipt as valid planned work, retain history,
+// or decide whether a run passed. GitHub currently uses native run artifacts.
+// Mode 3 will add the approved controller/node transport here without changing
+// Scheduler, ExecutionNode, or TimingResults ownership.
+async function ResultTransfer(request) {
   const {
     action,
     applicationRoot,
-    workload,
-    profiles = [],
-    selectedJobNames = [],
     mode,
-    target,
-    resources,
-    results: suppliedResults = [],
-    history = new Map(),
-    githubReturn = null,
-    resourceTargets = [],
+    node,
+    artifactReturn = null,
+    receiptPaths = [],
+    timingLogPaths = [],
+    planPaths = [],
   } = request;
-  if (!['read', 'weights', 'save'].includes(action))
-    throw new Error(`TimingResults received unsupported action: ${action}`);
+  if (!['locate-history', 'download', 'upload'].includes(action))
+    throw new Error(`ResultTransfer received unsupported action: ${action}`);
+  if (mode !== 'github')
+    throw new Error(`ResultTransfer ${action} is not implemented for ${mode} mode`);
 
-  const userDataRoot = join(applicationRoot, USER_DATA_FOLDER);
-  const workloadLogRoot = join(userDataRoot, TIMING_LOG_FOLDER, workload);
-  const timingLogFolders = profiles.length
-    ? profiles.map((profile) => ({ profile, path: join(workloadLogRoot, profile.name) }))
-    : selectedJobNames.length || suppliedResults.length || githubReturn
-      ? [{ profile: null, path: workloadLogRoot }]
-      : [];
-  const timingPrefix = `${mode}-timing-`;
-  for (const source of timingLogFolders) {
-    await mkdir(source.path, { recursive: true });
-    const existing = (await readdir(source.path))
-      .filter((entry) => entry.startsWith(timingPrefix) && entry.endsWith('.log'))
-      .sort();
-    for (const expired of existing.slice(0, -TIMING_LOG_LIMIT))
-      await unlink(join(source.path, expired));
-  }
-
-  let completedResults = suppliedResults;
-  const downloadedReceipts = new Map();
-  const downloadedTimingRecords = [];
-  const historyRecords = [];
-  let artifactReturn = githubReturn;
-  if (
-    !artifactReturn &&
-    (action === 'read' || action === 'weights') &&
-    mode === 'github' &&
-    process.env.GITHUB_ACTIONS === 'true'
-  ) {
+  if (action === 'locate-history') {
+    if (process.env.GITHUB_ACTIONS !== 'true') return { artifactReturn: null };
     const repository = process.env.GITHUB_REPOSITORY?.trim();
     const token = process.env.VROOM_GITHUB_TOKEN?.trim();
     const currentRunId = process.env.GITHUB_RUN_ID?.trim();
     const branch = process.env.GITHUB_REF_NAME?.trim();
-    if (repository && token && currentRunId && branch) {
-      const apiRoot = String(process.env.GITHUB_API_URL ?? 'https://api.github.com').replace(
-        /\/$/,
-        ''
-      );
-      const headers = {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'Vroom',
-      };
-      const response = await fetch(`${apiRoot}/repos/${repository}/actions/artifacts?per_page=100`, {
-        headers,
-      });
-      if (!response.ok)
-        throw new Error(`Unable to list GitHub timing history: HTTP ${response.status}`);
-      const listing = await response.json();
-      if (!Array.isArray(listing.artifacts))
-        throw new Error('GitHub timing history listing did not contain an artifact list');
-      const previous = listing.artifacts
-        .filter((artifact) => {
-          const match = /^vroom-mode2-(\d+)-(\d+)-reconciled$/.exec(artifact.name ?? '');
-          return (
-            match &&
-            !artifact.expired &&
-            match[1] !== currentRunId &&
-            String(artifact.workflow_run?.id ?? '') === match[1] &&
-            artifact.workflow_run?.head_branch === branch
-          );
-        })
-        .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))[0];
-      if (previous) {
-        const match = /^vroom-mode2-(\d+)-(\d+)-reconciled$/.exec(previous.name);
-        artifactReturn = {
-          repository,
-          runId: match[1],
-          runAttempt: match[2],
-          token,
-          apiUrl: apiRoot,
-          artifactPrefix: previous.name,
-        };
-        process.stdout.write(`GitHub timing history: ${previous.name}\n`);
-      }
-    }
+    if (!repository || !token || !currentRunId || !branch) return { artifactReturn: null };
+    const apiRoot = String(process.env.GITHUB_API_URL ?? 'https://api.github.com').replace(
+      /\/$/,
+      ''
+    );
+    const headers = {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'Vroom',
+    };
+    const response = await fetch(`${apiRoot}/repos/${repository}/actions/artifacts?per_page=100`, {
+      headers,
+    });
+    if (!response.ok)
+      throw new Error(`Unable to list GitHub timing history: HTTP ${response.status}`);
+    const listing = await response.json();
+    if (!Array.isArray(listing.artifacts))
+      throw new Error('GitHub timing history listing did not contain an artifact list');
+    const previous = listing.artifacts
+      .filter((artifact) => {
+        const match = /^vroom-node-results-(\d+)-(\d+)-reconciled$/.exec(artifact.name ?? '');
+        return (
+          match &&
+          !artifact.expired &&
+          match[1] !== currentRunId &&
+          String(artifact.workflow_run?.id ?? '') === match[1] &&
+          artifact.workflow_run?.head_branch === branch
+        );
+      })
+      .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))[0];
+    if (!previous) return { artifactReturn: null };
+    const match = /^vroom-node-results-(\d+)-(\d+)-reconciled$/.exec(previous.name);
+    process.stdout.write(`GitHub timing history: ${previous.name}\n`);
+    return {
+      artifactReturn: {
+        repository,
+        runId: match[1],
+        runAttempt: match[2],
+        token,
+        apiUrl: apiRoot,
+        artifactPrefix: previous.name,
+      },
+    };
   }
 
-  if (action === 'read' || action === 'weights') {
-    for (const source of timingLogFolders) {
-      const timingFiles = (await readdir(source.path))
-        .filter((entry) => entry.startsWith(timingPrefix) && entry.endsWith('.log'))
-        .sort();
-      for (const name of timingFiles) {
-        try {
-          const record = JSON.parse(await readFile(join(source.path, name), 'utf8'));
-          if (record.schema !== 'vroom-timing-v1' || !Array.isArray(record.results)) continue;
-          historyRecords.push({ profile: source.profile, record });
-        } catch {
-          process.stderr.write(
-            `Vroom warning: ignored unreadable timing log ${join(source.path, name)}\n`
-          );
-        }
-      }
-    }
-  }
-
-  if (artifactReturn) {
-    if (mode !== 'github') throw new Error('GitHub artifact return requires GitHub mode');
+  if (action === 'download') {
+    if (!artifactReturn) throw new Error('ResultTransfer download requires an artifact return');
     const repository = String(artifactReturn.repository ?? '').trim();
     const runId = String(artifactReturn.runId ?? '').trim();
     const runAttempt = String(artifactReturn.runAttempt ?? '').trim();
@@ -1008,8 +994,11 @@ async function TimingResults(request) {
       throw new Error('GitHub artifact listing did not contain an artifact list');
     if (Number(listing.total_count) > listing.artifacts.length)
       throw new Error('GitHub artifact return exceeded one result page');
+    const recordType = artifactReturn.recordType ?? 'results';
+    if (!['results', 'plan'].includes(recordType))
+      throw new Error(`GitHub artifact return requested unsupported records: ${recordType}`);
     const artifactPrefix =
-      artifactReturn.artifactPrefix ?? `vroom-mode2-${runId}-${runAttempt}-`;
+      artifactReturn.artifactPrefix ?? `vroom-node-results-${runId}-${runAttempt}-`;
     const artifacts = listing.artifacts
       .filter(
         (artifact) =>
@@ -1019,9 +1008,12 @@ async function TimingResults(request) {
           typeof artifact.archive_download_url === 'string'
       )
       .sort((left, right) => left.name.localeCompare(right.name));
-    if (!artifacts.length)
+    if (!artifacts.length && !artifactReturn.allowEmpty)
       throw new Error(`No current GitHub result artifacts matched ${artifactPrefix}`);
 
+    const receipts = new Map();
+    const timingRecords = [];
+    const plans = [];
     for (const artifact of artifacts) {
       const archiveResponse = await fetch(artifact.archive_download_url, { headers });
       if (!archiveResponse.ok)
@@ -1082,25 +1074,271 @@ async function TimingResults(request) {
         } catch {
           continue;
         }
-        if (record.schema === 'vroom-github-receipt-v1') {
+        if (record.schema === 'vroom-node-receipt-v1') {
           if (
             String(record.runId) !== runId ||
             String(record.runAttempt) !== runAttempt ||
             record.repository !== repository
           )
             throw new Error(`GitHub artifact ${artifact.name} returned a foreign receipt`);
-          if (downloadedReceipts.has(record.shardId))
+          if (receipts.has(record.shardId))
             throw new Error(`GitHub artifact return duplicated receipt ${record.shardId}`);
-          downloadedReceipts.set(record.shardId, record);
+          receipts.set(record.shardId, record);
         } else if (record.schema === 'vroom-timing-v1') {
           if (record.executionMode !== 'github' || !Array.isArray(record.results))
             throw new Error(`GitHub artifact ${artifact.name} returned invalid timing data`);
-          downloadedTimingRecords.push(record);
+          timingRecords.push(record);
+        } else if (record.schema === 'vroom-plan-v1') {
+          if (
+            String(record.runId) !== runId ||
+            String(record.runAttempt) !== runAttempt ||
+            record.repository !== repository
+          )
+            throw new Error(`GitHub artifact ${artifact.name} returned a foreign plan`);
+          plans.push(record);
         }
       }
     }
-    if (!downloadedReceipts.size)
+    if (recordType === 'plan') {
+      if (plans.length !== 1)
+        throw new Error(`GitHub plan return expected one plan; found ${plans.length}`);
+      return { plan: plans[0] };
+    }
+    if (!receipts.size && !artifactReturn.allowEmpty)
       throw new Error('GitHub artifact return contained no Vroom receipts');
+    return { receipts, timingRecords };
+  }
+
+  if (process.env.GITHUB_ACTIONS !== 'true')
+    throw new Error('GitHub result upload requires the GitHub Actions environment');
+  const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN?.trim();
+  const resultsServiceUrl = process.env.ACTIONS_RESULTS_URL?.trim();
+  const runId = process.env.GITHUB_RUN_ID?.trim();
+  const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
+  if (!runtimeToken || !resultsServiceUrl || !runId || !runAttempt)
+    throw new Error(
+      'GitHub artifact upload requires runtime token, results service, run, and attempt values'
+    );
+  const tokenParts = runtimeToken.split('.');
+  if (tokenParts.length !== 3) throw new Error('GitHub artifact runtime token is not a JWT');
+  let tokenClaims;
+  try {
+    tokenClaims = JSON.parse(Buffer.from(tokenParts[1], 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('GitHub artifact runtime token contains invalid claims');
+  }
+  const resultScope = String(tokenClaims.scp ?? '')
+    .split(' ')
+    .find((scope) => scope.startsWith('Actions.Results:'));
+  const scopeParts = resultScope?.split(':') ?? [];
+  if (scopeParts.length !== 3)
+    throw new Error('GitHub artifact runtime token is missing Actions.Results scope');
+  const reconcileUpload = process.env.VROOM_GITHUB_RECONCILE === 'true';
+  const planUpload = planPaths.length > 0;
+  if (planUpload && (receiptPaths.length || timingLogPaths.length || planPaths.length !== 1))
+    throw new Error('GitHub plan upload requires exactly one plan record');
+  if (!planUpload && !reconcileUpload && !node?.id)
+    throw new Error('GitHub worker artifact upload requires a node identity');
+  const artifactName = planUpload
+    ? `vroom-plan-${runId}-${runAttempt}`
+    : `vroom-node-results-${runId}-${runAttempt}-${
+        reconcileUpload ? 'reconciled' : node.id
+      }`;
+  const uploadFiles = [
+    ...new Set(planUpload ? planPaths : [...receiptPaths, ...timingLogPaths]),
+  ];
+  if (!uploadFiles.length)
+    throw new Error(`GitHub artifact ${artifactName} has no Vroom records to upload`);
+  const artifactPaths = planUpload
+    ? uploadFiles
+    : uploadFiles.map((filePath) => {
+        const artifactPath = relative(applicationRoot, filePath).replace(/\\/g, '/');
+        if (!artifactPath || artifactPath.startsWith('../') || artifactPath.startsWith('/'))
+          throw new Error(`GitHub artifact path is outside the application: ${filePath}`);
+        return artifactPath;
+      });
+  const archivePath = join(
+    process.env.RUNNER_TEMP ?? applicationRoot,
+    `${artifactName}-${process.pid}.zip`
+  );
+  const zipResult = spawnSync('zip', ['-q', ...(planUpload ? ['-j'] : []), archivePath, ...artifactPaths], {
+    cwd: applicationRoot,
+    encoding: 'utf8',
+  });
+  if (zipResult.status !== 0)
+    throw new Error(
+      `Unable to package GitHub artifact ${artifactName}: ${zipResult.stderr?.trim() || 'zip failed'}`
+    );
+  const archive = await readFile(archivePath);
+  await unlink(archivePath);
+  const artifactService = `${new URL(resultsServiceUrl).origin}/twirp/github.actions.results.api.v1.ArtifactService`;
+  const serviceHeaders = {
+    Authorization: `Bearer ${runtimeToken}`,
+    'Content-Type': 'application/json',
+    'User-Agent': 'Vroom',
+  };
+  const createResponse = await fetch(`${artifactService}/CreateArtifact`, {
+    method: 'POST',
+    headers: serviceHeaders,
+    body: JSON.stringify({
+      workflow_run_backend_id: scopeParts[1],
+      workflow_job_run_backend_id: scopeParts[2],
+      name: artifactName,
+      version: 7,
+      mime_type: { value: 'application/zip' },
+    }),
+  });
+  if (!createResponse.ok)
+    throw new Error(`Unable to create GitHub artifact ${artifactName}: HTTP ${createResponse.status}`);
+  const createdArtifact = await createResponse.json();
+  if (!createdArtifact.ok || typeof createdArtifact.signed_upload_url !== 'string')
+    throw new Error(`GitHub refused artifact creation for ${artifactName}`);
+  const uploadResponse = await fetch(createdArtifact.signed_upload_url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/zip', 'x-ms-blob-type': 'BlockBlob' },
+    body: archive,
+  });
+  if (!uploadResponse.ok)
+    throw new Error(`Unable to upload GitHub artifact ${artifactName}: HTTP ${uploadResponse.status}`);
+  const finalizeResponse = await fetch(`${artifactService}/FinalizeArtifact`, {
+    method: 'POST',
+    headers: serviceHeaders,
+    body: JSON.stringify({
+      workflow_run_backend_id: scopeParts[1],
+      workflow_job_run_backend_id: scopeParts[2],
+      name: artifactName,
+      size: String(archive.length),
+    }),
+  });
+  if (!finalizeResponse.ok)
+    throw new Error(`Unable to finalize GitHub artifact ${artifactName}: HTTP ${finalizeResponse.status}`);
+  const finalizedArtifact = await finalizeResponse.json();
+  if (!finalizedArtifact.ok)
+    throw new Error(`GitHub refused artifact finalization for ${artifactName}`);
+  process.stdout.write(`GitHub artifact uploaded: ${artifactName}\n`);
+  return { artifactNames: [artifactName] };
+}
+
+// H. TimingResults
+// Owns timing-history intake and completed-result storage for the application
+// that invoked Vroom. It reads comparable timing logs for Scheduler, validates
+// and stores returned receipts, writes the combined timing record, and keeps
+// only the latest five timing logs and GitHub receipt sets. For hosted work it
+// downloads the expected GitHub artifacts itself, compares their receipts with
+// Scheduler's immutable plan, and interprets their timing records. It does not
+// schedule work or assign shards.
+async function TimingResults(request) {
+  const {
+    action,
+    applicationRoot,
+    workload,
+    profiles = [],
+    selectedJobNames = [],
+    mode,
+    node,
+    resources,
+    results: suppliedResults = [],
+    history = new Map(),
+    githubReturn = null,
+    expectedPlan = null,
+    resourceNodes = [],
+  } = request;
+  if (!['read', 'weights', 'save'].includes(action))
+    throw new Error(`TimingResults received unsupported action: ${action}`);
+
+  const userDataRoot = join(applicationRoot, USER_DATA_FOLDER);
+  const workloadLogRoot = join(userDataRoot, TIMING_LOG_FOLDER, workload);
+  const timingLogFolders = profiles.length
+    ? profiles.map((profile) => ({ profile, path: join(workloadLogRoot, profile.name) }))
+    : selectedJobNames.length || suppliedResults.length || githubReturn
+      ? [{ profile: null, path: workloadLogRoot }]
+      : [];
+  const timingPrefix = `${mode}-timing-`;
+  for (const source of timingLogFolders) {
+    await mkdir(source.path, { recursive: true });
+    const existing = (await readdir(source.path))
+      .filter((entry) => entry.startsWith(timingPrefix) && entry.endsWith('.log'))
+      .sort();
+    for (const expired of existing.slice(0, -TIMING_LOG_LIMIT))
+      await unlink(join(source.path, expired));
+  }
+
+  let completedResults = suppliedResults;
+  let downloadedReceipts = new Map();
+  let downloadedTimingRecords = [];
+  const historyRecords = [];
+  let artifactReturn = githubReturn;
+  if (
+    !artifactReturn &&
+    (action === 'read' || action === 'weights') &&
+    mode === 'github' &&
+    process.env.GITHUB_ACTIONS === 'true'
+  ) {
+    ({ artifactReturn } = await ResultTransfer({ action: 'locate-history', mode }));
+  }
+
+  if (action === 'read' || action === 'weights') {
+    for (const source of timingLogFolders) {
+      const timingFiles = (await readdir(source.path))
+        .filter((entry) => entry.startsWith(timingPrefix) && entry.endsWith('.log'))
+        .sort();
+      for (const name of timingFiles) {
+        try {
+          const record = JSON.parse(await readFile(join(source.path, name), 'utf8'));
+          if (record.schema !== 'vroom-timing-v1' || !Array.isArray(record.results)) continue;
+          historyRecords.push({ profile: source.profile, record });
+        } catch {
+          process.stderr.write(
+            `Vroom warning: ignored unreadable timing log ${join(source.path, name)}\n`
+          );
+        }
+      }
+    }
+  }
+
+  if (artifactReturn) {
+    if (mode !== 'github') throw new Error('GitHub artifact return requires GitHub mode');
+    const transfer = await ResultTransfer({
+      action: 'download',
+      applicationRoot,
+      mode,
+      artifactReturn,
+    });
+    downloadedReceipts = transfer.receipts;
+    downloadedTimingRecords = transfer.timingRecords;
+    if (expectedPlan) {
+      const expectedAssignments = new Map(
+        expectedPlan.assignments.map((assignment) => [assignment.shardId, assignment])
+      );
+      if (expectedAssignments.size !== expectedPlan.assignments.length)
+        throw new Error('GitHub plan contains duplicate shard identities');
+      const unexpected = [...downloadedReceipts.keys()].filter(
+        (shardId) => !expectedAssignments.has(shardId)
+      );
+      if (unexpected.length)
+        throw new Error(`GitHub artifact return contained unexpected work: ${unexpected.join(', ')}`);
+      const missing = [...expectedAssignments.keys()].filter(
+        (shardId) => !downloadedReceipts.has(shardId)
+      );
+      if (missing.length)
+        throw new Error(`GitHub artifact return is missing planned work: ${missing.join(', ')}`);
+      for (const [shardId, assignment] of expectedAssignments) {
+        const receipt = downloadedReceipts.get(shardId);
+        if (
+          receipt.provider !== expectedPlan.provider ||
+          receipt.repository !== expectedPlan.repository ||
+          String(receipt.runId) !== String(expectedPlan.runId) ||
+          String(receipt.runAttempt) !== String(expectedPlan.runAttempt) ||
+          receipt.commitSha !== expectedPlan.commitSha ||
+          receipt.jobName !== assignment.jobName ||
+          receipt.nodeId !== assignment.nodeId ||
+          !Number.isInteger(receipt.allocatedThreads) ||
+          receipt.allocatedThreads < 1 ||
+          receipt.allocatedThreads > assignment.nodeCapacity
+        )
+          throw new Error(`GitHub receipt does not match planned assignment ${shardId}`);
+      }
+    }
     const returnedResults = [];
     for (const receipt of downloadedReceipts.values()) {
       const matches = downloadedTimingRecords
@@ -1109,7 +1347,7 @@ async function TimingResults(request) {
           (result) =>
             result.shardId === receipt.shardId &&
             result.jobName === receipt.jobName &&
-            result.targetId === receipt.targetId &&
+            result.nodeId === receipt.nodeId &&
             result.allocatedCapacity === receipt.allocatedThreads &&
             result.status === receipt.result &&
             result.exitCode === receipt.exitCode
@@ -1147,7 +1385,7 @@ async function TimingResults(request) {
         if (source.profile && !source.profile.jobs.includes(result.jobName)) continue;
         if (
           result.status === 'passed' &&
-          typeof result.targetId === 'string' &&
+          typeof result.nodeId === 'string' &&
           Number.isFinite(result.estimatedWeight) &&
           result.estimatedWeight > 0 &&
           Number.isFinite(result.durationMs) &&
@@ -1155,10 +1393,10 @@ async function TimingResults(request) {
           Number.isInteger(result.allocatedCapacity) &&
           result.allocatedCapacity > 0
         ) {
-          if (!performanceSamples.has(result.targetId))
-            performanceSamples.set(result.targetId, []);
+          if (!performanceSamples.has(result.nodeId))
+            performanceSamples.set(result.nodeId, []);
           performanceSamples
-            .get(result.targetId)
+            .get(result.nodeId)
             .push(result.estimatedWeight / (result.durationMs * result.allocatedCapacity));
         }
         if (
@@ -1166,7 +1404,7 @@ async function TimingResults(request) {
           typeof result.jobName !== 'string' ||
           typeof result.command !== 'string' ||
           !Number.isFinite(result.durationMs) ||
-          (target && result.targetCapacity !== target.capacity)
+          (node && result.nodeCapacity !== node.capacity)
         )
           continue;
         const key = `${result.jobName}\u0000${result.command}`;
@@ -1177,21 +1415,21 @@ async function TimingResults(request) {
             Number.isInteger(result.allocatedCapacity) && result.allocatedCapacity > 0
               ? result.allocatedCapacity
               : 1,
-          targetId: result.targetId,
-          targetCapacity: result.targetCapacity,
+          nodeId: result.nodeId,
+          nodeCapacity: result.nodeCapacity,
           workerGroup,
         });
       }
     }
     if (action === 'weights') {
       const measuredPerformance = new Map();
-      for (const resourceTarget of resourceTargets) {
-        const samples = (performanceSamples.get(resourceTarget.id) ?? [])
+      for (const resourceNode of resourceNodes) {
+        const samples = (performanceSamples.get(resourceNode.id) ?? [])
           .slice(-5)
           .sort((left, right) => left - right);
         const sampleMidpoint = Math.floor(samples.length / 2);
         measuredPerformance.set(
-          resourceTarget.id,
+          resourceNode.id,
           samples.length
             ? samples.length % 2
               ? samples[sampleMidpoint]
@@ -1209,16 +1447,16 @@ async function TimingResults(request) {
           ? measured[midpoint]
           : (measured[midpoint - 1] + measured[midpoint]) / 2
         : 1;
-      const targetWeights = new Map();
-      for (const resourceTarget of resourceTargets) {
-        const performance = measuredPerformance.get(resourceTarget.id);
+      const nodeWeights = new Map();
+      for (const resourceNode of resourceNodes) {
+        const performance = measuredPerformance.get(resourceNode.id);
         const relativeWeight = performance ? performance / baseline : 1;
-        targetWeights.set(
-          resourceTarget.id,
+        nodeWeights.set(
+          resourceNode.id,
           Math.round(Math.min(4, Math.max(0.25, relativeWeight)) * 1000) / 1000
         );
       }
-      return { targetWeights, timingLogFolders };
+      return { nodeWeights, timingLogFolders };
     }
     return { history: loadedHistory, timingLogFolders };
   }
@@ -1230,28 +1468,28 @@ async function TimingResults(request) {
       const downloadedReceipt = downloadedReceipts.get(result.shardId);
       const receiptIdentity = downloadedReceipt ? `download:${result.shardId}` : result.receiptPath;
       if (!receiptIdentity || acceptedReceiptPaths.has(receiptIdentity))
-        throw new Error(`GitHub receipt reconciliation failed for ${result.shardId}`);
+        throw new Error(`Node receipt reconciliation failed for ${result.shardId}`);
       let receipt;
       if (downloadedReceipt) receipt = downloadedReceipt;
       else {
         try {
           receipt = JSON.parse(await readFile(result.receiptPath, 'utf8'));
         } catch (error) {
-          throw new Error(`Unable to read GitHub receipt for ${result.shardId}: ${error.message}`);
+          throw new Error(`Unable to read node receipt for ${result.shardId}: ${error.message}`);
         }
       }
       if (
-        receipt.schema !== 'vroom-github-receipt-v1' ||
+        receipt.schema !== 'vroom-node-receipt-v1' ||
         receipt.shardId !== result.shardId ||
         receipt.jobName !== result.jobName ||
-        receipt.targetId !== result.targetId ||
+        receipt.nodeId !== result.nodeId ||
         receipt.allocatedThreads !== result.allocatedCapacity ||
         receipt.result !== result.status ||
         receipt.exitCode !== result.exitCode
       )
-        throw new Error(`GitHub receipt does not match execution result for ${result.shardId}`);
-      const runScope = `${receipt.runId}-${receipt.runAttempt}`;
-      const receiptFolder = join(userDataRoot, 'github-receipts', runScope);
+        throw new Error(`Node receipt does not match execution result for ${result.shardId}`);
+      const runScope = `${receipt.provider}-${receipt.runId}-${receipt.runAttempt}`;
+      const receiptFolder = join(userDataRoot, 'node-receipts', runScope);
       const receiptPath = join(receiptFolder, `${result.shardId}.json`);
       await mkdir(receiptFolder, { recursive: true });
       if (downloadedReceipt || resolve(result.receiptPath) !== resolve(receiptPath))
@@ -1263,7 +1501,7 @@ async function TimingResults(request) {
       receiptPaths.push(receiptPath);
       result.receiptPath = receiptPath;
     }
-    const receiptRoot = join(userDataRoot, 'github-receipts');
+    const receiptRoot = join(userDataRoot, 'node-receipts');
     await mkdir(receiptRoot, { recursive: true });
     const retainedReceiptSets = (await readdir(receiptRoot, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
@@ -1271,7 +1509,7 @@ async function TimingResults(request) {
       .sort();
     for (const expired of retainedReceiptSets.slice(0, -TIMING_LOG_LIMIT))
       await rm(join(receiptRoot, expired), { recursive: true, force: true });
-    process.stdout.write(`GitHub receipts accepted: ${acceptedReceiptPaths.size}\n`);
+    process.stdout.write(`Node receipts accepted: ${acceptedReceiptPaths.size}\n`);
   }
 
   if (!completedResults.length)
@@ -1285,7 +1523,7 @@ async function TimingResults(request) {
     applicationRoot,
     controllerId: resources.controllerId,
     startedWithHistory: history.size > 0,
-    targets: resources.targets,
+    nodes: resources.nodes,
     results: completedResults.map((result) => {
       const previous = history.get(`${result.jobName}\u0000${result.command}`) ?? [];
       const samples =
@@ -1329,15 +1567,34 @@ async function TimingResults(request) {
     for (const expired of retainedTimingFiles.slice(0, -TIMING_LOG_LIMIT))
       await unlink(join(source.path, expired));
   }
-  return { results: completedResults, receiptPaths, timingLogPaths, timingLogFolders };
+  let uploadedArtifactNames = [];
+  if (mode === 'github' && process.env.GITHUB_ACTIONS === 'true') {
+    const transfer = await ResultTransfer({
+      action: 'upload',
+      applicationRoot,
+      mode,
+      node,
+      receiptPaths,
+      timingLogPaths,
+    });
+    uploadedArtifactNames = transfer.artifactNames;
+  }
+  return {
+    results: completedResults,
+    receiptPaths,
+    timingLogPaths,
+    timingLogFolders,
+    uploadedArtifactNames,
+  };
 }
 
 // I. Scheduler
 // Owns the one application-agnostic scheduler used by every Vroom mode. It
 // creates and displays the application-work plan, loads Vroom configuration,
-// obtains CPU and weighted target resources, resolves generic command behavior,
-// creates and assigns deterministic local or multi-VM shards, emits the GitHub
-// VM matrix, applies changed-file rules, enforces dependencies and exclusivity,
+// obtains CPU and weighted node resources, resolves generic command behavior,
+// creates and assigns deterministic local or multi-node shards, emits one
+// immutable GitHub run-attempt plan and node matrix, applies changed-file rules,
+// enforces dependencies and exclusivity,
 // asks TimingResults for timing history, uses that history to set execution
 // order, balances worker capacity, executes nodes with their
 // application-declared non-secret environments, handles cancellation and
@@ -1389,7 +1646,7 @@ async function Scheduler(
     profiles: plan.profiles,
     selectedJobNames: plannedJobNames,
     mode,
-    target: null,
+    node: null,
   });
   const vroomConfiguration = await loadVroomConfiguration();
   const resources = await CpuThreadPanning(mode, vroomConfiguration, {
@@ -1420,6 +1677,28 @@ async function Scheduler(
       throw new Error(
         'GitHub reconciliation requires repository, run, attempt, and token environment values'
       );
+    const planTransfer = await ResultTransfer({
+      action: 'download',
+      applicationRoot: plan.applicationRoot,
+      mode,
+      artifactReturn: {
+        repository,
+        runId,
+        runAttempt,
+        token,
+        recordType: 'plan',
+        artifactPrefix: `vroom-plan-${runId}-${runAttempt}`,
+      },
+    });
+    const expectedPlan = planTransfer.plan;
+    if (
+      expectedPlan.schema !== 'vroom-plan-v1' ||
+      expectedPlan.provider !== 'github-actions' ||
+      expectedPlan.workload !== plan.workload ||
+      !Array.isArray(expectedPlan.nodes) ||
+      !Array.isArray(expectedPlan.assignments)
+    )
+      throw new Error('GitHub returned an invalid Vroom assignment plan');
     const timingOutcome = await TimingResults({
       action: 'save',
       applicationRoot: plan.applicationRoot,
@@ -1427,17 +1706,19 @@ async function Scheduler(
       profiles: plan.profiles,
       selectedJobNames: plannedJobNames,
       mode,
-      target: null,
+      node: null,
       resources,
       results: [],
       history: preliminaryTimingState.history,
+      expectedPlan,
       githubReturn: {
         repository,
         runId,
         runAttempt,
         token,
+        allowEmpty: true,
         ...(returnedToApplication
-          ? { artifactPrefix: `vroom-mode2-${runId}-${runAttempt}-reconciled` }
+          ? { artifactPrefix: `vroom-node-results-${runId}-${runAttempt}-reconciled` }
           : {}),
       },
     });
@@ -1446,7 +1727,7 @@ async function Scheduler(
       process.env.VROOM_GITHUB_EXECUTION_RESULT !== 'success'
     )
       throw new Error(
-        `GitHub VM execution completed with ${process.env.VROOM_GITHUB_EXECUTION_RESULT ?? 'an unknown result'}`
+        `GitHub node execution completed with ${process.env.VROOM_GITHUB_EXECUTION_RESULT ?? 'an unknown result'}`
       );
     return {
       resources,
@@ -1455,22 +1736,124 @@ async function Scheduler(
       timingLogPaths: timingOutcome.timingLogPaths,
     };
   }
-  const multiVmGithub = mode === 'github' && resources.targets.length > 1;
+  const multiNode = resources.nodes.length > 1;
   const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
-  const githubAssignments = new Map();
-  if (multiVmGithub) {
+  let githubExecutionPlan = null;
+  if (mode === 'github' && !githubPlan) {
+    const repository = process.env.GITHUB_REPOSITORY?.trim();
+    const runId = process.env.GITHUB_RUN_ID?.trim();
+    const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
+    const commitSha = process.env.GITHUB_SHA?.trim();
+    const token = process.env.VROOM_GITHUB_TOKEN?.trim();
+    if (!repository || !runId || !runAttempt || !commitSha || !token)
+      throw new Error(
+        'GitHub node execution requires repository, run, attempt, commit, and token environment values'
+      );
+    ({ plan: githubExecutionPlan } = await ResultTransfer({
+      action: 'download',
+      applicationRoot: plan.applicationRoot,
+      mode,
+      artifactReturn: {
+        repository,
+        runId,
+        runAttempt,
+        token,
+        recordType: 'plan',
+        artifactPrefix: `vroom-plan-${runId}-${runAttempt}`,
+      },
+    }));
+    if (
+      githubExecutionPlan.schema !== 'vroom-plan-v1' ||
+      githubExecutionPlan.provider !== 'github-actions' ||
+      githubExecutionPlan.repository !== repository ||
+      String(githubExecutionPlan.runId) !== runId ||
+      String(githubExecutionPlan.runAttempt) !== runAttempt ||
+      githubExecutionPlan.commitSha !== commitSha ||
+      githubExecutionPlan.workload !== plan.workload ||
+      !Array.isArray(githubExecutionPlan.nodes) ||
+      !Array.isArray(githubExecutionPlan.jobs) ||
+      !Array.isArray(githubExecutionPlan.assignments)
+    )
+      throw new Error('GitHub node received an invalid or foreign Vroom assignment plan');
+  }
+  const nodeAssignments = new Map();
+  if (githubExecutionPlan) {
+    const configuredNodes = new Map(resources.nodes.map((resourceNode) => [resourceNode.id, resourceNode]));
+    if (
+      githubExecutionPlan.nodes.length !== resources.nodes.length ||
+      githubExecutionPlan.nodes.some(
+        (plannedNode) =>
+          configuredNodes.get(plannedNode.id)?.capacity !== plannedNode.capacity
+      )
+    )
+      throw new Error('GitHub plan node capacity does not match vroom.cfg');
+    const plannedJobs = new Map(githubExecutionPlan.jobs.map((job) => [job.name, job]));
+    if (plannedJobs.size !== githubExecutionPlan.jobs.length)
+      throw new Error('GitHub plan contains duplicate job records');
+    for (let jobIndex = 0; jobIndex < plan.jobs.length; jobIndex += 1) {
+      const job = plan.jobs[jobIndex];
+      const plannedJob = plannedJobs.get(job.name);
+      if (
+        plannedJob &&
+        (plannedJob.command !== job.command ||
+          JSON.stringify(plannedJob.environment) !== JSON.stringify(job.environment) ||
+          !Array.isArray(plannedJob.selectedFiles))
+      )
+        throw new Error(`GitHub plan job does not match application configuration: ${job.name}`);
+      const assignments = resources.nodes.map((resourceNode, nodeIndex) => ({
+        nodeId: resourceNode.id,
+        nodeIndex,
+        weightedCapacity: resourceNode.weightedCapacity,
+        estimatedWeight: 0,
+        files: [],
+        wholeJob: false,
+        shardId: null,
+      }));
+      const plannedAssignments = githubExecutionPlan.assignments.filter(
+        (assignment) => assignment.jobName === job.name
+      );
+      for (const assignment of plannedAssignments) {
+        const target = assignments.find((candidate) => candidate.nodeId === assignment.nodeId);
+        const expectedShardId = multiNode
+          ? `shard-${String(jobIndex + 1).padStart(2, '0')}-${assignment.nodeId}`
+          : `shard-${String(jobIndex + 1).padStart(2, '0')}`;
+        if (
+          !plannedJob ||
+          !target ||
+          target.shardId ||
+          assignment.shardId !== expectedShardId ||
+          assignment.nodeCapacity !== configuredNodes.get(assignment.nodeId).capacity ||
+          !Array.isArray(assignment.executionFiles) ||
+          assignment.executionFiles.some((file) => !job.files.includes(file)) ||
+          typeof assignment.wholeJob !== 'boolean'
+        )
+          throw new Error(`GitHub plan contains an invalid assignment for ${job.name}`);
+        target.files = [...assignment.executionFiles];
+        target.wholeJob = assignment.wholeJob;
+        target.estimatedWeight = assignment.estimatedWeight;
+        target.shardId = assignment.shardId;
+      }
+      nodeAssignments.set(job.name, assignments);
+    }
+    if (
+      githubExecutionPlan.assignments.some(
+        (assignment) => !plan.jobs.some((job) => job.name === assignment.jobName)
+      )
+    )
+      throw new Error('GitHub plan contains a job absent from application configuration');
+  } else if (multiNode) {
     const unsupported = plan.jobs.filter((job) => job.after.length || job.exclusive);
     if (unsupported.length)
       throw new Error(
-        `Multi-VM GitHub execution does not yet support cross-VM dependencies or exclusivity: ${unsupported.map((job) => job.name).join(', ')}`
+        `Multi-node execution does not yet support cross-node dependencies or exclusivity: ${unsupported.map((job) => job.name).join(', ')}`
       );
 
     for (let jobIndex = 0; jobIndex < plan.jobs.length; jobIndex += 1) {
       const job = plan.jobs[jobIndex];
-      const assignments = resources.targets.map((resourceTarget, targetIndex) => ({
-        targetId: resourceTarget.id,
-        targetIndex,
-        weightedCapacity: resourceTarget.weightedCapacity,
+      const assignments = resources.nodes.map((resourceNode, nodeIndex) => ({
+        nodeId: resourceNode.id,
+        nodeIndex,
+        weightedCapacity: resourceNode.weightedCapacity,
         estimatedWeight: 0,
         files: [],
         wholeJob: false,
@@ -1527,7 +1910,7 @@ async function Scheduler(
             if (candidateLoad < selectedLoad) return candidate;
             if (
               candidateLoad === selectedLoad &&
-              candidate.targetIndex < selected.targetIndex
+              candidate.nodeIndex < selected.nodeIndex
             )
               return candidate;
             return selected;
@@ -1541,54 +1924,18 @@ async function Scheduler(
         assignment.wholeJob = true;
         assignment.estimatedWeight = 1;
       }
-      githubAssignments.set(job.name, assignments);
+      nodeAssignments.set(job.name, assignments);
     }
   }
-
-  if (githubPlan) {
-    if (mode !== 'github') throw new Error('--github-plan requires GitHub execution mode');
-    const outputPath = process.env.GITHUB_OUTPUT?.trim();
-    if (!outputPath) throw new Error('--github-plan requires GITHUB_OUTPUT');
-    const matrix = { target: resources.targets.map((resourceTarget) => resourceTarget.id) };
-    await appendFile(outputPath, `matrix=${JSON.stringify(matrix)}\n`, 'utf8');
-    process.stdout.write(
-      `GitHub VM matrix: ${matrix.target.join(', ')}\n` +
-        `Configured capacity: ${resources.totalCapacity} thread slots across ${resources.targets.length} VM(s)\n`
-    );
-    for (const job of plan.jobs) {
-      const assignments = githubAssignments.get(job.name);
-      if (!assignments) continue;
-      const summary = assignments
-        .map((assignment) =>
-          job.files.length
-            ? `${assignment.targetId}=${assignment.files.length} file(s)`
-            : `${assignment.targetId}=${assignment.wholeJob ? 'whole job' : 'no work'}`
-        )
-        .join(', ');
-      process.stdout.write(`[assign] ${job.name}: ${summary}\n`);
-    }
-    return { resources, results: [], timingLogPaths: [], plannedOnly: true };
-  }
-
-  if (mode === 'cluster') await ExecutionCluster();
-  const requestedTargetId = process.env.VROOM_GITHUB_TARGET_ID?.trim();
-  let target = resources.targets[0];
-  if (mode === 'github' && requestedTargetId)
-    target = resources.targets.find((candidate) => candidate.id === requestedTargetId);
-  else if (multiVmGithub)
-    throw new Error('Multi-VM GitHub execution requires VROOM_GITHUB_TARGET_ID');
-  if (!target || target.capacity < 1)
-    throw new Error(
-      requestedTargetId
-        ? `Configured GitHub target does not exist or has no capacity: ${requestedTargetId}`
-        : `${mode} execution target has no capacity`
-    );
-  const targetIndex = resources.targets.findIndex((candidate) => candidate.id === target.id);
-  const execute = mode === 'github' ? ExecutionGitHub : ExecutionLocal;
 
   const changedFilesByReference = new Map();
   const selectedFilesByJob = new Map();
   for (const job of plan.jobs) {
+    if (githubExecutionPlan) {
+      const plannedJob = githubExecutionPlan.jobs.find((entry) => entry.name === job.name);
+      selectedFilesByJob.set(job.name, plannedJob ? [...plannedJob.selectedFiles] : []);
+      continue;
+    }
     if (!job.when.length) {
       selectedFilesByJob.set(job.name, []);
       continue;
@@ -1644,10 +1991,13 @@ async function Scheduler(
     selectedFilesByJob.set(job.name, selectedFiles);
   }
 
-  const selectedJobNames = plan.jobs
-    .filter((job) => !job.when.length || selectedFilesByJob.get(job.name)?.length)
-    .map((job) => job.name)
-    .sort();
+  const selectedJobNames = (
+    githubExecutionPlan
+      ? githubExecutionPlan.jobs.map((job) => job.name)
+      : plan.jobs
+          .filter((job) => !job.when.length || selectedFilesByJob.get(job.name)?.length)
+          .map((job) => job.name)
+  ).sort();
   const selectedJobSet = new Set(selectedJobNames);
   const activeProfiles = [];
   if (selectedJobNames.length && plan.profiles.length) {
@@ -1667,6 +2017,128 @@ async function Scheduler(
         `${plan.configPath}: selected jobs do not belong to a declared ${plan.workload} profile: ${unprofiledJobNames.join(', ')}`
       );
   }
+
+  if (githubPlan) {
+    if (mode !== 'github') throw new Error('--github-plan requires GitHub execution mode');
+    const outputPath = process.env.GITHUB_OUTPUT?.trim();
+    const repository = process.env.GITHUB_REPOSITORY?.trim();
+    const runId = process.env.GITHUB_RUN_ID?.trim();
+    const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
+    const commitSha = process.env.GITHUB_SHA?.trim();
+    if (!outputPath || !repository || !runId || !runAttempt || !commitSha)
+      throw new Error(
+        '--github-plan requires output, repository, run, attempt, and commit environment values'
+      );
+    const assignments = [];
+    for (let jobIndex = 0; jobIndex < plan.jobs.length; jobIndex += 1) {
+      const job = plan.jobs[jobIndex];
+      if (!selectedJobSet.has(job.name)) continue;
+      if (multiNode) {
+        for (const assignment of nodeAssignments.get(job.name) ?? []) {
+          const assigned = job.files.length
+            ? assignment.files.length > 0
+            : assignment.wholeJob;
+          if (!assigned) continue;
+          assignments.push({
+            jobName: job.name,
+            shardId: `shard-${String(jobIndex + 1).padStart(2, '0')}-${assignment.nodeId}`,
+            nodeId: assignment.nodeId,
+            nodeCapacity: resources.nodes[assignment.nodeIndex].capacity,
+            executionFiles: [...assignment.files],
+            wholeJob: assignment.wholeJob,
+            estimatedWeight: assignment.estimatedWeight,
+          });
+        }
+      } else {
+        assignments.push({
+          jobName: job.name,
+          shardId: `shard-${String(jobIndex + 1).padStart(2, '0')}`,
+          nodeId: resources.nodes[0].id,
+          nodeCapacity: resources.nodes[0].capacity,
+          executionFiles: [...job.files],
+          wholeJob: !job.files.length,
+          estimatedWeight: null,
+        });
+      }
+    }
+    const assignmentPlan = {
+      schema: 'vroom-plan-v1',
+      provider: 'github-actions',
+      repository,
+      runId,
+      runAttempt,
+      commitSha,
+      workflow: process.env.GITHUB_WORKFLOW ?? '',
+      workload: plan.workload,
+      nodes: resources.nodes.map((resourceNode) => ({
+        id: resourceNode.id,
+        capacity: resourceNode.capacity,
+      })),
+      jobs: plan.jobs
+        .filter((job) => selectedJobSet.has(job.name))
+        .map((job) => ({
+          name: job.name,
+          command: job.command,
+          environment: job.environment,
+          selectedFiles: selectedFilesByJob.get(job.name) ?? [],
+        })),
+      assignments,
+    };
+    const matrix = { node: resources.nodes.map((resourceNode) => resourceNode.id) };
+    const planPath = join(
+      process.env.RUNNER_TEMP ?? plan.applicationRoot,
+      `vroom-plan-${runId}-${runAttempt}-${process.pid}.json`
+    );
+    await writeFile(planPath, `${JSON.stringify(assignmentPlan, null, 2)}\n`, 'utf8');
+    try {
+      await ResultTransfer({
+        action: 'upload',
+        applicationRoot: plan.applicationRoot,
+        mode,
+        node: null,
+        planPaths: [planPath],
+      });
+    } finally {
+      await unlink(planPath).catch(() => {});
+    }
+    await appendFile(outputPath, `matrix=${JSON.stringify(matrix)}\n`, 'utf8');
+    process.stdout.write(
+      `GitHub node matrix: ${matrix.node.join(', ')}\n` +
+        `Configured capacity: ${resources.totalCapacity} thread slots across ${resources.nodes.length} node(s)\n` +
+        `Immutable assignments: ${assignments.length}\n`
+    );
+    for (const job of plan.jobs) {
+      const planned = assignments.filter((assignment) => assignment.jobName === job.name);
+      if (!selectedJobSet.has(job.name)) {
+        process.stdout.write(`[assign] ${job.name}: not selected\n`);
+        continue;
+      }
+      const summary = planned
+        .map((assignment) =>
+          assignment.executionFiles.length
+            ? `${assignment.nodeId}=${assignment.executionFiles.length} file(s)`
+            : `${assignment.nodeId}=whole job`
+        )
+        .join(', ');
+      process.stdout.write(`[assign] ${job.name}: ${summary}\n`);
+    }
+    return { resources, results: [], timingLogPaths: [], plannedOnly: true };
+  }
+
+  const requestedNodeId = process.env.VROOM_NODE_ID?.trim();
+  let node = resources.nodes[0];
+  if (mode === 'github' && requestedNodeId)
+    node = resources.nodes.find((candidate) => candidate.id === requestedNodeId);
+  else if (multiNode)
+    throw new Error('Multi-node execution requires VROOM_NODE_ID');
+  if (!node || node.capacity < 1)
+    throw new Error(
+      requestedNodeId
+        ? `Configured node does not exist or has no capacity: ${requestedNodeId}`
+        : `${mode} execution node has no capacity`
+    );
+  const nodeIndex = resources.nodes.findIndex((candidate) => candidate.id === node.id);
+
   let packageScripts = {};
   try {
     const packageJson = JSON.parse(
@@ -1706,15 +2178,17 @@ async function Scheduler(
       behavior = 'single-process';
 
     const selectedFiles = selectedFilesByJob.get(job.name) ?? [];
-    const githubAssignment = multiVmGithub
-      ? githubAssignments.get(job.name)?.[targetIndex]
+    const nodeAssignment = githubExecutionPlan || multiNode
+      ? nodeAssignments.get(job.name)?.[nodeIndex]
       : null;
-    const assignedToTarget = !multiVmGithub
-      ? true
+    const assignedToNode = githubExecutionPlan
+      ? Boolean(nodeAssignment?.shardId)
+      : !multiNode
+        ? true
       : job.files.length
-        ? githubAssignment.files.length > 0
-        : githubAssignment.wholeJob;
-    const executionFiles = multiVmGithub ? githubAssignment.files : job.files;
+        ? nodeAssignment.files.length > 0
+        : nodeAssignment.wholeJob;
+    const executionFiles = githubExecutionPlan || multiNode ? nodeAssignment.files : job.files;
     let historyCommand = executionFiles.length
       ? `${job.command}\u0000${executionFiles.join('\u0000')}`
       : job.command;
@@ -1727,29 +2201,38 @@ async function Scheduler(
         .join('\u0000')}`;
     return {
       id:
-        mode === 'github'
-          ? `shard-${String(index + 1).padStart(2, '0')}-${target.id}`
-          : `shard-${String(index + 1).padStart(2, '0')}`,
+        nodeAssignment?.shardId ??
+        (multiNode
+          ? `shard-${String(index + 1).padStart(2, '0')}-${node.id}`
+          : `shard-${String(index + 1).padStart(2, '0')}`),
       job,
       behavior,
       resolvedCommand,
       selectedFiles,
       executionFiles,
-      assignedToTarget,
-      estimatedWeight: githubAssignment?.estimatedWeight ?? null,
+      assignedToNode,
+      estimatedWeight: nodeAssignment?.estimatedWeight ?? null,
       historyCommand,
       timingSamples: history.get(`${job.name}\u0000${historyCommand}`) ?? [],
       averageDurationMs: null,
       averageWorkerMs: null,
       timingModel: null,
       originalOrder: index,
+      assignment: nodeAssignment?.shardId
+        ? {
+            shardId: nodeAssignment.shardId,
+            jobName: job.name,
+            nodeId: nodeAssignment.nodeId,
+            nodeCapacity: node.capacity,
+          }
+        : null,
     };
   });
 
   const activeWorkerGroup = shards
     .filter(
       (shard) =>
-        shard.assignedToTarget &&
+        shard.assignedToNode &&
         shard.behavior === 'worker-based' &&
         (!shard.job.when.length || shard.selectedFiles.length)
     )
@@ -1760,7 +2243,7 @@ async function Scheduler(
     const samples = shard.timingSamples
       .filter(
         (sample) =>
-          sample.targetCapacity === target.capacity &&
+          sample.nodeCapacity === node.capacity &&
           (shard.behavior !== 'worker-based' || sample.workerGroup === activeWorkerGroup)
       )
       .slice(-5);
@@ -1797,17 +2280,17 @@ async function Scheduler(
   process.stdout.write(
     `Execution: ${mode}\n` +
       `Resource configuration: ${resources.configPath}\n` +
-      `Controller/node: ${target.name} (${target.effectiveLogicalCpus} logical CPUs, ${target.threadPolicy} = ${target.capacity} thread slots)\n` +
+      `Controller/node: ${node.name} (${node.effectiveLogicalCpus} logical CPUs, ${node.threadPolicy} = ${node.capacity} thread slots)\n` +
       `Timing history: ${history.size ? `${history.size} matching job record(s)` : 'none; this run is the calibration run'}\n\n`
   );
-  if (multiVmGithub) {
+  if (multiNode) {
     for (const shard of shards) {
-      const assignment = shard.assignedToTarget
+      const assignment = shard.assignedToNode
         ? shard.executionFiles.length
           ? `${shard.executionFiles.length} file(s), estimated weight ${shard.estimatedWeight}`
           : 'whole job'
-        : 'assigned to another GitHub VM';
-      process.stdout.write(`[assignment] ${shard.job.name} -> ${target.id}: ${assignment}\n`);
+        : 'assigned to another node';
+      process.stdout.write(`[assignment] ${shard.job.name} -> ${node.id}: ${assignment}\n`);
     }
     process.stdout.write('\n');
   }
@@ -1823,20 +2306,20 @@ async function Scheduler(
   const results = new Map();
   const running = new Map();
   for (const shard of shards) {
-    if (shard.assignedToTarget) continue;
+    if (shard.assignedToNode) continue;
     state.set(shard.job.name, 'not-needed');
     results.set(shard.job.name, {
       shardId: shard.id,
       jobName: shard.job.name,
       command: shard.historyCommand,
-      targetId: target.id,
-      targetCapacity: target.capacity,
+      nodeId: node.id,
+      nodeCapacity: node.capacity,
       allocatedCapacity: 0,
       startedAt: null,
       finishedAt: new Date().toISOString(),
       durationMs: 0,
       status: 'not-needed',
-      detail: 'assigned to another configured GitHub VM',
+      detail: 'assigned to another configured node',
     });
   }
   for (const shard of shards) {
@@ -1847,8 +2330,8 @@ async function Scheduler(
       shardId: shard.id,
       jobName: shard.job.name,
       command: shard.historyCommand,
-      targetId: target.id,
-      targetCapacity: target.capacity,
+      nodeId: node.id,
+      nodeCapacity: node.capacity,
       allocatedCapacity: 0,
       startedAt: null,
       finishedAt: new Date().toISOString(),
@@ -1869,8 +2352,8 @@ async function Scheduler(
         shardId: shard.id,
         jobName: shard.job.name,
         command: shard.job.command,
-        targetId: target.id,
-        targetCapacity: target.capacity,
+        nodeId: node.id,
+        nodeCapacity: node.capacity,
         allocatedCapacity: 0,
         startedAt: null,
         finishedAt: new Date().toISOString(),
@@ -1890,8 +2373,8 @@ async function Scheduler(
           shardId: shard.id,
           jobName: shard.job.name,
           command: shard.job.command,
-          targetId: target.id,
-          targetCapacity: target.capacity,
+          nodeId: node.id,
+          nodeCapacity: node.capacity,
           allocatedCapacity: 0,
           startedAt: null,
           finishedAt: new Date().toISOString(),
@@ -1920,13 +2403,13 @@ async function Scheduler(
     const runningExclusive = runningEntries.some((entry) => entry.exclusive);
     const readyExclusive = ready.find((shard) => shard.job.exclusive);
     let availableCapacity =
-      target.capacity - runningEntries.reduce((total, entry) => total + entry.allocatedCapacity, 0);
+      node.capacity - runningEntries.reduce((total, entry) => total + entry.allocatedCapacity, 0);
     const starting = [];
 
     if (!runningExclusive && availableCapacity > 0) {
       if (readyExclusive) {
         if (!running.size)
-          starting.push({ shard: readyExclusive, allocatedCapacity: target.capacity });
+          starting.push({ shard: readyExclusive, allocatedCapacity: node.capacity });
       } else {
         const singleProcess = ready.filter((shard) => shard.behavior !== 'worker-based');
         for (const shard of singleProcess) {
@@ -2006,16 +2489,20 @@ async function Scheduler(
           executionCommand += ` --test-concurrency=${allocatedCapacity}`;
       }
       process.stdout.write(
-        `[start] ${shard.job.name} -> ${target.id} (${allocatedCapacity} thread slot${allocatedCapacity === 1 ? '' : 's'})\n`
+        `[start] ${shard.job.name} -> ${node.id} (${allocatedCapacity} thread slot${allocatedCapacity === 1 ? '' : 's'})\n`
       );
 
-      const execution = execute({
-        applicationRoot: plan.applicationRoot,
-        executionCommand,
-        shard,
-        target,
-        allocatedCapacity,
-        signal,
+      const execution = Controller({
+        mode,
+        request: {
+          applicationRoot: plan.applicationRoot,
+          executionCommand,
+          shard,
+          node,
+          allocatedCapacity,
+          assignment: shard.assignment,
+          signal,
+        },
       });
 
       const tracked = execution.then((result) => {
@@ -2045,7 +2532,7 @@ async function Scheduler(
     profiles: activeProfiles,
     selectedJobNames,
     mode,
-    target,
+    node,
     resources,
     results: orderedResults,
     history,
@@ -2084,7 +2571,7 @@ async function runVroom() {
     });
     if (outcome.plannedOnly) {
       process.stdout.write(
-        `\nVroom GitHub plan: ${outcome.resources.targets.length} configured VM(s)\n`
+        `\nVroom GitHub plan: ${outcome.resources.nodes.length} configured node(s)\n`
       );
       return 0;
     }
