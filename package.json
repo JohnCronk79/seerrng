@@ -21,6 +21,7 @@
     "bundle:baseline": "node scripts/check-bundle-size.mjs --write-baseline",
     "lint": "eslint \"./server/**/*.{ts,tsx}\" \"./src/**/*.{ts,tsx}\" --cache",
     "security:council": "node scripts/check-workflow-boundaries.mjs && pnpm test:tooling && node bin/run-bash.mjs scripts/check-council-browser-boundaries.sh && node bin/run-bash.mjs scripts/check-council-server-boundaries.sh",
+    "release-notes:check": "node scripts/run-release-note-validation.mjs",
     "release-notes:preview": "node scripts/preview-release-notes.mjs",
     "backissue:service": "node scripts/backissue-service.mjs",
     "bookshelf:move": "node scripts/bookshelf-media-move.mjs",

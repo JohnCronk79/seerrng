@@ -14,7 +14,17 @@ is supplied, Vroom selects `[dev]`.
 [compile]
 [pre-pr]
 [github]
+[github-full-test-suite]
 ```
+
+The application defines what each workload means. For Seerr, `dev` performs
+fast affected checks, `compile` refreshes compiled production-preview output,
+and `pre-pr` is the authoritative local pull-request validation workload.
+During the Mode 2 proof, `github` contains the small runnable GitHub VM sample,
+while `github-full-test-suite` durably preserves the complete hosted test
+inventory for later migration.
+Release-only packaging and publishing are separate from ordinary pull-request
+validation.
 
 ## Job definitions
 
@@ -28,12 +38,31 @@ Optional settings reuse the job name followed by a period:
 
 ```ini
 client-tests.files = src/example-one.test.ts, src/example-two.test.ts
+# Or let the application's own tool print one test path per line:
+# client-tests.files-command = pnpm exec vitest list --filesOnly --staticParse
 client-tests.when = src/**, tsconfig.json
 client-tests.compare = main
 client-tests.after = typecheck-client
 client-tests.kind = check
 client-tests.exclusive = false
+client-tests.env = NODE_ENV=test
 ```
+
+### `.env`
+
+The application can provide fixed non-secret environment values for one job as
+comma-separated `NAME=value` entries. Vroom applies them only to that job and
+keeps its own `VROOM_` execution variables protected. Do not store credentials
+or other secrets in `vroom-app.cfg`.
+
+Seerr uses this setting to ensure production compilation runs with
+`NODE_ENV=production` even when Vroom itself is launched from a development
+preview container.
+
+The same setting can neutralize preview-only safeguards for one validation
+job. Seerr's native pre-PR tests set `E2E_TESTS=false` and
+`SEERR_EXTERNAL_READ_ONLY=false`, giving that child process GitHub-equivalent
+behavior without changing or restarting the development preview.
 
 ### `.files`
 
@@ -47,6 +76,38 @@ folder as an unambiguous test scope. For example, Seerr's current Vitest
 configuration defines the test files under `src` and `server`, so those folders
 can be passed without copying hundreds of filenames into this cfg.
 
+### `.files-command`
+
+An application can provide a command that prints one test-file path per line
+when its native test inventory is large or changes frequently. Vroom runs that
+application-owned discovery command from the application root, accepts relative
+paths or absolute paths contained by that root, validates the result with the
+same rules as `.files`, and uses the resolved paths for ordinary sharding. Local
+execution resolves the list directly. For GitHub execution, only the planning
+phase runs discovery; execution nodes consume the exact resolved inventory from
+the immutable plan.
+
+Use either `.files` or `.files-command` for a job, never both. The discovery
+command identifies work only; it does not run the tests.
+
+### Provider-native jobs
+
+A GitHub action that must retain its native action steps uses a `workflow`
+declaration instead of a shell command. The application also lists the exact
+GitHub job names that the completed run must return:
+
+```ini
+codeql = workflow .github/workflows/codeql.yml analyze
+codeql.provider-results = CodeQL / Analyze (actions), CodeQL / Analyze (javascript)
+```
+
+The workflow path, reusable-workflow job id, and result names all remain
+application-owned. Scheduler records each expected result as a provider unit
+instead of assigning it to a Vroom node. During final reconciliation,
+ResultTransfer reads those job conclusions from the current GitHub run and
+TimingResults requires every planned provider unit before accepting the run.
+Provider-native jobs cannot declare `.files`, `.files-command`, or `.env`.
+
 ### `.when`
 
 The application lists the changed source paths that make a job applicable.
@@ -56,6 +117,30 @@ files against these rules.
 
 Every matching job is selected. If source and server paths both changed, their
 respective jobs are both selected and scheduled.
+
+### Named profiles
+
+A workload with automatic job selection declares each independently activated
+job group and its durable name in the application configuration:
+
+```ini
+profiles = src, server
+profile.src.jobs = client-tests, typecheck-client
+profile.server.jobs = server-tests, typecheck-server
+```
+
+Vroom activates every profile whose changed-file rules select its jobs. Source
+changes activate `src`, server changes activate `server`, and changes to both
+areas activate both profiles automatically. An explicit `both` profile is not
+needed.
+
+Each profile keeps its own five-file timing history. When multiple profiles run
+together, Vroom writes the same complete run record into every active profile
+folder, then reads only that profile's owned jobs from that copy. This preserves
+the combined-run context without counting another profile's jobs twice. An
+application can add names such as `interface` or `inventory-module` without
+changing Vroom. Vroom rejects partial profiles and selected jobs that do not
+belong to a declared profile.
 
 ### `.compare`
 
