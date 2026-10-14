@@ -15,6 +15,8 @@ jobs:
   vroom-plan:
     name: Plan configured GitHub VMs
     runs-on: ubuntu-latest
+    env:
+      VROOM_GITHUB_TOKEN: ${{ github.token }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -43,6 +45,7 @@ jobs:
     timeout-minutes: 20
     env:
       VROOM_GITHUB_TARGET_ID: ${{ matrix.target }}
+      VROOM_GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout SeerrNG
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

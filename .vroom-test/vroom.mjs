@@ -899,9 +899,68 @@ async function TimingResults(request) {
       await unlink(join(source.path, expired));
   }
 
+  let completedResults = suppliedResults;
+  const downloadedReceipts = new Map();
+  const downloadedTimingRecords = [];
+  const historyRecords = [];
+  let artifactReturn = githubReturn;
+  if (
+    !artifactReturn &&
+    (action === 'read' || action === 'weights') &&
+    mode === 'github' &&
+    process.env.GITHUB_ACTIONS === 'true'
+  ) {
+    const repository = process.env.GITHUB_REPOSITORY?.trim();
+    const token = process.env.VROOM_GITHUB_TOKEN?.trim();
+    const currentRunId = process.env.GITHUB_RUN_ID?.trim();
+    const branch = process.env.GITHUB_REF_NAME?.trim();
+    if (repository && token && currentRunId && branch) {
+      const apiRoot = String(process.env.GITHUB_API_URL ?? 'https://api.github.com').replace(
+        /\/$/,
+        ''
+      );
+      const headers = {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'Vroom',
+      };
+      const response = await fetch(`${apiRoot}/repos/${repository}/actions/artifacts?per_page=100`, {
+        headers,
+      });
+      if (!response.ok)
+        throw new Error(`Unable to list GitHub timing history: HTTP ${response.status}`);
+      const listing = await response.json();
+      if (!Array.isArray(listing.artifacts))
+        throw new Error('GitHub timing history listing did not contain an artifact list');
+      const previous = listing.artifacts
+        .filter((artifact) => {
+          const match = /^vroom-mode2-(\d+)-(\d+)-reconciled$/.exec(artifact.name ?? '');
+          return (
+            match &&
+            !artifact.expired &&
+            match[1] !== currentRunId &&
+            String(artifact.workflow_run?.id ?? '') === match[1] &&
+            artifact.workflow_run?.head_branch === branch
+          );
+        })
+        .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))[0];
+      if (previous) {
+        const match = /^vroom-mode2-(\d+)-(\d+)-reconciled$/.exec(previous.name);
+        artifactReturn = {
+          repository,
+          runId: match[1],
+          runAttempt: match[2],
+          token,
+          apiUrl: apiRoot,
+          artifactPrefix: previous.name,
+        };
+        process.stdout.write(`GitHub timing history: ${previous.name}\n`);
+      }
+    }
+  }
+
   if (action === 'read' || action === 'weights') {
-    const loadedHistory = new Map();
-    const performanceSamples = new Map();
     for (const source of timingLogFolders) {
       const timingFiles = (await readdir(source.path))
         .filter((entry) => entry.startsWith(timingPrefix) && entry.endsWith('.log'))
@@ -910,59 +969,7 @@ async function TimingResults(request) {
         try {
           const record = JSON.parse(await readFile(join(source.path, name), 'utf8'));
           if (record.schema !== 'vroom-timing-v1' || !Array.isArray(record.results)) continue;
-          const workerGroup = record.results
-            .filter(
-              (result) =>
-                result.status === 'passed' &&
-                result.behavior === 'worker-based' &&
-                Number.isInteger(result.allocatedCapacity) &&
-                result.allocatedCapacity > 0
-            )
-            .map((result) => result.jobName)
-            .sort()
-            .join('\u0000');
-          for (const result of record.results) {
-            if (source.profile && !source.profile.jobs.includes(result.jobName)) continue;
-            if (
-              result.status === 'passed' &&
-              typeof result.targetId === 'string' &&
-              Number.isFinite(result.estimatedWeight) &&
-              result.estimatedWeight > 0 &&
-              Number.isFinite(result.durationMs) &&
-              result.durationMs > 0 &&
-              Number.isInteger(result.allocatedCapacity) &&
-              result.allocatedCapacity > 0
-            ) {
-              if (!performanceSamples.has(result.targetId))
-                performanceSamples.set(result.targetId, []);
-              performanceSamples
-                .get(result.targetId)
-                .push(
-                  result.estimatedWeight /
-                    (result.durationMs * result.allocatedCapacity)
-                );
-            }
-            if (
-              result.status !== 'passed' ||
-              typeof result.jobName !== 'string' ||
-              typeof result.command !== 'string' ||
-              !Number.isFinite(result.durationMs) ||
-              (target && result.targetCapacity !== target.capacity)
-            )
-              continue;
-            const key = `${result.jobName}\u0000${result.command}`;
-            if (!loadedHistory.has(key)) loadedHistory.set(key, []);
-            loadedHistory.get(key).push({
-              durationMs: result.durationMs,
-              allocatedCapacity:
-                Number.isInteger(result.allocatedCapacity) && result.allocatedCapacity > 0
-                  ? result.allocatedCapacity
-                  : 1,
-              targetId: result.targetId,
-              targetCapacity: result.targetCapacity,
-              workerGroup,
-            });
-          }
+          historyRecords.push({ profile: source.profile, record });
         } catch {
           process.stderr.write(
             `Vroom warning: ignored unreadable timing log ${join(source.path, name)}\n`
@@ -970,60 +977,20 @@ async function TimingResults(request) {
         }
       }
     }
-    if (action === 'weights') {
-      const measuredPerformance = new Map();
-      for (const resourceTarget of resourceTargets) {
-        const samples = (performanceSamples.get(resourceTarget.id) ?? [])
-          .slice(-5)
-          .sort((left, right) => left - right);
-        const sampleMidpoint = Math.floor(samples.length / 2);
-        measuredPerformance.set(
-          resourceTarget.id,
-          samples.length
-            ? samples.length % 2
-              ? samples[sampleMidpoint]
-              : (samples[sampleMidpoint - 1] + samples[sampleMidpoint]) / 2
-            : null
-        );
-      }
-      const measured = [...measuredPerformance.values()].filter(
-        (value) => Number.isFinite(value) && value > 0
-      );
-      measured.sort((left, right) => left - right);
-      const midpoint = Math.floor(measured.length / 2);
-      const baseline = measured.length
-        ? measured.length % 2
-          ? measured[midpoint]
-          : (measured[midpoint - 1] + measured[midpoint]) / 2
-        : 1;
-      const targetWeights = new Map();
-      for (const resourceTarget of resourceTargets) {
-        const performance = measuredPerformance.get(resourceTarget.id);
-        const relativeWeight = performance ? performance / baseline : 1;
-        targetWeights.set(
-          resourceTarget.id,
-          Math.round(Math.min(4, Math.max(0.25, relativeWeight)) * 1000) / 1000
-        );
-      }
-      return { targetWeights, timingLogFolders };
-    }
-    return { history: loadedHistory, timingLogFolders };
   }
 
-  let completedResults = suppliedResults;
-  const downloadedReceipts = new Map();
-  if (githubReturn) {
+  if (artifactReturn) {
     if (mode !== 'github') throw new Error('GitHub artifact return requires GitHub mode');
-    const repository = String(githubReturn.repository ?? '').trim();
-    const runId = String(githubReturn.runId ?? '').trim();
-    const runAttempt = String(githubReturn.runAttempt ?? '').trim();
-    const token = String(githubReturn.token ?? '').trim();
+    const repository = String(artifactReturn.repository ?? '').trim();
+    const runId = String(artifactReturn.runId ?? '').trim();
+    const runAttempt = String(artifactReturn.runAttempt ?? '').trim();
+    const token = String(artifactReturn.token ?? '').trim();
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))
       throw new Error('GitHub artifact return requires an owner/repository name');
     if (!/^\d+$/.test(runId) || !/^\d+$/.test(runAttempt))
       throw new Error('GitHub artifact return requires numeric run and attempt identities');
     if (!token) throw new Error('GitHub artifact return requires an API token');
-    const apiRoot = String(githubReturn.apiUrl ?? 'https://api.github.com').replace(/\/$/, '');
+    const apiRoot = String(artifactReturn.apiUrl ?? 'https://api.github.com').replace(/\/$/, '');
     const headers = {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
@@ -1042,7 +1009,7 @@ async function TimingResults(request) {
     if (Number(listing.total_count) > listing.artifacts.length)
       throw new Error('GitHub artifact return exceeded one result page');
     const artifactPrefix =
-      githubReturn.artifactPrefix ?? `vroom-mode2-${runId}-${runAttempt}-`;
+      artifactReturn.artifactPrefix ?? `vroom-mode2-${runId}-${runAttempt}-`;
     const artifacts = listing.artifacts
       .filter(
         (artifact) =>
@@ -1055,7 +1022,6 @@ async function TimingResults(request) {
     if (!artifacts.length)
       throw new Error(`No current GitHub result artifacts matched ${artifactPrefix}`);
 
-    const timingRecords = [];
     for (const artifact of artifacts) {
       const archiveResponse = await fetch(artifact.archive_download_url, { headers });
       if (!archiveResponse.ok)
@@ -1129,7 +1095,7 @@ async function TimingResults(request) {
         } else if (record.schema === 'vroom-timing-v1') {
           if (record.executionMode !== 'github' || !Array.isArray(record.results))
             throw new Error(`GitHub artifact ${artifact.name} returned invalid timing data`);
-          timingRecords.push(record);
+          downloadedTimingRecords.push(record);
         }
       }
     }
@@ -1137,7 +1103,7 @@ async function TimingResults(request) {
       throw new Error('GitHub artifact return contained no Vroom receipts');
     const returnedResults = [];
     for (const receipt of downloadedReceipts.values()) {
-      const matches = timingRecords
+      const matches = downloadedTimingRecords
         .flatMap((record) => record.results)
         .filter(
           (result) =>
@@ -1158,6 +1124,103 @@ async function TimingResults(request) {
       (left, right) =>
         left.jobName.localeCompare(right.jobName) || left.shardId.localeCompare(right.shardId)
     );
+  }
+
+  if (action === 'read' || action === 'weights') {
+    for (const record of downloadedTimingRecords)
+      historyRecords.push({ profile: null, record });
+    const loadedHistory = new Map();
+    const performanceSamples = new Map();
+    for (const source of historyRecords) {
+      const workerGroup = source.record.results
+        .filter(
+          (result) =>
+            result.status === 'passed' &&
+            result.behavior === 'worker-based' &&
+            Number.isInteger(result.allocatedCapacity) &&
+            result.allocatedCapacity > 0
+        )
+        .map((result) => result.jobName)
+        .sort()
+        .join('\u0000');
+      for (const result of source.record.results) {
+        if (source.profile && !source.profile.jobs.includes(result.jobName)) continue;
+        if (
+          result.status === 'passed' &&
+          typeof result.targetId === 'string' &&
+          Number.isFinite(result.estimatedWeight) &&
+          result.estimatedWeight > 0 &&
+          Number.isFinite(result.durationMs) &&
+          result.durationMs > 0 &&
+          Number.isInteger(result.allocatedCapacity) &&
+          result.allocatedCapacity > 0
+        ) {
+          if (!performanceSamples.has(result.targetId))
+            performanceSamples.set(result.targetId, []);
+          performanceSamples
+            .get(result.targetId)
+            .push(result.estimatedWeight / (result.durationMs * result.allocatedCapacity));
+        }
+        if (
+          result.status !== 'passed' ||
+          typeof result.jobName !== 'string' ||
+          typeof result.command !== 'string' ||
+          !Number.isFinite(result.durationMs) ||
+          (target && result.targetCapacity !== target.capacity)
+        )
+          continue;
+        const key = `${result.jobName}\u0000${result.command}`;
+        if (!loadedHistory.has(key)) loadedHistory.set(key, []);
+        loadedHistory.get(key).push({
+          durationMs: result.durationMs,
+          allocatedCapacity:
+            Number.isInteger(result.allocatedCapacity) && result.allocatedCapacity > 0
+              ? result.allocatedCapacity
+              : 1,
+          targetId: result.targetId,
+          targetCapacity: result.targetCapacity,
+          workerGroup,
+        });
+      }
+    }
+    if (action === 'weights') {
+      const measuredPerformance = new Map();
+      for (const resourceTarget of resourceTargets) {
+        const samples = (performanceSamples.get(resourceTarget.id) ?? [])
+          .slice(-5)
+          .sort((left, right) => left - right);
+        const sampleMidpoint = Math.floor(samples.length / 2);
+        measuredPerformance.set(
+          resourceTarget.id,
+          samples.length
+            ? samples.length % 2
+              ? samples[sampleMidpoint]
+              : (samples[sampleMidpoint - 1] + samples[sampleMidpoint]) / 2
+            : null
+        );
+      }
+      const measured = [...measuredPerformance.values()].filter(
+        (value) => Number.isFinite(value) && value > 0
+      );
+      measured.sort((left, right) => left - right);
+      const midpoint = Math.floor(measured.length / 2);
+      const baseline = measured.length
+        ? measured.length % 2
+          ? measured[midpoint]
+          : (measured[midpoint - 1] + measured[midpoint]) / 2
+        : 1;
+      const targetWeights = new Map();
+      for (const resourceTarget of resourceTargets) {
+        const performance = measuredPerformance.get(resourceTarget.id);
+        const relativeWeight = performance ? performance / baseline : 1;
+        targetWeights.set(
+          resourceTarget.id,
+          Math.round(Math.min(4, Math.max(0.25, relativeWeight)) * 1000) / 1000
+        );
+      }
+      return { targetWeights, timingLogFolders };
+    }
+    return { history: loadedHistory, timingLogFolders };
   }
 
   const receiptPaths = [];
@@ -1413,15 +1476,45 @@ async function Scheduler(
         wholeJob: false,
       }));
       if (job.files.length) {
+        const declaredFiles = new Set(job.files);
+        const timingSamplesByFile = new Map();
+        for (const [historyKey, samples] of preliminaryTimingState.history) {
+          const parts = historyKey.split('\u0000');
+          if (parts[0] !== job.name || parts[1] !== job.command) continue;
+          const timedFiles = parts.slice(2).filter((part) => declaredFiles.has(part));
+          if (!timedFiles.length) continue;
+          for (const sample of samples.slice(-5)) {
+            if (!Number.isFinite(sample.durationMs) || sample.durationMs <= 0) continue;
+            const perFileWeight = sample.durationMs / timedFiles.length;
+            for (const file of timedFiles) {
+              if (!timingSamplesByFile.has(file)) timingSamplesByFile.set(file, []);
+              timingSamplesByFile.get(file).push(perFileWeight);
+            }
+          }
+        }
         const work = await Promise.all(
           job.files.map(async (file) => {
             const fileStats = await stat(join(plan.applicationRoot, file));
             return {
               file,
-              estimatedWeight: fileStats.isFile() ? Math.max(1, fileStats.size) : 1,
+              fileSize: fileStats.isFile() ? Math.max(1, fileStats.size) : 1,
             };
           })
         );
+        const measuredWork = work.filter((item) => timingSamplesByFile.has(item.file));
+        const measuredWeight = measuredWork.reduce((total, item) => {
+          const samples = timingSamplesByFile.get(item.file);
+          return total + samples.reduce((sum, sample) => sum + sample, 0) / samples.length;
+        }, 0);
+        const measuredSize = measuredWork.reduce((total, item) => total + item.fileSize, 0);
+        const fallbackWeightPerByte =
+          measuredWeight > 0 && measuredSize > 0 ? measuredWeight / measuredSize : 1;
+        for (const item of work) {
+          const samples = timingSamplesByFile.get(item.file);
+          item.estimatedWeight = samples?.length
+            ? samples.reduce((total, sample) => total + sample, 0) / samples.length
+            : item.fileSize * fallbackWeightPerByte;
+        }
         work.sort(
           (left, right) =>
             right.estimatedWeight - left.estimatedWeight ||
