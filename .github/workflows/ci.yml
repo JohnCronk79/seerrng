@@ -40,6 +40,10 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       plan: ${{ steps.plan.outputs.plan }}
       providerUnits: ${{ steps.plan.outputs.provider-units }}
+      planSha256: ${{ '' }}
+      runId: ${{ '' }}
+      runAttempt: ${{ '' }}
+      executionSha: ${{ '' }}
     steps:
       - name: Checkout complete candidate history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
