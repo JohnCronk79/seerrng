@@ -890,8 +890,7 @@ async function ExecutionNode({
 }
 
 // G. ResultTransfer
-// Moves immutable assignment plans, node receipts, and timing records across an
-// execution provider boundary.
+// Moves node receipts and timing records across an execution provider boundary.
 // It owns provider discovery, download, archive handling, and upload, but it does
 // not interpret timing, accept a receipt as valid planned work, retain history,
 // or decide whether a run passed. GitHub currently uses native run artifacts.
@@ -906,7 +905,6 @@ async function ResultTransfer(request) {
     artifactReturn = null,
     receiptPaths = [],
     timingLogPaths = [],
-    planPaths = [],
   } = request;
   if (!['locate-history', 'download', 'upload'].includes(action))
     throw new Error(`ResultTransfer received unsupported action: ${action}`);
@@ -994,9 +992,6 @@ async function ResultTransfer(request) {
       throw new Error('GitHub artifact listing did not contain an artifact list');
     if (Number(listing.total_count) > listing.artifacts.length)
       throw new Error('GitHub artifact return exceeded one result page');
-    const recordType = artifactReturn.recordType ?? 'results';
-    if (!['results', 'plan'].includes(recordType))
-      throw new Error(`GitHub artifact return requested unsupported records: ${recordType}`);
     const artifactPrefix =
       artifactReturn.artifactPrefix ?? `vroom-node-results-${runId}-${runAttempt}-`;
     const artifacts = listing.artifacts
@@ -1013,7 +1008,6 @@ async function ResultTransfer(request) {
 
     const receipts = new Map();
     const timingRecords = [];
-    const plans = [];
     for (const artifact of artifacts) {
       const archiveResponse = await fetch(artifact.archive_download_url, { headers });
       if (!archiveResponse.ok)
@@ -1088,21 +1082,8 @@ async function ResultTransfer(request) {
           if (record.executionMode !== 'github' || !Array.isArray(record.results))
             throw new Error(`GitHub artifact ${artifact.name} returned invalid timing data`);
           timingRecords.push(record);
-        } else if (record.schema === 'vroom-plan-v1') {
-          if (
-            String(record.runId) !== runId ||
-            String(record.runAttempt) !== runAttempt ||
-            record.repository !== repository
-          )
-            throw new Error(`GitHub artifact ${artifact.name} returned a foreign plan`);
-          plans.push(record);
         }
       }
-    }
-    if (recordType === 'plan') {
-      if (plans.length !== 1)
-        throw new Error(`GitHub plan return expected one plan; found ${plans.length}`);
-      return { plan: plans[0] };
     }
     if (!receipts.size && !artifactReturn.allowEmpty)
       throw new Error('GitHub artifact return contained no Vroom receipts');
@@ -1111,111 +1092,33 @@ async function ResultTransfer(request) {
 
   if (process.env.GITHUB_ACTIONS !== 'true')
     throw new Error('GitHub result upload requires the GitHub Actions environment');
-  const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN?.trim();
-  const resultsServiceUrl = process.env.ACTIONS_RESULTS_URL?.trim();
   const runId = process.env.GITHUB_RUN_ID?.trim();
   const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
-  if (!runtimeToken || !resultsServiceUrl || !runId || !runAttempt)
-    throw new Error(
-      'GitHub artifact upload requires runtime token, results service, run, and attempt values'
-    );
-  const tokenParts = runtimeToken.split('.');
-  if (tokenParts.length !== 3) throw new Error('GitHub artifact runtime token is not a JWT');
-  let tokenClaims;
-  try {
-    tokenClaims = JSON.parse(Buffer.from(tokenParts[1], 'base64url').toString('utf8'));
-  } catch {
-    throw new Error('GitHub artifact runtime token contains invalid claims');
-  }
-  const resultScope = String(tokenClaims.scp ?? '')
-    .split(' ')
-    .find((scope) => scope.startsWith('Actions.Results:'));
-  const scopeParts = resultScope?.split(':') ?? [];
-  if (scopeParts.length !== 3)
-    throw new Error('GitHub artifact runtime token is missing Actions.Results scope');
+  const outputPath = process.env.GITHUB_OUTPUT?.trim();
+  if (!runId || !runAttempt || !outputPath)
+    throw new Error('GitHub artifact upload requires run, attempt, and step-output values');
   const reconcileUpload = process.env.VROOM_GITHUB_RECONCILE === 'true';
-  const planUpload = planPaths.length > 0;
-  if (planUpload && (receiptPaths.length || timingLogPaths.length || planPaths.length !== 1))
-    throw new Error('GitHub plan upload requires exactly one plan record');
-  if (!planUpload && !reconcileUpload && !node?.id)
+  if (!reconcileUpload && !node?.id)
     throw new Error('GitHub worker artifact upload requires a node identity');
-  const artifactName = planUpload
-    ? `vroom-plan-${runId}-${runAttempt}`
-    : `vroom-node-results-${runId}-${runAttempt}-${
-        reconcileUpload ? 'reconciled' : node.id
-      }`;
-  const uploadFiles = [
-    ...new Set(planUpload ? planPaths : [...receiptPaths, ...timingLogPaths]),
-  ];
+  const artifactName = `vroom-node-results-${runId}-${runAttempt}-${
+    reconcileUpload ? 'reconciled' : node.id
+  }`;
+  const uploadFiles = [...new Set([...receiptPaths, ...timingLogPaths])];
   if (!uploadFiles.length)
     throw new Error(`GitHub artifact ${artifactName} has no Vroom records to upload`);
-  const artifactPaths = planUpload
-    ? uploadFiles
-    : uploadFiles.map((filePath) => {
-        const artifactPath = relative(applicationRoot, filePath).replace(/\\/g, '/');
-        if (!artifactPath || artifactPath.startsWith('../') || artifactPath.startsWith('/'))
-          throw new Error(`GitHub artifact path is outside the application: ${filePath}`);
-        return artifactPath;
-      });
-  const archivePath = join(
-    process.env.RUNNER_TEMP ?? applicationRoot,
-    `${artifactName}-${process.pid}.zip`
+  const artifactPaths = uploadFiles.map((filePath) => {
+    const artifactPath = relative(applicationRoot, filePath).replace(/\\/g, '/');
+    if (!artifactPath || artifactPath.startsWith('../') || artifactPath.startsWith('/'))
+      throw new Error(`GitHub artifact path is outside the application: ${filePath}`);
+    return artifactPath;
+  });
+  const delimiter = `VROOM_ARTIFACT_PATHS_${process.pid}`;
+  await appendFile(
+    outputPath,
+    `artifact-name=${artifactName}\nartifact-paths<<${delimiter}\n${artifactPaths.join('\n')}\n${delimiter}\n`,
+    'utf8'
   );
-  const zipResult = spawnSync('zip', ['-q', ...(planUpload ? ['-j'] : []), archivePath, ...artifactPaths], {
-    cwd: applicationRoot,
-    encoding: 'utf8',
-  });
-  if (zipResult.status !== 0)
-    throw new Error(
-      `Unable to package GitHub artifact ${artifactName}: ${zipResult.stderr?.trim() || 'zip failed'}`
-    );
-  const archive = await readFile(archivePath);
-  await unlink(archivePath);
-  const artifactService = `${new URL(resultsServiceUrl).origin}/twirp/github.actions.results.api.v1.ArtifactService`;
-  const serviceHeaders = {
-    Authorization: `Bearer ${runtimeToken}`,
-    'Content-Type': 'application/json',
-    'User-Agent': 'Vroom',
-  };
-  const createResponse = await fetch(`${artifactService}/CreateArtifact`, {
-    method: 'POST',
-    headers: serviceHeaders,
-    body: JSON.stringify({
-      workflow_run_backend_id: scopeParts[1],
-      workflow_job_run_backend_id: scopeParts[2],
-      name: artifactName,
-      version: 7,
-      mime_type: { value: 'application/zip' },
-    }),
-  });
-  if (!createResponse.ok)
-    throw new Error(`Unable to create GitHub artifact ${artifactName}: HTTP ${createResponse.status}`);
-  const createdArtifact = await createResponse.json();
-  if (!createdArtifact.ok || typeof createdArtifact.signed_upload_url !== 'string')
-    throw new Error(`GitHub refused artifact creation for ${artifactName}`);
-  const uploadResponse = await fetch(createdArtifact.signed_upload_url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/zip', 'x-ms-blob-type': 'BlockBlob' },
-    body: archive,
-  });
-  if (!uploadResponse.ok)
-    throw new Error(`Unable to upload GitHub artifact ${artifactName}: HTTP ${uploadResponse.status}`);
-  const finalizeResponse = await fetch(`${artifactService}/FinalizeArtifact`, {
-    method: 'POST',
-    headers: serviceHeaders,
-    body: JSON.stringify({
-      workflow_run_backend_id: scopeParts[1],
-      workflow_job_run_backend_id: scopeParts[2],
-      name: artifactName,
-      size: String(archive.length),
-    }),
-  });
-  if (!finalizeResponse.ok)
-    throw new Error(`Unable to finalize GitHub artifact ${artifactName}: HTTP ${finalizeResponse.status}`);
-  const finalizedArtifact = await finalizeResponse.json();
-  if (!finalizedArtifact.ok)
-    throw new Error(`GitHub refused artifact finalization for ${artifactName}`);
-  process.stdout.write(`GitHub artifact uploaded: ${artifactName}\n`);
+  process.stdout.write(`GitHub artifact prepared: ${artifactName}\n`);
   return { artifactNames: [artifactName] };
 }
 
@@ -1677,28 +1580,26 @@ async function Scheduler(
       throw new Error(
         'GitHub reconciliation requires repository, run, attempt, and token environment values'
       );
-    const planTransfer = await ResultTransfer({
-      action: 'download',
-      applicationRoot: plan.applicationRoot,
-      mode,
-      artifactReturn: {
-        repository,
-        runId,
-        runAttempt,
-        token,
-        recordType: 'plan',
-        artifactPrefix: `vroom-plan-${runId}-${runAttempt}`,
-      },
-    });
-    const expectedPlan = planTransfer.plan;
-    if (
-      expectedPlan.schema !== 'vroom-plan-v1' ||
-      expectedPlan.provider !== 'github-actions' ||
-      expectedPlan.workload !== plan.workload ||
-      !Array.isArray(expectedPlan.nodes) ||
-      !Array.isArray(expectedPlan.assignments)
-    )
-      throw new Error('GitHub returned an invalid Vroom assignment plan');
+    let expectedPlan = null;
+    if (!returnedToApplication) {
+      try {
+        expectedPlan = JSON.parse(process.env.VROOM_GITHUB_PLAN ?? '');
+      } catch {
+        throw new Error('GitHub reconciliation requires a valid Vroom assignment plan');
+      }
+      if (
+        expectedPlan.schema !== 'vroom-plan-v1' ||
+        expectedPlan.provider !== 'github-actions' ||
+        expectedPlan.repository !== repository ||
+        String(expectedPlan.runId) !== runId ||
+        String(expectedPlan.runAttempt) !== runAttempt ||
+        expectedPlan.commitSha !== process.env.GITHUB_SHA?.trim() ||
+        expectedPlan.workload !== plan.workload ||
+        !Array.isArray(expectedPlan.nodes) ||
+        !Array.isArray(expectedPlan.assignments)
+      )
+        throw new Error('GitHub reconciliation received an invalid or foreign Vroom assignment plan');
+    }
     const timingOutcome = await TimingResults({
       action: 'save',
       applicationRoot: plan.applicationRoot,
@@ -1744,24 +1645,15 @@ async function Scheduler(
     const runId = process.env.GITHUB_RUN_ID?.trim();
     const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
     const commitSha = process.env.GITHUB_SHA?.trim();
-    const token = process.env.VROOM_GITHUB_TOKEN?.trim();
-    if (!repository || !runId || !runAttempt || !commitSha || !token)
+    if (!repository || !runId || !runAttempt || !commitSha)
       throw new Error(
-        'GitHub node execution requires repository, run, attempt, commit, and token environment values'
+        'GitHub node execution requires repository, run, attempt, and commit environment values'
       );
-    ({ plan: githubExecutionPlan } = await ResultTransfer({
-      action: 'download',
-      applicationRoot: plan.applicationRoot,
-      mode,
-      artifactReturn: {
-        repository,
-        runId,
-        runAttempt,
-        token,
-        recordType: 'plan',
-        artifactPrefix: `vroom-plan-${runId}-${runAttempt}`,
-      },
-    }));
+    try {
+      githubExecutionPlan = JSON.parse(process.env.VROOM_GITHUB_PLAN ?? '');
+    } catch {
+      throw new Error('GitHub node execution requires a valid Vroom assignment plan');
+    }
     if (
       githubExecutionPlan.schema !== 'vroom-plan-v1' ||
       githubExecutionPlan.provider !== 'github-actions' ||
@@ -2085,23 +1977,11 @@ async function Scheduler(
       assignments,
     };
     const matrix = { node: resources.nodes.map((resourceNode) => resourceNode.id) };
-    const planPath = join(
-      process.env.RUNNER_TEMP ?? plan.applicationRoot,
-      `vroom-plan-${runId}-${runAttempt}-${process.pid}.json`
+    await appendFile(
+      outputPath,
+      `matrix=${JSON.stringify(matrix)}\nplan=${JSON.stringify(assignmentPlan)}\n`,
+      'utf8'
     );
-    await writeFile(planPath, `${JSON.stringify(assignmentPlan, null, 2)}\n`, 'utf8');
-    try {
-      await ResultTransfer({
-        action: 'upload',
-        applicationRoot: plan.applicationRoot,
-        mode,
-        node: null,
-        planPaths: [planPath],
-      });
-    } finally {
-      await unlink(planPath).catch(() => {});
-    }
-    await appendFile(outputPath, `matrix=${JSON.stringify(matrix)}\n`, 'utf8');
     process.stdout.write(
       `GitHub node matrix: ${matrix.node.join(', ')}\n` +
         `Configured capacity: ${resources.totalCapacity} thread slots across ${resources.nodes.length} node(s)\n` +

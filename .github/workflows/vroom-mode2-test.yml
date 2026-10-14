@@ -13,12 +13,13 @@ permissions:
 
 jobs:
   vroom-plan:
-    name: Plan configured GitHub VMs
+    name: Plan configured nodes
     runs-on: ubuntu-latest
     env:
       VROOM_GITHUB_TOKEN: ${{ github.token }}
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      plan: ${{ steps.plan.outputs.plan }}
     steps:
       - name: Checkout SeerrNG
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,9 +32,9 @@ jobs:
           node-version-file: package.json
           package-manager-cache: false
 
-      - name: Build Vroom VM matrix
+      - name: Build Vroom node matrix
         id: plan
-        run: node .vroom-test/vroom.mjs . github --github-plan
+        run: node .vroom-test/vroom.mjs . test --github-plan
 
   vroom-test:
     name: ${{ matrix.node }} - four-thread Vitest sample
@@ -45,6 +46,7 @@ jobs:
     timeout-minutes: 20
     env:
       VROOM_NODE_ID: ${{ matrix.node }}
+      VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
       VROOM_GITHUB_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout SeerrNG
@@ -67,7 +69,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run assigned Vroom shard
-        run: node .vroom-test/vroom.mjs . github --github
+        id: execute
+        run: node .vroom-test/vroom.mjs . test --github
+
+      - name: Upload Vroom records
+        if: always() && steps.execute.outputs['artifact-name'] != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.execute.outputs['artifact-name'] }}
+          if-no-files-found: error
+          path: ${{ steps.execute.outputs['artifact-paths'] }}
 
   vroom-reconcile:
     name: Reconcile Vroom results
@@ -78,6 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VROOM_GITHUB_RECONCILE: true
+      VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
       VROOM_GITHUB_TOKEN: ${{ github.token }}
       VROOM_GITHUB_EXECUTION_RESULT: ${{ needs.vroom-test.result }}
     steps:
@@ -93,4 +105,13 @@ jobs:
           package-manager-cache: false
 
       - name: Reconcile and save Vroom results
-        run: node .vroom-test/vroom.mjs . github --github
+        id: reconcile
+        run: node .vroom-test/vroom.mjs . test --github
+
+      - name: Upload reconciled Vroom records
+        if: always() && steps.reconcile.outputs['artifact-name'] != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.reconcile.outputs['artifact-name'] }}
+          if-no-files-found: error
+          path: ${{ steps.reconcile.outputs['artifact-paths'] }}
