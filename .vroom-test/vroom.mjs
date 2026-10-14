@@ -69,8 +69,15 @@ Examples:
 
   const githubPlan = githubFlags[0] === '--github-plan';
   const executionMode = githubFlags.length ? 'github' : 'local';
-  if (executionMode === 'github' && process.env.GITHUB_ACTIONS !== 'true')
-    throw new Error(`${githubPlan ? '--github-plan' : '--github'} requires the GitHub Actions environment`);
+  const githubReturn = Boolean(process.env.VROOM_GITHUB_RETURN_RUN_ID);
+  if (
+    executionMode === 'github' &&
+    process.env.GITHUB_ACTIONS !== 'true' &&
+    !githubReturn
+  )
+    throw new Error(
+      `${githubPlan ? '--github-plan' : '--github'} requires GitHub Actions or a completed GitHub return`
+    );
 
   return {
     applicationRoot: resolve(positional[0]),
@@ -1328,10 +1335,23 @@ async function Scheduler(
     profiles: plan.profiles,
     selectedJobNames: plannedJobNames,
   });
-  if (mode === 'github' && process.env.VROOM_GITHUB_RECONCILE === 'true') {
-    const repository = process.env.GITHUB_REPOSITORY?.trim();
-    const runId = process.env.GITHUB_RUN_ID?.trim();
-    const runAttempt = process.env.GITHUB_RUN_ATTEMPT?.trim();
+  const returnedRunId = process.env.VROOM_GITHUB_RETURN_RUN_ID?.trim();
+  if (
+    mode === 'github' &&
+    (process.env.VROOM_GITHUB_RECONCILE === 'true' || returnedRunId)
+  ) {
+    const returnedToApplication = Boolean(returnedRunId);
+    const repository = (
+      returnedToApplication
+        ? process.env.VROOM_GITHUB_RETURN_REPOSITORY
+        : process.env.GITHUB_REPOSITORY
+    )?.trim();
+    const runId = returnedRunId || process.env.GITHUB_RUN_ID?.trim();
+    const runAttempt = (
+      returnedToApplication
+        ? process.env.VROOM_GITHUB_RETURN_ATTEMPT || '1'
+        : process.env.GITHUB_RUN_ATTEMPT
+    )?.trim();
     const token = process.env.VROOM_GITHUB_TOKEN?.trim();
     if (!repository || !runId || !runAttempt || !token)
       throw new Error(
@@ -1348,9 +1368,20 @@ async function Scheduler(
       resources,
       results: [],
       history: preliminaryTimingState.history,
-      githubReturn: { repository, runId, runAttempt, token },
+      githubReturn: {
+        repository,
+        runId,
+        runAttempt,
+        token,
+        ...(returnedToApplication
+          ? { artifactPrefix: `vroom-mode2-${runId}-${runAttempt}-reconciled` }
+          : {}),
+      },
     });
-    if (process.env.VROOM_GITHUB_EXECUTION_RESULT !== 'success')
+    if (
+      !returnedToApplication &&
+      process.env.VROOM_GITHUB_EXECUTION_RESULT !== 'success'
+    )
       throw new Error(
         `GitHub VM execution completed with ${process.env.VROOM_GITHUB_EXECUTION_RESULT ?? 'an unknown result'}`
       );

@@ -5,7 +5,7 @@ name: Vroom Mode 2 test
 on:
   push:
     branches:
-      - test/vroom-mode2-single-vm-proof
+      - test/vroom-mode2-calibration
 
 permissions:
   actions: read
