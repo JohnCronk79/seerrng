@@ -46,10 +46,7 @@ test('provider-native chart validation retains push-wide lint behavior', () => {
     (step) => step.name === 'Run chart-testing (push)'
   );
 
-  assert.equal(
-    pushLint.if,
-    "!cancelled() && github.event_name == 'push'"
-  );
+  assert.equal(pushLint.if, "!cancelled() && github.event_name == 'push'");
   assert.match(pushLint.run, /ct lint --all --validate-maintainers=false/iu);
   assert.ok(Object.hasOwn(workflow.on, 'workflow_call'));
   assert.deepEqual(ciWorkflow.on.push.branches, ['main']);
@@ -57,5 +54,8 @@ test('provider-native chart validation retains push-wide lint behavior', () => {
     ciWorkflow.jobs.helm.uses,
     './.github/workflows/lint-helm-charts.yml'
   );
-  assert.equal(ciWorkflow.jobs.helm.if, "needs.engine-plan.result == 'success'");
+  assert.equal(
+    ciWorkflow.jobs.helm.if,
+    "needs.engine-plan.result == 'success'"
+  );
 });
