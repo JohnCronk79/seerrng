@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { withGitBashOnPath } from './platform-tools.mjs';
 
 export function parseToolingWorkers(args) {
