@@ -181,6 +181,11 @@ jobs:
           CI: true
         run: pnpm install
 
+      - name: Run Vroom
+        id: vroom
+        env:
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+        run: node vroom/vroom.mjs seerr github-full-test-suite --github-plan
       - name: Lint
         run: pnpm lint
 
