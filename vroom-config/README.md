@@ -2,8 +2,7 @@
 
 The `vroom-config` folder keeps Seerr's Vroom integration files separate from
 the main Seerr application files. Vroom itself remains a separate application;
-this folder contains only Seerr's Vroom configuration and Seerr-specific Vroom
-run data.
+this folder contains only Seerr's Vroom configuration and local timing history.
 
 `vroom-config/vroom-app.cfg` is the application-owned source of truth for every
 workload, job command, test scope, dependency, and selection rule used by
@@ -35,11 +34,18 @@ the stable execution target from `vroom.cfg`, not the command-line mode that
 happened to launch Vroom. Current folders are `timing-local-node`,
 `timing-github-hosted`, and `timing-john-home`. Future examples include
 `timing-keith-home`, `timing-keith-office`, and
-`timing-family-federation`. Reusing the same physical target ID allows a locally
+`timing-federation`. Reusing the same physical target ID allows a locally
 launched run and a GitHub-launched run to share valid comparable history for
 that target. Other future developer-data categories, such as federation-level
 diagnostics, must use their own equally clear purpose prefix instead of being
 mixed into a timing folder.
+
+The planned Mode 3 design gives one Vroom installation one Federation.
+Numbered federation members represent sites or networks and contain clusters;
+each cluster initially has one controller. These future timing target IDs are
+separate from the planned persistent
+`<member-id>-<controller-id>-<node-id>` machine identity. The current loader
+does not implement this hierarchy.
 
 The second folder is the application-owned workload from `vroom-app.cfg`, such
 as `dev`, `compile`, or `pre-pr`. A workload with profiles, such as Seerr's
@@ -50,9 +56,51 @@ timing record for diagnostics; it does not divide the history into another
 folder. These records remain local and must not be committed or included in a
 pull request.
 
-Node receipts are temporary transport files. Vroom creates them in the Linux
-temporary directory, reconciles them into the final result and timing record,
-and leaves no persistent receipt folder in `dev-user-data`.
+Node receipt files remain in OS or Linux temporary storage only long enough for
+transfer and reconciliation, then are deleted. Provider receipt records remain
+transient in process memory and are discarded after reconciliation. Neither is
+copied into `dev-user-data`, the combined timing history, or a persistent
+receipt folder.
+
+## Installer application-integration contract
+
+The future Vroom installer must install or maintain the following integration
+boundary for every application that uses Vroom. This contract is recorded now
+for installer implementation; the installer itself is not yet implemented.
+
+1. `.github/workflows/vroom-engine.yml` is the installed copy of Vroom's one
+   application-agnostic GitHub provider workflow. Its authoritative source
+   is Vroom's root `vroom-engine.yml`, and the same file is used by every
+   application. It plans the run, exposes the node matrix to GitHub, launches
+   Vroom on each provisioned node, and starts final reconciliation. It must not
+   contain Seerr-specific commands, paths, or test inventories.
+
+2. The application's existing CI workflow needs one thin job-level call to the
+   installed `vroom-engine.yml`. That call supplies only the registered
+   application id and selected workload. The call must not be placed as a step
+   inside an existing test job because a step cannot define the downstream
+   GitHub node matrix. Application test commands remain in `vroom-app.cfg`.
+
+3. `vroom-config/vroom-app.cfg` and `vroom-config/README.md` are application-
+   owned integration files. The installer creates the standard locations but
+   must preserve approved application commands and documentation during an
+   update.
+
+4. `vroom-config/dev-user-data/README.md` and
+   `vroom-config/dev-user-data/.gitignore` are installed with the developer-data
+   folder. The nested `.gitignore` ignores runtime timing data and other
+   developer-specific contents while keeping itself and the README tracked.
+   Vroom must not add these runtime-data rules to the application's root
+   `.gitignore`.
+
+5. The installer registers the application's id, root path, and configuration
+   location in Vroom's root `vroom.cfg`. That global Vroom-owned configuration
+   is not copied into this application-owned folder.
+
+Once the installer is proven, the application must not contain a private copy
+of `vroom.mjs`, `vroom.cfg`, or `VERSION`. Seerr's current root `vroom` folder
+is only a temporary GitHub test bridge until the durable installation path is
+available.
 
 ## Workload sections
 

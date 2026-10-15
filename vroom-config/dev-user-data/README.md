@@ -26,13 +26,20 @@ not the command-line argument used to start Vroom. Current timing folders are:
 
 1. `timing-local-node` - the current computer acting as one node.
 2. `timing-github-hosted` - the configured GitHub-hosted VM pool.
-3. `timing-john-home` - John's local cluster site.
+3. `timing-john-home` - John's federation-member cluster.
 
 Future timing targets can use stable folders such as `timing-keith-home`,
-`timing-keith-office`, and `timing-family-federation`. A federation owns one
-combined timing record containing the per-site, controller, and node samples. A
-site run by itself uses the site target instead. A target keeps the same history
-whether GitHub or a local command launched it.
+`timing-keith-office`, and `timing-federation`. A Federation owns one combined
+timing record containing the per-member, cluster, controller, and node samples.
+A member-cluster run by itself uses that configured target instead. A target
+keeps the same history whether GitHub or a local command launched it.
+
+In the planned Mode 3 design, one Vroom installation owns one Federation.
+Member `001` and controller `000` are the defaults. The controller consumes
+node `000`, which executes work only when its optional node role is enabled;
+worker nodes use `001` through `999`. The temporary run coordinator is outside
+that persistent identity. This hierarchy and its timing targets are not active
+yet.
 
 `<workload>` is an application-owned section from `vroom-app.cfg`, such as
 `dev`, `compile`, `pre-pr`, `github`, or `github-full-test-suite`. A workload
@@ -42,5 +49,7 @@ currently uses `src` and `server`.
 Vroom keeps only the newest five comparable timing logs in each final workload
 or profile folder. The timing record stores launch mode and per-node details for
 diagnostics. Large native reports remain with their provider or application.
-Node receipts are temporary transport files: Vroom reads them from Linux
-temporary storage during reconciliation and then removes them.
+Node receipt files exist only in OS or Linux temporary storage while transfer
+and reconciliation need them, then are deleted. Provider receipt records remain
+transient in process memory and are discarded after reconciliation. Neither is
+retained in this folder or copied into the combined timing history.
