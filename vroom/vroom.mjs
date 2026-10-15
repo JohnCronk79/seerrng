@@ -1095,8 +1095,9 @@ async function ResultTransfer(request) {
       const coordinatorRun = await coordinatorResponse.json();
       const coordinatorPath = String(coordinatorRun.path ?? '').split('@')[0];
       const coordinatorCreatedAt = Date.parse(coordinatorRun.created_at);
+      const providerHeadSha = String(coordinatorRun.head_sha ?? '');
       if (String(coordinatorRun.id) !== runId || String(coordinatorRun.run_attempt) !== runAttempt ||
-          coordinatorRun.head_sha !== expectedCommit || !coordinatorPath ||
+          !/^[a-f0-9]{40}$/i.test(providerHeadSha) || !coordinatorPath ||
           typeof coordinatorRun.event !== 'string' || !Number.isFinite(coordinatorCreatedAt))
         throw new Error('GitHub coordinator run does not match the immutable plan');
 
@@ -1106,7 +1107,7 @@ async function ResultTransfer(request) {
         if (!providerRun) {
           const workflowId = encodeURIComponent(workflow.split('/').at(-1));
           const query = new URLSearchParams({
-            event: coordinatorRun.event, head_sha: expectedCommit, per_page: '100',
+            event: coordinatorRun.event, head_sha: providerHeadSha, per_page: '100',
           });
           const runsResponse = await fetch(
             `${apiRoot}/repos/${repository}/actions/workflows/${workflowId}/runs?${query}`,
@@ -1121,7 +1122,7 @@ async function ResultTransfer(request) {
             throw new Error(`GitHub provider workflow ${workflow} exceeded one result page`);
           const matches = runsListing.workflow_runs.filter((candidate) =>
             String(candidate.path ?? '').split('@')[0] === workflow &&
-            candidate.head_sha === expectedCommit && candidate.event === coordinatorRun.event &&
+            candidate.head_sha === providerHeadSha && candidate.event === coordinatorRun.event &&
             candidate.head_branch === coordinatorRun.head_branch &&
             String(candidate.run_attempt) === runAttempt &&
             Number.isFinite(Date.parse(candidate.created_at)) &&
@@ -1169,6 +1170,7 @@ async function ResultTransfer(request) {
           providerReceipts.set(unit.id, {
             provider: unit.provider, executionTarget: targetId, repository,
             runId, runAttempt, commitSha: expectedCommit,
+            providerHeadSha,
             providerRunId: String(providerRun.id),
             providerRunAttempt: String(providerRun.run_attempt),
             providerUnitId: unit.id, jobName: unit.jobName,
