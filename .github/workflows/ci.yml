@@ -18,6 +18,7 @@ on:
         default: true
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -29,6 +30,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  vroom:
+    name: Vroom 12-file Mode 2 proof
+    uses: ./.github/workflows/vroom-engine.yml
+    with:
+      application-id: seerr
+      workload: github
+      setup-command: corepack enable && pnpm install --frozen-lockfile
+
   jellyfin-plugin:
     name: Build Jellyfin bridge plugin
     timeout-minutes: 15
