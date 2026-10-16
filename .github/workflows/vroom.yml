@@ -29,6 +29,9 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
+  packages: write
+  security-events: write
 
 env:
   VROOM_APPLICATION_ID: 'seerr'
