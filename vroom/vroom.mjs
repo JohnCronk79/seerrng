@@ -3,6 +3,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFile,
+  glob,
   mkdir,
   mkdtemp,
   readFile,
@@ -35,8 +36,8 @@ workload from that application's owned configuration.
 The workload defaults to "${DEFAULT_WORKLOAD}" when omitted.
 Use --local to select Mode 1 execution on the current computer.
 Use --github only inside GitHub Actions to select Mode 2 execution.
-Use --github-plan inside GitHub Actions to emit the configured node matrix
-without executing the workload.
+Use --github-plan inside GitHub Actions to emit the Scheduler work queue and
+configured maximum node concurrency without executing the workload.
 
 Examples:
   vroom my-app --local
@@ -99,7 +100,8 @@ Examples:
 // Owns application configuration intake. It confirms the application folder,
 // reads vroom-app.cfg, parses its workload sections and job metadata, selects
 // the requested workload, creates the job records, validates application-owned
-// file lists or application-owned file-discovery commands, provider-native
+// exact paths, glob file lists, or application-owned file-discovery commands,
+// provider-native
 // workflow results, changed-file rules, and fixed non-secret job environments,
 // and rejects missing dependencies or dependency cycles. It does not decide
 // execution order or run jobs.
@@ -193,6 +195,27 @@ async function loadApplicationConfiguration(
     let files = csv(record.metadata.files).map((file) => file.replace(/\\/g, '/'));
     const filesCommand = record.metadata['files-command']?.value ?? null;
     if (filesCommand && files.length) throw new Error(`${configPath}: ${record.name} cannot use files and files-command`);
+    const filePatterns = files.filter((file) => /[*?\[]/.test(file));
+    if (filePatterns.some((pattern) =>
+      pattern.startsWith('/') || /^[a-z]:\//i.test(pattern) || pattern.includes('..') ||
+      !/^[a-z0-9_./@+*?\[\]-]+$/i.test(pattern)))
+      throw new Error(`${configPath}: ${record.name}.files contains an invalid glob pattern`);
+    if (filePatterns.length) {
+      if (discoverFiles) {
+        const expanded = files.filter((file) => !filePatterns.includes(file));
+        for (const pattern of filePatterns) {
+          let matched = 0;
+          for await (const file of glob(pattern, { cwd: applicationRoot })) {
+            const normalized = file.replace(/\\/g, '/');
+            if (!(await stat(join(applicationRoot, normalized))).isFile()) continue;
+            expanded.push(normalized);
+            matched += 1;
+          }
+          if (!matched) throw new Error(`${configPath}: ${record.name}.files pattern matched no files: ${pattern}`);
+        }
+        files = [...new Set(expanded)].sort();
+      } else files = [];
+    }
     if (filesCommand && discoverFiles) {
       const discovery = spawnSync(filesCommand, {
         cwd: applicationRoot,
@@ -250,7 +273,7 @@ async function loadApplicationConfiguration(
       when,
       compare: when.length ? compare ?? 'main' : null,
       files,
-      discoversFiles: Boolean(filesCommand),
+      discoversFiles: Boolean(filesCommand || filePatterns.length),
       environment,
       provider: providerMatch
         ? {
@@ -654,12 +677,13 @@ async function CpuThreadPlanning(mode, configuration, performanceSamples = new M
 }
 
 // E. Controller
-// Owns the boundary between Scheduler's node assignments and the environment
-// that delivers those assignments. It never selects work, balances capacity,
-// or becomes another scheduler. Local mode calls ExecutionNode in this process.
-// In GitHub mode the thin workflow has already provisioned each hosted VM and
-// started Vroom; Controller validates the GitHub node identity and starts only
-// that node's assigned work. Mode 3 will extend this function so the controller
+// Owns the boundary between Scheduler's queued assignments and the environment
+// that delivers them. It never selects work, balances capacity, or becomes
+// another scheduler. Local mode calls ExecutionNode in this process. In GitHub
+// mode the thin workflow starts one matrix job per queued assignment while its
+// configured concurrency limit controls how many hosted VMs run at once;
+// Controller validates the exact assignment identity and starts only that work.
+// Mode 3 will extend this function so the controller
 // contacts enrolled cluster nodes, starts Vroom with an immutable assignment,
 // tracks delivery, cancellation, and node loss, and receives the returned
 // disposition. The remote Mode 3 transport is deliberately not implemented
@@ -713,10 +737,10 @@ async function Controller({ mode, request }) {
       workload: request.workload, nodes: request.nodes,
       assignments: request.assignments, providerUnits: request.providerUnits,
     };
-    const matrix = { node: request.nodes.map((node) => node.id) };
+    const matrix = { node: request.assignments.map((assignment) => assignment.nodeId) };
     await appendFile(outputPath,
-      `matrix=${JSON.stringify(matrix)}\nplan=${JSON.stringify(plan)}\n`, 'utf8');
-    return { matrix };
+      `matrix=${JSON.stringify(matrix)}\nparallel=${request.nodes.length}\nplan=${JSON.stringify(plan)}\n`, 'utf8');
+    return { matrix, parallel: request.nodes.length };
   }
 
   if (action === 'context') {
@@ -1574,7 +1598,7 @@ async function TimingResults(request) {
 // creates and displays the application-work plan, loads Vroom configuration,
 // obtains CPU and weighted node resources, resolves generic command behavior,
 // creates and assigns deterministic local or multi-node shards, records native
-// provider units, emits one immutable GitHub run-attempt plan and node matrix,
+// provider units, emits one immutable GitHub run-attempt queue and concurrency,
 // applies changed-file rules,
 // enforces dependencies and exclusivity,
 // asks TimingResults for timing history, uses that history to set execution
@@ -1729,8 +1753,9 @@ async function Scheduler(
   }
 
   const multiNode = resources.nodes.length > 1;
+  const distributedPlanning = githubPlan || Boolean(githubExecutionPlan) || multiNode;
   const nodeAssignments = new Map();
-  if (multiNode) {
+  if (distributedPlanning) {
     const unsupported = plan.jobs.filter((job) =>
       selectedJobSet.has(job.name) && !job.provider && (job.after.length || job.exclusive));
     if (unsupported.length)
@@ -1743,12 +1768,17 @@ async function Scheduler(
     if (plannedNodes.size !== nodes.size || [...nodes].some(([id, node]) => plannedNodes.get(id)?.capacity !== node.capacity))
       throw new Error('GitHub plan node capacity does not match vroom.cfg');
     const jobsByName = new Map(plan.jobs.map((job, index) => [job.name, { job, index }]));
+    const githubNodeCapacity = resources.nodes[0].capacity;
     const shardIds = new Set();
     const assignedFilesByJob = new Map();
     for (const assignment of githubExecutionPlan.assignments) {
+      if (!assignment || typeof assignment !== 'object')
+        throw new Error('GitHub plan contains a malformed assignment');
       const entry = jobsByName.get(assignment.jobName);
-      const targetNode = nodes.get(assignment.nodeId);
-      const expectedId = entry && `${`shard-${String(entry.index + 1).padStart(2, '0')}`}${multiNode ? `-${assignment.nodeId}` : ''}`;
+      const expectedPrefix = entry && `shard-${String(entry.index + 1).padStart(2, '0')}-`;
+      const validShardId = Boolean(expectedPrefix) && typeof assignment.shardId === 'string' &&
+        assignment.shardId.startsWith(expectedPrefix) &&
+        /^\d{3}$/.test(assignment.shardId.slice(expectedPrefix.length));
       const assignedFiles = Array.isArray(assignment.executionFiles) ? assignment.executionFiles : [];
       const uniqueFiles = new Set(assignedFiles);
       const fileJob = Boolean(entry?.job.files.length || entry?.job.discoversFiles);
@@ -1759,12 +1789,13 @@ async function Scheduler(
           assignedFiles.every((file) =>
             !entry.job.files.length || entry.job.files.includes(file))
         : assignment.wholeJob === true && assignedFiles.length === 0;
-      if (!entry || entry.job.provider || !targetNode || assignment.shardId !== expectedId || shardIds.has(expectedId) ||
-          assignment.nodeCapacity !== targetNode.capacity || !validShape ||
+      if (!entry || entry.job.provider || !validShardId ||
+          assignment.nodeId !== assignment.shardId || shardIds.has(assignment.shardId) ||
+          assignment.nodeCapacity !== githubNodeCapacity || !validShape ||
           !Number.isFinite(assignment.estimatedWeight) || assignment.estimatedWeight <= 0 ||
           assignedFiles.some((file) => typeof file !== 'string' || !/^[a-z0-9_./@+-]+$/i.test(file)))
         throw new Error(`GitHub plan contains an invalid assignment for ${assignment.jobName}`);
-      shardIds.add(expectedId);
+      shardIds.add(assignment.shardId);
       if (!assignedFilesByJob.has(entry.job.name)) assignedFilesByJob.set(entry.job.name, new Set());
       const recordedFiles = assignedFilesByJob.get(entry.job.name);
       if (assignedFiles.some((file) => recordedFiles.has(file)))
@@ -1811,16 +1842,34 @@ async function Scheduler(
       if (job.provider.results.some((resultName) => !unitKeys.has(`${job.name}\u0000${resultName}`)))
         throw new Error(`GitHub plan does not contain every provider result for ${job.name}`);
     }
-  } else if (multiNode) {
+  } else if (githubPlan) {
+    const fileJobs = plan.jobs.filter((job) =>
+      selectedJobSet.has(job.name) && !job.provider && job.files.length);
+    const totalFiles = fileJobs.reduce((total, job) => total + job.files.length, 0);
+    const targetFileShards = Math.min(resources.totalCapacity, totalFiles);
+    const shardCounts = new Map(fileJobs.map((job) => [job.name, 1]));
+    let remainingShards = Math.max(0, targetFileShards - shardCounts.size);
+    while (remainingShards > 0) {
+      const candidates = fileJobs.filter((job) => shardCounts.get(job.name) < job.files.length);
+      if (!candidates.length) break;
+      const selected = candidates.reduce((best, candidate) =>
+        candidate.files.length / (shardCounts.get(candidate.name) + 1) >
+        best.files.length / (shardCounts.get(best.name) + 1) ? candidate : best);
+      shardCounts.set(selected.name, shardCounts.get(selected.name) + 1);
+      remainingShards -= 1;
+    }
     for (const [jobIndex, job] of plan.jobs.entries()) {
       if (!selectedJobSet.has(job.name) || job.provider) continue;
-      const assignments = resources.nodes.map((node) => ({
-        nodeId: node.id,
-        weightedCapacity: node.weightedCapacity,
-        estimatedWeight: 0,
-        files: [],
-        wholeJob: false,
-      }));
+      const assignmentCount = job.files.length ? shardCounts.get(job.name) : 1;
+      const assignments = Array.from({ length: assignmentCount }, (_, index) => {
+        const shardId = `shard-${String(jobIndex + 1).padStart(2, '0')}-${String(index + 1).padStart(3, '0')}`;
+        return {
+          nodeId: shardId,
+          estimatedWeight: 0,
+          files: [],
+          wholeJob: false,
+        };
+      });
       if (job.files.length) {
         const samplesByFile = new Map();
         for (const [key, samples] of preliminaryTimingState.history) {
@@ -1845,15 +1894,23 @@ async function Scheduler(
         work.sort((left, right) => right.weight - left.weight || left.file.localeCompare(right.file));
         for (const item of work) {
           const target = assignments.reduce((best, candidate) =>
-            candidate.estimatedWeight / candidate.weightedCapacity < best.estimatedWeight / best.weightedCapacity ? candidate : best
+            candidate.estimatedWeight < best.estimatedWeight ? candidate : best
           );
           target.files.push(item.file);
           target.estimatedWeight += item.weight;
         }
         for (const assignment of assignments) assignment.files.sort();
       } else {
-        assignments[jobIndex % assignments.length].wholeJob = true;
-        assignments[jobIndex % assignments.length].estimatedWeight = 1;
+        const samples = [...preliminaryTimingState.history]
+          .filter(([key]) => {
+            const parts = key.split('\u0000');
+            return parts[0] === job.name && parts[1] === job.command;
+          })
+          .flatMap(([, values]) => values.slice(-5).map((sample) => sample.durationMs));
+        assignments[0].wholeJob = true;
+        assignments[0].estimatedWeight = samples.length
+          ? samples.reduce((sum, value) => sum + value, 0) / samples.length
+          : 1;
       }
       nodeAssignments.set(job.name, assignments);
     }
@@ -1865,32 +1922,22 @@ async function Scheduler(
     for (let jobIndex = 0; jobIndex < plan.jobs.length; jobIndex += 1) {
       const job = plan.jobs[jobIndex];
       if (!selectedJobSet.has(job.name) || job.provider) continue;
-      if (multiNode) {
-        for (const assignment of nodeAssignments.get(job.name) ?? []) {
-          const assigned = job.files.length ? assignment.files.length > 0 : assignment.wholeJob;
-          if (!assigned) continue;
-          assignments.push({
-            jobName: job.name,
-            shardId: `shard-${String(jobIndex + 1).padStart(2, '0')}-${assignment.nodeId}`,
-            nodeId: assignment.nodeId,
-            nodeCapacity: resources.nodes.find((node) => node.id === assignment.nodeId).capacity,
-            executionFiles: [...assignment.files],
-            wholeJob: assignment.wholeJob,
-            estimatedWeight: assignment.estimatedWeight,
-          });
-        }
-      } else {
+      for (const assignment of nodeAssignments.get(job.name) ?? []) {
+        const assigned = job.files.length ? assignment.files.length > 0 : assignment.wholeJob;
+        if (!assigned) continue;
         assignments.push({
           jobName: job.name,
-          shardId: `shard-${String(jobIndex + 1).padStart(2, '0')}`,
-          nodeId: resources.nodes[0].id,
+          shardId: assignment.nodeId,
+          nodeId: assignment.nodeId,
           nodeCapacity: resources.nodes[0].capacity,
-          executionFiles: [...job.files],
-          wholeJob: !job.files.length,
-          estimatedWeight: null,
+          executionFiles: [...assignment.files],
+          wholeJob: assignment.wholeJob,
+          estimatedWeight: assignment.estimatedWeight,
         });
       }
     }
+    assignments.sort((left, right) =>
+      right.estimatedWeight - left.estimatedWeight || left.shardId.localeCompare(right.shardId));
     const providerUnits = plan.jobs.flatMap((job, jobIndex) =>
       !selectedJobSet.has(job.name) || !job.provider
         ? []
@@ -1903,7 +1950,7 @@ async function Scheduler(
           resultName,
         }))
     );
-    const { matrix } = await Controller({
+    const { matrix, parallel } = await Controller({
       mode,
       request: {
         action: 'publish-plan',
@@ -1916,7 +1963,8 @@ async function Scheduler(
       },
     });
     process.stdout.write(
-      `GitHub node matrix: ${matrix.node.join(', ')}\n` +
+      `GitHub work queue: ${matrix.node.join(', ')}\n` +
+        `Maximum concurrent nodes: ${parallel}\n` +
         `Configured capacity: ${resources.totalCapacity} thread slots across ${resources.nodes.length} node(s)\n` +
         `Immutable assignments: ${assignments.length}\n` +
         `Provider-native results: ${providerUnits.length}\n`
@@ -1926,9 +1974,18 @@ async function Scheduler(
 
   const requestedNodeId = githubContext?.nodeId ?? null;
   let node = resources.nodes[0];
-  if (mode === 'github' && requestedNodeId)
-    node = resources.nodes.find((candidate) => candidate.id === requestedNodeId);
-  else if (multiNode)
+  if (mode === 'github' && requestedNodeId) {
+    const queuedAssignment = githubExecutionPlan?.assignments.find(
+      (assignment) => assignment.nodeId === requestedNodeId
+    );
+    if (!queuedAssignment)
+      throw new Error(`Scheduler plan does not contain queued assignment: ${requestedNodeId}`);
+    node = {
+      ...resources.nodes[0],
+      id: requestedNodeId,
+      name: `GitHub queued assignment ${requestedNodeId}`,
+    };
+  } else if (multiNode)
     throw new Error('Multi-node execution requires a controller-selected node');
   if (!node || node.capacity < 1)
     throw new Error(
@@ -1938,7 +1995,11 @@ async function Scheduler(
     );
   const history = preliminaryTimingState.history;
   const distributed = Boolean(githubExecutionPlan || multiNode);
-  const shards = plan.jobs.filter((job) => !job.provider).map((job) => {
+  const executableJobs = plan.jobs.filter((job) =>
+    !job.provider && (!distributed ||
+      nodeAssignments.get(job.name)?.some((assignment) => assignment.nodeId === node.id))
+  );
+  const shards = executableJobs.map((job) => {
     const index = plan.jobs.indexOf(job);
     const selectedFiles = selectedFilesByJob.get(job.name) ?? [];
     const nodeAssignment = distributed

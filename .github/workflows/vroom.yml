@@ -98,6 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      parallel: ${{ steps.plan.outputs.parallel }}
       plan: ${{ steps.plan.outputs.plan }}
     steps:
       - name: Checkout application
@@ -135,6 +136,7 @@ jobs:
     if: needs.select-engine.outputs.selected == 'vroom' && needs.vroom-plan.result == 'success'
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(needs.vroom-plan.outputs.parallel) }}
       matrix: ${{ fromJSON(needs.vroom-plan.outputs.matrix) }}
     runs-on: ubuntu-latest
     steps:
@@ -175,7 +177,6 @@ jobs:
           path: ${{ steps.execute.outputs.artifact-paths }}
           if-no-files-found: error
           retention-days: 5
-
   vroom-reconcile:
     name: Vroom reconcile
     needs:
