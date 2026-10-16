@@ -1,0 +1,156 @@
+---
+# Vroom-owned GitHub provider bridge.
+#
+# This workflow is application-agnostic. The calling application's workflow
+# supplies only its registered Vroom id, selected workload, and optional native
+# dependency-setup command. Application commands remain in vroom-app.cfg.
+name: Vroom GitHub provider bridge
+
+on:
+  workflow_call:
+    inputs:
+      application-id:
+        description: Application id registered in Vroom's vroom.cfg.
+        required: true
+        type: string
+      workload:
+        description: Application-owned workload section from vroom-app.cfg.
+        required: true
+        type: string
+      setup-command:
+        description: Optional application-owned dependency setup command.
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  vroom-plan:
+    name: Vroom plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Prepare application dependencies
+        if: inputs.setup-command != ''
+        env:
+          VROOM_APPLICATION_SETUP: ${{ inputs.setup-command }}
+        shell: bash
+        run: bash -euo pipefail -c "$VROOM_APPLICATION_SETUP"
+
+      - name: Create immutable Vroom plan
+        id: plan
+        env:
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node vroom/vroom.mjs
+          "${{ inputs.application-id }}"
+          "${{ inputs.workload }}"
+          --github-plan
+
+  vroom-nodes:
+    name: Vroom ${{ matrix.node }}
+    needs: vroom-plan
+    if: needs.vroom-plan.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.vroom-plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Prepare application dependencies
+        if: inputs.setup-command != ''
+        env:
+          VROOM_APPLICATION_SETUP: ${{ inputs.setup-command }}
+        shell: bash
+        run: bash -euo pipefail -c "$VROOM_APPLICATION_SETUP"
+
+      - name: Run assigned Vroom work
+        id: execute
+        env:
+          VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+          VROOM_NODE_ID: ${{ matrix.node }}
+        run: >-
+          node vroom/vroom.mjs
+          "${{ inputs.application-id }}"
+          "${{ inputs.workload }}"
+          --github
+
+      - name: Publish Vroom node records
+        if: always() && steps.execute.outputs.artifact-name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.execute.outputs.artifact-name }}
+          path: ${{ steps.execute.outputs.artifact-paths }}
+          if-no-files-found: error
+          retention-days: 5
+
+  vroom-reconcile:
+    name: Vroom reconcile
+    needs:
+      - vroom-plan
+      - vroom-nodes
+    if: always() && needs.vroom-plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Reconcile Vroom results
+        id: reconcile
+        env:
+          VROOM_GITHUB_EXECUTION_RESULT: ${{ needs.vroom-nodes.result }}
+          VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
+          VROOM_GITHUB_RECONCILE: 'true'
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node vroom/vroom.mjs
+          "${{ inputs.application-id }}"
+          "${{ inputs.workload }}"
+          --github
+
+      - name: Publish reconciled Vroom records
+        if: always() && steps.reconcile.outputs.artifact-name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.reconcile.outputs.artifact-name }}
+          path: ${{ steps.reconcile.outputs.artifact-paths }}
+          if-no-files-found: error
+          retention-days: 5
