@@ -237,7 +237,9 @@ jobs:
       - name: Run tests
         env:
           CI: true
-        run: pnpm test:ci
+        run: |
+          pnpm test:node
+          pnpm test:ci
 
       - name: Publish test report
         uses: mikepenz/action-junit-report@a9170d5795813c01ab4901ffb045b52bab4ab09d # v6.5.0
