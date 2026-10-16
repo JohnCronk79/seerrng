@@ -1,0 +1,218 @@
+---
+# Vroom pull-request test dispatcher.
+#
+# Install this file as `.github/workflows/vroom.yml` in an application that
+# uses Vroom. Comment out the application's direct `pull_request` trigger in
+# its existing test workflow and add `workflow_call` to that original workflow.
+# On a pull request, this dispatcher selects exactly one test engine:
+# Vroom is the default when its installed files are available, an explicit
+# default-engine choice calls the application's unchanged workflow, and a
+# missing Vroom installation also falls back to that workflow.
+#
+# The installer replaces the four `__VROOM_*__` values below. Application test
+# commands and scheduling remain in `vroom-config/vroom-app.cfg`, not here.
+#
+# Future GitHub integration may extend this dispatcher to validation-only
+# development-branch `push` events; compatible test or build work on main
+# `push` events while leaving publishing and deployment application-owned;
+# manual `workflow_dispatch` engine and workload choices; and scheduled test
+# runs. Provider-native security, publishing, deployment, and maintenance
+# workflows remain independent unless a later approved design gives Vroom a
+# narrow application-agnostic role in their test or build stages.
+name: Vroom pull-request validation
+
+on:
+  pull_request:
+    branches:
+      - '*'
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  VROOM_APPLICATION_ID: 'seerr'
+  VROOM_WORKLOAD: 'github-full-test-suite'
+  VROOM_SETUP_COMMAND: 'corepack enable && pnpm install --frozen-lockfile'
+
+concurrency:
+  group: vroom-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  select-engine:
+    name: Select test engine
+    runs-on: ubuntu-latest
+    outputs:
+      selected: ${{ steps.select.outputs.selected }}
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select test engine
+        id: select
+        env:
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+        shell: bash
+        run: |
+          vroom_installed=false
+          requested_engine=''
+
+          if [[ -f vroom/vroom.mjs && -f vroom/vroom.cfg && -f vroom/VERSION && -f vroom-config/vroom-app.cfg ]]; then
+            vroom_installed=true
+          fi
+
+          if grep -Fqi -- '- [x] Default application test engine' <<< "$PR_BODY"; then
+            requested_engine=default
+          elif grep -Fqi -- '- [x] Vroom test engine' <<< "$PR_BODY"; then
+            requested_engine=vroom
+          fi
+
+          if [[ "$requested_engine" == default ]]; then
+            selected=default
+          elif [[ "$vroom_installed" == true && ( "$requested_engine" == vroom || -z "$requested_engine" ) ]]; then
+            selected=vroom
+          else
+            selected=default
+          fi
+
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          echo "Selected test engine: $selected"
+
+  default-tests:
+    name: Application default test engine
+    needs: select-engine
+    if: needs.select-engine.outputs.selected == 'default'
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  vroom-plan:
+    name: Vroom plan
+    needs: select-engine
+    if: needs.select-engine.outputs.selected == 'vroom'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Prepare application dependencies
+        if: env.VROOM_SETUP_COMMAND != ''
+        shell: bash
+        run: bash -euo pipefail -c "$VROOM_SETUP_COMMAND"
+
+      - name: Create immutable Vroom plan
+        id: plan
+        env:
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node vroom/vroom.mjs
+          "$VROOM_APPLICATION_ID"
+          "$VROOM_WORKLOAD"
+          --github-plan
+
+  vroom-nodes:
+    name: Vroom ${{ matrix.node }}
+    needs:
+      - select-engine
+      - vroom-plan
+    if: needs.select-engine.outputs.selected == 'vroom' && needs.vroom-plan.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.vroom-plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Prepare application dependencies
+        if: env.VROOM_SETUP_COMMAND != ''
+        shell: bash
+        run: bash -euo pipefail -c "$VROOM_SETUP_COMMAND"
+
+      - name: Run assigned Vroom work
+        id: execute
+        env:
+          VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+          VROOM_NODE_ID: ${{ matrix.node }}
+        run: >-
+          node vroom/vroom.mjs
+          "$VROOM_APPLICATION_ID"
+          "$VROOM_WORKLOAD"
+          --github
+
+      - name: Publish Vroom node records
+        if: always() && steps.execute.outputs.artifact-name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.execute.outputs.artifact-name }}
+          path: ${{ steps.execute.outputs.artifact-paths }}
+          if-no-files-found: error
+          retention-days: 5
+
+  vroom-reconcile:
+    name: Vroom reconcile
+    needs:
+      - select-engine
+      - vroom-plan
+      - vroom-nodes
+    if: always() && needs.select-engine.outputs.selected == 'vroom' && needs.vroom-plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Vroom runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Reconcile Vroom results
+        id: reconcile
+        env:
+          VROOM_GITHUB_EXECUTION_RESULT: ${{ needs.vroom-nodes.result }}
+          VROOM_GITHUB_PLAN: ${{ needs.vroom-plan.outputs.plan }}
+          VROOM_GITHUB_RECONCILE: 'true'
+          VROOM_GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node vroom/vroom.mjs
+          "$VROOM_APPLICATION_ID"
+          "$VROOM_WORKLOAD"
+          --github
+
+      - name: Publish reconciled Vroom records
+        if: always() && steps.reconcile.outputs.artifact-name != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.reconcile.outputs.artifact-name }}
+          path: ${{ steps.reconcile.outputs.artifact-paths }}
+          if-no-files-found: error
+          retention-days: 5
+
