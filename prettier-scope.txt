@@ -15,6 +15,7 @@ coverage/
 out/
 build/
 artifacts/
+/vroom/
 cypress/runtime-config/
 cypress/videos/
 cypress/screenshots/

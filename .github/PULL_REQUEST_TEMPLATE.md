@@ -17,6 +17,17 @@
 <!--- Include details of your testing environment, and the tests you ran to -->
 <!--- see how your change affects other areas of the code, etc. -->
 
+## Test Engine
+
+<!--
+  Select at most one option. When Vroom is installed, leaving both options
+  blank uses Vroom automatically. Select the default engine to override it.
+  If Vroom is unavailable, the default engine is always used.
+-->
+
+- [ ] Default application test engine
+- [ ] Vroom test engine
+
 ## Screenshots / Logs (if applicable)
 
 ## Release Notes
