@@ -3,9 +3,12 @@
 name: SeerrNG CI
 
 on:
-  pull_request:
-    branches:
-      - '*'
+  # Vroom owns pull-request dispatch while it is installed. To uninstall Vroom,
+  # remove `workflow_call` and uncomment the original pull-request trigger.
+  # pull_request:
+  #   branches:
+  #     - '*'
+  workflow_call:
   push:
     branches:
       - main
